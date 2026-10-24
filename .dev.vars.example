@@ -1,0 +1,15 @@
+# Banto settings. The "Deploy to Cloudflare" setup page reads this file and asks for each value.
+# Replace REPLACE_ME with the real value. A value left as REPLACE_ME is treated as "not set"
+# and the setup screen (/admin/setup) will tell you where to paste it.
+# Without the button: add the same names under Settings -> Variables and Secrets in Cloudflare.
+# Locally: cp .dev.vars.example .dev.vars (wrangler dev reads .dev.vars; never commit it).
+
+# Supabase -> Project Settings -> Data API -> Project URL (https://xxxx.supabase.co)
+SUPABASE_URL=REPLACE_ME
+# Supabase -> Project Settings -> API Keys -> anon public (safe to expose)
+SUPABASE_ANON_KEY=REPLACE_ME
+# Supabase -> Project Settings -> API Keys -> service_role. Never expose it.
+SUPABASE_SERVICE_ROLE_KEY=REPLACE_ME
+# A random string of 32+ characters you make up (e.g. `openssl rand -base64 32`). Root of the session, member-login and
+# encryption keys. Never expose it and never change it after setup (the setup screen also generates one for you).
+SESSION_SECRET=REPLACE_ME

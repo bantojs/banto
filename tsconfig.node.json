@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": false,
+    "outDir": "dist/node"
+  },
+  "include": ["src"],
+  "exclude": ["src/index.ts", "src/adapters/workers/**", "src/**/*.test.ts"]
+}

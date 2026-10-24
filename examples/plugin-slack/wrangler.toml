@@ -1,0 +1,6 @@
+name = "banto-plugin-slack"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+# Secret は `wrangler secret put BANTO_HOOK_SECRET` / `wrangler secret put SLACK_WEBHOOK_URL` で設定する
+# （または Cloudflare の画面 → Workers & Pages → banto-plugin-slack → 設定 → 変数とシークレット）

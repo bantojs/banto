@@ -1,0 +1,9 @@
+name = "banto-plugin-hubspot"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+# Secret は `wrangler secret put <名前>` で設定する（Cloudflare の画面 → Workers & Pages → banto-plugin-hubspot → 設定 → 変数とシークレット でも可）:
+#   BANTO_HOOK_SECRET     Banto の管理画面 → 連携 → 送信先に表示される署名シークレット
+#   BANTO_API_URL         https://<Banto の URL>/api/v1
+#   BANTO_API_TOKEN       Banto の AI 用トークン（customers:read。external_ref を書き戻すなら customers:write も）
+#   HUBSPOT_ACCESS_TOKEN  HubSpot の非公開アプリのアクセストークン（crm.objects.contacts.read / write）

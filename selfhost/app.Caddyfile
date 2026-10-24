@@ -1,0 +1,19 @@
+# GATEWAY_MODE=app: この VPS で Banto も動かす。外に出すのは店の画面だけ（SHOP_DOMAIN、証明書は自動）。
+# DB の口（/rest/v1・/auth/v1）は compose の中だけで使う :8000 に置き、外には出さない。
+(db_api) {
+	handle_path /rest/v1/* {
+		reverse_proxy rest:3000
+	}
+	handle_path /auth/v1/* {
+		reverse_proxy auth:9999
+	}
+	respond 404
+}
+
+{$SHOP_DOMAIN} {
+	reverse_proxy banto:8787
+}
+
+:8000 {
+	import db_api
+}

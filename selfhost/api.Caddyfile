@@ -1,0 +1,12 @@
+# GATEWAY_MODE=api: Banto は Cloudflare Workers。Workers から届くよう、DB の口を API_DOMAIN で HTTPS に出す。
+# 守りは JWT（anon / service_role の鍵）と RLS。service_role の鍵は Workers の Secret にだけ置くこと。
+{$API_DOMAIN} {
+	handle_path /rest/v1/* {
+		reverse_proxy rest:3000
+	}
+	handle_path /auth/v1/* {
+		# 運営者の作成（/admin/users）は service_role の鍵が要る（GoTrue が確かめる）
+		reverse_proxy auth:9999
+	}
+	respond 404
+}

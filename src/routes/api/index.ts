@@ -1,0 +1,182 @@
+import { Hono } from "hono";
+import type { AppEnv } from "../../app";
+import { createDbClient } from "../../db/client";
+import { PRODUCT_SORTS, StorefrontData, queryProducts, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { tagCounts, tagsOf } from "../../products/tags";
+import { categoryPath, categoryTree, descendantIds, inCategories, type CategoryNode } from "../../products/categories";
+import { productFields, publicAttributes } from "../../products/fields";
+import type { CategoryRow } from "../../db/types";
+import { imageUrl } from "../../media/images";
+import { BANTO_VERSION } from "../../version";
+import { mediaBaseUrl, param, type Ctx } from "../common";
+import { cors } from "hono/cors";
+import { commerceApi } from "./commerce";
+import { memberCors, membersApi } from "./members";
+import { tryonApi } from "./tryon";
+
+/**
+ * ヘッドレス API（公開）。外部フロント（WordPress・Next.js 等）やプラグインが使う。docs/headless.md
+ * 読み取りは anon キーで読むので RLS により published のものだけ返る。カートとチェックアウトは ./commerce.ts。
+ * 別ドメインのブラウザから直接呼べるよう CORS を許可する（Cookie を使わないので資格情報は不要）。
+ * /api/v1 と /mcp（Bearer トークン必須）には付けない。
+ */
+export const api = new Hono<AppEnv>();
+
+const publicCors = cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], allowHeaders: ["Content-Type", "Authorization"], maxAge: 86400 });
+api.use("/", publicCors);
+api.use("/shops", publicCors);
+// 会員の API（/api/shops/:shop/members/*）は return_origins のオリジンだけ（0029）。それ以外の公開 API は *
+api.use("/shops/*", (c, next) => (/^\/api\/shops\/[^/]+\/members(\/|$)/.test(c.req.path) ? memberCors(c, next) : publicCors(c, next)));
+api.route("/", commerceApi);
+api.route("/", membersApi);
+api.route("/", tryonApi);
+
+function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
+  const cfg = c.get("adapters").config;
+  const url = cfg.get("SUPABASE_URL");
+  const anonKey = cfg.get("SUPABASE_ANON_KEY");
+  if (!url || !anonKey) return null;
+  return {
+    sf: new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache),
+    mediaBaseUrl: mediaBaseUrl(c),
+  };
+}
+
+api.get("/", (c) => c.json({ name: "banto", version: BANTO_VERSION, public: ["/api/shops", "/api/shops/:slug", "/api/shops/:slug/products", "/api/shops/:slug/products/:slug", "/api/shops/:slug/categories"], cart: ["GET /api/shops/:slug/cart", "POST /api/shops/:slug/cart"], checkout: ["POST /api/shops/:slug/checkout/quote", "POST /api/shops/:slug/checkout"], buy_link: "/:slug/buy?sku=<sku_id>&qty=1", docs: "docs/headless.md", authenticated: "/api/v1 (OpenAPI: /api/v1/openapi.json)", mcp: "/mcp" }));
+
+api.get("/shops", async (c: Ctx) => {
+  const d = data(c);
+  if (!d) return c.json({ error: "not_configured" }, 503);
+  const shops = await d.sf.listShops();
+  return c.json({ shops: shops.map((s) => ({ id: s.id, slug: s.slug, name: s.name })) });
+});
+
+api.get("/shops/:shop", async (c: Ctx) => {
+  const d = data(c);
+  if (!d) return c.json({ error: "not_configured" }, 503);
+  const shop = await d.sf.shopBySlug(param(c, "shop"));
+  if (!shop) return c.json({ error: "not_found" }, 404);
+  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy } });
+});
+
+/**
+ * 商品一覧。?tag=&category=&brand=&q=&updated_since=&sort=new|updated|price_asc|price_desc|name&limit=&offset=（limit は既定・上限 100）。
+ * category は子孫のカテゴリーを含む。
+ * tags はショップ全体（絞り込み前）のタグと件数で、連携側の絞り込み UI に使う。
+ */
+api.get("/shops/:shop/products", async (c: Ctx) => {
+  const d = data(c);
+  if (!d) return c.json({ error: "not_configured" }, 503);
+  const shop = await d.sf.shopBySlug(param(c, "shop"));
+  if (!shop) return c.json({ error: "not_found" }, 404);
+  const query = productQuery(c);
+  if (typeof query === "string") return c.json({ error: "invalid_request", field: query }, 400);
+  const [all, categories] = await Promise.all([d.sf.listProducts(shop), d.sf.listCategories(shop)]);
+  const page = queryProducts(all, query, categories);
+  const catById = new Map(categories.map((x) => [x.id, x]));
+  return c.json({
+    products: page.items.map(({ product, image, minPrice, compareAt }) => ({
+      id: product.id,
+      slug: product.slug,
+      name: product.name,
+      brand: product.brand ?? null,
+      category: categoryRef(catById.get(product.category_id ?? "")),
+      extra_categories: (product.extra_category_ids ?? []).map((id) => categoryRef(catById.get(id))).filter((x) => x !== null),
+      tags: tagsOf(product),
+      image: image ? imageUrl(d.mediaBaseUrl, image.storage_key) : null,
+      thumb: image ? imageUrl(d.mediaBaseUrl, image.thumb_key ?? image.storage_key) : null,
+      min_price_jpy: minPrice,
+      compare_at_price_jpy: compareAt ?? null,
+      created_at: product.created_at,
+      updated_at: product.updated_at,
+    })),
+    total: page.total,
+    limit: page.limit,
+    offset: page.offset,
+    next_offset: page.nextOffset,
+    tags: tagCounts(all.map((s) => s.product)),
+  });
+});
+
+/** クエリ文字列 → ProductQuery。形が違う項目があればその名前を返す */
+function productQuery(c: Ctx): ProductQuery | string {
+  const out: ProductQuery = {};
+  const tag = c.req.query("tag");
+  if (tag) out.tag = tag;
+  const category = c.req.query("category");
+  if (category) out.category = category;
+  const brand = c.req.query("brand");
+  if (brand) out.brand = brand;
+  const q = c.req.query("q");
+  if (q) out.q = q.slice(0, 100);
+  const sort = c.req.query("sort");
+  if (sort) {
+    if (!(PRODUCT_SORTS as readonly string[]).includes(sort)) return "sort";
+    out.sort = sort as ProductSort;
+  }
+  const since = c.req.query("updated_since");
+  if (since) {
+    const t = Date.parse(since);
+    if (Number.isNaN(t)) return "updated_since";
+    out.updatedSince = new Date(t);
+  }
+  for (const k of ["limit", "offset"] as const) {
+    const v = c.req.query(k);
+    if (v === undefined || v === "") continue;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < (k === "limit" ? 1 : 0)) return k;
+    out[k] = n;
+  }
+  return out;
+}
+
+api.get("/shops/:shop/products/:product", async (c: Ctx) => {
+  const d = data(c);
+  if (!d) return c.json({ error: "not_configured" }, 503);
+  const shop = await d.sf.shopBySlug(param(c, "shop"));
+  if (!shop) return c.json({ error: "not_found" }, 404);
+  const [detail, categories] = await Promise.all([d.sf.productBySlug(shop, param(c, "product")), d.sf.listCategories(shop)]);
+  if (!detail) return c.json({ error: "not_found" }, 404);
+  const p = detail.product;
+  return c.json({
+    product: {
+      id: p.id,
+      slug: p.slug,
+      name: p.name,
+      description: p.description,
+      brand: p.brand ?? null,
+      category: categoryRef(categories.find((x) => x.id === p.category_id)),
+      /** 最上位から主カテゴリーまで（パンくず用） */
+      category_path: categoryPath(categories, p.category_id).map((x) => ({ slug: x.slug, name: x.name })),
+      /** 追加カテゴリー（売り場の棚。主カテゴリーのほかに並ぶカテゴリー） */
+      extra_categories: (p.extra_category_ids ?? []).map((id) => categoryRef(categories.find((x) => x.id === id))).filter((x) => x !== null),
+      tags: tagsOf(p),
+      /** カスタム項目のうち公開するもの（表示名つき） */
+      attributes: publicAttributes(productFields(shop.settings), p.attributes),
+      updated_at: p.updated_at,
+      images: detail.images.map((i) => imageUrl(d.mediaBaseUrl, i.storage_key)),
+      image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height })),
+      skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
+    },
+  });
+});
+
+/** カテゴリーの木（公開中の商品数つき、子孫を含む件数） */
+api.get("/shops/:shop/categories", async (c: Ctx) => {
+  const d = data(c);
+  if (!d) return c.json({ error: "not_configured" }, 503);
+  const shop = await d.sf.shopBySlug(param(c, "shop"));
+  if (!shop) return c.json({ error: "not_found" }, 404);
+  const [all, categories] = await Promise.all([d.sf.listProducts(shop), d.sf.listCategories(shop)]);
+  const count = (id: string) => {
+    const ids = descendantIds(categories, id);
+    return all.filter((s) => inCategories(s.product, ids)).length;
+  };
+  type Node = { slug: string; name: string; count: number; children: Node[] };
+  const walk = (nodes: CategoryNode[]): Node[] => nodes.map((n) => ({ slug: n.slug, name: n.name, count: count(n.id), children: walk(n.children) }));
+  return c.json({ categories: walk(categoryTree(categories)) });
+});
+
+function categoryRef(cat: CategoryRow | undefined): { slug: string; name: string } | null {
+  return cat ? { slug: cat.slug, name: cat.name } : null;
+}

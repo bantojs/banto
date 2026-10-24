@@ -1,0 +1,56 @@
+{
+  "name": "banto",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted, zero-fee EC platform on Cloudflare Workers + Supabase",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "build:workers": "wrangler deploy --dry-run --outdir dist/workers",
+    "build:node": "tsc -p tsconfig.node.json && esbuild src/entry/node.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/node/server.js && esbuild src/entry/migrate.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/node/migrate.js",
+    "test": "vitest run",
+    "test:db": "BANTO_TEST_DB_URL=${BANTO_TEST_DB_URL:-postgres://postgres:postgres@127.0.0.1:54322/postgres} vitest run test/db",
+    "lint": "node scripts/gen-migrations.mjs --check && tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "check:rls": "node scripts/check-rls.mjs",
+    "check:size": "node scripts/check-size.mjs",
+    "check:client": "node scripts/check-client-scripts.mjs",
+    "start:node": "node dist/node/server.js",
+    "smoke:node": "node scripts/smoke-node.mjs",
+    "gen:migrations": "node scripts/gen-migrations.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.17",
+    "hono": "^4.6.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^4.0.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "SUPABASE_URL": {
+        "description": "Supabase の プロジェクト設定 → Data API → **Project URL**（`https://xxxx.supabase.co`）。あとからでも設定できます（[docs/setup.md](https://github.com/bantojs/banto/blob/main/docs/setup.md)）。"
+      },
+      "SUPABASE_ANON_KEY": {
+        "description": "Supabase の プロジェクト設定 → API Keys → **anon public** の文字列。公開しても問題ないキーです。"
+      },
+      "SUPABASE_SERVICE_ROLE_KEY": {
+        "description": "Supabase の プロジェクト設定 → API Keys → **service_role** の文字列を `REPLACE_ME` の代わりに貼ります。**誰にも見せないでください**。注文確定・在庫・Webhook の処理に使います。"
+      },
+      "MEDIA": {
+        "description": "商品画像を置く R2 バケット。名前は `banto-media` のままで構いません。"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

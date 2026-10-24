@@ -1,0 +1,120 @@
+# Banto を自前の PostgreSQL で動かす（docs/self-hosted-db.md）。Supabase の代わりに、同じ部品を自分で立てる:
+#   db       PostgreSQL 16（外には出さない）
+#   rest     PostgREST（Banto が DB を読み書きする HTTP の口。Supabase の /rest/v1）
+#   auth     GoTrue（運営者・スタッフのログイン。Supabase の /auth/v1。会員のログインは Banto が自前で持つ）
+#   gateway  Caddy（HTTPS の入口。/rest/v1 と /auth/v1 を振り分ける）
+#   banto    Banto 本体（Node 版）。GATEWAY_MODE=app のときだけ（--profile app）
+#   migrate  マイグレーションを当てる一回限りのコマンド（--profile tools。Workers で動かすとき）
+#
+# 使い方は 2 通り（.env の GATEWAY_MODE）:
+#   app … この VPS で Banto も動かす（おすすめ）。DB の口は外に出さず、店の画面だけを HTTPS で出す
+#   api … Banto は Cloudflare Workers。Workers から届くように、DB の口（PostgREST・GoTrue）を HTTPS で出す
+name: banto
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: banto
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env に POSTGRES_PASSWORD を書いてください}
+      AUTHENTICATOR_PASSWORD: ${AUTHENTICATOR_PASSWORD:?}
+      AUTH_ADMIN_PASSWORD: ${AUTH_ADMIN_PASSWORD:?}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # 初めて起動したときに 1 回だけ流れる（ロールと auth スキーマ）
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d banto"]
+      interval: 5s
+      retries: 20
+    # ports は書かない（5432 をインターネットに出さない）
+
+  auth:
+    image: supabase/gotrue:v2.164.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: "9999"
+      API_EXTERNAL_URL: ${PUBLIC_API_URL:-http://gateway:8000}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${AUTH_ADMIN_PASSWORD}@db:5432/banto
+      GOTRUE_SITE_URL: ${BANTO_URL:?.env に BANTO_URL を書いてください}
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      # ログインした人のトークンの role（PostgREST はこれで authenticated に切り替える。無いと role "" で弾かれる）
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      # 運営者・スタッフは Banto が作る（セットアップと招待）。自分で登録させない。確認メールも送らない
+      GOTRUE_DISABLE_SIGNUP: "true"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/banto
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      # Supabase と同じく 1 回 1,000 行まで（Banto はそれを前提にページを送る）
+      PGRST_DB_MAX_ROWS: "1000"
+      # マイグレーションのあとに表と関数を読み直す（initdb のイベントトリガーが通知する）
+      PGRST_DB_CHANNEL_ENABLED: "true"
+
+  gateway:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on: [rest, auth]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SHOP_DOMAIN: ${SHOP_DOMAIN:-}
+      API_DOMAIN: ${API_DOMAIN:-}
+    volumes:
+      - ./${GATEWAY_MODE:-app}.Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+  banto:
+    profiles: [app]
+    build: ..
+    restart: unless-stopped
+    depends_on: [gateway]
+    environment:
+      PUBLIC_BASE_URL: ${BANTO_URL}
+      # 中の通信だけで DB の口に届く（gateway の :8000 は外に出していない）
+      SUPABASE_URL: http://gateway:8000
+      SUPABASE_ANON_KEY: ${ANON_KEY:?}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:?}
+      SESSION_SECRET: ${SESSION_SECRET:?}
+      # セットアップの画面から接続文字列でマイグレーションを当てられる相手（この compose の db だけ）
+      DB_MIGRATION_HOSTS: db
+    env_file:
+      - path: banto.env
+        required: false
+    volumes:
+      - banto-data:/app/data
+
+  migrate:
+    profiles: [tools]
+    build: ..
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/banto?sslmode=disable
+    command: ["node", "dist/node/migrate.js"]
+
+volumes:
+  db-data:
+  caddy-data:
+  banto-data:

@@ -1,0 +1,686 @@
+import { Hono } from "hono";
+import { blockedTarget, storefrontSettings } from "../../storefront/mode";
+import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../storefront/events";
+import { injectHead, renderHeadTags } from "../../storefront/head";
+import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
+import type { AppEnv } from "../../app";
+import type { StorefrontData, PublicShop } from "../../storefront/data";
+import { shopHome, shopOrigin } from "../../storefront/urls";
+import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
+import { addCoupon, addItem, cartCookieHeader, cartCookieName, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
+import { openJson, readCookie } from "../../util/signed";
+import { tagCounts, tagsOf } from "../../products/tags";
+import { categoryPath, categoryTree, descendantIds, inCategories } from "../../products/categories";
+import { productFields, publicAttributes } from "../../products/fields";
+import { resolveTheme } from "../../themes";
+import type { CartLine, ThemeContext } from "../../themes/types";
+import { t, tf, type MessageKey } from "../../i18n";
+import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
+import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { normalizeCode } from "../../commerce/discounts";
+import { ipHash } from "../../members/auth";
+import type { AddressFormValues } from "../../themes/types";
+import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, CHECKOUT_STATUS_MIGRATION, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
+import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
+import { moduleEnabled } from "../../modules/registry";
+import { FEED_MODULE, feedKey } from "../../modules/product-feed/job";
+import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { dateLabel, deliveryOptions } from "../../modules/delivery-time";
+import { TRYON_MODULE, checkTryon, storeView, todayHere, tryonSettings, visitDates } from "../../modules/store-tryon";
+import { PrivilegedRpcError } from "../../db/privileged";
+
+/**
+ * ストアフロント（Hono SSR）。anon キーで PostgREST を読む（RLS: published のみ）。
+ *   /                       公開ショップ一覧（1件なら転送）
+ *   /:shop                  商品一覧
+ *   /:shop/p/:product       商品詳細
+ *   /:shop/cart             カート（署名付き Cookie）。/:shop/buy は購入リンク、/:shop/cart/load は API のカートを読み込む
+ *   /:shop/legal|privacy|returns  法務ページ
+ *   /:shop/checkout         決済手段を選ぶ → 配送先入力 → /:shop/checkout/:provider で最終確認 → 在庫予約と決済ページへ転送
+ *   /:shop/shipping, /:shop/orders/lookup  送料案内、注文照会
+ */
+export const storefront = new Hono<AppEnv>();
+
+storefront.use("*", csrfGuard);
+storefront.use("*", redirectToShopDomain);
+
+const data = storefrontData;
+
+/**
+ * お店の画面の使い方（0041、src/storefront/mode.ts）と、同梱モジュールの <head> の口（src/storefront/head.ts）。
+ * キャッシュ済みのショップ行だけで判定する（このために DB に問い合わせない）。
+ *  - 使わない画面: GET は外のサイトへ 302、それ以外は 404
+ *  - <head>: ON の同梱モジュールが返す決まった形のタグを、HTML の応答の </head> の前に入れる（ルートが積んだ出来事を渡す）
+ */
+storefront.use("*", async (c, next) => {
+  const m = /^\/([^/]+)(\/.*)?$/.exec(c.req.path);
+  const sf = m && !m[1]!.startsWith("_") && !m[1]!.includes(".") ? data(c) : null;
+  const shop = sf ? await sf.shopBySlug(decodeURIComponent(m![1]!)).catch(() => null) : null;
+  if (!shop) return next();
+  const target = blockedTarget(storefrontSettings(shop.settings), m![2] ?? "");
+  if (target) {
+    if (target === "not_found" || (c.req.method !== "GET" && c.req.method !== "HEAD")) return notFound(c);
+    return c.redirect(target, 302);
+  }
+  await next();
+  const contributors = STOREFRONT_HEAD_CONTRIBUTORS.filter((h) => moduleEnabled(shop.settings, h.module));
+  if (contributors.length === 0 || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
+  const events = c.get("shopEvents") ?? [];
+  const snippet = renderHeadTags(contributors.flatMap((h) => h.tags(shop, events)));
+  if (!snippet) return;
+  const html = await c.res.text();
+  const headers = new Headers(c.res.headers);
+  headers.delete("content-length");
+  c.res = new Response(injectHead(html, snippet), { status: c.res.status, headers });
+});
+
+interface ShopScope {
+  shop: PublicShop;
+  sf: StorefrontData;
+  cart: Cart;
+  ctx: ThemeContext;
+  theme: ReturnType<typeof resolveTheme>;
+}
+
+async function scope(c: Ctx): Promise<ShopScope | null> {
+  const sf = data(c);
+  if (!sf) return null;
+  const slug = param(c, "shop");
+  const shop = await sf.shopBySlug(slug);
+  if (!shop) return null;
+  const secret = c.get("sessionSecret");
+  const cart = secret ? await openCart(secret, readCookie(c.req.header("cookie"), cartCookieName(shop.id))) : { items: [] };
+  // 独自ドメインの上ではショップがドメインのトップ（パスにスラッグを付けない）
+  const onDomain = onShopDomain(c, shop);
+  const ctx: ThemeContext = {
+    shop,
+    shopPath: onDomain ? "" : `/${shop.slug}`,
+    mediaBaseUrl: mediaBaseUrl(c),
+    cartCount: cart.items.reduce((n, i) => n + i.qty, 0),
+    membersEnabled: membersEnabled(shop),
+    publicBaseUrl: onDomain ? shopOrigin(publicBaseUrl(c), shop) : publicBaseUrl(c),
+    themeSettings: (shop.settings ?? {})["theme_settings"] && typeof (shop.settings ?? {})["theme_settings"] === "object" ? ((shop.settings ?? {})["theme_settings"] as Record<string, unknown>) : {},
+  };
+  if (ctx.membersEnabled) {
+    const member = await customerSession(c, { shop });
+    ctx.member = member ? { email: member.email } : null;
+  }
+  return { shop, sf, cart, ctx, theme: resolveTheme(shop.settings ?? {}) };
+}
+
+// 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
+bindScope(async (c) => {
+  const s = await scope(c);
+  if (!s) return null;
+  const session = await customerSession(c, { shop: s.shop });
+  return { shop: s.shop, theme: s.theme, shopPath: s.ctx.shopPath, session };
+});
+storefront.route("/", members);
+
+async function writeCart(c: Ctx, s: ShopScope, cart: Cart): Promise<void> {
+  const secret = c.get("sessionSecret");
+  if (!secret) return;
+  c.header("Set-Cookie", cartCookieHeader(cartCookieName(s.shop.id), await sealCart(secret, cart), { path: s.ctx.shopPath || "/", secure: isSecureRequest(c) }), {
+    append: true,
+  });
+}
+
+/** お店の画面で起きた出来事を積む（src/storefront/events.ts。受け取るモジュールが ON のときだけ外に出る。個人情報は入れない） */
+function track(c: Ctx, type: ShopEvent["type"], value: number, items: ShopEventItem[], orderNumber?: number) {
+  recordShopEvent(c, { type, value_jpy: value, items, ...(orderNumber !== undefined ? { order_number: orderNumber } : {}) });
+}
+const cartItems = (lines: CartLine[]): ShopEventItem[] =>
+  lines.map((l) => ({ sku: l.sku.code, name: l.product.name, ...(l.sku.name ? { variant: l.sku.name } : {}), price: l.sku.price_jpy, quantity: l.qty }));
+
+function notFound(c: Ctx, s?: ShopScope) {
+  const theme = s?.theme ?? resolveTheme({});
+  return c.html(theme.NotFound({ ctx: s?.ctx }), 404);
+}
+
+// ---------- robots / sitemap ----------
+// 独自ドメインの上ではそのショップだけ。Banto の URL では独自ドメインの無いショップだけ（サイトマップに別のホストを載せない）
+storefront.get("/robots.txt", async (c: Ctx) => {
+  const own = await hostShop(c);
+  if (own) {
+    const origin = shopOrigin(publicBaseUrl(c), own);
+    return c.text(`User-agent: *\nDisallow: /admin\nDisallow: /api/v1\nDisallow: /mcp\nDisallow: /cart\nDisallow: /checkout\nDisallow: /account\nSitemap: ${origin}/sitemap.xml\n`);
+  }
+  return c.text(`User-agent: *\nDisallow: /admin\nDisallow: /api/v1\nDisallow: /mcp\nDisallow: /*/cart\nDisallow: /*/checkout\nDisallow: /*/account\nSitemap: ${publicBaseUrl(c)}/sitemap.xml\n`);
+});
+
+storefront.get("/sitemap.xml", async (c: Ctx) => {
+  const sf = data(c);
+  if (!sf) return c.notFound();
+  const base = publicBaseUrl(c);
+  const own = await hostShop(c);
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const urls: string[] = [];
+  const shops = own ? [own] : (await sf.listShops()).filter((shop) => !shop.domain);
+  for (const shop of shops) {
+    // お店の画面を使わないショップは載せない。カートと購入だけ使うショップは法務のページだけ（商品は外のサイトのもの）
+    const mode = storefrontSettings(shop.settings).mode;
+    if (mode === "off") continue;
+    const home = shopHome(base, shop);
+    if (mode === "full") urls.push(own ? `${home}/` : home);
+    for (const page of ["legal", "privacy", "returns", "shipping"]) urls.push(`${home}/${page}`);
+    if (mode === "full") for (const { product } of await sf.listProducts(shop)) urls.push(`${home}/p/${product.slug}`);
+  }
+  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${esc(u)}</loc></url>`).join("\n")}\n</urlset>\n`;
+  return c.body(body, 200, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600" });
+});
+
+// ---------- 一覧 ----------
+storefront.get("/", async (c: Ctx) => {
+  const sf = data(c);
+  if (!sf) return c.redirect("/admin/setup");
+  const shops = await sf.listShops();
+  if (shops.length === 1) return c.redirect(`/${shops[0]!.slug}`);
+  return c.html(resolveTheme({}).ShopIndex({ shops }));
+});
+
+storefront.get("/:shop", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const [all, categories] = await Promise.all([s.sf.listProducts(s.shop), s.sf.listCategories(s.shop)]);
+  const tag = c.req.query("tag") || undefined;
+  const categorySlug = c.req.query("category") || undefined;
+  const category = categorySlug ? categories.find((x) => x.slug === categorySlug) : undefined;
+  if (categorySlug && !category) return notFound(c, s);
+  const inCategory = category ? descendantIds(categories, category.id) : null;
+  const products = all.filter(({ product }) => (!tag || tagsOf(product).includes(tag)) && (!inCategory || inCategories(product, inCategory)));
+  return c.html(
+    s.theme.ShopHome({
+      ctx: s.ctx,
+      products,
+      tag,
+      tags: tagCounts(all.map((p) => p.product)),
+      categories: categoryTree(categories),
+      ...(category ? { category: { slug: category.slug, name: category.name } } : {}),
+    }),
+  );
+});
+
+storefront.get("/:shop/p/:product", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const [detail, categories] = await Promise.all([s.sf.productBySlug(s.shop, param(c, "product")), s.sf.listCategories(s.shop)]);
+  if (!detail) return notFound(c, s);
+  // 品目は SKU の品番（カート・購入手続きと同じ）。商品を見たときは SKU を全部並べる
+  const items = detail.skus.map((k) => ({ sku: k.code, name: detail.product.name, ...(k.name ? { variant: k.name } : {}), price: k.price_jpy }));
+  const price = items.reduce<number | null>((m, k) => (m === null || k.price < m ? k.price : m), null) ?? 0;
+  track(c, "product_view", price, items);
+  // カートに入れた直後の商品ページ（?added=1&sku=…&qty=…）。どの SKU かは sku で受ける（無ければ最安の SKU）
+  if (c.req.query("added") === "1") {
+    const added = items.find((k) => k.sku === c.req.query("sku")) ?? items.find((k) => k.price === price);
+    const qty = Math.min(999, Math.max(1, Number.parseInt(c.req.query("qty") ?? "1", 10) || 1));
+    if (added) track(c, "cart_add", added.price * qty, [{ ...added, quantity: qty }]);
+  }
+  return c.html(
+    s.theme.ProductPage({
+      ctx: s.ctx,
+      detail,
+      added: c.req.query("added") === "1",
+      categoryPath: categoryPath(categories, detail.product.category_id).map((x) => ({ slug: x.slug, name: x.name })),
+      attributes: publicAttributes(productFields(s.shop.settings), detail.product.attributes),
+    }),
+  );
+});
+
+// ---------- 法務ページ ----------
+const legalPages: Record<string, { title: () => string; pick: (s: PublicShop) => string | null }> = {
+  legal: { title: () => t("shop.legal_notice"), pick: (s) => s.legal_notice },
+  privacy: { title: () => t("shop.privacy_policy"), pick: (s) => s.privacy_policy },
+  returns: { title: () => t("shop.return_policy"), pick: (s) => s.return_policy },
+};
+
+// 商品フィード（同梱モジュール product_feed）。Cron が作って置いたものを配る。DB はキャッシュ済みのショップ行だけ
+storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
+  const sf = data(c);
+  const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
+  if (!shop || !moduleEnabled(shop.settings, FEED_MODULE)) return c.notFound();
+  const obj = await c.get("adapters").storage.get(feedKey(shop.id));
+  if (!obj) return c.text(t("feed.not_ready"), 404);
+  return new Response(obj.body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600", "X-Content-Type-Options": "nosniff" } });
+});
+
+storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const page = legalPages[param(c, "page")]!;
+  return c.html(s.theme.LegalPage({ ctx: s.ctx, title: page.title(), body: page.pick(s.shop) ?? "" }));
+});
+
+// ---------- カート ----------
+async function cartLines(s: ShopScope): Promise<{ lines: CartLine[]; total: number }> {
+  const priced = await priceCart(s.sf, s.shop, s.cart);
+  return { lines: priced.lines, total: priced.subtotal };
+}
+
+/** カート画面のクーポン欄（モジュールが OFF なら null。コードが無ければ DB に問い合わせない） */
+async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: number) {
+  const source = couponSource(c, s.shop);
+  if (!source) return null;
+  const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
+  // 送料は配送先が決まるまで分からないので 0 で判定する（送料無料のクーポンは確認画面で額が決まる）
+  const d = await discountCart({ sf: s.sf, shop: s.shop, coupons: source, member: member ? { id: member.cid } : null }, { lines, subtotal, dropped: [], cart: s.cart }, s.cart.coupons, 0, null);
+  return {
+    applied: d.applied.map((a) => ({ code: a.code, name: a.name, amount_jpy: a.amount_jpy, free_shipping: a.kind === "free_shipping" })),
+    rejected: d.rejected.map(couponNotice),
+    discount: d.itemDiscount,
+  };
+}
+
+function paymentOptions(c: Ctx, s: ShopScope): Promise<PaymentSetup> {
+  return paymentSetup(s.sf, s.shop, c.get("adapters").config);
+}
+
+const CART_ERRORS: Record<string, MessageKey> = {
+  stock: "store.checkout_error_stock",
+  payment: "store.checkout_error_payment",
+  config: "store.checkout_error_config",
+  expired: "confirm.expired",
+  quote_used: "confirm.expired",
+  limit: "store.checkout_error_limit",
+  coupon: "store.checkout_error_coupon",
+  minimum: "store.checkout_error_minimum",
+  coupon_invalid: "store.coupon_invalid",
+};
+
+storefront.get("/:shop/cart", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  // クーポン付きリンク（/:shop/cart?coupon=SUMMER10）: コードをカートに入れてから表示する
+  const linked = normalizeCode(c.req.query("coupon"));
+  if (linked && couponSource(c, s.shop)) {
+    await writeCart(c, s, addCoupon(s.cart, linked));
+    return c.redirect(`${s.ctx.shopPath}/cart`);
+  }
+  const [{ lines, total }, { options }] = await Promise.all([cartLines(s), paymentOptions(c, s)]);
+  const coupons = await cartCoupons(c, s, lines, total);
+  const errorKey = CART_ERRORS[c.req.query("error") ?? ""];
+  const tryon = moduleEnabled(s.shop.settings, TRYON_MODULE) && !!s.theme.TryonPage;
+  if (lines.length > 0) track(c, "cart_view", total, cartItems(lines));
+  return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping: shippingSummary(s.shop), coupons, error: errorKey ? t(errorKey) : undefined, tryon }));
+});
+
+// ---------- お店で試着（同梱モジュール store_tryon、決済なし。docs/store-tryon.md） ----------
+storefront.get("/:shop/stores", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !moduleEnabled(s.shop.settings, TRYON_MODULE) || !s.theme.StoresPage) return notFound(c, s ?? undefined);
+  const today = todayHere();
+  const stores = (await s.sf.listStores(s.shop)).map((st) => storeView(st, today));
+  return c.html(s.theme.StoresPage({ ctx: s.ctx, stores }));
+});
+
+/** 申し込みの画面の共通の材料。モジュールが OFF・テーマが対応していなければ null */
+async function tryonScope(c: Ctx) {
+  const s = await scope(c);
+  if (!s || !moduleEnabled(s.shop.settings, TRYON_MODULE) || !s.theme.TryonPage) return { s, t: null };
+  const settings = tryonSettings(s.shop.settings);
+  const [stores, { lines }] = await Promise.all([s.sf.listStores(s.shop), cartLines(s)]);
+  return { s, t: { settings, stores: stores.filter((x) => x.tryon), lines, today: todayHere() } };
+}
+
+/** カートの点数の上限・在庫切れ（申し込めないときのエラー） */
+function tryonCartError(lines: CartLine[], max: number): MessageKey | null {
+  if (lines.length === 0) return "tryon.error_empty";
+  if (lines.some((l) => l.short)) return "store.checkout_error_stock";
+  if (lines.reduce((n, l) => n + l.qty, 0) > max) return "tryon.error_too_many";
+  return null;
+}
+
+function tryonPage(c: Ctx, s: ShopScope, tr: NonNullable<Awaited<ReturnType<typeof tryonScope>>["t"]>, props: Partial<Parameters<NonNullable<ShopScope["theme"]["TryonPage"]>>[0]>, status: 200 | 400 | 409 = 200) {
+  const page = s.theme.TryonPage!({
+    ctx: s.ctx,
+    step: "store",
+    lines: tr.lines,
+    stores: tr.stores.map((st) => storeView(st, tr.today)),
+    settings: { mode: tr.settings.mode, hold_days: tr.settings.hold_days, max_items: tr.settings.max_items, notice: tr.settings.notice },
+    values: {},
+    ...props,
+  });
+  return c.html(page, status);
+}
+
+storefront.get("/:shop/tryon", async (c: Ctx) => {
+  const { s, t: tr } = await tryonScope(c);
+  if (!s || !tr) return notFound(c, s ?? undefined);
+  const cartError = tryonCartError(tr.lines, tr.settings.max_items);
+  if (cartError === "tryon.error_empty") return c.redirect(`${s.ctx.shopPath}/cart`);
+  if (cartError) return tryonPage(c, s, tr, { error: tf(cartError, { max: tr.settings.max_items }) }, 409);
+  const store = tr.stores.find((x) => x.id === c.req.query("store"));
+  if (!store) return tryonPage(c, s, tr, {});
+  const prefill = s.ctx.membersEnabled ? await customerPrefill(c, s) : {};
+  const dates = tr.settings.mode === "visit" ? visitDates(store, tr.settings, tr.today).map((d) => ({ value: d, label: dateLabel(d) })) : [];
+  return tryonPage(c, s, tr, {
+    step: "details",
+    store: storeView(store, tr.today),
+    dates,
+    values: { store: store.id, customer_name: prefill.customer_name, customer_email: prefill.customer_email, customer_phone: prefill.phone },
+  });
+});
+
+storefront.post("/:shop/tryon/confirm", async (c: Ctx) => {
+  const { s, t: tr } = await tryonScope(c);
+  if (!s || !tr) return notFound(c, s ?? undefined);
+  const cartError = tryonCartError(tr.lines, tr.settings.max_items);
+  if (cartError) return cartError === "tryon.error_empty" ? c.redirect(`${s.ctx.shopPath}/cart`) : tryonPage(c, s, tr, { error: tf(cartError, { max: tr.settings.max_items }) }, 409);
+  const r = checkTryon(await formFields(c), tr.stores, tr.settings, tr.today);
+  if (!r.store) return tryonPage(c, s, tr, { error: t("tryon.error_store") }, 400);
+  const view = storeView(r.store, tr.today);
+  if (r.error) {
+    const dates = tr.settings.mode === "visit" ? visitDates(r.store, tr.settings, tr.today).map((d) => ({ value: d, label: dateLabel(d) })) : [];
+    return tryonPage(c, s, tr, { step: "details", store: view, dates, values: r.input, error: t(r.error) }, 400);
+  }
+  return tryonPage(c, s, tr, { step: "confirm", store: view, values: r.input, visitLabel: r.input.visit_date ? dateLabel(r.input.visit_date) : null });
+});
+
+/** 同じ人・同じ IP の開いている申し込みの上限に使う IP の HMAC（0029。p_customer.ip_hash で渡すので古い DB は無視する） */
+async function tryonIpHash(c: Ctx, shop: { id: string }): Promise<string | null> {
+  const secret = c.get("sessionSecret");
+  const ip = await clientIpFor(c, shop);
+  return secret && ip ? ipHash(secret, ip) : null;
+}
+
+const TRYON_RPC_ERRORS: Record<string, MessageKey> = {
+  too_many_requests: "tryon.error_too_many_open",
+  insufficient_stock: "store.checkout_error_stock",
+  sku_not_available: "store.checkout_error_stock",
+  store_not_available: "tryon.error_store",
+  invalid_customer: "tryon.error_email",
+};
+
+storefront.post("/:shop/tryon/submit", async (c: Ctx) => {
+  const { s, t: tr } = await tryonScope(c);
+  if (!s || !tr) return notFound(c, s ?? undefined);
+  const cartError = tryonCartError(tr.lines, tr.settings.max_items);
+  if (cartError) return cartError === "tryon.error_empty" ? c.redirect(`${s.ctx.shopPath}/cart`) : tryonPage(c, s, tr, { error: tf(cartError, { max: tr.settings.max_items }) }, 409);
+  const r = checkTryon(await formFields(c), tr.stores, tr.settings, tr.today);
+  if (!r.store || r.error) return tryonPage(c, s, tr, { error: t(r.error ?? "tryon.error_store") }, 400);
+  const db = privilegedFor(c);
+  if (!db) return tryonPage(c, s, tr, { error: t("store.checkout_error_config") }, 409);
+  const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
+  try {
+    const res = await db.tryonRequest(
+      s.shop.id,
+      r.store.id,
+      tr.lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })),
+      { customer_email: r.input.customer_email, customer_name: r.input.customer_name, customer_phone: r.input.customer_phone, note: r.input.note || null, customer_id: member?.cid ?? null, ip_hash: await tryonIpHash(c, s.shop) },
+      r.input.visit_date || null,
+    );
+    // 申し込んだ商品はカートから外す（クーポンは残す）
+    await writeCart(c, s, { ...s.cart, items: [] });
+    return c.redirect(`${s.ctx.shopPath}/tryon/done?n=${res.number}&store=${r.store.id}`);
+  } catch (e) {
+    if (e instanceof PrivilegedRpcError) {
+      const key = Object.entries(TRYON_RPC_ERRORS).find(([k]) => e.message.includes(k))?.[1];
+      if (key) return tryonPage(c, s, tr, { error: t(key) }, 409);
+    }
+    throw e;
+  }
+});
+
+storefront.get("/:shop/tryon/done", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !moduleEnabled(s.shop.settings, TRYON_MODULE) || !s.theme.TryonPage) return notFound(c, s ?? undefined);
+  const number = Number(c.req.query("n"));
+  if (!Number.isInteger(number) || number <= 0) return notFound(c, s);
+  const today = todayHere();
+  const store = (await s.sf.listStores(s.shop)).find((x) => x.id === c.req.query("store"));
+  const settings = tryonSettings(s.shop.settings);
+  return c.html(
+    s.theme.TryonPage({
+      ctx: s.ctx,
+      step: "done",
+      lines: [],
+      stores: [],
+      store: store ? storeView(store, today) : null,
+      settings: { mode: settings.mode, hold_days: settings.hold_days, max_items: settings.max_items, notice: settings.notice },
+      values: {},
+      number,
+    }),
+  );
+});
+
+/** クーポンのコードを入れる / 外す（使えるかどうかはカートの表示のたびに判定する） */
+storefront.post("/:shop/cart/coupon", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const cartUrl = `${s.ctx.shopPath}/cart`;
+  if (!couponSource(c, s.shop)) return c.redirect(cartUrl);
+  const f = await formFields(c);
+  if (f.remove) {
+    await writeCart(c, s, removeCoupon(s.cart, f.remove));
+    return c.redirect(cartUrl);
+  }
+  const code = normalizeCode(f.code);
+  if (!code) return c.redirect(`${cartUrl}?error=coupon_invalid`);
+  await writeCart(c, s, addCoupon(s.cart, code));
+  return c.redirect(cartUrl);
+});
+
+storefront.post("/:shop/cart/add", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const f = await formFields(c);
+  const skuId = (f.sku_id ?? "").trim();
+  const qty = Number.parseInt(f.qty ?? "1", 10);
+  if (!skuId || !Number.isInteger(qty) || qty <= 0) return c.redirect(`${s.ctx.shopPath}/cart`);
+  // 公開中の SKU だけ受け付ける
+  const found = await s.sf.skusForCart(s.shop, [skuId]);
+  const hit = found.get(skuId);
+  if (!hit) return notFound(c, s);
+  await writeCart(c, s, addItem(s.cart, skuId, qty));
+  // sku と qty は「カートに入れた」の出来事用（どの SKU を何点入れたか。src/storefront/events.ts）
+  return c.redirect(`${s.ctx.shopPath}/p/${hit.product.slug}?added=1&sku=${encodeURIComponent(hit.sku.code)}&qty=${qty}`);
+});
+
+storefront.post("/:shop/cart/update", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const f = await formFields(c);
+  const skuId = (f.sku_id ?? "").trim();
+  const qty = Number.parseInt(f.qty ?? "0", 10);
+  if (skuId) await writeCart(c, s, setQty(s.cart, skuId, Number.isInteger(qty) ? qty : 0));
+  return c.redirect(`${s.ctx.shopPath}/cart`);
+});
+
+/**
+ * 購入リンク（連携側の「買う」ボタンの行き先）。GET /:shop/buy?sku=<id>&qty=2、または ?items=<id>:2,<id>:1。
+ * 今のカートに足してカート画面へ。公開中の SKU だけ受け付ける。docs/headless.md
+ */
+storefront.get("/:shop/buy", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const wanted: { sku_id: string; qty: number }[] = [];
+  const sku = (c.req.query("sku") ?? "").trim();
+  if (sku) wanted.push({ sku_id: sku, qty: Number.parseInt(c.req.query("qty") ?? "1", 10) });
+  for (const part of (c.req.query("items") ?? "").split(",")) {
+    const [id, q] = part.split(":");
+    if (id && id.trim()) wanted.push({ sku_id: id.trim(), qty: Number.parseInt(q ?? "1", 10) });
+  }
+  const valid = wanted.filter((w) => Number.isInteger(w.qty) && w.qty > 0);
+  if (valid.length === 0) return c.redirect(`${s.ctx.shopPath}/cart`);
+  const found = await s.sf.skusForCart(
+    s.shop,
+    valid.map((w) => w.sku_id),
+  );
+  if (valid.some((w) => !found.has(w.sku_id))) return notFound(c, s);
+  const linked = normalizeCode(c.req.query("coupon"));
+  const cart = valid.reduce((cart, w) => addItem(cart, w.sku_id, w.qty), s.cart);
+  await writeCart(c, s, linked && couponSource(c, s.shop) ? addCoupon(cart, linked) : cart);
+  return c.redirect(`${s.ctx.shopPath}/cart`);
+});
+
+/**
+ * カート API（/api/shops/:shop/cart）のトークンをこのブラウザのカートにして、カート画面へ。
+ * 連携側の画面でカートを作り、レジ（配送先・最終確認・決済）だけ同梱テーマを使うときの入口。
+ */
+storefront.get("/:shop/cart/load", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const secret = c.get("sessionSecret");
+  const token = c.req.query("cart");
+  // 署名が合わないトークンで今のカートを空にしない
+  if (secret && token && (await openJson(secret, token)) !== null) await writeCart(c, s, await openCart(secret, token));
+  return c.redirect(`${s.ctx.shopPath}/cart`);
+});
+
+// ---------- チェックアウト ----------
+// 配送先入力 → 最終確認（特商法の最終確認画面）→ 在庫予約と決済ページへの転送。計算は src/commerce/checkout.ts
+
+function addressValues(f: Record<string, string>): AddressFormValues {
+  const v: AddressFormValues = {};
+  for (const k of ADDRESS_FIELDS) if (f[k] !== undefined) v[k] = f[k];
+  return v;
+}
+
+/** 「購入手続きへ」: 決済手段を選び、配送先入力へ（全決済手段で共通）。確認画面の「修正する」もここに戻る */
+storefront.post("/:shop/checkout", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const cartUrl = `${s.ctx.shopPath}/cart`;
+  const f = await formFields(c);
+  const provider = f.provider ?? "stripe";
+  const setup = await paymentOptions(c, s);
+  if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
+  const { lines, total } = await cartLines(s);
+  if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
+  const edited = addressValues(f);
+  const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
+  return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: total, delivery: deliveryOptions(s.shop.settings), consent: await consentCollected(s.sf, s.shop) }));
+});
+
+/**
+ * 2 段階:
+ *   配送先（住所の項目）を受け取ったら → 最終確認画面（署名付きの quote を埋め込む）
+ *   quote を受け取ったら → 内容を引き直して一致すれば在庫を予約し、決済ページへ転送する
+ */
+storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const cartUrl = `${s.ctx.shopPath}/cart`;
+  const provider = param(c, "provider") as Provider;
+  const setup = await paymentOptions(c, s);
+  if (!providerAvailable(setup, provider)) return c.redirect(cartUrl);
+  const secret = c.get("sessionSecret");
+  if (!secret) return c.redirect(`${cartUrl}?error=config`);
+  const base = publicBaseUrl(c);
+  const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
+  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: await consentCollected(s.sf, s.shop) };
+  const f = await formFields(c);
+
+  // 1. 配送先 → 最終確認画面
+  if (f.quote === undefined) {
+    const r = await createQuote(qctx, s.cart, provider, f);
+    if (!r.ok && r.error === "invalid_address") {
+      const { total: subtotal } = await cartLines(s);
+      const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
+      return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values: addressValues(f), prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), delivery: deliveryOptions(s.shop.settings), consent: qctx.consent }), 400);
+    }
+    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : "stock"}`);
+    const conf = r.confirmation;
+    track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
+    return c.html(s.theme.ConfirmPage({ ctx: s.ctx, confirmation: conf, quote: r.token }));
+  }
+
+  // 2. 確認済みの quote → 確定
+  const quote = await openQuote(secret, f.quote, s.shop.id);
+  if (!quote || quote.provider !== provider) return c.redirect(`${cartUrl}?error=expired`);
+  const check = await recheckQuote(qctx, quote);
+  if (!check.ok) {
+    if (check.error === "changed" && check.fresh.ok) return c.html(s.theme.ConfirmPage({ ctx: s.ctx, confirmation: check.fresh.confirmation, quote: check.fresh.token, error: t("confirm.changed") }), 409);
+    return c.redirect(`${cartUrl}?error=stock`);
+  }
+  const deps = placeOrderDeps(c, setup);
+  if (!deps) return c.redirect(`${cartUrl}?error=config`);
+  const statusToken = quote.id && (await s.sf.migratedTo(CHECKOUT_STATUS_MIGRATION)) ? await sealStatusToken(secret, s.shop.id, quote.id) : null;
+  const placed = await placeOrder(deps, {
+    shop: s.shop,
+    quote,
+    lines: check.lines,
+    subtotal: check.subtotal,
+    discount: check.discount,
+    // 決済の後はショップのドメインへ戻す（独自ドメインがあればそちら）。照会トークン（0035）を付けて、完了画面で注文番号を出す
+    successUrl: statusToken ? withQueryParam(`${shopHome(base, s.shop)}/checkout/done`, "s", statusToken) : `${shopHome(base, s.shop)}/checkout/done`,
+    cancelUrl: `${shopHome(base, s.shop)}/cart`,
+    ...(member ? { customerId: member.cid, customerEpoch: member.ep } : {}),
+    limits: await reserveLimits(s.sf, secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
+  });
+  // 全端末からログアウトした後の古いセッション: ログインし直してもらう
+  if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);
+  if (!placed.ok) return c.redirect(`${cartUrl}?error=${placed.error}`);
+  // 0 円の注文はこの時点で確定している
+  return c.redirect(placed.free ? withQueryParam(placed.url, "free", "1") : placed.url, 303);
+});
+
+// ---------- 送料ページ・注文照会 ----------
+storefront.get("/:shop/shipping", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const { options } = await paymentOptions(c, s);
+  return c.html(s.theme.ShippingPage({ ctx: s.ctx, shipping: shippingSummary(s.shop), payments: options }));
+});
+
+storefront.get("/:shop/orders/lookup", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values: {} }));
+});
+
+storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const f = await formFields(c);
+  const number = Number.parseInt((f.number ?? "").trim(), 10);
+  const email = (f.email ?? "").trim();
+  const values = { number: f.number ?? "", email };
+  if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
+  const result = await s.sf.lookupOrder(s.shop, number, email);
+  if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
+  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE) }));
+});
+
+/** 領収書（同梱モジュール receipt）。注文照会と同じく注文番号とメールアドレスで引く（GET の URL にメールアドレスを載せない） */
+storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !moduleEnabled(s.shop.settings, RECEIPT_MODULE)) return notFound(c);
+  const f = await formFields(c);
+  const number = Number.parseInt((f.number ?? "").trim(), 10);
+  const email = (f.email ?? "").trim();
+  const order = Number.isInteger(number) && email ? ((await s.sf.lookupOrder(s.shop, number, email)) as ReceiptOrder | null) : null;
+  if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
+  c.header("Cache-Control", "no-store");
+  // no-referrer にすると、宛名のフォームの POST に Origin: null が付いて csrfGuard に拒まれる（src/routes/storefront/members.ts の privatePage）
+  c.header("Referrer-Policy", "same-origin");
+  const name = (f.name ?? "").trim().slice(0, 100);
+  return c.html(renderReceipt({ shopName: s.shop.name, settings: receiptSettings(s.shop), shopSettings: s.shop.settings, order, addressee: name, issuedAt: new Date(), nameForm: { action: `${s.ctx.shopPath}/orders/receipt`, method: "post", hidden: { number: String(number), email } } }));
+});
+
+/** 「確認中」の自動更新を続ける時間。これを過ぎたら「受付済み。メールでお知らせ」の表示に戻す（Webhook が遅れている・届いていない） */
+const DONE_REFRESH_WINDOW_SECONDS = 10 * 60;
+
+/**
+ * 決済ページから戻ってきた直後。注文確定は Webhook のみ（CLAUDE.md §5）。カート Cookie は消す。
+ * 照会トークン（?s=、0035）があれば checkout_status で「確定したか・注文番号」を引いて出す。引けなければ今までどおりの表示
+ */
+storefront.get("/:shop/checkout/done", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  await writeCart(c, s, { items: [] });
+  const free = c.req.query("free") === "1";
+  const secret = c.get("sessionSecret");
+  const token = secret ? await openStatusToken(secret, c.req.query("s"), s.shop.id) : null;
+  const db = token ? privilegedFor(c) : null;
+  if (!token || !db) return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free }));
+  try {
+    const r = await db.checkoutStatus(s.shop.id, token.quoteId);
+    const refresh = r.status === "pending" && Date.now() / 1000 - token.issuedAt < DONE_REFRESH_WINDOW_SECONDS;
+    // 確定したときだけ購入とする（注文番号で重ねて数えないのは受け取る側の仕事）
+    if (r.status === "confirmed" && r.order) track(c, "purchase", r.order.total_jpy, [], r.order.number);
+    return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free, status: r.status, orderNumber: r.order?.number ?? null, refresh }), 200, { "cache-control": "no-store" });
+  } catch (e) {
+    console.error("[banto] checkout/done status:", e);
+    return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free }));
+  }
+});

@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Banto 運用費用試算</title>
+<meta name="description" content="自分の Cloudflare と Supabase で Banto を動かしたときの月額費用を、注文数・アクセス数・商品数から試算します。">
+<style>
+:root{
+  --bg:#f7f5ef; --surface:#ffffff; --surface-2:#efece3; --fg:#1f2430; --muted:#5e6472; --line:#d9d4c7;
+  --accent:#2b4a7a; --accent-fg:#ffffff; --accent-soft:#e3ebf6; --warn:#b7412f; --warn-soft:#f7e3df; --ok:#2f6f4e; --ok-soft:#dfeee4;
+  --shadow:0 1px 2px rgba(31,36,48,.06),0 8px 24px rgba(31,36,48,.06);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#14171d; --surface:#1c2027; --surface-2:#242931; --fg:#e8e6df; --muted:#a2a7b3; --line:#343a45;
+  --accent:#8fb3e6; --accent-fg:#101722; --accent-soft:#223149; --warn:#ef8d7c; --warn-soft:#3e2420; --ok:#8fd0ad; --ok-soft:#1f3a2c;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#14171d; --surface:#1c2027; --surface-2:#242931; --fg:#e8e6df; --muted:#a2a7b3; --line:#343a45;
+  --accent:#8fb3e6; --accent-fg:#101722; --accent-soft:#223149; --warn:#ef8d7c; --warn-soft:#3e2420; --ok:#8fd0ad; --ok-soft:#1f3a2c;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35); color-scheme:dark}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 system-ui,-apple-system,"Segoe UI","Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",sans-serif;font-variant-numeric:tabular-nums}
+.wrap{max-width:1120px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px 56px}
+header.top{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:6px}
+h1{font-size:1.55rem;margin:0;letter-spacing:.01em;text-wrap:balance}
+h1 small{font-size:.8rem;color:var(--muted);font-weight:500;margin-left:.5em}
+.lead{color:var(--muted);margin:0 0 20px;max-width:62ch}
+h2{font-size:1.05rem;margin:0 0 10px;letter-spacing:.02em}
+h3{font-size:.95rem;margin:18px 0 8px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
+.grid aside{order:-1}
+@media (min-width:900px){.grid{grid-template-columns:minmax(0,1fr) minmax(0,400px);align-items:start}.grid aside{order:0}.sticky{position:sticky;top:12px}}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;box-shadow:var(--shadow);min-width:0}
+.card+.card{margin-top:16px}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.presets button{font:inherit;font-size:.9rem;padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.presets button:hover{border-color:var(--accent)}
+.presets button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+fieldset{border:0;padding:0;margin:0 0 6px}
+legend{font-weight:700;font-size:.95rem;padding:0;margin:0 0 8px;letter-spacing:.02em}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:.86rem;color:var(--muted);min-width:0}
+label.f span.n{color:var(--fg);font-weight:600}
+.in{display:flex;align-items:center;gap:6px;min-width:0}
+.in input[type=number],.in select{font:inherit;font-size:1rem;width:100%;min-width:0;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)}
+.in input:focus,.in select:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+.in .u{color:var(--muted);font-size:.85rem;white-space:nowrap}
+label.c{display:flex;align-items:center;gap:8px;font-size:.92rem;padding:6px 0}
+label.c input{width:18px;height:18px;accent-color:var(--accent)}
+.hint{font-size:.78rem;color:var(--muted)}
+.total{display:flex;flex-direction:column;gap:2px;padding:14px 16px;border-radius:10px;background:var(--accent-soft);margin-bottom:12px}
+.total .big{font-size:2.1rem;font-weight:800;letter-spacing:-.01em;line-height:1.15}
+.total .big small{font-size:1rem;font-weight:600;margin-left:.2em}
+.total .sub{color:var(--muted);font-size:.86rem}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:14px}
+.kpi{background:var(--surface-2);border-radius:8px;padding:8px 10px}
+.kpi .l{font-size:.74rem;color:var(--muted)}
+.kpi .v{font-weight:700;font-size:1.05rem}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+.tbl{overflow-x:auto;min-width:0}
+th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.76rem;color:var(--muted);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+td.r,th.r{text-align:right;white-space:nowrap}
+tr.sum td{font-weight:700;border-bottom:0;border-top:2px solid var(--line)}
+.tag{display:inline-block;font-size:.72rem;padding:1px 7px;border-radius:999px;background:var(--ok-soft);color:var(--ok);font-weight:600;white-space:nowrap}
+.tag.paid{background:var(--warn-soft);color:var(--warn)}
+.tag.na{background:var(--surface-2);color:var(--muted)}
+.why{display:block;color:var(--muted);font-size:.78rem;margin-top:2px}
+.notes{margin:10px 0 0;padding-left:1.2em;font-size:.85rem;color:var(--muted)}
+.notes li{margin:4px 0}
+.notes li.w{color:var(--warn)}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.btns button{font:inherit;font-size:.88rem;padding:7px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.btns button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+.btns button:hover{filter:brightness(1.05)}
+.flash{font-size:.82rem;color:var(--ok);min-height:1.2em}
+details{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:0 18px;margin-top:16px}
+details summary{cursor:pointer;padding:14px 0;font-weight:700;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px}
+details summary::-webkit-details-marker{display:none}
+details summary::after{content:"＋";color:var(--muted);font-weight:400}
+details[open] summary::after{content:"－"}
+details .body{padding:0 0 18px}
+.prices{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px 24px}
+.prices h3{margin:6px 0 4px}
+.prices h3 a{color:var(--accent);font-weight:500;font-size:.8rem;margin-left:.5em}
+.pr{display:grid;grid-template-columns:minmax(0,1fr) 110px;align-items:center;gap:6px;font-size:.85rem;padding:3px 0}
+.pr input{font:inherit;font-size:.95rem;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--fg);width:100%;text-align:right}
+.pr .u{color:var(--muted);font-size:.75rem;margin-left:4px}
+.prose{font-size:.9rem;max-width:68ch}
+.prose p,.prose li{color:var(--fg)}
+.prose li{margin:4px 0}
+footer{margin-top:28px;font-size:.8rem;color:var(--muted);max-width:68ch}
+a{color:var(--accent)}
+textarea.copy{position:absolute;left:-9999px;top:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <h1>Banto 運用費用試算 <small>番頭の帳場</small></h1>
+</header>
+<p class="lead">自分の Cloudflare と Supabase で Banto を動かすと、毎月いくらかかるか。注文数・アクセス数・商品数を入れると、各サービスの無料枠に収まるかどうかと、有料プランが要る場合の月額を見積もります。値はすべて編集できます。</p>
+
+<div class="presets" id="presets" role="group" aria-label="規模の例">
+  <button type="button" data-preset="hobby">趣味・副業（月 20 件）</button>
+  <button type="button" data-preset="small" aria-pressed="true">小さなお店（月 100 件）</button>
+  <button type="button" data-preset="main">本業（月 1,000 件）</button>
+</div>
+
+<div class="grid">
+<div>
+  <form id="f" class="card" autocomplete="off">
+    <fieldset>
+      <legend>売上と注文</legend>
+      <div class="fields">
+        <label class="f"><span class="n">月間注文数</span><span class="in"><input type="number" name="orders" min="0" step="1" value="100"><span class="u">件 / 月</span></span></label>
+        <label class="f"><span class="n">平均注文額（税込・送料込）</span><span class="in"><input type="number" name="aov" min="0" step="100" value="6000"><span class="u">円</span></span></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>アクセス</legend>
+      <div class="fields">
+        <label class="f"><span class="n">月間ページビュー</span><span class="in"><input type="number" name="pv" min="0" step="100" value="20000"><span class="u">PV / 月</span></span></label>
+        <label class="f"><span class="n">1 PV あたりのリクエスト数</span><span class="in"><input type="number" name="reqPerPv" min="1" step="1" value="4"><span class="u">回</span></span><span class="hint">ページ 1 回 + 画像の枚数</span></label>
+        <label class="f"><span class="n">ピーク日の倍率</span><span class="in"><input type="number" name="peak" min="1" step="0.5" value="3"><span class="u">× 平均日</span></span><span class="hint">セールや告知の日。Workers 無料枠は「1 日あたり」で判定されます</span></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>商品と画像</legend>
+      <div class="fields">
+        <label class="f"><span class="n">商品数</span><span class="in"><input type="number" name="products" min="0" step="1" value="50"><span class="u">点</span></span></label>
+        <label class="f"><span class="n">1 商品あたりの画像</span><span class="in"><input type="number" name="imgs" min="0" step="1" value="3"><span class="u">枚</span></span></label>
+        <label class="f"><span class="n">画像 1 枚の平均サイズ</span><span class="in"><input type="number" name="imgMb" min="0" step="0.05" value="0.2"><span class="u">MB</span></span><span class="hint">管理画面が長辺 1600px の WebP に縮小するので、写真でも 0.1〜0.3 MB 程度。サムネイル分は自動で加算します</span></label>
+      </div>
+      <label class="c"><input type="checkbox" name="r2Direct"> 画像を R2 のカスタムドメインから配信する（推奨設定。Worker を通らず CDN から配信）</label>
+    </fieldset>
+    <fieldset>
+      <legend>決済</legend>
+      <div class="fields">
+        <label class="f"><span class="n">決済事業者</span><span class="in"><select name="provider"><option value="stripe">Stripe（同梱・既定）</option><option value="komoju">KOMOJU（同梱）</option></select></span></label>
+        <label class="f"><span class="n">カード決済の割合</span><span class="in"><input type="number" name="cardShare" min="0" max="100" step="5" value="90"><span class="u">%</span></span><span class="hint">残りはコンビニ決済として計算します</span></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>通知</legend>
+      <div class="fields">
+        <label class="f"><span class="n">注文 1 件あたりのメール</span><span class="in"><input type="number" name="mailsPerOrder" min="0" step="1" value="2"><span class="u">通</span></span><span class="hint">注文確認 + 発送通知で 2 通（同梱「メール通知（Resend）」）</span></label>
+      </div>
+      <label class="c"><input type="checkbox" name="bcc" checked> 運営者にも控えを送る（BCC）</label>
+      <label class="c"><input type="checkbox" name="line"> LINE で運営者に通知する（同梱「LINE 通知」）</label>
+    </fieldset>
+    <fieldset>
+      <legend>運用</legend>
+      <label class="c"><input type="checkbox" name="members"> 会員機能を使う（Supabase Auth のエンドユーザー）</label>
+      <label class="c"><input type="checkbox" name="backups"> データベースの自動バックアップが欲しい（Supabase Pro）</label>
+      <label class="c"><input type="checkbox" name="domain" checked> 独自ドメインを使う</label>
+      <div class="fields" style="margin-top:6px">
+        <label class="f"><span class="n">為替</span><span class="in"><input type="number" name="fx" min="1" step="1" value="150"><span class="u">円 / US$</span></span><span class="hint">Cloudflare・Supabase・Resend はドル建て請求です</span></label>
+      </div>
+    </fieldset>
+  </form>
+
+  <section class="card" aria-labelledby="h-saas">
+    <h2 id="h-saas">参考: ショップ作成サービスと比べると</h2>
+    <p class="hint" style="margin:0 0 8px">同じ売上を各社の公開料金（下の単価表、編集可）に当てはめた金額です。各社は決済・ホスティング・サポートを含みます。Banto は手数料が決済事業者分だけな代わりに、運用はあなた自身が行います。</p>
+    <div class="tbl"><table id="saas"><thead><tr><th>サービス</th><th>プラン</th><th class="r">月額合計</th><th class="r">Banto との差</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <details>
+    <summary>単価表（編集できます）<span class="hint" id="asof"></span></summary>
+    <div class="body">
+      <p class="hint">開発チームが公開ページから書き写した参考値です。契約条件・地域・改定で変わります。導入前に必ず各社の料金ページで確認してください。値を変えると試算に即時反映されます。</p>
+      <div class="prices" id="prices"></div>
+      <div class="btns"><button type="button" id="resetPrices">単価を既定に戻す</button></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>前提と計算のしかた</summary>
+    <div class="body prose">
+      <ul>
+        <li><strong>Cloudflare Workers</strong>: ストアフロント・管理画面・API・画像配信のすべてが Worker のリクエストです。5 分ごとの Cron（在庫予約の解放、hooks の再送）も月 8,640 回のリクエストとして数えます。無料枠は 1 日 10 万リクエストなので、ピーク日の推定（平均日 × 倍率）がこれを超えると Paid プランとしています。</li>
+        <li><strong>R2</strong>: 保存容量 = 商品数 × 画像枚数 ×（サイズ + サムネイル約 30 KB）。読み取り（Class B）= 画像の表示回数（PV × 画像枚数）。「R2 のカスタムドメインから配信」にすると、画像は Worker を通らず、読み取りは CDN のキャッシュを外れた分だけ（ヒット率は単価表で変更可）になります。書き込み（Class A）= アップロード（年間で商品が入れ替わる想定で月割り）。転送量は無料です。</li>
+        <li><strong>Supabase</strong>: データ量は注文 1 件あたり約 8 KB（注文・明細・在庫予約・hooks 配信記録・Webhook イベント）で 1 年分を見ています。無料枠は 500 MB、バックアップなし。Banto の Cron が 5 分ごとにデータベースを呼ぶので、無料プランの「1 週間アクセスがないと一時停止」は実質起きません。会員機能を使う場合、無料プランの認証メールは 1 時間 2 通までなので、Resend などの SMTP 設定が必要です（Pro でも同様に推奨）。</li>
+        <li><strong>決済手数料</strong>: 売上 × 料率 + 件数 × 固定額。Stripe / KOMOJU の返金・チャージバック・振込手数料は含みません。</li>
+        <li><strong>メール</strong>: Resend は宛先 1 件を 1 通と数えるので、BCC を付けると 2 倍になります。無料枠は月 3,000 通・日 100 通。</li>
+        <li><strong>LINE</strong>: 運営者への通知は注文 1 件につき 1 通。Messaging API の無料枠は月 200 通。</li>
+        <li><strong>含まないもの</strong>: 送料・梱包・仕入れ、あなたの作業時間、Stripe/KOMOJU の審査や振込の手数料、消費税（ドル建て請求には日本の消費税がかかる場合があります）。</li>
+      </ul>
+    </div>
+  </details>
+</div>
+
+<aside class="sticky">
+  <section class="card" aria-live="polite">
+    <h2>月額の見積もり</h2>
+    <div class="total">
+      <div class="big" id="total">—</div>
+      <div class="sub" id="totalSub"></div>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="l">固定費（インフラ）</div><div class="v" id="kFixed">—</div></div>
+      <div class="kpi"><div class="l">決済手数料</div><div class="v" id="kFees">—</div></div>
+      <div class="kpi"><div class="l">注文 1 件あたり</div><div class="v" id="kPerOrder">—</div></div>
+      <div class="kpi"><div class="l">売上に対して</div><div class="v" id="kPct">—</div></div>
+      <div class="kpi"><div class="l">年額</div><div class="v" id="kYear">—</div></div>
+    </div>
+    <div class="tbl"><table id="rows"><thead><tr><th>サービス</th><th>プラン</th><th class="r">月額</th></tr></thead><tbody></tbody></table></div>
+    <ul class="notes" id="notes"></ul>
+    <div class="btns">
+      <button type="button" class="primary" id="copyText">結果をテキストでコピー</button>
+      <button type="button" id="copyUrl">この試算の URL をコピー</button>
+    </div>
+    <div class="flash" id="flash"></div>
+  </section>
+</aside>
+</div>
+
+<footer>
+  <p>Banto は MIT ライセンスの OSS で、開発チームはホスティング・課金・サポートを行いません。この試算は導入検討の目安であり、金額を保証するものではありません。前提の詳細と単価の確認日は <a href="cost.md">docs/cost.md</a> に書いてあります。</p>
+</footer>
+</div>
+<textarea class="copy" id="clip" aria-hidden="true" tabindex="-1"></textarea>
+
+<script>
+(function(){
+"use strict";
+var ASOF = "2026-10";
+var DEFAULT_PRICES = {
+  cf_free_daily:   {v:100000,u:"req / 日",  l:"Workers 無料枠（1 日あたり）", g:"cf"},
+  cf_paid_usd:     {v:5,     u:"US$ / 月",  l:"Workers Paid 月額（1,000 万 req 込み）", g:"cf"},
+  cf_paid_incl_m:  {v:10,    u:"百万 req",  l:"Paid に含まれるリクエスト", g:"cf"},
+  cf_extra_usd:    {v:0.30,  u:"US$ / 百万",l:"Paid の超過リクエスト", g:"cf"},
+  r2_store_usd:    {v:0.015, u:"US$ / GB月",l:"R2 保存（10 GB まで無料）", g:"cf"},
+  r2_store_free:   {v:10,    u:"GB",        l:"R2 保存の無料枠", g:"cf"},
+  r2_a_usd:        {v:4.50,  u:"US$ / 百万",l:"R2 Class A（書き込み。月 100 万まで無料）", g:"cf"},
+  r2_b_usd:        {v:0.36,  u:"US$ / 百万",l:"R2 Class B（読み取り。月 1,000 万まで無料）", g:"cf"},
+  r2_cdn_hit_pct:  {v:70,    u:"%",         l:"R2 カスタムドメイン配信時の CDN キャッシュヒット率（仮定）", g:"cf"},
+  sb_free_db_mb:   {v:500,   u:"MB",        l:"Supabase Free のデータベース上限", g:"sb"},
+  sb_free_egress:  {v:5,     u:"GB / 月",   l:"Supabase Free の転送量", g:"sb"},
+  sb_pro_usd:      {v:25,    u:"US$ / 月",  l:"Supabase Pro 月額（8 GB・日次バックアップ）", g:"sb"},
+  sb_pro_db_gb:    {v:8,     u:"GB",        l:"Pro に含まれるデータベース", g:"sb"},
+  sb_db_extra_usd: {v:0.125, u:"US$ / GB月",l:"Pro の超過データベース", g:"sb"},
+  sb_pro_egress:   {v:250,   u:"GB / 月",   l:"Pro に含まれる転送量", g:"sb"},
+  sb_egress_usd:   {v:0.09,  u:"US$ / GB",  l:"超過転送量", g:"sb"},
+  sb_kb_per_pv:    {v:10,    u:"KB / PV",   l:"1 PV あたりのデータベース転送（30 秒キャッシュ後）", g:"sb"},
+  rs_free_month:   {v:3000,  u:"通 / 月",   l:"Resend 無料枠（月）", g:"mail"},
+  rs_free_day:     {v:100,   u:"通 / 日",   l:"Resend 無料枠（日）", g:"mail"},
+  rs_pro_usd:      {v:20,    u:"US$ / 月",  l:"Resend Pro 月額（5 万通）", g:"mail"},
+  rs_pro_month:    {v:50000, u:"通 / 月",   l:"Pro に含まれる通数", g:"mail"},
+  ln_free_month:   {v:200,   u:"通 / 月",   l:"LINE Messaging API 無料枠", g:"mail"},
+  ln_light_jpy:    {v:5000,  u:"円 / 月",   l:"LINE ライトプラン月額（5,000 通）", g:"mail"},
+  ln_light_month:  {v:5000,  u:"通 / 月",   l:"ライトプランに含まれる通数", g:"mail"},
+  domain_jpy:      {v:1800,  u:"円 / 年",   l:"独自ドメイン（.com を Cloudflare Registrar で）", g:"other"},
+  st_card_pct:     {v:3.6,   u:"%",         l:"Stripe カード（国内発行）", g:"pay"},
+  st_konbini_pct:  {v:3.6,   u:"%",         l:"Stripe コンビニ決済", g:"pay"},
+  st_konbini_fix:  {v:0,     u:"円 / 件",   l:"Stripe コンビニ決済の固定額", g:"pay"},
+  st_monthly_jpy:  {v:0,     u:"円 / 月",   l:"Stripe 月額固定費", g:"pay"},
+  km_card_pct:     {v:3.6,   u:"%",         l:"KOMOJU カード", g:"pay"},
+  km_konbini_pct:  {v:3.5,   u:"%",         l:"KOMOJU コンビニ決済（要確認）", g:"pay"},
+  km_konbini_fix:  {v:0,     u:"円 / 件",   l:"KOMOJU コンビニ決済の固定額（要確認）", g:"pay"},
+  km_monthly_jpy:  {v:0,     u:"円 / 月",   l:"KOMOJU 月額固定費", g:"pay"},
+  base_std_pct:    {v:6.6,   u:"%",         l:"BASE スタンダード 決済 3.6% + サービス利用料 3%", g:"saas"},
+  base_std_fix:    {v:40,    u:"円 / 件",   l:"BASE スタンダード 1 件あたり", g:"saas"},
+  base_grow_jpy:   {v:19980, u:"円 / 月",   l:"BASE グロース 月額", g:"saas"},
+  base_grow_pct:   {v:2.9,   u:"%",         l:"BASE グロース 決済手数料", g:"saas"},
+  stores_free_pct: {v:5,     u:"%",         l:"STORES フリー 決済手数料", g:"saas"},
+  stores_std_jpy:  {v:3480,  u:"円 / 月",   l:"STORES スタンダード 月額", g:"saas"},
+  stores_std_pct:  {v:3.6,   u:"%",         l:"STORES スタンダード 決済手数料", g:"saas"},
+  shop_basic_jpy:  {v:4850,  u:"円 / 月",   l:"Shopify ベーシック 月額（月払い）", g:"saas"},
+  shop_basic_pct:  {v:3.55,  u:"%",         l:"Shopify ベーシック 国内カード", g:"saas"}
+};
+var GROUPS = [["cf","Cloudflare Workers / R2","https://developers.cloudflare.com/workers/platform/pricing/"],["sb","Supabase","https://supabase.com/pricing"],["mail","メール / LINE","https://resend.com/pricing"],["pay","決済手数料","https://stripe.com/jp/pricing"],["other","その他",""],["saas","参考: ショップ作成サービス",""]];
+var PRESETS = {
+  hobby:{orders:20,aov:4000,pv:3000,reqPerPv:4,peak:3,products:20,imgs:3,imgMb:0.2,r2Direct:false,provider:"stripe",cardShare:90,mailsPerOrder:2,bcc:true,line:false,members:false,backups:false,domain:false,fx:150},
+  small:{orders:100,aov:6000,pv:20000,reqPerPv:4,peak:3,products:50,imgs:3,imgMb:0.2,r2Direct:true,provider:"stripe",cardShare:90,mailsPerOrder:2,bcc:true,line:false,members:false,backups:false,domain:true,fx:150},
+  main:{orders:1000,aov:8000,pv:300000,reqPerPv:4,peak:3,products:500,imgs:4,imgMb:0.25,r2Direct:true,provider:"stripe",cardShare:85,mailsPerOrder:2,bcc:true,line:true,members:true,backups:true,domain:true,fx:150}
+};
+var prices = {}; // key -> number
+var form = document.getElementById("f");
+var $ = function(id){ return document.getElementById(id); };
+
+function num(x, d){ var n = parseFloat(x); return isFinite(n) ? n : d; }
+function yen(n){ return "¥" + Math.round(n).toLocaleString("ja-JP"); }
+function fmt(n){ return Math.round(n).toLocaleString("ja-JP"); }
+function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+
+function readInputs(){
+  var o = {};
+  var els = form.elements;
+  for (var i = 0; i < els.length; i++) {
+    var e = els[i]; if (!e.name) continue;
+    if (e.type === "checkbox") o[e.name] = e.checked;
+    else if (e.type === "number") o[e.name] = num(e.value, 0);
+    else o[e.name] = e.value;
+  }
+  return o;
+}
+function writeInputs(o){
+  var els = form.elements;
+  for (var i = 0; i < els.length; i++) {
+    var e = els[i]; if (!e.name || !(e.name in o)) continue;
+    if (e.type === "checkbox") e.checked = !!o[e.name]; else e.value = o[e.name];
+  }
+}
+
+function compute(i, p){
+  var fx = Math.max(1, i.fx);
+  var gmv = i.orders * i.aov;
+  var rows = [], notes = [], fixed = 0;
+
+  // Cloudflare Workers
+  var cron = 8640;
+  var imgPerPv = Math.max(0, i.reqPerPv - 1);
+  var reqMonth = i.pv * (i.r2Direct ? 1 : i.reqPerPv) + cron;
+  var peakDay = (reqMonth / 30) * Math.max(1, i.peak);
+  var cfPaid = peakDay > p.cf_free_daily;
+  var cfCost = 0;
+  if (cfPaid) {
+    var extraM = Math.max(0, reqMonth / 1e6 - p.cf_paid_incl_m);
+    cfCost = (p.cf_paid_usd + extraM * p.cf_extra_usd) * fx;
+  }
+  fixed += cfCost;
+  rows.push({name:"Cloudflare Workers", plan: cfPaid ? "Paid" : "Free", paid: cfPaid, cost: cfCost,
+    why: "月 " + fmt(reqMonth) + " req（Cron " + fmt(cron) + " 含む" + (i.r2Direct ? "、画像は Worker を通らない" : "") + "）、ピーク日 約 " + fmt(peakDay) + " req" + (cfPaid ? "" : "（無料枠 " + fmt(p.cf_free_daily) + " / 日）")});
+  if (!i.r2Direct && imgPerPv > 0) notes.push({t:"画像を R2 のカスタムドメインから配信すると（設定 5 分）、Workers のリクエストが 1 PV あたり " + imgPerPv + " 回減ります。"});
+  if (!cfPaid && peakDay > p.cf_free_daily * 0.7) notes.push({w:true, t:"Workers はピーク日に無料枠の 7 割を超えます。超えた日はショップが止まるので、Paid（約 " + yen(p.cf_paid_usd*fx) + "/月）への切り替えを検討してください。"});
+
+  // R2
+  var storeGb = i.products * i.imgs * (i.imgMb + 0.03) / 1024; // サムネイル約 30KB を加算
+  var classB = i.pv * imgPerPv * (i.r2Direct ? Math.max(0, 1 - p.r2_cdn_hit_pct / 100) : 1);
+  var classA = Math.ceil(i.products * i.imgs / 12);
+  var r2 = Math.max(0, storeGb - p.r2_store_free) * p.r2_store_usd
+         + Math.max(0, classB / 1e6 - 10) * p.r2_b_usd
+         + Math.max(0, classA / 1e6 - 1) * p.r2_a_usd;
+  var r2Cost = r2 * fx;
+  fixed += r2Cost;
+  rows.push({name:"Cloudflare R2（画像）", plan: r2Cost > 0 ? "従量" : "無料枠内", paid: r2Cost > 0, cost: r2Cost,
+    why: "保存 " + storeGb.toFixed(2) + " GB（サムネイル込み）、読み取り 月 " + fmt(classB) + " 回" + (i.r2Direct ? "（CDN ヒット率 " + p.r2_cdn_hit_pct + "% を仮定）" : "")});
+  notes.push({t:"R2 は無料枠でも支払い方法の登録を求められることがあります。"});
+
+  // Supabase
+  var dbMb = (i.orders * 12 * 8 + i.products * i.imgs * 1 + (i.members ? i.orders * 12 * 1 : 0)) / 1024;
+  var egressGb = i.pv * p.sb_kb_per_pv / 1e6;
+  var sbReason = [];
+  if (i.backups) sbReason.push("自動バックアップ");
+  if (dbMb > p.sb_free_db_mb * 0.8) sbReason.push("データ量が 1 年で " + fmt(dbMb) + " MB");
+  if (egressGb > p.sb_free_egress) sbReason.push("転送量 " + egressGb.toFixed(1) + " GB/月");
+  var sbPro = sbReason.length > 0;
+  var sbCost = 0;
+  if (sbPro) {
+    sbCost = (p.sb_pro_usd + Math.max(0, dbMb/1024 - p.sb_pro_db_gb) * p.sb_db_extra_usd + Math.max(0, egressGb - p.sb_pro_egress) * p.sb_egress_usd) * fx;
+  }
+  fixed += sbCost;
+  var yearsToFree = dbMb > 0 ? p.sb_free_db_mb / dbMb : Infinity;
+  rows.push({name:"Supabase", plan: sbPro ? "Pro" : "Free", paid: sbPro, cost: sbCost,
+    why: sbPro ? sbReason.join("、") + " のため" : "1 年で約 " + fmt(dbMb) + " MB（無料枠 " + fmt(p.sb_free_db_mb) + " MB に達するまで約 " + (yearsToFree > 50 ? "50 年以上" : yearsToFree.toFixed(0) + " 年") + "）、転送 " + egressGb.toFixed(1) + " GB/月"});
+  if (!sbPro) notes.push({w:true, t:"Supabase Free には自動バックアップがありません。注文データは管理画面の CSV で定期的に書き出してください。"});
+  if (i.members) notes.push({t:"会員機能の認証メールは Supabase 既定の SMTP だと 1 時間 2 通までです。Resend などを Supabase の Custom SMTP に設定してください。"});
+
+  // Email
+  var mails = i.orders * i.mailsPerOrder * (i.bcc ? 2 : 1);
+  var mailsPeakDay = (mails / 30) * Math.max(1, i.peak);
+  var rsPro = i.mailsPerOrder > 0 && (mails > p.rs_free_month || mailsPeakDay > p.rs_free_day);
+  var rsCost = rsPro ? p.rs_pro_usd * fx * Math.max(1, Math.ceil(mails / p.rs_pro_month)) : 0;
+  fixed += rsCost;
+  rows.push({name:"メール（Resend）", plan: i.mailsPerOrder > 0 ? (rsPro ? "Pro" : "Free") : "未使用", paid: rsPro, na: i.mailsPerOrder === 0, cost: rsCost,
+    why: "月 " + fmt(mails) + " 通、ピーク日 約 " + fmt(mailsPeakDay) + " 通"});
+
+  // LINE
+  var lineCost = 0, linePlan = "未使用";
+  if (i.line) {
+    var lineMsgs = i.orders;
+    if (lineMsgs > p.ln_free_month) { linePlan = "ライト"; lineCost = p.ln_light_jpy * Math.max(1, Math.ceil(lineMsgs / p.ln_light_month)); }
+    else linePlan = "無料枠内";
+    rows.push({name:"LINE 通知", plan: linePlan, paid: lineCost > 0, cost: lineCost, why: "月 " + fmt(lineMsgs) + " 通（注文 1 件につき 1 通）"});
+    fixed += lineCost;
+  }
+
+  // Domain
+  var domCost = i.domain ? p.domain_jpy / 12 : 0;
+  fixed += domCost;
+  rows.push({name:"独自ドメイン", plan: i.domain ? "年額を月割り" : "workers.dev のまま", paid: i.domain, na: !i.domain, cost: domCost, why: i.domain ? yen(p.domain_jpy) + " / 年" : "無料のサブドメインで運用"});
+
+  // Payment fees
+  var s = Math.min(1, Math.max(0, i.cardShare / 100));
+  var cardPct = i.provider === "stripe" ? p.st_card_pct : p.km_card_pct;
+  var kPct = i.provider === "stripe" ? p.st_konbini_pct : p.km_konbini_pct;
+  var kFix = i.provider === "stripe" ? p.st_konbini_fix : p.km_konbini_fix;
+  var monthly = i.provider === "stripe" ? p.st_monthly_jpy : p.km_monthly_jpy;
+  var fees = gmv * (s * cardPct + (1 - s) * kPct) / 100 + i.orders * (1 - s) * kFix + monthly;
+  var effPct = gmv > 0 ? fees / gmv * 100 : 0;
+  rows.push({name: i.provider === "stripe" ? "Stripe 決済手数料" : "KOMOJU 決済手数料", plan: "従量", paid: fees > 0, cost: fees, fee: true,
+    why: "カード " + Math.round(s*100) + "%（" + cardPct + "%）、コンビニ " + Math.round((1-s)*100) + "%（" + kPct + "%" + (kFix ? " + " + yen(kFix) : "") + "）"});
+
+  var total = fixed + fees;
+  var saas = [];
+  function best(name, plans){
+    var b = null;
+    plans.forEach(function(pl){ var c = pl.fee + gmv * pl.pct / 100 + i.orders * (pl.fix || 0); if (!b || c < b.cost) b = {plan: pl.name, cost: c}; });
+    saas.push({name: name, plan: b.plan, cost: b.cost});
+  }
+  best("BASE", [{name:"スタンダード", fee:0, pct:p.base_std_pct, fix:p.base_std_fix},{name:"グロース", fee:p.base_grow_jpy, pct:p.base_grow_pct}]);
+  best("STORES", [{name:"フリー", fee:0, pct:p.stores_free_pct},{name:"スタンダード", fee:p.stores_std_jpy, pct:p.stores_std_pct}]);
+  best("Shopify", [{name:"ベーシック", fee:p.shop_basic_jpy, pct:p.shop_basic_pct}]);
+
+  return {gmv:gmv, rows:rows, notes:notes, fixed:fixed, fees:fees, total:total, effPct:effPct, saas:saas,
+    perOrder: i.orders > 0 ? total / i.orders : 0, pct: gmv > 0 ? total / gmv * 100 : 0};
+}
+
+var last = null;
+function render(){
+  var i = readInputs();
+  var r = compute(i, prices);
+  last = {i:i, r:r};
+  $("total").innerHTML = esc(yen(r.total)) + "<small>/ 月</small>";
+  $("totalSub").textContent = "月商 " + yen(r.gmv) + "（" + fmt(i.orders) + " 件 × " + yen(i.aov) + "）に対して";
+  $("kFixed").textContent = yen(r.fixed);
+  $("kFees").textContent = yen(r.fees);
+  $("kPerOrder").textContent = yen(r.perOrder);
+  $("kPct").textContent = r.pct.toFixed(1) + "%";
+  $("kYear").textContent = yen(r.total * 12);
+  var tb = $("rows").tBodies[0]; tb.innerHTML = "";
+  r.rows.forEach(function(row){
+    var tr = document.createElement("tr");
+    var tag = row.na ? "na" : (row.paid ? "paid" : "");
+    tr.innerHTML = "<td>" + esc(row.name) + "<span class='why'>" + esc(row.why) + "</span></td><td><span class='tag " + tag + "'>" + esc(row.plan) + "</span></td><td class='r'>" + esc(yen(row.cost)) + "</td>";
+    tb.appendChild(tr);
+  });
+  var sum = document.createElement("tr"); sum.className = "sum";
+  sum.innerHTML = "<td colspan='2'>合計</td><td class='r'>" + esc(yen(r.total)) + "</td>";
+  tb.appendChild(sum);
+  var nl = $("notes"); nl.innerHTML = "";
+  r.notes.forEach(function(n){ var li = document.createElement("li"); if (n.w) li.className = "w"; li.textContent = n.t; nl.appendChild(li); });
+  var st = $("saas").tBodies[0]; st.innerHTML = "";
+  var me = document.createElement("tr");
+  me.innerHTML = "<td><strong>Banto（自前）</strong></td><td>Cloudflare + Supabase + " + (i.provider === "stripe" ? "Stripe" : "KOMOJU") + "</td><td class='r'><strong>" + esc(yen(r.total)) + "</strong></td><td class='r'>—</td>";
+  st.appendChild(me);
+  r.saas.forEach(function(x){
+    var d = x.cost - r.total;
+    var tr = document.createElement("tr");
+    tr.innerHTML = "<td>" + esc(x.name) + "</td><td>" + esc(x.plan) + "</td><td class='r'>" + esc(yen(x.cost)) + "</td><td class='r'>" + (d >= 0 ? "+" : "−") + esc(yen(Math.abs(d))) + "</td>";
+    st.appendChild(tr);
+  });
+}
+
+function buildPrices(){
+  var box = $("prices"); box.innerHTML = "";
+  GROUPS.forEach(function(g){
+    var sec = document.createElement("div");
+    var h = document.createElement("h3"); h.textContent = g[1];
+    if (g[2]) { var a = document.createElement("a"); a.href = g[2]; a.target = "_blank"; a.rel = "noopener"; a.textContent = "料金ページ"; h.appendChild(a); }
+    sec.appendChild(h);
+    Object.keys(DEFAULT_PRICES).forEach(function(k){
+      var d = DEFAULT_PRICES[k]; if (d.g !== g[0]) return;
+      var row = document.createElement("label"); row.className = "pr";
+      var lab = document.createElement("span"); lab.textContent = d.l;
+      var wrap = document.createElement("span"); wrap.style.display = "flex"; wrap.style.alignItems = "center";
+      var inp = document.createElement("input"); inp.type = "number"; inp.step = "any"; inp.min = "0"; inp.value = prices[k]; inp.dataset.key = k;
+      inp.addEventListener("input", function(){ prices[k] = num(inp.value, d.v); render(); });
+      var u = document.createElement("span"); u.className = "u"; u.textContent = d.u;
+      wrap.appendChild(inp); wrap.appendChild(u);
+      row.appendChild(lab); row.appendChild(wrap); sec.appendChild(row);
+    });
+    box.appendChild(sec);
+  });
+}
+function resetPrices(){ Object.keys(DEFAULT_PRICES).forEach(function(k){ prices[k] = DEFAULT_PRICES[k].v; }); }
+
+function setPreset(key){
+  writeInputs(PRESETS[key]);
+  var bs = $("presets").querySelectorAll("button");
+  for (var i = 0; i < bs.length; i++) bs[i].setAttribute("aria-pressed", bs[i].dataset.preset === key ? "true" : "false");
+  render();
+}
+function clearPreset(){ var bs = $("presets").querySelectorAll("button"); for (var i = 0; i < bs.length; i++) bs[i].setAttribute("aria-pressed", "false"); }
+
+function b64url(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function unb64url(s){ s = s.replace(/-/g,"+").replace(/_/g,"/"); while (s.length % 4) s += "="; return decodeURIComponent(escape(atob(s))); }
+function loadHash(){
+  try {
+    var h = location.hash.replace(/^#/, ""); if (!h) return false;
+    var o = JSON.parse(unb64url(h)); if (!o || typeof o !== "object") return false;
+    if (o.i) writeInputs(o.i);
+    if (o.p) Object.keys(o.p).forEach(function(k){ if (k in DEFAULT_PRICES) prices[k] = num(o.p[k], DEFAULT_PRICES[k].v); });
+    clearPreset();
+    return true;
+  } catch (e) { return false; }
+}
+function copy(text, msg){
+  var done = function(ok){ $("flash").textContent = ok ? msg : "コピーできませんでした。テキストを選択してコピーしてください。"; setTimeout(function(){ $("flash").textContent = ""; }, 3000); };
+  var fallback = function(){ var ta = $("clip"); ta.value = text; ta.style.left = "0"; ta.focus(); ta.select(); var ok = false; try { ok = document.execCommand("copy"); } catch (e) {} ta.style.left = "-9999px"; done(ok); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function(){ done(true); }, fallback); else fallback();
+}
+function asText(){
+  var i = last.i, r = last.r, L = [];
+  L.push("# Banto 運用費用試算（単価確認日 " + ASOF + "）");
+  L.push("");
+  L.push("- 月間注文数 " + fmt(i.orders) + " 件、平均注文額 " + yen(i.aov) + "、月商 " + yen(r.gmv));
+  L.push("- 月間 " + fmt(i.pv) + " PV、商品 " + fmt(i.products) + " 点 × 画像 " + i.imgs + " 枚" + (i.r2Direct ? "（R2 カスタムドメイン配信）" : "") + "、決済 " + (i.provider === "stripe" ? "Stripe" : "KOMOJU") + "（カード " + i.cardShare + "%）、為替 " + i.fx + " 円/US$");
+  L.push("");
+  L.push("| サービス | プラン | 月額 | 根拠 |");
+  L.push("| --- | --- | ---: | --- |");
+  r.rows.forEach(function(x){ L.push("| " + x.name + " | " + x.plan + " | " + yen(x.cost) + " | " + x.why + " |"); });
+  L.push("| 合計 | | " + yen(r.total) + " | 固定費 " + yen(r.fixed) + " + 決済手数料 " + yen(r.fees) + " |");
+  L.push("");
+  L.push("注文 1 件あたり " + yen(r.perOrder) + "、売上の " + r.pct.toFixed(1) + "%、年額 " + yen(r.total * 12));
+  if (r.notes.length) { L.push(""); r.notes.forEach(function(n){ L.push("- " + n.t); }); }
+  L.push(""); L.push("参考（各社の公開料金から）:"); r.saas.forEach(function(x){ L.push("- " + x.name + " " + x.plan + ": " + yen(x.cost) + "/月"); });
+  return L.join("\n");
+}
+
+resetPrices();
+$("asof").textContent = "確認日 " + ASOF;
+buildPrices();
+var fromHash = loadHash();
+if (!fromHash) writeInputs(PRESETS.small);
+form.addEventListener("input", function(){ clearPreset(); render(); });
+form.addEventListener("submit", function(e){ e.preventDefault(); });
+$("presets").addEventListener("click", function(e){ var b = e.target.closest("button"); if (b) setPreset(b.dataset.preset); });
+$("resetPrices").addEventListener("click", function(){ resetPrices(); buildPrices(); render(); });
+$("copyText").addEventListener("click", function(){ copy(asText(), "結果をコピーしました。AI や同僚に貼って相談できます。"); });
+$("copyUrl").addEventListener("click", function(){
+  var changed = {}; Object.keys(prices).forEach(function(k){ if (prices[k] !== DEFAULT_PRICES[k].v) changed[k] = prices[k]; });
+  var url = location.href.split("#")[0] + "#" + b64url(JSON.stringify({i: last.i, p: changed}));
+  try { history.replaceState(null, "", "#" + url.split("#")[1]); } catch (e) {}
+  copy(url, "URL をコピーしました。開くと同じ条件で表示されます。");
+});
+render();
+})();
+</script>
+</body>
+</html>

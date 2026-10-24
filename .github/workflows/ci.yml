@@ -1,0 +1,47 @@
+name: ci
+on: [push, pull_request]
+
+# 公開リポジトリでは GITHUB_TOKEN を読み取りだけにする（Secret は使っていない）
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build:workers
+      - run: npm run check:size     # Worker 本体の圧縮後サイズの予算（docs/ARCHITECTURE.md「速度の予算」）
+      - run: npm run check:client   # 管理画面がブラウザへ渡すスクリプトが本番のバンドルのままで動くか
+      - run: npm run build:node     # 可搬性チェック（CLAUDE.md §4）+ Node 向けバンドル
+      - run: npm run smoke:node     # Node 入口の起動確認（docs/run-on-node.md）
+
+  # スキーマ・RLS・在庫 RPC のテスト（CLAUDE.md §1-4, §6）。
+  # 素の PostgreSQL に supabase/test/auth_shim.sql で Supabase 相当の auth スキーマとロールを足して流す。
+  db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["54322:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BANTO_TEST_DB_URL: postgres://postgres:postgres@127.0.0.1:54322/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm test
+      # テストが最後に適用したスキーマに対して、全テーブルの RLS 有効化を検査する
+      - run: npm run check:rls

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.dev.vars
+.env
+.wrangler/
+.supabase/
+*.log
+supabase/.temp/
+supabase/.branches/
+data/
+selfhost/.env
+selfhost/banto.env

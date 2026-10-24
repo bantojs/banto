@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "banto",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // ショップの URL を https://banto.<account>.workers.dev で公開する（独自ドメインは後から追加。docs/custom-domain.md）
+  "workers_dev": true,
+  "upload_source_maps": true,
+
+  // 設定値はここに書かず、Cloudflare の「変数とシークレット」（または Deploy ボタンの画面）で入れる（docs/env.md）。
+  // keep_vars が無いと、ビルドのたびに wrangler が画面で入れた変数を消してしまう。
+  "keep_vars": true,
+
+  // R2: 商品画像。キーは不要（Binding）
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "banto-media" }],
+
+  // 在庫予約の期限解放・hooks 配信・メール送信（SchedulerAdapter 経由で呼ぶ）
+  "triggers": { "crons": ["*/5 * * * *"] }
+
+  // 必須の 3 つ（SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY）は .dev.vars.example に列挙してあり、Deploy ボタンの画面で入力できる。
+  // 決済・通知のプラグイン用（STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, KOMOJU_*, RESEND_API_KEY ほかメールの送り手の値（MAIL_TRANSPORT、docs/email.md）, LINE_CHANNEL_ACCESS_TOKEN）は
+  // 有効化するときに「変数とシークレット」で追加する（docs/plugins.md）。
+}
