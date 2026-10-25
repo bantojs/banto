@@ -23,7 +23,8 @@
 | `SENDGRID_API_KEY` | Secret | `sendgrid` のとき | SendGrid → Settings → API Keys（Mail Send の権限） |
 | `SES_REGION` / `SES_ACCESS_KEY_ID` / `SES_SECRET_ACCESS_KEY` / `SES_ENDPOINT` | `SES_REGION` と `SES_ENDPOINT` は変数、鍵は Secret | `ses` のとき | Amazon SES（`ses:SendEmail` だけの IAM ユーザー）。`SES_ENDPOINT` は省略可（VPC エンドポイント等） |
 | `DB_MIGRATION_HOSTS` | 変数 | 自前の PostgreSQL なら | セットアップ・アップデートの画面から接続文字列でマイグレーションを当ててよいホスト（カンマ区切り、完全一致）。Supabase のホストと localhost は書かなくても使える（docs/self-hosted-db.md） |
-| `CLIENT_IP_HEADER` | 変数 | 任意 | 会員のログインの回数の制限に使う IP のヘッダー。既定は `cf-connecting-ip`（Cloudflare）。Node でリバースプロキシの後ろに置くなら `x-forwarded-for` |
+| `CLIENT_IP_HEADER` | 変数 | 任意 | 回数の制限（会員のログイン・在庫の予約・運営者のログイン）に使う IP のヘッダー。Cloudflare の既定は `cf-connecting-ip`。Node の既定は `x-forwarded-for`（リバースプロキシの後ろに置く前提） |
+| `TRUSTED_PROXY_HOPS` | 変数 | 任意 | `x-forwarded-for` のとき、信頼するプロキシの段数（既定 1 = 直前のプロキシが足した値を使う）。先頭の値は依頼側が自由に書けるので使わない。前段に CDN とリバースプロキシの 2 段があるなら 2 |
 | `LINE_CHANNEL_ACCESS_TOKEN` | Secret | LINE 通知を使うなら | LINE Developers → Messaging API 設定 → チャネルアクセストークン |
 
 - 値が空、または `REPLACE_ME` のままの項目は「未設定」として扱われます（`.dev.vars.example` の雛形をそのまま配置しても壊れません）。

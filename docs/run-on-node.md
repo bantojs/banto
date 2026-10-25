@@ -21,7 +21,9 @@ Workers の `[vars]` と Secret に相当するものを、すべて環境変数
 | 変数 | 必須 | 内容 |
 | --- | --- | --- |
 | `PORT` / `HOST` | - | 既定 8787 / 0.0.0.0 |
-| `PUBLIC_BASE_URL` | 必須（無ければ起動しない） | 外から見た URL（例 `https://shop.example`）。Stripe のコールバック・メールのリンク・OAuth の戻り先の起点。リクエストの Host ヘッダーは使いません（偽装されると会員のログインのリンクを攻撃者のサイトに届けられるため） |
+| `PUBLIC_BASE_URL` | 必須（無ければ起動しない） | 外から見た URL（例 `https://shop.example`）。Stripe のコールバック・メールのリンク・OAuth の戻り先の起点。リクエストの Host ヘッダーは使いません（偽装されると会員のログインのリンクを攻撃者のサイトに届けられるため）。`https://` なら、TLS を終端するプロキシの後ろでも Cookie に `Secure`、応答に HSTS が付き、フォームの CSRF 検査も https の Origin を自分とみなします |
+| `CLIENT_IP_HEADER` | - | 回数の制限に使う IP のヘッダー。Node の既定は `x-forwarded-for`（前段のプロキシが足す値）。**プロキシを置かずに直接公開する構成では、依頼側がこのヘッダーを書けるので、IP ごとの上限が効きません**。必ずリバースプロキシの後ろに置いてください |
+| `TRUSTED_PROXY_HOPS` | - | `x-forwarded-for` の末尾から何段目を利用者の IP とみなすか（既定 1）。CDN + リバースプロキシの 2 段なら 2 |
 | `MEDIA_BASE_URL` | - | 画像の公開 URL の起点。省略時は `PUBLIC_BASE_URL/media`（アプリが配信） |
 | `SUPABASE_URL` `SUPABASE_ANON_KEY` `SUPABASE_SERVICE_ROLE_KEY` `SESSION_SECRET` | 必須 | docs/setup.md と同じ |
 | `STRIPE_CLIENT_ID` `STRIPE_SECRET_KEY` `STRIPE_WEBHOOK_SECRET` | 決済時 | 同上 |

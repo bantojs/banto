@@ -27,6 +27,9 @@ export class EnvConfig implements ConfigAdapter {
   }
 }
 
+/** プロセス内のキャッシュの行数の上限（未知の Host ごとの否定キャッシュなどで際限なく増えないように） */
+export const MEMORY_CACHE_MAX_ENTRIES = 5000;
+
 export class MemoryCache implements CacheAdapter {
   private readonly memory = new Map<string, { value: unknown; expires: number }>();
   async get<T>(key: string) {
@@ -36,6 +39,16 @@ export class MemoryCache implements CacheAdapter {
     return null;
   }
   async set<T>(key: string, value: T, ttlSeconds: number) {
+    if (this.memory.size >= MEMORY_CACHE_MAX_ENTRIES && !this.memory.has(key)) {
+      const now = Date.now();
+      for (const [k, v] of this.memory) if (v.expires <= now) this.memory.delete(k);
+      // 期限切れを消しても足りなければ古いものから（Map は挿入順）
+      while (this.memory.size >= MEMORY_CACHE_MAX_ENTRIES) {
+        const oldest = this.memory.keys().next().value;
+        if (oldest === undefined) break;
+        this.memory.delete(oldest);
+      }
+    }
     this.memory.set(key, { value, expires: Date.now() + ttlSeconds * 1000 });
   }
   async delete(key: string) {
@@ -90,13 +103,21 @@ export class IntervalScheduler implements SchedulerAdapter {
   register(name: string, job: ScheduledJob) {
     this.jobs.set(name, job);
   }
+  private running = false;
+  /** 前の回がまだ走っていれば飛ばす（間隔より長引いたときに重ならない） */
   async runAll() {
-    for (const [name, job] of this.jobs) {
-      try {
-        await job();
-      } catch (e) {
-        console.error(`[banto] job ${name} failed:`, e);
+    if (this.running) return;
+    this.running = true;
+    try {
+      for (const [name, job] of this.jobs) {
+        try {
+          await job();
+        } catch (e) {
+          console.error(`[banto] job ${name} failed:`, e);
+        }
       }
+    } finally {
+      this.running = false;
     }
   }
   start(intervalSeconds: number) {

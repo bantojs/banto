@@ -18,8 +18,7 @@ export type Ctx = Context<AppEnv>;
 export const csrfGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE" || c.req.method === "PATCH") {
     const origin = c.req.header("origin");
-    const self = new URL(c.req.url).origin;
-    if (origin !== undefined && origin !== self) {
+    if (origin !== undefined && !originIsSelf(c, origin)) {
       return c.text(t("error.csrf"), 403);
     }
     const site = c.req.header("sec-fetch-site");
@@ -29,6 +28,29 @@ export const csrfGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
   }
   await next();
 };
+
+/**
+ * Origin が自分か。リクエストの URL のオリジンと同じか、ホストが同じ（TLS を終端するリバースプロキシの後ろでは
+ * ブラウザの Origin は https、サーバーが見る URL は http になる）か、PUBLIC_BASE_URL のオリジンと同じなら自分
+ */
+function originIsSelf(c: Ctx, origin: string): boolean {
+  const self = new URL(c.req.url);
+  if (origin === self.origin) return true;
+  let o: URL;
+  try {
+    o = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (o.host === self.host && (o.protocol === "https:" || o.protocol === "http:")) return true;
+  const configured = c.get("adapters").config.get("PUBLIC_BASE_URL");
+  if (!configured) return false;
+  try {
+    return new URL(configured).origin === o.origin;
+  } catch {
+    return false;
+  }
+}
 
 export async function formFields(c: Ctx): Promise<Record<string, string>> {
   const body = await c.req.parseBody();
@@ -48,11 +70,18 @@ export function param(c: Ctx, name: string): string {
  * 取れなければ null（IP ごとの上限は掛けず、メールアドレスごとの上限だけになる）
  */
 export function clientIp(c: Ctx): string | null {
-  const name = (c.get("adapters").config.get("CLIENT_IP_HEADER") || "cf-connecting-ip").toLowerCase();
+  const cfg = c.get("adapters").config;
+  const name = (cfg.get("CLIENT_IP_HEADER") || "cf-connecting-ip").toLowerCase();
   const v = c.req.header(name);
   if (!v) return null;
-  const first = v.split(",")[0]!.trim();
-  return first.length > 0 && first.length <= 64 ? first : null;
+  const parts = v.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (parts.length === 0) return null;
+  // X-Forwarded-For は中継を通るたびに末尾に足される。先頭は依頼側が自由に書けるので、信頼するプロキシの段数ぶん末尾から数える
+  // （TRUSTED_PROXY_HOPS、既定 1 = 直前のプロキシが足した値）。Cloudflare の CF-Connecting-IP は常に 1 つ
+  const hopsRaw = cfg.get("TRUSTED_PROXY_HOPS");
+  const hops = hopsRaw && /^[1-9][0-9]?$/.test(hopsRaw) ? Number(hopsRaw) : 1;
+  const pick = parts[Math.max(0, parts.length - hops)]!;
+  return pick.length <= 64 ? pick : null;
 }
 
 /** 信頼する中継元が購入者の IP を申告するヘッダー（0033、docs/headless.md「サーバー側で中継するとき」） */
@@ -124,8 +153,11 @@ export async function afterResponse(c: Ctx, work: Promise<unknown>): Promise<voi
   else await work;
 }
 
+/** https で届いたか。TLS を終端するリバースプロキシの後ろ（Node）では URL が http になるので、PUBLIC_BASE_URL が https ならそれに従う */
 export function isSecureRequest(c: Ctx): boolean {
-  return new URL(c.req.url).protocol === "https:";
+  if (new URL(c.req.url).protocol === "https:") return true;
+  const configured = c.get("adapters").config.get("PUBLIC_BASE_URL");
+  return Boolean(configured && /^https:/i.test(configured));
 }
 
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;

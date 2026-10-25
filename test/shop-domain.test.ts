@@ -95,6 +95,23 @@ describe("独自ドメインのストアフロント", () => {
     expect((await bare.get("/admin/login")).status).toBe(404);
   });
 
+  it("Host の末尾のドット・大文字でも同じショップのドメイン（/admin は出ない）。運営者と連携の入口（/mcp /api/v1 /webhooks）はショップのドメインでは 404", async () => {
+    const { app, b } = setup();
+    for (const host of [`https://${DOMAIN}.`, `https://${DOMAIN.toUpperCase()}`]) {
+      const dotted = new Browser(app, host);
+      expect((await dotted.get("/admin/login")).status, host).toBe(302);
+      expect((await dotted.get("/p/tee")).status, host).toBe(200);
+    }
+    expect((await b.get("/mcp")).status).toBe(404);
+    expect((await app.request(`${SHOP_URL}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(404);
+    expect((await b.get("/api/v1/openapi.json")).status).toBe(404);
+    expect((await app.request(`${SHOP_URL}/webhooks/stripe`, { method: "POST", body: "{}" })).status).toBe(404);
+    // 公開 API と画像はショップのドメインでも使える
+    expect((await b.get("/api/shops/my-shop/products")).status).toBe(200);
+    // Banto 自身の URL では今までどおり
+    expect((await app.request(`${BASE}/api/v1/openapi.json`)).status).toBe(200);
+  });
+
   it("Banto の URL でショップを開くと、同じページのドメインへ転送する（GET だけ）", async () => {
     const { base } = setup();
     const top = await base.get("/my-shop");

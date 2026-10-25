@@ -1,3 +1,4 @@
+import { isSecureRequest } from "./routes/common";
 import { Hono } from "hono";
 import type { ShopEvent } from "./storefront/events";
 import type { ShopAccess } from "./routes/admin/access";
@@ -81,7 +82,7 @@ export function createApp(
       h.set("X-Frame-Options", "DENY");
       if (!h.has("Content-Security-Policy")) h.set("Content-Security-Policy", "frame-ancestors 'none'");
     }
-    if (c.req.url.startsWith("https:") && !h.has("Strict-Transport-Security")) h.set("Strict-Transport-Security", "max-age=31536000");
+    if (isSecureRequest(c) && !h.has("Strict-Transport-Security")) h.set("Strict-Transport-Security", "max-age=31536000");
   });
 
   // ショップごとの独自ドメイン（0015）: そのドメインへのアクセスをストアフロントのルートへ

@@ -49,6 +49,51 @@ describe("外部の応答の本文", () => {
   });
 });
 
+describe("TLS を終端するリバースプロキシの後ろ（Node）", () => {
+  it("URL が http でも、Origin が同じホストの https か PUBLIC_BASE_URL のオリジンなら CSRF では拒まない。別のオリジンは 403", async () => {
+    const sb = new FakeSupabase();
+    sb.addUser("owner@example.com", "password-123", { owner: true });
+    const app = appWith(sb, { PUBLIC_BASE_URL: "https://shop.example" });
+    const post = (url: string, origin: string) =>
+      app.request(url, { method: "POST", headers: { origin, "content-type": "application/x-www-form-urlencoded" }, body: "email=owner%40example.com&password=password-123" });
+    expect((await post("http://shop.example/admin/login", "https://shop.example")).status).not.toBe(403);
+    expect((await post("http://banto:8787/admin/login", "https://shop.example")).status).not.toBe(403);
+    expect((await post("http://shop.example/admin/login", "https://evil.example")).status).toBe(403);
+    // Secure / HSTS は PUBLIC_BASE_URL が https なら付く
+    const res = await post("http://shop.example/admin/login", "https://shop.example");
+    expect(res.headers.get("strict-transport-security")).toContain("max-age");
+    expect(res.headers.get("set-cookie") ?? "").toMatch(/Secure/);
+  });
+});
+
+describe("Node のアダプタ", () => {
+  it("MemoryCache は行数に上限がある。IntervalScheduler は前の回が走っていれば飛ばす", async () => {
+    const { IntervalScheduler, MEMORY_CACHE_MAX_ENTRIES, MemoryCache } = await import("../src/adapters/node");
+    const cache = new MemoryCache();
+    for (let i = 0; i < MEMORY_CACHE_MAX_ENTRIES + 50; i++) await cache.set(`domain:host${i}.example`, null, 60);
+    expect(await cache.get("domain:host0.example")).toBeNull();
+    expect(await cache.get(`domain:host${MEMORY_CACHE_MAX_ENTRIES + 49}.example`)).toBeNull(); // 値が null（否定キャッシュ）なので get は null。行数だけ確かめる
+    await cache.set("k", "v", 60);
+    expect(await cache.get("k")).toBe("v");
+
+    const s = new IntervalScheduler();
+    let runs = 0;
+    let release: () => void = () => undefined;
+    s.register("slow", () => new Promise<void>((r) => { runs++; release = r; }));
+    const first = s.runAll();
+    await new Promise((r) => setTimeout(r, 10));
+    await s.runAll(); // 重ならない（前の回が終わるまで何もしない）
+    expect(runs).toBe(1);
+    release();
+    await first;
+    const second = s.runAll();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(runs).toBe(2);
+    release();
+    await second;
+  });
+});
+
 describe("AI 用 API の入口", () => {
   it("openapi.json は完全一致のパスだけ認証なし。接尾辞が同じ別のパスは 401", async () => {
     const sb = new FakeSupabase();
