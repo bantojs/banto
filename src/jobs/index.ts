@@ -43,12 +43,7 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     await db.releaseExpiredReservations();
   });
 
-  adapters.scheduler.register("deliver_hooks", async () => {
-    const sessionSecret = await resolveSessionSecret(cfg);
-    if (!sessionSecret) return;
-    await deliverPendingHooks({ db, sessionSecret, fetch: doFetch, config: cfg, socket: adapters.socket });
-  });
-
+  // 法務上の処理（個人情報のマスキング）は hooks の配信より前に走らせる（配信が通信の上限に当たって同じ回の後続を止めても影響しないように。0056）
   adapters.scheduler.register("mask_shipped_orders", async () => {
     const raw = cfg.get("MASK_ORDERS_AFTER_DAYS");
     const days = raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS;
@@ -58,6 +53,13 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     if (anonKey && (await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, AUDIT_LOG_MIGRATION))) {
       await db.pruneAuditLog(auditKeepDays(cfg.get("AUDIT_LOG_KEEP_DAYS")));
     }
+  });
+
+  // hooks の配信。1 回に取り出す数は DB が Workers のプランで決める（claim_hook_deliveries、0056）
+  adapters.scheduler.register("deliver_hooks", async () => {
+    const sessionSecret = await resolveSessionSecret(cfg);
+    if (!sessionSecret) return;
+    await deliverPendingHooks({ db, sessionSecret, fetch: doFetch, config: cfg, socket: adapters.socket });
   });
 
   // 期限切れのログインのコードを消す（0012）。終わった会員のセッション（0045）とパスキーの challenge（0046）も消す（適用されるまでは呼ばない）

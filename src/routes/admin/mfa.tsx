@@ -82,7 +82,8 @@ mfa.post("/mfa", async (c: AdminContext) => {
   const auth = authClient(c);
   if (!session || !auth) return c.redirect("/admin/login");
   const code = ((await formFields(c)).code ?? "").trim();
-  const guard = await adminLoginGuard(c, session.email ?? session.user_id);
+  // 6 桁の失敗はパスワードの失敗とは別に数える（鍵 mfa:<利用者 id>）。パスワードの再ログインで消えない（0056）
+  const guard = await adminLoginGuard(c, `mfa:${session.user_id}`);
   if (!guard.allowed) return c.redirect("/admin/mfa?error=locked");
   if (!CODE_RE.test(code)) return c.redirect("/admin/mfa?error=code");
   try {
@@ -90,6 +91,8 @@ mfa.post("/mfa", async (c: AdminContext) => {
     if (!factor) return c.redirect("/admin/mfa/setup");
     const next = toSessionData(await auth.verifyTotp(session.access_token, factor.id, code));
     await guard.record(true);
+    // 6 桁まで通ったので、パスワードの側の失敗も消す（login.tsx は二段階認証の人の成功を記録しない）
+    if (session.email) await (await adminLoginGuard(c, session.email)).record(true);
     if ((await finish(c, next)) !== "ok") return c.redirect("/admin/login?error=not_owner");
     return c.redirect("/admin");
   } catch (e) {

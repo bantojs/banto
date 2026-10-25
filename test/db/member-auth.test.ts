@@ -57,10 +57,13 @@ describe.skipIf(!dbAvailable)("会員のログイン（0012_member_auth）", () 
     expect(await verify(a.shopId, c2.challenge_id, "444444")).toMatchObject({ ok: true }); // 届いたばかりの前のコードは生きている
     expect(await verify(a.shopId, c3.challenge_id, "555555")).toMatchObject({ ok: true });
     expect(await verify(a.shopId, c4.challenge_id, "666666")).toMatchObject({ ok: true });
-    // 照合の失敗はアドレスごとに 1 日 50 回まで（有効なチャレンジが 3 つでも総当たりの回数は増えない）
-    await getPool().query("insert into member_login_challenges (shop_id, email, code_hash, link_hash, attempts, created_at, expires_at, consumed_at) select $1, 'brute@example.com', $2, $2, 5, now() - interval '3 hours', now(), now() from generate_series(1, 10)", [a.shopId, h("x")]);
+    // 照合の失敗は「同じ IP が出したチャレンジ」ごとに 1 日 50 回まで（有効なチャレンジが 3 つでも総当たりの回数は増えない）。
+    // 第三者の失敗は本人の（別の IP の）チャレンジを止めない（0056）
+    await getPool().query("insert into member_login_challenges (shop_id, email, code_hash, link_hash, attempts, created_at, expires_at, consumed_at, ip_hash) select $1, 'brute@example.com', $2, $2, 6, now() - interval '3 hours', now(), now(), $3 from generate_series(1, 9)", [a.shopId, h("x"), h("198.51.100.5")]);
     const c5 = await start(a.shopId, "brute@example.com", "777777", { ip: "198.51.100.5" });
     expect(await verify(a.shopId, c5.challenge_id, "777777")).toEqual({ ok: false, reason: "expired" });
+    const c6 = await start(a.shopId, "brute@example.com", "888888", { ip: "198.51.100.6" });
+    expect(await verify(a.shopId, c6.challenge_id, "888888")).toMatchObject({ ok: true });
 
     const late = await start(a.shopId, "late@example.com", "555555");
     await getPool().query("update member_login_challenges set expires_at = now() - interval '1 second' where id = $1", [late.challenge_id]);
