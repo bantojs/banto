@@ -61,12 +61,13 @@ login.post("/login", async (c: AdminContext) => {
   try {
     const signedIn = await auth.signInWithPassword(email, password);
     const session = toSessionData(signedIn);
-    await guard.record(true);
-    // 二段階認証を登録している人（0054）: パスワードだけでは入れない。6 桁の画面へ（このあいだ DB も aal1 の JWT を止める）
+    // 二段階認証を登録している人（0054）: パスワードだけでは入れない。6 桁の画面へ（このあいだ DB も aal1 の JWT を止める）。
+    // 成功の記録（失敗の数を消す）は 6 桁が通ってから（パスワードを知る人が再ログインで 6 桁の失敗の数を消せないように）
     if (verifiedTotp(signedIn.user)) {
       await setSessionCookie(c, { ...session, mfa: "challenge" });
       return c.redirect("/admin/mfa");
     }
+    await guard.record(true);
     let state: Awaited<ReturnType<typeof ensureOwnerRow>>;
     try {
       state = await ensureOwnerRow(c, session);

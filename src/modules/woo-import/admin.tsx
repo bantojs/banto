@@ -51,7 +51,7 @@ export const CLIENT_PRELUDE = 'var __name = __name || function (t, v) { try { Ob
 const MAX_IMAGES_PER_REQUEST = 20;
 
 /** モジュールが OFF のショップでは何も出さない（存在しないのと同じ） */
-async function scope(c: AdminContext, perm: ShopPerm = "catalog"): Promise<ShopRow | null> {
+async function scope(c: AdminContext, perm: ShopPerm | "admin" = "catalog"): Promise<ShopRow | null> {
   const shop = await loadShop(c, param(c, "shopId"), perm);
   if (!shop || !moduleEnabled(shop.settings, "woo_import")) return null;
   return shop;
@@ -810,7 +810,8 @@ wooImport.post("/orders", requireOwner, async (c: AdminContext) => {
  * 形式の確かめと保存は import_member_passwords（0013）。ハッシュはログに出さない
  */
 wooImport.post("/customers/passwords", requireOwner, async (c: AdminContext) => {
-  const shop = await scope(c, "customers");
+  // 会員のログインの入口を足す操作なので owner / admin だけ（customers の項目では呼べない。0055 と member_set_email（0031）と同じ線）
+  const shop = await scope(c, "admin");
   if (!shop) return c.notFound();
   const settings = shop.settings ?? {};
   if (settings["members_enabled"] !== true || settings["members_password"] !== true) return c.json({ error: "password_disabled" }, 409);

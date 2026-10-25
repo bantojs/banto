@@ -62,7 +62,11 @@ function mapRpcError(e: unknown): never {
     if (/duplicate key/.test(e.dbMessage)) throw new ApiError("conflict", "a record with the same slug or code already exists", 409);
     if (/violates foreign key constraint/.test(e.dbMessage)) throw new ApiError("conflict", "the record is referenced by orders and cannot be deleted", 409);
     if (/violates check constraint "shops_publish_requires_legal"/.test(e.dbMessage)) throw new ApiError("invalid", "legal_notice, privacy_policy and return_policy are required before publishing", 400);
-    if (/violates check constraint|invalid_|null value in column|invalid input syntax/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_[a-z_]+).*$/s, "$1"), 400);
+    if (/violates check constraint|invalid_|null value in column|invalid input syntax/.test(e.dbMessage)) {
+      // DB の内部名（制約名・列名）は外に出さない。invalid_xxx の印だけ返す
+      const m = /(invalid_[a-z_]+)/.exec(e.dbMessage);
+      throw new ApiError("invalid", m ? m[1]! : "invalid request", 400);
+    }
     throw new ApiError("upstream", "database error", 502);
   }
   throw e;

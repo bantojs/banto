@@ -60,7 +60,7 @@ describe.skipIf(!dbAvailable)("セキュリティの締め直し（0028_security
       const h = await issue(staff, ["shop:read"]);
       expect(await rpc("api_has_scope", [h, "shop:read"])).toBe(true);
       // 自分の JWT で PostgREST に直接 insert しても同じ（トリガー）。既存のトークンのスコープも広げられない
-      expect(await expectDbError(() => asUser(staff, (c) => c.query("update api_tokens set scopes = '{orders:pii}' where token_hash = $1", [h])))).toMatch(/scope_not_permitted/);
+      expect(await expectDbError(() => asUser(staff, (c) => c.query("update api_tokens set scopes = '{orders:pii}' where token_hash = $1", [h])))).toMatch(/scope_not_permitted|token_immutable/);
     });
 
     it("項目を外すと、そのスコープだけ使えなくなる（他のスコープは残る）。owner / admin は全部出せる", async () => {

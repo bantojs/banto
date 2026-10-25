@@ -2,6 +2,8 @@
  * 外部プラグインのマニフェスト（docs/hooks.md）。登録 URL に GET して取得する。
  * 取得できなくても登録は可能（イベントは手動で選ぶ）。シークレット型の設定項目は受け付けない。
  */
+import { readTextCapped } from "../util/read-capped";
+
 export interface ManifestSetting {
   key: string;
   label: string;
@@ -68,9 +70,10 @@ export async function fetchManifest(url: string, doFetch: typeof fetch, timeoutM
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await doFetch(url, { headers: { Accept: "application/json", "User-Agent": "banto-hooks" }, signal: controller.signal });
+    // リダイレクトは追わない（登録時に確かめた行き先以外へ出ない）。本文は 64KB まで
+    const res = await doFetch(url, { headers: { Accept: "application/json", "User-Agent": "banto-hooks" }, signal: controller.signal, redirect: "manual" });
     if (!res.ok) return null;
-    return parseManifest(await res.json());
+    return parseManifest(JSON.parse(await readTextCapped(res, 64 * 1024)));
   } catch {
     return null;
   } finally {
@@ -85,7 +88,8 @@ export function settingsFromForm(manifest: PluginManifest | null, form: Record<s
     const raw = form[`setting_${s.key}`];
     if (s.type === "boolean") out[s.key] = raw === "on";
     else if (s.type === "select") out[s.key] = s.options?.some((o) => o.value === raw) ? (raw as string) : (s.options?.[0]?.value ?? "");
-    else out[s.key] = (raw ?? "").slice(0, 1000);
+    // 制御文字（改行を含む）は落とす。値はメールの送信元などに使われる（2026-10-25 の監査）
+    else out[s.key] = (raw ?? "").replace(/[\x00-\x1f\x7f]/g, "").slice(0, 1000);
   }
   return out;
 }

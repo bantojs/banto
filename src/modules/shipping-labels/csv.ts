@@ -6,6 +6,7 @@
  *   配達日は YYYYMMDD、配達指定時間帯は 00（指定なし）/ 01 / 14 / 16 / 18 / 19（佐川の区分値の資料で確認。18・19 は 6 時間帯の契約）。
  * 文字コード（Shift_JIS）への変換はブラウザ側（client.ts）。ここでは文字列（CRLF 区切り）を返す。
  */
+import { csvCell } from "../../util/csv";
 import type { DeliverySlot } from "../delivery-time";
 
 export const CARRIERS = ["yamato", "sagawa"] as const;
@@ -82,9 +83,9 @@ export function sjisWidth(s: string): number {
   return n;
 }
 
+/** 改行は空白に（運送会社の取り込みは 1 行 1 件）。式の無害化と引用は src/util/csv.ts */
 function cell(v: string): string {
-  const s = v.replace(/[\r\n]+/g, " ");
-  return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return csvCell(v.replace(/[\r\n]+/g, " "));
 }
 
 export interface LabelWarning {

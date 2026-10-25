@@ -10,7 +10,7 @@ import { enabledProviders, loginDeps, memberSessionsReady, membersEnabled, start
 import { storefrontData } from "../storefront/domain";
 import { isProvider } from "../../modules/social-login/providers";
 import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
-import { sendPasswordLoginNotice } from "../../members/notice";
+import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
@@ -327,10 +327,12 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   if (!deps) return c.json({ error: "not_configured" }, 503);
   const password = str((await body(c))["password"]);
   if (password.length < 8 || password.length > 200) return c.json({ error: "weak_password" }, 400);
-  const epoch = await deps.db.memberSetPassword(s.shop.id, s.member.id, s.member.epoch, password);
-  if (epoch === null) return c.json({ error: "invalid_member_token" }, 401);
-  // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のセッションで続ける
-  const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, epoch);
+  // 0057: ログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth。連携側はログインし直させる）
+  const r = await deps.db.memberSetPassword(s.shop.id, s.member.id, s.member.epoch, password, s.member.sid);
+  if (!r.ok) return r.reason === "reauth" ? c.json({ error: "reauth" }, 403) : c.json({ error: "invalid_member_token" }, 401);
+  // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
+  if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+  const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });
 

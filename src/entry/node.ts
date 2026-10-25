@@ -15,6 +15,10 @@ if (!/^https?:\/\/[^/\s]+/.test(process.env["PUBLIC_BASE_URL"] ?? "")) {
   process.exit(1);
 }
 
+// Node はリバースプロキシの後ろに置く前提（docs/run-on-node.md）。利用者の IP は X-Forwarded-For の末尾（直前のプロキシが足した値）から取る。
+// Cloudflare の CF-Connecting-IP を既定のままにすると、依頼側が自由に書けるヘッダーを信じてしまう（回数の制限が無効になる）
+process.env["CLIENT_IP_HEADER"] ??= "x-forwarded-for";
+
 const adapters = createNodeAdapters();
 const app = createApp(() => adapters);
 

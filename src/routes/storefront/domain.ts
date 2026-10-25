@@ -21,8 +21,18 @@ import { SLUG_RE, type Ctx } from "../common";
  */
 
 /** ショップのドメインでもスラッグを足さないパス（Banto 全体のもの） */
-const PASSTHROUGH = ["/api", "/mcp", "/webhooks", "/media", "/health", "/_oauth"];
+const PASSTHROUGH = ["/api", "/media", "/health", "/_oauth"];
 const PASSTHROUGH_FILES = new Set(["/robots.txt", "/sitemap.xml"]);
+/**
+ * Banto 自身のホストでだけ出すパス（運営者と連携の入口）。ショップのドメインでは 404。
+ * 店主がドメインの DNS を握る構成で、AI 用トークンや決済事業者の Webhook が店主のサーバーへ向かないように（2026-10-25 の監査）
+ */
+const PLATFORM_ONLY = ["/mcp", "/api/v1", "/webhooks"];
+
+/** Host を比べる形にそろえる（小文字・末尾のドットを落とす。`shop.example.jp.` も同じショップ） */
+export function normalizeHost(host: string): string {
+  return host.toLowerCase().replace(/\.+$/, "");
+}
 
 export function storefrontData(c: Ctx): StorefrontData | null {
   const cfg = c.get("adapters").config;
@@ -38,7 +48,7 @@ function isPlatformHost(c: Ctx, host: string): boolean {
   const configured = c.get("adapters").config.get("PUBLIC_BASE_URL");
   if (!configured) return false;
   try {
-    return new URL(configured).hostname === host;
+    return normalizeHost(new URL(configured).hostname) === host;
   } catch {
     return false;
   }
@@ -48,13 +58,17 @@ function passthrough(path: string): boolean {
   return PASSTHROUGH_FILES.has(path) || PASSTHROUGH.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
+function platformOnly(path: string): boolean {
+  return PLATFORM_ONLY.some((p) => path === p || path.startsWith(`${p}/`));
+}
+
 function isAdminPath(path: string): boolean {
   return path === "/admin" || path.startsWith("/admin/");
 }
 
 /** このリクエストのホストがショップの独自ドメインなら、そのショップ（Banto 自身の URL なら DB を引かない） */
 export async function hostShop(c: Ctx): Promise<PublicShop | null> {
-  const host = new URL(c.req.url).hostname;
+  const host = normalizeHost(new URL(c.req.url).hostname);
   if (isPlatformHost(c, host)) return null;
   const sf = storefrontData(c);
   return sf ? sf.shopByDomain(host) : null;
@@ -62,7 +76,7 @@ export async function hostShop(c: Ctx): Promise<PublicShop | null> {
 
 /** 今のリクエストがショップの独自ドメインの上か */
 export function onShopDomain(c: Ctx, shop: { domain?: string | null }): boolean {
-  return Boolean(shop.domain) && new URL(c.req.url).hostname === shop.domain;
+  return Boolean(shop.domain) && normalizeHost(new URL(c.req.url).hostname) === shop.domain;
 }
 
 /**
@@ -83,6 +97,10 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
   return async (c, next) => {
     if (rewritten.has(c.req.raw)) return next();
     const url = new URL(c.req.url);
+    if (platformOnly(url.pathname)) {
+      // 運営者と連携の入口はショップのドメインでは出さない
+      return (await hostShop(c)) ? c.notFound() : next();
+    }
     if (passthrough(url.pathname)) return next();
     const shop = await hostShop(c);
     if (!shop) return next();

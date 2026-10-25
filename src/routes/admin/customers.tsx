@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { csvCell } from "../../util/csv";
 import type { AppEnv } from "../../app";
 import { t } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -6,6 +7,7 @@ import { AdminLayout, PageHead } from "./layout";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { can } from "./access";
 import { DbError } from "../../db/client";
 import { tf } from "../../i18n";
 import { createMailer, sendMail } from "../../mail/send";
@@ -61,10 +63,6 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
 
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");
 
-function csvCell(x: unknown): string {
-  const s = x === null || x === undefined ? "" : String(x);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -220,7 +218,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                           </button>
                         </form>
                       ) : null}
-                      {passkeys ? (
+                      {passkeys && can(c.get("shopAccess"), "admin") ? (
                         <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/passkeys/reset`} onsubmit={`return confirm(${JSON.stringify(t("passkey.admin_reset_confirm"))})`}>
                           <button type="submit" class="secondary small">
                             {t("passkey.admin_reset")}
@@ -335,11 +333,11 @@ customers.post("/:shopId/customers/:customerId/email", requireOwner, async (c: A
   return c.redirect(`/admin/shops/${shopId}/customers?flash=email_changed`);
 });
 
-/** 会員のパスキーを全部消す（0046 の member_passkeys_reset。会員の項目 customers が要る） */
+/** 会員のパスキーを全部消す（0046 の member_passkeys_reset。0055 からは owner / admin だけ。メールアドレスの変更と同じ線） */
 customers.post("/:shopId/customers/:customerId/passkeys/reset", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
-  const shop = await loadShop(c, shopId, "customers");
+  const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   if (!(await migrated({ db, cache: c.get("adapters").cache }, PASSKEY_MIGRATION))) return c.redirect(`/admin/shops/${shopId}/customers`);
   await db.rpc("member_passkeys_reset", { p_shop_id: shopId, p_customer_id: param(c, "customerId") });

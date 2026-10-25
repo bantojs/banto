@@ -58,6 +58,8 @@ Banto 自身も管理者ログインの失敗を数えます（0030: 同じメ�
 **強制はデータベースで行います。** パスワードを知っている人は、管理画面を通らずに Supabase へ直接ログインして鍵（JWT）を受け取れます。そこで Banto は PostgREST の「リクエストの前の関数」（`pgrst.db_pre_request = public.banto_pre_request`）で、二段階目を済ませていない運営者の鍵をテーブルにも関数にも通しません。お客様の画面（anon）と Worker の特権の経路（service_role）は関係ありません。
 自前の PostgreSQL（docs/self-hosted-db.md）でも、PostgREST が DB の設定を読む既定（`PGRST_DB_CONFIG=true`）のままなら同じように効きます。
 
+**6 桁の総当たりについて。** Banto は 6 桁の失敗を、パスワードの失敗とは別に「同じ IP から 15 分に 5 回・同じ利用者で 15 分に 5 回」まで数えて止めます（0056。パスワードで入り直しても消えません）。Supabase 側（GoTrue）の `/factors/verify` にも回数の制限がありますが、それは **Worker の出口の IP** にまとめて掛かります（攻撃者だけでなく、同じ Worker を使う正規の運営者も巻き込みます）。二段階認証は「パスワードが漏れたときの最後の鍵」なので、パスワードそのものを長く・使い回さないことが前提です。
+
 ## 4. 管理画面に二重の鍵をかける（Cloudflare Access、任意）
 
 Cloudflare Zero Trust の **Access** は 50 ユーザーまで無料で、`/admin` を開く前にメールのワンタイムコードや Google ログインを要求できます。

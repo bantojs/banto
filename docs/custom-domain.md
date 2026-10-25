@@ -48,7 +48,7 @@ Workers の無料枠（1 日 10 万リクエスト）を画像で消費しなく
    - `https://shop-a.example.jp/` がそのショップのトップ、商品は `https://shop-a.example.jp/p/<商品>` になります。
    - これまでの URL（`https://<Banto の URL>/<スラッグ>/…`）は、同じページのドメイン側へ転送されます。
    - API（`/api`）・Webhook（`/webhooks`）は、Banto の URL のままで使えます。
-   - 管理画面（`/admin`）は **Banto の URL だけ** で開きます。ショップのドメインで `/admin` を開くと Banto の URL へ転送されます（`PUBLIC_BASE_URL` が未設定なら 404）。運営者のログイン画面を店主のドメインに置かないためです。
+   - 管理画面（`/admin`）は **Banto の URL だけ** で開きます。ショップのドメインで `/admin` を開くと Banto の URL へ転送されます（`PUBLIC_BASE_URL` が未設定なら 404）。運営者のログイン画面を店主のドメインに置かないためです。AI からの操作（`/mcp`・`/api/v1`）と決済事業者の Webhook（`/webhooks`）も Banto の URL だけです（ショップのドメインでは 404。AI クライアントの接続先と Webhook の URL には Banto の URL を使ってください）。公開 API（`/api/shops/...`）と画像はどちらでも使えます。
 4. **LINE・Google でログイン** を使っているなら、それぞれの設定画面に出るコールバック URL（`https://shop-a.example.jp/_oauth/line/callback` など）を、LINE Developers・Google Cloud のコンソールに登録し直します。Google の「OAuth 同意画面」の承認済みドメインにも、ショップのドメインを足してください。
 5. **ヘッドレス連携** で決済後の戻り先を許可リストにしているなら、変える必要はありません（連携側のサイトの設定です）。
 

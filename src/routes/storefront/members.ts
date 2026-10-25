@@ -46,7 +46,7 @@ import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
 import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
-import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendPasswordLoginNotice } from "../../members/notice";
+import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
@@ -222,6 +222,7 @@ function privatePage(c: Ctx): void {
 const ACCOUNT_ERRORS: Record<string, MessageKey> = {
   weak: "member.password_weak",
   oauth: "member.oauth_failed",
+  reauth: "member.reauth_required",
   already_linked: "member.oauth_already_linked",
   other_linked: "member.oauth_other_linked",
   last_method: "member.oauth_last_method",
@@ -232,6 +233,7 @@ const LOGIN_ERRORS: Record<string, MessageKey> = {
   password: "member.password_invalid",
   locked: "member.password_locked",
   oauth: "member.oauth_failed",
+  reauth: "member.reauth_required",
   invalid_email: "member.invalid_email",
   unavailable: "member.unavailable",
   mail_failed: "member.mail_failed",
@@ -827,16 +829,24 @@ members.post("/:shop/account/password", async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   const password = (await formFields(c)).password ?? "";
   if (password.length < 8 || password.length > 200) return c.redirect(`${s.shopPath}/account?error=weak`);
-  const epoch = await db.memberSetPassword(s.shop.id, s.session.cid, s.session.ep, password);
-  if (epoch === null) {
+  // 0057: ログインしてから 15 分以内のセッションだけ（盗まれた Cookie からパスワードを足されないように）。過ぎていれば入り直す
+  const r = await db.memberSetPassword(s.shop.id, s.session.cid, s.session.ep, password, s.session.sid);
+  if (!r.ok) {
+    // 15 分を過ぎている: この端末のセッションを終えて入り直してもらう（入り直した直後のセッションなら設定できる）
+    await writeSession(c, s, null);
+    return c.redirect(`${s.shopPath}/account/login${r.reason === "reauth" ? "?error=reauth" : ""}`);
+  }
+  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代で続ける（0057）。0045 より前の Cookie（sid 無し）は行を作り直す
+  if (s.session.sid) {
+    const now = Math.floor(Date.now() / 1000);
+    await writeSession(c, s, { ...s.session, ep: r.epoch, chk: now });
+  } else if (!(await startWebSession(c, s, { customer_id: s.session.cid, session_epoch: r.epoch, email: s.session.email }))) {
     await writeSession(c, s, null);
     return c.redirect(`${s.shopPath}/account/login`);
   }
-  // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のセッションで続ける
-  if (!(await startWebSession(c, s, { customer_id: s.session.cid, session_epoch: epoch, email: s.session.email }))) {
-    await writeSession(c, s, null);
-    return c.redirect(`${s.shopPath}/account/login`);
-  }
+  // 本人に知らせる（盗まれたセッションから足されても気づけるように。送信元が無ければ送らない）
+  const ld = loginDeps(c);
+  if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
   return c.redirect(`${s.shopPath}/account?flash=password_saved`);
 });
 
@@ -857,6 +867,10 @@ interface OAuthState {
   mode: "login" | "link" | "api";
   cid?: string;
   ep?: number;
+  /** 連携（link）のとき: 始めたセッションの行（0045）。連携はログインしてから 15 分以内のセッションだけ（0057） */
+  sid?: string;
+  /** 知らせのメールに出すショップ名（0057） */
+  shop_name?: string;
   return_to?: string;
   exp: number;
 }
@@ -866,7 +880,7 @@ const oauthSecret = (secret: string) => `${secret}|member-oauth`;
 const redirectUri = (origin: string, p: Provider) => `${origin}${callbackPath(p)}`;
 
 /** 提供元へ送り出す（state などを Cookie に持つ）。client_id はキャッシュ済みのショップ行から */
-export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OAuthState["mode"], extra: { cid?: string; ep?: number; return_to?: string } = {}): Promise<Response> {
+export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OAuthState["mode"], extra: { cid?: string; ep?: number; sid?: string; return_to?: string } = {}): Promise<Response> {
   const clientId = providerClientId(shop.settings, p);
   const secret = c.get("sessionSecret");
   if (!clientId || !secret || !enabledProviders(shop).includes(p)) return c.text(t("store.not_found"), 404);
@@ -880,6 +894,7 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
     nonce: randomToken(24),
     verifier,
     shop: shop.id,
+    shop_name: shop.name,
     origin,
     path: shop.domain ? "" : `/${shop.slug}`,
     mode,
@@ -909,7 +924,7 @@ members.post("/:shop/account/oauth/:provider/link", async (c: Ctx) => {
   const p = providerOf(c);
   if (!s || !p) return notFound(c);
   if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
-  return startOAuth(c, s.shop, p, "link", { cid: s.session.cid, ep: s.session.ep });
+  return startOAuth(c, s.shop, p, "link", { cid: s.session.cid, ep: s.session.ep, ...(s.session.sid ? { sid: s.session.sid } : {}) });
 });
 
 members.post("/:shop/account/oauth/:provider/unlink", async (c: Ctx) => {
@@ -954,9 +969,16 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
     if (e instanceof OAuthError) return fail("oauth");
     throw e;
   }
-  const r = await db.memberOauthLogin(st.shop, p, identity.sub, identity.email, identity.emailVerified, st.mode === "link" && st.cid ? { customerId: st.cid, epoch: st.ep ?? -1 } : null);
-  if (!r.ok) return fail(r.reason === "already_linked" || r.reason === "other_linked" ? r.reason : "oauth");
-  if (st.mode === "link") return c.redirect(`${shopPath}/account?flash=oauth_linked`);
+  const r = await db.memberOauthLogin(st.shop, p, identity.sub, identity.email, identity.emailVerified, st.mode === "link" && st.cid ? { customerId: st.cid, epoch: st.ep ?? -1, ...(st.sid ? { sessionId: st.sid } : {}) } : null);
+  if (!r.ok) return fail(r.reason === "already_linked" || r.reason === "other_linked" || r.reason === "reauth" ? r.reason : "oauth");
+  if (st.mode === "link") {
+    // 本人に知らせる（0057。盗まれたセッションから連携されても気づけるように）
+    const ld = loginDeps(c);
+    if (ld && r.linked && r.mail_from && r.email) {
+      await afterResponse(c, sendAccountChangeNotice(ld, { name: st.shop_name ?? "" }, { kind: "oauth", provider: p, from: r.mail_from, to: r.email, accountUrl: `${st.origin}${shopPath}/account` }));
+    }
+    return c.redirect(`${shopPath}/account?flash=oauth_linked`);
+  }
   if (st.mode === "api" && st.return_to) {
     // ヘッドレス: 1 回限り・2 分の引き換え券を渡す（会員のトークンを URL に載せない）
     const token = randomToken(32);

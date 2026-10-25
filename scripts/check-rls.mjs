@@ -35,6 +35,8 @@ const ANON_FUNCTIONS = new Set([
   "coupon_claim_info", "heartbeat_age_seconds", "lookup_order", "shop_payment_options", "shop_public_get", "shop_public_list", "shop_store_list",
   // 0054: PostgREST がすべてのリクエストの前に、リクエストの役割のまま呼ぶ（中身は JWT を読むだけ。anon には何もしない）
   "banto_mfa_state", "banto_pre_request",
+  // 0055: 商品詳細（公開中の商品だけ。attributes は公開の項目だけ）
+  "product_public_get",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */
@@ -46,6 +48,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "org_invitation_accept", "org_invitation_revoke", "org_invite", "org_member_remove", "org_member_set", "org_members_list",
   "image_import_cancel", "image_import_enqueue", "image_import_resolve", "image_import_retry", "image_import_summary", "site_settings_set",
   "org_set_require_mfa", "org_members_mfa", "org_member_mfa_reset_authorize", // 0054: 中で組織の owner / admin を確かめる
+  "org_member_mfa_self", // 0057: 自分の二段階認証の登録・解除を監査ログに（auth.uid() の分だけ）
   "banto_plan_usage", // 0052: プランの上限と使用量（中で組織の owner / admin を確かめる）
   "sales_summary", "set_stock", "ship_orders", "shop_oauth_client_delete", "shop_oauth_client_save", "shop_secret_save",
   "store_set_hours", "stores_set_special_days", "tryon_request_detail", "tryon_restock", "tryon_store_shops", "tryon_update",
@@ -60,6 +63,21 @@ const COLUMN_DENIES = [
   { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["total_jpy", "customer_email", "customer_name", "shipping_address", "number", "shop_id", "payment_ref", "amount_paid_jpy", "discount_jpy", "tax_rate", "reservation_id", "customer_id"] },
   { role: "authenticated", table: "shop_oauth_clients", privilege: "SELECT", columns: ["secret_box"] },
   { role: "authenticated", table: "shop_secret_boxes", privilege: "SELECT", columns: ["secret_box"] },
+  // 0055: 非公開の独自項目は anon に見せない。require_mfa は org_set_require_mfa（owner + aal2 + 監査）だけ。AI 用トークンは失効（revoked_at）と name だけ変えられる
+  { role: "anon", table: "products", privilege: "SELECT", columns: ["attributes"] },
+  { role: "authenticated", table: "organizations", privilege: "UPDATE", columns: ["require_mfa", "id", "created_at"] },
+];
+
+/** 表の権限。must: その役割がその表にその権限を持ってはいけない（0055: AI 用トークンの削除は無し。失効は revoked_at） */
+const TABLE_DENIES = [{ role: "authenticated", table: "api_tokens", privilege: "DELETE" }];
+
+/**
+ * 守りを担うトリガー（0028 / 0031 / 0051 / 0052 / 0055）。後のマイグレーションが drop trigger して戻し忘れると、列の権限だけでは
+ * 止まらない経路（orders の遷移・shops の列・AI 用トークンの書き換え・プランの上限・監査ログ）が開く。有効（tgenabled <> 'D'）であること
+ */
+const REQUIRED_TRIGGERS = [
+  ["orders", "orders_guard"], ["shops", "shops_guard"], ["api_tokens", "api_tokens_guard"],
+  ["shops", "shops_plan_limit"], ["products", "products_plan_limit"], ["customers", "customers_plan_limit"], ["org_members", "org_members_plan_limit"],
 ];
 
 const client = new pg.Client({ connectionString: url });
@@ -119,6 +137,35 @@ try {
     }
   }
   console.log(`check-rls: column privileges checked (${COLUMN_DENIES.length} rules)`);
+
+  // ---------- 4. 表の権限 ----------
+  for (const d of TABLE_DENIES) {
+    const r = await client.query("select has_table_privilege($1, ('public.' || quote_ident($2))::regclass, $3) as allowed", [d.role, d.table, d.privilege]);
+    if (r.rows[0].allowed) fail(`${d.role} が ${d.table} を ${d.privilege} できます（0055 の表の権限が外れています）`);
+  }
+
+  // ---------- 5. 守りのトリガー ----------
+  for (const [table, trigger] of REQUIRED_TRIGGERS) {
+    const r = await client.query(
+      `select t.tgenabled from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'public' and c.relname = $1 and t.tgname = $2 and not t.tgisinternal`,
+      [table, trigger],
+    );
+    if (r.rowCount === 0) fail(`トリガー ${table}.${trigger} がありません（守りの判定が外れています）`);
+    else if (r.rows[0].tgenabled === "D") fail(`トリガー ${table}.${trigger} が無効です`);
+  }
+  console.log(`check-rls: required triggers checked (${REQUIRED_TRIGGERS.length})`);
+
+  // ---------- 6. SECURITY DEFINER の search_path ----------
+  // 固定していないと、呼び手が search_path に置いた同名のオブジェクトで判定をすり替えられる
+  const sd = await client.query(
+    `select p.proname as name from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.prosecdef
+        and not exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c like 'search_path=%')
+      order by 1`,
+  );
+  for (const r of sd.rows) if (!EXTENSION_FUNCTIONS.has(r.name)) fail(`SECURITY DEFINER 関数 ${r.name} に set search_path がありません`);
+  console.log("check-rls: security definer search_path checked");
 
   if (failures > 0) {
     console.error(`\ncheck-rls: ${failures} problem(s)`);

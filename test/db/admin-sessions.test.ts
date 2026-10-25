@@ -42,14 +42,15 @@ describe.skipIf(!dbAvailable)("運営者の入口（0030_admin_sessions）", () 
     expect(await expectDbError(() => asAnon((c) => c.query("select banto_admin_me()")))).toMatch(/permission denied/);
   });
 
-  it("M2: 同じアドレスは 15 分に 5 回、同じ IP は 20 回まで失敗できる。成功すれば失敗は消える。service_role だけ", async () => {
+  it("M2: 同じ IP から同じアドレスへは 15 分に 5 回、同じ IP は 20 回まで失敗できる（0056）。成功すれば失敗は消える。service_role だけ", async () => {
     const check = (email: string, ip: string | null) => asService(async (c) => (await c.query<{ r: { allowed: boolean } }>("select admin_login_check($1, $2) as r", [h(email), ip ? h(ip) : null])).rows[0]!.r);
     const record = (email: string, ip: string | null, ok: boolean) => asService((c) => c.query("select admin_login_record($1, $2, $3)", [h(email), ip ? h(ip) : null, ok]));
     for (let i = 0; i < 5; i++) {
       expect((await check("a@example.com", "198.51.100.1")).allowed).toBe(true);
       await record("a@example.com", "198.51.100.1", false);
     }
-    expect((await check("a@example.com", "198.51.100.2")).allowed).toBe(false);
+    expect((await check("a@example.com", "198.51.100.1")).allowed).toBe(false);
+    expect((await check("a@example.com", "198.51.100.2")).allowed).toBe(true); // 0056: 別の IP からは入れる（同じ IP から同じアドレスへ、が先）
     expect((await check("b@example.com", "198.51.100.1")).allowed).toBe(true);
     await getPool().query("update admin_login_attempts set created_at = now() - interval '16 minutes'");
     expect((await check("a@example.com", "198.51.100.1")).allowed).toBe(true);

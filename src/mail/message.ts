@@ -8,13 +8,29 @@ export interface MailAddress {
   email: string;
 }
 
-/** "名前 <a@b>" / "<a@b>" / "a@b" を分ける。名前の引用符は外す */
+/** アドレスの形（空白・改行・< > , ; " ( ) を含まない。SMTP のコマンドとヘッダに出すので厳しく。2026-10-25 の監査） */
+const EMAIL_RE = /^[^\s<>@,;"()\\]+@[^\s<>@,;"()\\]+\.[^\s<>@,;"()\\]+$/;
+
+export class MailAddressError extends Error {
+  constructor(raw: string) {
+    super(`invalid mail address: ${raw.replace(/[\r\n\t]/g, " ").slice(0, 60)}`);
+    this.name = "MailAddressError";
+  }
+}
+
+/** "名前 <a@b>" / "<a@b>" / "a@b" を分ける。名前の引用符は外す。アドレスの形でなければ MailAddressError */
 export function parseAddress(raw: string): MailAddress {
   const s = raw.trim();
   const m = /^(.*?)\s*<([^<>\s]+@[^<>\s]+)>$/.exec(s);
-  if (!m) return { email: s.replace(/^<|>$/g, "") };
+  if (!m) {
+    const email = s.replace(/^<|>$/g, "");
+    if (!EMAIL_RE.test(email)) throw new MailAddressError(email);
+    return { email };
+  }
+  if (!EMAIL_RE.test(m[2]!)) throw new MailAddressError(m[2]!);
   let name = m[1]!.trim();
   if (name.startsWith('"') && name.endsWith('"') && name.length >= 2) name = name.slice(1, -1).replace(/\\(.)/g, "$1");
+  if (/[\r\n]/.test(name)) throw new MailAddressError(name);
   return name ? { name, email: m[2]! } : { email: m[2]! };
 }
 

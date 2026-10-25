@@ -93,6 +93,11 @@ describe("連携（管理画面）", () => {
     // 同梱プラグインの内部 URL は外部の送信先として登録できない（通知が二重に届く。0031）
     res = await b.post(`/admin/shops/${shop.id}/hooks/new`, { url: "https://banto.invalid/plugins/email_resend" });
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/hooks?flash=invalid_url`);
+    // 私設のアドレス・localhost は登録できない（Node 実行で社内へ届かないように。2026-10-25 の監査）
+    for (const url of ["http://127.0.0.1:8080/x", "http://10.0.0.5/hook", "http://[::1]/", "http://localhost/hook", "http://169.254.169.254/latest/meta-data"]) {
+      res = await b.post(`/admin/shops/${shop.id}/hooks/new`, { url });
+      expect(res.headers.get("location"), url).toBe(`/admin/shops/${shop.id}/hooks?flash=invalid_url`);
+    }
 
     res = await b.post(`/admin/shops/${shop.id}/hooks/new`, { url: "https://plugin.example/banto" });
     expect(res.status).toBe(200);
