@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { csvCell } from "../../util/csv";
 import type { AppEnv } from "../../app";
 import { t } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -62,10 +63,6 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
 
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");
 
-function csvCell(x: unknown): string {
-  const s = x === null || x === undefined ? "" : String(x);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);

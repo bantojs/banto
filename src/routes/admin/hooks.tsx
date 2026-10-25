@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
+import { classifyHost } from "../../media/address";
 import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
 import { fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
 import { endpointSecret, signHookPayload } from "../../hooks/signing";
@@ -64,7 +65,9 @@ function externalHookUrl(url: string): boolean {
   if (!URL_RE.test(url)) return false;
   try {
     const host = new URL(url).hostname.toLowerCase();
-    return host !== "banto.invalid" && !host.endsWith(".banto.invalid");
+    if (host === "banto.invalid" || host.endsWith(".banto.invalid")) return false;
+    // 私設のアドレス・localhost 等は受け付けない（Node 実行で社内へ届かないように。画像の取り込みと同じ判定。2026-10-25 の監査）
+    return classifyHost(host) !== "blocked";
   } catch {
     return false;
   }
@@ -441,6 +444,7 @@ hooks.post("/:shopId/hooks/:endpointId/test", requireOwner, async (c: AdminConte
       },
       body,
       signal: controller.signal,
+      redirect: "manual",
     });
     clearTimeout(timer);
     return c.redirect(`${base}?flash=${res.ok ? "test_ok" : "test_failed"}`);

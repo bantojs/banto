@@ -8,6 +8,7 @@ import type { ConfigAdapter, SocketAdapter } from "../adapters/types";
 import { endpointSecret, signHookPayload } from "./signing";
 import type { HookEnvelope } from "./events";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../plugins";
+import { readTextCapped } from "../util/read-capped";
 
 export const HOOK_TIMEOUT_MS = 10_000;
 
@@ -85,9 +86,12 @@ export async function deliverPendingHooks(opts: {
           },
           body,
           signal: controller.signal,
+          // リダイレクトは追わない（登録時に確かめた行き先以外へ出ない）。3xx は失敗として再送に回る
+          redirect: "manual",
         });
         const ok = res.status >= 200 && res.status < 300;
-        const text = ok ? null : (await res.text().catch(() => "")).slice(0, 500);
+        // 失敗の本文は 4KB まで読み、記録は 500 文字（上限なしに読まない）
+        const text = ok ? null : (await readTextCapped(res, 4096).catch(() => "")).slice(0, 500);
         await opts.db.finishHookDelivery(row.id, ok, res.status, text);
         if (ok) result.delivered++;
         else result.failed++;

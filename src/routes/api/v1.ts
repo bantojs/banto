@@ -22,7 +22,7 @@ function errorJson(c: Ctx, e: unknown): Response {
 apiV1.get("/openapi.json", (c) => c.json(openapiDocument(new URL(c.req.url).origin, BANTO_VERSION)));
 
 apiV1.use("*", async (c, next) => {
-  if (c.req.path.endsWith("/openapi.json")) return next();
+  if (c.req.path === "/api/v1/openapi.json") return next();
   const token = bearerToken(c.req.header("authorization"));
   if (!token) return c.json({ error: { code: "unauthorized", message: "Authorization: Bearer banto_... is required" } }, 401, { "WWW-Authenticate": "Bearer" });
   const cfg = c.get("adapters").config;

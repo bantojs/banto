@@ -73,6 +73,8 @@ class Session {
   }
 
   async send(line: string): Promise<void> {
+    // 1 コマンド 1 行。引数に改行が混ざると別のコマンドになる（送信元・宛先の注入）。ここで止める（最後の砦。2026-10-25 の監査）
+    if (/[\r\n]/.test(line)) throw new SmtpError(0, "line contains CR/LF");
     await this.conn.write(enc.encode(`${line}\r\n`));
   }
 

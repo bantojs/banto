@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { csvCell } from "../../util/csv";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { OrderItemRow, OrderRow, SkuRow } from "../../db/types";
@@ -72,10 +73,6 @@ async function listOrders(c: AdminContext, shopId: string): Promise<{ rows: Orde
   return { rows: q ? rows.filter((o) => matches(o, q)) : rows, q, status };
 }
 
-function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);

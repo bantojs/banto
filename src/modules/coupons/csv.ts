@@ -82,10 +82,8 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim() !== ""));
 }
 
-export function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? "" : String(v);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+import { csvCell } from "../../util/csv";
+export { csvCell };
 
 /** クーポン CSV を書く（BOM 付き、CRLF。表計算ソフトで文字化けしないように） */
 export function couponCsv(rows: Partial<Record<CouponCsvColumn, string | number | boolean | null>>[]): string {
