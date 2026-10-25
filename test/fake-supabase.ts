@@ -6,6 +6,7 @@
 
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { normalizeTags } from "../src/products/tags";
+import { productFields } from "../src/products/fields";
 import { publicShopSettings } from "../src/storefront/data";
 
 export interface FakeSupabaseOptions {
@@ -935,6 +936,18 @@ export class FakeSupabase {
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
+    // 0055: 商品詳細（公開中のショップの公開中の商品だけ。attributes は公開の項目だけ）
+    if (fn === "product_public_get") {
+      if (!this.shopPublished(args["p_shop_id"])) return json(null);
+      const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true);
+      if (!p) return json(null);
+      const shop = this.tables.shops.find((s) => s["id"] === args["p_shop_id"]);
+      const fields = productFields((shop?.["settings"] ?? {}) as Record<string, unknown>);
+      const attrs = (p["attributes"] ?? {}) as Record<string, unknown>;
+      const pub: Record<string, unknown> = {};
+      for (const f of fields) if (f.public && f.key in attrs) pub[f.key] = attrs[f.key];
+      return json({ ...p, attributes: pub });
+    }
     if (fn === "set_stock") {
       const sku = this.tables.skus.find((k) => k["id"] === args["p_sku_id"]);
       const available = Number(args["p_available"]);

@@ -37,6 +37,13 @@ export const PUBLIC_SHOP_COLUMNS = "id,slug,name,published,legal_notice,privacy_
 /** お店の画面の使い方（storefront）と、同梱モジュール ga4 の測定 ID（analytics）を公開の settings に足す版。当たる前は、お客様の画面には渡らない（既定の動きのまま） */
 export const STOREFRONT_SETTINGS_MIGRATION = "0041_storefront_settings";
 
+/**
+ * 0055: anon は products.attributes を読めない（非公開の独自項目を隠す）。当たっている DB では列を選んで読み、
+ * 商品詳細は product_public_get（公開の項目だけの attributes 付き）で受け取る。当たる前は * で読む（0008 より前の DB でも動く）
+ */
+export const PRODUCT_ATTRIBUTES_MIGRATION = "0055_security_hardening_2";
+export const PUBLIC_PRODUCT_COLUMNS = "id,shop_id,slug,name,description,published,created_at,updated_at,tags,category_id,brand,tax_class,extra_category_ids";
+
 /** お客様の画面に渡す settings の鍵（0028 の banto_shop_public_settings と同じ。足すときは SQL と test/fake-supabase.ts も揃える） */
 export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent"] as const;
 
@@ -46,6 +53,8 @@ export function publicShopSettings(settings: Record<string, unknown> | null | un
   const src = isObject(settings) ? settings : {};
   const out: Record<string, unknown> = {};
   for (const k of PUBLIC_SETTINGS_KEYS) if (k in src) out[k] = src[k];
+  // 非公開の独自項目は定義（表示名）も見せない（0055 の banto_shop_public_settings と同じ）
+  if (Array.isArray(src["product_fields"])) out["product_fields"] = src["product_fields"].filter((f) => isObject(f) && f["public"] !== false);
   // relay_ips（中継元の素の IP）は公開しない（0034）。Worker が service_role で読む
   if (isObject(src["headless"])) out["headless"] = { return_origins: src["headless"]["return_origins"] ?? [] };
   if (isObject(src["oauth"])) {
@@ -121,6 +130,11 @@ export class StorefrontData {
     return this.migratedTo(HARDENING_MIGRATION);
   }
 
+  /** anon で products を読むときの列（0055 が当たっていれば attributes を除いた列、前は *） */
+  private async productColumns(): Promise<string> {
+    return (await this.migratedTo(PRODUCT_ATTRIBUTES_MIGRATION)) ? PUBLIC_PRODUCT_COLUMNS : "*";
+  }
+
   async listShops(): Promise<PublicShop[]> {
     if (await this.hardened()) {
       const rows = await this.db.rpc<PublicShop[] | null>("shop_public_list", {});
@@ -166,8 +180,9 @@ export class StorefrontData {
     const key = `products:${shop.id}`;
     const hit = await this.cache.get<ProductSummary[]>(key);
     if (hit) return hit;
+    const cols = await this.productColumns();
     const [products, images, skus] = await Promise.all([
-      this.db.from<ProductRow>("products").select("*", { eq: { shop_id: shop.id, published: true }, order: "created_at.desc" }),
+      this.db.from<ProductRow>("products").select(cols, { eq: { shop_id: shop.id, published: true }, order: "created_at.desc" }),
       this.db.from<ProductImageRow>("product_images").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" }),
       // 列名を絞らず * で読む（0008 の compare_at_price_jpy が無い DB でも動くように）
       this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id } }),
@@ -212,8 +227,11 @@ export class StorefrontData {
   }
 
   async productBySlug(shop: PublicShop, slug: string): Promise<ProductDetail | null> {
-    const product = await this.db.from<ProductRow>("products").selectOne("*", { eq: { shop_id: shop.id, slug, published: true } });
-    if (!product) return null;
+    // 0055 以降: product_public_get（attributes は公開の項目だけ）。前は行をそのまま読む（attributes は Worker の publicAttributes が絞る）
+    const product = (await this.migratedTo(PRODUCT_ATTRIBUTES_MIGRATION))
+      ? await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug })
+      : await this.db.from<ProductRow>("products").selectOne("*", { eq: { shop_id: shop.id, slug, published: true } });
+    if (!product || typeof product !== "object") return null;
     const [images, skus, inventory] = await Promise.all([
       this.db.from<ProductImageRow>("product_images").select("*", { eq: { product_id: product.id }, order: "sort_order.asc" }),
       this.db.from<SkuRow>("skus").select("*", { eq: { product_id: product.id }, order: "created_at.asc" }),
@@ -236,8 +254,9 @@ export class StorefrontData {
         if (page.length < 1000) return out;
       }
     };
+    const cols = await this.productColumns();
     const [products, skus, inventory, images, categories] = await Promise.all([
-      all<ProductRow>("products", "*", { shop_id: shop.id, published: true }, "created_at.asc"),
+      all<ProductRow>("products", cols, { shop_id: shop.id, published: true }, "created_at.asc"),
       all<SkuRow>("skus", "*", { shop_id: shop.id }, "created_at.asc"),
       all<InventoryRow>("inventory", "sku_id,available", { shop_id: shop.id }, "sku_id.asc"),
       all<ProductImageRow>("product_images", "*", { shop_id: shop.id }, "sort_order.asc"),
@@ -271,10 +290,11 @@ export class StorefrontData {
   async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow }>> {
     const out = new Map<string, { sku: SkuWithStock; product: ProductRow }>();
     if (skuIds.length === 0) return out;
+    const cols = await this.productColumns();
     const [skus, inventory, products] = await Promise.all([
       this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id } }),
       this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id } }),
-      this.db.from<ProductRow>("products").select("*", { eq: { shop_id: shop.id, published: true } }),
+      this.db.from<ProductRow>("products").select(cols, { eq: { shop_id: shop.id, published: true } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));

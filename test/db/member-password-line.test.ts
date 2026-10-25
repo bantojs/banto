@@ -40,7 +40,7 @@ describe.skipIf(!dbAvailable)("会員のパスワード（0013）と LINE ログ
         { email: "old@example.com", hash: PHPASS },
         { email: "bad", hash: WP68 },
       ]),
-    ).toEqual({ imported: 3, created: 3, skipped_format: 1, skipped_has_password: 0, skipped_invalid_email: 1 });
+    ).toEqual({ imported: 3, created: 3, skipped_format: 1, skipped_has_password: 0, skipped_invalid_email: 1, skipped_active: 0 });
     expect((await getPool().query("select count(*)::int as n from customers where email = 'old@example.com'")).rows[0].n).toBe(0);
 
     expect(await login("wp@example.com", "wrong-pass")).toEqual({ ok: false, reason: "invalid" });

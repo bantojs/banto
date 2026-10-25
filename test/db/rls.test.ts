@@ -89,11 +89,8 @@ describe.skipIf(!dbAvailable)("RLS（CLAUDE.md §3）", () => {
       }
     });
 
-    it("UPDATE は 0 行に終わる", async () => {
-      await asAnon(async (c) => {
-        const r = await c.query("update products set name = 'hacked' where id = $1", [a.productId]);
-        expect(r.rowCount).toBe(0);
-      });
+    it("UPDATE はできない（0055 からは表の権限で拒まれる）", async () => {
+      expect(await expectDbError(() => asAnon((c) => c.query("update products set name = 'hacked' where id = $1", [a.productId])))).toMatch(/permission denied/);
       const r = await getPool().query<{ name: string }>("select name from products where id = $1", [a.productId]);
       expect(r.rows[0]!.name).toBe("Tシャツ");
     });

@@ -62,7 +62,7 @@ describe.skipIf(!dbAvailable)("組織・メンバー・権限の項目（0024_or
     expect(await expectDbError(() => asUser(staff, (c) => c.query("select mask_customer($1, 'buyer@example.com')", [f.shopId])))).toMatch(/shop_not_found/);
     expect(await expectDbError(() => asUser(staff, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 'x', $3, 'bnt_x', '{products:read}')", [f.shopId, staff, hash("tok")])))).toMatch(/row-level security|scope_not_permitted/);
     // ショップは作れない・消せない
-    expect(await expectDbError(() => asUser(staff, (c) => c.query("insert into shops (slug, name) values ('staff-shop', 'S')")))).toMatch(/row-level security/);
+    expect(await expectDbError(() => asUser(staff, (c) => c.query("insert into shops (slug, name) values ('staff-shop', 'S')")))).toMatch(/row-level security|org_required/);
     // 項目を足すと次のリクエストから効く
     await asUser(f.ownerId, (c) => c.query("select org_member_set($1, $2, 'member', $3::jsonb)", [orgId, staff, JSON.stringify([{ shop_id: f.shopId, perms: ["catalog", "orders", "settings"] }])]));
     expect((await asUser(staff, (c) => c.query("select id from orders where shop_id = $1", [f.shopId]))).rows).toHaveLength(1);
