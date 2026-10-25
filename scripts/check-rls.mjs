@@ -48,6 +48,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "org_invitation_accept", "org_invitation_revoke", "org_invite", "org_member_remove", "org_member_set", "org_members_list",
   "image_import_cancel", "image_import_enqueue", "image_import_resolve", "image_import_retry", "image_import_summary", "site_settings_set",
   "org_set_require_mfa", "org_members_mfa", "org_member_mfa_reset_authorize", // 0054: 中で組織の owner / admin を確かめる
+  "org_member_mfa_self", // 0057: 自分の二段階認証の登録・解除を監査ログに（auth.uid() の分だけ）
   "banto_plan_usage", // 0052: プランの上限と使用量（中で組織の owner / admin を確かめる）
   "sales_summary", "set_stock", "ship_orders", "shop_oauth_client_delete", "shop_oauth_client_save", "shop_secret_save",
   "store_set_hours", "stores_set_special_days", "tryon_request_detail", "tryon_restock", "tryon_store_shops", "tryon_update",
