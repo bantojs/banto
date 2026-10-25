@@ -97,7 +97,12 @@ export interface MemberCoupon {
 /** パスワード（0013）・LINE（0014）でのログインの結果 */
 export type MemberLoginResult =
   | { ok: true; customer_id: string; session_epoch: number; email: string | null; created?: boolean; linked?: boolean; /** パスワードでのログインの知らせの送信元（0016。無ければ送らない） */ mail_from?: string | null }
-  | { ok: false; reason: "invalid" | "locked" | "disabled" | "already_linked" | "other_linked" | "session" | "expired" };
+  | { ok: false; reason: "invalid" | "locked" | "disabled" | "already_linked" | "other_linked" | "session" | "expired" | "reauth" };
+
+/** パスワードの設定（0057）。reauth = ログインしてから 15 分を過ぎたセッション（確かめのコードで入り直す） */
+export type MemberSetPasswordResult =
+  | { ok: true; epoch: number; email: string | null; mail_from: string | null }
+  | { ok: false; reason: "session" | "reauth" };
 
 /** 会員のログイン（0012_member_auth） */
 export interface MemberLoginStart {
@@ -216,11 +221,16 @@ export interface PrivilegedDb {
   /** パスワードでログインする（0013）。照合・回数の制限は DB。パスワードは保存しない・ログに出さない */
   memberPasswordLogin(shopId: string, email: string, password: string, ipHash: string | null): Promise<MemberLoginResult>;
   /** パスワードを決める・変える（0013）。新しい世代を返す（世代が合わなければ null） */
-  memberSetPassword(shopId: string, customerId: string, epoch: number, password: string): Promise<number | null>;
+  /**
+   * パスワードの設定。0057 以降はログインしてから 15 分以内のセッション（sessionId）だけ（過ぎていれば reason: 'reauth'）。
+   * 成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる）。0057 より前の DB では整数（新しい世代）が返るので、同じ形に直す
+   */
+  memberSetPassword(shopId: string, customerId: string, epoch: number, password: string, sessionId?: string): Promise<MemberSetPasswordResult>;
   /** WordPress のパスワードの取り込み（0013、bcrypt の形式だけ）。呼び出し側が owner の所有を確かめてから呼ぶ */
   importMemberPasswords(shopId: string, rows: { email: string; hash: string }[]): Promise<Record<string, number>>;
   /** 外部のアカウントでログインする（0014）。link があればログイン中のその会員に結びつける */
-  memberOauthLogin(shopId: string, provider: "line" | "google", subject: string, email: string | null, emailVerified: boolean, link: { customerId: string; epoch: number } | null): Promise<MemberLoginResult>;
+  /** LINE / Google でのログイン・連携。連携（link）は 0057 以降、ログインしてから 15 分以内のセッション（sessionId）だけ（過ぎていれば reason: 'reauth'） */
+  memberOauthLogin(shopId: string, provider: "line" | "google", subject: string, email: string | null, emailVerified: boolean, link: { customerId: string; epoch: number; sessionId?: string } | null): Promise<MemberLoginResult>;
   memberUnlinkIdentity(shopId: string, customerId: string, epoch: number, provider: "line" | "google"): Promise<boolean>;
   /** ショップごとの提供元の設定（0014）。secret_box は暗号文（src/members/secret-box.ts で開く）。無ければ null */
   shopOauthClient(shopId: string, provider: "line" | "google"): Promise<{ client_id: string; secret_box: string } | null>;
@@ -401,10 +411,21 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     imageImportClaim: () => rpc<ImageImportJob[]>("image_import_claim", {}),
     imageImportFinish: (results) => rpc("image_import_finish", { p_results: results }),
     memberPasswordLogin: (shopId, email, password, ipHash) => rpc("member_password_login", { p_shop_id: shopId, p_email: email, p_password: password, p_ip_hash: ipHash }),
-    memberSetPassword: (shopId, customerId, epoch, password) => rpc("member_set_password", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_password: password }),
+    memberSetPassword: async (shopId, customerId, epoch, password, sessionId) => {
+      const r = await rpc<number | { ok: boolean; reason?: string; epoch?: number; email?: string | null; mail_from?: string | null } | null>("member_set_password", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_password: password, ...(sessionId ? { p_session_id: sessionId } : {}),
+      });
+      if (r === null || r === undefined) return { ok: false, reason: "session" };
+      if (typeof r === "number") return { ok: true, epoch: r, email: null, mail_from: null }; // 0057 より前
+      if (r.ok && typeof r.epoch === "number") return { ok: true, epoch: r.epoch, email: r.email ?? null, mail_from: r.mail_from ?? null };
+      return { ok: false, reason: r.reason === "reauth" ? "reauth" : "session" };
+    },
     importMemberPasswords: (shopId, rows) => rpc("import_member_passwords", { p_shop_id: shopId, p_rows: rows }),
     memberOauthLogin: (shopId, provider, subject, email, emailVerified, link) =>
-      rpc("member_oauth_login", { p_shop_id: shopId, p_provider: provider, p_subject: subject, p_email: email, p_email_verified: emailVerified, p_link_customer_id: link?.customerId ?? null, p_link_epoch: link?.epoch ?? null }),
+      rpc("member_oauth_login", {
+        p_shop_id: shopId, p_provider: provider, p_subject: subject, p_email: email, p_email_verified: emailVerified,
+        p_link_customer_id: link?.customerId ?? null, p_link_epoch: link?.epoch ?? null, ...(link?.sessionId ? { p_link_session_id: link.sessionId } : {}),
+      }),
     memberUnlinkIdentity: (shopId, customerId, epoch, provider) => rpc("member_unlink_identity", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_provider: provider }),
     shopOauthClient: (shopId, provider) => rpc("shop_oauth_client", { p_shop_id: shopId, p_provider: provider }),
     memberHandoffCreate: (shopId, customerId, epoch, tokenHash) => rpc("member_handoff_create", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_token_hash: tokenHash }),

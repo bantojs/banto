@@ -70,7 +70,11 @@ describe("運営者の二段階認証（管理画面）", () => {
     expect((await b.get("/admin/mfa/setup")).headers.get("location")).toBe("/admin/mfa");
     await b.post("/admin/mfa", { code });
     expect(await (await b.get("/admin/mfa/setup")).text()).toContain("二段階認証を外す");
-    expect((await b.post("/admin/mfa/disable", {})).headers.get("location")).toBe("/admin/mfa/setup?flash=disabled");
+    // 0057: 外すには 6 桁をもう一度入れる
+    expect((await b.post("/admin/mfa/disable", {})).headers.get("location")).toBe("/admin/mfa/setup?error=code");
+    expect((await b.post("/admin/mfa/disable", { code: "000000" })).headers.get("location")).toBe("/admin/mfa/setup?error=code");
+    expect(sb.users.get(owner.id)!.factors).toHaveLength(1);
+    expect((await b.post("/admin/mfa/disable", { code })).headers.get("location")).toBe("/admin/mfa/setup?flash=disabled");
     expect(sb.users.get(owner.id)!.factors).toEqual([]);
     expect((await Browser.loggedIn(app, "owner@example.com", "password-123")).constructor).toBe(Browser);
   });

@@ -105,6 +105,9 @@ mfa.post("/mfa", async (c: AdminContext) => {
 });
 
 // ---------- 自分の設定: 登録・解除 ----------
+/** 0057: 二段階認証の登録・解除の監査（org_member_mfa_self）が使える DB か */
+const MEMBER_REAUTH_MIGRATION = "0057_member_reauth";
+
 async function ready(c: AdminContext): Promise<boolean> {
   const db = dbClient(c);
   return Boolean(db && (await migrated({ db, cache: c.get("adapters").cache }, OPERATOR_MFA_MIGRATION)));
@@ -135,8 +138,15 @@ mfa.get("/mfa/setup", async (c: AdminContext) => {
             <span class="badge ok">{t("mfa.on")}</span> {t("mfa.on_help")}
           </p>
           <form method="post" action="/admin/mfa/disable">
+            <p>
+              <label>
+                {t("mfa.code")}
+                <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength={6} required />
+              </label>
+            </p>
             <button type="submit">{t("mfa.disable")}</button>
           </form>
+          <p class="below">{t("mfa.disable_code_help")}</p>
           <p class="below">{t("mfa.disable_help")}</p>
         </>
       ) : (
@@ -203,6 +213,7 @@ mfa.post("/mfa/setup/verify", async (c: AdminContext) => {
     const next = toSessionData(await auth.verifyTotp(session.access_token, factorId, code));
     await guard.record(true);
     if ((await finish(c, next)) !== "ok") return c.redirect("/admin/login?error=not_owner");
+    await auditMfa(c, next, "enabled");
     return c.redirect("/admin/mfa/setup?flash=enabled");
   } catch (e) {
     if (e instanceof AuthError) {
@@ -213,13 +224,37 @@ mfa.post("/mfa/setup/verify", async (c: AdminContext) => {
   }
 });
 
-// 解除は二段階目を済ませたセッションだけ（GoTrue も aal2 を求める）。組織が必須なら、次の操作で DB がまた登録を求める
+// 解除は二段階目を済ませたセッションで、さらに 6 桁をもう一度入れたときだけ（席を離れたブラウザ・盗まれた Cookie から外されないように。0057）。
+// 組織が必須なら、次の操作で DB がまた登録を求める。解除は監査ログに残す
 mfa.post("/mfa/disable", async (c: AdminContext) => {
   const session = await loadSession(c);
   const auth = authClient(c);
   if (!session || !auth) return c.redirect("/admin/login");
   if (sessionAal(session) !== "aal2") return c.redirect("/admin/mfa/setup?error=aal");
+  const code = ((await formFields(c)).code ?? "").trim();
+  const guard = await adminLoginGuard(c, `mfa:${session.user_id}`);
+  if (!guard.allowed) return c.redirect("/admin/mfa/setup?error=code");
+  if (!CODE_RE.test(code)) return c.redirect("/admin/mfa/setup?error=code");
   const factor = verifiedTotp(await auth.getUser(session.access_token));
-  if (factor) await auth.unenroll(session.access_token, factor.id);
+  if (!factor) return c.redirect("/admin/mfa/setup");
+  try {
+    await auth.verifyTotp(session.access_token, factor.id, code);
+  } catch (e) {
+    if (e instanceof AuthError) {
+      await guard.record(false);
+      return c.redirect("/admin/mfa/setup?error=code");
+    }
+    throw e;
+  }
+  await guard.record(true);
+  await auth.unenroll(session.access_token, factor.id);
+  await auditMfa(c, session, "disabled");
   return c.redirect("/admin/mfa/setup?flash=disabled");
 });
+
+/** 二段階認証の登録・解除を監査ログに残す（0057 の org_member_mfa_self。適用前の DB では何もしない） */
+async function auditMfa(c: AdminContext, session: SessionData, action: "enabled" | "disabled"): Promise<void> {
+  const db = dbClient(c, session.access_token);
+  if (!db || !(await migrated({ db, cache: c.get("adapters").cache }, MEMBER_REAUTH_MIGRATION))) return;
+  await db.rpc("org_member_mfa_self", { p_action: action }).catch((e: unknown) => console.error("[banto] mfa audit:", e));
+}

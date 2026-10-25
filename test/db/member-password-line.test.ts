@@ -83,22 +83,25 @@ describe.skipIf(!dbAvailable)("会員のパスワード（0013）と LINE ログ
 
   it("パスワードを決める: 8 文字以上。世代を上げ（ほかの端末をログアウト）、WordPress のハッシュを捨てる。店の設定が OFF なら使えない", async () => {
     const id = (await getPool().query("select id, session_epoch from customers where email = 'plain@example.com'")).rows[0];
-    const set = (epoch: number, pw: string) => asService(async (c) => (await c.query<{ r: number | null }>("select member_set_password($1, $2, $3, $4) as r", [f.shopId, id.id, epoch, pw])).rows[0]!.r);
-    expect(await expectDbError(() => set(id.session_epoch, "short"))).toMatch(/weak_password/);
-    expect(await set(id.session_epoch + 9, "new-password-1")).toBeNull();
-    expect(await set(id.session_epoch, "new-password-1")).toBe(id.session_epoch + 1);
+    // 0057: ログインしてから 15 分以内のセッション（p_session_id）だけ
+    const sid = (epoch: number) => asService(async (c) => (await c.query<{ r: string }>("select member_session_start($1, $2, $3, 'web', 'dev', 86400) as r", [f.shopId, id.id, epoch])).rows[0]!.r);
+    const set = (epoch: number, pw: string, s: string | null) => asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select member_set_password($1, $2, $3, $4, $5) as r", [f.shopId, id.id, epoch, pw, s])).rows[0]!.r);
+    expect(await expectDbError(() => set(id.session_epoch, "short", null))).toMatch(/weak_password/);
+    expect(await set(id.session_epoch + 9, "new-password-1", null)).toEqual({ ok: false, reason: "session" });
+    const s = await sid(id.session_epoch);
+    expect(await set(id.session_epoch, "new-password-1", s)).toMatchObject({ ok: true, epoch: id.session_epoch + 1 });
     expect(await login("plain@example.com", "plain-pass-2")).toEqual({ ok: false, reason: "invalid" });
     expect(await login("plain@example.com", "new-password-1")).toMatchObject({ ok: true, session_epoch: id.session_epoch + 1 });
 
     await getPool().query("update shops set settings = settings || '{\"members_password\": false}' where id = $1", [f.shopId]);
     expect(await login("plain@example.com", "new-password-1")).toEqual({ ok: false, reason: "disabled" });
-    expect(await expectDbError(() => set(id.session_epoch + 1, "another-pass-2"))).toMatch(/password_disabled/);
+    expect(await expectDbError(() => set(id.session_epoch + 1, "another-pass-2", s))).toMatch(/password_disabled/);
     await getPool().query("update shops set settings = settings || '{\"members_password\": true}' where id = $1", [f.shopId]);
   });
 
   type O = R & { reason?: string };
-  const oauth = (sub: string, email: string | null, verified: boolean, link: { id: string; epoch: number } | null = null) =>
-    asService(async (c) => (await c.query<{ r: O }>("select member_oauth_login($1, 'line', $2, $3, $4, $5, $6) as r", [f.shopId, sub, email, verified, link?.id ?? null, link?.epoch ?? null])).rows[0]!.r);
+  const oauth = (sub: string, email: string | null, verified: boolean, link: { id: string; epoch: number; sid?: string | null } | null = null) =>
+    asService(async (c) => (await c.query<{ r: O }>("select member_oauth_login($1, 'line', $2, $3, $4, $5, $6, $7) as r", [f.shopId, sub, email, verified, link?.id ?? null, link?.epoch ?? null, link?.sid ?? null])).rows[0]!.r);
 
   it("LINE: 初回は会員登録、2 回目は同じ会員。確認済みのアドレスなら既存の会員に結びつく。未確認なら結びつけない", async () => {
     const first = await oauth("U-new", null, false);
@@ -115,10 +118,13 @@ describe.skipIf(!dbAvailable)("会員のパスワード（0013）と LINE ログ
 
   it("LINE: ログイン中の会員が連携する。別の会員に結びついた LINE・世代違いは不可。外すのはメールアドレスがある会員だけ", async () => {
     const ja = (await getPool().query("select id, session_epoch from customers where email = 'ja@example.com'")).rows[0];
-    expect(await oauth("U-ja", null, false, { id: ja.id, epoch: ja.session_epoch + 5 })).toEqual({ ok: false, reason: "session" });
-    expect(await oauth("U-new", null, false, { id: ja.id, epoch: ja.session_epoch })).toEqual({ ok: false, reason: "already_linked" });
-    expect(await oauth("U-ja", null, false, { id: ja.id, epoch: ja.session_epoch })).toMatchObject({ ok: true, linked: true, customer_id: ja.id });
-    expect(await oauth("U-ja2", null, false, { id: ja.id, epoch: ja.session_epoch })).toEqual({ ok: false, reason: "other_linked" });
+    // 0057: 連携はログインしてから 15 分以内のセッション（sid）だけ
+    const sj = await asService(async (c) => (await c.query<{ r: string }>("select member_session_start($1, $2, $3, 'web', 'dev', 86400) as r", [f.shopId, ja.id, ja.session_epoch])).rows[0]!.r);
+    expect(await oauth("U-ja", null, false, { id: ja.id, epoch: ja.session_epoch + 5, sid: sj })).toEqual({ ok: false, reason: "session" });
+    expect(await oauth("U-ja", null, false, { id: ja.id, epoch: ja.session_epoch })).toEqual({ ok: false, reason: "session" });
+    expect(await oauth("U-new", null, false, { id: ja.id, epoch: ja.session_epoch, sid: sj })).toEqual({ ok: false, reason: "already_linked" });
+    expect(await oauth("U-ja", null, false, { id: ja.id, epoch: ja.session_epoch, sid: sj })).toMatchObject({ ok: true, linked: true, customer_id: ja.id });
+    expect(await oauth("U-ja2", null, false, { id: ja.id, epoch: ja.session_epoch, sid: sj })).toEqual({ ok: false, reason: "other_linked" });
     const get = (id: string, epoch: number) => asService(async (c) => (await c.query<{ r: { customer: Record<string, unknown> } | null }>("select member_get($1, $2, $3) as r", [f.shopId, id, epoch])).rows[0]!.r);
     expect((await get(ja.id, ja.session_epoch))!.customer).toMatchObject({ providers: ["line"], has_password: true });
 

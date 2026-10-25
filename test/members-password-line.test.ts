@@ -117,6 +117,27 @@ describe("会員のパスワード（店ごと、0013）", () => {
     expect((await new Browser(app).post("/my-shop/account/password-login", { email: "member@example.com", password: "new-password-1" })).headers.get("location")).toBe("/my-shop/account");
   });
 
+  it("パスワードの設定はログインしてから 15 分以内だけ（0057）。過ぎていれば入り直し。設定したら本人に知らせる", async () => {
+    const { mail, app, b, sb } = setup();
+    await memberLogin(b, mail, "/my-shop", "member@example.com");
+    // 15 分を過ぎたセッション: 入り直しへ（パスワードは変わらない）
+    for (const ms of sb.memberSessions) ms["created_at"] = new Date(Date.now() - 16 * 60 * 1000).toISOString();
+    expect((await b.post("/my-shop/account/password", { password: "new-password-1" })).headers.get("location")).toBe("/my-shop/account/login?error=reauth");
+    // この端末のセッションは終わり、ログイン画面に理由が出る。パスワードは変わっていない
+    expect((await b.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/account/login");
+    expect(await (await b.get("/my-shop/account/login?error=reauth")).text()).toContain("もう一度ログインしてください");
+    expect((await b.post("/my-shop/account/password-login", { email: "member@example.com", password: "new-password-1" })).headers.get("location")).not.toBe("/my-shop/account");
+    // 入り直すと設定できる。ほかの端末は止まり、この端末は続く。知らせが届く
+    const other = new Browser(app);
+    await memberLogin(other, mail, "/my-shop", "member@example.com");
+    await memberLogin(b, mail, "/my-shop", "member@example.com");
+    expect((await b.post("/my-shop/account/password", { password: "new-password-1" })).headers.get("location")).toBe("/my-shop/account?flash=password_saved");
+    expect((await b.get("/my-shop/account")).status).toBe(200);
+    expect((await other.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/account/login");
+    const notice = mail.sent.find((m) => m.subject.includes("パスワードが設定されました"));
+    expect(notice?.to).toBe("member@example.com");
+  });
+
   it("パスワードでのログインを知らせる（0016）: 初めての端末だけ。コードでログインした端末からは送らない。ヘッドレスは毎回", async () => {
     const { mail, app, b } = setup();
     await memberLogin(b, mail, "/my-shop", "member@example.com");

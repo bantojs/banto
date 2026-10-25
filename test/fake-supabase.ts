@@ -517,6 +517,13 @@ export class FakeSupabase {
     return perm !== undefined && this.memberPerms(uid, shopId).includes(perm);
   }
 
+  /** メール通知プラグインの送信元（0057 の banto_member_mail_from） */
+  private mailFrom(shopId: unknown): string | null {
+    const ep = this.tables.hook_endpoints.find((e) => e["shop_id"] === shopId && e["enabled"] !== false && e["url"] === "https://banto.invalid/plugins/email_resend");
+    const from = ((ep?.["settings"] ?? {}) as Row)["from"];
+    return typeof from === "string" && from.trim() ? from.trim() : null;
+  }
+
   private shopPublished(shopId: unknown): boolean {
     return this.tables.shops.some((s) => s["id"] === shopId && s["published"] === true);
   }
@@ -912,6 +919,11 @@ export class FakeSupabase {
       if (!org || !this.orgMembers.some((m) => m.org_id === org["id"] && m.user_id === uid && m.role === "owner")) return json({ code: "42501", message: "forbidden" }, 403);
       if (args["p_required"] === true && this.currentAal !== "aal2") return json({ code: "P0001", message: "mfa_self_first" }, 400);
       org["require_mfa"] = args["p_required"] === true;
+      return json(null);
+    }
+    // 0057: 二段階認証の登録・解除の監査（本物は audit_log に書く。ここでは呼べたことだけ）
+    if (fn === "org_member_mfa_self") {
+      if (!uid) return json({ code: "42501", message: "forbidden" }, 403);
       return json(null);
     }
     if (fn === "org_members_mfa") {
@@ -2044,11 +2056,16 @@ export class FakeSupabase {
         const pw = String(args["p_password"] ?? "");
         if (pw.length < 8) return json({ code: "P0001", message: "weak_password" }, 400);
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);
-        if (!c) return json(null);
+        if (!c) return json({ ok: false, reason: "session" });
+        // 0057: ログインしてから 15 分以内のセッションだけ。今のセッションの行を新しい世代に付け替える
+        const ms = this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now());
+        if (!ms) return json({ ok: false, reason: "session" });
+        if (Date.now() - Date.parse(String(ms["created_at"])) > 15 * 60 * 1000) return json({ ok: false, reason: "reauth" });
         c["password_hash"] = `fake$${pw}`;
         c["legacy_password_hash"] = null;
         c["session_epoch"] = Number(c["session_epoch"] ?? 0) + 1;
-        return json(c["session_epoch"]);
+        ms["session_epoch"] = c["session_epoch"];
+        return json({ ok: true, epoch: c["session_epoch"], email: c["email"] ?? null, mail_from: this.mailFrom(shopId) });
       }
       case "import_member_passwords": {
         const out = { imported: 0, created: 0, skipped_format: 0, skipped_has_password: 0, skipped_invalid_email: 0 };
@@ -2082,6 +2099,10 @@ export class FakeSupabase {
         let cid: unknown;
         if (args["p_link_customer_id"]) {
           if (!findCustomer(args["p_link_customer_id"], args["p_link_epoch"])) return json({ ok: false, reason: "session" });
+          // 0057: 連携はログインしてから 15 分以内のセッションだけ
+          const ms = this.liveMemberSession(shopId, args["p_link_customer_id"], args["p_link_epoch"], args["p_link_session_id"], Date.now());
+          if (!ms) return json({ ok: false, reason: "session" });
+          if (Date.now() - Date.parse(String(ms["created_at"])) > 15 * 60 * 1000) return json({ ok: false, reason: "reauth" });
           if (ident && ident["customer_id"] !== args["p_link_customer_id"]) return json({ ok: false, reason: "already_linked" });
           if (!ident) {
             if (this.memberIdentities.some((i) => i["shop_id"] === shopId && i["customer_id"] === args["p_link_customer_id"] && i["provider"] === provider)) return json({ ok: false, reason: "other_linked" });
@@ -2105,7 +2126,7 @@ export class FakeSupabase {
           linked = true;
         }
         const c = this.tables.customers.find((x) => x["shop_id"] === shopId && x["id"] === cid)!;
-        return json({ ok: true, customer_id: c["id"], session_epoch: Number(c["session_epoch"] ?? 0), email: c["email"] ?? null, created, linked });
+        return json({ ok: true, customer_id: c["id"], session_epoch: Number(c["session_epoch"] ?? 0), email: c["email"] ?? null, created, linked, mail_from: args["p_link_customer_id"] && linked ? this.mailFrom(shopId) : null });
       }
       case "member_unlink_identity": {
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);

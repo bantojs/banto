@@ -47,3 +47,30 @@ export async function sendPasswordLoginNotice(
     }),
   }).catch((e: unknown) => console.error("[banto] password login notice:", e));
 }
+
+/**
+ * アカウントに「入る手段」が足されたことを本人に知らせる（0057: パスワードの設定・LINE / Google の連携）。
+ * 盗まれたセッションから足されても本人が気づけるように、端末の印に関わらず毎回送る
+ */
+export async function sendAccountChangeNotice(
+  deps: NoticeDeps,
+  shop: { name: string; settings?: Record<string, unknown> | null },
+  m: { kind: "password" | "oauth"; provider?: string; from: string | null | undefined; to: string | null | undefined; accountUrl: string; at?: Date },
+): Promise<void> {
+  if (!deps.mailer || !m.from || !m.to) return;
+  const time = formatDateTime((m.at ?? new Date()).toISOString());
+  const intro = m.kind === "password"
+    ? tf("member.change_intro_password", { email: m.to, time })
+    : tf("member.change_intro_oauth", { email: m.to, time, provider: m.provider === "line" ? "LINE" : m.provider === "google" ? "Google" : m.provider ?? "" });
+  await sendMail(deps.mailer, {
+    from: m.from,
+    to: m.to,
+    subject: tf(m.kind === "password" ? "member.change_subject_password" : "member.change_subject_oauth", { shop: shop.name }),
+    text: tf("member.change_body", { intro, advice: t("member.change_advice"), account: m.accountUrl, shop: shop.name }),
+    html: renderMailHtml(shop, {
+      heading: t(m.kind === "password" ? "member.change_heading_password" : "member.change_heading_oauth"),
+      paragraphs: [intro, t("member.change_advice")],
+      button: { label: t("member.notice_button"), url: m.accountUrl },
+    }),
+  }).catch((e: unknown) => console.error("[banto] account change notice:", e));
+}
