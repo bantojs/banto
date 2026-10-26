@@ -1,4 +1,5 @@
-import type { Adapters, CacheAdapter, ConfigAdapter, SchedulerAdapter, ScheduledJob, StorageAdapter } from "../types";
+import { MemoryCache } from "../memory-cache";
+import type { Adapters, ConfigAdapter, SchedulerAdapter, ScheduledJob, StorageAdapter } from "../types";
 import { normalizeConfigValue } from "../types";
 import { workersSockets } from "./socket";
 
@@ -61,22 +62,8 @@ class EnvConfig implements ConfigAdapter {
   }
 }
 
-/** Cache API + isolate 内メモリ。KV は使わない（CLAUDE.md §1-2） */
-class WorkersCache implements CacheAdapter {
-  private memory = new Map<string, { value: unknown; expires: number }>();
-  async get<T>(key: string) {
-    const hit = this.memory.get(key);
-    if (hit && hit.expires > Date.now()) return hit.value as T;
-    this.memory.delete(key);
-    return null;
-  }
-  async set<T>(key: string, value: T, ttlSeconds: number) {
-    this.memory.set(key, { value, expires: Date.now() + ttlSeconds * 1000 });
-  }
-  async delete(key: string) {
-    this.memory.delete(key);
-  }
-}
+/** isolate 内メモリ（行数の上限つき、src/adapters/memory-cache.ts）。KV は使わない（CLAUDE.md §1-2） */
+class WorkersCache extends MemoryCache {}
 
 class CronScheduler implements SchedulerAdapter {
   private jobs = new Map<string, ScheduledJob>();

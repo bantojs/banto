@@ -64,7 +64,7 @@ describe.skipIf(!dbAvailable)("10 万件の性能（0058〜0060）", () => {
     );
     await pool.query(`insert into product_images (shop_id, product_id, storage_key, sort_order) select shop_id, id, 'products/' || slug || '.webp', 0 from products where shop_id = $1`, [shop.shopId]);
     // クーポン: キャンペーン 1 万件、うち 1 つに配布用のコード 10 万枚
-    await pool.query(`update shops set settings = settings || '{"modules":{"coupons":true}}'::jsonb where id = $1`, [shop.shopId]);
+    await pool.query(`update shops set settings = settings || '{"modules":{"coupons":true,"product_feed":true}}'::jsonb where id = $1`, [shop.shopId]);
     await pool.query(`insert into coupon_campaigns (shop_id, name, code, kind, value) select $1, 'c' || g, 'CODE' || g, 'fixed', 100 from generate_series(1, 10000) g`, [shop.shopId]);
     campaignId = (await pool.query<{ id: string }>("select id from coupon_campaigns where shop_id = $1 and code = 'CODE1'", [shop.shopId])).rows[0]!.id;
     await pool.query(`insert into coupon_grants (shop_id, campaign_id, code, status) select $1, $2, 'G-' || g, case when g % 10 = 0 then 'used' else 'available' end from generate_series(1, $3) g`, [shop.shopId, campaignId, N]);

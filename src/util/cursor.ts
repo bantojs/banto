@@ -22,3 +22,6 @@ export function decodeCursor(text: string): Record<string, unknown> | null {
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** DB の timestamptz が返す形（ISO 8601、秒の端数は 6 桁まで、時差つき）。Date.parse は "1" なども通すので、これで確かめる */
+export const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:\d{2})$/;

@@ -3,7 +3,7 @@ import { migrated } from "../../db/migration-state";
 import { selectIn } from "../../db/select-in";
 import { owner, type AdminContext } from "./context";
 import { t } from "../../i18n";
-import { UUID_RE, decodeCursor, encodeCursor } from "../../util/cursor";
+import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../../util/cursor";
 
 /**
  * 管理画面の一覧のページ送り（新しい順、キーセット。docs/knowledge/02-decisions.md 2026-10-26）。
@@ -21,7 +21,7 @@ export interface PagePosition {
 export function readAfter(text: string | undefined): PagePosition | null | undefined {
   if (!text) return undefined;
   const v = decodeCursor(text);
-  if (!v || typeof v["k"] !== "string" || typeof v["id"] !== "string" || !UUID_RE.test(v["id"]) || Number.isNaN(Date.parse(v["k"]))) return null;
+  if (!v || typeof v["k"] !== "string" || typeof v["id"] !== "string" || !UUID_RE.test(v["id"]) || !ISO_TIMESTAMP.test(v["k"])) return null;
   return { k: v["k"], id: v["id"] };
 }
 

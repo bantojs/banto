@@ -46,7 +46,7 @@ GET /api/shops/<shop>/categories
 | `sort` | `new`（既定、登録の新しい順）/ `updated` / `price_asc` / `price_desc` / `name` |
 | `limit` | 1 ページの件数。既定・上限とも 100 |
 | `cursor` | 次のページ。前の応答の `next_cursor` をそのまま渡す（`sort` を変えて使い回すと 400） |
-| `offset` | 先頭から何件飛ばすか。10,000 まで（それより先は `cursor` で辿る） |
+| `offset` | 先頭から何件飛ばすか。10,000 まで、`q` があるときは 1,000 まで（それより先は `cursor` で辿る） |
 
 応答:
 
@@ -64,7 +64,7 @@ GET /api/shops/<shop>/categories
 ```
 
 - `next_cursor` が `null` なら最後のページです。商品が多いショップでも速さが変わらないので、ページ送りは `cursor` を使ってください。`next_offset` は `offset` で辿っているときだけ（10,000 件まで）返ります。
-- `total` は絞り込み後の件数で、10,000 件まで数えます。超えたら `10000` と `total_capped: true` を返します。
+- `total` は絞り込み後の件数で、最初のページ（`cursor` も `offset` も無いとき）だけ 10,000 件まで数えます。超えたら `10000` と `total_capped: true` を返します。2 ページ目からは `null` です。
 - `tags` はショップ全体（絞り込み前、公開中の商品だけ）のタグと件数です（多い順に 200 件まで）。絞り込みボタンを並べるのに使えます。
 - `compare_at_price_jpy` は最安 SKU の通常価格です。`min_price_jpy` より高ければセール中として表示できます。
 - 詳細（`/products/<slug>`）は説明・画像（幅と高さつき）に加え、次を返します。

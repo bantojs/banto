@@ -304,6 +304,7 @@ as $$
 declare
   v_limit integer := least(greatest(coalesce(p_limit, 24), 1), 100);
   v_offset integer := greatest(coalesce(p_offset, 0), 0);
+  v_offset_max integer;
   v_key text;    -- 並べ替えの値の式
   v_order text;  -- order by
   v_cmp text;    -- キーセットの比較（> か <）
@@ -318,7 +319,10 @@ begin
   if not exists (select 1 from shops where id = p_shop_id and published) then
     return jsonb_build_object('items', '[]'::jsonb, 'next', null);
   end if;
-  if v_offset > 10000 then raise exception 'offset_too_large' using errcode = '22023'; end if;
+  -- 検索の語があるときは 1,000 まで（深い位置まで読ませて DB を重くさせない。先は p_after で）
+  v_offset_max := 10000;
+  if nullif(btrim(coalesce(p_q, '')), '') is not null then v_offset_max := 1000; end if;
+  if v_offset > v_offset_max then raise exception 'offset_too_large' using errcode = '22023'; end if;
   case coalesce(p_sort, 'new')
     when 'new' then v_key := 'p.created_at'; v_order := 'p.created_at desc, p.id desc'; v_cmp := '<'; v_cast := 'timestamptz';
     when 'updated' then v_key := 'p.updated_at'; v_order := 'p.updated_at desc, p.id desc'; v_cmp := '<'; v_cast := 'timestamptz';

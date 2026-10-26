@@ -36,7 +36,8 @@ as $$
 $$;
 
 -- 商品フィードの 1 ページ: id が p_after より後ろの公開中の商品を p_limit 件（1,000 まで）と、その SKU・在庫・画像。
--- { products: [...], skus: [...], inventory: [...], images: [...] }。products は説明つき（フィードの description）、attributes は返さない
+-- { products: [...], skus: [...], inventory: [...], images: [...] }。products は説明つき（フィードの description）、attributes は返さない。
+-- 商品フィードのモジュールが ON のショップだけ（OFF なら空）
 create or replace function product_feed_page(p_shop_id uuid, p_after uuid, p_limit integer)
 returns jsonb
 language sql
@@ -48,7 +49,8 @@ as $$
     select id, shop_id, slug, name, description, tags, category_id, extra_category_ids, brand, tax_class, published, created_at, updated_at
       from products
      where shop_id = p_shop_id and published and (p_after is null or id > p_after)
-       and exists (select 1 from shops where id = p_shop_id and published)
+       and exists (select 1 from shops where id = p_shop_id and published
+                     and coalesce(settings->'modules'->>'product_feed', 'false') = 'true')
      order by id
      limit least(greatest(coalesce(p_limit, 0), 0), 1000)
   ),

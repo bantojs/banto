@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { PRODUCT_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
@@ -63,7 +63,7 @@ api.get("/shops/:shop", async (c: Ctx) => {
  * 商品一覧。?tag=&category=&brand=&q=&updated_since=&sort=new|updated|price_asc|price_desc|name&limit=&offset=&cursor=
  * （limit は既定・上限 100）。category は子孫のカテゴリーを含む。
  * ページ送りは cursor（前の応答の next_cursor）。offset は 10,000 まで（docs/headless.md）。
- * total は 10,000 まで数える（超えたら total_capped: true）。
+ * total は最初のページ（cursor も offset も無いとき）だけ、10,000 まで数える（超えたら total_capped: true、2 ページ目からは null）。検索の語があるときの offset は 1,000 まで。
  * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）で、連携側の絞り込み UI に使う。
  */
 api.get("/shops/:shop/products", async (c: Ctx) => {
@@ -74,9 +74,11 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const query = productQuery(c);
   if (typeof query === "string") return c.json({ error: "invalid_request", field: query }, 400);
   const cursor = c.req.query("cursor") || undefined;
-  if ((query.offset ?? 0) > PRODUCT_OFFSET_MAX) return c.json({ error: "invalid_request", field: "offset" }, 400);
+  if ((query.offset ?? 0) > (query.q ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return c.json({ error: "invalid_request", field: "offset" }, 400);
   const categories = await d.sf.listCategories(shop);
-  const [page, facets] = await Promise.all([d.sf.productPage(shop, query, categories, { cursor, count: true }), d.sf.productFacets(shop, categories)]);
+  // total は最初のページだけ数える（ページごとに数え直させない）
+  const first = !cursor && !query.offset;
+  const [page, facets] = await Promise.all([d.sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
   if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
   const catById = new Map(categories.map((x) => [x.id, x]));
   return c.json({

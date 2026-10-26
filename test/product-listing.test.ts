@@ -65,7 +65,8 @@ for (const legacy of [false, true]) {
         for (let guard = 0; guard < 10; guard++) {
           const { status, body } = await get(app, path);
           expect(status).toBe(200);
-          expect(body.total).toBe(60);
+          // total は最初のページだけ
+          expect(body.total).toBe(path.includes("cursor=") ? null : 60);
           seen.push(...body.products.map((p) => p.slug));
           if (!body.next_cursor) break;
           path = `/api/shops/my-shop/products?limit=25&sort=${sort}&cursor=${body.next_cursor}`;
@@ -87,6 +88,13 @@ for (const legacy of [false, true]) {
       expect((await get(app, `/api/shops/my-shop/products?sort=name&cursor=${first.body.next_cursor}`)).body).toMatchObject({ error: "invalid_request", field: "cursor" });
       expect((await get(app, "/api/shops/my-shop/products?cursor=%%%")).status).toBe(400);
       expect((await get(app, "/api/shops/my-shop/products?offset=10001")).body).toMatchObject({ error: "invalid_request", field: "offset" });
+      expect((await get(app, "/api/shops/my-shop/products?q=x&offset=1001")).body).toMatchObject({ error: "invalid_request", field: "offset" });
+      // 型・範囲の合わない位置（DB で型に直せない値）は 500 にせず 400
+      const bad = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
+      if (!legacy) {
+        expect((await get(app, `/api/shops/my-shop/products?sort=price_asc&cursor=${bad({ s: "price_asc", k: 99999999999, id: "00000000-0000-4000-a000-000000000001" })}`)).status).toBe(400);
+        expect((await get(app, `/api/shops/my-shop/products?sort=new&cursor=${bad({ s: "new", k: "1", id: "00000000-0000-4000-a000-000000000001" })}`)).status).toBe(400);
+      }
     });
 
     it("公開 API: カテゴリーの木の件数（子孫を含む）", async () => {

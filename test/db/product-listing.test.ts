@@ -142,6 +142,9 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect(desc.at(-1)!.slug).toBe("k-noprice");
     expect((await list(shop.shopId, { offset: 10, limit: 5 })).items).toHaveLength(2);
     expect(await expectDbError(() => list(shop.shopId, { offset: 10001 }))).toMatch(/offset_too_large/);
+    // 検索の語があるときは 1,000 まで
+    expect(await expectDbError(() => list(shop.shopId, { offset: 1001, q: "k" }))).toMatch(/offset_too_large/);
+    expect((await list(shop.shopId, { offset: 1000, q: "k" })).items).toEqual([]);
     expect(await expectDbError(() => list(shop.shopId, { sort: "x" }))).toMatch(/invalid_sort/);
     const counted = await list(shop.shopId, { limit: 3, count: true });
     expect(counted).toMatchObject({ total, total_capped: false });
@@ -173,6 +176,14 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     const one = (await list(shop.shopId, { q: "麦わら" })).items[0]!;
     expect(one).not.toHaveProperty("attributes");
     expect(one).not.toHaveProperty("description");
+  });
+
+  it("商品フィードの 1 ページは、モジュールが ON のショップだけ", async () => {
+    const shop = await createShopFixture({ email: "pl-g@example.com", slug: "pl-g", publish: true });
+    const page = () => asAnon(async (c) => (await c.query<{ r: { products: unknown[] } }>("select product_feed_page($1, null, 10) as r", [shop.shopId])).rows[0]!.r);
+    expect((await page()).products).toEqual([]);
+    await getPool().query(`update shops set settings = settings || '{"modules":{"product_feed":true}}'::jsonb where id = $1`, [shop.shopId]);
+    expect((await page()).products).toHaveLength(1);
   });
 
   it("画像は並び順の最初の 1 枚", async () => {

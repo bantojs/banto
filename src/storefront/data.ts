@@ -8,7 +8,7 @@ import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, S
 import { migrated } from "../db/migration-state";
 import { descendantIds, inCategories } from "../products/categories";
 import { tagCounts } from "../products/tags";
-import { UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
+import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 
@@ -228,11 +228,12 @@ export class StorefrontData {
     if (cursor === null) return null;
     if (!(await this.migratedTo(PRODUCT_LISTING_MIGRATION))) {
       const page = queryProducts(await this.listProducts(shop), { ...query, limit, offset: cursor && "o" in cursor ? cursor.o : query.offset }, categories);
-      return { ...page, nextCursor: page.nextOffset === null ? null : encodeCursor({ s: sort, o: page.nextOffset }), totalCapped: false };
+      return { ...page, total: opts.count ? page.total : null, nextCursor: page.nextOffset === null ? null : encodeCursor({ s: sort, o: page.nextOffset }), totalCapped: false };
     }
     if (cursor && "o" in cursor) return null;
     const offset = cursor ? 0 : Math.max(0, Math.floor(query.offset ?? 0));
-    if (offset > PRODUCT_OFFSET_MAX) return null;
+    // 検索の語があるときの offset は 1,000 まで（深い位置まで読ませて DB を重くさせない。先は cursor で）
+    if (offset > (query.q?.trim() ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return null;
     const cat = query.category ? categories.find((c) => c.slug === query.category) : undefined;
     const args = {
       p_shop_id: shop.id,
@@ -248,8 +249,10 @@ export class StorefrontData {
       p_updated_since: query.updatedSince?.toISOString() ?? null,
       p_count: opts.count ?? false,
     };
+    // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
+    const cacheable = !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
     const key = `plist:${JSON.stringify(args)}`;
-    const hit = await this.cache.get<ProductListPage>(key);
+    const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
     if (hit) return hit;
     const r = await this.db.rpc<{ items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean }>("product_public_list", args);
     const items = r.items.map((x): ProductSummary => ({
@@ -267,7 +270,7 @@ export class StorefrontData {
       nextOffset: !cursor && r.next && offset + limit <= PRODUCT_OFFSET_MAX ? offset + limit : null,
       nextCursor: r.next ? encodeCursor({ s: sort, k: r.next.k, id: r.next.id }) : null,
     };
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
   }
 
@@ -295,7 +298,13 @@ export class StorefrontData {
 
   /** 公開中の商品の数（0060。サイトマップのファイルの数を決める） */
   async productCount(shop: PublicShop): Promise<number> {
-    return this.db.rpc<number>("product_public_count", { p_shop_id: shop.id });
+    const key = `pcount:${shop.id}`;
+    const hit = await this.cache.get<{ n: number }>(key);
+    if (hit) return hit.n;
+    const n = await this.db.rpc<number>("product_public_count", { p_shop_id: shop.id });
+    // サイトマップの索引のたびに数えない（ファイルの数が少し遅れて増えるだけ）
+    await this.cache.set(key, { n }, 600);
+    return n;
   }
 
   /** サイトマップの 1 ファイル分の [slug, 更新日時]（0060、id 順） */
@@ -473,6 +482,8 @@ export interface FeedCatalogRows {
 export const PRODUCT_LISTING_MIGRATION = "0058_product_listing";
 /** offset で辿れる上限（それより先は cursor）。product_public_list と同じ */
 export const PRODUCT_OFFSET_MAX = 10000;
+/** 検索の語があるときの offset の上限 */
+export const PRODUCT_SEARCH_OFFSET_MAX = 1000;
 /** 一覧と一緒に返すタグの数（多い順） */
 export const PRODUCT_FACET_TAGS = 200;
 
@@ -514,9 +525,11 @@ function readCursor(text: string, sort: ProductSort): Cursor | null {
   if (typeof v["o"] === "number") return Number.isInteger(v["o"]) && v["o"] >= 0 ? { s: sort, o: v["o"] } : null;
   const k = v["k"];
   const id = v["id"];
-  if ((typeof k !== "string" && typeof k !== "number") || typeof id !== "string" || !UUID_RE.test(id)) return null;
-  if (typeof k === "number" ? !Number.isInteger(k) : sort === "name" ? k.length > 300 : Number.isNaN(Date.parse(k))) return null;
-  return { s: sort, k, id };
+  if (typeof id !== "string" || !UUID_RE.test(id)) return null;
+  // 並べ替えの値の型と範囲を DB の列と同じに確かめる（DB で型に直せない値を渡して 500 にさせない）
+  const price = sort === "price_asc" || sort === "price_desc";
+  if (price ? !(typeof k === "number" && Number.isInteger(k) && k >= -1 && k <= 2147483647) : sort === "name" ? !(typeof k === "string" && k.length <= 300) : !(typeof k === "string" && ISO_TIMESTAMP.test(k))) return null;
+  return { s: sort, k: k as string | number, id };
 }
 
 /** listProducts の結果を絞り込む。0058 より前の DB だけの経路（キャッシュ済みの全件をメモリで処理する） */

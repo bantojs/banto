@@ -9,7 +9,7 @@
  */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
-import type { Adapters, CacheAdapter, ConfigAdapter, SchedulerAdapter, ScheduledJob, StorageAdapter } from "../types";
+import type { Adapters, ConfigAdapter, SchedulerAdapter, ScheduledJob, StorageAdapter } from "../types";
 import { normalizeConfigValue } from "../types";
 import { S3Storage } from "./s3";
 import { createPublicFetch } from "./public-fetch";
@@ -27,34 +27,8 @@ export class EnvConfig implements ConfigAdapter {
   }
 }
 
-/** プロセス内のキャッシュの行数の上限（未知の Host ごとの否定キャッシュなどで際限なく増えないように） */
-export const MEMORY_CACHE_MAX_ENTRIES = 5000;
-
-export class MemoryCache implements CacheAdapter {
-  private readonly memory = new Map<string, { value: unknown; expires: number }>();
-  async get<T>(key: string) {
-    const hit = this.memory.get(key);
-    if (hit && hit.expires > Date.now()) return hit.value as T;
-    this.memory.delete(key);
-    return null;
-  }
-  async set<T>(key: string, value: T, ttlSeconds: number) {
-    if (this.memory.size >= MEMORY_CACHE_MAX_ENTRIES && !this.memory.has(key)) {
-      const now = Date.now();
-      for (const [k, v] of this.memory) if (v.expires <= now) this.memory.delete(k);
-      // 期限切れを消しても足りなければ古いものから（Map は挿入順）
-      while (this.memory.size >= MEMORY_CACHE_MAX_ENTRIES) {
-        const oldest = this.memory.keys().next().value;
-        if (oldest === undefined) break;
-        this.memory.delete(oldest);
-      }
-    }
-    this.memory.set(key, { value, expires: Date.now() + ttlSeconds * 1000 });
-  }
-  async delete(key: string) {
-    this.memory.delete(key);
-  }
-}
+import { MemoryCache } from "../memory-cache";
+export { MEMORY_CACHE_MAX_ENTRIES, MemoryCache } from "../memory-cache";
 
 /** ローカルディレクトリ。開発用、または単一サーバーの Docker ボリューム向け */
 export class FsStorage implements StorageAdapter {

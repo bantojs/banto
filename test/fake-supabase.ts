@@ -926,7 +926,7 @@ export class FakeSupabase {
     if (!this.shopPublished(shopId)) return json({ items: [], next: null });
     const limit = Math.min(Math.max(Number(args["p_limit"] ?? 24) || 24, 1), 100);
     const offset = Math.max(Number(args["p_offset"] ?? 0) || 0, 0);
-    if (offset > 10000) return json({ code: "22023", message: "offset_too_large" }, 400);
+    if (offset > (typeof args["p_q"] === "string" && args["p_q"].trim() ? 1000 : 10000)) return json({ code: "22023", message: "offset_too_large" }, 400);
     const sort = String(args["p_sort"] ?? "new");
     const tag = args["p_tag"] as string | null;
     const cats = args["p_category_ids"] as string[] | null;
@@ -1083,7 +1083,9 @@ export class FakeSupabase {
       return json(rows.slice(offset, offset + Math.min(Number(args["p_limit"] ?? 0), 10000)).map((p) => [p["slug"], p["updated_at"]]));
     }
     if (fn === "product_feed_page") {
-      if (!this.shopPublished(args["p_shop_id"])) return json({ products: [], skus: [], inventory: [], images: [] });
+      const feedShop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      const feedOn = ((feedShop?.["settings"] as { modules?: Record<string, unknown> } | undefined)?.modules ?? {})["product_feed"] === true;
+      if (!this.shopPublished(args["p_shop_id"]) || !feedOn) return json({ products: [], skus: [], inventory: [], images: [] });
       const after = args["p_after"] as string | null;
       const products = this.tables.products
         .filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true && (!after || String(p["id"]) > after))
