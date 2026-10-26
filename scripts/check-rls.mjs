@@ -37,6 +37,8 @@ const ANON_FUNCTIONS = new Set([
   "banto_mfa_state", "banto_pre_request",
   // 0055: 商品詳細（公開中の商品だけ。attributes は公開の項目だけ）
   "product_public_get",
+  // 0058: 商品の一覧（公開中のショップの公開中の商品だけ。attributes・説明は返さない）とタグ・カテゴリーの件数。検索の式インデックスの関数
+  "product_public_list", "product_public_facets", "banto_product_search_text",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */
