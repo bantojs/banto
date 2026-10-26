@@ -63,14 +63,6 @@ export function attributesFromForm(fields: CustomerField[], form: Record<string,
   return out;
 }
 
-/** 一覧の絞り込み（項目 1 つの値の部分一致。大文字小文字は区別しない）。key が定義に無ければ絞らない */
-export function matchesAttribute(fields: CustomerField[], values: unknown, key: string, needle: string): boolean {
-  const q = needle.trim().toLowerCase();
-  if (!q || !fields.some((f) => f.key === key)) return true;
-  const v = values && typeof values === "object" ? (values as Record<string, unknown>)[key] : undefined;
-  return (typeof v === "string" || typeof v === "number") && String(v).toLowerCase().includes(q);
-}
-
 /** 管理画面の一覧に出す「表示名: 値」の並び（定義の順。定義に無い鍵は出さない） */
 export function attributeRows(fields: CustomerField[], values: unknown): { key: string; label: string; value: string }[] {
   const v = values && typeof values === "object" ? (values as Record<string, unknown>) : {};

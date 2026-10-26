@@ -43,6 +43,8 @@ export interface SelectOptions {
   eq?: Record<string, Scalar>;
   /** 列の値がどれかに一致（PostgREST の in.(…)）。空の配列は 0 件になる */
   in?: Record<string, readonly string[]>;
+  /** 条件の木（すべてを満たす行だけ。PostgREST の and=(…)）。管理画面の検索とキーセットのページ送りに使う */
+  where?: readonly Filter[];
   /** 例: "created_at.desc" */
   order?: string;
   limit?: number;
@@ -50,9 +52,42 @@ export interface SelectOptions {
   offset?: number;
 }
 
+/**
+ * 条件の木。列は英小文字・数字・_ と、jsonb の 1 段の鍵（attributes->>key）だけ。
+ * contains は大文字小文字を区別しない部分一致（ilike。% と _ はそのままの文字として探す）
+ */
+export type Filter =
+  | { or: readonly Filter[] }
+  | { and: readonly Filter[] }
+  | { col: string; op: "eq" | "neq" | "lt" | "lte" | "gt" | "gte"; value: string | number | boolean }
+  | { col: string; op: "is"; value: null | boolean }
+  | { col: string; op: "contains"; value: string };
+
+const FILTER_COLUMN = /^[a-z_][a-z0-9_]*(->>[a-z0-9_]+)?$/;
+
+function quoteValue(v: string): string {
+  return `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** 条件の木 → PostgREST の論理式（and(…) / or(…) / 列.演算子.値） */
+export function filterExpr(f: Filter): string {
+  if ("or" in f) return `or(${f.or.map(filterExpr).join(",")})`;
+  if ("and" in f) return `and(${f.and.map(filterExpr).join(",")})`;
+  if (!FILTER_COLUMN.test(f.col)) throw new Error(`invalid filter column: ${f.col}`);
+  if (f.op === "is") return `${f.col}.is.${f.value === null ? "null" : String(f.value)}`;
+  if (f.op === "contains") {
+    // LIKE の特別な文字をそのままの文字に。* は PostgREST が % に読み替えるので値からは外す
+    const like = f.value.replace(/\*/g, "").replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    return `${f.col}.ilike.${quoteValue(`*${like}*`)}`;
+  }
+  return `${f.col}.${f.op}.${typeof f.value === "string" ? quoteValue(f.value) : String(f.value)}`;
+}
+
 export interface TableQuery<T extends Row> {
   select(columns?: string, opts?: SelectOptions): Promise<T[]>;
   selectOne(columns?: string, opts?: SelectOptions): Promise<T | null>;
+  /** 条件に合う行の数（PostgREST の Prefer: count=exact。行そのものは読まない）。数が大きい表では絞り込みに使う列にインデックスがあること */
+  count(opts?: SelectOptions): Promise<number>;
   insert(rows: Partial<T> | Partial<T>[]): Promise<T[]>;
   update(values: Partial<T>, eq: Record<string, Scalar>): Promise<T[]>;
   delete(eq: Record<string, Scalar>): Promise<void>;
@@ -73,6 +108,7 @@ function buildQuery(columns: string | undefined, opts: SelectOptions | undefined
   for (const [k, vs] of Object.entries(opts?.in ?? {})) {
     q.set(k, `in.(${vs.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")})`);
   }
+  if (opts?.where && opts.where.length > 0) q.set("and", `(${opts.where.map(filterExpr).join(",")})`);
   if (opts?.order) q.set("order", opts.order);
   if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
   if (opts?.offset) q.set("offset", String(opts.offset));
@@ -118,6 +154,14 @@ export function createDbClient(opts: DbClientOptions): DbClient {
     from<T extends Row = Row>(table: string): TableQuery<T> {
       return {
         select: (columns = "*", o) => request<T[]>(`${table}${buildQuery(columns, o)}`, { headers: headers() }),
+        async count(o) {
+          const res = await doFetch(`${base}/rest/v1/${table}${buildQuery("id", { ...o, limit: 0 })}`, { headers: headers({ Prefer: "count=exact" }) });
+          if (!res.ok) throw await toDbError(res);
+          await res.body?.cancel();
+          const n = Number((res.headers.get("content-range") ?? "").split("/")[1]);
+          if (!Number.isInteger(n)) throw new DbError("PostgREST: count missing", res.status);
+          return n;
+        },
         async selectOne(columns = "*", o) {
           const rows = await request<T[]>(`${table}${buildQuery(columns, { ...o, limit: 1 })}`, { headers: headers() });
           return rows[0] ?? null;

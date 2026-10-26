@@ -346,7 +346,6 @@ export const en: Record<MessageKey, string> = {
   "product.search": "Search by name or slug",
   "product.state": "Status",
   "product.state_all": "All statuses",
-  "product.count": "{n} of {total}",
   "product.no_match": "No products match.",
   "order.search_placeholder": "Order number, email or name",
   "product.none": "No products yet.",

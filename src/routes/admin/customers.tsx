@@ -6,15 +6,19 @@ import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, PageHead } from "./layout";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
+
+/** CSV に入れる行の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
+const CSV_MAX_ROWS = 5000;
 import { loadShop } from "./shops";
 import { can } from "./access";
-import { DbError } from "../../db/client";
+import { DbError, type Filter } from "../../db/client";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage, type PagePosition } from "./paging";
 import { tf } from "../../i18n";
 import { createMailer, sendMail } from "../../mail/send";
 import { migrated } from "../../db/migration-state";
 import { moduleEnabled } from "../../modules/registry";
 import { PASSKEY_MIGRATION, PASSKEY_MODULE } from "../../modules/passkey";
-import { CUSTOMER_ATTRIBUTES_ADMIN_MIGRATION, CUSTOMER_MASTER_MIGRATION, MARKETING_CONSENT_MIGRATION, attributeRows, attributesFromForm, customerFields, externalRef, matchesAttribute, type CustomerField } from "../../customers/fields";
+import { CUSTOMER_ATTRIBUTES_ADMIN_MIGRATION, CUSTOMER_MASTER_MIGRATION, MARKETING_CONSENT_MIGRATION, attributeRows, attributesFromForm, customerFields, externalRef, type CustomerField } from "../../customers/fields";
 
 /**
  * 会員一覧・削除（退会依頼への対応）・メールアドレスの変更（メールを失った会員の救済）。/admin/shops/:shopId/customers
@@ -41,24 +45,35 @@ interface CustomerRow {
 }
 
 /**
- * 一覧と CSV で共通: 最新 500 件を読み、メール・氏名の部分一致（q）と独自項目 1 つの値の部分一致（f / v）で絞る。
- * 独自項目・外部の ID の列は 0047 が当たっているときだけ選ぶ
+ * 一覧と CSV で共通: メール・氏名の部分一致（q）、独自項目 1 つの値の部分一致（f / v）、案内メールの同意で DB で絞り、
+ * 新しい順に limit 件（after より後ろ）を読む。独自項目・外部の ID の列は 0047 が当たっているときだけ選ぶ
  */
-async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>) {
+async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>, opts: { limit: number; after?: PagePosition }) {
   const { db } = owner(c);
   const master = await migrated({ db, cache: c.get("adapters").cache }, CUSTOMER_MASTER_MIGRATION);
   const consentOn = master && (await migrated({ db, cache: c.get("adapters").cache }, MARKETING_CONSENT_MIGRATION));
   const fields: CustomerField[] = master ? customerFields(settings) : [];
   const columns = ["id,email,name,default_address,created_at,last_login_at", ...(master ? ["external_ref,attributes"] : []), ...(consentOn ? ["marketing_consent,marketing_consent_at,marketing_consent_source"] : [])].join(",");
-  const all = await db.from<CustomerRow>("customers").select(columns, { eq: { shop_id: shopId }, order: "created_at.desc", limit: 500 });
-  const q = (c.req.query("q") ?? "").trim().toLowerCase();
+  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
   const f = (c.req.query("f") ?? "").trim();
-  const v = (c.req.query("v") ?? "").trim();
+  const v = (c.req.query("v") ?? "").trim().slice(0, 100);
   // 案内メールの同意で絞る（0050）: yes / no / none（未回答）
-  const consent = consentOn ? (c.req.query("consent") ?? "").trim() : "";
-  const consentMatch = (r: CustomerRow) => (consent === "yes" ? r.marketing_consent === true : consent === "no" ? r.marketing_consent === false : consent === "none" ? r.marketing_consent === null || r.marketing_consent === undefined : true);
-  const rows = all.filter((r) => (!q || `${r.email ?? ""} ${r.name ?? ""}`.toLowerCase().includes(q)) && (!f || matchesAttribute(fields, r.attributes, f, v)) && consentMatch(r));
-  return { master, consentOn, fields, all, rows, q, f, v, consent };
+  const consent = consentOn && ["yes", "no", "none"].includes(c.req.query("consent") ?? "") ? c.req.query("consent")! : "";
+  const where: Filter[] = [];
+  if (q) where.push({ or: [{ col: "email", op: "contains", value: q }, { col: "name", op: "contains", value: q }] });
+  if (f && v && fields.some((x) => x.key === f)) where.push({ col: `attributes->>${f}`, op: "contains", value: v });
+  if (consent) where.push(consent === "none" ? { col: "marketing_consent", op: "is", value: null } : { col: "marketing_consent", op: "is", value: consent === "yes" });
+  const rows: CustomerRow[] = [];
+  // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
+  for (let after = opts.after; rows.length < opts.limit; ) {
+    const n = Math.min(1000, opts.limit - rows.length);
+    const page = await db.from<CustomerRow>("customers").select(columns, { eq: { shop_id: shopId }, where: after ? [...where, olderThan(after)] : where, order: "created_at.desc,id.desc", limit: n });
+    rows.push(...page);
+    if (page.length < n) break;
+    const last = page[page.length - 1]!;
+    after = { k: last.created_at, id: last.id };
+  }
+  return { master, consentOn, fields, rows, q, f, v, consent, filtered: Boolean(q || (f && v) || consent || opts.after) };
 }
 
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");
@@ -69,7 +84,12 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const { master, consentOn, fields, all, rows, q, f, v, consent } = await listCustomers(c, shopId, shop.settings ?? {});
+  const after = readAfter(c.req.query("after"));
+  if (after === null) return c.text(t("error.generic"), 400);
+  const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
+  const { master, consentOn, fields, q, f, v, consent, filtered } = list;
+  const page = splitPage(list.rows, (r) => r.created_at);
+  const rows = page.rows;
   const editable = master && fields.length > 0 && (await migrated({ db, cache: c.get("adapters").cache }, CUSTOMER_ATTRIBUTES_ADMIN_MIGRATION));
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(f ? { f, v } : {}), ...(consent ? { consent } : {}) }).toString();
   const passkeys = moduleEnabled(shop.settings, PASSKEY_MODULE) && (await migrated({ db, cache: c.get("adapters").cache }, PASSKEY_MIGRATION));
@@ -92,7 +112,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
           <p class="muted">{t("shop.members_hint")}</p>
         </div>
       ) : null}
-      {all.length === 0 ? (
+      {rows.length === 0 && !filtered ? (
         <div class="empty">
           <p>{t("customers.none")}</p>
         </div>
@@ -130,7 +150,6 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
             <button type="submit" class="secondary small">
               {t("order.search")}
             </button>
-            <span class="count">{tf("product.count", { n: rows.length, total: all.length })}</span>
             <a class="btn secondary small" href={`/admin/shops/${shop.id}/customers.csv${query ? `?${query}` : ""}`}>
               {t("customers.csv")}
             </a>
@@ -238,6 +257,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
           </table>
         </>
       )}
+      <Pager base={`/admin/shops/${shop.id}/customers${query ? `?${query}` : ""}`} next={page.next} paged={Boolean(after)} />
     </AdminLayout>,
   );
 });
@@ -247,7 +267,7 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const { master, consentOn, fields, rows } = await listCustomers(c, shopId, shop.settings ?? {});
+  const { master, consentOn, fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS });
   const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", ...(consentOn ? ["marketing_consent", "marketing_consent_at", "marketing_consent_source"] : []), ...(master ? ["external_provider", "external_id", ...fields.map((f) => f.key)] : [])];
   const lines = rows.map((r) => {
     const a = (r.default_address ?? {}) as Record<string, unknown>;

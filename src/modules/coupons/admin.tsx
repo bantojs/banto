@@ -15,6 +15,11 @@ import { normalizeCode, type CouponConditions } from "../../commerce/discounts";
 import { moduleEnabled } from "../registry";
 import { customerFields, type CustomerField } from "../../customers/fields";
 import { membersEnabled } from "../../routes/storefront/members";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage, type PagePosition } from "../../routes/admin/paging";
+import { migrated } from "../../db/migration-state";
+
+/** 管理画面の一覧の材料を表示する分だけ数える（coupon_stats_for）。docs/knowledge/02-decisions.md 2026-10-26 */
+export const ADMIN_LISTS_MIGRATION = "0059_admin_lists";
 
 /**
  * 同梱モジュール「クーポン」（coupons、既定 OFF）の管理画面。docs/coupons.md
@@ -35,10 +40,17 @@ export async function scope(c: AdminContext): Promise<ShopRow | null> {
   return shop;
 }
 
-const loadCampaigns = (db: DbClient, shopId: string) => db.from<CouponCampaignRow>("coupon_campaigns").select("*", { eq: { shop_id: shopId }, order: "created_at.desc" });
+/** キャンペーンの一覧の 1 ページ（新しい順、after より後ろ） */
+const loadCampaigns = (db: DbClient, shopId: string, after?: PagePosition) =>
+  db.from<CouponCampaignRow>("coupon_campaigns").select("*", { eq: { shop_id: shopId }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 });
 
-async function loadStats(db: DbClient, shopId: string): Promise<Record<string, { used: number; held: number }>> {
+/** 使われた・押さえ中の数。0059 以降は表示するキャンペーンの分だけ数える（それより前はショップ全体） */
+async function loadStats(c: AdminContext, shopId: string, campaignIds: string[]): Promise<Record<string, { used: number; held: number }>> {
+  const { db } = owner(c);
   try {
+    if (await migrated({ db, cache: c.get("adapters").cache }, ADMIN_LISTS_MIGRATION)) {
+      return campaignIds.length === 0 ? {} : ((await db.rpc<Record<string, { used: number; held: number }> | null>("coupon_stats_for", { p_shop_id: shopId, p_campaign_ids: campaignIds })) ?? {});
+    }
     return (await db.rpc<Record<string, { used: number; held: number }> | null>("coupon_stats", { p_shop_id: shopId })) ?? {};
   } catch {
     return {};
@@ -83,8 +95,11 @@ couponsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const { db } = owner(c);
-  const rows = await loadCampaigns(db, shop.id);
-  const stats = rows.length > 0 ? await loadStats(db, shop.id) : {};
+  const after = readAfter(c.req.query("after"));
+  if (after === null) return c.text(t("error.generic"), 400);
+  const page = splitPage(await loadCampaigns(db, shop.id, after), (r) => r.created_at);
+  const rows = page.rows;
+  const stats = await loadStats(c, shop.id, rows.map((r) => r.id));
   const base = `/admin/shops/${shop.id}/modules/coupons`;
   const f = flash(c.req.query("flash"));
   const now = Date.now();
@@ -146,6 +161,7 @@ couponsAdmin.get("/", requireOwner, async (c: AdminContext) => {
               </tbody>
             </table>
           )}
+          <Pager base={base} next={page.next} paged={Boolean(after)} />
         </div>
     </AdminLayout>,
   );
@@ -163,11 +179,29 @@ function attributeFields(fc: FormContext): CustomerField[] {
   return customerFields(fc.shop.settings).slice(0, 10);
 }
 
-async function formContext(c: AdminContext, shop: ShopRow): Promise<FormContext> {
+/** フォームの商品の欄（slug を改行・空白・カンマ区切り）→ 小文字の slug の並び */
+function slugList(text: string | undefined): string[] {
+  return (text ?? "")
+    .split(/[\s,、]+/)
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * フォームに要る材料。商品はクーポンの条件に書かれた分だけ（表示は id → slug、保存は slug → id）を引く。
+ * ショップ全体の商品を読むと、商品が多いショップで 1,000 行の上限に掛かって条件が欠けるため
+ */
+async function formContext(c: AdminContext, shop: ShopRow, need: { ids?: string[]; slugs?: string[] } = {}): Promise<FormContext> {
   const { db } = owner(c);
-  const [categories, products] = await Promise.all([loadCategories(db, shop.id), db.from<ProductRow>("products").select("id,slug,name", { eq: { shop_id: shop.id }, order: "slug.asc" })]);
+  const pick = (col: "id" | "slug", values: string[]) =>
+    values.length === 0 ? Promise.resolve([]) : db.from<ProductRow>("products").select("id,slug,name", { eq: { shop_id: shop.id }, in: { [col]: [...new Set(values)].slice(0, 400) } });
+  const [categories, byId, bySlug] = await Promise.all([loadCategories(db, shop.id), pick("id", need.ids ?? []), pick("slug", need.slugs ?? [])]);
+  const products = [...new Map([...byId, ...bySlug].map((p) => [p.id, p])).values()];
   return { shop, categories, products, base: `/admin/shops/${shop.id}/modules/coupons` };
 }
+
+/** 保存のとき: フォームの商品の欄に書かれた slug */
+const formSlugs = (f: Record<string, string>) => [...slugList(f["product_slugs"]), ...slugList(f["exclude_product_slugs"])];
 
 function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormContext; row: Partial<CouponCampaignRow> | null; action: string; stats?: { used: number; held: number }; link?: string | null; claimUrl?: string }) {
   const cond = (row?.conditions ?? {}) as CouponConditions;
@@ -397,10 +431,7 @@ function campaignValues(f: Record<string, string>, fc: FormContext): Partial<Cou
   if ((f.starts_at && !startsAt) || (f.ends_at && !endsAt) || (startsAt && endsAt && startsAt >= endsAt)) return "invalid";
   const bySlug = new Map(fc.products.map((p) => [p.slug, p.id]));
   const productIds = (text: string | undefined): string[] | "unknown" => {
-    const wanted = (text ?? "")
-      .split(/[\s,、]+/)
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean);
+    const wanted = slugList(text);
     const out: string[] = [];
     for (const w of wanted) {
       const id = bySlug.get(w);
@@ -492,8 +523,9 @@ couponsAdmin.get("/new", requireOwner, async (c: AdminContext) => {
 couponsAdmin.post("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const fc = await formContext(c, shop);
-  const v = campaignValues(await formFields(c), fc);
+  const form = await formFields(c);
+  const fc = await formContext(c, shop, { slugs: formSlugs(form) });
+  const v = campaignValues(form, fc);
   if (typeof v === "string") return c.redirect(`${fc.base}/new?flash=${v}`);
   try {
     const [row] = await owner(c).db.from<CouponCampaignRow>("coupon_campaigns").insert({ ...v, shop_id: shop.id });
@@ -509,7 +541,10 @@ couponsAdmin.get("/:campaignId", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const row = await db.from<CouponCampaignRow>("coupon_campaigns").selectOne("*", { eq: { id: param(c, "campaignId"), shop_id: shop.id } });
   if (!row) return c.notFound();
-  const [fc, stats] = await Promise.all([formContext(c, shop), loadStats(db, shop.id)]);
+  const cond = (row.conditions ?? {}) as CouponConditions;
+  const gafter = readAfter(c.req.query("gafter"));
+  if (gafter === null) return c.text(t("error.generic"), 400);
+  const [fc, stats, grants] = await Promise.all([formContext(c, shop, { ids: [...(cond.product_ids ?? []), ...(cond.exclude_product_ids ?? [])] }), loadStats(c, shop.id, [row.id]), loadGrants(db, row.id, gafter)]);
   const f = flash(c.req.query("flash"));
   const link = row.code ? `${shopHome(publicBaseUrl(c), shop)}/cart?coupon=${encodeURIComponent(row.code)}` : null;
   return c.html(
@@ -517,7 +552,7 @@ couponsAdmin.get("/:campaignId", requireOwner, async (c: AdminContext) => {
       <PageHead title={row.name} />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       <CampaignForm fc={fc} row={row} action={`${fc.base}/${row.id}`} stats={stats[row.id] ?? { used: 0, held: 0 }} link={link} claimUrl={`${shopHome(publicBaseUrl(c), shop)}/coupons`} />
-      <GrantsSection fc={fc} row={row} grants={await loadGrants(db, row.id)} flash={c.req.query("grants")} />
+      <GrantsSection fc={fc} row={row} grants={grants} flash={c.req.query("grants")} />
       <form method="post" action={`${fc.base}/${row.id}/delete`}>
         <p class="muted">{t("coupons.delete_hint")}</p>
         <button type="submit">{t("coupons.delete")}</button>
@@ -529,9 +564,10 @@ couponsAdmin.get("/:campaignId", requireOwner, async (c: AdminContext) => {
 couponsAdmin.post("/:campaignId", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const fc = await formContext(c, shop);
+  const form = await formFields(c);
+  const fc = await formContext(c, shop, { slugs: formSlugs(form) });
   const id = param(c, "campaignId");
-  const v = campaignValues(await formFields(c), fc);
+  const v = campaignValues(form, fc);
   if (typeof v === "string") return c.redirect(`${fc.base}/${id}?flash=${v}`);
   try {
     const rows = await owner(c).db.from<CouponCampaignRow>("coupon_campaigns").update(v, { id, shop_id: shop.id });
@@ -554,12 +590,23 @@ interface GrantRow {
 }
 
 /** 発行済みのクーポン（新しい順に最大 5,000） */
-const loadGrants = (db: DbClient, campaignId: string) =>
-  db.from<GrantRow>("coupon_grants").select("id,code,customer_id,status,expires_at,created_at", { eq: { campaign_id: campaignId }, order: "created_at.desc", limit: 5000 });
+const GRANT_STATUSES = ["available", "held", "used", "revoked"] as const;
+/** 配布用のコードの CSV に入れる上限（使える・会員に結んでいないものの新しい順） */
+const GRANTS_CSV_MAX = 10000;
 
-function GrantsSection({ fc, row, grants, flash }: { fc: FormContext; row: CouponCampaignRow; grants: GrantRow[]; flash?: string }) {
+/** 発行したクーポン: 状態ごとの数（DB で数える）と、新しい順の 1 ページ（after より後ろ） */
+async function loadGrants(db: DbClient, campaignId: string, after?: PagePosition) {
+  const [counts, rows] = await Promise.all([
+    Promise.all(GRANT_STATUSES.map((status) => db.from<GrantRow>("coupon_grants").count({ eq: { campaign_id: campaignId, status } }))),
+    db.from<GrantRow>("coupon_grants").select("id,code,customer_id,status,expires_at,created_at", { eq: { campaign_id: campaignId }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
+  ]);
+  return { counts: Object.fromEntries(GRANT_STATUSES.map((st, i) => [st, counts[i]!])) as Record<GrantRow["status"], number>, ...splitPage(rows, (g) => g.created_at), paged: Boolean(after) };
+}
+
+function GrantsSection({ fc, row, grants, flash }: { fc: FormContext; row: CouponCampaignRow; grants: Awaited<ReturnType<typeof loadGrants>>; flash?: string }) {
   const base = `${fc.base}/${row.id}/grants`;
-  const count = (s: GrantRow["status"]) => grants.filter((g) => g.status === s).length;
+  const count = (s: GrantRow["status"]) => grants.counts[s];
+  const total = GRANT_STATUSES.reduce((n, st) => n + grants.counts[st], 0);
   return (
     <section>
       <h2 id="grants">{t("grants.title")}</h2>
@@ -589,12 +636,12 @@ function GrantsSection({ fc, row, grants, flash }: { fc: FormContext; row: Coupo
           <button type="submit">{t("grants.issue")}</button>
         </p>
       </form>
-      {grants.length > 0 ? (
+      {total > 0 ? (
         <p>
           <a href={`${base}.csv`}>{t("grants.csv")}</a>
         </p>
       ) : null}
-      {grants.length > 0 ? (
+      {grants.rows.length > 0 ? (
         <table>
           <thead>
             <tr>
@@ -606,7 +653,7 @@ function GrantsSection({ fc, row, grants, flash }: { fc: FormContext; row: Coupo
             </tr>
           </thead>
           <tbody>
-            {grants.slice(0, 200).map((g) => (
+            {grants.rows.map((g) => (
               <tr>
                 <td>
                   <code>{g.code}</code>
@@ -626,6 +673,7 @@ function GrantsSection({ fc, row, grants, flash }: { fc: FormContext; row: Coupo
           </tbody>
         </table>
       ) : null}
+      <Pager base={`${fc.base}/${row.id}`} param="gafter" next={grants.next} paged={grants.paged} />
     </section>
   );
 }
@@ -695,8 +743,22 @@ couponsAdmin.post("/:campaignId/grants/:grantId/revoke", requireOwner, async (c:
 couponsAdmin.get("/:campaignId/grants.csv", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const grants = await loadGrants(owner(c).db, param(c, "campaignId"));
-  const rows = grants.filter((g) => !g.customer_id && g.status === "available").map((g) => `${g.code},${g.expires_at ?? ""}`);
+  const { db } = owner(c);
+  const codes: GrantRow[] = [];
+  // 1 回 1,000 行まで。新しい順に GRANTS_CSV_MAX 件まで
+  for (let after: PagePosition | undefined; codes.length < GRANTS_CSV_MAX; ) {
+    const page = await db.from<GrantRow>("coupon_grants").select("id,code,expires_at,created_at", {
+      eq: { campaign_id: param(c, "campaignId"), shop_id: shop.id, status: "available" },
+      where: [{ col: "customer_id", op: "is", value: null }, ...(after ? [olderThan(after)] : [])],
+      order: "created_at.desc,id.desc",
+      limit: 1000,
+    });
+    codes.push(...page);
+    if (page.length < 1000) break;
+    const last = page[page.length - 1]!;
+    after = { k: last.created_at, id: last.id };
+  }
+  const rows = codes.slice(0, GRANTS_CSV_MAX).map((g) => `${g.code},${g.expires_at ?? ""}`);
   return c.body(`\uFEFFcode,expires_at\r\n${rows.join("\r\n")}\r\n`, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="coupon-codes-${param(c, "campaignId").slice(0, 8)}.csv"`, "Cache-Control": "no-store" });
 });
 

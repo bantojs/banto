@@ -45,7 +45,7 @@ const ANON_FUNCTIONS = new Set([
 const AUTHENTICATED_FUNCTIONS = new Set([
   ...ANON_FUNCTIONS,
   "banto_admin_shop", "banto_my_shops", "banto_my_stores", "banto_admin_me", "admin_session_bump",
-  "coupon_grant_revoke", "coupon_grants_for_emails", "coupon_grants_issue", "coupon_stats",
+  "coupon_grant_revoke", "coupon_grants_for_emails", "coupon_grants_issue", "coupon_stats", "coupon_stats_for",
   "enqueue_hook", "import_catalog", "import_coupon_usage", "import_coupons", "import_orders", "import_tax_classes", "mask_customer", "member_set_email", "member_passkeys_reset", "customer_set_attributes", "customer_marketing_consent_withdraw",
   "org_invitation_accept", "org_invitation_revoke", "org_invite", "org_member_remove", "org_member_set", "org_members_list",
   "image_import_cancel", "image_import_enqueue", "image_import_resolve", "image_import_retry", "image_import_summary", "site_settings_set",

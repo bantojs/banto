@@ -614,8 +614,11 @@ export class FakeSupabase {
       else if (v === "is.null") filters.push([k, "\u0000null"]);
       else if (v.startsWith("in.(") && v.endsWith(")")) inFilters.push([k, new Set(parseInList(v.slice(4, -1)))]);
     }
+    // 条件の木（DbClient の where → and=(…)）
+    const tree = u.searchParams.get("and");
+    const logic = tree ? parseLogic(`and${tree}`) : null;
     const matches = (row: Row) =>
-      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k])));
+      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && (!logic || evalLogic(logic, row));
 
     if (path.startsWith("rpc/")) {
       const fn = path.slice(4);
@@ -669,12 +672,26 @@ export class FakeSupabase {
       let out = rows.filter((r) => (service || this.visible(table, r, uid)) && matches(r));
       const order = u.searchParams.get("order");
       if (order) {
-        const [col, dir] = order.split(".") as [string, string | undefined];
-        out = [...out].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (dir === "desc" ? -1 : 1));
+        // created_at.desc,id.desc のような複数の列（同じ値なら次の列で）
+        const keys = order.split(",").map((part) => part.split(".") as [string, string | undefined]);
+        out = [...out].sort((a, b) => {
+          for (const [col, dir] of keys) {
+            const x = String(a[col]), y = String(b[col]);
+            if (x !== y) return (x < y ? -1 : 1) * (dir === "desc" ? -1 : 1);
+          }
+          return 0;
+        });
       }
       const offset = Number(u.searchParams.get("offset") ?? 0);
       const limit = u.searchParams.get("limit");
+      const total = out.length;
       out = out.slice(offset, limit ? offset + Number(limit) : undefined);
+      // Prefer: count=exact（DbClient の count）
+      if ((req.headers.get("prefer") ?? "").includes("count=exact")) {
+        const res = json(out);
+        res.headers.set("content-range", `*/${total}`);
+        return res;
+      }
       return json(out);
     }
     if (req.method === "POST") {
@@ -1295,10 +1312,12 @@ export class FakeSupabase {
       if (g) g["status"] = "revoked";
       return json(Boolean(g));
     }
-    if (fn === "coupon_stats") {
+    if (fn === "coupon_stats" || fn === "coupon_stats_for") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json(null);
       const out: Record<string, { used: number; held: number }> = {};
-      for (const r of this.tables.coupon_redemptions.filter((x) => x["shop_id"] === args["p_shop_id"])) {
+      // 0059: coupon_stats_for は渡したキャンペーンの分だけ
+      const only = fn === "coupon_stats_for" ? new Set(args["p_campaign_ids"] as string[]) : null;
+      for (const r of this.tables.coupon_redemptions.filter((x) => x["shop_id"] === args["p_shop_id"] && (!only || only.has(String(x["campaign_id"]))))) {
         const s = (out[String(r["campaign_id"])] ??= { used: 0, held: 0 });
         if (r["status"] === "used") s.used++;
         if (r["status"] === "held") s.held++;
@@ -2799,6 +2818,68 @@ export class FakeSupabase {
     }
     return json({ code: "PGRST202", message: `Could not find the function public.${fn}` }, 404);
   }
+}
+
+/** PostgREST の論理式（and(…) / or(…) / 列.演算子.値）。DbClient の filterExpr が作る形だけを読む */
+type Logic = { kind: "and" | "or"; items: Logic[] } | { kind: "leaf"; col: string; op: string; value: string; quoted: boolean };
+
+function parseLogic(text: string): Logic {
+  let i = 0;
+  const node = (): Logic => {
+    for (const kind of ["and", "or"] as const) {
+      if (text.startsWith(`${kind}(`, i)) {
+        i += kind.length + 1;
+        const items: Logic[] = [];
+        while (text[i] !== ")") {
+          items.push(node());
+          if (text[i] === ",") i++;
+        }
+        i++;
+        return { kind, items };
+      }
+    }
+    const colEnd = text.indexOf(".", i);
+    const col = text.slice(i, colEnd);
+    const opEnd = text.indexOf(".", colEnd + 1);
+    const op = text.slice(colEnd + 1, opEnd);
+    i = opEnd + 1;
+    if (text[i] === '"') {
+      let v = "";
+      for (i++; text[i] !== '"'; i++) v += text[i] === "\\" ? text[++i] : text[i];
+      i++;
+      return { kind: "leaf", col, op, value: v, quoted: true };
+    }
+    let v = "";
+    while (i < text.length && text[i] !== "," && text[i] !== ")") v += text[i++];
+    return { kind: "leaf", col, op, value: v, quoted: false };
+  };
+  return node();
+}
+
+function evalLogic(l: Logic, row: Row): boolean {
+  if (l.kind !== "leaf") return l.kind === "and" ? l.items.every((x) => evalLogic(x, row)) : l.items.some((x) => evalLogic(x, row));
+  const [base, key] = l.col.split("->>") as [string, string | undefined];
+  const raw = key === undefined ? row[base] : ((row[base] ?? {}) as Record<string, unknown>)[key];
+  if (l.op === "is") return l.value === "null" ? raw === null || raw === undefined : raw === (l.value === "true");
+  if (raw === null || raw === undefined) return false;
+  if (l.op === "ilike") {
+    // *…* の部分一致だけ（\ でそのままの文字）
+    const needle = l.value.replace(/^\*|\*$/g, "").replace(/\\(.)/g, "$1").toLowerCase();
+    return String(raw).toLowerCase().includes(needle);
+  }
+  const num = typeof raw === "number" && !l.quoted;
+  const a: string | number = num ? raw : String(raw);
+  const b: string | number = num ? Number(l.value) : l.value;
+  if (typeof raw === "boolean") return l.op === "eq" ? String(raw) === l.value : String(raw) !== l.value;
+  switch (l.op) {
+    case "eq": return a === b || (typeof raw === "number" && Number(l.value) === raw);
+    case "neq": return a !== b;
+    case "lt": return typeof raw === "number" ? raw < Number(l.value) : a < b;
+    case "lte": return typeof raw === "number" ? raw <= Number(l.value) : a <= b;
+    case "gt": return typeof raw === "number" ? raw > Number(l.value) : a > b;
+    case "gte": return typeof raw === "number" ? raw >= Number(l.value) : a >= b;
+  }
+  return false;
 }
 
 /** SKU の id（本物と同じ UUID の形。お店の画面は UUID でない SKU の id を DB に問い合わせない） */

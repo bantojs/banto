@@ -8,11 +8,11 @@ import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, S
 import { migrated } from "../db/migration-state";
 import { descendantIds, inCategories } from "../products/categories";
 import { tagCounts } from "../products/tags";
+import { UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import type { StoreRow } from "../modules/store-tryon";
 
 export const STOREFRONT_CACHE_TTL = 30;
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * 公開中のショップのうち、お客様の画面（anon）に渡してよい部分（0028_security_hardening の shop_public_get / shop_public_list）。
@@ -223,7 +223,7 @@ export class StorefrontData {
   async productPage(shop: PublicShop, query: ProductQuery, categories: CategoryRow[], opts: { cursor?: string; count?: boolean } = {}): Promise<ProductListPage | null> {
     const sort = query.sort ?? "new";
     const limit = Math.min(PRODUCT_PAGE_MAX, Math.max(1, Math.floor(query.limit ?? PRODUCT_PAGE_MAX)));
-    const cursor = opts.cursor ? decodeCursor(opts.cursor, sort) : undefined;
+    const cursor = opts.cursor ? readCursor(opts.cursor, sort) : undefined;
     if (cursor === null) return null;
     if (!(await this.migratedTo(PRODUCT_LISTING_MIGRATION))) {
       const page = queryProducts(await this.listProducts(shop), { ...query, limit, offset: cursor && "o" in cursor ? cursor.o : query.offset }, categories);
@@ -481,28 +481,15 @@ interface ListItem extends ProductListRow {
  */
 type Cursor = { s: ProductSort; k: string | number; id: string } | { s: ProductSort; o: number };
 
-function encodeCursor(c: Cursor): string {
-  return btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(c))))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-function decodeCursor(text: string, sort: ProductSort): Cursor | null {
-  try {
-    if (text.length > 500) return null;
-    const bin = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
-    const v = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (ch) => ch.charCodeAt(0)))) as Record<string, unknown>;
-    if (v["s"] !== sort) return null;
-    if (typeof v["o"] === "number") return Number.isInteger(v["o"]) && v["o"] >= 0 ? { s: sort, o: v["o"] } : null;
-    const k = v["k"];
-    const id = v["id"];
-    if ((typeof k !== "string" && typeof k !== "number") || typeof id !== "string" || !UUID_RE.test(id)) return null;
-    if (typeof k === "number" ? !Number.isInteger(k) : sort === "name" ? k.length > 300 : Number.isNaN(Date.parse(k))) return null;
-    return { s: sort, k, id };
-  } catch {
-    return null;
-  }
+function readCursor(text: string, sort: ProductSort): Cursor | null {
+  const v = decodeCursor(text);
+  if (!v || v["s"] !== sort) return null;
+  if (typeof v["o"] === "number") return Number.isInteger(v["o"]) && v["o"] >= 0 ? { s: sort, o: v["o"] } : null;
+  const k = v["k"];
+  const id = v["id"];
+  if ((typeof k !== "string" && typeof k !== "number") || typeof id !== "string" || !UUID_RE.test(id)) return null;
+  if (typeof k === "number" ? !Number.isInteger(k) : sort === "name" ? k.length > 300 : Number.isNaN(Date.parse(k))) return null;
+  return { s: sort, k, id };
 }
 
 /** listProducts の結果を絞り込む。0058 より前の DB だけの経路（キャッシュ済みの全件をメモリで処理する） */

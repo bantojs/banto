@@ -2,6 +2,9 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage } from "./paging";
+import { selectIn } from "../../db/select-in";
+import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageUrl, productImageKey, thumbKey } from "../../media/images";
 import { t, tf, type MessageKey } from "../../i18n";
@@ -76,11 +79,22 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const all = await db.from<ProductRow>("products").select("*", { eq: { shop_id: shopId }, order: "created_at.desc" });
-  // 名前・スラッグの部分一致と、公開の状態で絞る（小規模ショップ前提で、読んだ全件をここで絞る）
-  const q = (c.req.query("q") ?? "").trim().toLowerCase();
+  // 名前・スラッグの部分一致と公開の状態で、DB で絞って新しい順に 1 ページ分だけ読む（何十万件でも同じ速さ）
+  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
   const state = c.req.query("state") === "published" || c.req.query("state") === "draft" ? c.req.query("state")! : "";
-  const rows = all.filter((p) => (!q || p.name.toLowerCase().includes(q) || p.slug.includes(q)) && (!state || p.published === (state === "published")));
+  const after = readAfter(c.req.query("after"));
+  if (after === null) return c.text(t("error.generic"), 400);
+  const where: Filter[] = [];
+  if (q) where.push({ or: [{ col: "name", op: "contains", value: q }, { col: "slug", op: "contains", value: q.toLowerCase() }] });
+  if (state) where.push({ col: "published", op: "eq", value: state === "published" });
+  if (after) where.push(olderThan(after));
+  const page = splitPage(
+    await db.from<ProductRow>("products").select("id,slug,name,published,created_at", { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
+    (p) => p.created_at,
+  );
+  const rows = page.rows;
+  const filtered = Boolean(q || state || after);
+  const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("product.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "products" }}>
       <PageHead title={t("product.list")}>
@@ -92,7 +106,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         </a>
       </PageHead>
       <Flash flash={flash(c.req.query("flash"))} />
-      {all.length > 0 ? (
+      {rows.length > 0 || filtered ? (
         <form method="get" class="toolbar">
           <input type="search" name="q" value={c.req.query("q") ?? ""} placeholder={t("product.search")} aria-label={t("product.search")} />
           <select name="state" aria-label={t("product.state")}>
@@ -107,10 +121,9 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
           <button type="submit" class="secondary small">
             {t("order.search")}
           </button>
-          <span class="count">{tf("product.count", { n: rows.length, total: all.length })}</span>
         </form>
       ) : null}
-      {all.length === 0 ? (
+      {rows.length === 0 && !filtered ? (
         <div class="empty">
           {t("product.none")}{" "}
           <a href={`/admin/shops/${shop.id}/products/new`}>{t("product.new")}</a>
@@ -143,6 +156,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
           </tbody>
         </table>
       )}
+      <Pager base={listBase} next={page.next} paged={Boolean(after)} />
     </AdminLayout>,
   );
 });
@@ -330,9 +344,12 @@ async function loadProduct(c: AdminContext, shopId: string, productId: string) {
   if (!shop) return null;
   const product = await db.from<ProductRow>("products").selectOne("*", { eq: { id: productId, shop_id: shopId } });
   if (!product) return null;
-  const [skus, inventory, images] = await Promise.all([
-    db.from<SkuRow>("skus").select("*", { eq: { product_id: productId }, order: "created_at.asc" }),
-    db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shopId } }),
+  // 在庫はこの商品の SKU の分だけ（ショップ全体を読むと 1,000 行で欠ける）
+  const [[skus, inventory], images] = await Promise.all([
+    db
+      .from<SkuRow>("skus")
+      .select("*", { eq: { product_id: productId }, order: "created_at.asc" })
+      .then(async (skus) => [skus, await selectIn<InventoryRow>(db, "inventory", "sku_id,available", shopId, "sku_id", skus.map((k) => k.id))] as const),
     db.from<ProductImageRow>("product_images").select("*", { eq: { product_id: productId }, order: "sort_order.asc" }),
   ]);
   const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));

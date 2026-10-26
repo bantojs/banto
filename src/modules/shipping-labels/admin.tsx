@@ -15,6 +15,7 @@ import { todayIn } from "../delivery-time";
 import { CARRIERS, buildLabelsCsv, labelSettings, type Carrier, type LabelOrder } from "./csv";
 import { shippingLabelsClient } from "./client";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier } from "../../orders/tracking";
+import { selectIn } from "../../db/select-in";
 
 export const LABELS_MODULE = "shipping_labels";
 
@@ -122,11 +123,10 @@ labelsAdmin.get("/rows.json", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   // 未発送 = 支払い済み（status = paid）。古い順に最大 500 件
   const orders = await db.from<OrderForLabel>("orders").select("*", { eq: { shop_id: shop.id, status: "paid" }, order: "created_at.asc", limit: 500 });
-  const [items, skus, products] = await Promise.all([
-    db.from<OrderItemRow>("order_items").select("order_id,sku_id,qty,item_name", { eq: { shop_id: shop.id } }),
-    db.from<SkuRow>("skus").select("id,product_id", { eq: { shop_id: shop.id } }),
-    db.from<ProductRow>("products").select("id,name", { eq: { shop_id: shop.id } }),
-  ]);
+  // 明細・SKU・商品は送り状に載せる注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
+  const items = await selectIn<OrderItemRow>(db, "order_items", "order_id,sku_id,qty,item_name", shop.id, "order_id", orders.map((o) => o.id));
+  const skus = await selectIn<SkuRow>(db, "skus", "id,product_id", shop.id, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
+  const products = await selectIn<ProductRow>(db, "products", "id,name", shop.id, "id", skus.map((k) => k.product_id));
   const productOfSku = new Map(skus.map((k) => [k.id, k.product_id]));
   const nameOf = new Map(products.map((p) => [p.id, p.name]));
   const itemsBy = new Map<string, OrderItemRow[]>();

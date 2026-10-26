@@ -345,7 +345,6 @@ export const ja = {
   "product.search": "名前・スラッグで探す",
   "product.state": "公開の状態",
   "product.state_all": "すべての状態",
-  "product.count": "{n} 件 / 全 {total} 件",
   "product.no_match": "条件に合う商品がありません。",
   "order.search_placeholder": "注文番号・メール・氏名",
   "product.none": "商品がまだありません。",
