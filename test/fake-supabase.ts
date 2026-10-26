@@ -927,6 +927,8 @@ export class FakeSupabase {
     const limit = Math.min(Math.max(Number(args["p_limit"] ?? 24) || 24, 1), 100);
     const offset = Math.max(Number(args["p_offset"] ?? 0) || 0, 0);
     if (offset > (typeof args["p_q"] === "string" && args["p_q"].trim() ? 1000 : 10000)) return json({ code: "22023", message: "offset_too_large" }, 400);
+    const rawQ = typeof args["p_q"] === "string" ? args["p_q"].trim() : "";
+    if (rawQ && [...rawQ].length < 3 && !args["p_tag"] && !args["p_category_ids"] && !args["p_brand"]) return json({ code: "22023", message: "q_too_short" }, 400);
     const sort = String(args["p_sort"] ?? "new");
     const tag = args["p_tag"] as string | null;
     const cats = args["p_category_ids"] as string[] | null;

@@ -331,6 +331,12 @@ begin
     when 'name' then v_key := 'p.name'; v_order := 'p.name, p.id'; v_cmp := '>'; v_cast := 'text';
     else raise exception 'invalid_sort' using errcode = '22023';
   end case;
+  -- 2 文字以下の語は pg_trgm のインデックスが効かず全件を見るので、タグ・カテゴリー・ブランドで絞っているときだけ
+  -- （ログイン無しで何度も送られて DB を重くされないように。人間の決定 2026-10-26）
+  if p_q is not null and btrim(p_q) <> '' and char_length(btrim(p_q)) < 3
+     and p_tag is null and p_category_ids is null and p_brand is null then
+    raise exception 'q_too_short' using errcode = '22023';
+  end if;
   if p_q is not null and btrim(p_q) <> '' then
     v_like := '%' || replace(replace(replace(lower(left(btrim(p_q), 100)), '\', '\\'), '%', '\%'), '_', '\_') || '%';
   end if;

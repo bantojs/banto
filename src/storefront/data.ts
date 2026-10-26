@@ -482,6 +482,8 @@ export interface FeedCatalogRows {
 export const PRODUCT_LISTING_MIGRATION = "0058_product_listing";
 /** offset で辿れる上限（それより先は cursor）。product_public_list と同じ */
 export const PRODUCT_OFFSET_MAX = 10000;
+/** 絞り込み（タグ・カテゴリー・ブランド）無しで受け付ける検索の語の文字数の下限（pg_trgm のインデックスが効く長さ） */
+export const PRODUCT_SEARCH_MIN_CHARS = 3;
 /** 検索の語があるときの offset の上限 */
 export const PRODUCT_SEARCH_OFFSET_MAX = 1000;
 /** 一覧と一緒に返すタグの数（多い順） */

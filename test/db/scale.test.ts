@@ -112,10 +112,12 @@ describe.skipIf(!dbAvailable)("10 万件の性能（0058〜0060）", () => {
     const searchEn = await timed("list:search_en", () => list([shop.shopId, "new", 48, null, 0, null, null, null, "linen shirt 99", true]));
     expect(searchEn.items.length).toBeGreaterThan(0);
     for (const [k, v] of Object.entries(timings)) if (k.startsWith("list:")) expect(v, k).toBeLessThan(FAST_MS);
-    // 2 文字の語はインデックスが効かない（全件を見る）。遅くても数百 ms で返ること（docs/knowledge/02-decisions.md）
-    const short = await timed("list:search_2chars", () => list([shop.shopId, "new", 48, null, 0, null, null, null, "帽子", false]));
-    expect(short.items).toHaveLength(48);
-    expect(timings["list:search_2chars"]).toBeLessThan(3000);
+    // 2 文字の語はインデックスが効かないので、絞り込み無しでは受け付けない。カテゴリーと一緒なら、そのカテゴリーの中だけを見る
+    await expect(list([shop.shopId, "new", 48, null, 0, null, null, null, "帽子", false])).rejects.toThrow(/q_too_short/);
+    // categories[16] には g ≡ 16 (mod 60) の商品が入り、そのうち g ≡ 0 (mod 8) が「麦わら帽子」（どれも公開中）
+    const short = await timed("list:search_2chars_in_category", () => list([shop.shopId, "new", 48, null, 0, null, [categories[16]!], null, "帽子", false]));
+    expect(short.items.length).toBeGreaterThan(0);
+    expect(timings["list:search_2chars_in_category"]).toBeLessThan(FAST_MS);
   });
 
   it("実行計画: 並べ替え・キーセット・検索・タグ・カテゴリーはインデックスを使う", async () => {

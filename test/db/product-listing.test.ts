@@ -143,8 +143,8 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect((await list(shop.shopId, { offset: 10, limit: 5 })).items).toHaveLength(2);
     expect(await expectDbError(() => list(shop.shopId, { offset: 10001 }))).toMatch(/offset_too_large/);
     // 検索の語があるときは 1,000 まで
-    expect(await expectDbError(() => list(shop.shopId, { offset: 1001, q: "k" }))).toMatch(/offset_too_large/);
-    expect((await list(shop.shopId, { offset: 1000, q: "k" })).items).toEqual([]);
+    expect(await expectDbError(() => list(shop.shopId, { offset: 1001, q: "k-1" }))).toMatch(/offset_too_large/);
+    expect((await list(shop.shopId, { offset: 1000, q: "k-1" })).items).toEqual([]);
     expect(await expectDbError(() => list(shop.shopId, { sort: "x" }))).toMatch(/invalid_sort/);
     const counted = await list(shop.shopId, { limit: 3, count: true });
     expect(counted).toMatchObject({ total, total_capped: false });
@@ -164,13 +164,18 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect(await slugs({ categories: [c1, c2] })).toEqual(["d-1", "d-2", "d-3"]);
     expect(await slugs({ categories: [] })).toEqual([]);
     expect(await slugs({ brand: "ACME" })).toEqual(["d-1"]);
-    expect(await slugs({ q: "帽子" })).toEqual(["d-1"]);
-    expect(await slugs({ q: "帽" })).toEqual(["d-1", "d-3"]);
+    expect(await slugs({ q: "麦わら帽子" })).toEqual(["d-1"]);
     expect(await slugs({ q: "wool" })).toEqual(["d-2"]);
     expect(await slugs({ q: "セール" })).toEqual(["d-3"]);
     expect(await slugs({ q: "100%" })).toEqual(["d-1"]);
-    expect(await slugs({ q: "%" })).toEqual(["d-1"]);
-    expect(await slugs({ q: "_" })).toEqual([]);
+    expect(await slugs({ q: "0% 綿" })).toEqual(["d-1"]);
+    expect(await slugs({ q: "_x_" })).toEqual([]);
+    // 2 文字以下は、タグ・カテゴリー・ブランドで絞っているときだけ（インデックスが効かず全件を見るため）
+    expect(await expectDbError(() => slugs({ q: "帽子" }))).toMatch(/q_too_short/);
+    expect(await expectDbError(() => slugs({ q: "%" }))).toMatch(/q_too_short/);
+    expect(await slugs({ q: "帽", categories: [c1, c2] })).toEqual(["d-1", "d-3"]);
+    expect(await slugs({ q: "帽子", tag: "夏" })).toEqual(["d-1"]);
+    expect(await slugs({ q: "%", brand: "ACME" })).toEqual(["d-1"]);
     expect(await slugs({ tag: "冬", q: "ニット" })).toEqual(["d-3"]);
     expect(await slugs({ since: "2999-01-01T00:00:00Z" })).toEqual([]);
     const one = (await list(shop.shopId, { q: "麦わら" })).items[0]!;

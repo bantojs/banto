@@ -88,7 +88,12 @@ for (const legacy of [false, true]) {
       expect((await get(app, `/api/shops/my-shop/products?sort=name&cursor=${first.body.next_cursor}`)).body).toMatchObject({ error: "invalid_request", field: "cursor" });
       expect((await get(app, "/api/shops/my-shop/products?cursor=%%%")).status).toBe(400);
       expect((await get(app, "/api/shops/my-shop/products?offset=10001")).body).toMatchObject({ error: "invalid_request", field: "offset" });
-      expect((await get(app, "/api/shops/my-shop/products?q=x&offset=1001")).body).toMatchObject({ error: "invalid_request", field: "offset" });
+      expect((await get(app, "/api/shops/my-shop/products?q=xyz&offset=1001")).body).toMatchObject({ error: "invalid_request", field: "offset" });
+      // 2 文字以下の語は、タグ・カテゴリー・ブランドの絞り込みと一緒のときだけ
+      expect((await get(app, `/api/shops/my-shop/products?q=${encodeURIComponent("商品")}`)).body).toMatchObject({ error: "invalid_request", field: "q", reason: "too_short" });
+      const narrowed = await get(app, `/api/shops/my-shop/products?q=${encodeURIComponent("商品")}&tag=${encodeURIComponent("奇数")}`);
+      expect(narrowed.status).toBe(200);
+      expect(narrowed.body.total).toBe(30);
       // 型・範囲の合わない位置（DB で型に直せない値）は 500 にせず 400
       const bad = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
       if (!legacy) {
