@@ -10,8 +10,8 @@ import { Browser, appWith, memberLogin, memberMail } from "./helpers";
  */
 const BUDGET = {
   // 初回（キャッシュなし）: 適用済みの版 1（banto_setup_state。isolate ごとに 60 秒、0028 で +1、2026-10-18 02-decisions.md）
-  // + ショップ行 1 + 商品一覧 3 とカテゴリー 1（並列。0008 で +1、2026-10-16 02-decisions.md）
-  cold: { "/my-shop": 6, "/api/shops/my-shop/products": 6 },
+  // + ショップ行 1 + カテゴリー 1 + 一覧の 1 ページ 1 とタグ・カテゴリーの件数 1（並列。0058 で全件 3 回 → 2 回、2026-10-26 02-decisions.md）
+  cold: { "/my-shop": 5, "/api/shops/my-shop/products": 5 },
   // 2 回目以降（isolate のキャッシュが効いている）
   warm: {
     "/my-shop": 0,

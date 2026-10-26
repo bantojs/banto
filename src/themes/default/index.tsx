@@ -57,6 +57,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .tags{display:flex;flex-wrap:wrap;gap:.4rem}.tags a{padding:.15rem .6rem;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:1rem;text-decoration:none;font-size:.9rem}.tags a.active{background:var(--accent,#1f6feb);color:#fff;border-color:transparent}
 .categories{display:flex;flex-wrap:wrap;gap:.25rem .9rem;margin:.5rem 0 1rem}.categories a{text-decoration:none}.categories a.active{font-weight:700}.categories a.sub{font-size:.9rem;margin-left:.5rem;opacity:.8}
 table.attributes th{width:30%;font-weight:600}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin:2rem 0}
 .thumbs{display:flex;gap:.5rem;flex-wrap:wrap}.thumbs img{width:4.5rem;height:4.5rem;object-fit:cover;border-radius:.25rem;border:1px solid color-mix(in srgb,CanvasText 15%,transparent)}
 `;
 
@@ -213,7 +214,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category }) {
+  ShopHome({ ctx, products, tag, tags, categories, category, pagination }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
     const heading = category ? category.name : tag;
@@ -221,7 +222,7 @@ export const defaultTheme: Theme = {
       <Layout
         title={heading ? `${heading} · ${t("store.products")}` : t("store.products")}
         ctx={ctx}
-        seo={{ path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home, description: intro, image: products.find((p) => p.image)?.image ? imageUrl(ctx.mediaBaseUrl, products.find((p) => p.image)!.image!.storage_key) : undefined }}
+        seo={{ path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home, description: intro, image: products.find((p) => p.image)?.image ? imageUrl(ctx.mediaBaseUrl, products.find((p) => p.image)!.image!.storage_key) : undefined, ...(pagination?.first ? { noindex: true } : {}) }}
       >
         <div class="hero">
           <h1>{ctx.shop.name}</h1>
@@ -278,6 +279,16 @@ export const defaultTheme: Theme = {
             </div>
           ))}
         </div>
+        {pagination?.next || pagination?.first ? (
+          <nav class="pager" aria-label={t("store.pagination")}>
+            {pagination.first ? <a href={pagination.first}>{t("store.first_page")}</a> : null}
+            {pagination.next ? (
+              <a href={pagination.next} rel="next">
+                {t("store.next_page")}
+              </a>
+            ) : null}
+          </nav>
+        ) : null}
       </Layout>
     );
   },

@@ -9,8 +9,7 @@ import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
 import { addCoupon, addItem, cartCookieHeader, cartCookieName, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { openJson, readCookie } from "../../util/signed";
-import { tagCounts, tagsOf } from "../../products/tags";
-import { categoryPath, categoryTree, descendantIds, inCategories } from "../../products/categories";
+import { categoryPath, categoryTree } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
@@ -178,24 +177,39 @@ storefront.get("/", async (c: Ctx) => {
   return c.html(resolveTheme({}).ShopIndex({ shops }));
 });
 
+/** お店の画面の一覧の 1 ページの数 */
+const STORE_PAGE_SIZE = 48;
+
 storefront.get("/:shop", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const [all, categories] = await Promise.all([s.sf.listProducts(s.shop), s.sf.listCategories(s.shop)]);
   const tag = c.req.query("tag") || undefined;
   const categorySlug = c.req.query("category") || undefined;
+  const after = c.req.query("after") || undefined;
+  const query = { tag, category: categorySlug, limit: STORE_PAGE_SIZE };
+  // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）。それ以外は並列
+  const categories = await s.sf.listCategories(s.shop);
   const category = categorySlug ? categories.find((x) => x.slug === categorySlug) : undefined;
   if (categorySlug && !category) return notFound(c, s);
-  const inCategory = category ? descendantIds(categories, category.id) : null;
-  const products = all.filter(({ product }) => (!tag || tagsOf(product).includes(tag)) && (!inCategory || inCategories(product, inCategory)));
+  const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, categories, { cursor: after }), s.sf.productFacets(s.shop, categories)]);
+  if (!page) return notFound(c, s);
+  const link = (cursor: string | null) => {
+    const q = new URLSearchParams();
+    if (tag) q.set("tag", tag);
+    if (categorySlug) q.set("category", categorySlug);
+    if (cursor) q.set("after", cursor);
+    const qs = q.toString();
+    return `${s.ctx.shopPath || "/"}${qs ? `?${qs}` : ""}`;
+  };
   return c.html(
     s.theme.ShopHome({
       ctx: s.ctx,
-      products,
+      products: page.items,
       tag,
-      tags: tagCounts(all.map((p) => p.product)),
+      tags: facets.tags,
       categories: categoryTree(categories),
       ...(category ? { category: { slug: category.slug, name: category.name } } : {}),
+      pagination: { ...(page.nextCursor ? { next: link(page.nextCursor) } : {}), ...(after ? { first: link(null) } : {}) },
     }),
   );
 });

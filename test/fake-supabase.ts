@@ -203,7 +203,7 @@ export class FakeSupabase {
     if (!Array.isArray(data["products"] ?? []) || !Array.isArray(data["orders"] ?? [])) return json({ code: "P0001", message: "invalid_export" }, 400);
     const counts: Record<string, number> = {};
     const pmap = new Map<string, string>(), smap = new Map<string, string>(), omap = new Map<string, string>();
-    for (const r of data["products"] ?? []) { const id = `product-${++this.seq}`; pmap.set(String(r["id"]), id); this.tables.products.push({ ...r, tags: [], category_id: null, brand: null, attributes: {}, id, shop_id: shopId }); } // 0006 は拡張列を入れない（restore_catalog が戻す）
+    for (const r of data["products"] ?? []) { const id = fakeUuid(++this.seq); pmap.set(String(r["id"]), id); this.tables.products.push({ ...r, tags: [], category_id: null, brand: null, attributes: {}, id, shop_id: shopId }); } // 0006 は拡張列を入れない（restore_catalog が戻す）
     counts["products"] = pmap.size;
     for (const r of data["skus"] ?? []) { const pid = pmap.get(String(r["product_id"])); if (!pid) continue; const id = fakeUuid(++this.seq); smap.set(String(r["id"]), id); this.tables.skus.push({ ...r, options: {}, gtin: null, compare_at_price_jpy: null, id, product_id: pid, shop_id: shopId }); this.tables.inventory.push({ sku_id: id, shop_id: shopId, available: 0 }); }
     counts["skus"] = smap.size;
@@ -274,7 +274,7 @@ export class FakeSupabase {
   }
 
   addProduct(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
-    const row = { id: `product-${++this.seq}`, shop_id: shopId, slug: "item", name: "Item", description: null, tags: [] as string[], category_id: null as string | null, brand: null as string | null, attributes: {} as Record<string, unknown>, published: false, created_at: this.now(), updated_at: this.now(), ...fields };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, slug: "item", name: "Item", description: null, tags: [] as string[], category_id: null as string | null, brand: null as string | null, attributes: {} as Record<string, unknown>, published: false, created_at: this.now(), updated_at: this.now(), ...fields };
     this.tables.products.push(row);
     return row;
   }
@@ -893,6 +893,96 @@ export class FakeSupabase {
   /** Cron ハートビート（0006）。null = 一度も記録なし */
   heartbeats = new Map<string, number>();
 
+  /** 0058 の list_price_jpy / list_compare_at_jpy（いちばん安い SKU。同額なら作成順・id 順） */
+  private listPrice(productId: unknown): { price: number | null; compareAt: number | null } {
+    const skus = this.tables.skus
+      .filter((k) => k["product_id"] === productId)
+      .sort((a, b) => Number(a["price_jpy"]) - Number(b["price_jpy"]) || String(a["created_at"]).localeCompare(String(b["created_at"])) || String(a["id"]).localeCompare(String(b["id"])));
+    const k = skus[0];
+    return k ? { price: Number(k["price_jpy"]), compareAt: (k["compare_at_price_jpy"] as number | null) ?? null } : { price: null, compareAt: null };
+  }
+
+  private productPublicList(args: Record<string, unknown>): Response {
+    const shopId = args["p_shop_id"];
+    if (!this.shopPublished(shopId)) return json({ items: [], next: null });
+    const limit = Math.min(Math.max(Number(args["p_limit"] ?? 24) || 24, 1), 100);
+    const offset = Math.max(Number(args["p_offset"] ?? 0) || 0, 0);
+    if (offset > 10000) return json({ code: "22023", message: "offset_too_large" }, 400);
+    const sort = String(args["p_sort"] ?? "new");
+    const tag = args["p_tag"] as string | null;
+    const cats = args["p_category_ids"] as string[] | null;
+    const brand = args["p_brand"] as string | null;
+    const q = typeof args["p_q"] === "string" && args["p_q"].trim() ? args["p_q"].trim().slice(0, 100).toLowerCase() : null;
+    const since = args["p_updated_since"] ? Date.parse(String(args["p_updated_since"])) : null;
+    type Entry = { p: Row; key: string | number; price: number | null; compareAt: number | null };
+    const keyOf: Record<string, (e: { p: Row; price: number | null }) => string | number> = {
+      new: (e) => String(e.p["created_at"]),
+      updated: (e) => String(e.p["updated_at"]),
+      price_asc: (e) => e.price ?? 2147483647,
+      price_desc: (e) => e.price ?? -1,
+      name: (e) => String(e.p["name"]),
+    };
+    const desc = sort === "new" || sort === "updated" || sort === "price_desc";
+    if (!keyOf[sort]) return json({ code: "22023", message: "invalid_sort" }, 400);
+    const cmp = (a: string | number, b: string | number) => (a < b ? -1 : a > b ? 1 : 0);
+    const order = (x: Entry, y: Entry) => (desc ? -1 : 1) * (cmp(x.key, y.key) || cmp(String(x.p["id"]), String(y.p["id"])));
+    const tagsOf = (p: Row) => (Array.isArray(p["tags"]) ? (p["tags"] as string[]) : []);
+    const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300)].join(" ").toLowerCase();
+    let rows: Entry[] = this.tables.products
+      .filter((p) => p["shop_id"] === shopId && p["published"] === true)
+      .filter((p) => !tag || tagsOf(p).includes(tag))
+      .filter((p) => !cats || cats.includes(String(p["category_id"])) || ((p["extra_category_ids"] ?? []) as string[]).some((c) => cats.includes(c)))
+      .filter((p) => !brand || p["brand"] === brand)
+      .filter((p) => !q || text(p).includes(q))
+      .filter((p) => since === null || Date.parse(String(p["updated_at"])) > since)
+      .map((p) => {
+        const lp = this.listPrice(p["id"]);
+        return { p, key: keyOf[sort]!({ p, price: lp.price }), price: lp.price, compareAt: lp.compareAt };
+      })
+      .sort(order);
+    const total = rows.length;
+    const after = args["p_after"] as { k: string | number; id: string } | null;
+    if (after) rows = rows.filter((e) => (desc ? -1 : 1) * (cmp(e.key, typeof e.key === "number" ? Number(after.k) : String(after.k)) || cmp(String(e.p["id"]), after.id)) > 0);
+    else rows = rows.slice(offset);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    const items = page.map((e) => {
+      const img = this.tables.product_images.filter((i) => i["product_id"] === e.p["id"]).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"]))[0];
+      return {
+        id: e.p["id"], slug: e.p["slug"], name: e.p["name"], brand: e.p["brand"] ?? null, category_id: e.p["category_id"] ?? null,
+        extra_category_ids: e.p["extra_category_ids"] ?? [], tags: tagsOf(e.p), created_at: e.p["created_at"], updated_at: e.p["updated_at"],
+        min_price_jpy: e.price, compare_at_price_jpy: e.compareAt,
+        image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
+      };
+    });
+    return json({
+      items,
+      next: rows.length > limit && last ? { k: last.key, id: last.p["id"] } : null,
+      ...(args["p_count"] ? { total: Math.min(total, 10000), total_capped: total > 10000 } : {}),
+    });
+  }
+
+  private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number> } {
+    if (!this.shopPublished(shopId)) return { tags: [], categories: {} };
+    const products = this.tables.products.filter((p) => p["shop_id"] === shopId && p["published"] === true);
+    const tags = new Map<string, number>();
+    for (const p of products) for (const t of new Set(Array.isArray(p["tags"]) ? (p["tags"] as string[]) : [])) tags.set(t, (tags.get(t) ?? 0) + 1);
+    const cats = this.tables.categories.filter((c) => c["shop_id"] === shopId);
+    const parent = new Map(cats.map((c) => [String(c["id"]), (c["parent_id"] as string | null) ?? null]));
+    const counts: Record<string, number> = {};
+    for (const p of products) {
+      const seen = new Set<string>();
+      for (const start of [p["category_id"], ...((p["extra_category_ids"] ?? []) as string[])]) {
+        for (let id = start ? String(start) : null; id && parent.has(id); id = parent.get(id) ?? null) seen.add(id);
+      }
+      for (const id of seen) counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return {
+      tags: [...tags].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0)).slice(0, tagLimit),
+      categories: counts,
+    };
+  }
+
   private rpc(fn: string, args: Record<string, unknown>, uid: string | null): Response {
     if (fn === "shop_store_list") {
       if (!this.shopPublished(args["p_shop_id"])) return json([]);
@@ -963,6 +1053,9 @@ export class FakeSupabase {
       for (const f of fields) if (f.public && f.key in attrs) pub[f.key] = attrs[f.key];
       return json({ ...p, attributes: pub });
     }
+    // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
+    if (fn === "product_public_list") return this.productPublicList(args);
+    if (fn === "product_public_facets") return json(this.productPublicFacets(String(args["p_shop_id"]), Number(args["p_tag_limit"] ?? 200)));
     if (fn === "set_stock") {
       const sku = this.tables.skus.find((k) => k["id"] === args["p_sku_id"]);
       const available = Number(args["p_available"]);

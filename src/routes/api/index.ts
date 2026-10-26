@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { PRODUCT_SORTS, StorefrontData, queryProducts, type ProductQuery, type ProductSort } from "../../storefront/data";
-import { tagCounts, tagsOf } from "../../products/tags";
-import { categoryPath, categoryTree, descendantIds, inCategories, type CategoryNode } from "../../products/categories";
+import { PRODUCT_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { tagsOf } from "../../products/tags";
+import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
 import type { CategoryRow } from "../../db/types";
 import { imageUrl } from "../../media/images";
@@ -60,9 +60,11 @@ api.get("/shops/:shop", async (c: Ctx) => {
 });
 
 /**
- * 商品一覧。?tag=&category=&brand=&q=&updated_since=&sort=new|updated|price_asc|price_desc|name&limit=&offset=（limit は既定・上限 100）。
- * category は子孫のカテゴリーを含む。
- * tags はショップ全体（絞り込み前）のタグと件数で、連携側の絞り込み UI に使う。
+ * 商品一覧。?tag=&category=&brand=&q=&updated_since=&sort=new|updated|price_asc|price_desc|name&limit=&offset=&cursor=
+ * （limit は既定・上限 100）。category は子孫のカテゴリーを含む。
+ * ページ送りは cursor（前の応答の next_cursor）。offset は 10,000 まで（docs/headless.md）。
+ * total は 10,000 まで数える（超えたら total_capped: true）。
+ * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）で、連携側の絞り込み UI に使う。
  */
 api.get("/shops/:shop/products", async (c: Ctx) => {
   const d = data(c);
@@ -71,8 +73,11 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   if (!shop) return c.json({ error: "not_found" }, 404);
   const query = productQuery(c);
   if (typeof query === "string") return c.json({ error: "invalid_request", field: query }, 400);
-  const [all, categories] = await Promise.all([d.sf.listProducts(shop), d.sf.listCategories(shop)]);
-  const page = queryProducts(all, query, categories);
+  const cursor = c.req.query("cursor") || undefined;
+  if ((query.offset ?? 0) > PRODUCT_OFFSET_MAX) return c.json({ error: "invalid_request", field: "offset" }, 400);
+  const categories = await d.sf.listCategories(shop);
+  const [page, facets] = await Promise.all([d.sf.productPage(shop, query, categories, { cursor, count: true }), d.sf.productFacets(shop, categories)]);
+  if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
   const catById = new Map(categories.map((x) => [x.id, x]));
   return c.json({
     products: page.items.map(({ product, image, minPrice, compareAt }) => ({
@@ -91,10 +96,12 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
       updated_at: product.updated_at,
     })),
     total: page.total,
+    total_capped: page.totalCapped,
     limit: page.limit,
     offset: page.offset,
     next_offset: page.nextOffset,
-    tags: tagCounts(all.map((s) => s.product)),
+    next_cursor: page.nextCursor,
+    tags: facets.tags,
   });
 });
 
@@ -167,13 +174,10 @@ api.get("/shops/:shop/categories", async (c: Ctx) => {
   if (!d) return c.json({ error: "not_configured" }, 503);
   const shop = await d.sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
-  const [all, categories] = await Promise.all([d.sf.listProducts(shop), d.sf.listCategories(shop)]);
-  const count = (id: string) => {
-    const ids = descendantIds(categories, id);
-    return all.filter((s) => inCategories(s.product, ids)).length;
-  };
+  const categories = await d.sf.listCategories(shop);
+  const facets = await d.sf.productFacets(shop, categories);
   type Node = { slug: string; name: string; count: number; children: Node[] };
-  const walk = (nodes: CategoryNode[]): Node[] => nodes.map((n) => ({ slug: n.slug, name: n.name, count: count(n.id), children: walk(n.children) }));
+  const walk = (nodes: CategoryNode[]): Node[] => nodes.map((n) => ({ slug: n.slug, name: n.name, count: facets.categories[n.id] ?? 0, children: walk(n.children) }));
   return c.json({ categories: walk(categoryTree(categories)) });
 });
 
