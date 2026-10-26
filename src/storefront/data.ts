@@ -312,9 +312,13 @@ export class StorefrontData {
     return this.db.rpc<[string, string][]>("product_public_slugs", { p_shop_id: shop.id, p_offset: offset, p_limit: limit });
   }
 
-  /** 商品フィードの 1 ページ（0060、id が after より後ろの公開中の商品 limit 件と、その SKU・在庫・画像） */
+  /**
+   * 商品フィードの 1 ページ（0060、id が after より後ろの公開中の商品 limit 件と、その SKU・在庫・画像）。
+   * 在庫は「あり / なし」だけが返る（フィードの availability に要るのはそれだけ）ので、在庫の行は 1 / 0 の数にして渡す
+   */
   async feedPage(shop: PublicShop, after: string | null, limit: number): Promise<Omit<FeedCatalogRows, "categories">> {
-    return this.db.rpc<Omit<FeedCatalogRows, "categories">>("product_feed_page", { p_shop_id: shop.id, p_after: after, p_limit: limit });
+    const r = await this.db.rpc<Omit<FeedCatalogRows, "categories" | "inventory"> & { inventory: { sku_id: string; in_stock: boolean }[] }>("product_feed_page", { p_shop_id: shop.id, p_after: after, p_limit: limit });
+    return { ...r, inventory: r.inventory.map((i) => ({ sku_id: i.sku_id, available: i.in_stock ? 1 : 0 })) };
   }
 
   /** このデプロイの Workers のプラン（0060 の banto_site_plan。裏の処理が 1 回に進める量）。当たる前は free */
@@ -473,7 +477,7 @@ export const CATALOG_PAGES_MIGRATION = "0060_catalog_pages";
 export interface FeedCatalogRows {
   products: ProductRow[];
   skus: SkuRow[];
-  inventory: InventoryRow[];
+  inventory: Pick<InventoryRow, "sku_id" | "available">[];
   images: ProductImageRow[];
   categories: CategoryRow[];
 }

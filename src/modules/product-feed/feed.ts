@@ -11,7 +11,8 @@ import { imageUrl } from "../../media/images";
 export interface FeedCatalog {
   products: ProductRow[];
   skus: SkuRow[];
-  inventory: InventoryRow[];
+  /** フィードが見るのは「1 以上か」だけ（0060 の product_feed_page は 1 / 0 を返す） */
+  inventory: Pick<InventoryRow, "sku_id" | "available">[];
   images: ProductImageRow[];
   categories: CategoryRow[];
 }

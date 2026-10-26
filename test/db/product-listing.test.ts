@@ -188,7 +188,12 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     const page = () => asAnon(async (c) => (await c.query<{ r: { products: unknown[] } }>("select product_feed_page($1, null, 10) as r", [shop.shopId])).rows[0]!.r);
     expect((await page()).products).toEqual([]);
     await getPool().query(`update shops set settings = settings || '{"modules":{"product_feed":true}}'::jsonb where id = $1`, [shop.shopId]);
-    expect((await page()).products).toHaveLength(1);
+    const r = (await page()) as unknown as { products: unknown[]; inventory: Record<string, unknown>[] };
+    expect(r.products).toHaveLength(1);
+    // 在庫は「あり / なし」だけ（正確な数は返さない）
+    expect(r.inventory).toEqual([{ sku_id: shop.skuId, in_stock: false }]);
+    await asUser(shop.ownerId, (c) => c.query("select set_stock($1, 7)", [shop.skuId]));
+    expect(((await page()) as unknown as { inventory: Record<string, unknown>[] }).inventory).toEqual([{ sku_id: shop.skuId, in_stock: true }]);
   });
 
   it("workers_plan は払い出しの自動化（service_role・JWT の無い直接の SQL）からも書ける。anon と member は書けない", async () => {

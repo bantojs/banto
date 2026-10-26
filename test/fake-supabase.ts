@@ -1100,7 +1100,7 @@ export class FakeSupabase {
       return json({
         products,
         skus,
-        inventory: this.tables.inventory.filter((i) => skuIds.has(i["sku_id"])).map((i) => ({ sku_id: i["sku_id"], available: i["available"] })),
+        inventory: this.tables.inventory.filter((i) => skuIds.has(i["sku_id"])).map((i) => ({ sku_id: i["sku_id"], in_stock: Number(i["available"]) > 0 })),
         images: this.tables.product_images.filter((i) => ids.has(i["product_id"])).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])),
       });
     }

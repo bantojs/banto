@@ -21,8 +21,8 @@ describe("商品フィード（src/modules/product-feed/feed.ts）", () => {
         sku({ id: "k3", product_id: "p2", code: "X" }),
       ],
       inventory: [
-        { sku_id: "k1", shop_id: "s", available: 3 },
-        { sku_id: "k2", shop_id: "s", available: 0 },
+        { sku_id: "k1", available: 3 },
+        { sku_id: "k2", available: 0 },
       ] as FeedCatalog["inventory"],
       images: [
         { id: "i1", shop_id: "s", product_id: "p1", storage_key: "a.webp", thumb_key: null, width: null, height: null, sort_order: 0, created_at: now },

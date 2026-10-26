@@ -36,7 +36,7 @@ as $$
 $$;
 
 -- 商品フィードの 1 ページ: id が p_after より後ろの公開中の商品を p_limit 件（1,000 まで）と、その SKU・在庫・画像。
--- { products: [...], skus: [...], inventory: [...], images: [...] }。products は説明つき（フィードの description）、attributes は返さない。
+-- { products: [...], skus: [...], inventory: [{ sku_id, in_stock }], images: [...] }。products は説明つき（フィードの description）、attributes は返さない。
 -- 商品フィードのモジュールが ON のショップだけ（OFF なら空）
 create or replace function product_feed_page(p_shop_id uuid, p_after uuid, p_limit integer)
 returns jsonb
@@ -58,7 +58,8 @@ as $$
   select jsonb_build_object(
     'products', coalesce((select jsonb_agg(to_jsonb(p) order by p.id) from p), '[]'::jsonb),
     'skus', coalesce((select jsonb_agg(to_jsonb(k) order by k.product_id, k.created_at) from k), '[]'::jsonb),
-    'inventory', coalesce((select jsonb_agg(jsonb_build_object('sku_id', i.sku_id, 'available', i.available)) from inventory i where i.sku_id in (select id from k)), '[]'::jsonb),
+    -- 在庫は「あり / なし」だけ（フィードの availability に要るのはそれだけ。正確な数は返さない）
+    'inventory', coalesce((select jsonb_agg(jsonb_build_object('sku_id', i.sku_id, 'in_stock', i.available > 0)) from inventory i where i.sku_id in (select id from k)), '[]'::jsonb),
     'images', coalesce((select jsonb_agg(to_jsonb(im) order by im.product_id, im.sort_order) from product_images im where im.product_id in (select id from p)), '[]'::jsonb)
   );
 $$;
