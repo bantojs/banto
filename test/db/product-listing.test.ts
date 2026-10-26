@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asAnon, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 /**
  * 0058_product_listing: 商品の一覧を DB で絞り込み・並べ替え・ページ送りする。
@@ -189,6 +189,21 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect((await page()).products).toEqual([]);
     await getPool().query(`update shops set settings = settings || '{"modules":{"product_feed":true}}'::jsonb where id = $1`, [shop.shopId]);
     expect((await page()).products).toHaveLength(1);
+  });
+
+  it("workers_plan は払い出しの自動化（service_role・JWT の無い直接の SQL）からも書ける。anon と member は書けない", async () => {
+    const set = (v: string) => `select site_settings_set('workers_plan', '"${v}"') as r`;
+    const plan = async () => (await getPool().query<{ p: string }>("select banto_site_plan() as p")).rows[0]!.p;
+    await asService((c) => c.query(set("paid")));
+    expect(await plan()).toBe("paid");
+    await getPool().query(set("free"));
+    expect(await plan()).toBe("free");
+    expect(await expectDbError(() => asAnon((c) => c.query(set("paid"))))).toMatch(/permission denied|forbidden/);
+    const stranger = await createAuthUser("pl-plan@example.com");
+    expect(await expectDbError(() => asUser(stranger, (c) => c.query(set("paid"))))).toMatch(/forbidden/);
+    expect(await expectDbError(() => asService((c) => c.query(set("enterprise"))))).toMatch(/invalid_value/);
+    // plan_limits は今までどおり owner には書けない
+    expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query(`select site_settings_set('plan_limits', '{}')`)))).toMatch(/forbidden/);
   });
 
   it("画像は並び順の最初の 1 枚", async () => {

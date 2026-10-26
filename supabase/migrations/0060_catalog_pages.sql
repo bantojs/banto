@@ -74,6 +74,42 @@ as $$
   select coalesce((select settings->>'workers_plan' from banto_site_settings where id), 'free');
 $$;
 
+-- workers_plan は service_role と JWT の無い直接の SQL からも書ける（0052 の site_settings_set を差し替え）。
+-- ホスティングの提供者が払い出しのときに有料の枠（paid）を置けるように。組織の owner / admin は今までどおり書ける。
+-- plan_limits は今までどおり service_role と直接の SQL だけ
+create or replace function site_settings_set(p_key text, p_value jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_out jsonb;
+  v_role text := auth.role();
+  v_platform boolean := v_role is null or v_role = 'service_role';
+begin
+  if p_key = 'plan_limits' then
+    -- service_role（ホスティングの提供者・Worker の特権経路）か、JWT の無い直接の SQL（SQL エディタ・Management API）だけ
+    if not v_platform then raise exception 'forbidden' using errcode = '42501'; end if;
+    if not banto_plan_limits_valid(p_value) then raise exception 'invalid_value'; end if;
+  else
+    if not v_platform and not exists (select 1 from org_members m where m.user_id = auth.uid() and m.role in ('owner', 'admin')) then
+      raise exception 'forbidden' using errcode = '42501';
+    end if;
+    case p_key
+      when 'workers_plan' then
+        if p_value is null or jsonb_typeof(p_value) <> 'string' or p_value #>> '{}' not in ('free', 'paid') then raise exception 'invalid_value'; end if;
+      else raise exception 'invalid_key';
+    end case;
+  end if;
+  update banto_site_settings set settings = settings || jsonb_build_object(p_key, p_value), updated_at = now() where id
+  returning settings into v_out;
+  return v_out;
+end;
+$$;
+revoke execute on function site_settings_set(text, jsonb) from public, anon;
+grant execute on function site_settings_set(text, jsonb) to authenticated, service_role;
+
 revoke execute on function product_public_count(uuid) from public;
 grant execute on function product_public_count(uuid) to anon, authenticated, service_role;
 revoke execute on function product_public_slugs(uuid, integer, integer) from public;
