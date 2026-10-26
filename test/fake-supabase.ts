@@ -148,6 +148,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** 0060 の banto_site_plan（0038 の workers_plan） */
+  sitePlan: "free" | "paid" = "free";
   readonly serviceRoleKey: string;
   readonly webhookEvents = new Set<string>();
   /** 0038: サイトの設定（banto_site_settings の 1 行） */
@@ -203,9 +205,9 @@ export class FakeSupabase {
     if (!Array.isArray(data["products"] ?? []) || !Array.isArray(data["orders"] ?? [])) return json({ code: "P0001", message: "invalid_export" }, 400);
     const counts: Record<string, number> = {};
     const pmap = new Map<string, string>(), smap = new Map<string, string>(), omap = new Map<string, string>();
-    for (const r of data["products"] ?? []) { const id = `product-${++this.seq}`; pmap.set(String(r["id"]), id); this.tables.products.push({ ...r, tags: [], category_id: null, brand: null, attributes: {}, id, shop_id: shopId }); } // 0006 は拡張列を入れない（restore_catalog が戻す）
+    for (const r of data["products"] ?? []) { const id = fakeUuid(++this.seq); pmap.set(String(r["id"]), id); this.tables.products.push({ ...r, tags: [], category_id: null, brand: null, attributes: {}, id, shop_id: shopId }); } // 0006 は拡張列を入れない（restore_catalog が戻す）
     counts["products"] = pmap.size;
-    for (const r of data["skus"] ?? []) { const pid = pmap.get(String(r["product_id"])); if (!pid) continue; const id = `sku-${++this.seq}`; smap.set(String(r["id"]), id); this.tables.skus.push({ ...r, options: {}, gtin: null, compare_at_price_jpy: null, id, product_id: pid, shop_id: shopId }); this.tables.inventory.push({ sku_id: id, shop_id: shopId, available: 0 }); }
+    for (const r of data["skus"] ?? []) { const pid = pmap.get(String(r["product_id"])); if (!pid) continue; const id = fakeUuid(++this.seq); smap.set(String(r["id"]), id); this.tables.skus.push({ ...r, options: {}, gtin: null, compare_at_price_jpy: null, id, product_id: pid, shop_id: shopId }); this.tables.inventory.push({ sku_id: id, shop_id: shopId, available: 0 }); }
     counts["skus"] = smap.size;
     for (const r of data["inventory"] ?? []) { const sid = smap.get(String(r["sku_id"])); if (sid) this.tables.inventory.find((i) => i["sku_id"] === sid)!["available"] = Math.max(0, Number(r["available"] ?? 0)); }
     let n = 0;
@@ -274,7 +276,7 @@ export class FakeSupabase {
   }
 
   addProduct(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
-    const row = { id: `product-${++this.seq}`, shop_id: shopId, slug: "item", name: "Item", description: null, tags: [] as string[], category_id: null as string | null, brand: null as string | null, attributes: {} as Record<string, unknown>, published: false, created_at: this.now(), updated_at: this.now(), ...fields };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, slug: "item", name: "Item", description: null, tags: [] as string[], category_id: null as string | null, brand: null as string | null, attributes: {} as Record<string, unknown>, published: false, created_at: this.now(), updated_at: this.now(), ...fields };
     this.tables.products.push(row);
     return row;
   }
@@ -352,7 +354,7 @@ export class FakeSupabase {
 
   addSku(shopId: string, productId: string, fields: Partial<Row> & { available?: number } = {}): Row & { id: string } {
     const { available, ...rest } = fields;
-    const row = { id: `sku-${++this.seq}`, shop_id: shopId, product_id: productId, code: "SKU", name: null, price_jpy: 1000, options: {} as Record<string, unknown>, gtin: null as string | null, compare_at_price_jpy: null as number | null, created_at: this.now(), ...rest };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, product_id: productId, code: "SKU", name: null, price_jpy: 1000, options: {} as Record<string, unknown>, gtin: null as string | null, compare_at_price_jpy: null as number | null, created_at: this.now(), ...rest };
     this.tables.skus.push(row);
     this.tables.inventory.push({ sku_id: row.id, shop_id: shopId, available: available ?? 0, updated_at: this.now() });
     return row;
@@ -607,12 +609,18 @@ export class FakeSupabase {
       if (state !== "ok") return json({ code: "42501", message: `mfa_required:${state}`, details: null, hint: null }, 403);
     }
     const filters: [string, string][] = [];
+    const inFilters: [string, Set<string>][] = [];
     for (const [k, v] of u.searchParams) {
       if (["select", "order", "limit", "offset"].includes(k)) continue;
       if (v.startsWith("eq.")) filters.push([k, v.slice(3)]);
       else if (v === "is.null") filters.push([k, "\u0000null"]);
+      else if (v.startsWith("in.(") && v.endsWith(")")) inFilters.push([k, new Set(parseInList(v.slice(4, -1)))]);
     }
-    const matches = (row: Row) => filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v));
+    // 条件の木（DbClient の where → and=(…)）
+    const tree = u.searchParams.get("and");
+    const logic = tree ? parseLogic(`and${tree}`) : null;
+    const matches = (row: Row) =>
+      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && (!logic || evalLogic(logic, row));
 
     if (path.startsWith("rpc/")) {
       const fn = path.slice(4);
@@ -666,12 +674,26 @@ export class FakeSupabase {
       let out = rows.filter((r) => (service || this.visible(table, r, uid)) && matches(r));
       const order = u.searchParams.get("order");
       if (order) {
-        const [col, dir] = order.split(".") as [string, string | undefined];
-        out = [...out].sort((a, b) => (String(a[col]) < String(b[col]) ? -1 : 1) * (dir === "desc" ? -1 : 1));
+        // created_at.desc,id.desc のような複数の列（同じ値なら次の列で）
+        const keys = order.split(",").map((part) => part.split(".") as [string, string | undefined]);
+        out = [...out].sort((a, b) => {
+          for (const [col, dir] of keys) {
+            const x = String(a[col]), y = String(b[col]);
+            if (x !== y) return (x < y ? -1 : 1) * (dir === "desc" ? -1 : 1);
+          }
+          return 0;
+        });
       }
       const offset = Number(u.searchParams.get("offset") ?? 0);
       const limit = u.searchParams.get("limit");
+      const total = out.length;
       out = out.slice(offset, limit ? offset + Number(limit) : undefined);
+      // Prefer: count=exact（DbClient の count）
+      if ((req.headers.get("prefer") ?? "").includes("count=exact")) {
+        const res = json(out);
+        res.headers.set("content-range", `*/${total}`);
+        return res;
+      }
       return json(out);
     }
     if (req.method === "POST") {
@@ -890,6 +912,98 @@ export class FakeSupabase {
   /** Cron ハートビート（0006）。null = 一度も記録なし */
   heartbeats = new Map<string, number>();
 
+  /** 0058 の list_price_jpy / list_compare_at_jpy（いちばん安い SKU。同額なら作成順・id 順） */
+  private listPrice(productId: unknown): { price: number | null; compareAt: number | null } {
+    const skus = this.tables.skus
+      .filter((k) => k["product_id"] === productId)
+      .sort((a, b) => Number(a["price_jpy"]) - Number(b["price_jpy"]) || String(a["created_at"]).localeCompare(String(b["created_at"])) || String(a["id"]).localeCompare(String(b["id"])));
+    const k = skus[0];
+    return k ? { price: Number(k["price_jpy"]), compareAt: (k["compare_at_price_jpy"] as number | null) ?? null } : { price: null, compareAt: null };
+  }
+
+  private productPublicList(args: Record<string, unknown>): Response {
+    const shopId = args["p_shop_id"];
+    if (!this.shopPublished(shopId)) return json({ items: [], next: null });
+    const limit = Math.min(Math.max(Number(args["p_limit"] ?? 24) || 24, 1), 100);
+    const offset = Math.max(Number(args["p_offset"] ?? 0) || 0, 0);
+    if (offset > (typeof args["p_q"] === "string" && args["p_q"].trim() ? 1000 : 10000)) return json({ code: "22023", message: "offset_too_large" }, 400);
+    const rawQ = typeof args["p_q"] === "string" ? args["p_q"].trim() : "";
+    if (rawQ && [...rawQ].length < 3 && !args["p_tag"] && !args["p_category_ids"] && !args["p_brand"]) return json({ code: "22023", message: "q_too_short" }, 400);
+    const sort = String(args["p_sort"] ?? "new");
+    const tag = args["p_tag"] as string | null;
+    const cats = args["p_category_ids"] as string[] | null;
+    const brand = args["p_brand"] as string | null;
+    const q = typeof args["p_q"] === "string" && args["p_q"].trim() ? args["p_q"].trim().slice(0, 100).toLowerCase() : null;
+    const since = args["p_updated_since"] ? Date.parse(String(args["p_updated_since"])) : null;
+    type Entry = { p: Row; key: string | number; price: number | null; compareAt: number | null };
+    const keyOf: Record<string, (e: { p: Row; price: number | null }) => string | number> = {
+      new: (e) => String(e.p["created_at"]),
+      updated: (e) => String(e.p["updated_at"]),
+      price_asc: (e) => e.price ?? 2147483647,
+      price_desc: (e) => e.price ?? -1,
+      name: (e) => String(e.p["name"]),
+    };
+    const desc = sort === "new" || sort === "updated" || sort === "price_desc";
+    if (!keyOf[sort]) return json({ code: "22023", message: "invalid_sort" }, 400);
+    const cmp = (a: string | number, b: string | number) => (a < b ? -1 : a > b ? 1 : 0);
+    const order = (x: Entry, y: Entry) => (desc ? -1 : 1) * (cmp(x.key, y.key) || cmp(String(x.p["id"]), String(y.p["id"])));
+    const tagsOf = (p: Row) => (Array.isArray(p["tags"]) ? (p["tags"] as string[]) : []);
+    const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300)].join(" ").toLowerCase();
+    let rows: Entry[] = this.tables.products
+      .filter((p) => p["shop_id"] === shopId && p["published"] === true)
+      .filter((p) => !tag || tagsOf(p).includes(tag))
+      .filter((p) => !cats || cats.includes(String(p["category_id"])) || ((p["extra_category_ids"] ?? []) as string[]).some((c) => cats.includes(c)))
+      .filter((p) => !brand || p["brand"] === brand)
+      .filter((p) => !q || text(p).includes(q))
+      .filter((p) => since === null || Date.parse(String(p["updated_at"])) > since)
+      .map((p) => {
+        const lp = this.listPrice(p["id"]);
+        return { p, key: keyOf[sort]!({ p, price: lp.price }), price: lp.price, compareAt: lp.compareAt };
+      })
+      .sort(order);
+    const total = rows.length;
+    const after = args["p_after"] as { k: string | number; id: string } | null;
+    if (after) rows = rows.filter((e) => (desc ? -1 : 1) * (cmp(e.key, typeof e.key === "number" ? Number(after.k) : String(after.k)) || cmp(String(e.p["id"]), after.id)) > 0);
+    else rows = rows.slice(offset);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    const items = page.map((e) => {
+      const img = this.tables.product_images.filter((i) => i["product_id"] === e.p["id"]).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"]))[0];
+      return {
+        id: e.p["id"], slug: e.p["slug"], name: e.p["name"], brand: e.p["brand"] ?? null, category_id: e.p["category_id"] ?? null,
+        extra_category_ids: e.p["extra_category_ids"] ?? [], tags: tagsOf(e.p), created_at: e.p["created_at"], updated_at: e.p["updated_at"],
+        min_price_jpy: e.price, compare_at_price_jpy: e.compareAt,
+        image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
+      };
+    });
+    return json({
+      items,
+      next: rows.length > limit && last ? { k: last.key, id: last.p["id"] } : null,
+      ...(args["p_count"] ? { total: Math.min(total, 10000), total_capped: total > 10000 } : {}),
+    });
+  }
+
+  private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number> } {
+    if (!this.shopPublished(shopId)) return { tags: [], categories: {} };
+    const products = this.tables.products.filter((p) => p["shop_id"] === shopId && p["published"] === true);
+    const tags = new Map<string, number>();
+    for (const p of products) for (const t of new Set(Array.isArray(p["tags"]) ? (p["tags"] as string[]) : [])) tags.set(t, (tags.get(t) ?? 0) + 1);
+    const cats = this.tables.categories.filter((c) => c["shop_id"] === shopId);
+    const parent = new Map(cats.map((c) => [String(c["id"]), (c["parent_id"] as string | null) ?? null]));
+    const counts: Record<string, number> = {};
+    for (const p of products) {
+      const seen = new Set<string>();
+      for (const start of [p["category_id"], ...((p["extra_category_ids"] ?? []) as string[])]) {
+        for (let id = start ? String(start) : null; id && parent.has(id); id = parent.get(id) ?? null) seen.add(id);
+      }
+      for (const id of seen) counts[id] = (counts[id] ?? 0) + 1;
+    }
+    return {
+      tags: [...tags].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0)).slice(0, tagLimit),
+      categories: counts,
+    };
+  }
+
   private rpc(fn: string, args: Record<string, unknown>, uid: string | null): Response {
     if (fn === "shop_store_list") {
       if (!this.shopPublished(args["p_shop_id"])) return json([]);
@@ -960,6 +1074,38 @@ export class FakeSupabase {
       for (const f of fields) if (f.public && f.key in attrs) pub[f.key] = attrs[f.key];
       return json({ ...p, attributes: pub });
     }
+    // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
+    if (fn === "product_public_list") return this.productPublicList(args);
+    // 0060: サイトマップの分割と商品フィードの 1 ページ
+    if (fn === "product_public_count") return json(this.shopPublished(args["p_shop_id"]) ? this.tables.products.filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true).length : 0);
+    if (fn === "product_public_slugs") {
+      if (!this.shopPublished(args["p_shop_id"])) return json([]);
+      const rows = this.tables.products.filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true).sort((a, b) => String(a["id"]).localeCompare(String(b["id"])));
+      const offset = Number(args["p_offset"] ?? 0);
+      return json(rows.slice(offset, offset + Math.min(Number(args["p_limit"] ?? 0), 10000)).map((p) => [p["slug"], p["updated_at"]]));
+    }
+    if (fn === "product_feed_page") {
+      const feedShop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      const feedOn = ((feedShop?.["settings"] as { modules?: Record<string, unknown> } | undefined)?.modules ?? {})["product_feed"] === true;
+      if (!this.shopPublished(args["p_shop_id"]) || !feedOn) return json({ products: [], skus: [], inventory: [], images: [] });
+      const after = args["p_after"] as string | null;
+      const products = this.tables.products
+        .filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true && (!after || String(p["id"]) > after))
+        .sort((a, b) => String(a["id"]).localeCompare(String(b["id"])))
+        .slice(0, Math.min(Number(args["p_limit"] ?? 0), 1000))
+        .map(({ attributes: _attrs, ...p }) => p);
+      const ids = new Set(products.map((p) => p["id"]));
+      const skus = this.tables.skus.filter((k) => ids.has(k["product_id"]));
+      const skuIds = new Set(skus.map((k) => k["id"]));
+      return json({
+        products,
+        skus,
+        inventory: this.tables.inventory.filter((i) => skuIds.has(i["sku_id"])).map((i) => ({ sku_id: i["sku_id"], in_stock: Number(i["available"]) > 0 })),
+        images: this.tables.product_images.filter((i) => ids.has(i["product_id"])).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])),
+      });
+    }
+    if (fn === "banto_site_plan") return json(this.sitePlan);
+    if (fn === "product_public_facets") return json(this.productPublicFacets(String(args["p_shop_id"]), Number(args["p_tag_limit"] ?? 200)));
     if (fn === "set_stock") {
       const sku = this.tables.skus.find((k) => k["id"] === args["p_sku_id"]);
       const available = Number(args["p_available"]);
@@ -1199,10 +1345,45 @@ export class FakeSupabase {
       if (g) g["status"] = "revoked";
       return json(Boolean(g));
     }
-    if (fn === "coupon_stats") {
+    // 0059: 管理画面の部分一致の検索（本物は権限を 1 回確かめて RLS の外でインデックスを使う）
+    if (fn === "admin_search_ids") {
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "forbidden" }, 403);
+      const kind = String(args["p_kind"]) as "products" | "orders" | "customers";
+      const q = String(args["p_q"] ?? "").trim().toLowerCase();
+      const f = (args["p_filters"] ?? {}) as Record<string, string>;
+      const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
+      const afterK = args["p_after_k"] as string | null;
+      const afterId = args["p_after_id"] as string | null;
+      const rows = this.tables[kind]
+        .filter((r) => r["shop_id"] === shopId)
+        .filter((r) => {
+          if (kind === "products") return (!q || has(r["name"]) || has(r["slug"])) && (f["state"] !== "published" || r["published"] === true) && (f["state"] !== "draft" || r["published"] !== true);
+          if (kind === "orders") return (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === q || (/^\d{1,9}$/.test(q) && Number(r["number"]) === Number(q))) && (!f["status"] || r["status"] === f["status"]);
+          const attrs = (r["attributes"] ?? {}) as Record<string, unknown>;
+          const consent = r["marketing_consent"];
+          return (
+            (!q || has(r["email"]) || has(r["name"])) &&
+            (!f["field"] || !f["value"] || String(attrs[f["field"]] ?? "").toLowerCase().includes(f["value"].toLowerCase())) &&
+            (f["consent"] !== "yes" || consent === true) && (f["consent"] !== "no" || consent === false) && (f["consent"] !== "none" || consent === null || consent === undefined)
+          );
+        })
+        .filter((r) => !afterK || !afterId || String(r["created_at"]) < afterK || (String(r["created_at"]) === afterK && String(r["id"]) < afterId))
+        .sort((a, b) => (String(a["created_at"]) === String(b["created_at"]) ? (String(a["id"]) < String(b["id"]) ? 1 : -1) : String(a["created_at"]) < String(b["created_at"]) ? 1 : -1));
+      return json(rows.slice(0, Math.min(Number(args["p_limit"] ?? 50), 1000)).map((r) => r["id"]));
+    }
+    if (fn === "coupon_grant_counts") {
+      if (!uid || !this.ownedShopIds(uid).has(String(args["p_shop_id"]))) return json(null);
+      const out: Record<string, number> = { available: 0, held: 0, used: 0, revoked: 0 };
+      for (const g of this.tables.coupon_grants) if (g["shop_id"] === args["p_shop_id"] && g["campaign_id"] === args["p_campaign_id"]) out[String(g["status"])] = (out[String(g["status"])] ?? 0) + 1;
+      return json(out);
+    }
+    if (fn === "coupon_stats" || fn === "coupon_stats_for") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json(null);
       const out: Record<string, { used: number; held: number }> = {};
-      for (const r of this.tables.coupon_redemptions.filter((x) => x["shop_id"] === args["p_shop_id"])) {
+      // 0059: coupon_stats_for は渡したキャンペーンの分だけ
+      const only = fn === "coupon_stats_for" ? new Set(args["p_campaign_ids"] as string[]) : null;
+      for (const r of this.tables.coupon_redemptions.filter((x) => x["shop_id"] === args["p_shop_id"] && (!only || only.has(String(x["campaign_id"]))))) {
         const s = (out[String(r["campaign_id"])] ??= { used: 0, held: 0 });
         if (r["status"] === "used") s.used++;
         if (r["status"] === "held") s.held++;
@@ -2703,6 +2884,81 @@ export class FakeSupabase {
     }
     return json({ code: "PGRST202", message: `Could not find the function public.${fn}` }, 404);
   }
+}
+
+/** PostgREST の論理式（and(…) / or(…) / 列.演算子.値）。DbClient の filterExpr が作る形だけを読む */
+type Logic = { kind: "and" | "or"; items: Logic[] } | { kind: "leaf"; col: string; op: string; value: string; quoted: boolean };
+
+function parseLogic(text: string): Logic {
+  let i = 0;
+  const node = (): Logic => {
+    for (const kind of ["and", "or"] as const) {
+      if (text.startsWith(`${kind}(`, i)) {
+        i += kind.length + 1;
+        const items: Logic[] = [];
+        while (text[i] !== ")") {
+          items.push(node());
+          if (text[i] === ",") i++;
+        }
+        i++;
+        return { kind, items };
+      }
+    }
+    const colEnd = text.indexOf(".", i);
+    const col = text.slice(i, colEnd);
+    const opEnd = text.indexOf(".", colEnd + 1);
+    const op = text.slice(colEnd + 1, opEnd);
+    i = opEnd + 1;
+    if (text[i] === '"') {
+      let v = "";
+      for (i++; text[i] !== '"'; i++) v += text[i] === "\\" ? text[++i] : text[i];
+      i++;
+      return { kind: "leaf", col, op, value: v, quoted: true };
+    }
+    let v = "";
+    while (i < text.length && text[i] !== "," && text[i] !== ")") v += text[i++];
+    return { kind: "leaf", col, op, value: v, quoted: false };
+  };
+  return node();
+}
+
+function evalLogic(l: Logic, row: Row): boolean {
+  if (l.kind !== "leaf") return l.kind === "and" ? l.items.every((x) => evalLogic(x, row)) : l.items.some((x) => evalLogic(x, row));
+  const [base, key] = l.col.split("->>") as [string, string | undefined];
+  const raw = key === undefined ? row[base] : ((row[base] ?? {}) as Record<string, unknown>)[key];
+  if (l.op === "is") return l.value === "null" ? raw === null || raw === undefined : raw === (l.value === "true");
+  if (raw === null || raw === undefined) return false;
+  if (l.op === "ilike") {
+    // *…* の部分一致だけ（\ でそのままの文字）
+    const needle = l.value.replace(/^\*|\*$/g, "").replace(/\\(.)/g, "$1").toLowerCase();
+    return String(raw).toLowerCase().includes(needle);
+  }
+  const num = typeof raw === "number" && !l.quoted;
+  const a: string | number = num ? raw : String(raw);
+  const b: string | number = num ? Number(l.value) : l.value;
+  if (typeof raw === "boolean") return l.op === "eq" ? String(raw) === l.value : String(raw) !== l.value;
+  switch (l.op) {
+    case "eq": return a === b || (typeof raw === "number" && Number(l.value) === raw);
+    case "neq": return a !== b;
+    case "lt": return typeof raw === "number" ? raw < Number(l.value) : a < b;
+    case "lte": return typeof raw === "number" ? raw <= Number(l.value) : a <= b;
+    case "gt": return typeof raw === "number" ? raw > Number(l.value) : a > b;
+    case "gte": return typeof raw === "number" ? raw >= Number(l.value) : a >= b;
+  }
+  return false;
+}
+
+/** SKU の id（本物と同じ UUID の形。お店の画面は UUID でない SKU の id を DB に問い合わせない） */
+function fakeUuid(n: number): string {
+  return `00000000-0000-4000-a000-${String(n).padStart(12, "0")}`;
+}
+
+/** PostgREST の in.(…) の中身。"…" で囲んだ値（\\ と \\" のエスケープ）と、囲まない値の両方を読む */
+function parseInList(body: string): string[] {
+  const out: string[] = [];
+  const re = /"((?:[^"\\]|\\.)*)"|([^,]+)/g;
+  for (const m of body.matchAll(re)) out.push(m[1] !== undefined ? m[1].replace(/\\(.)/g, "$1") : m[2]!);
+  return out;
 }
 
 function rlsError(table: string): Response {

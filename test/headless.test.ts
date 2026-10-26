@@ -365,8 +365,11 @@ describe("商品一覧の絞り込み・並べ替え・ページング（公開 
     expect(r.products[2]).toMatchObject({ tags: ["夏物", "トップス"], updated_at: "2026-10-10T00:00:00Z" });
 
     expect((await list(app, `?tag=${encodeURIComponent("夏物")}`)).products.map((p) => p.slug)).toEqual(["cap", "tee"]);
-    expect((await list(app, `?q=${encodeURIComponent("綿")}`)).products.map((p) => p.slug)).toEqual(["tee"]);
-    expect((await list(app, `?q=${encodeURIComponent("冬")}`)).products.map((p) => p.slug)).toEqual(["coat"]);
+    // 2 文字以下の語は、タグ・カテゴリー・ブランドで絞っているときだけ（docs/headless.md）
+    expect((await list(app, `?q=${encodeURIComponent("綿")}&tag=${encodeURIComponent("夏物")}`)).products.map((p) => p.slug)).toEqual(["tee"]);
+    expect((await list(app, `?q=${encodeURIComponent("冬")}&tag=${encodeURIComponent("冬物")}`)).products.map((p) => p.slug)).toEqual(["coat"]);
+    expect((await api(app, `/api/shops/my-shop/products?q=${encodeURIComponent("綿")}`)).status).toBe(400);
+    expect((await list(app, `?q=${encodeURIComponent("キャップ")}`)).products.map((p) => p.slug)).toEqual(["cap"]);
     expect((await list(app, "?updated_since=2026-03-01T12:00:00Z")).products.map((p) => p.slug)).toEqual(["coat", "tee"]);
     expect((await list(app, "?updated_since=2026-03-05T00:00:00Z")).products.map((p) => p.slug)).toEqual(["tee"]);
     expect((await list(app, "?sort=price_asc")).products.map((p) => p.slug)).toEqual(["cap", "tee", "coat"]);

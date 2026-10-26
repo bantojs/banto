@@ -31,7 +31,7 @@ A と B では、特定商取引法の最終確認画面は Banto の画面が�
 ## 商品を読む（公開読み取り API）
 
 ```
-GET /api/shops/<shop>/products?category=<カテゴリーの slug>&brand=<ブランド>&tag=<タグ>&q=<語>&updated_since=<ISO 8601>&sort=<並び>&limit=<件数>&offset=<位置>
+GET /api/shops/<shop>/products?category=<カテゴリーの slug>&brand=<ブランド>&tag=<タグ>&q=<語>&updated_since=<ISO 8601>&sort=<並び>&limit=<件数>&cursor=<次の位置>
 GET /api/shops/<shop>/products/<product_slug>
 GET /api/shops/<shop>/categories
 ```
@@ -41,10 +41,12 @@ GET /api/shops/<shop>/categories
 | `category` | このカテゴリーと、その子孫のカテゴリーの商品だけ（主カテゴリーか追加カテゴリーのどれかが合えば出る）。存在しない slug なら 0 件 |
 | `brand` | このブランドの商品だけ（完全一致） |
 | `tag` | このタグを持つ商品だけ（完全一致）。タグは管理画面の商品編集、または AI 用 API で付ける |
-| `q` | 名前・説明・ブランド・タグの部分一致（大文字小文字を区別しない、100 文字まで） |
+| `q` | 名前・ブランド・タグ・説明（先頭 300 文字）の部分一致（大文字小文字を区別しない、3〜100 文字）。2 文字以下の語（「帽子」など）は `tag`・`category`・`brand` のどれかと一緒のときだけ受け付けます（それ以外は 400、`field: "q"`, `reason: "too_short"`） |
 | `updated_since` | この時刻より後に更新された商品だけ。連携側でキャッシュを差分更新するときに使う |
 | `sort` | `new`（既定、登録の新しい順）/ `updated` / `price_asc` / `price_desc` / `name` |
-| `limit` / `offset` | ページング。`limit` は既定・上限とも 100 |
+| `limit` | 1 ページの件数。既定・上限とも 100 |
+| `cursor` | 次のページ。前の応答の `next_cursor` をそのまま渡す（`sort` を変えて使い回すと 400） |
+| `offset` | 先頭から何件飛ばすか。10,000 まで、`q` があるときは 1,000 まで（それより先は `cursor` で辿る） |
 
 応答:
 
@@ -56,13 +58,14 @@ GET /api/shops/<shop>/categories
       "image": "https://…", "thumb": "https://…", "min_price_jpy": 3000, "compare_at_price_jpy": 4000,
       "created_at": "…", "updated_at": "…" }
   ],
-  "total": 42, "limit": 20, "offset": 0, "next_offset": 20,
+  "total": 42, "total_capped": false, "limit": 20, "offset": 0, "next_offset": 20, "next_cursor": "eyJzIjoibmV3Ii…",
   "tags": [ { "tag": "夏物", "count": 12 }, { "tag": "トップス", "count": 5 } ]
 }
 ```
 
-- `next_offset` が `null` なら最後のページです。
-- `tags` はショップ全体（絞り込み前、公開中の商品だけ）のタグと件数です。絞り込みボタンを並べるのに使えます。
+- `next_cursor` が `null` なら最後のページです。商品が多いショップでも速さが変わらないので、ページ送りは `cursor` を使ってください。`next_offset` は `offset` で辿っているときだけ（10,000 件まで）返ります。
+- `total` は絞り込み後の件数で、最初のページ（`cursor` も `offset` も無いとき）だけ 10,000 件まで数えます。超えたら `10000` と `total_capped: true` を返します。2 ページ目からは `null` です。
+- `tags` はショップ全体（絞り込み前、公開中の商品だけ）のタグと件数です（多い順に 200 件まで）。絞り込みボタンを並べるのに使えます。
 - `compare_at_price_jpy` は最安 SKU の通常価格です。`min_price_jpy` より高ければセール中として表示できます。
 - 詳細（`/products/<slug>`）は説明・画像（幅と高さつき）に加え、次を返します。
   - `brand`、`category`、`category_path`（最上位から主カテゴリーまで。パンくず用）、`extra_categories`（追加カテゴリー。主カテゴリーのほかに並ぶ棚）、`tags`、`updated_at`

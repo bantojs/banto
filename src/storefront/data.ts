@@ -7,9 +7,13 @@ import type { DbClient, Row } from "../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../db/types";
 import { migrated } from "../db/migration-state";
 import { descendantIds, inCategories } from "../products/categories";
+import { tagCounts } from "../products/tags";
+import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
+import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 
 export const STOREFRONT_CACHE_TTL = 30;
+
 
 /**
  * 公開中のショップのうち、お客様の画面（anon）に渡してよい部分（0028_security_hardening の shop_public_get / shop_public_list）。
@@ -95,13 +99,23 @@ export interface CouponClaimInfo {
   remaining: number | null;
 }
 
+/** 一覧に出す商品の列（0058 の product_public_list が返すもの。説明・独自項目は含まない） */
+export type ProductListRow = Pick<ProductRow, "id" | "slug" | "name" | "tags" | "category_id" | "extra_category_ids" | "brand" | "created_at" | "updated_at">;
+export type ProductListImage = Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height">;
+
 export interface ProductSummary {
-  product: ProductRow;
-  image: ProductImageRow | null;
+  product: ProductListRow;
+  image: ProductListImage | null;
   /** 最安 SKU 価格。SKU が無ければ null */
   minPrice: number | null;
   /** 最安 SKU の通常価格（セール中なら minPrice より高い）。無ければ null */
   compareAt?: number | null;
+}
+
+/** 全件を読む経路（0058 より前の DB の一覧・サイトマップ）の行。商品の行をそのまま持つ */
+export interface CatalogSummary extends ProductSummary {
+  product: ProductRow;
+  image: ProductImageRow | null;
 }
 
 export interface SkuWithStock extends SkuRow {
@@ -176,9 +190,9 @@ export class StorefrontData {
     return shop;
   }
 
-  async listProducts(shop: PublicShop): Promise<ProductSummary[]> {
+  async listProducts(shop: PublicShop): Promise<CatalogSummary[]> {
     const key = `products:${shop.id}`;
-    const hit = await this.cache.get<ProductSummary[]>(key);
+    const hit = await this.cache.get<CatalogSummary[]>(key);
     if (hit) return hit;
     const cols = await this.productColumns();
     const [products, images, skus] = await Promise.all([
@@ -200,6 +214,117 @@ export class StorefrontData {
     });
     await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
+  }
+
+  /**
+   * 商品の一覧の 1 ページ（お店の画面と公開 API で共通）。0058 以降は DB で絞り込み・並べ替え・キーセットのページ送り
+   * （product_public_list、問い合わせ 1 回）。それより前の DB は全件を読んでメモリで（queryProducts）。
+   * categories はカテゴリーで絞るときだけ要る（子孫まで広げるため）。cursor は前のページの nextCursor。形が違えば null を返す。
+   */
+  async productPage(shop: PublicShop, query: ProductQuery, categories: CategoryRow[], opts: { cursor?: string; count?: boolean } = {}): Promise<ProductListPage | null> {
+    const sort = query.sort ?? "new";
+    const limit = Math.min(PRODUCT_PAGE_MAX, Math.max(1, Math.floor(query.limit ?? PRODUCT_PAGE_MAX)));
+    const cursor = opts.cursor ? readCursor(opts.cursor, sort) : undefined;
+    if (cursor === null) return null;
+    if (!(await this.migratedTo(PRODUCT_LISTING_MIGRATION))) {
+      const page = queryProducts(await this.listProducts(shop), { ...query, limit, offset: cursor && "o" in cursor ? cursor.o : query.offset }, categories);
+      return { ...page, total: opts.count ? page.total : null, nextCursor: page.nextOffset === null ? null : encodeCursor({ s: sort, o: page.nextOffset }), totalCapped: false };
+    }
+    if (cursor && "o" in cursor) return null;
+    const offset = cursor ? 0 : Math.max(0, Math.floor(query.offset ?? 0));
+    // 検索の語があるときの offset は 1,000 まで（深い位置まで読ませて DB を重くさせない。先は cursor で）
+    if (offset > (query.q?.trim() ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return null;
+    const cat = query.category ? categories.find((c) => c.slug === query.category) : undefined;
+    const args = {
+      p_shop_id: shop.id,
+      p_sort: sort,
+      p_limit: limit,
+      p_after: cursor ? { k: cursor.k, id: cursor.id } : null,
+      p_offset: offset,
+      p_tag: query.tag ?? null,
+      // 無いカテゴリーなら 0 件（全件を返さない）
+      p_category_ids: query.category ? (cat ? [...descendantIds(categories, cat.id)] : []) : null,
+      p_brand: query.brand ?? null,
+      p_q: query.q?.trim() ? query.q.trim().slice(0, 100) : null,
+      p_updated_since: query.updatedSince?.toISOString() ?? null,
+      p_count: opts.count ?? false,
+    };
+    // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
+    const cacheable = !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
+    const key = `plist:${JSON.stringify(args)}`;
+    const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
+    if (hit) return hit;
+    const r = await this.db.rpc<{ items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean }>("product_public_list", args);
+    const items = r.items.map((x): ProductSummary => ({
+      product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },
+      image: x.image,
+      minPrice: x.min_price_jpy,
+      compareAt: x.compare_at_price_jpy,
+    }));
+    const out: ProductListPage = {
+      items,
+      total: r.total ?? null,
+      totalCapped: r.total_capped ?? false,
+      limit,
+      offset,
+      nextOffset: !cursor && r.next && offset + limit <= PRODUCT_OFFSET_MAX ? offset + limit : null,
+      nextCursor: r.next ? encodeCursor({ s: sort, k: r.next.k, id: r.next.id }) : null,
+    };
+    if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    return out;
+  }
+
+  /**
+   * 公開中の商品のタグ（多い順に 200 件まで）とカテゴリーごとの件数（子孫を含む、1 商品は 1 回）。
+   * 0058 以降は数え済みの表（product_public_facets、問い合わせ 1 回）。それより前は全件から数える。
+   */
+  async productFacets(shop: PublicShop, categories: CategoryRow[]): Promise<ProductFacets> {
+    if (!(await this.migratedTo(PRODUCT_LISTING_MIGRATION))) {
+      const all = await this.listProducts(shop);
+      const counts: Record<string, number> = {};
+      for (const c of categories) {
+        const ids = descendantIds(categories, c.id);
+        counts[c.id] = all.filter((s) => inCategories(s.product, ids)).length;
+      }
+      return { tags: tagCounts(all.map((s) => s.product)).slice(0, PRODUCT_FACET_TAGS), categories: counts };
+    }
+    const key = `facets:${shop.id}`;
+    const hit = await this.cache.get<ProductFacets>(key);
+    if (hit) return hit;
+    const out = await this.db.rpc<ProductFacets>("product_public_facets", { p_shop_id: shop.id, p_tag_limit: PRODUCT_FACET_TAGS });
+    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    return out;
+  }
+
+  /** 公開中の商品の数（0060。サイトマップのファイルの数を決める） */
+  async productCount(shop: PublicShop): Promise<number> {
+    const key = `pcount:${shop.id}`;
+    const hit = await this.cache.get<{ n: number }>(key);
+    if (hit) return hit.n;
+    const n = await this.db.rpc<number>("product_public_count", { p_shop_id: shop.id });
+    // サイトマップの索引のたびに数えない（ファイルの数が少し遅れて増えるだけ）
+    await this.cache.set(key, { n }, 600);
+    return n;
+  }
+
+  /** サイトマップの 1 ファイル分の [slug, 更新日時]（0060、id 順） */
+  async productSlugs(shop: PublicShop, offset: number, limit: number): Promise<[string, string][]> {
+    return this.db.rpc<[string, string][]>("product_public_slugs", { p_shop_id: shop.id, p_offset: offset, p_limit: limit });
+  }
+
+  /**
+   * 商品フィードの 1 ページ（0060、id が after より後ろの公開中の商品 limit 件と、その SKU・在庫・画像）。
+   * 在庫は「あり / なし」だけが返る（フィードの availability に要るのはそれだけ）ので、在庫の行は 1 / 0 の数にして渡す
+   */
+  async feedPage(shop: PublicShop, after: string | null, limit: number): Promise<Omit<FeedCatalogRows, "categories">> {
+    const r = await this.db.rpc<Omit<FeedCatalogRows, "categories" | "inventory"> & { inventory: { sku_id: string; in_stock: boolean }[] }>("product_feed_page", { p_shop_id: shop.id, p_after: after, p_limit: limit });
+    return { ...r, inventory: r.inventory.map((i) => ({ sku_id: i.sku_id, available: i.in_stock ? 1 : 0 })) };
+  }
+
+  /** このデプロイの Workers のプラン（0060 の banto_site_plan。裏の処理が 1 回に進める量）。当たる前は free */
+  async sitePlan(): Promise<"free" | "paid"> {
+    if (!(await this.migratedTo(CATALOG_PAGES_MIGRATION))) return "free";
+    return (await this.db.rpc<string>("banto_site_plan", {})) === "paid" ? "paid" : "free";
   }
 
   /**
@@ -232,20 +357,24 @@ export class StorefrontData {
       ? await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug })
       : await this.db.from<ProductRow>("products").selectOne("*", { eq: { shop_id: shop.id, slug, published: true } });
     if (!product || typeof product !== "object") return null;
-    const [images, skus, inventory] = await Promise.all([
+    // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）
+    const [images, [skus, inventory]] = await Promise.all([
       this.db.from<ProductImageRow>("product_images").select("*", { eq: { product_id: product.id }, order: "sort_order.asc" }),
-      this.db.from<SkuRow>("skus").select("*", { eq: { product_id: product.id }, order: "created_at.asc" }),
-      this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id } }),
+      this.db
+        .from<SkuRow>("skus")
+        .select("*", { eq: { product_id: product.id }, order: "created_at.asc" })
+        .then(async (skus) => [skus, await this.inventoryOf(shop, skus.map((s) => s.id))] as const),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })) };
   }
 
-  /**
-   * 商品フィード用に、公開中の商品・SKU・在庫・画像・カテゴリーをすべて読む（同梱モジュール product_feed、Cron と管理画面から）。
-   * PostgREST は 1 回 1,000 行までなので、表ごとにページを送って読む。キャッシュはしない。
-   */
-  async feedCatalog(shop: PublicShop): Promise<{ products: ProductRow[]; skus: SkuRow[]; inventory: InventoryRow[]; images: ProductImageRow[]; categories: CategoryRow[] }> {
+  /** SKU の在庫（その SKU の分だけ。SKU が無ければ問い合わせない） */
+  private inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
+    return selectIn<InventoryRow>(this.db, "inventory", "sku_id,available", shop.id, "sku_id", skuIds);
+  }
+
+  async feedCatalog(shop: PublicShop): Promise<FeedCatalogRows> {
     const all = async <T extends Row>(table: string, columns: string, eq: Record<string, string | boolean>, order: string): Promise<T[]> => {
       const out: T[] = [];
       for (let offset = 0; ; offset += 1000) {
@@ -290,11 +419,13 @@ export class StorefrontData {
   async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow }>> {
     const out = new Map<string, { sku: SkuWithStock; product: ProductRow }>();
     if (skuIds.length === 0) return out;
-    const cols = await this.productColumns();
-    const [skus, inventory, products] = await Promise.all([
-      this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id } }),
-      this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id } }),
-      this.db.from<ProductRow>("products").select(cols, { eq: { shop_id: shop.id, published: true } }),
+    // カートの分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた商品がカートから消える）
+    const ids = [...new Set(skuIds)].filter((id) => UUID_RE.test(id)).slice(0, 100);
+    if (ids.length === 0) return out;
+    const [cols, skus] = await Promise.all([this.productColumns(), this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } })]);
+    const [inventory, products] = await Promise.all([
+      this.inventoryOf(shop, skus.map((s) => s.id)),
+      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(cols, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));
@@ -339,8 +470,76 @@ export interface ProductPage {
   nextOffset: number | null;
 }
 
-/** listProducts の結果を絞り込む。小規模ショップ前提で、キャッシュ済みの全件をメモリで処理する */
-export function queryProducts(all: ProductSummary[], query: ProductQuery, categories: CategoryRow[] = []): ProductPage {
+/** サイトマップの分割と商品フィードの分割（product_public_count / product_public_slugs / product_feed_page）。当たる前は全件を読む */
+export const CATALOG_PAGES_MIGRATION = "0060_catalog_pages";
+
+/** 商品フィードの材料（src/modules/product-feed/feed.ts の FeedCatalog と同じ形） */
+export interface FeedCatalogRows {
+  products: ProductRow[];
+  skus: SkuRow[];
+  inventory: Pick<InventoryRow, "sku_id" | "available">[];
+  images: ProductImageRow[];
+  categories: CategoryRow[];
+}
+
+/** 商品の一覧を DB で絞り込む版（product_public_list・product_public_facets）。当たる前は全件を読んでメモリで */
+export const PRODUCT_LISTING_MIGRATION = "0058_product_listing";
+/** offset で辿れる上限（それより先は cursor）。product_public_list と同じ */
+export const PRODUCT_OFFSET_MAX = 10000;
+/** 絞り込み（タグ・カテゴリー・ブランド）無しで受け付ける検索の語の文字数の下限（pg_trgm のインデックスが効く長さ） */
+export const PRODUCT_SEARCH_MIN_CHARS = 3;
+/** 検索の語があるときの offset の上限 */
+export const PRODUCT_SEARCH_OFFSET_MAX = 1000;
+/** 一覧と一緒に返すタグの数（多い順） */
+export const PRODUCT_FACET_TAGS = 200;
+
+export interface ProductListPage {
+  items: ProductSummary[];
+  /** 絞り込み後の件数。数えなかったら null。10,000 を超えたら 10,000 で totalCapped */
+  total: number | null;
+  totalCapped: boolean;
+  limit: number;
+  offset: number;
+  /** 次のページの offset（offset で辿っていて 10,000 以内のときだけ）。最後のページなら null */
+  nextOffset: number | null;
+  /** 次のページの cursor。最後のページなら null */
+  nextCursor: string | null;
+}
+
+export interface ProductFacets {
+  tags: { tag: string; count: number }[];
+  /** カテゴリーの id → 公開中の商品の数（子孫を含む） */
+  categories: Record<string, number>;
+}
+
+/** product_public_list の 1 行 */
+interface ListItem extends ProductListRow {
+  min_price_jpy: number | null;
+  compare_at_price_jpy: number | null;
+  image: ProductListImage | null;
+}
+
+/**
+ * ページ送りの位置（並べ替えの値と id、0058 より前の DB では offset）。base64url の JSON。
+ * 並べ替えを変えて使い回されたら受け付けない（位置の意味が変わるため）
+ */
+type Cursor = { s: ProductSort; k: string | number; id: string } | { s: ProductSort; o: number };
+
+function readCursor(text: string, sort: ProductSort): Cursor | null {
+  const v = decodeCursor(text);
+  if (!v || v["s"] !== sort) return null;
+  if (typeof v["o"] === "number") return Number.isInteger(v["o"]) && v["o"] >= 0 ? { s: sort, o: v["o"] } : null;
+  const k = v["k"];
+  const id = v["id"];
+  if (typeof id !== "string" || !UUID_RE.test(id)) return null;
+  // 並べ替えの値の型と範囲を DB の列と同じに確かめる（DB で型に直せない値を渡して 500 にさせない）
+  const price = sort === "price_asc" || sort === "price_desc";
+  if (price ? !(typeof k === "number" && Number.isInteger(k) && k >= -1 && k <= 2147483647) : sort === "name" ? !(typeof k === "string" && k.length <= 300) : !(typeof k === "string" && ISO_TIMESTAMP.test(k))) return null;
+  return { s: sort, k: k as string | number, id };
+}
+
+/** listProducts の結果を絞り込む。0058 より前の DB だけの経路（キャッシュ済みの全件をメモリで処理する） */
+export function queryProducts(all: CatalogSummary[], query: ProductQuery, categories: CategoryRow[] = []): ProductPage {
   const q = query.q?.trim().toLowerCase();
   const cat = query.category ? categories.find((c) => c.slug === query.category) : undefined;
   // 存在しないカテゴリーを指定されたら 0 件（全件を返さない）

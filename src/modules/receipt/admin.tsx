@@ -9,6 +9,7 @@ import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
 import { INVOICE_NUMBER_RE, RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "./render";
+import { selectIn } from "../../db/select-in";
 
 export { RECEIPT_MODULE };
 
@@ -92,11 +93,10 @@ export async function adminReceipt(c: AdminContext): Promise<Response> {
   if (!shop || !moduleEnabled(shop.settings, RECEIPT_MODULE)) return c.notFound();
   const order = await db.from<AdminOrderRow>("orders").selectOne("*", { eq: { id: param(c, "orderId"), shop_id: shopId } });
   if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
-  const [items, skus, products] = await Promise.all([
-    db.from<OrderItemRow & { tax_rate?: number | string | null }>("order_items").select("*", { eq: { order_id: order.id } }),
-    db.from<SkuRow>("skus").select("id,code,name,product_id", { eq: { shop_id: shopId } }),
-    db.from<ProductRow>("products").select("id,name", { eq: { shop_id: shopId } }),
-  ]);
+  // SKU と商品は明細の分だけ（ショップ全体を読むと 1,000 行で欠ける）
+  const items = await db.from<OrderItemRow & { tax_rate?: number | string | null }>("order_items").select("*", { eq: { order_id: order.id } });
+  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name,product_id", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
+  const products = await selectIn<ProductRow>(db, "products", "id,name", shopId, "id", skus.map((k) => k.product_id));
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const nameById = new Map(products.map((p) => [p.id, p.name]));
   const ro: ReceiptOrder = {

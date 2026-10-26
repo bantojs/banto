@@ -11,7 +11,8 @@ import { imageUrl } from "../../media/images";
 export interface FeedCatalog {
   products: ProductRow[];
   skus: SkuRow[];
-  inventory: InventoryRow[];
+  /** フィードが見るのは「1 以上か」だけ（0060 の product_feed_page は 1 / 0 を返す） */
+  inventory: Pick<InventoryRow, "sku_id" | "available">[];
   images: ProductImageRow[];
   categories: CategoryRow[];
 }
@@ -112,11 +113,23 @@ const esc = (s: string) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
+/** フィードの頭（<channel> の見出しまで）。分けて作るとき（job.ts）は頭・<item> の並び・尻を別々に置いてつなぐ */
+export function feedHead(target: FeedTarget): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0"><channel><title>${esc(target.shopName)}</title><link>${esc(target.home)}</link><description>${esc(target.shopName)}</description>\n`;
+}
+
+export const FEED_TAIL = "</channel></rss>\n";
+
 export function feedXml(r: FeedResult, target: FeedTarget): string {
+  return `${feedHead(target)}${feedItemsXml(r)}${FEED_TAIL}`;
+}
+
+/** <item> の並び（1 行に 1 件。分けて作るときは part ごとにつなぐので、末尾にも改行） */
+export function feedItemsXml(r: FeedResult): string {
   const el = (k: string, v: string | undefined) => (v === undefined ? "" : `<g:${k}>${esc(v)}</g:${k}>`);
   const items = r.items.map(
     (i) =>
       `<item>${el("id", i.id)}${el("item_group_id", i.item_group_id)}${el("title", i.title)}${el("description", i.description)}${el("link", i.link)}${el("image_link", i.image_link)}${i.additional_image_link.map((u) => el("additional_image_link", u)).join("")}${el("availability", i.availability)}${el("price", i.price)}${el("sale_price", i.sale_price)}${el("condition", i.condition)}${el("brand", i.brand)}${el("gtin", i.gtin)}${el("identifier_exists", i.identifier_exists)}${el("product_type", i.product_type)}</item>`,
   );
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0"><channel><title>${esc(target.shopName)}</title><link>${esc(target.home)}</link><description>${esc(target.shopName)}</description>\n${items.join("\n")}\n</channel></rss>\n`;
+  return items.map((x) => `${x}\n`).join("");
 }

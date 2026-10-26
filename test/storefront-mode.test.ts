@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
+import { BASE, readSitemap } from "./helpers";
 import { blockedTarget, pageKind, safeHttpsUrl, storefrontSettings } from "../src/storefront/mode";
 import { injectHead, renderHeadTags } from "../src/storefront/head";
 import { ga4Tags } from "../src/modules/ga4/ga4";
@@ -78,7 +79,7 @@ describe("お店の画面の使い方", () => {
     res = await b.get("/my-shop/p/tee?added=1");
     expect(res.headers.get("location")).toBe("https://wp.example/product/tee/");
     for (const p of ["/my-shop/cart", "/my-shop/legal", "/my-shop/shipping", "/my-shop/orders/lookup"]) expect(`${p} ${(await b.get(p)).status}`).toBe(`${p} 200`);
-    const sitemap = await (await b.get("/sitemap.xml")).text();
+    const sitemap = await readSitemap(async (u) => (await b.get(new URL(u).pathname)).text(), `${BASE}/sitemap.xml`);
     expect(sitemap).toContain("/my-shop/legal");
     expect(sitemap).not.toContain("/my-shop/p/tee");
   });

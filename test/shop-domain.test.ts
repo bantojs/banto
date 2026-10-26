@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
 import { BASE, Browser, appWith, checkout, memberLogin, memberMail } from "./helpers";
+import { readSitemap } from "./helpers";
 import { normalizeDomain, shopHome, shopOrigin } from "../src/storefront/urls";
 
 const DOMAIN = "shop.example.jp";
@@ -128,11 +129,11 @@ describe("独自ドメインのストアフロント", () => {
     const robots = await (await b.get("/robots.txt")).text();
     expect(robots).toContain(`Sitemap: ${SHOP_URL}/sitemap.xml`);
     expect(robots).toContain("Disallow: /cart");
-    const own = await (await b.get("/sitemap.xml")).text();
+    const own = await readSitemap(async (u) => (await b.get(new URL(u).pathname)).text(), `${SHOP_URL}/sitemap.xml`);
     expect(own).toContain(`<loc>${SHOP_URL}/p/tee</loc>`);
     expect(own).not.toContain("/other");
     // Banto の URL のサイトマップには、独自ドメインのショップを載せない
-    const main = await (await base.get("/sitemap.xml")).text();
+    const main = await readSitemap(async (u) => (await base.get(new URL(u).pathname)).text(), `${BASE}/sitemap.xml`);
     expect(main).toContain(`<loc>${BASE}/other</loc>`);
     expect(main).not.toContain("my-shop");
     expect(main).not.toContain(DOMAIN);

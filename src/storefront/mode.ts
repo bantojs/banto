@@ -49,7 +49,7 @@ export function pageKind(rest: string): PageKind {
   if (r === "" || r.startsWith("/p/")) return "catalog";
   if (/^\/(legal|privacy|returns|shipping)$/.test(r)) return "system";
   if (/^\/orders\/(lookup|receipt)$/.test(r)) return "system";
-  if (r === "/checkout/done" || r === "/feed/products.xml") return "system";
+  if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";
   if (/^\/account\/(verify|code)$/.test(r)) return "system";
   return "shopping";
 }

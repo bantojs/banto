@@ -21,8 +21,8 @@ describe("商品フィード（src/modules/product-feed/feed.ts）", () => {
         sku({ id: "k3", product_id: "p2", code: "X" }),
       ],
       inventory: [
-        { sku_id: "k1", shop_id: "s", available: 3 },
-        { sku_id: "k2", shop_id: "s", available: 0 },
+        { sku_id: "k1", available: 3 },
+        { sku_id: "k2", available: 0 },
       ] as FeedCatalog["inventory"],
       images: [
         { id: "i1", shop_id: "s", product_id: "p1", storage_key: "a.webp", thumb_key: null, width: null, height: null, sort_order: 0, created_at: now },
@@ -130,11 +130,53 @@ describe("商品フィードのモジュール（product_feed）", () => {
     adapters.scheduler = { register: (n, j) => void jobs.set(n, j), runAll: async () => undefined };
     registerJobs(adapters, { fetch: sb.fetch });
     await jobs.get("product_feeds")!();
-    expect(storage.objects.has(`feeds/${shop.id}/products.xml`)).toBe(true);
-    expect(storage.objects.has(`feeds/${off.id}/products.xml`)).toBe(false);
+    expect(storage.objects.has(`feeds/${shop.id}/meta.json`)).toBe(true);
+    expect(storage.objects.has(`feeds/${off.id}/meta.json`)).toBe(false);
     const first = storage.objects.get(`feeds/${shop.id}/meta.json`)!.body;
     await jobs.get("product_feeds")!();
     expect(storage.objects.get(`feeds/${shop.id}/meta.json`)!.body).toBe(first);
+  });
+
+  it("商品が多いと何回かの Cron に分けて作り、作り終えるまでは前のフィードを配る。作り終えたら前の回の part を消す", async () => {
+    const { sb, shop, storage, app } = setup({ product_feed: true });
+    const now = "2026-01-01T00:00:00.000Z";
+    for (let i = 0; i < 4500; i++) {
+      const p = sb.addProduct(shop.id, { slug: `bulk-${i}`, name: `まとめ${i}`, published: true });
+      sb.addSku(shop.id, p.id, { code: `B${i}`, price_jpy: 500, available: 1 });
+      sb.tables.product_images.push({ id: `bimg-${i}`, shop_id: shop.id, product_id: p.id, storage_key: `products/b${i}.webp`, thumb_key: null, width: null, height: null, sort_order: 0, created_at: now });
+    }
+    const adapters = memoryAdapters({ SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, PUBLIC_BASE_URL: BASE }, storage);
+    const jobs = new Map<string, () => Promise<void>>();
+    adapters.scheduler = { register: (n, j) => void jobs.set(n, j), runAll: async () => undefined };
+    registerJobs(adapters, { fetch: sb.fetch });
+    const feed = async () => {
+      const res = await new Browser(app).get("/my-shop/feed/products.xml");
+      return { status: res.status, xml: await res.text() };
+    };
+    // 無料プランは 1 回 3,000 商品まで: 1 回目は作りかけ（まだ配るものが無い）
+    await jobs.get("product_feeds")!();
+    expect(storage.objects.has(`feeds/${shop.id}/run.json`)).toBe(true);
+    expect((await feed()).status).toBe(404);
+    await jobs.get("product_feeds")!();
+    expect(storage.objects.has(`feeds/${shop.id}/run.json`)).toBe(false);
+    const first = await feed();
+    expect(first.status).toBe(200);
+    expect(first.xml.match(/<item>/g)).toHaveLength(4501);
+    expect(first.xml.startsWith('<?xml version="1.0"')).toBe(true);
+    expect(first.xml.endsWith("</channel></rss>\n")).toBe(true);
+    const meta1 = JSON.parse(new TextDecoder().decode(storage.objects.get(`feeds/${shop.id}/meta.json`)!.body as ArrayBuffer)) as { run: string; parts: number };
+    expect(meta1.parts).toBe(3);
+
+    // 作り直し: 作りかけのあいだは前のフィードのまま。作り終えたら前の回の part は消える
+    sb.sitePlan = "paid";
+    storage.objects.delete(`feeds/${shop.id}/meta.json`);
+    storage.objects.set(`feeds/${shop.id}/meta.json`, { body: new TextEncoder().encode(JSON.stringify({ ...meta1, generated_at: "2000-01-01T00:00:00Z" })).buffer as ArrayBuffer, contentType: "application/json" });
+    await jobs.get("product_feeds")!();
+    const meta2 = JSON.parse(new TextDecoder().decode(storage.objects.get(`feeds/${shop.id}/meta.json`)!.body as ArrayBuffer)) as { run: string; parts: number; items: number };
+    expect(meta2.run).not.toBe(meta1.run);
+    expect(meta2.items).toBe(4501);
+    expect([...storage.objects.keys()].filter((k) => k.includes(`/runs/${meta1.run}/`))).toEqual([]);
+    expect((await feed()).xml.match(/<item>/g)).toHaveLength(4501);
   });
 
   it("モジュールが OFF なら配らない・画面も無い", async () => {

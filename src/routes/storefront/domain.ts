@@ -22,7 +22,7 @@ import { SLUG_RE, type Ctx } from "../common";
 
 /** ショップのドメインでもスラッグを足さないパス（Banto 全体のもの） */
 const PASSTHROUGH = ["/api", "/media", "/health", "/_oauth"];
-const PASSTHROUGH_FILES = new Set(["/robots.txt", "/sitemap.xml"]);
+const PASSTHROUGH_FILES = new Set(["/robots.txt", "/sitemap.xml", "/sitemap-pages.xml"]);
 /**
  * Banto 自身のホストでだけ出すパス（運営者と連携の入口）。ショップのドメインでは 404。
  * 店主がドメインの DNS を握る構成で、AI 用トークンや決済事業者の Webhook が店主のサーバーへ向かないように（2026-10-25 の監査）

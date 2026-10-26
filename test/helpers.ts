@@ -218,3 +218,14 @@ export function tinyPng(width = 2, height = 3): Uint8Array<ArrayBuffer> {
   new DataView(b.buffer).setUint32(20, height);
   return b;
 }
+
+/**
+ * サイトマップを索引（0060 の sitemapindex）から辿って、全部のファイルの中身をつなげて返す。
+ * get は絶対 URL を受け取って本文を返す（Browser なら同じホストのパスに直して呼ぶ）
+ */
+export async function readSitemap(get: (url: string) => Promise<string>, url: string): Promise<string> {
+  const xml = await get(url);
+  if (!xml.includes("<sitemapindex")) return xml;
+  const files = [...xml.matchAll(/<sitemap><loc>([^<]+)<\/loc><\/sitemap>/g)].map((m) => m[1]!.replace(/&amp;/g, "&"));
+  return [xml, ...(await Promise.all(files.map(get)))].join("\n");
+}

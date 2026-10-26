@@ -4,13 +4,12 @@ import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../store
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import type { AppEnv } from "../../app";
-import type { StorefrontData, PublicShop } from "../../storefront/data";
+import { CATALOG_PAGES_MIGRATION, type StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
 import { addCoupon, addItem, cartCookieHeader, cartCookieName, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { openJson, readCookie } from "../../util/signed";
-import { tagCounts, tagsOf } from "../../products/tags";
-import { categoryPath, categoryTree, descendantIds, inCategories } from "../../products/categories";
+import { categoryPath, categoryTree } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
@@ -23,7 +22,7 @@ import type { AddressFormValues } from "../../themes/types";
 import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, CHECKOUT_STATUS_MIGRATION, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
 import { moduleEnabled } from "../../modules/registry";
-import { FEED_MODULE, feedKey } from "../../modules/product-feed/job";
+import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
 import { dateLabel, deliveryOptions } from "../../modules/delivery-time";
 import { TRYON_MODULE, checkTryon, storeView, todayHere, tryonSettings, visitDates } from "../../modules/store-tryon";
@@ -148,25 +147,70 @@ storefront.get("/robots.txt", async (c: Ctx) => {
   return c.text(`User-agent: *\nDisallow: /admin\nDisallow: /api/v1\nDisallow: /mcp\nDisallow: /*/cart\nDisallow: /*/checkout\nDisallow: /*/account\nSitemap: ${publicBaseUrl(c)}/sitemap.xml\n`);
 });
 
+/** サイトマップの商品のファイル 1 つの URL の数（0060） */
+const SITEMAP_PRODUCTS_PER_FILE = 10000;
+
+const xmlEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+const xmlResponse = (c: Ctx, body: string) => c.body(body, 200, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600" });
+const urlset = (urls: string[]) => `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`;
+
+/** サイトマップに載せるショップ（独自ドメインの上ではそのショップだけ。Banto の URL では独自ドメインの無いショップだけ）と、お店のトップ */
+async function sitemapShops(c: Ctx, sf: StorefrontData): Promise<{ shop: PublicShop; home: string; own: boolean }[]> {
+  const base = publicBaseUrl(c);
+  const own = await hostShop(c);
+  const shops = own ? [own] : (await sf.listShops()).filter((shop) => !shop.domain);
+  return shops.filter((shop) => storefrontSettings(shop.settings).mode !== "off").map((shop) => ({ shop, home: shopHome(base, shop), own: Boolean(own) }));
+}
+
+/** トップ（お店の画面を使うショップだけ）と法務・送料のページ。カートと購入だけ使うショップは法務のページだけ（商品は外のサイトのもの） */
+function pageUrls(entries: { shop: PublicShop; home: string; own: boolean }[]): string[] {
+  const urls: string[] = [];
+  for (const { shop, home, own } of entries) {
+    if (storefrontSettings(shop.settings).mode === "full") urls.push(own ? `${home}/` : home);
+    for (const page of ["legal", "privacy", "returns", "shipping"]) urls.push(`${home}/${page}`);
+  }
+  return urls;
+}
+
+/**
+ * 0060 以降は索引（sitemapindex）: ページのファイル 1 つと、ショップごとの商品のファイル（10,000 件ずつ）。
+ * それより前の DB は 1 つのファイルに全部（商品は全件を読む）
+ */
 storefront.get("/sitemap.xml", async (c: Ctx) => {
   const sf = data(c);
   if (!sf) return c.notFound();
-  const base = publicBaseUrl(c);
-  const own = await hostShop(c);
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  const urls: string[] = [];
-  const shops = own ? [own] : (await sf.listShops()).filter((shop) => !shop.domain);
-  for (const shop of shops) {
-    // お店の画面を使わないショップは載せない。カートと購入だけ使うショップは法務のページだけ（商品は外のサイトのもの）
-    const mode = storefrontSettings(shop.settings).mode;
-    if (mode === "off") continue;
-    const home = shopHome(base, shop);
-    if (mode === "full") urls.push(own ? `${home}/` : home);
-    for (const page of ["legal", "privacy", "returns", "shipping"]) urls.push(`${home}/${page}`);
-    if (mode === "full") for (const { product } of await sf.listProducts(shop)) urls.push(`${home}/p/${product.slug}`);
+  const entries = await sitemapShops(c, sf);
+  if (!(await sf.migratedTo(CATALOG_PAGES_MIGRATION))) {
+    const urls = pageUrls(entries);
+    for (const { shop, home } of entries) if (storefrontSettings(shop.settings).mode === "full") for (const { product } of await sf.listProducts(shop)) urls.push(`${home}/p/${product.slug}`);
+    return xmlResponse(c, urlset(urls.map((u) => `  <url><loc>${xmlEsc(u)}</loc></url>`)));
   }
-  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${esc(u)}</loc></url>`).join("\n")}\n</urlset>\n`;
-  return c.body(body, 200, { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600" });
+  const own = await hostShop(c);
+  const files = [own ? `${shopOrigin(publicBaseUrl(c), own)}/sitemap-pages.xml` : `${publicBaseUrl(c)}/sitemap-pages.xml`];
+  for (const { shop, home } of entries) {
+    if (storefrontSettings(shop.settings).mode !== "full") continue;
+    const n = Math.ceil((await sf.productCount(shop)) / SITEMAP_PRODUCTS_PER_FILE);
+    for (let i = 1; i <= n; i++) files.push(`${home}/sitemap-products-${i}.xml`);
+  }
+  return xmlResponse(c, `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${files.map((u) => `  <sitemap><loc>${xmlEsc(u)}</loc></sitemap>`).join("\n")}\n</sitemapindex>\n`);
+});
+
+storefront.get("/sitemap-pages.xml", async (c: Ctx) => {
+  const sf = data(c);
+  if (!sf) return c.notFound();
+  return xmlResponse(c, urlset(pageUrls(await sitemapShops(c, sf)).map((u) => `  <url><loc>${xmlEsc(u)}</loc></url>`)));
+});
+
+storefront.get("/:shop/:file{sitemap-products-[0-9]{1,4}\\.xml}", async (c: Ctx) => {
+  const sf = data(c);
+  const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
+  if (!sf || !shop || storefrontSettings(shop.settings).mode !== "full" || !(await sf.migratedTo(CATALOG_PAGES_MIGRATION))) return c.notFound();
+  const n = Number(/([0-9]+)/.exec(param(c, "file"))![1]);
+  if (n < 1) return c.notFound();
+  const rows = await sf.productSlugs(shop, (n - 1) * SITEMAP_PRODUCTS_PER_FILE, SITEMAP_PRODUCTS_PER_FILE);
+  if (rows.length === 0) return c.notFound();
+  const home = shopHome(publicBaseUrl(c), shop);
+  return xmlResponse(c, urlset(rows.map(([slug, updated]) => `  <url><loc>${xmlEsc(`${home}/p/${slug}`)}</loc><lastmod>${xmlEsc(updated.slice(0, 10))}</lastmod></url>`)));
 });
 
 // ---------- 一覧 ----------
@@ -178,24 +222,39 @@ storefront.get("/", async (c: Ctx) => {
   return c.html(resolveTheme({}).ShopIndex({ shops }));
 });
 
+/** お店の画面の一覧の 1 ページの数 */
+const STORE_PAGE_SIZE = 48;
+
 storefront.get("/:shop", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const [all, categories] = await Promise.all([s.sf.listProducts(s.shop), s.sf.listCategories(s.shop)]);
   const tag = c.req.query("tag") || undefined;
   const categorySlug = c.req.query("category") || undefined;
+  const after = c.req.query("after") || undefined;
+  const query = { tag, category: categorySlug, limit: STORE_PAGE_SIZE };
+  // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）。それ以外は並列
+  const categories = await s.sf.listCategories(s.shop);
   const category = categorySlug ? categories.find((x) => x.slug === categorySlug) : undefined;
   if (categorySlug && !category) return notFound(c, s);
-  const inCategory = category ? descendantIds(categories, category.id) : null;
-  const products = all.filter(({ product }) => (!tag || tagsOf(product).includes(tag)) && (!inCategory || inCategories(product, inCategory)));
+  const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, categories, { cursor: after }), s.sf.productFacets(s.shop, categories)]);
+  if (!page) return notFound(c, s);
+  const link = (cursor: string | null) => {
+    const q = new URLSearchParams();
+    if (tag) q.set("tag", tag);
+    if (categorySlug) q.set("category", categorySlug);
+    if (cursor) q.set("after", cursor);
+    const qs = q.toString();
+    return `${s.ctx.shopPath || "/"}${qs ? `?${qs}` : ""}`;
+  };
   return c.html(
     s.theme.ShopHome({
       ctx: s.ctx,
-      products,
+      products: page.items,
       tag,
-      tags: tagCounts(all.map((p) => p.product)),
+      tags: facets.tags,
       categories: categoryTree(categories),
       ...(category ? { category: { slug: category.slug, name: category.name } } : {}),
+      pagination: { ...(page.nextCursor ? { next: link(page.nextCursor) } : {}), ...(after ? { first: link(null) } : {}) },
     }),
   );
 });
@@ -238,9 +297,9 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
   const sf = data(c);
   const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
   if (!shop || !moduleEnabled(shop.settings, FEED_MODULE)) return c.notFound();
-  const obj = await c.get("adapters").storage.get(feedKey(shop.id));
-  if (!obj) return c.text(t("feed.not_ready"), 404);
-  return new Response(obj.body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600", "X-Content-Type-Options": "nosniff" } });
+  const body = await readFeed(c.get("adapters").storage, shop.id);
+  if (!body) return c.text(t("feed.not_ready"), 404);
+  return new Response(body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600", "X-Content-Type-Options": "nosniff" } });
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

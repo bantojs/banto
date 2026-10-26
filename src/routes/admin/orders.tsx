@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import { csvCell } from "../../util/csv";
 import type { AppEnv } from "../../app";
-import { DbError } from "../../db/client";
+import { DbError, type Filter } from "../../db/client";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
+import { selectIn } from "../../db/select-in";
 import type { OrderItemRow, OrderRow, SkuRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -58,21 +60,39 @@ interface OrderListRow extends OrderRow {
   tracking_number?: string | null;
 }
 
-function matches(o: OrderListRow, q: string): boolean {
-  const needle = q.toLowerCase();
-  return String(o.number) === needle || (o.customer_email ?? "").toLowerCase().includes(needle) || (o.customer_name ?? "").toLowerCase().includes(needle) || (o.payment_ref ?? "").toLowerCase() === needle;
-}
+/** CSV に入れる注文の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
+const CSV_MAX_ORDERS = 2000;
 
-async function listOrders(c: AdminContext, shopId: string): Promise<{ rows: OrderListRow[]; q: string; status: string }> {
+/**
+ * 一覧と CSV で共通: 注文番号・決済の参照（完全一致）、メール・氏名（部分一致）と状態で DB で絞り、
+ * 新しい順に limit 件（after より後ろ）を読む
+ */
+async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; q: string; status: string }> {
   const { db } = owner(c);
-  const q = (c.req.query("q") ?? "").trim();
+  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
   const status = c.req.query("status") ?? "";
   const eq: Record<string, string> = { shop_id: shopId };
   if (["paid", "shipped", "cancelled", "refunded"].includes(status)) eq["status"] = status;
-  const rows = await db.from<OrderListRow>("orders").select("*", { eq, order: "created_at.desc", limit: 500 });
-  return { rows: q ? rows.filter((o) => matches(o, q)) : rows, q, status };
+  const where: Filter[] = [];
+  if (q) {
+    const n = /^\d{1,9}$/.test(q) ? Number(q) : null;
+    where.push({ or: [...(n !== null ? [{ col: "number", op: "eq", value: n } as const] : []), { col: "payment_ref", op: "eq", value: q }, { col: "customer_email", op: "contains", value: q }, { col: "customer_name", op: "contains", value: q }] });
+  }
+  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
+  const searched = q ? await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: eq["status"] ? { status: eq["status"] } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" }) : null;
+  if (searched) return { rows: searched, q, status: eq["status"] ?? "" };
+  const rows: OrderListRow[] = [];
+  // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
+  for (let after = opts.after; rows.length < opts.limit; ) {
+    const n = Math.min(1000, opts.limit - rows.length);
+    const page = await db.from<OrderListRow>("orders").select("*", { eq, where: after ? [...where, olderThan(after)] : where, order: "created_at.desc,id.desc", limit: n });
+    rows.push(...page);
+    if (page.length < n) break;
+    const last = page[page.length - 1]!;
+    after = { k: last.created_at, id: last.id };
+  }
+  return { rows, q, status: eq["status"] ?? "" };
 }
-
 
 orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -80,7 +100,12 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
   void db;
-  const { rows, q, status } = await listOrders(c, shopId);
+  const after = readAfter(c.req.query("after"));
+  if (after === null) return c.text(t("error.generic"), 400);
+  const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
+  const { q, status } = list;
+  const page = splitPage(list.rows, (o) => o.created_at);
+  const rows = page.rows;
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(status ? { status } : {}) }).toString();
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "orders" }}>
@@ -134,27 +159,28 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           </tbody>
         </table>
       )}
+      <Pager base={`/admin/shops/${shop.id}/orders${query ? `?${query}` : ""}`} next={page.next} paged={Boolean(after)} />
     </AdminLayout>,
   );
 });
 
-/** CSV（Excel 向けに BOM 付き UTF-8）。検索条件は一覧と同じ */
+/** CSV（Excel 向けに BOM 付き UTF-8）。検索条件は一覧と同じで、新しい順に CSV_MAX_ORDERS 件まで */
 orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const { rows } = await listOrders(c, shopId);
+  const { rows } = await listOrders(c, shopId, { limit: CSV_MAX_ORDERS });
   const { db } = owner(c);
-  const [items, skus] = await Promise.all([
-    db.from<OrderItemRow>("order_items").select("*", { eq: { shop_id: shopId } }),
-    db.from<SkuRow>("skus").select("id,code,name", { eq: { shop_id: shopId } }),
-  ]);
+  // 明細と SKU は CSV に入る注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
+  const items = await selectIn<OrderItemRow>(db, "order_items", "*", shopId, "order_id", rows.map((o) => o.id));
+  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
   const skuById = new Map(skus.map((s) => [s.id, s]));
+  const itemsByOrder = new Map<string, OrderItemRow[]>();
+  for (const i of items) itemsByOrder.set(i.order_id, [...(itemsByOrder.get(i.order_id) ?? []), i]);
   const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン"];
   const lines = rows.map((o) => {
     const a = (o.shipping_address ?? {}) as Record<string, unknown>;
-    const detail = items
-      .filter((i) => i.order_id === o.id)
+    const detail = (itemsByOrder.get(o.id) ?? [])
       .map((i) => `${(i.sku_id ? skuById.get(i.sku_id)?.code : undefined) ?? i.item_name ?? i.sku_id ?? ""} x${i.qty}`)
       .join(" / ");
     return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" ")].map(csvCell).join(",");
@@ -171,10 +197,8 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
   if (!shop) return c.text(t("shop.not_found"), 404);
   const order = await db.from<OrderListRow>("orders").selectOne("*", { eq: { id: orderId, shop_id: shopId } });
   if (!order) return c.text(t("order.not_found"), 404);
-  const [items, skus] = await Promise.all([
-    db.from<OrderItemRow & { tax_rate?: number | string | null }>("order_items").select("*", { eq: { order_id: orderId } }),
-    db.from<SkuRow>("skus").select("id,code,name", { eq: { shop_id: shopId } }),
-  ]);
+  const items = await db.from<OrderItemRow & { tax_rate?: number | string | null }>("order_items").select("*", { eq: { order_id: orderId } });
+  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const base = `/admin/shops/${shopId}/orders/${orderId}`;
   const addr = order.shipping_address ?? null;

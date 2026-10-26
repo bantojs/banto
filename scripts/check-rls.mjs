@@ -37,13 +37,17 @@ const ANON_FUNCTIONS = new Set([
   "banto_mfa_state", "banto_pre_request",
   // 0055: 商品詳細（公開中の商品だけ。attributes は公開の項目だけ）
   "product_public_get",
+  // 0058: 商品の一覧（公開中のショップの公開中の商品だけ。attributes・説明は返さない）とタグ・カテゴリーの件数。検索の式インデックスの関数
+  "product_public_list", "product_public_facets", "banto_product_search_text",
+  // 0060: サイトマップ（公開中の商品の数と slug）・商品フィードの 1 ページ・Workers のプラン（free / paid、裏の処理の量）
+  "product_public_count", "product_public_slugs", "product_feed_page", "banto_site_plan",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */
 const AUTHENTICATED_FUNCTIONS = new Set([
   ...ANON_FUNCTIONS,
   "banto_admin_shop", "banto_my_shops", "banto_my_stores", "banto_admin_me", "admin_session_bump",
-  "coupon_grant_revoke", "coupon_grants_for_emails", "coupon_grants_issue", "coupon_stats",
+  "coupon_grant_revoke", "coupon_grants_for_emails", "coupon_grants_issue", "coupon_stats", "coupon_stats_for", "coupon_grant_counts", "admin_search_ids",
   "enqueue_hook", "import_catalog", "import_coupon_usage", "import_coupons", "import_orders", "import_tax_classes", "mask_customer", "member_set_email", "member_passkeys_reset", "customer_set_attributes", "customer_marketing_consent_withdraw",
   "org_invitation_accept", "org_invitation_revoke", "org_invite", "org_member_remove", "org_member_set", "org_members_list",
   "image_import_cancel", "image_import_enqueue", "image_import_resolve", "image_import_retry", "image_import_summary", "site_settings_set",
