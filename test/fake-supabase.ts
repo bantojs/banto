@@ -148,6 +148,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** 0060 の banto_site_plan（0038 の workers_plan） */
+  sitePlan: "free" | "paid" = "free";
   readonly serviceRoleKey: string;
   readonly webhookEvents = new Set<string>();
   /** 0038: サイトの設定（banto_site_settings の 1 行） */
@@ -1072,6 +1074,33 @@ export class FakeSupabase {
     }
     // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
     if (fn === "product_public_list") return this.productPublicList(args);
+    // 0060: サイトマップの分割と商品フィードの 1 ページ
+    if (fn === "product_public_count") return json(this.shopPublished(args["p_shop_id"]) ? this.tables.products.filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true).length : 0);
+    if (fn === "product_public_slugs") {
+      if (!this.shopPublished(args["p_shop_id"])) return json([]);
+      const rows = this.tables.products.filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true).sort((a, b) => String(a["id"]).localeCompare(String(b["id"])));
+      const offset = Number(args["p_offset"] ?? 0);
+      return json(rows.slice(offset, offset + Math.min(Number(args["p_limit"] ?? 0), 10000)).map((p) => [p["slug"], p["updated_at"]]));
+    }
+    if (fn === "product_feed_page") {
+      if (!this.shopPublished(args["p_shop_id"])) return json({ products: [], skus: [], inventory: [], images: [] });
+      const after = args["p_after"] as string | null;
+      const products = this.tables.products
+        .filter((p) => p["shop_id"] === args["p_shop_id"] && p["published"] === true && (!after || String(p["id"]) > after))
+        .sort((a, b) => String(a["id"]).localeCompare(String(b["id"])))
+        .slice(0, Math.min(Number(args["p_limit"] ?? 0), 1000))
+        .map(({ attributes: _attrs, ...p }) => p);
+      const ids = new Set(products.map((p) => p["id"]));
+      const skus = this.tables.skus.filter((k) => ids.has(k["product_id"]));
+      const skuIds = new Set(skus.map((k) => k["id"]));
+      return json({
+        products,
+        skus,
+        inventory: this.tables.inventory.filter((i) => skuIds.has(i["sku_id"])).map((i) => ({ sku_id: i["sku_id"], available: i["available"] })),
+        images: this.tables.product_images.filter((i) => ids.has(i["product_id"])).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])),
+      });
+    }
+    if (fn === "banto_site_plan") return json(this.sitePlan);
     if (fn === "product_public_facets") return json(this.productPublicFacets(String(args["p_shop_id"]), Number(args["p_tag_limit"] ?? 200)));
     if (fn === "set_stock") {
       const sku = this.tables.skus.find((k) => k["id"] === args["p_sku_id"]);

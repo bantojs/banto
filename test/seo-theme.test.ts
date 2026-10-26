@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith } from "./helpers";
+import { readSitemap } from "./helpers";
 
 function setup() {
   const sb = new FakeSupabase();
@@ -45,7 +46,8 @@ describe("SEO とテーマ設定", () => {
     expect(robots).toContain(`Sitemap: ${BASE}/sitemap.xml`);
     const res = await app.request(`${BASE}/sitemap.xml`);
     expect(res.headers.get("content-type")).toContain("application/xml");
-    const xml = await res.text();
+    expect(await res.text()).toContain("<sitemapindex");
+    const xml = await readSitemap(async (u) => (await app.request(u)).text(), `${BASE}/sitemap.xml`);
     expect(xml).toContain(`<loc>${BASE}/my-shop</loc>`);
     expect(xml).toContain(`<loc>${BASE}/my-shop/p/tee</loc>`);
     expect(xml).toContain(`<loc>${BASE}/my-shop/shipping</loc>`);

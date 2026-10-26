@@ -96,3 +96,25 @@ for (const legacy of [false, true]) {
     });
   });
 }
+
+describe("サイトマップの分割（0060）", () => {
+  it("索引に商品のファイルを 10,000 件ずつ並べ、全部の商品が 1 回ずつ載る。0060 より前の DB は 1 ファイル", async () => {
+    const { sb, app } = setup({ count: 0 });
+    const shop = sb.tables.shops[0]!;
+    for (let i = 0; i < 25000; i++) sb.tables.products.push({ id: `00000000-0000-4000-c000-${String(i).padStart(12, "0")}`, shop_id: shop["id"], slug: `s-${i}`, name: `n${i}`, published: true, tags: [], updated_at: "2026-10-01T00:00:00Z", created_at: "2026-10-01T00:00:00Z" });
+    const text = async (path: string) => (await app.request(`${BASE}${path}`)).text();
+    const index = await text("/sitemap.xml");
+    const files = [...index.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => new URL(m[1]!).pathname);
+    expect(files).toEqual(["/sitemap-pages.xml", "/my-shop/sitemap-products-1.xml", "/my-shop/sitemap-products-2.xml", "/my-shop/sitemap-products-3.xml"]);
+    const slugs = new Set<string>();
+    for (const f of files.slice(1)) for (const m of (await text(f)).matchAll(/\/p\/(s-\d+)<\/loc><lastmod>2026-10-01<\/lastmod>/g)) slugs.add(m[1]!);
+    expect(slugs.size).toBe(25000);
+    expect((await app.request(`${BASE}/my-shop/sitemap-products-4.xml`)).status).toBe(404);
+    expect(await text("/sitemap-pages.xml")).toContain(`<loc>${BASE}/my-shop/legal</loc>`);
+
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0060_catalog_pages");
+    const legacy = await (await appWith(sb, {}).request(`${BASE}/sitemap.xml`)).text();
+    expect(legacy).toContain("<urlset");
+    expect(legacy).toContain(`<loc>${BASE}/my-shop/legal</loc>`);
+  });
+});

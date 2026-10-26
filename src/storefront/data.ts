@@ -292,6 +292,27 @@ export class StorefrontData {
     return out;
   }
 
+  /** 公開中の商品の数（0060。サイトマップのファイルの数を決める） */
+  async productCount(shop: PublicShop): Promise<number> {
+    return this.db.rpc<number>("product_public_count", { p_shop_id: shop.id });
+  }
+
+  /** サイトマップの 1 ファイル分の [slug, 更新日時]（0060、id 順） */
+  async productSlugs(shop: PublicShop, offset: number, limit: number): Promise<[string, string][]> {
+    return this.db.rpc<[string, string][]>("product_public_slugs", { p_shop_id: shop.id, p_offset: offset, p_limit: limit });
+  }
+
+  /** 商品フィードの 1 ページ（0060、id が after より後ろの公開中の商品 limit 件と、その SKU・在庫・画像） */
+  async feedPage(shop: PublicShop, after: string | null, limit: number): Promise<Omit<FeedCatalogRows, "categories">> {
+    return this.db.rpc<Omit<FeedCatalogRows, "categories">>("product_feed_page", { p_shop_id: shop.id, p_after: after, p_limit: limit });
+  }
+
+  /** このデプロイの Workers のプラン（0060 の banto_site_plan。裏の処理が 1 回に進める量）。当たる前は free */
+  async sitePlan(): Promise<"free" | "paid"> {
+    if (!(await this.migratedTo(CATALOG_PAGES_MIGRATION))) return "free";
+    return (await this.db.rpc<string>("banto_site_plan", {})) === "paid" ? "paid" : "free";
+  }
+
   /**
    * カテゴリー（公開中のショップのもの、RLS）。商品一覧と同じく短時間キャッシュする。
    */
@@ -346,7 +367,7 @@ export class StorefrontData {
    * 商品フィード用に、公開中の商品・SKU・在庫・画像・カテゴリーをすべて読む（同梱モジュール product_feed、Cron と管理画面から）。
    * PostgREST は 1 回 1,000 行までなので、表ごとにページを送って読む。キャッシュはしない。
    */
-  async feedCatalog(shop: PublicShop): Promise<{ products: ProductRow[]; skus: SkuRow[]; inventory: InventoryRow[]; images: ProductImageRow[]; categories: CategoryRow[] }> {
+  async feedCatalog(shop: PublicShop): Promise<FeedCatalogRows> {
     const all = async <T extends Row>(table: string, columns: string, eq: Record<string, string | boolean>, order: string): Promise<T[]> => {
       const out: T[] = [];
       for (let offset = 0; ; offset += 1000) {
@@ -440,6 +461,18 @@ export interface ProductPage {
   offset: number;
   /** 次のページの offset。最後のページなら null */
   nextOffset: number | null;
+}
+
+/** サイトマップの分割と商品フィードの分割（product_public_count / product_public_slugs / product_feed_page）。当たる前は全件を読む */
+export const CATALOG_PAGES_MIGRATION = "0060_catalog_pages";
+
+/** 商品フィードの材料（src/modules/product-feed/feed.ts の FeedCatalog と同じ形） */
+export interface FeedCatalogRows {
+  products: ProductRow[];
+  skus: SkuRow[];
+  inventory: InventoryRow[];
+  images: ProductImageRow[];
+  categories: CategoryRow[];
 }
 
 /** 商品の一覧を DB で絞り込む版（product_public_list・product_public_facets）。当たる前は全件を読んでメモリで */
