@@ -20,38 +20,46 @@ alter table products
   add column list_price_jpy integer,
   add column list_compare_at_jpy integer;
 
--- p_ids の商品の list_* を SKU から引き直す（変わった行だけ書く）
+-- p_ids の商品の list_* を SKU から引き直す（変わった行だけ書く）。
+-- 商品ごとの副問い合わせにしない（同じトランザクションで大量に入れた直後は統計が古く、SKU を毎回全件見る計画になるため）。
+-- 対象の SKU をまとめて結び、商品ごとにいちばん安いものを 1 つ選ぶ
 create or replace function banto_product_list_price_refresh(p_ids uuid[])
 returns void
 language sql
 security definer
 set search_path = public
 as $$
+  with ids as (select distinct x.id from unnest(p_ids) x(id) where x.id is not null),
+  best as (
+    select distinct on (k.product_id) k.product_id, k.price_jpy, k.compare_at_price_jpy
+      from skus k join ids on ids.id = k.product_id
+     order by k.product_id, k.price_jpy, k.created_at, k.id
+  )
   update products p
-     set list_price_jpy = m.price, list_compare_at_jpy = m.compare_at
-    from (select x.id,
-                 (select k.price_jpy from skus k where k.product_id = x.id order by k.price_jpy, k.created_at, k.id limit 1) as price,
-                 (select k.compare_at_price_jpy from skus k where k.product_id = x.id order by k.price_jpy, k.created_at, k.id limit 1) as compare_at
-            from unnest(p_ids) x(id)) m
-   where p.id = m.id
-     and (p.list_price_jpy is distinct from m.price or p.list_compare_at_jpy is distinct from m.compare_at);
+     set list_price_jpy = best.price_jpy, list_compare_at_jpy = best.compare_at_price_jpy
+    from ids left join best on best.product_id = ids.id
+   where p.id = ids.id
+     and (p.list_price_jpy is distinct from best.price_jpy or p.list_compare_at_jpy is distinct from best.compare_at_price_jpy);
 $$;
 
+-- SKU を足したとき: 足した SKU だけで決まる（いちばん安いものが今の価格より安ければ入れ替え。同額なら前からある SKU のまま）。
+-- SKU の表を読まないので、大量に入れた直後の統計の古さに左右されない
 create or replace function banto_skus_list_price_ins()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  perform banto_product_list_price_refresh(array(select distinct product_id from new_rows));
+  update products p
+     set list_price_jpy = c.price_jpy, list_compare_at_jpy = c.compare_at_price_jpy
+    from (select distinct on (product_id) product_id, price_jpy, compare_at_price_jpy
+            from new_rows order by product_id, price_jpy, created_at, id) c
+   where p.id = c.product_id and (p.list_price_jpy is null or c.price_jpy < p.list_price_jpy);
   return null;
 end;
 $$;
 create or replace function banto_skus_list_price_upd()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  perform banto_product_list_price_refresh(array(
-    select distinct x from (select n.product_id as a, o.product_id as b from new_rows n join old_rows o on o.id = n.id
-                             where n.price_jpy is distinct from o.price_jpy or n.compare_at_price_jpy is distinct from o.compare_at_price_jpy
-                                or n.product_id is distinct from o.product_id) c,
-                       lateral unnest(array[c.a, c.b]) x));
+  -- 前後の行を突き合わせない（遷移表の結合は計画が崩れると行数の 2 乗）。値が同じなら refresh が書かない
+  perform banto_product_list_price_refresh(array(select product_id from new_rows union select product_id from old_rows));
   return null;
 end;
 $$;
@@ -151,24 +159,17 @@ begin
   return null;
 end;
 $$;
+-- 更新: 前の行の分を引き、後の行の分を足す。変わっていない行は打ち消し合う（前後の行を突き合わせる結合は、
+-- 統計の無い遷移表で入れ子のループの計画になると行数の 2 乗になるので使わない）。数える材料の列が変わらない更新
+-- （価格の写し・説明の変更など）でも行の数に比例する手間はかかる
 create or replace function banto_product_facet_rows_upd()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare v_old jsonb; v_new jsonb;
 begin
-  -- 数える材料（公開・タグ・カテゴリー）が変わった行だけ
-  with c as (
-    select o.id, o.shop_id, o.published as op, o.tags as ot, o.category_id as oc, o.extra_category_ids as oe,
-           n.published as np, n.tags as nt, n.category_id as nc, n.extra_category_ids as ne, n.shop_id as ns
-      from old_rows o join new_rows n on n.id = o.id
-     where o.published is distinct from n.published or o.tags is distinct from n.tags
-        or o.category_id is distinct from n.category_id or o.extra_category_ids is distinct from n.extra_category_ids
-        or o.shop_id is distinct from n.shop_id
-  )
-  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'shop_id', shop_id, 'tags', ot, 'category_id', oc, 'extra_category_ids', oe)) filter (where op), '[]'),
-         coalesce(jsonb_agg(jsonb_build_object('id', id, 'shop_id', ns, 'tags', nt, 'category_id', nc, 'extra_category_ids', ne)) filter (where np), '[]')
-    into v_old, v_new
-    from c;
-  if v_old <> '[]'::jsonb or v_new <> '[]'::jsonb then perform banto_product_facets_apply(v_old, v_new); end if;
+  perform banto_product_facets_apply(
+    (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'shop_id', shop_id, 'tags', tags, 'category_id', category_id, 'extra_category_ids', extra_category_ids)), '[]')
+       from old_rows where published),
+    (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'shop_id', shop_id, 'tags', tags, 'category_id', category_id, 'extra_category_ids', extra_category_ids)), '[]')
+       from new_rows where published));
   return null;
 end;
 $$;

@@ -12,7 +12,7 @@ const CSV_MAX_ROWS = 5000;
 import { loadShop } from "./shops";
 import { can } from "./access";
 import { DbError, type Filter } from "../../db/client";
-import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage, type PagePosition } from "./paging";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
 import { tf } from "../../i18n";
 import { createMailer, sendMail } from "../../mail/send";
 import { migrated } from "../../db/migration-state";
@@ -63,6 +63,14 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
   if (q) where.push({ or: [{ col: "email", op: "contains", value: q }, { col: "name", op: "contains", value: q }] });
   if (f && v && fields.some((x) => x.key === f)) where.push({ col: `attributes->>${f}`, op: "contains", value: v });
   if (consent) where.push(consent === "none" ? { col: "marketing_consent", op: "is", value: null } : { col: "marketing_consent", op: "is", value: consent === "yes" });
+  const attr = Boolean(f && v && fields.some((x) => x.key === f));
+  const filtered = Boolean(q || attr || consent || opts.after);
+  // 部分一致（氏名・メール・独自項目）は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
+  const searched =
+    q || attr
+      ? await searchRows<CustomerRow>(c, { kind: "customers", shopId, q, filters: { ...(attr ? { field: f, value: v } : {}), ...(consent ? { consent } : {}) }, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns })
+      : null;
+  if (searched) return { master, consentOn, fields, rows: searched, q, f, v, consent, filtered };
   const rows: CustomerRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {
@@ -73,7 +81,7 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { master, consentOn, fields, rows, q, f, v, consent, filtered: Boolean(q || (f && v) || consent || opts.after) };
+  return { master, consentOn, fields, rows, q, f, v, consent, filtered };
 }
 
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
-import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage } from "./paging";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage } from "./paging";
 import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
@@ -88,10 +88,10 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   if (q) where.push({ or: [{ col: "name", op: "contains", value: q }, { col: "slug", op: "contains", value: q.toLowerCase() }] });
   if (state) where.push({ col: "published", op: "eq", value: state === "published" });
   if (after) where.push(olderThan(after));
-  const page = splitPage(
-    await db.from<ProductRow>("products").select("id,slug,name,published,created_at", { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
-    (p) => p.created_at,
-  );
+  const columns = "id,slug,name,published,created_at";
+  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
+  const searched = q ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters: state ? { state } : {}, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : null;
+  const page = splitPage(searched ?? (await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 })), (p) => p.created_at);
   const rows = page.rows;
   const filtered = Boolean(q || state || after);
   const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;

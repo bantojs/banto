@@ -1341,6 +1341,39 @@ export class FakeSupabase {
       if (g) g["status"] = "revoked";
       return json(Boolean(g));
     }
+    // 0059: 管理画面の部分一致の検索（本物は権限を 1 回確かめて RLS の外でインデックスを使う）
+    if (fn === "admin_search_ids") {
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "forbidden" }, 403);
+      const kind = String(args["p_kind"]) as "products" | "orders" | "customers";
+      const q = String(args["p_q"] ?? "").trim().toLowerCase();
+      const f = (args["p_filters"] ?? {}) as Record<string, string>;
+      const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
+      const afterK = args["p_after_k"] as string | null;
+      const afterId = args["p_after_id"] as string | null;
+      const rows = this.tables[kind]
+        .filter((r) => r["shop_id"] === shopId)
+        .filter((r) => {
+          if (kind === "products") return (!q || has(r["name"]) || has(r["slug"])) && (f["state"] !== "published" || r["published"] === true) && (f["state"] !== "draft" || r["published"] !== true);
+          if (kind === "orders") return (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === q || (/^\d{1,9}$/.test(q) && Number(r["number"]) === Number(q))) && (!f["status"] || r["status"] === f["status"]);
+          const attrs = (r["attributes"] ?? {}) as Record<string, unknown>;
+          const consent = r["marketing_consent"];
+          return (
+            (!q || has(r["email"]) || has(r["name"])) &&
+            (!f["field"] || !f["value"] || String(attrs[f["field"]] ?? "").toLowerCase().includes(f["value"].toLowerCase())) &&
+            (f["consent"] !== "yes" || consent === true) && (f["consent"] !== "no" || consent === false) && (f["consent"] !== "none" || consent === null || consent === undefined)
+          );
+        })
+        .filter((r) => !afterK || !afterId || String(r["created_at"]) < afterK || (String(r["created_at"]) === afterK && String(r["id"]) < afterId))
+        .sort((a, b) => (String(a["created_at"]) === String(b["created_at"]) ? (String(a["id"]) < String(b["id"]) ? 1 : -1) : String(a["created_at"]) < String(b["created_at"]) ? 1 : -1));
+      return json(rows.slice(0, Math.min(Number(args["p_limit"] ?? 50), 1000)).map((r) => r["id"]));
+    }
+    if (fn === "coupon_grant_counts") {
+      if (!uid || !this.ownedShopIds(uid).has(String(args["p_shop_id"]))) return json(null);
+      const out: Record<string, number> = { available: 0, held: 0, used: 0, revoked: 0 };
+      for (const g of this.tables.coupon_grants) if (g["shop_id"] === args["p_shop_id"] && g["campaign_id"] === args["p_campaign_id"]) out[String(g["status"])] = (out[String(g["status"])] ?? 0) + 1;
+      return json(out);
+    }
     if (fn === "coupon_stats" || fn === "coupon_stats_for") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json(null);
       const out: Record<string, { used: number; held: number }> = {};

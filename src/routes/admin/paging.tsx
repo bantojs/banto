@@ -1,4 +1,7 @@
 import type { Filter } from "../../db/client";
+import { migrated } from "../../db/migration-state";
+import { selectIn } from "../../db/select-in";
+import { owner, type AdminContext } from "./context";
 import { t } from "../../i18n";
 import { UUID_RE, decodeCursor, encodeCursor } from "../../util/cursor";
 
@@ -56,4 +59,35 @@ export function Pager(props: { base: string; next: string | null; paged: boolean
       ) : null}
     </nav>
   );
+}
+
+/** 部分一致の検索を RLS の外で行う関数（admin_search_ids）と、発行したクーポンの数（coupon_grant_counts）の版 */
+export const ADMIN_SEARCH_MIGRATION = "0059_admin_lists";
+
+/**
+ * 部分一致の検索（名前・メールなど）のあるときの 1 ページ: admin_search_ids で id を探し（権限は関数が 1 回確かめる、
+ * pg_trgm のインデックスが効く）、行そのものは RLS 越しに読む。0059 より前の DB なら null（呼び出し側が PostgREST の ilike で読む）。
+ * RLS の掛かった表では ilike がインデックスを使えず全件を見るため（docs/knowledge/02-decisions.md 2026-10-26）
+ */
+export async function searchRows<T extends { id: string; created_at: string }>(
+  c: AdminContext,
+  opts: { kind: "products" | "orders" | "customers"; shopId: string; q: string; filters: Record<string, string>; after?: PagePosition; limit: number; columns: string },
+): Promise<T[] | null> {
+  const { db } = owner(c);
+  if (!(await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION))) return null;
+  const rows: T[] = [];
+  for (let after = opts.after; rows.length < opts.limit; ) {
+    const n = Math.min(1000, opts.limit - rows.length);
+    const ids = await db.rpc<string[]>("admin_search_ids", { p_shop_id: opts.shopId, p_kind: opts.kind, p_q: opts.q, p_filters: opts.filters, p_after_k: after?.k ?? null, p_after_id: after?.id ?? null, p_limit: n });
+    if (ids.length === 0) break;
+    const page = await selectIn<T>(db, opts.kind, opts.columns, opts.shopId, "id", ids);
+    const order = new Map(ids.map((id, i) => [id, i]));
+    page.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    rows.push(...page);
+    if (ids.length < n) break;
+    const last = page[page.length - 1];
+    if (!last) break;
+    after = { k: last.created_at, id: last.id };
+  }
+  return rows;
 }

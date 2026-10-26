@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { csvCell } from "../../util/csv";
 import type { AppEnv } from "../../app";
 import { DbError, type Filter } from "../../db/client";
-import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage, type PagePosition } from "./paging";
+import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
 import { selectIn } from "../../db/select-in";
 import type { OrderItemRow, OrderRow, SkuRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
@@ -78,6 +78,9 @@ async function listOrders(c: AdminContext, shopId: string, opts: { limit: number
     const n = /^\d{1,9}$/.test(q) ? Number(q) : null;
     where.push({ or: [...(n !== null ? [{ col: "number", op: "eq", value: n } as const] : []), { col: "payment_ref", op: "eq", value: q }, { col: "customer_email", op: "contains", value: q }, { col: "customer_name", op: "contains", value: q }] });
   }
+  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
+  const searched = q ? await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: eq["status"] ? { status: eq["status"] } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" }) : null;
+  if (searched) return { rows: searched, q, status: eq["status"] ?? "" };
   const rows: OrderListRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {

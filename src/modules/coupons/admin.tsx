@@ -544,7 +544,7 @@ couponsAdmin.get("/:campaignId", requireOwner, async (c: AdminContext) => {
   const cond = (row.conditions ?? {}) as CouponConditions;
   const gafter = readAfter(c.req.query("gafter"));
   if (gafter === null) return c.text(t("error.generic"), 400);
-  const [fc, stats, grants] = await Promise.all([formContext(c, shop, { ids: [...(cond.product_ids ?? []), ...(cond.exclude_product_ids ?? [])] }), loadStats(c, shop.id, [row.id]), loadGrants(db, row.id, gafter)]);
+  const [fc, stats, grants] = await Promise.all([formContext(c, shop, { ids: [...(cond.product_ids ?? []), ...(cond.exclude_product_ids ?? [])] }), loadStats(c, shop.id, [row.id]), loadGrants(c, shop.id, row.id, gafter)]);
   const f = flash(c.req.query("flash"));
   const link = row.code ? `${shopHome(publicBaseUrl(c), shop)}/cart?coupon=${encodeURIComponent(row.code)}` : null;
   return c.html(
@@ -595,9 +595,18 @@ const GRANT_STATUSES = ["available", "held", "used", "revoked"] as const;
 const GRANTS_CSV_MAX = 10000;
 
 /** 発行したクーポン: 状態ごとの数（DB で数える）と、新しい順の 1 ページ（after より後ろ） */
-async function loadGrants(db: DbClient, campaignId: string, after?: PagePosition) {
+async function loadGrants(c: AdminContext, shopId: string, campaignId: string, after?: PagePosition) {
+  const { db } = owner(c);
+  // 状態ごとの数: 0059 以降は権限を 1 回確かめて数える関数（RLS 越しだと行ごとに権限の関数を呼ぶので 10 万枚で秒単位）
+  const countAll = async (): Promise<number[]> => {
+    if (await migrated({ db, cache: c.get("adapters").cache }, ADMIN_LISTS_MIGRATION)) {
+      const r = (await db.rpc<Record<string, number> | null>("coupon_grant_counts", { p_shop_id: shopId, p_campaign_id: campaignId })) ?? {};
+      return GRANT_STATUSES.map((st) => Number(r[st] ?? 0));
+    }
+    return Promise.all(GRANT_STATUSES.map((status) => db.from<GrantRow>("coupon_grants").count({ eq: { campaign_id: campaignId, status } })));
+  };
   const [counts, rows] = await Promise.all([
-    Promise.all(GRANT_STATUSES.map((status) => db.from<GrantRow>("coupon_grants").count({ eq: { campaign_id: campaignId, status } }))),
+    countAll(),
     db.from<GrantRow>("coupon_grants").select("id,code,customer_id,status,expires_at,created_at", { eq: { campaign_id: campaignId }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
   ]);
   return { counts: Object.fromEntries(GRANT_STATUSES.map((st, i) => [st, counts[i]!])) as Record<GrantRow["status"], number>, ...splitPage(rows, (g) => g.created_at), paged: Boolean(after) };
