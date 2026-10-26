@@ -36,6 +36,7 @@ productFeedAdmin.get("/", requireOwner, async (c: AdminContext) => {
     <AdminLayout title={`${shop.name} · ${t("feed.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("feed.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("feed.title")} />
       {flash === "generated" ? <p class="notice">{t("feed.generated")}</p> : null}
+      {flash === "started" ? <p class="notice">{t("feed.started")}</p> : null}
       {flash === "unpublished" ? <p class="error">{t("feed.unpublished")}</p> : null}
       <p>{t("feed.intro")}</p>
       <h2>{t("feed.url")}</h2>
@@ -66,6 +67,7 @@ productFeedAdmin.post("/generate", requireOwner, async (c: AdminContext) => {
   if (!shop.published) return c.redirect(`${base}?flash=unpublished`);
   // 管理画面は owner の JWT で読む（anon の経路は使わない）。公開中の商品だけを載せる（feedCatalog が絞る）
   const sf = new StorefrontData(owner(c).db, c.get("adapters").cache);
-  await generateFeed(sf, c.get("adapters").storage, toPublicShop(shop), { publicBaseUrl: publicBaseUrl(c), mediaBaseUrl: mediaBaseUrl(c) });
-  return c.redirect(`${base}?flash=generated`);
+  const r = await generateFeed(sf, c.get("adapters").storage, toPublicShop(shop), { publicBaseUrl: publicBaseUrl(c), mediaBaseUrl: mediaBaseUrl(c) });
+  // 商品が多いショップは 1 回では作り終えない。続きは Cron（5 分ごと）が作る
+  return c.redirect(`${base}?flash=${r === "in_progress" ? "started" : "generated"}`);
 });

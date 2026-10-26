@@ -722,6 +722,7 @@ export const ja = {
   "feed.not_yet": "まだ作っていません。「今すぐ作る」を押すか、次の定期処理（1 時間以内）を待ってください。",
   "feed.generate": "今すぐ作る",
   "feed.generated": "フィードを作りました。",
+  "feed.started": "作り始めました。商品が多いため、続きは定期処理（5 分ごと）が作ります。作り終えるまでは前のフィードを配ります。",
   "feed.unpublished": "ショップが非公開のため作れません。",
   "feed.not_ready": "フィードはまだありません。",
   "feed.register_title": "登録のしかた",

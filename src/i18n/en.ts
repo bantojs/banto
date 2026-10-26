@@ -715,6 +715,7 @@ export const en: Record<MessageKey, string> = {
   "feed.not_yet": "Not built yet. Press “Build now” or wait for the next scheduled run (within an hour).",
   "feed.generate": "Build now",
   "feed.generated": "Feed built.",
+  "feed.started": "Started. Because the catalog is large, the scheduled job (every 5 minutes) will finish it. The previous feed is served until then.",
   "feed.unpublished": "The shop is not published, so the feed cannot be built.",
   "feed.not_ready": "The feed is not available yet.",
   "feed.register_title": "How to register",

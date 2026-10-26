@@ -22,7 +22,7 @@ import type { AddressFormValues } from "../../themes/types";
 import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, CHECKOUT_STATUS_MIGRATION, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
 import { moduleEnabled } from "../../modules/registry";
-import { FEED_MODULE, feedKey } from "../../modules/product-feed/job";
+import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
 import { dateLabel, deliveryOptions } from "../../modules/delivery-time";
 import { TRYON_MODULE, checkTryon, storeView, todayHere, tryonSettings, visitDates } from "../../modules/store-tryon";
@@ -297,9 +297,9 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
   const sf = data(c);
   const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
   if (!shop || !moduleEnabled(shop.settings, FEED_MODULE)) return c.notFound();
-  const obj = await c.get("adapters").storage.get(feedKey(shop.id));
-  if (!obj) return c.text(t("feed.not_ready"), 404);
-  return new Response(obj.body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600", "X-Content-Type-Options": "nosniff" } });
+  const body = await readFeed(c.get("adapters").storage, shop.id);
+  if (!body) return c.text(t("feed.not_ready"), 404);
+  return new Response(body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600", "X-Content-Type-Options": "nosniff" } });
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {
