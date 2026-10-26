@@ -11,6 +11,8 @@ import type { StoreRow } from "../modules/store-tryon";
 
 export const STOREFRONT_CACHE_TTL = 30;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * 公開中のショップのうち、お客様の画面（anon）に渡してよい部分（0028_security_hardening の shop_public_get / shop_public_list）。
  * Stripe の接続先 ID や settings の内部の鍵（連絡先・在庫僅少の閾値・送り状の設定など）は含めない。
@@ -301,11 +303,13 @@ export class StorefrontData {
   async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow }>> {
     const out = new Map<string, { sku: SkuWithStock; product: ProductRow }>();
     if (skuIds.length === 0) return out;
-    const cols = await this.productColumns();
-    const [skus, inventory, products] = await Promise.all([
-      this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id } }),
-      this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id } }),
-      this.db.from<ProductRow>("products").select(cols, { eq: { shop_id: shop.id, published: true } }),
+    // カートの分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた商品がカートから消える）
+    const ids = [...new Set(skuIds)].filter((id) => UUID_RE.test(id)).slice(0, 100);
+    if (ids.length === 0) return out;
+    const [cols, skus] = await Promise.all([this.productColumns(), this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } })]);
+    const [inventory, products] = await Promise.all([
+      this.inventoryOf(shop, skus.map((s) => s.id)),
+      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(cols, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));

@@ -205,7 +205,7 @@ export class FakeSupabase {
     const pmap = new Map<string, string>(), smap = new Map<string, string>(), omap = new Map<string, string>();
     for (const r of data["products"] ?? []) { const id = `product-${++this.seq}`; pmap.set(String(r["id"]), id); this.tables.products.push({ ...r, tags: [], category_id: null, brand: null, attributes: {}, id, shop_id: shopId }); } // 0006 は拡張列を入れない（restore_catalog が戻す）
     counts["products"] = pmap.size;
-    for (const r of data["skus"] ?? []) { const pid = pmap.get(String(r["product_id"])); if (!pid) continue; const id = `sku-${++this.seq}`; smap.set(String(r["id"]), id); this.tables.skus.push({ ...r, options: {}, gtin: null, compare_at_price_jpy: null, id, product_id: pid, shop_id: shopId }); this.tables.inventory.push({ sku_id: id, shop_id: shopId, available: 0 }); }
+    for (const r of data["skus"] ?? []) { const pid = pmap.get(String(r["product_id"])); if (!pid) continue; const id = fakeUuid(++this.seq); smap.set(String(r["id"]), id); this.tables.skus.push({ ...r, options: {}, gtin: null, compare_at_price_jpy: null, id, product_id: pid, shop_id: shopId }); this.tables.inventory.push({ sku_id: id, shop_id: shopId, available: 0 }); }
     counts["skus"] = smap.size;
     for (const r of data["inventory"] ?? []) { const sid = smap.get(String(r["sku_id"])); if (sid) this.tables.inventory.find((i) => i["sku_id"] === sid)!["available"] = Math.max(0, Number(r["available"] ?? 0)); }
     let n = 0;
@@ -352,7 +352,7 @@ export class FakeSupabase {
 
   addSku(shopId: string, productId: string, fields: Partial<Row> & { available?: number } = {}): Row & { id: string } {
     const { available, ...rest } = fields;
-    const row = { id: `sku-${++this.seq}`, shop_id: shopId, product_id: productId, code: "SKU", name: null, price_jpy: 1000, options: {} as Record<string, unknown>, gtin: null as string | null, compare_at_price_jpy: null as number | null, created_at: this.now(), ...rest };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, product_id: productId, code: "SKU", name: null, price_jpy: 1000, options: {} as Record<string, unknown>, gtin: null as string | null, compare_at_price_jpy: null as number | null, created_at: this.now(), ...rest };
     this.tables.skus.push(row);
     this.tables.inventory.push({ sku_id: row.id, shop_id: shopId, available: available ?? 0, updated_at: this.now() });
     return row;
@@ -2706,6 +2706,11 @@ export class FakeSupabase {
     }
     return json({ code: "PGRST202", message: `Could not find the function public.${fn}` }, 404);
   }
+}
+
+/** SKU の id（本物と同じ UUID の形。お店の画面は UUID でない SKU の id を DB に問い合わせない） */
+function fakeUuid(n: number): string {
+  return `00000000-0000-4000-a000-${String(n).padStart(12, "0")}`;
 }
 
 /** PostgREST の in.(…) の中身。"…" で囲んだ値（\\ と \\" のエスケープ）と、囲まない値の両方を読む */
