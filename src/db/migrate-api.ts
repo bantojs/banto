@@ -8,7 +8,13 @@
  * Supabase 以外のホストにはつながない（SUPABASE_URL から取った project ref だけを使う）。
  */
 import type { MigrationFile } from "./migrations";
-import type { ApplyResult } from "./migrate";
+import { MIGRATION_STEP_BUDGET_MS, type ApplyResult } from "./migrate";
+
+/**
+ * 1 回のリクエストで送る問い合わせの数の上限。Workers の無料プランは 1 リクエストのサブリクエストが 50 まで。
+ * マイグレーションは 1 ファイル = 1 回なので、初回（全部）は 1 回では当てきれない。残りは画面が続けて送る（migrate.tsx）
+ */
+export const MIGRATION_STEP_MAX_QUERIES = 40;
 
 export const SUPABASE_MANAGEMENT_API = "https://api.supabase.com";
 
@@ -64,9 +70,11 @@ async function runQuery(opts: { ref: string; token: string; fetch: typeof fetch 
 }
 
 export async function applyMigrationsViaApi(
-  opts: { ref: string; token: string; fetch: typeof fetch },
+  opts: { ref: string; token: string; fetch: typeof fetch; now?: () => number },
   files: readonly MigrationFile[],
 ): Promise<ApplyResult> {
+  const now = opts.now ?? Date.now;
+  const started = now();
   let applied: string[] = [];
   try {
     const rows = (await runQuery(opts, "select version from banto_migrations order by version")) as { version?: string }[];
@@ -76,11 +84,18 @@ export async function applyMigrationsViaApi(
     if (!(e instanceof ManagementApiError && e.kind === "query" && /banto_migrations|42P01|does not exist/i.test(e.message))) throw e;
   }
   const done = new Set(applied);
-  const result: ApplyResult = { applied: [], alreadyApplied: applied };
-  for (const file of files) {
-    if (done.has(file.version)) continue;
+  const todo = files.filter((f) => !done.has(f.version));
+  const result: ApplyResult = { applied: [], alreadyApplied: applied, remaining: [] };
+  let queries = 1;
+  for (const [i, file] of todo.entries()) {
+    // 上限か持ち時間に達したら、残りは次のリクエストへ（少なくとも 1 つは当てる）
+    if (result.applied.length > 0 && (queries >= MIGRATION_STEP_MAX_QUERIES || now() - started >= MIGRATION_STEP_BUDGET_MS)) {
+      result.remaining = todo.slice(i).map((f) => f.version);
+      break;
+    }
     try {
       // 1 ファイル = 1 リクエスト。複数文の simple query は暗黙の 1 トランザクションなので、途中で失敗すれば全体が戻る
+      queries++;
       await runQuery(opts, file.sql);
     } catch (e) {
       if (e instanceof ManagementApiError && (e.kind === "token" || e.kind === "rate_limited" || e.kind === "ref")) throw e;

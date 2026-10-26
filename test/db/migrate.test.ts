@@ -31,10 +31,17 @@ describe.skipIf(!dbAvailable)("applyMigrations（ウィザード / アップデ�
     await closePool();
   });
 
-  it("空の DB に全マイグレーションを順に当て、2回目は何もしない", async () => {
+  it("空の DB に全マイグレーションを順に当て、2回目は何もしない。画面からは持ち時間で区切り、続きから当てる", async () => {
+    // 画面から: 持ち時間を過ぎたら次のファイルに進まない（少なくとも 1 つは当てる）
+    let clock = 0;
+    const step = await applyMigrations(migrateUrl(), MIGRATION_FILES, [], { budgetMs: 1000, now: () => (clock += 1000) });
+    expect(step.applied).toEqual(MIGRATION_FILES.slice(0, 1).map((m) => m.version));
+    expect(step.remaining).toEqual(MIGRATION_FILES.slice(1).map((m) => m.version));
+
     const first = await applyMigrations(migrateUrl(), MIGRATION_FILES);
-    expect(first.applied).toEqual(MIGRATION_FILES.map((m) => m.version));
-    expect(first.alreadyApplied).toEqual([]);
+    expect(first.applied).toEqual(MIGRATION_FILES.slice(1).map((m) => m.version));
+    expect(first.alreadyApplied).toEqual([MIGRATION_FILES[0]!.version]);
+    expect(first.remaining).toEqual([]);
     const c = new pg.Client({ connectionString: migrateUrl() });
     await c.connect();
     const r = await c.query<{ version: string }>("select version from banto_migrations order by version");

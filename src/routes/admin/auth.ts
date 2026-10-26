@@ -4,7 +4,7 @@ import { DbError } from "../../db/client";
 import { openSession, sealSession, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, type SessionData } from "../../auth/session";
 import type { AuthSession } from "../../auth/supabase";
 import { authClient, dbClient, isSecureRequest, sessionSecret, type AdminContext } from "./context";
-import { migrated } from "../../db/migration-state";
+import { appliedMigrations, migrated } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ipHash, subjectHash } from "../../members/auth";
 import { clientIp } from "../common";
@@ -89,6 +89,22 @@ export async function loadSession(c: AdminContext): Promise<SessionData | null> 
     return refreshed;
   } catch {
     return null;
+  }
+}
+
+/**
+ * ログインの前に、DB が使える状態か確かめる。マイグレーションが 1 つも当たっていない（初回のデプロイでウィザードを通していない）、
+ * または Supabase に届かない（URL・anon キーの誤り）ときは、ログインの処理に進まずセットアップの画面で理由を出す。
+ * 適用済みの一覧はキャッシュされるので、続く migrated() は問い合わせを増やさない
+ */
+export async function adminDbReady(c: AdminContext): Promise<boolean> {
+  const db = dbClient(c);
+  if (!db) return false;
+  try {
+    return (await appliedMigrations({ db, cache: c.get("adapters").cache })).size > 0;
+  } catch (e) {
+    if (!(e instanceof DbError && e.isMissingRelation)) console.error("[banto] admin login: database not reachable:", e);
+    return false;
   }
 }
 

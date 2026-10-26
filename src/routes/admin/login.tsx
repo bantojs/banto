@@ -4,7 +4,7 @@ import { AuthError, verifiedTotp } from "../../auth/supabase";
 import { t, type MessageKey } from "../../i18n";
 import { AdminLayout } from "./layout";
 import { authClient, formFields, sessionSecret, type AdminContext } from "./context";
-import { adminLoginGuard, bumpSessionEpoch, clearSessionCookie, ensureOwnerRow, loadSession, mfaRequiredOf, setSessionCookie, toSessionData } from "./auth";
+import { adminDbReady, adminLoginGuard, bumpSessionEpoch, clearSessionCookie, ensureOwnerRow, loadSession, mfaRequiredOf, setSessionCookie, toSessionData } from "./auth";
 
 export const login = new Hono<AppEnv>();
 
@@ -55,6 +55,7 @@ login.post("/login", async (c: AdminContext) => {
   const email = (form.email ?? "").trim();
   const password = form.password ?? "";
   if (!email || !password) return c.redirect("/admin/login?error=failed");
+  if (!(await adminDbReady(c))) return c.redirect("/admin/setup");
   // 回数の制限（0030）: 計算の前に判定する。超えていれば Supabase には問い合わせない
   const guard = await adminLoginGuard(c, email);
   if (!guard.allowed) return c.redirect("/admin/login?error=locked");

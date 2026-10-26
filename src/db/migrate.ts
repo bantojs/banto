@@ -94,12 +94,28 @@ export function describeConnection(p: ParsedConnection): string {
   return `${p.user}@${p.host}:${p.port}/${p.database}`;
 }
 
+/**
+ * 1 回のリクエストで当て続ける持ち時間。これを過ぎたら次のファイルには進まず、残りを返す（画面が続けて送る）。
+ * 応答が長く返らないと、ブラウザとのあいだの接続が途中で切られるため
+ */
+export const MIGRATION_STEP_BUDGET_MS = 20_000;
+
 export interface ApplyResult {
   applied: string[];
   alreadyApplied: string[];
+  /** 持ち時間・回数の上限で、このリクエストでは当てなかった版（空なら全部済み） */
+  remaining: string[];
 }
 
-export async function applyMigrations(connectionString: string, files: readonly MigrationFile[], extraHosts: readonly string[] = []): Promise<ApplyResult> {
+/** step: 画面から当てるときの持ち時間（MIGRATION_STEP_BUDGET_MS）。コマンド（src/entry/migrate.ts）は省略して最後まで当てる */
+export async function applyMigrations(
+  connectionString: string,
+  files: readonly MigrationFile[],
+  extraHosts: readonly string[] = [],
+  step: { budgetMs: number; now?: () => number } = { budgetMs: Infinity },
+): Promise<ApplyResult> {
+  const now = step.now ?? Date.now;
+  const started = now();
   const parsed = parseConnectionString(connectionString, extraHosts);
   if ("error" in parsed) throw new MigrationError("connect", null, parsed.error);
 
@@ -132,9 +148,13 @@ export async function applyMigrations(connectionString: string, files: readonly 
       if ((e as { code?: string }).code !== "42P01") throw new MigrationError("query", null, e instanceof Error ? e.message : String(e));
     }
     const done = new Set(applied);
-    const result: ApplyResult = { applied: [], alreadyApplied: applied };
-    for (const file of files) {
-      if (done.has(file.version)) continue;
+    const todo = files.filter((f) => !done.has(f.version));
+    const result: ApplyResult = { applied: [], alreadyApplied: applied, remaining: [] };
+    for (const [i, file] of todo.entries()) {
+      if (result.applied.length > 0 && now() - started >= step.budgetMs) {
+        result.remaining = todo.slice(i).map((f) => f.version);
+        break;
+      }
       try {
         await client.query("begin");
         await client.query(file.sql);

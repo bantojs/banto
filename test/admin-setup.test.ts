@@ -194,6 +194,21 @@ describe("ログイン / セッション", () => {
     expect((await b.get("/admin")).headers.get("location")).toBe("/admin/login");
   });
 
+  it("DB の準備が済んでいない・Supabase に届かないときは、ログインの処理に進まずセットアップの画面へ（500 にしない）", async () => {
+    const fresh = new FakeSupabase({ migrationsApplied: false });
+    fresh.addUser("owner@example.com", "password-123", {});
+    let res = await new Browser(appWith(fresh)).post("/admin/login", { email: "owner@example.com", password: "password-123" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/admin/setup");
+    expect(fresh.calls.some((c) => c.includes("grant_type=password"))).toBe(false);
+
+    const down = new FakeSupabase();
+    down.addUser("owner@example.com", "password-123", { owner: true });
+    down.failNextRequests = 1;
+    res = await new Browser(appWith(down)).post("/admin/login", { email: "owner@example.com", password: "password-123" });
+    expect(res.headers.get("location")).toBe("/admin/setup");
+  });
+
   it("owner でない認証ユーザーは入れない", async () => {
     const sb = new FakeSupabase();
     sb.addUser("owner@example.com", "password-123", { owner: true });

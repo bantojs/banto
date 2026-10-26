@@ -7,7 +7,7 @@ import { AdminLayout, PageHead } from "./layout";
 import { owner, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { requireOrgAdmin } from "./access";
-import { MigrateForm, runMigrationFromForm } from "./migrate";
+import { isMigrateStep, MigrateForm, migrateStepJson, runMigrationFromForm } from "./migrate";
 import { projectRefFromUrl } from "../../db/migrate-api";
 
 /** アップデート（/admin/update）: 未適用マイグレーションの検出と適用（docs/upgrade.md） */
@@ -29,6 +29,7 @@ function Page(props: { pending: string[]; applied: string[]; error?: string | nu
       {props.done && props.done.length > 0 ? (
         <p class="notice">
           {t("migrate.done")} {props.done.join(", ")}
+          {props.pending.length > 0 ? ` ${t("migrate.more")}` : null}
         </p>
       ) : null}
       {props.pending.length === 0 ? (
@@ -61,6 +62,7 @@ update.get("/update", requireOwner, requireOrgAdmin, async (c: AdminContext) => 
 update.post("/update", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
   const applied = await appliedVersions(c);
   const outcome = await runMigrationFromForm(c, applied);
+  if (isMigrateStep(c)) return migrateStepJson(c, outcome, "/admin/update?done=");
   if (!outcome.ok) return c.html(<Page pending={pendingMigrations(applied)} applied={applied} error={outcome.message} projectRef={projectRefFromUrl(c.get("adapters").config.get("SUPABASE_URL"))} />, 400);
   return c.redirect(`/admin/update?done=${encodeURIComponent(outcome.applied.join(","))}`);
 });
