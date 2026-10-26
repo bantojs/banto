@@ -607,12 +607,15 @@ export class FakeSupabase {
       if (state !== "ok") return json({ code: "42501", message: `mfa_required:${state}`, details: null, hint: null }, 403);
     }
     const filters: [string, string][] = [];
+    const inFilters: [string, Set<string>][] = [];
     for (const [k, v] of u.searchParams) {
       if (["select", "order", "limit", "offset"].includes(k)) continue;
       if (v.startsWith("eq.")) filters.push([k, v.slice(3)]);
       else if (v === "is.null") filters.push([k, "\u0000null"]);
+      else if (v.startsWith("in.(") && v.endsWith(")")) inFilters.push([k, new Set(parseInList(v.slice(4, -1)))]);
     }
-    const matches = (row: Row) => filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v));
+    const matches = (row: Row) =>
+      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k])));
 
     if (path.startsWith("rpc/")) {
       const fn = path.slice(4);
@@ -2703,6 +2706,14 @@ export class FakeSupabase {
     }
     return json({ code: "PGRST202", message: `Could not find the function public.${fn}` }, 404);
   }
+}
+
+/** PostgREST の in.(…) の中身。"…" で囲んだ値（\\ と \\" のエスケープ）と、囲まない値の両方を読む */
+function parseInList(body: string): string[] {
+  const out: string[] = [];
+  const re = /"((?:[^"\\]|\\.)*)"|([^,]+)/g;
+  for (const m of body.matchAll(re)) out.push(m[1] !== undefined ? m[1].replace(/\\(.)/g, "$1") : m[2]!);
+  return out;
 }
 
 function rlsError(table: string): Response {

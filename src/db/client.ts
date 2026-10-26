@@ -41,6 +41,8 @@ export class DbError extends Error {
 
 export interface SelectOptions {
   eq?: Record<string, Scalar>;
+  /** 列の値がどれかに一致（PostgREST の in.(…)）。空の配列は 0 件になる */
+  in?: Record<string, readonly string[]>;
   /** 例: "created_at.desc" */
   order?: string;
   limit?: number;
@@ -66,6 +68,10 @@ function buildQuery(columns: string | undefined, opts: SelectOptions | undefined
   if (columns) q.set("select", columns);
   for (const [k, v] of Object.entries({ ...(opts?.eq ?? {}), ...(eq ?? {}) })) {
     q.set(k, v === null ? "is.null" : `eq.${String(v)}`);
+  }
+  // 値は二重引用符で囲む（カンマや括弧を含んでも 1 つの値として扱われるように）
+  for (const [k, vs] of Object.entries(opts?.in ?? {})) {
+    q.set(k, `in.(${vs.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")})`);
   }
   if (opts?.order) q.set("order", opts.order);
   if (opts?.limit !== undefined) q.set("limit", String(opts.limit));

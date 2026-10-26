@@ -232,13 +232,24 @@ export class StorefrontData {
       ? await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug })
       : await this.db.from<ProductRow>("products").selectOne("*", { eq: { shop_id: shop.id, slug, published: true } });
     if (!product || typeof product !== "object") return null;
-    const [images, skus, inventory] = await Promise.all([
+    // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）
+    const [images, [skus, inventory]] = await Promise.all([
       this.db.from<ProductImageRow>("product_images").select("*", { eq: { product_id: product.id }, order: "sort_order.asc" }),
-      this.db.from<SkuRow>("skus").select("*", { eq: { product_id: product.id }, order: "created_at.asc" }),
-      this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id } }),
+      this.db
+        .from<SkuRow>("skus")
+        .select("*", { eq: { product_id: product.id }, order: "created_at.asc" })
+        .then(async (skus) => [skus, await this.inventoryOf(shop, skus.map((s) => s.id))] as const),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })) };
+  }
+
+  /** SKU の在庫。URL が長くなりすぎないよう 100 件ずつ引く（SKU が無ければ問い合わせない） */
+  private async inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
+    const chunks: string[][] = [];
+    for (let i = 0; i < skuIds.length; i += 100) chunks.push(skuIds.slice(i, i + 100));
+    const pages = await Promise.all(chunks.map((ids) => this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id }, in: { sku_id: ids } })));
+    return pages.flat();
   }
 
   /**

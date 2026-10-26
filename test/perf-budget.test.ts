@@ -18,7 +18,7 @@ const BUDGET = {
     "/my-shop?tag=x": 0,
     "/api/shops/my-shop/products": 0,
     "/api/shops/my-shop/products?tag=x&sort=price_asc&limit=10": 0,
-    // 商品行 → 画像・SKU・在庫（並列）。在庫は常に最新を読む
+    // 商品行 → 画像・SKU（並列）→ 在庫（その商品の SKU だけ）。在庫は常に最新を読む
     "/my-shop/p/tee": 4,
     "/api/shops/my-shop/products/tee": 4,
     // 空のカート: 決済手段だけ
@@ -92,6 +92,19 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
       counts.push(review.length);
     }
     expect(counts[0]).toBe(counts[1]);
+  });
+
+  it("商品のページの在庫は、その商品の SKU だけを引く（ショップ全体の在庫を読まない）", async () => {
+    const { sb, b } = setup();
+    const shopId = String(sb.tables.shops[0]!["id"]);
+    for (let i = 0; i < 50; i++) {
+      const other = sb.addProduct(shopId, { slug: `other-${i}`, name: `O${i}`, published: true });
+      sb.addSku(shopId, other.id, { code: `O${i}`, price_jpy: 500, available: 1 });
+    }
+    await b.get("/my-shop/p/tee");
+    const inventory = (await calls(sb, () => b.get("/my-shop/p/tee"))).filter((x) => x.includes("/rest/v1/inventory"));
+    expect(inventory).toHaveLength(1);
+    expect(decodeURIComponent(inventory[0]!)).toContain("sku_id=in.(");
   });
 
   it("会員: ログイン中でも商品のページの回数は変わらない。会員ページは 1 回", async () => {
