@@ -48,21 +48,50 @@ describe("マイグレーション適用フォーム", () => {
     expect(applied.map((c) => /banto_migrations \(version\) values \('([^']+)'\)/.exec(c.query)?.[1])).toEqual(["0001_init", "0002_hooks", "0003_api", "0004_commerce"]);
   });
 
-  it("アクセストークン: 既存の適用済みを飛ばし、残りを順に当てて転送する。SUPABASE_URL がローカルならトークン欄は出ない", async () => {
-    const sb = new FakeSupabase({ appliedMigrations: [], url: "https://abcdefghijklmnopqrst.supabase.co" });
+  it("アクセストークン: 既存の適用済みを飛ばし、1 回の送信では 40 回まで当てる。続きは画面のスクリプトが送り直し（JSON）、最後まで当たる", async () => {
+    const sb = new FakeSupabase({ appliedMigrations: ["0001_init", "0002_hooks"], url: "https://abcdefghijklmnopqrst.supabase.co" });
     const app = appWith(sb);
     const b = new Browser(app);
-    const queries: string[] = [];
+    let queries: string[] = [];
     externalHosts.set("https://api.supabase.com/", async (req) => {
       const body = (await req.json()) as { query: string };
       queries.push(body.query);
-      if (body.query.startsWith("select version")) return new Response(JSON.stringify([{ version: "0001_init" }, { version: "0002_hooks" }]), { status: 201 });
+      if (body.query.startsWith("select version")) return new Response(JSON.stringify(sb.appliedMigrations.map((version) => ({ version }))), { status: 201 });
+      const v = /banto_migrations \(version\) values \('([^']+)'\)/.exec(body.query)?.[1];
+      if (v) sb.appliedMigrations.push(v);
       return new Response("[]", { status: 201 });
     });
-    const res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" });
+    expect(await (await b.get("/admin/setup")).text()).toContain("X-Banto-Migrate"); // 続けて送るスクリプト
+
+    // スクリプトが動かないとき: 1 回目は 40 回（一覧 + 39 ファイル）で止め、残りがあると知らせる
+    let res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(`/admin/setup?migrated=${encodeURIComponent(BUNDLED_MIGRATIONS.slice(2).join(","))}`);
-    expect(queries).toHaveLength(1 + BUNDLED_MIGRATIONS.length - 2);
+    expect(queries).toHaveLength(40);
+    expect(res.headers.get("location")).toBe(`/admin/setup?migrated=${encodeURIComponent(BUNDLED_MIGRATIONS.slice(2, 41).join(","))}`);
+    expect(await (await b.get(res.headers.get("location")!)).text()).toContain("残りがあります");
+
+    // スクリプトから: 続きを当てて JSON で返す。残りが無くなれば next を開く
+    queries = [];
+    res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" }, { headers: { "X-Banto-Migrate": "step" } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({ ok: true, applied: BUNDLED_MIGRATIONS.slice(41), remaining: [], next: "/admin/setup?migrated=" });
+    expect(queries).toHaveLength(1 + BUNDLED_MIGRATIONS.length - 41);
+    expect(sb.appliedMigrations).toEqual([...BUNDLED_MIGRATIONS]);
+
+    // 当て終わった後の送り直し（二度押し）も JSON
+    res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" }, { headers: { "X-Banto-Migrate": "step" } });
+    expect(await res.json()).toMatchObject({ ok: true, remaining: [] });
+
+    // 失敗はメッセージを JSON で（トークンは返さない）
+    const fresh = new FakeSupabase({ appliedMigrations: [], url: "https://abcdefghijklmnopqrst.supabase.co" });
+    externalHosts.set("https://api.supabase.com/", async () => new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 }));
+    res = await new Browser(appWith(fresh)).post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" }, { headers: { "X-Banto-Migrate": "step" } });
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as { ok: boolean; message: string };
+    expect(err.ok).toBe(false);
+    expect(err.message).toContain("アクセストークンが正しくないか");
+    expect(JSON.stringify(err)).not.toContain("sbp_0123456789");
 
     const local = new Browser(appWith(new FakeSupabase({ appliedMigrations: [] })));
     const html = await (await local.get("/admin/setup")).text();

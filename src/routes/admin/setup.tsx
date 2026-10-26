@@ -19,7 +19,7 @@ import {
 import { ensureOwnerRow, loadSession, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { generateSecret } from "../../auth/session";
 import { requireOrgAdmin } from "./access";
-import { MigrateForm, runMigrationFromForm } from "./migrate";
+import { isMigrateStep, MigrateForm, migrateStepJson, runMigrationFromForm } from "./migrate";
 import { projectRefFromUrl } from "../../db/migrate-api";
 import { createPrivilegedAuth } from "../../db/privileged";
 
@@ -157,6 +157,7 @@ function DbSection(props: { db: DbState; migrateError?: string | null; migrated?
       {props.migrated && props.migrated.length > 0 ? (
         <p class="notice">
           {t("migrate.done")} {props.migrated.join(", ")}
+          {needsMigration ? ` ${t("migrate.more")}` : null}
         </p>
       ) : null}
       {needsMigration ? <MigrateForm action="/admin/setup/migrate" pending={db.pending} error={props.migrateError} projectRef={props.projectRef} /> : null}
@@ -304,8 +305,9 @@ setup.post("/migrate", async (c) => {
     const session = await loadSession(c);
     if (!session || (await ensureOwnerRow(c, session)) !== "ok") return c.redirect("/admin/login");
   }
-  if (db.status === "ok" && db.pending.length === 0) return c.redirect("/admin/setup");
+  if (db.status === "ok" && db.pending.length === 0) return isMigrateStep(c) ? migrateStepJson(c, { ok: true, applied: [], remaining: [] }, "/admin/setup?migrated=") : c.redirect("/admin/setup");
   const outcome = await runMigrationFromForm(c, db.status === "ok" ? db.applied : []);
+  if (isMigrateStep(c)) return migrateStepJson(c, outcome, "/admin/setup?migrated=");
   if (!outcome.ok) return renderSetup(c, { migrateError: outcome.message, status: 400 });
   return c.redirect(`/admin/setup?migrated=${encodeURIComponent(outcome.applied.join(","))}`);
 });
