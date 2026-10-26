@@ -38,23 +38,16 @@ export function splitPage<T extends { id: string }>(rows: T[], key: (row: T) => 
   return { rows: shown, next: encodeCursor({ k: key(last), id: last.id }) };
 }
 
-/** 配列を n 個ずつに分ける（in.(…) の URL を長くしすぎないため） */
-export function chunks<T>(items: readonly T[], n: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n));
-  return out;
-}
-
 /** 次のページ・最初のページへのリンク。base は検索条件を含む一覧の URL（after は付けない）。param は位置を載せる名前 */
 export function Pager(props: { base: string; next: string | null; paged: boolean; param?: string }) {
   if (!props.next && !props.paged) return null;
   const sep = props.base.includes("?") ? "&" : "?";
   return (
-    <nav class="pager" aria-label={t("store.pagination")} style="display:flex;justify-content:space-between;gap:1rem;margin:1rem 0">
-      {props.paged ? <a href={props.base}>{t("store.first_page")}</a> : <span />}
+    <nav class="pager" aria-label={t("admin.pagination")}>
+      {props.paged ? <a href={props.base}>{t("admin.first_page")}</a> : <span />}
       {props.next ? (
         <a href={`${props.base}${sep}${props.param ?? "after"}=${props.next}`} rel="next">
-          {t("store.next_page")}
+          {t("admin.next_page")}
         </a>
       ) : null}
     </nav>

@@ -1,8 +1,8 @@
 -- Banto 0059_admin_lists: 管理画面の一覧を DB で検索・ページ送りする（10 万〜100 万件。人間の決定 2026-10-26）。前方専用。
 -- 管理画面の一覧（商品・注文・会員・クーポン・発行したクーポン）は、新しい順のキーセット（created_at desc, id desc）で 1 ページずつ読み、
--- 名前・メールなどの部分一致は PostgREST の ilike で DB に寄せた（src/routes/admin/paging.tsx）。そのためのインデックスと、
--- キャンペーンの「使われた数」を表示する分だけ数える coupon_stats_for。インデックスが無くても結果は同じ（遅いだけ）なので、
--- コードは適用前の DB でもそのまま動く（coupon_stats_for だけ migrated() で分岐）。
+-- 名前・メールなどの部分一致は admin_search_ids（下）で id を探す（src/routes/admin/paging.tsx）。そのためのインデックスと、
+-- キャンペーンの「使われた数」を表示する分だけ数える coupon_stats_for、発行したクーポンの状態ごとの数 coupon_grant_counts。
+-- コードは適用前の DB でも動く（migrated() で分岐し、部分一致は PostgREST の ilike・数は行ごとに数える。結果は同じで遅いだけ）。
 
 -- ---------- 新しい順のページ送り ----------
 create index if not exists products_admin_list on products (shop_id, created_at desc, id desc);

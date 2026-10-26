@@ -6,7 +6,7 @@
  *   1 回の処理で product_feed_page（id 順、1,000 商品ずつ）を数ページ読み、<item> の並びを 1 つのファイル（part）にして置く。
  *   途中の位置は feeds/<shop_id>/run.json。最後まで読んだら meta.json に run と part の数を書き、前の回の part を消す。
  *   配信（/<スラッグ>/feed/products.xml）は頭・part・尻をつないで流す（readFeed）。
- *   1 回に進める量は workers_plan（free は 3 ページ、paid は 10 ページ）と、part の大きさ（8MB）で決める。
+ *   1 回に進める量は workers_plan（free は 3 ページ、paid は 10 ページ）と、part の大きさ（800 万文字）で決める。
  * 0060 より前の DB は全件を読んで 1 つのファイルに（feeds/<shop_id>/products.xml）。
  */
 import type { Adapters, StorageAdapter } from "../../adapters/types";
@@ -24,8 +24,8 @@ export const FEED_INTERVAL_MS = 60 * 60 * 1000;
 const FEED_PAGE = 1000;
 /** 1 回の処理で読むページの数（Workers の 1 回あたりの問い合わせの上限に合わせる） */
 const PAGES_PER_RUN = { free: 3, paid: 10 } as const;
-/** part の大きさの目安（これを超えたらその回はそこまで。メモリ 128MB に余裕を残す） */
-const PART_BYTES = 8 * 1024 * 1024;
+/** part の大きさの目安（文字数。これを超えたらその回はそこまで。日本語は UTF-8 で 3 バイトなので最大 24MB ほど。メモリ 128MB に余裕を残す） */
+const PART_CHARS = 8_000_000;
 
 export const feedKey = (shopId: string) => `feeds/${shopId}/products.xml`;
 const metaKey = (shopId: string) => `feeds/${shopId}/meta.json`;
@@ -85,10 +85,10 @@ function feedTarget(shop: PublicShop, bases: FeedBases): FeedTarget | null {
 }
 
 /**
- * フィードを作る（0060 以降は 1 回の処理の分だけ進める）。作り終えたら meta を、続きがあれば "in_progress" を、
- * URL の起点が分からなければ null を返す。pages は 1 回に読むページの数（省略時は workers_plan で決める）
+ * フィードを作る（0060 以降は 1 回の処理の分だけ進める。読むページの数は workers_plan で決める）。
+ * 作り終えたら meta を、続きがあれば "in_progress" を、URL の起点が分からなければ null を返す
  */
-export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, shop: PublicShop, bases: FeedBases, now = new Date(), pages?: number): Promise<FeedMeta | "in_progress" | null> {
+export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, shop: PublicShop, bases: FeedBases, now = new Date()): Promise<FeedMeta | "in_progress" | null> {
   const target = feedTarget(shop, bases);
   if (!target) return null;
   if (!(await sf.migratedTo(CATALOG_PAGES_MIGRATION))) {
@@ -103,11 +103,11 @@ export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, 
     run = { run: now.getTime().toString(36), started_at: now.toISOString(), after: null, parts: 1, items: 0, skipped: { no_image: 0, no_price: 0 } };
     await putText(storage, partKey(shop.id, run.run, 0), feedHead(target), "application/xml; charset=utf-8");
   }
-  const [categories, plan] = await Promise.all([sf.listCategories(shop), pages === undefined ? sf.sitePlan() : Promise.resolve("free" as const)]);
-  const budget = pages ?? PAGES_PER_RUN[plan];
+  const [categories, plan] = await Promise.all([sf.listCategories(shop), sf.sitePlan()]);
+  const budget = PAGES_PER_RUN[plan];
   let xml = "";
   let done = false;
-  for (let i = 0; i < budget && xml.length < PART_BYTES; i++) {
+  for (let i = 0; i < budget && xml.length < PART_CHARS; i++) {
     const page = await sf.feedPage(shop, run.after, FEED_PAGE);
     const result = buildFeed({ ...page, categories }, target);
     xml += feedItemsXml(result);

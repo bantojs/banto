@@ -9,6 +9,7 @@ import { migrated } from "../db/migration-state";
 import { descendantIds, inCategories } from "../products/categories";
 import { tagCounts } from "../products/tags";
 import { UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
+import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 
 export const STOREFRONT_CACHE_TTL = 30;
@@ -355,18 +356,11 @@ export class StorefrontData {
     return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })) };
   }
 
-  /** SKU の在庫。URL が長くなりすぎないよう 100 件ずつ引く（SKU が無ければ問い合わせない） */
-  private async inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
-    const chunks: string[][] = [];
-    for (let i = 0; i < skuIds.length; i += 100) chunks.push(skuIds.slice(i, i + 100));
-    const pages = await Promise.all(chunks.map((ids) => this.db.from<InventoryRow>("inventory").select("sku_id,available", { eq: { shop_id: shop.id }, in: { sku_id: ids } })));
-    return pages.flat();
+  /** SKU の在庫（その SKU の分だけ。SKU が無ければ問い合わせない） */
+  private inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
+    return selectIn<InventoryRow>(this.db, "inventory", "sku_id,available", shop.id, "sku_id", skuIds);
   }
 
-  /**
-   * 商品フィード用に、公開中の商品・SKU・在庫・画像・カテゴリーをすべて読む（同梱モジュール product_feed、Cron と管理画面から）。
-   * PostgREST は 1 回 1,000 行までなので、表ごとにページを送って読む。キャッシュはしない。
-   */
   async feedCatalog(shop: PublicShop): Promise<FeedCatalogRows> {
     const all = async <T extends Row>(table: string, columns: string, eq: Record<string, string | boolean>, order: string): Promise<T[]> => {
       const out: T[] = [];

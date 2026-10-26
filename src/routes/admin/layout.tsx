@@ -161,6 +161,7 @@ td:first-child>a:hover{text-decoration:underline}
 .status.info::before{background:var(--link)}
 .status.off::before{background:var(--border-strong)}
 .toolbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:0 0 1rem}
+.pager{display:flex;justify-content:space-between;gap:1rem;margin:1rem 0}
 .toolbar input[type=search],.toolbar input[type=text],.toolbar select{width:auto;min-width:14rem;max-width:100%;min-height:36px;padding:.35rem .7rem}
 .toolbar select{min-width:9rem}
 .toolbar .count{margin-left:auto;color:var(--fg-muted);font-size:.85rem}
