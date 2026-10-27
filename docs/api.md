@@ -4,7 +4,7 @@ Banto には用途の違う 4 つの API があります。まずこの表で自
 
 | 使う人 | API | 認証 | 入口 | 詳しい仕様 |
 | --- | --- | --- | --- | --- |
-| 別のサイト（WordPress・LP・SPA）からショップを出したい | **公開 API・カート・チェックアウト・会員**（`/api/shops/...`） | なし（会員の操作だけ Banto の会員トークン） | `GET /api/` が一覧を返す | [docs/headless.md](headless.md) |
+| 別のサイト（WordPress・LP・SPA）からショップを出したい | **公開 API・カート・チェックアウト・会員**（`/api/shops/...`） | なし（会員の操作だけ Banto の会員トークン） | `GET /api/openapi.json`（OpenAPI 3.1）、`GET /api/` が一覧を返す | [docs/headless.md](headless.md) |
 | AI（Claude など）や自動化ツールで商品・注文・集計を扱いたい | **AI 用 API**（`/mcp`、`/api/v1`） | 管理画面で発行する AI 用トークン（`Authorization: Bearer banto_...`） | `GET /api/v1/openapi.json`（OpenAPI 3.1） | [docs/ai-access.md](ai-access.md) と §3 |
 | 注文や商品の変化を自分のサービスで受け取りたい（CRM・メール・Slack） | **hooks**（署名付き Webhook の送信） | 送信先ごとの署名シークレット（管理画面に表示） | 管理画面 → hooks | [docs/hooks.md](hooks.md)、実例 [examples/plugin-slack](../examples/plugin-slack/) |
 | 稼働を監視したい | **/health** | なし | `GET /health` | [docs/monitoring.md](monitoring.md) |

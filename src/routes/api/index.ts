@@ -15,6 +15,7 @@ import { memberCors, membersApi } from "./members";
 import { tryonApi } from "./tryon";
 import { inquiriesApi } from "./inquiries";
 import { imageOptionsOf } from "../../products/images";
+import { publicOpenapiDocument } from "./openapi-public";
 
 /**
  * ヘッドレス API（公開）。外部フロント（WordPress・Next.js 等）やプラグインが使う。docs/headless.md
@@ -26,6 +27,7 @@ export const api = new Hono<AppEnv>();
 
 const publicCors = cors({ origin: "*", allowMethods: ["GET", "POST", "OPTIONS"], allowHeaders: ["Content-Type", "Authorization"], maxAge: 86400 });
 api.use("/", publicCors);
+api.use("/openapi.json", publicCors);
 api.use("/shops", publicCors);
 // 会員の API（/api/shops/:shop/members/*）は return_origins のオリジンだけ（0029）。それ以外の公開 API は *
 api.use("/shops/*", (c, next) => (/^\/api\/shops\/[^/]+\/members(\/|$)/.test(c.req.path) ? memberCors(c, next) : publicCors(c, next)));
@@ -45,7 +47,8 @@ function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   };
 }
 
-api.get("/", (c) => c.json({ name: "banto", version: BANTO_VERSION, public: ["/api/shops", "/api/shops/:slug", "/api/shops/:slug/products", "/api/shops/:slug/products/:slug", "/api/shops/:slug/categories"], cart: ["GET /api/shops/:slug/cart", "POST /api/shops/:slug/cart"], checkout: ["POST /api/shops/:slug/checkout/quote", "POST /api/shops/:slug/checkout"], buy_link: "/:slug/buy?sku=<sku_id>&qty=1", docs: "docs/headless.md", authenticated: "/api/v1 (OpenAPI: /api/v1/openapi.json)", mcp: "/mcp" }));
+api.get("/openapi.json", (c) => c.json(publicOpenapiDocument(new URL(c.req.url).origin, BANTO_VERSION)));
+api.get("/", (c) => c.json({ name: "banto", version: BANTO_VERSION, openapi: "/api/openapi.json", public: ["/api/shops", "/api/shops/:slug", "/api/shops/:slug/products", "/api/shops/:slug/products/:slug", "/api/shops/:slug/categories"], cart: ["GET /api/shops/:slug/cart", "POST /api/shops/:slug/cart"], checkout: ["POST /api/shops/:slug/checkout/quote", "POST /api/shops/:slug/checkout"], buy_link: "/:slug/buy?sku=<sku_id>&qty=1", docs: "docs/headless.md", authenticated: "/api/v1 (OpenAPI: /api/v1/openapi.json)", mcp: "/mcp" }));
 
 api.get("/shops", async (c: Ctx) => {
   const d = data(c);
