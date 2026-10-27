@@ -5,6 +5,7 @@
  *   - deliver_hooks: hooks の配信と再送（§5）
  *   - product_feeds: 商品フィードを 1 時間ごとに作り直す（同梱モジュール product_feed）
  *   - tryon: お店で試着の取り置きの期限切れと、終わった申し込みの個人情報のマスキング（同梱モジュール store_tryon、0025）
+ *   - legal_links: 法務のページを向けた外の URL が生きているか（0062）
  */
 import { INQUIRIES_MIGRATION } from "../modules/inquiries";
 import { removeAttachments } from "../modules/inquiries/attachments";
@@ -20,6 +21,7 @@ import { todayHere } from "../modules/store-tryon";
 import { createDbClient } from "../db/client";
 import { migrated } from "../db/migration-state";
 import { auditKeepDays } from "../audit";
+import { LEGAL_LINKS_MIGRATION, checkLegalLinks } from "../storefront/legal-links";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -85,6 +87,17 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     if (storage) {
       const keys = await db.inquiryAttachmentTrashClaim(50);
       if (keys.length > 0) await db.inquiryAttachmentTrashDone(await removeAttachments(storage, keys));
+    }
+  });
+
+  // 法務のページの外の URL が生きているか（0062）。期限の来たショップを 1 回に 1 つだけ（外への通信は 3 種類 × リダイレクト 3 回で最大 12 回。
+  // Workers の 1 回あたりの通信の上限をほかの処理と分け合う。5 分ごとなら 1 日に 288 ショップ）
+  adapters.scheduler.register("legal_links", async () => {
+    const anonKey = cfg.get("SUPABASE_ANON_KEY");
+    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, LEGAL_LINKS_MIGRATION))) return;
+    const outbound = adapters.publicFetch ?? doFetch;
+    for (const due of await db.legalLinksDue(1)) {
+      await db.legalLinksRecord(due.shop_id, await checkLegalLinks(due.urls, outbound));
     }
   });
 

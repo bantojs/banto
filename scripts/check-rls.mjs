@@ -58,11 +58,12 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "store_set_hours", "stores_set_special_days", "tryon_request_detail", "tryon_restock", "tryon_store_shops", "tryon_update",
   // 0061: お問い合わせ（同梱モジュール inquiries）。中で support の項目を確かめる
   "inquiry_admin_get", "inquiry_attachment_admin_get", "inquiry_delete", "inquiry_reply", "inquiry_set_status",
+  "legal_links_record", // 0062: 法務のページの外の URL の確認結果（中で integrations の項目を確かめる）
 ]);
 
 /** 列の権限。must: その役割がその列にその権限を持ってはいけない */
 const COLUMN_DENIES = [
-  { role: "anon", table: "shops", privilege: "SELECT", columns: ["settings", "stripe_account_id", "order_seq", "tryon_seq", "owner_id", "org_id"] },
+  { role: "anon", table: "shops", privilege: "SELECT", columns: ["settings", "stripe_account_id", "order_seq", "tryon_seq", "owner_id", "org_id", "legal_links_state"] },
   { role: "anon", table: "customers", privilege: "SELECT", columns: ["id", "email", "password_hash"] },
   { role: "anon", table: "orders", privilege: "SELECT", columns: ["id", "customer_email"] },
   { role: "authenticated", table: "customers", privilege: "SELECT", columns: ["password_hash", "legacy_password_hash", "session_epoch", "password_updated_at", "legacy_password_expires_at"] },

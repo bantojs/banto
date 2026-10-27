@@ -58,7 +58,8 @@ api.get("/shops/:shop", async (c: Ctx) => {
   if (!d) return c.json({ error: "not_configured" }, 503);
   const shop = await d.sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
-  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy } });
+  // legal_links: 法務のページを連携サイトに向けていて、最後の確認で生きていた外の URL（0062。無ければ空）
+  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy, legal_links: shop.legal_links ?? {} } });
 });
 
 /**

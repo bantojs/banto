@@ -15,6 +15,8 @@ export interface ShopRow {
   domain?: string | null;
   /** 0024_organizations。ショップの持ち主の組織 */
   org_id?: string | null;
+  /** 0062_legal_links。法務のページの外の URL を確かめた結果（legal_links_record だけが書く） */
+  legal_links_state?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }

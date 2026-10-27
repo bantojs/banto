@@ -21,6 +21,7 @@ import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
+import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
@@ -316,7 +317,11 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const page = legalPages[param(c, "page")]!;
+  const kind = param(c, "page") as LegalKind;
+  // 連携サイトのページに向けていて、最後の確認で生きていればそちらへ（0062）。落ちていれば Banto のページを出す
+  const external = liveLegalUrl(s.shop.legal_links, kind);
+  if (external) return c.redirect(external, 302);
+  const page = legalPages[kind]!;
   return c.html(s.theme.LegalPage({ ctx: s.ctx, title: page.title(), body: page.pick(s.shop) ?? "" }));
 });
 

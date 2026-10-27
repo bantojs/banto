@@ -4,7 +4,11 @@ import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { DomainAttachResult, DomainState } from "../../adapters/types";
 import type { ShopRow } from "../../db/types";
-import { t, type MessageKey } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
+import { formatDateTime } from "../../i18n/time";
+import { migrated } from "../../db/migration-state";
+import { createPrivilegedDb } from "../../db/privileged";
+import { LEGAL_CHECK_HOURS, LEGAL_KINDS, LEGAL_LINKS_MIGRATION, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
@@ -42,6 +46,9 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     theme_saved: "theme.saved",
     terms_saved: "terms.saved",
     headless_saved: "headless.saved",
+    legal_links_saved: "legal_links.saved",
+    legal_links_checked: "legal_links.checked",
+    legal_links_invalid: "legal_links.invalid",
     storefront_saved: "sfmode.saved",
     storefront_invalid: "sfmode.invalid",
     domain_saved: "domain.saved",
@@ -63,7 +70,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
   };
   const key = map[code];
   if (!key) return null;
-  const ok = ["saved", "domain_saved", "shipping_saved", "theme_saved", "terms_saved", "headless_saved", "storefront_saved", "fields_saved", "customer_fields_saved", "stripe_connected", "stripe_disconnected", "restored"].includes(code);
+  const ok = ["saved", "domain_saved", "shipping_saved", "theme_saved", "terms_saved", "headless_saved", "legal_links_saved", "legal_links_checked", "storefront_saved", "fields_saved", "customer_fields_saved", "stripe_connected", "stripe_disconnected", "restored"].includes(code);
   return { kind: ok ? "ok" : "error", text: detail ? `${t(key)} ${detail.slice(0, 500)}` : t(key) };
 }
 
@@ -111,7 +118,60 @@ export function ShopNav({ shop, access, publicBaseUrl }: { shop: ShopRow; access
 }
 
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null } }) {
+const LEGAL_LABEL: Record<LegalKind, MessageKey> = { legal: "shop.legal_notice", privacy: "shop.privacy_policy", returns: "shop.return_policy" };
+const LEGAL_HOURS_LABEL: Record<number, MessageKey> = { 1: "legal_links.hours_1", 6: "legal_links.hours_6", 24: "legal_links.hours_24", 168: "legal_links.hours_168" };
+
+/** 法務のページを連携サイトのページへ向ける（0062。保存は integrations の項目） */
+function LegalLinksSection(props: { shop: ShopRow }) {
+  const { shop } = props;
+  const cfg = legalLinksOf(shop.settings);
+  const state = (shop.legal_links_state ?? {}) as Record<string, { url?: unknown; ok?: unknown; checked_at?: unknown } | undefined>;
+  const stateText = (k: LegalKind) => {
+    const url = cfg.urls[k];
+    if (!url) return null;
+    const st = state[k];
+    if (!st || st.url !== url || typeof st.checked_at !== "string") return <p class="muted">{t("legal_links.state_none")}</p>;
+    const at = formatDateTime(st.checked_at);
+    return st.ok === true ? <p class="muted">{tf("legal_links.state_ok", { at })}</p> : <p class="error">{tf("legal_links.state_ng", { at })}</p>;
+  };
+  return (
+    <section class="card" id="legal-links">
+      <h2>{t("legal_links.title")}</h2>
+      <form method="post" action={`/admin/shops/${shop.id}/legal-links`}>
+        <p class="muted">{t("legal_links.intro")}</p>
+        {LEGAL_KINDS.map((k) => (
+          <div>
+            <label for={`legal_url_${k}`}>{t(LEGAL_LABEL[k])}</label>
+            <input id={`legal_url_${k}`} type="url" name={`url_${k}`} value={cfg.urls[k] ?? ""} placeholder="https://example.com/legal" style="width:100%;max-width:40rem" />
+            {stateText(k)}
+          </div>
+        ))}
+        <p class="muted">{t("legal_links.url_hint")}</p>
+        <label for="legal_check_hours">{t("legal_links.check_hours")}</label>
+        <select id="legal_check_hours" name="check_hours">
+          {LEGAL_CHECK_HOURS.map((h) => (
+            <option value={String(h)} selected={cfg.check_hours === h}>
+              {t(LEGAL_HOURS_LABEL[h]!)}
+            </option>
+          ))}
+        </select>
+        <p class="muted">{t("legal_links.hours_hint")}</p>
+        <p>
+          <button type="submit">{t("shop.save")}</button>
+        </p>
+      </form>
+      {Object.keys(cfg.urls).length > 0 ? (
+        <form method="post" action={`/admin/shops/${shop.id}/legal-links/check`}>
+          <button type="submit" class="secondary">
+            {t("legal_links.check_now")}
+          </button>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -410,6 +470,8 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
           </form>
         </section>
 
+        {props.legalLinksReady ? <LegalLinksSection shop={shop} /> : null}
+
         <section class="card" id="stripe">
           <h2>{t("stripe.title")}</h2>
           <p>
@@ -503,6 +565,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))}
       stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet}
       stripeKeySet={stripeKeySet}
+      legalLinksReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, LEGAL_LINKS_MIGRATION))}
     />,
   );
 });
@@ -711,8 +774,15 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
   const f = await formFields(c);
   const current = shop.settings ?? {};
   // 0033 の欄は DB にその版が入っているときだけ画面に出る。無ければ今の値をそのまま持ち越す
-  const headless = { return_origins: parseOrigins(f.return_origins ?? ""), relay_ips: f.relay_ips !== undefined ? parseRelayIps(f.relay_ips) : relayIps(current) };
   const section = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+  const origins = parseOrigins(f.return_origins ?? "");
+  const headless: Record<string, unknown> = { ...section(current.headless), return_origins: origins, relay_ips: f.relay_ips !== undefined ? parseRelayIps(f.relay_ips) : relayIps(current) };
+  // 法務のページの外の URL（0062）は、許可から外したサイトのものを外す（許可したサイトの URL だけ向ける）
+  if (headless.legal_links !== undefined) {
+    const links = section(headless.legal_links);
+    const kept = Object.fromEntries(Object.entries(links).filter(([k, v]) => !(LEGAL_KINDS as readonly string[]).includes(k) || (typeof v === "string" && parseLegalUrl(v, origins).ok)));
+    headless.legal_links = kept;
+  }
   const limit = (v: string | undefined, dflt: number) => {
     const n = Number.parseInt(v ?? "", 10);
     return Number.isInteger(n) && n >= 1 && n <= 9999 ? n : dflt;
@@ -727,6 +797,59 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
     throw e;
   }
   return c.redirect(`/admin/shops/${shopId}?flash=headless_saved`);
+});
+
+/** 外の URL を確かめて結果を書く（保存と「今すぐ確かめる」。管理画面の操作なので、その場で取りに行く） */
+async function recordLegalLinks(c: AdminContext, shop: ShopRow, urls: Partial<Record<LegalKind, string>>): Promise<void> {
+  const shopId = shop.id;
+  const cfg = c.get("adapters").config;
+  const outbound = c.get("adapters").publicFetch ?? c.get("deps").fetch;
+  const results: LegalLinkResults = Object.keys(urls).length > 0 ? await checkLegalLinks(urls, outbound) : {};
+  // 結果は運営者の JWT で書く（DB が integrations の項目を確かめる）
+  await owner(c).db.rpc("legal_links_record", { p_shop_id: shopId, p_results: results });
+  // この isolate のお店の画面のキャッシュを捨てる（ほかの isolate は最大 30 秒で入れ替わる）
+  const cache = c.get("adapters").cache;
+  await Promise.all([cache.delete(`shop:${shop.slug}`), ...(shop.domain ? [cache.delete(`domain:${shop.domain}`)] : [])]);
+}
+
+/** 法務のページの外の URL（shops.settings.headless.legal_links、0062）。https で、決済後の戻り先として許可したサイトだけ */
+shops.post("/:shopId/legal-links", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const shop = await loadShop(c, shopId, "integrations");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const f = await formFields(c);
+  const current = shop.settings ?? {};
+  const origins = returnOrigins(current);
+  const urls: Partial<Record<LegalKind, string>> = {};
+  for (const k of LEGAL_KINDS) {
+    const r = parseLegalUrl(f[`url_${k}`] ?? "", origins);
+    if (!r.ok) return c.redirect(`/admin/shops/${shopId}?flash=legal_links_invalid&detail=${encodeURIComponent(t(LEGAL_LABEL[k]))}#legal-links`);
+    if (r.url) urls[k] = r.url;
+  }
+  const hours = Number(f.check_hours);
+  const headless = { ...((current.headless ?? {}) as Record<string, unknown>), legal_links: { ...urls, check_hours: (LEGAL_CHECK_HOURS as readonly number[]).includes(hours) ? hours : 24 } };
+  try {
+    await db.from<ShopRow>("shops").update({ settings: { ...current, headless } }, { id: shopId });
+    await recordLegalLinks(c, shop, urls);
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}?flash=generic#legal-links`);
+    throw e;
+  }
+  return c.redirect(`/admin/shops/${shopId}?flash=legal_links_saved#legal-links`);
+});
+
+shops.post("/:shopId/legal-links/check", requireOwner, async (c: AdminContext) => {
+  const shopId = param(c, "shopId");
+  const shop = await loadShop(c, shopId, "integrations");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  try {
+    await recordLegalLinks(c, shop, legalLinksOf(shop.settings).urls);
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}?flash=generic#legal-links`);
+    throw e;
+  }
+  return c.redirect(`/admin/shops/${shopId}?flash=legal_links_checked#legal-links`);
 });
 
 /** テーマ設定（既定テーマが解釈する。独自テーマは好きなキーを使ってよい） */
