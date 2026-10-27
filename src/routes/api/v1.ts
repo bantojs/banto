@@ -3,7 +3,7 @@ import type { AppEnv } from "../../app";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ApiError, ApiService, isInquiryApiStatus, isTryonApiStatus } from "../../api/service";
 import { bearerToken } from "../../api/tokens";
-import { inquiryMailFor, migrationStateFor, relayStatus, type Ctx } from "../common";
+import { MAX_JSON_BODY_BYTES, inquiryMailFor, migrationStateFor, readBodyLimited, relayStatus, type Ctx } from "../common";
 import { BANTO_VERSION } from "../../version";
 import { openapiDocument } from "./openapi";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES } from "../../media/images";
@@ -49,39 +49,16 @@ const api = (c: Ctx): ApiService => {
 };
 
 async function body(c: Ctx): Promise<Record<string, unknown>> {
+  const raw = await readBodyLimited(c.req.raw, MAX_JSON_BODY_BYTES);
+  if (!raw) throw new ApiError("invalid", "request body is larger than 1MB", 413);
   let j: unknown;
   try {
-    j = await c.req.json();
+    j = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     throw new ApiError("invalid", "request body must be a JSON object", 400);
   }
   if (!j || typeof j !== "object" || Array.isArray(j)) throw new ApiError("invalid", "request body must be a JSON object", 400);
   return j as Record<string, unknown>;
-}
-
-/** 本文を上限まで読む（申告の Content-Length より長く送られても上限で止める） */
-async function readLimited(req: Request, max: number): Promise<Uint8Array> {
-  if (!req.body) return new Uint8Array();
-  const reader = req.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => undefined);
-      throw new ApiError("invalid", "image is larger than 5MB", 413);
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(size);
-  let at = 0;
-  for (const ch of chunks) {
-    out.set(ch, at);
-    at += ch.byteLength;
-  }
-  return out;
 }
 
 const int = (v: string | undefined, d: number) => (v && /^\d+$/.test(v) ? Number(v) : d);
@@ -152,7 +129,9 @@ v1.post("/products/:id/images/upload", async (c) => {
       thumbnail = thumb instanceof Blob ? new Uint8Array(await thumb.arrayBuffer()) : null;
     } else if (type.startsWith("image/") || type === "application/octet-stream") {
       if (length > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 413);
-      image = await readLimited(c.req.raw, MAX_IMAGE_BYTES);
+      const read = await readBodyLimited(c.req.raw, MAX_IMAGE_BYTES);
+      if (!read) throw new ApiError("invalid", "image is larger than 5MB", 413);
+      image = read;
     } else {
       throw new ApiError("invalid", "send the image as the body (Content-Type: image/...) or as multipart/form-data (image, thumbnail)", 415);
     }

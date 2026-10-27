@@ -63,6 +63,27 @@ describe("REST /api/v1", () => {
     expect((await rest(app, ro, "GET", "/shop")).status).toBe(401);
   });
 
+  it("本文は 1MB まで。超えたら読まずに 413（Content-Length の申告が無い・偽っても上限で止める）", async () => {
+    const { app, issue, tee, sb } = await setup();
+    const tok = await issue(["products:write"]);
+    const big = JSON.stringify({ description: "あ".repeat(400_000) }); // UTF-8 で 1.2MB
+    const res = await rest(app, tok, "PATCH", `/products/${tee.id}`, JSON.parse(big));
+    expect(res.status).toBe(413);
+    // 申告の無い本文（ストリーム）も上限で止める
+    const bytes = new TextEncoder().encode(big);
+    const stream = new ReadableStream<Uint8Array>({
+      start(ctl) {
+        for (let i = 0; i < bytes.length; i += 64 * 1024) ctl.enqueue(bytes.subarray(i, i + 64 * 1024));
+        ctl.close();
+      },
+    });
+    const streamed = await app.request(`${BASE}/api/v1/products/${tee.id}`, { method: "PATCH", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: stream, duplex: "half" } as RequestInit);
+    expect(streamed.status).toBe(413);
+    expect(sb.tables.products.find((p) => p.id === tee.id)?.["description"]).not.toBe("あ".repeat(400_000));
+    // 上限より小さければ今までどおり
+    expect((await rest(app, tok, "PATCH", `/products/${tee.id}`, { description: "あ".repeat(1000) })).status).toBe(200);
+  });
+
   it("ショップ: 購入前の確認画面の文言（checkout_terms）を読み書きする。渡した鍵だけ変え、null で消す", async () => {
     const { app, issue, sb, shop } = await setup();
     const tok = await issue(["shop:read", "shop:write"]);
@@ -226,6 +247,10 @@ describe("MCP /mcp", () => {
     expect(parse.status).toBe(400);
     const tooMany = await rpc(app, tok, Array.from({ length: 21 }, (_, i) => ({ jsonrpc: "2.0", id: i, method: "ping" })));
     expect(tooMany.status).toBe(400);
+    // 本文は 1MB まで
+    const tooBig = await rpc(app, tok, { jsonrpc: "2.0", id: 10, method: "ping", params: { pad: "x".repeat(1024 * 1024) } });
+    expect(tooBig.status).toBe(413);
+    expect(((await tooBig.json()) as { error: { code: number } }).error.code).toBe(-32600);
   });
 
   it("集計ツールは group_by を検証する", async () => {
