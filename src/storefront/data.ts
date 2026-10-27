@@ -32,6 +32,8 @@ export interface PublicShop {
   stripe_connected: boolean;
   /** 公開の鍵だけ（publicShopSettings） */
   settings: Record<string, unknown>;
+  /** 法務のページの外の URL のうち、最後の確認で生きていたものだけ（0062、src/storefront/legal-links.ts）。当たる前は無い */
+  legal_links?: Record<string, string>;
 }
 
 /**

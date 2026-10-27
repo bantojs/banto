@@ -281,6 +281,10 @@ export interface PrivilegedDb {
   inquiryAttachmentTrashDone(keys: string[]): Promise<number>;
   /** 完了から days 日の連絡先と本文を消す・未確認のまま 30 日のものを消す（Cron） */
   maskInquiries(days: number): Promise<number>;
+  /** 法務のページの外の URL を確かめる時期の来たショップ（0062。古い順に limit 件） */
+  legalLinksDue(limit: number): Promise<{ shop_id: string; urls: Record<string, string> }[]>;
+  /** 外の URL を確かめた結果を書く（0062。設定と違う URL の結果は DB が捨てる） */
+  legalLinksRecord(shopId: string, results: Record<string, { url: string; ok: boolean }>): Promise<unknown>;
   /** 組織への招待のリンクを開いたとき（0024）。token_hash は SHA-256。無ければ null */
   orgInvitationPeek(tokenHash: string): Promise<{ email: string; org_name: string; role: string; valid: boolean; user_exists: boolean } | null>;
   /** 先着のクーポンを獲得する（0020） */
@@ -490,6 +494,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     inquiryResendLink: (shopId, number, email, linkHash, ipHash, emailHash) =>
       rpc("inquiry_resend_link", { p_shop_id: shopId, p_number: number, p_email: email, p_link_hash: linkHash, p_ip_hash: ipHash, p_email_hash: emailHash }),
     maskInquiries: (days) => rpc("mask_inquiries", { p_days: days }),
+    legalLinksDue: async (limit) => (await rpc<{ shop_id: string; urls: Record<string, string> }[] | null>("legal_links_due", { p_limit: limit })) ?? [],
+    legalLinksRecord: (shopId, results) => rpc("legal_links_record", { p_shop_id: shopId, p_results: results }),
     memberClaimCoupon: (shopId, customerId, epoch, campaignId) => rpc("member_claim_coupon", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_campaign_id: campaignId }),
     memberCoupons: (shopId, customerId, epoch) => rpc("member_coupons", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
     memberOrder: (shopId, customerId, epoch, number) => rpc("member_order", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),

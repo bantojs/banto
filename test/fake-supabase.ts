@@ -8,6 +8,7 @@ import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { normalizeTags } from "../src/products/tags";
 import { productFields } from "../src/products/fields";
 import { publicShopSettings } from "../src/storefront/data";
+import { legalLinksOf } from "../src/storefront/legal-links";
 
 export interface FakeSupabaseOptions {
   url?: string;
@@ -152,6 +153,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** legal_links_record に渡った結果（0062） */
+  legalLinkRecords: { shop_id: string; results: unknown }[] = [];
   /** 0060 の banto_site_plan（0038 の workers_plan） */
   sitePlan: "free" | "paid" = "free";
   readonly serviceRoleKey: string;
@@ -1066,6 +1069,7 @@ export class FakeSupabase {
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
+    if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, uid, false);
     // 0055: 商品詳細（公開中のショップの公開中の商品だけ。attributes は公開の項目だけ）
     if (fn === "product_public_get") {
       if (!this.shopPublished(args["p_shop_id"])) return json(null);
@@ -1538,7 +1542,45 @@ export class FakeSupabase {
       legal_notice: s["legal_notice"] ?? null, privacy_policy: s["privacy_policy"] ?? null, return_policy: s["return_policy"] ?? null,
       domain: s["domain"] ?? null, stripe_connected: Boolean(s["stripe_account_id"]),
       settings: publicShopSettings((s["settings"] ?? {}) as Record<string, unknown>),
+      legal_links: this.legalLinksLive(s),
     };
+  }
+
+  /** 0062 の banto_legal_links_live: 最後の確認で生きていて、確認した URL が今の設定と同じものだけ */
+  private legalLinksLive(s: Row): Record<string, string> {
+    const urls = legalLinksOf((s["settings"] ?? {}) as Record<string, unknown>).urls;
+    const state = (s["legal_links_state"] ?? {}) as Record<string, { url?: string; ok?: boolean } | undefined>;
+    return Object.fromEntries(Object.entries(urls).filter(([k, url]) => state[k]?.ok === true && state[k]?.url === url));
+  }
+
+  /** 0062 の legal_links_record（設定と違う URL の結果は捨てる）。uid が null なら service_role */
+  legalLinksRecord(shopId: unknown, results: Record<string, { url?: string; ok?: boolean }>, uid: string | null, service: boolean): Response {
+    if (!service && !(this.ownedShopIds(uid).has(String(shopId)) || this.memberPerms(uid, shopId).includes("integrations"))) return json({ code: "42501", message: "forbidden" }, 403);
+    const shop = this.tables.shops.find((x) => x["id"] === shopId);
+    if (!shop) return json({ code: "P0001", message: "not_found" }, 400);
+    const urls = legalLinksOf((shop["settings"] ?? {}) as Record<string, unknown>).urls;
+    const prev = (shop["legal_links_state"] ?? {}) as Record<string, { url?: string } | undefined>;
+    const state: Record<string, unknown> = {};
+    for (const [k, url] of Object.entries(urls)) {
+      const r = results[k];
+      if (r && r.url === url && typeof r.ok === "boolean") state[k] = { url, ok: r.ok, checked_at: new Date().toISOString() };
+      else if (prev[k]?.url === url) state[k] = prev[k];
+    }
+    shop["legal_links_state"] = state;
+    this.legalLinkRecords.push({ shop_id: String(shopId), results });
+    return json(state);
+  }
+
+  /** 0062 の legal_links_due（ここでは外の URL のあるショップを全部、未確認・設定と違う・期限切れのものだけ） */
+  legalLinksDue(limit: number): Row[] {
+    return this.tables.shops
+      .map((s) => ({ s, cfg: legalLinksOf((s["settings"] ?? {}) as Record<string, unknown>) }))
+      .filter(({ s, cfg }) => {
+        const state = (s["legal_links_state"] ?? {}) as Record<string, { url?: string; checked_at?: string } | undefined>;
+        return Object.entries(cfg.urls).some(([k, url]) => state[k]?.url !== url || Date.parse(state[k]?.checked_at ?? "") < Date.now() - cfg.check_hours * 3600_000);
+      })
+      .slice(0, limit)
+      .map(({ s, cfg }) => ({ shop_id: s["id"], urls: cfg.urls }));
   }
 
   private shopPublicGet(args: Record<string, unknown>): Row | null {
@@ -2527,6 +2569,8 @@ export class FakeSupabase {
       return json({ email: i["email"], org_name: o?.["name"], role: i["role"], valid: i["accepted_at"] == null && String(i["expires_at"]) > this.now(), user_exists: [...this.users.values()].some((u) => u.email === i["email"]) });
     }
     if (fn.startsWith("api_")) return this.apiRpc(fn, args);
+    if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, null, true);
+    if (fn === "legal_links_due") return json(this.legalLinksDue(Number(args["p_limit"] ?? 1)));
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
