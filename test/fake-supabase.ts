@@ -33,6 +33,9 @@ interface User {
 
 export type Row = Record<string, unknown>;
 
+/** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
+const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
+
 type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
@@ -105,6 +108,8 @@ export class FakeSupabase {
   /** 偽の bcrypt: 取り込んだ WordPress のハッシュ → 平文（本物の照合は test/db/member-password-line.test.ts） */
   readonly legacyPasswords = new Map<string, string>();
   readonly owners = new Set<string>();
+  /** 画像の URL の目印 → SKU の options（0063。product_image_hints の代わり。中身は test/db/sku-images.test.ts） */
+  readonly imageHints: { shop_id: string; product_id: string; tag: string; options: Row }[] = [];
   readonly tables: Record<TableName, Row[]> = {
     shops: [],
     categories: [],
@@ -720,6 +725,9 @@ export class FakeSupabase {
           if (row["owner_id"] && !this.owners.has(String(row["owner_id"]))) row["owner_id"] = null;
         }
         if (table === "skus") this.tables.inventory.push({ sku_id: row["id"], shop_id: row["shop_id"], available: 0, updated_at: this.now() });
+        if (table === "product_images" && !Object.keys((row["options"] as Row | undefined) ?? {}).length) {
+          row["options"] = this.imageHints.find((h) => h.product_id === row["product_id"] && String(row["storage_key"]).includes(h.tag))?.options ?? {};
+        }
         rows.push(row);
         created.push(row);
       }
@@ -1141,6 +1149,25 @@ export class FakeSupabase {
     if (fn === "sales_summary") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json({ code: "42501", message: "shop_not_found" }, 403);
       return json(this.salesSummary(args["p_shop_id"] as string, String(args["p_from"]), String(args["p_to"]), String(args["p_group_by"] ?? "day")));
+    }
+    if (fn === "product_image_hints_set") {
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "forbidden" }, 403);
+      let hints = 0, applied = 0;
+      for (const x of args["p_items"] as Row[]) {
+        if (!/^\/wc-[0-9a-z]{1,13}\.$/.test(String(x["tag"]))) return json({ code: "P0001", message: "invalid_items" }, 400);
+        const p = this.tables.products.find((r) => r["shop_id"] === shopId && r["slug"] === x["slug"]);
+        if (!p) continue;
+        const tag = String(x["tag"]);
+        const at = this.imageHints.findIndex((h) => h.product_id === p["id"] && h.tag === tag);
+        if (at >= 0) this.imageHints.splice(at, 1);
+        const options = x["options"] as Row;
+        if (!Object.keys(options).length) continue;
+        this.imageHints.push({ shop_id: shopId, product_id: String(p["id"]), tag, options });
+        hints++;
+        for (const i of this.tables.product_images.filter((r) => r["product_id"] === p["id"] && String(r["storage_key"]).includes(tag) && !Object.keys((r["options"] as Row | undefined) ?? {}).length)) { i["options"] = options; applied++; }
+      }
+      return json({ hints, applied });
     }
     if (fn === "import_catalog") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json({ code: "42501", message: "shop_not_found" }, 403);
@@ -1616,7 +1643,7 @@ export class FakeSupabase {
       category: (() => { const c = this.tables.categories.find((x) => x["id"] === p["category_id"]); return c ? { id: c["id"], slug: c["slug"], name: c["name"], parent_id: c["parent_id"] ?? null, sort_order: c["sort_order"] ?? 0 } : null; })(),
       extra_categories: ((p["extra_category_ids"] ?? []) as string[]).flatMap((id) => this.tables.categories.filter((c) => c["id"] === id).map((c) => ({ id: c["id"], slug: c["slug"], name: c["name"], parent_id: c["parent_id"] ?? null, sort_order: c["sort_order"] ?? 0 }))),
       published: p["published"], created_at: p["created_at"], updated_at: p["updated_at"],
-      images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"] })),
+      images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"], options: i["options"] ?? {} })),
       skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ id: k["id"], code: k["code"], name: k["name"] ?? null, price_jpy: k["price_jpy"], compare_at_price_jpy: k["compare_at_price_jpy"] ?? null, options: k["options"] ?? {}, gtin: k["gtin"] ?? null, available: this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0 })),
     });
     const order = (o: Row, pii: boolean): Row => ({
@@ -1969,21 +1996,33 @@ export class FakeSupabase {
       }
       case "api_image_add": {
         if (!need("products:write")) return unauthorized();
+        if (args["p_options"] !== undefined && badImageOptions(args["p_options"])) return json({ code: "P0001", message: "invalid_options" }, 400);
         const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
         if (!p) return notFound();
         if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/`)) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
-        this.tables.product_images.push({ id: `img-${++this.seq}`, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: null, width: null, height: null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now() });
+        this.tables.product_images.push({ id: `img-${++this.seq}`, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: null, width: null, height: null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now(), options: args["p_options"] ?? {} });
         return json(product(p));
       }
       case "api_image_add_file": {
         // 0037: キーの形の検査は test/db/api-image-upload.test.ts（本物の SQL）
         if (!need("products:write")) return unauthorized();
+        if (args["p_options"] !== undefined && badImageOptions(args["p_options"])) return json({ code: "P0001", message: "invalid_options" }, 400);
         const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
         if (!p) return notFound();
         if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/products/${p["id"]}/`)) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
         const id = `img-${++this.seq}`;
-        this.tables.product_images.push({ id, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now() });
+        this.tables.product_images.push({ id, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now(), options: args["p_options"] ?? {} });
         return json({ image_id: id, product: product(p) });
+      }
+      case "api_image_set_options": {
+        // 0063: 形の検査（banto_image_options_ok）は test/db/sku-images.test.ts（本物の SQL）
+        if (!need("products:write")) return unauthorized();
+        const o = args["p_options"];
+        if (badImageOptions(o)) return json({ code: "P0001", message: "invalid_options" }, 400);
+        const i = mine(this.tables.product_images.find((x) => x["id"] === args["p_image_id"]));
+        if (!i) return notFound();
+        i["options"] = o;
+        return json(product(this.tables.products.find((x) => x["id"] === i["product_id"])!));
       }
       case "api_image_delete": {
         if (!need("products:write")) return unauthorized();
@@ -2537,7 +2576,7 @@ export class FakeSupabase {
         if (!j) continue;
         if (typeof x["storage_key"] === "string") {
           if (!this.tables.product_images.some((i) => i["storage_key"] === x["storage_key"]))
-            this.tables.product_images.push({ id: `img-${++this.seq}`, shop_id: j.shop_id, product_id: j.product_id, storage_key: x["storage_key"], thumb_key: null, width: null, height: null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === j.product_id).length, created_at: this.now() });
+            this.tables.product_images.push({ id: `img-${++this.seq}`, shop_id: j.shop_id, product_id: j.product_id, storage_key: x["storage_key"], thumb_key: null, width: null, height: null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === j.product_id).length, created_at: this.now(), options: this.imageHints.find((h) => h.product_id === j.product_id && String(x["storage_key"]).includes(h.tag))?.options ?? {} });
           Object.assign(j, { status: "done", last_error: null });
           r.done++;
         } else {
@@ -2802,6 +2841,13 @@ export class FakeSupabase {
     if (fn === "record_heartbeat") {
       this.heartbeats.set(String(args["p_name"]), Date.now());
       return new Response(null, { status: 204 });
+    }
+    if (fn === "restore_product_image_options") {
+      let n = 0;
+      for (const x of args["p_items"] as Row[]) {
+        for (const i of this.tables.product_images.filter((r) => r["shop_id"] === args["p_shop_id"] && r["storage_key"] === x["storage_key"])) { i["options"] = x["options"]; n++; }
+      }
+      return json({ product_image_options: n });
     }
     if (fn === "restore_shop_data") return this.restoreShopData(String(args["p_shop_id"]), args["p_data"] as Record<string, Row[]>);
     if (fn === "tryon_request") return this.tryonRequest(args);

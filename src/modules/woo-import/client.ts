@@ -56,6 +56,8 @@ export function wooImporter() {
     /** 旧サイトの商品ページの URL（REST API のときだけ分かる） */
     permalink: string | null;
     variationImages?: string[];
+    /** バリエーションの画像 → そのバリエーションの属性（同じ画像を複数のバリエーションが使えば共通する属性だけ。0063 の SKU ごとの画像） */
+    variationImageOptions?: Record<string, Record<string, string>>;
   }
   interface Warning {
     code: string;
@@ -462,6 +464,9 @@ export function wooImporter() {
         for (const u of v.images) {
           const list = (parent.variationImages ??= []);
           if (!list.includes(u)) list.push(u);
+          const byUrl = (parent.variationImageOptions ??= {});
+          const prev = byUrl[u];
+          byUrl[u] = prev ? Object.fromEntries(Object.entries(prev).filter(([k, val]) => v.options[k] === val)) : { ...v.options };
         }
       }
     for (const p of products) if (p.skus.length === 0) addWarn(warn, "no_sku", p.name);
@@ -1416,6 +1421,12 @@ export function wooImporter() {
           skus,
         },
         images: [...new Set([...p.images, ...(opts.includeVariationImages ? variationImages : [])])],
+        // 商品の画像に無いバリエーションの画像だけ、その属性に結ぶ（商品全体の画像にも使われているものは全体のまま）
+        imageHints: opts.includeVariationImages
+          ? Object.entries(p.variationImageOptions ?? {})
+              .filter(([url, o]) => !p.images.includes(url) && Object.keys(o).length > 0)
+              .map(([url, options]) => ({ url, options }))
+          : [],
       };
     });
     return { categories, products, overwrite_stock: opts.overwriteStock };
@@ -2095,6 +2106,16 @@ export function wooImporter() {
           const csv = redirectsCsv(analysis!, cfg.shopUrl);
           const a = el("a", { download: "banto-redirects.csv", href: `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}` }, t("download_redirects"));
           log.append(el("p", {}, a), el("p", { class: "muted" }, t("redirects_hint")));
+        }
+        // バリエーションの画像をその属性に結ぶ対応表（0063）。画像の取り込みより先に置く（どちらの取り込み方でも、画像ができたときに結ばれる）
+        const hints = plan.products.flatMap((p) => p.imageHints.map((h) => ({ slug: p.payload.slug, url: h.url, options: h.options })));
+        for (let i = 0; i < hints.length; i += 500) {
+          try {
+            await post("image-hints", { items: hints.slice(i, i + 500) });
+          } catch {
+            // DB が 0063 より前など。結べないだけで、画像は商品全体の画像として取り込む
+            break;
+          }
         }
         // 画像（やり直せる: 取り込み済みの URL はサーバー側で飛ばす）
         const requests = imageRequests(plan.products);

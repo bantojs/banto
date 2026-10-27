@@ -22,6 +22,8 @@ import { productFields, MAX_FIELDS, type ProductField } from "../../products/fie
 import { moduleEnabled } from "../registry";
 import { wcImageKey, wcImageTag } from "./keys";
 import { wooImporter } from "./client";
+import { migrated } from "../../db/migration-state";
+import { SKU_IMAGES_MIGRATION, imageOptionsOf } from "../../products/images";
 
 /**
  * 同梱モジュール「WooCommerce から取り込み」（woo_import、既定 OFF）。docs/knowledge/08-woo-migration.md
@@ -239,6 +241,25 @@ wooImport.post("/batch", requireOwner, async (c: AdminContext) => {
     return c.json(result);
   } catch (e) {
     if (e instanceof DbError) return c.json({ error: "db_error", message: e.message.slice(0, 300) }, 502);
+    throw e;
+  }
+});
+
+/** バリエーションの画像を SKU の属性に結ぶ対応表（0063）。items = [{ slug, url, options }]、目印はサーバーで URL から作る */
+wooImport.post("/image-hints", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop) return c.notFound();
+  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  const body = await jsonBody(c);
+  const list = Array.isArray(body?.["items"]) ? (body!["items"] as unknown[]).slice(0, 500) : [];
+  const items = list
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+    .filter((x) => typeof x["slug"] === "string" && typeof x["url"] === "string")
+    .map((x) => ({ slug: x["slug"] as string, tag: wcImageTag(x["url"] as string), options: imageOptionsOf(x["options"]) }));
+  try {
+    return c.json(await owner(c).db.rpc<Record<string, unknown>>("product_image_hints_set", { p_shop_id: shop.id, p_items: items }));
+  } catch (e) {
+    if (e instanceof DbError) return c.json({ error: "invalid_request" }, 400);
     throw e;
   }
 });

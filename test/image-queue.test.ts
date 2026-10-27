@@ -85,6 +85,20 @@ describe("画像を裏で取り込む", () => {
     expect(sb.imageJobs.map((j) => j.status)).toEqual(["done"]);
   });
 
+  it("バリエーションの画像の対応表（0063）: 先に置いておくと、裏で取り込んだ画像がその属性に結ばれる", async () => {
+    const { sb, shop, tee, storage, app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/woo-import`;
+    const hints = await admin.postJson(`${base}/image-hints`, { items: [{ slug: "tee", url: "https://old.example/red.png", options: { color: "Red" } }, { slug: "gone", url: "https://old.example/x.png", options: { color: "x" } }] });
+    expect(await hints.json()).toEqual({ hints: 1, applied: 0 });
+    await admin.postJson(`${base}/images/queue`, { items: [{ slug: "tee", urls: ["https://old.example/red.png", "https://old.example/all.png"] }] });
+    externalHosts.set("https://old.example/", () => new Response(tinyPng(), { headers: { "content-type": "image/png" } }));
+    await cron(sb, storage)();
+    const opts = (url: string) => sb.tables.product_images.find((i) => i["storage_key"] === wcImageKey(shop.id, tee.id, url, "png"))!["options"];
+    expect(opts("https://old.example/red.png")).toEqual({ color: "Red" });
+    expect(opts("https://old.example/all.png")).toEqual({});
+  });
+
   it("モジュールを OFF にしたショップの予約は進めない", async () => {
     const { sb, shop, storage, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");

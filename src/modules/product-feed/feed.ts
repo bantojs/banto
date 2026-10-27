@@ -7,6 +7,7 @@
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, SkuRow } from "../../db/types";
 import { categoryPath } from "../../products/categories";
 import { imageUrl } from "../../media/images";
+import { imageOptionsOf, orderImagesForSku } from "../../products/images";
 
 export interface FeedCatalog {
   products: ProductRow[];
@@ -61,6 +62,12 @@ function skuTitle(product: ProductRow, sku: SkuRow, many: boolean): string {
   return `${product.name} ${suffix}`;
 }
 
+/** SKU ごとの画像がある商品は、商品ページの URL に ?sku=<品番> を付ける（広告の画像と着地の画像をそろえる） */
+function skuLink(url: string, code: string | null): string {
+  if (!code) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}sku=${encodeURIComponent(code)}`;
+}
+
 export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
   const stock = new Map(cat.inventory.map((i) => [i.sku_id, i.available]));
   const imagesBy = new Map<string, ProductImageRow[]>();
@@ -71,9 +78,11 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
   const skipped = { no_image: 0, no_price: 0 };
   for (const p of cat.products) {
     const skus = skusBy.get(p.id) ?? [];
-    const imgs = (imagesBy.get(p.id) ?? []).map((i) => imageUrl(target.mediaBaseUrl, i.storage_key));
+    const productImages = imagesBy.get(p.id) ?? [];
     const path = p.category_id ? categoryPath(cat.categories, p.category_id).map((c) => c.name) : [];
     for (const s of skus) {
+      // SKU ごとの画像（0063）: その SKU に結んだ画像を先頭に。商品ページも ?sku= で同じ画像を出す
+      const imgs = orderImagesForSku(productImages, s.options).map((i) => imageUrl(target.mediaBaseUrl, i.storage_key));
       if (imgs.length === 0) {
         skipped.no_image++;
         continue;
@@ -89,7 +98,7 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
         ...(skus.length > 1 ? { item_group_id: p.id } : {}),
         title: clip(skuTitle(p, s, skus.length > 1), 150),
         description: clip((p.description ?? "").trim() || p.name, 5000),
-        link: target.productLink?.(p.slug) ?? `${target.home}/p/${encodeURIComponent(p.slug)}`,
+        link: skuLink(target.productLink?.(p.slug) ?? `${target.home}/p/${encodeURIComponent(p.slug)}`, skus.length > 1 && productImages.some((i) => Object.keys(imageOptionsOf(i.options)).length > 0) ? s.code : null),
         image_link: imgs[0]!,
         additional_image_link: imgs.slice(1, 11),
         availability: (stock.get(s.id) ?? 0) > 0 ? "in_stock" : "out_of_stock",

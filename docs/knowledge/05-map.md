@@ -39,6 +39,7 @@
 | hooks | `supabase/migrations/0002_hooks.sql`、`src/hooks/`（`deliver.ts` が同梱プラグインをプロセス内呼び出し）、`src/plugins/` | 署名は `signing.ts`。実例 `examples/plugin-slack` |
 | AI 用 API | `supabase/migrations/0003_api.sql`、`src/api/`、`src/mcp/`、`src/routes/api/v1.ts` | 権限判定は SQL（`api_require`） |
 | 画像 | `supabase/migrations/0005_images.sql`、`src/media/images.ts`（`responsiveImage`）、`src/routes/media.ts` | thumb_key / width / height |
+| SKU ごとの画像 | `supabase/migrations/0063_sku_images.sql`（`product_images.options`・`product_image_hints` とトリガー・`api_image_set_options`・`restore_product_image_options`）、`src/products/images.ts`（当てはまり・並べ方・お店の画面のスクリプト）、`src/themes/default/index.tsx`（`ProductPage` の `selectedSku`）、`src/routes/admin/products.tsx`（画像ごとの選択）、`src/modules/product-feed/feed.ts`、`src/modules/woo-import/`（`/image-hints`） | docs/knowledge/02-decisions.md 2026-10-27。`test/sku-images.test.ts`・`test/db/sku-images.test.ts` |
 | 運用 | `supabase/migrations/0006_ops.sql`（heartbeat / restore）、`src/routes/health.ts`、`src/jobs/index.ts` | Cron は最後に heartbeat |
 | マイグレーション適用 | `src/db/migrate-api.ts`（既定、Management API）、`src/db/migrate.ts`（接続文字列） | 埋め込みは `src/db/migrations.generated.ts` |
 | i18n | `src/i18n/ja.ts`（正）、`en.ts`、`index.ts`（`setLocale`）、`time.ts`（`formatDateTime`、`BANTO_TIMEZONE`） | キー一致は `test/i18n.test.ts` |

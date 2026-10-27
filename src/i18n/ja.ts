@@ -368,6 +368,8 @@ export const ja = {
   "sku.none": "SKU がありません。価格と在庫は SKU 単位で持ちます。まず1つ追加してください。",
   "sku.invalid": "SKU コード・価格・在庫の値を確認してください。",
 
+  "image.options_any": "指定なし",
+  "image.options_hint": "画像ごとに、どの SKU の画像かを選べます（例: カラーだけ選ぶとそのカラーの全サイズ、カラーとサイズを選ぶとその SKU だけ）。全部「指定なし」なら商品全体の画像です。お店の画面では、選んだ SKU の画像が先頭に出ます。",
   "image.list": "画像",
   "image.upload": "画像をアップロード",
   "image.file": "ファイル（JPEG / PNG / WebP / GIF / AVIF、5MB まで）",

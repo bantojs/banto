@@ -110,6 +110,8 @@ describe("WooCommerce インポーター: CSV の解析と対応付け（ブラ�
     expect(tee.payload.skus.map((k) => k.code)).toEqual(["TEE-01-BK", "tee-01-12"]);
     expect(tee.payload.skus[1]!.available).toBe(0);
     expect(tee.images).toEqual(["https://shop.example/a.jpg", "https://shop.example/b.jpg", "https://shop.example/bk.jpg"]);
+    // 商品の画像に無いバリエーションの画像だけ、そのバリエーションの属性に結ぶ（a.jpg は商品全体の画像のまま）
+    expect(tee.imageHints).toEqual([{ url: "https://shop.example/bk.jpg", options: tee.payload.skus[0]!.options }]);
     expect(Object.values(tee.payload.attributes)).toContain(65.5);
 
     const last = w.build(a, { ...OPTS, brandMode: "last", skipDisabledVariations: false, includeVariationImages: false, fields: [] });

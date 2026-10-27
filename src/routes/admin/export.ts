@@ -9,6 +9,7 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
 import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
+import { SKU_IMAGES_MIGRATION } from "../../products/images";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -133,6 +134,13 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     // お問い合わせとやり取り（0061）。書き出しに入っているときだけ
     if (pick("inquiries").length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION))) {
       Object.assign(counts, await privileged.restoreInquiries(shopId, { inquiries: pick("inquiries"), inquiry_messages: pick("inquiry_messages"), orders: pick("orders"), customers: pick("customers") }));
+    }
+    // 画像を SKU に結んだもの（0063）。結んだ画像があるときだけ
+    const imageOptions = pick("product_images")
+      .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && !!(r as Record<string, unknown>)["options"] && Object.keys((r as Record<string, unknown>)["options"] as object).length > 0)
+      .map((r) => ({ storage_key: r["storage_key"], options: r["options"] }));
+    if (imageOptions.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION))) {
+      Object.assign(counts, await privileged.restoreProductImageOptions(shopId, imageOptions));
     }
     const detail = Object.entries(counts)
       .map(([k, v]) => `${k}: ${v}`)

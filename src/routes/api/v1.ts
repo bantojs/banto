@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createPrivilegedDb } from "../../db/privileged";
-import { ApiError, ApiService, isInquiryApiStatus, isTryonApiStatus } from "../../api/service";
+import { ApiError, ApiService, imageOptionsInput, parseOptionsText, isInquiryApiStatus, isTryonApiStatus } from "../../api/service";
 import { bearerToken } from "../../api/tokens";
 import { MAX_JSON_BODY_BYTES, inquiryMailFor, migrationStateFor, readBodyLimited, relayStatus, type Ctx } from "../common";
 import { BANTO_VERSION } from "../../version";
@@ -99,7 +99,7 @@ v1.post("/products/:id/images", async (c) =>
   body(c)
     .then((b) => {
       if (typeof b["image_url"] !== "string") throw new ApiError("invalid", "image_url is required", 400);
-      return api(c).imageAddFromUrl(c.req.param("id"), b["image_url"]);
+      return api(c).imageAddFromUrl(c.req.param("id"), b["image_url"], imageOptionsInput(b["options"]));
     })
     .then((r) => c.json(r, 201))
     .catch((e) => errorJson(c, e)),
@@ -113,6 +113,8 @@ v1.post("/products/:id/images/upload", async (c) => {
     const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
     let image: Uint8Array;
     let thumbnail: Uint8Array | null = null;
+    // SKU に結ぶ（0063）: multipart なら options の欄、本文が画像そのものなら ?options=（どちらも JSON）
+    let options = c.req.query("options") !== undefined ? imageOptionsInput(parseOptionsText(c.req.query("options"))) : undefined;
     if (type === "multipart/form-data") {
       if (length > MAX_IMAGE_BYTES + MAX_THUMB_BYTES + 64 * 1024) throw new ApiError("invalid", "image is larger than 5MB or thumbnail is larger than 1MB", 413);
       let form: Record<string, unknown>;
@@ -121,6 +123,7 @@ v1.post("/products/:id/images/upload", async (c) => {
       } catch {
         throw new ApiError("invalid", "could not read the multipart body", 400);
       }
+      if (form["options"] !== undefined) options = imageOptionsInput(parseOptionsText(form["options"]));
       const file = form["image"];
       const thumb = form["thumbnail"];
       if (!(file instanceof Blob)) throw new ApiError("invalid", "the image field (a file) is required", 400);
@@ -135,11 +138,22 @@ v1.post("/products/:id/images/upload", async (c) => {
     } else {
       throw new ApiError("invalid", "send the image as the body (Content-Type: image/...) or as multipart/form-data (image, thumbnail)", 415);
     }
-    return c.json(await api(c).imageUpload(c.req.param("id"), image, thumbnail), 201);
+    return c.json(await api(c).imageUpload(c.req.param("id"), image, thumbnail, options), 201);
   } catch (e) {
     return errorJson(c, e);
   }
 });
+// 画像を SKU の options の一部に結ぶ（0063）。{ options: { color: "レッド" } }、{} で商品全体
+v1.patch("/images/:id", async (c) =>
+  body(c)
+    .then((b) => {
+      const o = imageOptionsInput(b["options"]);
+      if (!o) throw new ApiError("invalid", "options must be an object", 400);
+      return api(c).imageSetOptions(c.req.param("id"), o);
+    })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
 v1.delete("/images/:id", async (c) => api(c).imageDelete(c.req.param("id")).then(() => c.body(null, 204)).catch((e) => errorJson(c, e)));
 
 v1.get("/orders", async (c) =>

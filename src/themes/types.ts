@@ -87,7 +87,7 @@ export interface Theme {
     pagination?: { next?: string; first?: string };
   }): Rendered;
   /** categoryPath は最上位から主カテゴリーまで（パンくず）、attributes は公開するカスタム項目 */
-  ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[] }): Rendered;
+  ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[] }): Rendered;
   /** coupons が null / 省略なら、クーポン欄を出さない。入力は `${ctx.shopPath}/cart/coupon` に code、外すときは remove を POST する */
   /** tryon が true なら（同梱モジュール store_tryon）、GET `${ctx.shopPath}/tryon` への「お店で試着を申し込む」を出す */
   CartPage(props: { ctx: ThemeContext; lines: CartLine[]; total: number; payments: PaymentOptions; shipping: ShippingInfo; coupons?: CartCoupons | null; error?: string; tryon?: boolean }): Rendered;

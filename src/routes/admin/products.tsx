@@ -16,6 +16,8 @@ import { normalizeTags } from "../../products/tags";
 import { cleanAttributes, productFields, type ProductField } from "../../products/fields";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
+import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices, SKU_IMAGES_MIGRATION } from "../../products/images";
+import { migrated } from "../../db/migration-state";
 
 export const products = new Hono<AppEnv>();
 
@@ -357,6 +359,8 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const mediaBase = mediaBaseUrl(c);
   const catalog = await catalogContext(c, shop);
+  // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
+  const optionChoices = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION)) ? skuOptionChoices(skus) : [];
 
   return c.html(
     <AdminLayout title={`${product.name} · ${t("product.edit")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list"), href: `/admin/shops/${shop.id}/products` }, { label: product.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
@@ -460,6 +464,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
           <p>{t("image.none")}</p>
         </div>
       ) : null}
+      {optionChoices.length > 0 ? <p class="muted">{t("image.options_hint")}</p> : null}
       {images.length > 0 ? (
         <table>
           <tbody>
@@ -484,6 +489,28 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
                     </button>
                   </form>
                 </td>
+                {optionChoices.length > 0 ? (
+                  <td>
+                    <form method="post" action={`${base}/images/${img.id}/options`} style="display:inline">
+                      {optionChoices.map((ch) => (
+                        <label style="display:inline-block;margin-right:.5rem">
+                          {ch.key}{" "}
+                          <select name={`options.${ch.key}`}>
+                            <option value="">{t("image.options_any")}</option>
+                            {ch.values.map((v) => (
+                              <option value={v} selected={imageOptionsOf(img.options)[ch.key] === v}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ))}
+                      <button type="submit" class="secondary small">
+                        {t("product.save")}
+                      </button>
+                    </form>
+                  </td>
+                ) : null}
                 <td>
                   <form method="post" action={`${base}/images/${img.id}/delete`} style="display:inline">
                     <button type="submit" class="small">
@@ -734,6 +761,22 @@ products.post("/:shopId/products/:productId/images/:imageId/sort", requireOwner,
     await db.from<ProductImageRow>("product_images").update({ sort_order: sort }, { id: imageId, product_id: productId, shop_id: shopId });
   }
   return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved`);
+});
+
+/** 画像を SKU の項目に結ぶ（0063）。選べる項目はその商品の SKU にあるものだけ。全部「指定なし」なら商品全体の画像 */
+products.post("/:shopId/products/:productId/images/:imageId/options", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const { shopId, productId, imageId } = params(c);
+  const f = await formFields(c);
+  const skus = await db.from<SkuRow>("skus").select("options", { eq: { product_id: productId, shop_id: shopId } });
+  const options = imageOptionsFromForm(f, skuOptionChoices(skus).map((ch) => ch.key));
+  try {
+    await db.from<ProductImageRow>("product_images").update({ options }, { id: imageId, product_id: productId, shop_id: shopId });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=generic#images`);
+    throw e;
+  }
+  return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved#images`);
 });
 
 products.post("/:shopId/products/:productId/images/:imageId/delete", requireOwner, async (c: AdminContext) => {

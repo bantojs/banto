@@ -291,6 +291,8 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
       ctx: s.ctx,
       detail,
       added: c.req.query("added") === "1",
+      // ?sku=<品番> で選んだ SKU（その SKU の画像を先頭に。0063）
+      selectedSku: c.req.query("sku") ?? null,
       categoryPath: categoryPath(categories, detail.product.category_id).map((x) => ({ slug: x.slug, name: x.name })),
       attributes: publicAttributes(productFields(s.shop.settings), detail.product.attributes),
     }),
