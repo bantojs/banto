@@ -90,6 +90,11 @@ export interface DomainAdapter {
 
 export interface Adapters {
   storage: StorageAdapter;
+  /**
+   * 公開しない置き場（お問い合わせの添付、0061）。公開のメディア URL（MEDIA_BASE_URL・/media）からは読めず、
+   * Worker が権限を確かめてからだけ配る。put の返す url は使わない。無ければ添付の欄を出さない
+   */
+  privateStorage?: StorageAdapter;
   config: ConfigAdapter;
   cache: CacheAdapter;
   scheduler: SchedulerAdapter;

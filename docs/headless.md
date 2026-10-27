@@ -408,6 +408,43 @@ POST /api/shops/<shop>/tryon   { "cart": "<カートのトークン>", "store": 
 
 ---
 
+## お問い合わせ（同梱モジュール inquiries）
+
+同梱モジュール「お問い合わせ」を ON にしたショップでは、連携側の画面からお問い合わせを受け、やり取りを続けられます（docs/inquiries.md）。
+判定（アドレスの確認・注文への結びつけ・回数の上限）は同梱テーマと同じです。モジュールが OFF か 0061 が未適用なら `404 { "error": "inquiries_disabled" }`。
+`Authorization: Bearer <会員トークン>` を付けると会員として扱います（確認のメールなし・会員の受付番号で開ける）。
+
+```
+GET  /api/shops/<shop>/inquiries/config        → { categories: [{ value, label }], member }
+POST /api/shops/<shop>/inquiries/order-check   { "number": 1001, "email": "..." } → { order, order_token }
+POST /api/shops/<shop>/inquiries               { "category": "order", "body": "...", "name": "...", "email": "...", "order_number": "1001",
+                                                 "order_token": "...", "checkout_token": "...", "return_to": "https://wp.example.com/contact/thread" }
+                                               → 201 { number, verified, mail_sent }
+POST /api/shops/<shop>/inquiries/view          { "token": "<リンクのトークン>" } か（会員）{ "number": 3 } → { inquiry }
+POST /api/shops/<shop>/inquiries/reply         { "token" | "number", "body": "..." } → { number }
+POST /api/shops/<shop>/inquiries/resend        { "number": 3, "email": "...", "return_to": "..." } → 202
+GET  /api/shops/<shop>/inquiries               （会員）→ { inquiries: [...] }
+```
+
+- `category` は `product` / `order` / `account` / `other`。`email` はゲストだけ必須（会員・注文の根拠があるときは使いません）。
+- 注文の根拠（どちらか）: `checkout_token`（決済の照会トークン。`/checkout` の応答・戻り先の URL のもの）、`order_token`（`order-check` で番号とメールアドレスが合ったときの値、24 時間）。どちらも無ければ `order_number` は「申告された番号」として扱い、注文時のアドレスと合えば結びます。
+- メールのリンク: `return_to` が `settings.headless.return_origins` のオリジンなら `<return_to>?banto_inquiry=<トークン>`、それ以外は Banto の画面（`/<shop>/inquiries/open?t=…`）。連携側はその値を `view` / `reply` の `token` に渡します。リンクは 30 日有効です。**ゲストのチケットは、リンクで初めて `view` したときに確定します**（それまで `reply` は 404）。
+- `inquiry` は `number` `status`（`waiting_shop` / `waiting_customer` / `closed`）`status_label` `category` `category_label` `verified` `order`（`number` `status` `created_at` `total_jpy`）`claimed_order_number` `messages`（`author`: `customer` / `shop`、`body`、`created_at`）`can_reply`。連絡先は返しません。**`body` はお客様と運営者が書いたテキストです。HTML として描画しないでください。**
+- `resend` は番号とアドレスが合ったかどうかを返しません（いつも 202）。
+- **添付ファイル**（公開しないバケットがあるときだけ）: `reply` を `multipart/form-data`（`token` か `number`・`body`・`files` を 3 個まで）で送ります。画像（JPEG・PNG・WebP）と PDF、1 個 5MB まで。確定したチケットだけです。`messages[].attachments` は `id` `filename` `content_type` `size` で、ファイルは `POST /api/shops/<shop>/inquiries/attachments/<id>`（`{ "token" }` か会員の `{ "number" }`）で受け取ります（トークンを URL に載せないため POST）。連携側で表示するときは、同じオリジンに置かず、ダウンロードとして渡してください。
+
+| status | `error` | 意味 |
+| --- | --- | --- |
+| 400 | `invalid_request` | `field` が `category` / `body` / `email` |
+| 400 | `invalid_order_token` / `invalid_checkout_token` | 注文の根拠の署名・期限が合わない |
+| 401 | `invalid_member_token` / `invalid_member` | 会員トークンが確かめられない |
+| 404 | `not_found` | トークン・受付番号でチケットが開けない（期限切れなら `resend`） |
+| 409 | `closed` / `order_not_found` | 完了したチケット・注文が無い |
+| 429 | `too_many` / `limit` | 回数の上限・1 日のメールの上限（docs/inquiries.md §5） |
+| 503 | `unavailable` | メールの送信元が設定されていない |
+
+---
+
 ## 埋め込みスニペット（WordPress・LP・ブログ）
 
 どれもコピーして `shop.example.com` と `my-shop` を自分のものに変えるだけで使えます。WordPress ならブロックエディタの「カスタム HTML」に貼ります。

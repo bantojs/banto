@@ -6,6 +6,8 @@ import type { MigrationStateDeps } from "../db/migration-state";
 import { canonicalIp, relayIps } from "../commerce/checkout";
 import { STOREFRONT_CACHE_TTL } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
+import { createMailer } from "../mail/send";
+import type { InquiryMailDeps } from "../api/service";
 export { RELAY_LIMITS_MIGRATION } from "../commerce/checkout";
 
 export type Ctx = Context<AppEnv>;
@@ -182,4 +184,10 @@ export function mediaBaseUrl(c: Ctx): string {
 export function migrationStateFor(c: Ctx, url: string): MigrationStateDeps | null {
   const anonKey = c.get("adapters").config.get("SUPABASE_ANON_KEY");
   return anonKey ? { db: createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), cache: c.get("adapters").cache } : null;
+}
+
+/** AI 用 API がお問い合わせの返事を知らせるための材料（0061。サイトの秘密が無ければ null = 返事の操作は 503） */
+export function inquiryMailFor(c: Ctx): InquiryMailDeps | null {
+  const secret = c.get("sessionSecret");
+  return secret ? { secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), publicBase: publicBaseUrl(c) } : null;
 }

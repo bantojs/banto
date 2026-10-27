@@ -13,7 +13,26 @@ import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
 import { RELAY_LIMITS_MIGRATION } from "../commerce/checkout";
-import { API_COUPONS_CUSTOMERS_MIGRATION } from "./tokens";
+import { API_COUPONS_CUSTOMERS_MIGRATION, API_INQUIRIES_MIGRATION } from "./tokens";
+import type { Mailer } from "../mail/send";
+import { inquiryLinkHash } from "../members/auth";
+import { randomToken } from "../util/signed";
+import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checkout";
+import { shopHome } from "../storefront/urls";
+import { sendReplyNotice } from "../modules/inquiries";
+import type { InquiryMailShop } from "../modules/inquiries/mail";
+
+/** お問い合わせの返事のお知らせ（0061）。メールのリンクのトークンを作る秘密・送り手・お店の画面の URL */
+export interface InquiryMailDeps {
+  secret: string;
+  mailer: Mailer | null;
+  publicBase: string;
+}
+
+/** AI から変えられるお問い合わせの状態 */
+export const INQUIRY_API_STATUSES = ["closed", "waiting_shop", "waiting_customer"] as const;
+export type InquiryApiStatus = (typeof INQUIRY_API_STATUSES)[number];
+export const isInquiryApiStatus = (v: unknown): v is InquiryApiStatus => typeof v === "string" && (INQUIRY_API_STATUSES as readonly string[]).includes(v);
 import { COUPON_ATTRIBUTES_MIGRATION, CUSTOMER_MASTER_MIGRATION, MARKETING_CONSENT_MIGRATION } from "../customers/fields";
 
 /** 商品画像のファイルを送る（api_image_add_file）版 */
@@ -43,7 +62,9 @@ function mapRpcError(e: unknown): never {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
     // クーポンと会員（0036）
-    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the coupons module in the admin screen", 409);
+    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries) in the admin screen", 409);
+    if (e.is("inquiry_masked")) throw new ApiError("conflict", "inquiry_masked: the contact details and messages of this inquiry were erased", 409);
+    if (e.is("invalid_body")) throw new ApiError("invalid", "invalid_body: body must be 1 to 5000 characters", 400);
     if (e.is("coupon_in_use")) throw new ApiError("conflict", "coupon_in_use: a coupon that has been used cannot be deleted; set active to false instead", 409);
     if (e.is("usage_limit_below_used")) throw new ApiError("conflict", "usage_limit_below_used: usage_limit cannot be lower than the uses so far", 409);
     if (e.is("email_taken")) throw new ApiError("conflict", "email_taken: a member with this email address already exists", 409);
@@ -111,14 +132,15 @@ export class ApiService {
     private readonly migrationState: MigrationStateDeps | null,
     /** 外から渡された URL を開く fetch（Node では社内のアドレスに繋がない。監査 M12） */
     private readonly publicFetch: typeof fetch = fetchImpl,
+    private readonly inquiryMail: InquiryMailDeps | null = null,
   ) {}
 
   /** migrationState: 新しいマイグレーションを使う項目を、適用されるまで受け付けないため（null なら新しい項目は受け付けない） */
   static async forToken(
     rawToken: string,
-    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null },
+    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null },
   ): Promise<ApiService> {
-    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch);
+    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null);
   }
 
   private migratedTo(version: string): Promise<boolean> {
@@ -307,6 +329,43 @@ export class ApiService {
   /** 終わった申し込み（購入なし・期限切れ・取り消し）の在庫を EC に戻す。2 回目は何もしない */
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
+
+  // ---- お問い合わせ（0061。inquiries:read / inquiries:write、モジュール inquiries が ON のショップだけ）----
+  /** 0061 より前の DB では関数が無いので、有効なトークンであることだけ確かめてから DB の版を返す（need0036 と同じ） */
+  private async call0061<T>(scope: string, fn: `api_${string}`, args: Record<string, unknown>): Promise<T> {
+    if (!(await this.migratedTo(API_INQUIRIES_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `this endpoint needs the database update ${API_INQUIRIES_MIGRATION}; apply it from /admin/update (${scope})`, 409);
+    }
+    return this.call<T>(fn, args);
+  }
+  inquiriesList = (q: { status?: string; limit?: number; offset?: number } = {}) =>
+    this.call0061<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("inquiries:read", "api_inquiries_list", {
+      p_status: q.status ?? null,
+      p_limit: q.limit ?? 50,
+      p_offset: q.offset ?? 0,
+    });
+  inquiryGet = (number: number) => this.call0061<Record<string, unknown>>("inquiries:read", "api_inquiry_get", { p_number: number });
+  /**
+   * 返事を書く。お客様にはリンクだけのメール（本文は載せない）。リンクの行き先は管理画面の返事と同じ
+   * （連携サイトの画面が今の許可リストにあればそこ、無ければ Banto の画面）。宛先は AI に返さない
+   */
+  inquiryReply = async (number: number, body: string): Promise<Record<string, unknown>> => {
+    const deps = this.inquiryMail;
+    if (!deps) throw new ApiError("upstream", "not configured (SESSION_SECRET)", 503);
+    const token = randomToken(32);
+    const r = await this.call0061<{ inquiry: Record<string, unknown>; mail: { send: boolean; to: string | null; mail_from: string | null; return_to: string | null; shop: InquiryMailShop } }>(
+      "inquiries:write",
+      "api_inquiry_reply",
+      { p_number: number, p_body: body, p_link_hash: await inquiryLinkHash(deps.secret, token) },
+    );
+    const shop = r.mail.shop;
+    const target = r.mail.return_to ? safeReturnUrl(r.mail.return_to, returnOrigins(shop.settings), "") : "";
+    const link = target ? withQueryParam(target, "banto_inquiry", token) : `${shopHome(deps.publicBase, shop)}/inquiries/open?t=${token}`;
+    const sent = await sendReplyNotice({ mailer: deps.mailer }, shop, { ...r.mail, number }, link);
+    return { ...r.inquiry, mail_sent: sent };
+  };
+  inquirySetStatus = (number: number, status: InquiryApiStatus) => this.call0061<Record<string, unknown>>("inquiries:write", "api_inquiry_set_status", { p_number: number, p_status: status });
 
   // ---- クーポン（0036。coupons:read / coupons:write、モジュール coupons が ON のショップだけ）----
   /**

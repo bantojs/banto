@@ -32,7 +32,7 @@ interface User {
 
 export type Row = Record<string, unknown>;
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -65,6 +65,8 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   shop_stores: "stores",
   tryon_requests: "stores",
   tryon_items: "stores",
+  inquiries: "support",
+  inquiry_messages: "support",
 };
 
 /** POST の本文は 1 行のオブジェクトか行の配列。列の有無を見るために先頭の行を返す */
@@ -125,6 +127,8 @@ export class FakeSupabase {
     shop_stores: [],
     tryon_requests: [],
     tryon_items: [],
+    inquiries: [],
+    inquiry_messages: [],
     audit_log: [],
   };
   readonly calls: string[] = [];
@@ -571,14 +575,14 @@ export class FakeSupabase {
       const st = this.tables.stores.find((x) => x["id"] === row["store_id"]);
       if (!sh || !st || sh["org_id"] !== st["org_id"]) return false;
     }
-    if (this.hasPerm(table, row, uid) && !["inventory", "order_items", "reservations", "hook_deliveries", "coupon_redemptions", "coupon_grants", "tryon_requests", "tryon_items"].includes(table)) {
+    if (this.hasPerm(table, row, uid) && !["inventory", "order_items", "reservations", "hook_deliveries", "coupon_redemptions", "coupon_grants", "tryon_requests", "tryon_items", "inquiries", "inquiry_messages"].includes(table)) {
       if (table === "customers") return op === "delete";
       if (table === "orders") return op === "update";
       if (table === "api_tokens") return row["owner_id"] === uid;
       return true;
     }
     if (table === "orders") return op === "update" && this.ownedShopIds(uid).has(row["shop_id"] as string);
-    if (table === "inventory" || table === "order_items" || table === "reservations" || table === "hook_deliveries" || table === "coupon_redemptions" || table === "coupon_grants" || table === "tryon_requests" || table === "tryon_items") return false;
+    if (table === "inventory" || table === "order_items" || table === "reservations" || table === "hook_deliveries" || table === "coupon_redemptions" || table === "coupon_grants" || table === "tryon_requests" || table === "tryon_items" || table === "inquiries" || table === "inquiry_messages") return false;
     if (table === "api_tokens") return this.ownedShopIds(uid).has(row["shop_id"] as string) && row["owner_id"] === uid;
     // 会員の読み書きは service_role の member_* RPC だけ（0012）。owner は削除だけ
     if (table === "customers") return op === "delete" && this.ownedShopIds(uid).has(row["shop_id"] as string);
@@ -757,7 +761,7 @@ export class FakeSupabase {
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
   private orgRpc(fn: string, args: Record<string, unknown>, uid: string | null): Response | null {
-    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations"];
+    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support"];
     const role = (org: unknown) => this.orgMembers.find((m) => m.org_id === org && m.user_id === uid)?.role ?? null;
     const isAdmin = (org: unknown) => ["owner", "admin"].includes(role(org) ?? "");
     const err = (message: string) => json({ code: "P0001", message }, 400);

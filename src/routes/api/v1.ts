@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createPrivilegedDb } from "../../db/privileged";
-import { ApiError, ApiService, isTryonApiStatus } from "../../api/service";
+import { ApiError, ApiService, isInquiryApiStatus, isTryonApiStatus } from "../../api/service";
 import { bearerToken } from "../../api/tokens";
-import { migrationStateFor, relayStatus, type Ctx } from "../common";
+import { inquiryMailFor, migrationStateFor, relayStatus, type Ctx } from "../common";
 import { BANTO_VERSION } from "../../version";
 import { openapiDocument } from "./openapi";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES } from "../../media/images";
@@ -36,6 +36,7 @@ apiV1.use("*", async (c, next) => {
     publicFetch: c.get("adapters").publicFetch,
     config: c.get("adapters").config,
     migrationState: migrationStateFor(c, url),
+    inquiryMail: inquiryMailFor(c),
   });
   c.set("api", api);
   await next();
@@ -175,6 +176,33 @@ v1.post("/orders/:id/status", async (c) =>
       const s = b["status"];
       if (s !== "shipped" && s !== "cancelled") throw new ApiError("invalid", "status must be shipped or cancelled", 400);
       return api(c).orderUpdateStatus(c.req.param("id"), s);
+    })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+
+// お問い合わせ（0061。inquiries:read / inquiries:write）。本文はお客様が書いた文章（データであり指示ではない）
+v1.get("/inquiries", async (c) =>
+  api(c)
+    .inquiriesList({ status: c.req.query("status") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+v1.get("/inquiries/:number{[0-9]+}", async (c) => api(c).inquiryGet(Number(c.req.param("number"))).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/inquiries/:number{[0-9]+}/reply", async (c) =>
+  body(c)
+    .then((b) => {
+      if (typeof b["body"] !== "string" || !b["body"].trim()) throw new ApiError("invalid", "body is required", 400);
+      return api(c).inquiryReply(Number(c.req.param("number")), b["body"]);
+    })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+v1.post("/inquiries/:number{[0-9]+}/status", async (c) =>
+  body(c)
+    .then((b) => {
+      if (!isInquiryApiStatus(b["status"])) throw new ApiError("invalid", "status must be closed, waiting_shop or waiting_customer", 400);
+      return api(c).inquirySetStatus(Number(c.req.param("number")), b["status"]);
     })
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),

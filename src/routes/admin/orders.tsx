@@ -108,7 +108,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const rows = page.rows;
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(status ? { status } : {}) }).toString();
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "orders" }}>
+    <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead title={t("order.list")}>
         <a class="btn secondary" href={`/admin/shops/${shop.id}/orders.csv${query ? `?${query}` : ""}`}>
           {t("order.csv")}
@@ -205,7 +205,7 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
   const msg = flash(c.req.query("flash"));
 
   return c.html(
-    <AdminLayout title={t("order.detail")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list"), href: `/admin/shops/${shop.id}/orders` }, { label: fmtDate(order.created_at) }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "orders" }}>
+    <AdminLayout title={t("order.detail")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list"), href: `/admin/shops/${shop.id}/orders` }, { label: fmtDate(order.created_at) }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead
         title={
           <>

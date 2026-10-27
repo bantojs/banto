@@ -50,7 +50,7 @@ export const WEBHOOK_SECRET = "whsec_test";
 /** テスト内で任意のホストに応答させる（プラグインの偽サーバーなど）。URL 前方一致 */
 export const externalHosts = new Map<string, (req: Request) => Promise<Response> | Response>();
 
-export function appWith(supabase: FakeSupabase, overrides: Record<string, string | undefined> = {}, storage?: StorageAdapter, stripe?: FakeStripe) {
+export function appWith(supabase: FakeSupabase, overrides: Record<string, string | undefined> = {}, storage?: StorageAdapter, stripe?: FakeStripe, privateStorage?: StorageAdapter) {
   const vars: Record<string, string | undefined> = {
     SUPABASE_URL: supabase.url,
     SUPABASE_ANON_KEY: supabase.anonKey,
@@ -62,6 +62,7 @@ export function appWith(supabase: FakeSupabase, overrides: Record<string, string
     ...overrides,
   };
   const adapters = memoryAdapters(vars, storage);
+  if (privateStorage) adapters.privateStorage = privateStorage;
   const fetchImpl: typeof fetch = (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (stripe && (url.startsWith("https://api.stripe.com") || url.startsWith("https://connect.stripe.com"))) return stripe.fetch(input, init);

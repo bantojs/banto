@@ -13,6 +13,9 @@ export const HOOK_EVENTS = [
   // お店で試着（同梱モジュール store_tryon、0025）: 申し込み・状態の変化（status: sent / ready / purchased / not_purchased / expired / cancelled）
   "tryon.requested",
   "tryon.updated",
+  // お問い合わせ（同梱モジュール inquiries、0061）: アドレスが確かめられた・やり取りと状態の変化（change: message / status）
+  "inquiry.created",
+  "inquiry.updated",
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];

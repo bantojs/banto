@@ -25,7 +25,7 @@ deliveryAdmin.get("/", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.notFound();
   const ds = deliverySettings(shop.settings)!;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("delivery.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("delivery.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("delivery.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("delivery.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("delivery.title")} />
       {c.req.query("flash") === "saved" ? <p class="notice">{t("delivery.saved")}</p> : null}
       <p>{t("delivery.intro")}</p>

@@ -33,6 +33,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "passkey", name: "mod.passkey.name", description: "mod.passkey.description" },
   // Google アナリティクス（GA4）。お店の画面の <head> の口（src/storefront/head.ts）にタグを入れ、コアの出来事を GA4 の EC のイベントにする（docs/ga4.md）
   { id: "ga4", name: "mod.ga4.name", description: "mod.ga4.description", adminPath: "ga4" },
+  // お問い合わせ（チケット。メールはリンクだけで、やり取りは Banto の画面。0061_mod_inquiries、docs/inquiries.md）
+  { id: "inquiries", name: "mod.inquiries.name", description: "mod.inquiries.description", adminPath: "inquiries" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

@@ -5,6 +5,8 @@ import { workersSockets } from "./socket";
 
 export interface WorkersEnv {
   MEDIA: R2Bucket;
+  /** 公開しないバケット（お問い合わせの添付）。R2 のカスタムドメインを付けない。無ければ添付を出さない */
+  PRIVATE?: R2Bucket;
   PUBLIC_BASE_URL: string;
   MEDIA_BASE_URL: string;
   SUPABASE_URL: string;
@@ -78,6 +80,7 @@ class CronScheduler implements SchedulerAdapter {
 export function createWorkersAdapters(env: WorkersEnv): Adapters {
   return {
     storage: new R2Storage(env.MEDIA, env.MEDIA_BASE_URL),
+    ...(env.PRIVATE ? { privateStorage: new R2Storage(env.PRIVATE, "") } : {}),
     config: new EnvConfig(env),
     cache: new WorkersCache(),
     scheduler: new CronScheduler(),

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_COUPONS_CUSTOMERS_MIGRATION, API_SCOPES, DEFAULT_SCOPES, SCOPES_0036, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { API_COUPONS_CUSTOMERS_MIGRATION, API_INQUIRIES_MIGRATION, API_SCOPES, DEFAULT_SCOPES, SCOPES_0036, SCOPES_0061, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, PageHead } from "./layout";
@@ -41,6 +41,8 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "coupons:write": "tokens.scope.coupons_write",
   "customers:read": "tokens.scope.customers_read",
   "customers:write": "tokens.scope.customers_write",
+  "inquiries:read": "tokens.scope.inquiries_read",
+  "inquiries:write": "tokens.scope.inquiries_write",
 };
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
@@ -54,12 +56,15 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
   // クーポンと会員のスコープは 0036 が当たってから出す（当たる前は DB の CHECK で発行できない）
-  const offered = (await migrated({ db, cache: c.get("adapters").cache }, API_COUPONS_CUSTOMERS_MIGRATION)) ? API_SCOPES : API_SCOPES.filter((sc) => !SCOPES_0036.includes(sc));
+  // お問い合わせのスコープは 0061 が当たってから出す
+  const state = { db, cache: c.get("adapters").cache };
+  const [has0036, has0061] = await Promise.all([migrated(state, API_COUPONS_CUSTOMERS_MIGRATION), migrated(state, API_INQUIRIES_MIGRATION)]);
+  const offered = API_SCOPES.filter((sc) => (has0036 || !SCOPES_0036.includes(sc)) && (has0061 || !SCOPES_0061.includes(sc)));
   const rows = await db.from<TokenRow>("api_tokens").select("id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at", { eq: { shop_id: shopId }, order: "created_at.desc" });
   const base = publicBaseUrl(c);
   const flash = c.req.query("flash");
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("tokens.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "tokens" }}>
+    <AdminLayout title={`${shop.name} · ${t("tokens.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "tokens" }}>
       <PageHead title={t("tokens.title")} sub={t("tokens.intro")}>
         <a class="btn" href="#issue">
           {t("tokens.issue")}
@@ -179,7 +184,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   }
   // 生トークンはこの応答にだけ出す（URL やログに載せない）
   return c.html(
-    <AdminLayout title={t("tokens.issued")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title"), href: `/admin/shops/${shop.id}/tokens` }, { label: t("tokens.issued") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "tokens" }}>
+    <AdminLayout title={t("tokens.issued")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title"), href: `/admin/shops/${shop.id}/tokens` }, { label: t("tokens.issued") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "tokens" }}>
       <PageHead title={t("tokens.issued")}>
         <a class="btn secondary" href={`/admin/shops/${shop.id}/tokens`}>
           {t("tokens.title")}

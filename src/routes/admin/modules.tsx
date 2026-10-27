@@ -18,6 +18,7 @@ import { receiptAdmin } from "../../modules/receipt/admin";
 import { deliveryAdmin } from "../../modules/delivery-time/admin";
 import { labelsAdmin } from "../../modules/shipping-labels/admin";
 import { tryonAdmin } from "../../modules/store-tryon/admin";
+import { inquiriesAdmin } from "../../modules/inquiries/admin";
 
 /**
  * 同梱モジュールの ON/OFF（shops.settings.modules）。/admin/shops/:shopId/modules
@@ -30,7 +31,7 @@ modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const saved = c.req.query("flash") === "saved";
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("modules.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("modules.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("modules.title")} sub={t("modules.intro")} />
       {saved ? <p class="notice">{t("modules.saved")}</p> : null}
       <div class="grid">
@@ -98,3 +99,4 @@ modules.route("/:shopId/modules/delivery-time", deliveryAdmin);
 modules.route("/:shopId/modules/shipping-labels", labelsAdmin);
 modules.route("/:shopId/modules/store-tryon", tryonAdmin);
 modules.route("/:shopId/modules/ga4", ga4Admin);
+modules.route("/:shopId/modules/inquiries", inquiriesAdmin);

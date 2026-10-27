@@ -9,6 +9,7 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
 import { CUSTOMER_MASTER_MIGRATION } from "../../customers/fields";
+import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -38,6 +39,12 @@ const TABLES: { name: string; order: string; eq?: Record<string, string>; column
   { name: "coupon_grants", order: "created_at.asc" },
 ];
 
+/** お問い合わせ（0061）。当たってから書き出す */
+const INQUIRY_TABLES: typeof TABLES = [
+  { name: "inquiries", order: "created_at.asc", columns: "id,number,category,status,origin,contact_email,contact_name,email_verified_at,customer_id,order_id,claimed_order_number,created_at,last_message_at,closed_at,masked_at" },
+  { name: "inquiry_messages", order: "created_at.asc", columns: "id,inquiry_id,author,body,created_at" },
+];
+
 /** PostgREST の 1 回あたりの上限（既定 1,000 行）を offset で回して全件読む */
 export async function readAll(db: DbClient, table: string, shopId: string, order: string, eq: Record<string, string> = {}, columns = "*"): Promise<Row[]> {
   const out: Row[] = [];
@@ -55,7 +62,8 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  for (const tbl of TABLES) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  const inquiries = await migrated({ db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION);
+  for (const tbl of [...TABLES, ...(inquiries ? INQUIRY_TABLES : [])]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,
@@ -124,6 +132,10 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     // 会員の外部の ID と独自項目（0047）。0047 より前の DB なら関数が無いので飛ばす
     if (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, CUSTOMER_MASTER_MIGRATION)) {
       Object.assign(counts, await privileged.restoreCustomerMaster(shopId, pick("customers")));
+    }
+    // お問い合わせとやり取り（0061）。書き出しに入っているときだけ
+    if (pick("inquiries").length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION))) {
+      Object.assign(counts, await privileged.restoreInquiries(shopId, { inquiries: pick("inquiries"), inquiry_messages: pick("inquiry_messages"), orders: pick("orders"), customers: pick("customers") }));
     }
     const detail = Object.entries(counts)
       .map(([k, v]) => `${k}: ${v}`)

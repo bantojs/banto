@@ -57,7 +57,7 @@ labelsAdmin.get("/", requireOwner, async (c: AdminContext) => {
     </div>
   );
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("labels.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("labels.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("labels.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("labels.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("labels.title")} />
       {c.req.query("flash") === "saved" ? <p class="notice">{t("labels.saved")}</p> : null}
       <p>{t("labels.intro")}</p>

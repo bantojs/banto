@@ -11,6 +11,7 @@
 | [10-members-identity.md](10-members-identity.md) | 会員のアカウントを店ごとに Banto が持つ設計（Shopify 型。メールのコードとリンク、店ごとに選べるパスワードと WordPress のパスワードの取り込み、ショップごとの設定の LINE・Google でのログイン）。脅威モデル・表と RPC・回数の制限・ヘッドレス |
 | [11-organizations.md](11-organizations.md) | 組織・メンバー・役割（owner / admin / ショップの担当 / 実店舗のスタッフ）と、実店舗を組織に置いてショップごとに使い分ける設計（**決定・実装済み**、0024〜0027）。権限の項目・招待・移行・実装メモ |
 | [09-coupons.md](09-coupons.md) | クーポン（値引き）の設計。判定はコア・混合型（公開コード / 配布型 / 使い捨てコード）・Stripe への渡し方・枠の取り合いで遅くならない仕組み・次に作るもの |
+| [14-inquiries.md](14-inquiries.md) | お問い合わせのチケット（同梱モジュール inquiries、0061）。メールはリンクだけ・受信しない理由、本人確認と注文・会員への結びつけ、表と関数、次に作るもの |
 | [13-external-customer-master.md](13-external-customer-master.md) | 顧客マスタの外部連携（HubSpot・独自マスタ）。項目ごとに向きを 1 つ、Banto 自身を顧客マスタとして使う |
 
 更新のルール: 実機で新しい事実が分かったら 03 に、設計を決めたら 02 に、予定が変わったら docs/ROADMAP.md に書く。日付を添える。テストやビルドの回し方は CONTRIBUTING.md。

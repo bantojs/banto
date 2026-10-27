@@ -6,6 +6,8 @@
  *   - product_feeds: 商品フィードを 1 時間ごとに作り直す（同梱モジュール product_feed）
  *   - tryon: お店で試着の取り置きの期限切れと、終わった申し込みの個人情報のマスキング（同梱モジュール store_tryon、0025）
  */
+import { INQUIRIES_MIGRATION } from "../modules/inquiries";
+import { removeAttachments } from "../modules/inquiries/attachments";
 import type { Adapters } from "../adapters/types";
 import { createPrivilegedDb } from "../db/privileged";
 import { deliverPendingHooks } from "../hooks/deliver";
@@ -77,6 +79,20 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const days = raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS;
     await db.tryonExpire(todayHere());
     await db.maskTryonRequests(days);
+  });
+
+  // お問い合わせ（0061）: 完了から MASK_ORDERS_AFTER_DAYS 日の連絡先と本文を消す・未確認のまま 30 日のものを消す（適用されるまでは呼ばない）
+  adapters.scheduler.register("inquiries", async () => {
+    const anonKey = cfg.get("SUPABASE_ANON_KEY");
+    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, INQUIRIES_MIGRATION))) return;
+    const raw = cfg.get("MASK_ORDERS_AFTER_DAYS");
+    await db.maskInquiries(raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS);
+    // マスキング・削除で外れた添付の実体を、公開しない置き場から消す（消せたものだけ待ち行列から外す。残りは次の回）
+    const storage = adapters.privateStorage;
+    if (storage) {
+      const keys = await db.inquiryAttachmentTrashClaim(50);
+      if (keys.length > 0) await db.inquiryAttachmentTrashDone(await removeAttachments(storage, keys));
+    }
   });
 
   // 商品フィード（同梱モジュール product_feed、既定 OFF）

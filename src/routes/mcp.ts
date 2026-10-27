@@ -3,7 +3,7 @@ import type { AppEnv } from "../app";
 import { createPrivilegedDb } from "../db/privileged";
 import { ApiService } from "../api/service";
 import { bearerToken } from "../api/tokens";
-import { migrationStateFor, type Ctx } from "./common";
+import { inquiryMailFor, migrationStateFor, type Ctx } from "./common";
 import { handleJsonRpc } from "../mcp/server";
 import { BANTO_VERSION } from "../version";
 
@@ -33,6 +33,7 @@ mcp.post("/", async (c: Ctx) => {
     publicFetch: c.get("adapters").publicFetch,
     config: c.get("adapters").config,
     migrationState: migrationStateFor(c, url),
+    inquiryMail: inquiryMailFor(c),
   });
   const serverInfo = { name: "banto", version: BANTO_VERSION };
 

@@ -25,6 +25,8 @@ export interface ThemeContext {
   publicBaseUrl?: string;
   /** テーマ設定（shops.settings.theme_settings）。テーマが解釈する */
   themeSettings?: Record<string, unknown>;
+  /** お問い合わせ（同梱モジュール inquiries）が使える。フッター・ログイン画面に GET `${shopPath}/inquiries/new` へのリンクを出す */
+  inquiries?: boolean;
 }
 
 export interface PaymentOptions {
@@ -214,16 +216,49 @@ export interface Theme {
     error?: string;
     number?: number;
   }): Rendered;
+  /**
+   * お問い合わせ（同梱モジュール inquiries、0061）。省略したテーマでは出ない。メールにはリンクだけが届き、やり取りはこの画面でする。step:
+   *   form    種類・本文・お名前（askEmail ならメールアドレス）・注文番号（order が決まっていなければ。orders があれば会員の注文から選ぶ）
+   *           → POST `${shopPath}/inquiries/confirm`（category・body・name・email・order_number と hidden の値）
+   *   confirm 内容の確認（order があれば結ぶ注文の要約。orderUnmatched なら「番号は合いませんでしたが、そのまま書き添えて送ります」）
+   *           → 同じ値を hidden で POST `${shopPath}/inquiries/submit`。「修正する」は同じ値を POST `${shopPath}/inquiries/new`
+   *   sent    受け付けた（sent.verified でなければ「届いたメールのリンクを開いてください」。mailSent でなければ送り直しの案内）
+   *   open    メールのリンクを開いた先の確認画面（sent.number が受付番号）。GET では使わず、ボタンで POST `${shopPath}/inquiries/open`（t = token）
+   *   thread  やり取り（inquiry）。inquiry.canReply なら本文を POST `${shopPath}/inquiries/reply`（body と hidden の値。inquiry.canAttach なら
+   *           enctype="multipart/form-data" で files も）。添付は messages[].attachments の href（GET）
+   *   resend  リンクを送り直す: POST `${shopPath}/inquiries/resend`（number・email）
+   *   list    会員の問い合わせの一覧（list）。それぞれ GET `${shopPath}/inquiries/thread?n=<番号>`
+   * 本文はテキストとして出す（改行だけ活かす。HTML として描画しない）
+   */
+  InquiryPage?(props: {
+    ctx: ThemeContext;
+    step: "form" | "confirm" | "sent" | "open" | "thread" | "resend" | "list";
+    categories: { value: string; label: string }[];
+    values: InquiryFormValues;
+    hidden?: Record<string, string>;
+    askEmail?: boolean;
+    order?: InquiryOrderView | null;
+    orders?: { number: number; label: string }[] | null;
+    orderUnmatched?: boolean;
+    sent?: { number: number; verified: boolean; mailSent: boolean };
+    token?: string;
+    inquiry?: InquiryThreadView | null;
+    list?: { number: number; status: string; statusLabel: string; categoryLabel: string; created_at: string; last_message_at: string; order_number: number | null }[];
+    error?: string;
+    info?: string;
+  }): Rendered;
   /** 注文照会（番号 + メール） */
   /** receipt: 領収書を出せる（同梱モジュール receipt）。支払い済みなら POST `${shopPath}/orders/receipt`（number・email・name）のフォームを出す */
-  OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean }): Rendered;
+  /** inquiry: 同梱モジュール inquiries が ON なら、結果の注文について問い合わせるフォーム（POST `${shopPath}/inquiries/new`、hidden の o = inquiry.token） */
+  OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean; inquiry?: { token: string } | null }): Rendered;
   LegalPage(props: { ctx: ThemeContext; title: string; body: string }): Rendered;
   /**
    * 決済ページから戻ってきた直後。注文確定は Webhook で行うので、status が無ければ「受付済み」の表示に留める。
    * status（0035、照会トークン付きで開いたとき）: confirmed なら orderNumber を出す、pending なら「確認中」（refresh が true なら数秒後に自動で再読み込み）、
    * released なら「成立しなかった」。free: 0 円の注文で、この時点で確定している
    */
-  CheckoutDone(props: { ctx: ThemeContext; free?: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean }): Rendered;
+  /** inquiryUrl: 同梱モジュール inquiries が ON で注文が確定していれば、この注文について問い合わせる GET の URL */
+  CheckoutDone(props: { ctx: ThemeContext; free?: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; inquiryUrl?: string | null }): Rendered;
   NotFound(props: { ctx?: ThemeContext }): Rendered;
 }
 
@@ -252,4 +287,38 @@ export interface TryonFormValues {
   customer_email?: string;
   customer_phone?: string;
   note?: string;
+}
+
+export interface InquiryFormValues {
+  category?: string;
+  body?: string;
+  name?: string;
+  email?: string;
+  order_number?: string;
+}
+
+/** 問い合わせに結ぶ注文の要約（住所・連絡先は入らない） */
+export interface InquiryOrderView {
+  number: number;
+  status: string;
+  created_at: string;
+  total_jpy: number;
+  items: { name: string | null; qty: number }[];
+}
+
+export interface InquiryThreadView {
+  number: number;
+  status: string;
+  statusLabel: string;
+  categoryLabel: string;
+  created_at: string;
+  order: { number: number } | null;
+  claimed_order_number: number | null;
+  messages: { author: "customer" | "shop"; body: string; created_at: string; attachments: { href: string; filename: string; content_type: string; size: number }[] }[];
+  canReply: boolean;
+  /** 返事のフォームでファイルを添付できる（公開しない置き場があるとき）。フォームは multipart/form-data、入力は files（複数、accept は attachAccept） */
+  canAttach: boolean;
+  attachAccept: string;
+  /** 返事のフォームに hidden で入れる値（会員は受付番号 n） */
+  replyHidden: Record<string, string>;
 }

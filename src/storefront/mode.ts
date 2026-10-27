@@ -4,7 +4,7 @@
  *   checkout 商品の一覧と詳細は外のサイト（WordPress・Instagram など）。カート・購入・会員は Banto の画面
  *   off      Banto の画面を使わない（チェックアウト API で外のサイトが全部作る）
  * 使わない画面を開かれたら、外のサイトへ転送する（302。設定を戻せばすぐ戻るように、恒久の転送にはしない）。
- * どのモードでも残す画面（system）: 法務・送料・注文照会と領収書・決済後の完了画面・会員のログインのリンクとコード・商品フィード。
+ * どのモードでも残す画面（system）: 法務・送料・注文照会と領収書・決済後の完了画面・会員のログインのリンクとコード・商品フィード・お問い合わせ。
  * メールのリンク・決済事業者の戻り先・特商法の表示がこれらを指すため。
  */
 
@@ -51,6 +51,8 @@ export function pageKind(rest: string): PageKind {
   if (/^\/orders\/(lookup|receipt)$/.test(r)) return "system";
   if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";
   if (/^\/account\/(verify|code)$/.test(r)) return "system";
+  // お問い合わせ（同梱モジュール inquiries）: メールのリンクが指すので、どの使い方でも残す
+  if (/^\/inquiries(\/(new|confirm|submit|open|thread|reply|resend|attachments\/[0-9a-f-]{36}))?$/.test(r)) return "system";
   return "shopping";
 }
 

@@ -1,0 +1,311 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, withRole, type Fixture } from "./harness";
+
+const hash = (t: string) => createHash("sha256").update(t).digest("hex");
+type J = Record<string, unknown>;
+
+describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () => {
+  let f: Fixture;
+  let other: Fixture;
+  let orgId: string;
+  let support: string;
+  let catalogOnly: string;
+  let memberId: string;
+  let guestOrder: string;
+  let memberOrder: string;
+  beforeAll(async () => {
+    await resetDatabase();
+    f = await createShopFixture({ email: "inq@example.com", slug: "inq-shop", publish: true });
+    other = await createShopFixture({ email: "inq-o@example.com", slug: "inq-other", publish: true });
+    const pool = getPool();
+    await pool.query("update shops set settings = settings || '{\"modules\":{\"inquiries\":true},\"contact_email\":\"shop@example.com\"}'::jsonb where id = $1", [f.shopId]);
+    await pool.query("insert into hook_endpoints (shop_id, name, url, events, settings) values ($1, 'mail', 'https://banto.invalid/plugins/email_resend', '{}', '{\"from\": \"Shop <shop@example.com>\"}')", [f.shopId]);
+    await pool.query("insert into hook_endpoints (shop_id, name, url, events) values ($1, 'x', 'https://example.com/h', '{inquiry.created,inquiry.updated}')", [f.shopId]);
+    memberId = (await pool.query<{ id: string }>("insert into customers (shop_id, email, name) values ($1, 'Member@Example.com', '会員') returning id", [f.shopId])).rows[0]!.id;
+    guestOrder = (await pool.query<{ id: string }>("insert into orders (shop_id, number, status, total_jpy, shipping_jpy, customer_email, customer_name, payment_provider, payment_ref) values ($1, 1001, 'paid', 3000, 0, 'guest@example.com', 'ゲスト', 'stripe', 'pi_1') returning id", [f.shopId])).rows[0]!.id;
+    memberOrder = (await pool.query<{ id: string }>("insert into orders (shop_id, number, status, total_jpy, shipping_jpy, customer_email, customer_id, payment_provider, payment_ref) values ($1, 1002, 'paid', 5000, 0, 'member@example.com', $2, 'stripe', 'pi_2') returning id", [f.shopId, memberId])).rows[0]!.id;
+    orgId = (await pool.query<{ org_id: string }>("select org_id from shops where id = $1", [f.shopId])).rows[0]!.org_id;
+    // 問い合わせの担当（support だけ）と、商品の担当（catalog だけ）
+    support = await createAuthUser("support@example.com");
+    catalogOnly = await createAuthUser("catalog@example.com");
+    for (const [uid, email, perms] of [[support, "support@example.com", ["support"]], [catalogOnly, "catalog@example.com", ["catalog"]]] as const) {
+      await asUser(f.ownerId, (c) => c.query("select org_invite($1, $2, 'member', $3::jsonb, $4)", [orgId, email, JSON.stringify([{ shop_id: f.shopId, perms }]), hash(`t-${email}`)]));
+      await withRole("authenticated", { sub: uid, email }, (c) => c.query("select org_invitation_accept($1)", [hash(`t-${email}`)]));
+    }
+  });
+  afterAll(closePool);
+
+  const create = (input: J, link = hash(`link-${Math.random()}`), ip: string | null = hash(`ip-${Math.random()}`), shop = f.shopId) =>
+    asService(async (c) => (await c.query<{ r: J }>("select inquiry_create($1, $2::jsonb, $3, $4) as r", [shop, JSON.stringify(input), link, ip])).rows[0]!.r);
+  const get = (access: J) => asService(async (c) => (await c.query<{ r: J | null }>("select inquiry_get($1, $2::jsonb) as r", [f.shopId, JSON.stringify(access)])).rows[0]!.r);
+  const row = async (id: unknown) => (await getPool().query("select * from inquiries where id = $1", [id])).rows[0] as J;
+  const hooks = async () => (await getPool().query<{ event: string; payload: J }>("select event, payload from hook_deliveries where shop_id = $1 and event like 'inquiry.%' order by created_at", [f.shopId])).rows;
+  const mails = async (id: unknown) => (await getPool().query<{ kind: string }>("select kind from inquiry_mails where inquiry_id = $1 order by id", [id])).rows.map((r) => r.kind);
+
+  it("権限の項目に support が増え、support の担当だけが運営側で読める。お客様の経路の関数は service_role だけ", async () => {
+    expect((await getPool().query("select perms from org_member_shops where user_id = $1", [support])).rows).toEqual([{ perms: ["support"] }]);
+    const r = await create({ basis: "form", category: "other", body: "質問です", email: "q@example.com" });
+    expect((await asUser(support, (c) => c.query("select number from inquiries where id = $1", [r.id]))).rows).toHaveLength(1);
+    expect((await asUser(catalogOnly, (c) => c.query("select number from inquiries where id = $1", [r.id]))).rows).toHaveLength(0);
+    expect((await asUser(other.ownerId, (c) => c.query("select number from inquiries where id = $1", [r.id]))).rows).toHaveLength(0);
+    expect(await asUser(catalogOnly, async (c) => (await c.query("select inquiry_admin_get($1) as r", [r.id])).rows[0].r)).toBeNull();
+    // 運営側も表を直接は書けない（関数だけ）
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update inquiries set status = 'closed' where id = $1", [r.id])))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select inquiry_create($1, '{}'::jsonb, $2, null)", [f.shopId, hash("x")])))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select inquiry_get($1, '{}'::jsonb)", [f.shopId])))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select id from inquiries")))).toMatch(/permission denied/);
+  });
+
+  it("ゲスト: 確認のメールを送り、リンクで開くまで未確認（hooks・運営者へのお知らせはまだ）。開くと確認済みになり、会員と一致すれば結ぶ", async () => {
+    const link = hash("guest-link");
+    const r = await create({ basis: "form", category: "account", body: "ログインできません", email: "Member@example.com", name: "会員" }, link);
+    expect(r).toMatchObject({ verified: false, send: true, kind: "verify", to: "member@example.com", mail_from: "Shop <shop@example.com>", notify: null });
+    expect(await row(r.id)).toMatchObject({ status: "waiting_shop", origin: "form", customer_id: null, email_verified_at: null });
+    expect((await hooks()).filter((h) => h.payload.inquiry_id === r.id)).toHaveLength(0);
+    // 確認画面（使わない）
+    expect(await asService(async (c) => (await c.query("select inquiry_peek($1, $2) as r", [f.shopId, link])).rows[0].r)).toEqual({ number: r.number });
+    expect(await asService(async (c) => (await c.query("select inquiry_peek($1, $2) as r", [f.shopId, hash("nope")])).rows[0].r)).toBeNull();
+    // 開く
+    const opened = await get({ link_hash: link });
+    expect(opened!.notify).toEqual({ send: true, to: "shop@example.com" });
+    expect(opened!.inquiry).toMatchObject({ number: r.number, verified: true, messages: [{ author: "customer", body: "ログインできません" }] });
+    expect(JSON.stringify(opened)).not.toContain("member@example.com");
+    expect(await row(r.id)).toMatchObject({ customer_id: memberId });
+    const h = (await hooks()).filter((x) => x.payload.inquiry_id === r.id);
+    expect(h).toEqual([{ event: "inquiry.created", payload: expect.objectContaining({ number: r.number, customer_id: memberId, category: "account" }) }]);
+    expect(JSON.stringify(h)).not.toContain("@");
+    // 2 回目は確認済みなので何もしない
+    expect((await get({ link_hash: link }))!.notify).toBeNull();
+    expect(await mails(r.id)).toEqual(["verify", "shop"]);
+    // 他のショップのリンクとしては使えない
+    expect(await asService(async (c) => (await c.query("select inquiry_get($1, $2::jsonb) as r", [other.shopId, JSON.stringify({ link_hash: link })])).rows[0].r)).toBeNull();
+  });
+
+  it("ゲストの注文番号: 番号とアドレスが合えば注文に結ぶ。合わなければ申告された番号として残す", async () => {
+    const ok = await create({ basis: "form", category: "order", body: "届きません", email: "guest@example.com", order_number: "1001" });
+    expect(await row(ok.id)).toMatchObject({ order_id: guestOrder, claimed_order_number: null });
+    const ng = await create({ basis: "form", category: "order", body: "届きません", email: "someone@example.com", order_number: "1001" });
+    expect(await row(ng.id)).toMatchObject({ order_id: null, claimed_order_number: 1001 });
+    // 注文を確かめる（要約だけ。住所・アドレスは返さない）
+    const check = (n: number, email: string) => asService(async (c) => (await c.query<{ r: J | null }>("select inquiry_order_check($1, $2, $3, $4, $5) as r", [f.shopId, n, email, hash("ip-check"), hash(email)])).rows[0]!.r);
+    expect(await check(1001, "Guest@example.com")).toMatchObject({ number: 1001, total_jpy: 3000, status: "paid" });
+    expect(JSON.stringify(await check(1001, "guest@example.com"))).not.toContain("guest@example.com");
+    expect(await check(1001, "wrong@example.com")).toBeNull();
+  });
+
+  it("会員・注文から・購入完了の画面から: 確認メールなしで確認済み。注文時のアドレスに返す。会員は自分の注文だけ結べる", async () => {
+    const epoch = (await getPool().query<{ e: number }>("select session_epoch as e from customers where id = $1", [memberId])).rows[0]!.e;
+    const m = await create({ basis: "member", category: "order", body: "会員です", customer_id: memberId, epoch, order_number: 1002 });
+    expect(m).toMatchObject({ verified: true, kind: "created", to: "member@example.com", notify: { send: true } });
+    expect(await row(m.id)).toMatchObject({ origin: "member", customer_id: memberId, order_id: memberOrder });
+    const notMine = await create({ basis: "member", category: "order", body: "他人の注文", customer_id: memberId, epoch, order_number: 1001 });
+    expect(await row(notMine.id)).toMatchObject({ order_id: null, claimed_order_number: 1001 });
+    expect(await expectDbError(() => create({ basis: "member", category: "other", body: "x", customer_id: memberId, epoch: epoch + 1 }))).toMatch(/invalid_member/);
+
+    const o = await create({ basis: "order", category: "order", body: "注文から", order_id: guestOrder });
+    expect(o).toMatchObject({ verified: true, to: "guest@example.com" });
+    expect(await row(o.id)).toMatchObject({ origin: "order", order_id: guestOrder });
+    expect(await expectDbError(() => create({ basis: "order", category: "order", body: "x", order_id: guestOrder }, undefined, null, other.shopId))).toMatch(/inquiries_disabled/);
+
+    const res = (await getPool().query<{ id: string }>("insert into reservations (shop_id, items, expires_at, quote_id) values ($1, '[]'::jsonb, now() + interval '10 minutes', 'quote-123') returning id", [f.shopId])).rows[0]!.id;
+    expect(await expectDbError(() => create({ basis: "checkout", category: "order", body: "完了画面", quote_id: "quote-123" }))).toMatch(/order_not_found/);
+    await getPool().query("update orders set reservation_id = $2 where id = $1", [guestOrder, res]);
+    const ck = await create({ basis: "checkout", category: "order", body: "完了画面", quote_id: "quote-123" });
+    expect(await row(ck.id)).toMatchObject({ origin: "checkout", order_id: guestOrder, contact_email: "guest@example.com" });
+    const ref = await asService(async (c) => (await c.query("select inquiry_order_ref($1, $2::jsonb) as r", [f.shopId, JSON.stringify({ quote_id: "quote-123" })])).rows[0].r);
+    expect(ref).toMatchObject({ number: 1001, order_id: guestOrder });
+
+    // 会員の一覧（確認済みだけ）と、会員のアクセス（番号）で開く
+    const list = await asService(async (c) => (await c.query("select inquiry_member_list($1, $2, $3) as r", [f.shopId, memberId, epoch])).rows[0].r as J[]);
+    expect(list.map((x) => x.number)).toContain(m.number);
+    expect((await get({ customer_id: memberId, epoch, number: m.number }))!.inquiry).toMatchObject({ number: m.number, order: { number: 1002 } });
+    expect(await get({ customer_id: memberId, epoch, number: o.number })).toBeNull();
+  });
+
+  it("やり取り: お客様が書くと運営者の返事待ち、運営者が返すとお客様の返事待ちで新しいリンク。完了したチケットにはお客様は書けない", async () => {
+    const link = hash("thread-link");
+    const r = await create({ basis: "form", category: "product", body: "サイズは？", email: "thread@example.com" }, link);
+    // 未確認のままでは書けない（リンクで開いて確認してから）
+    expect(await expectDbError(() => asService((c) => c.query("select inquiry_customer_reply($1, $2::jsonb, 'x', null)", [f.shopId, JSON.stringify({ link_hash: link })])))).toMatch(/inquiry_not_found/);
+    await get({ link_hash: link });
+    const replyLink = hash("reply-link");
+    const sent = await asUser(support, async (c) => (await c.query<{ r: J }>("select inquiry_reply($1, 'M です', $2) as r", [r.id, replyLink])).rows[0]!.r);
+    expect(sent).toMatchObject({ number: r.number, send: true, to: "thread@example.com" });
+    expect(await row(r.id)).toMatchObject({ status: "waiting_customer" });
+    expect((await getPool().query("select author_user from inquiry_messages where inquiry_id = $1 and author = 'shop'", [r.id])).rows).toEqual([{ author_user: support }]);
+    expect(await expectDbError(() => asUser(catalogOnly, (c) => c.query("select inquiry_reply($1, 'x', $2)", [r.id, hash("z")])))).toMatch(/inquiry_not_found/);
+
+    const back = await asService(async (c) => (await c.query<{ r: J }>("select inquiry_customer_reply($1, $2::jsonb, 'ありがとう', $3) as r", [f.shopId, JSON.stringify({ link_hash: replyLink }), hash("ip-1")])).rows[0]!.r);
+    expect(back).toMatchObject({ number: r.number, notify: { send: true, to: "shop@example.com" } });
+    expect(await row(r.id)).toMatchObject({ status: "waiting_shop" });
+    const view = (await get({ link_hash: link }))!.inquiry as { messages: { author: string }[] };
+    expect(view.messages.map((x) => x.author)).toEqual(["customer", "shop", "customer"]);
+
+    await asUser(support, (c) => c.query("select inquiry_set_status($1, 'closed')", [r.id]));
+    expect(await row(r.id)).toMatchObject({ status: "closed" });
+    expect(await expectDbError(() => asService((c) => c.query("select inquiry_customer_reply($1, $2::jsonb, 'まだ', null)", [f.shopId, JSON.stringify({ link_hash: link })])))).toMatch(/inquiry_closed/);
+    const updates = (await hooks()).filter((h) => h.payload.inquiry_id === r.id).map((h) => [h.event, h.payload.status]);
+    expect(updates).toEqual([["inquiry.created", "waiting_shop"], ["inquiry.updated", "waiting_customer"], ["inquiry.updated", "waiting_shop"], ["inquiry.updated", "closed"]]);
+  });
+
+  it("リンクの送り直し: 受付番号とアドレスが合えば新しいリンク。合わなくても応答の形は同じ。同じ宛先への確認のメールは 1 時間 5 通まで", async () => {
+    const r = await create({ basis: "form", category: "other", body: "a", email: "resend@example.com" });
+    const resend = (n: number, email: string, link: string) =>
+      asService(async (c) => (await c.query<{ r: J }>("select inquiry_resend_link($1, $2, $3, $4, $5, $6) as r", [f.shopId, n, email, link, hash(`ip-${Math.random()}`), hash(email)])).rows[0]!.r);
+    expect(await resend(r.number as number, "Resend@example.com", hash("r1"))).toMatchObject({ send: true, to: "resend@example.com" });
+    expect(await resend(r.number as number, "wrong@example.com", hash("r2"))).toEqual({ send: false, mail_from: "Shop <shop@example.com>", to: null, number: null });
+    for (let i = 0; i < 3; i++) await resend(r.number as number, "resend@example.com", hash(`r-more-${i}`));
+    // verify 1 + link 4 = 5 通で打ち止め
+    expect(await resend(r.number as number, "resend@example.com", hash("r-over"))).toMatchObject({ send: false });
+    expect(await mails(r.id)).toEqual(["verify", "link", "link", "link", "link"]);
+  });
+
+  it("回数の制限: 同じ IP から 1 時間 10 件、同じアドレスの開いているチケットは 5 件まで。注文を確かめるのは同じ IP から 1 時間 20 回", async () => {
+    const ip = hash("ip-flood");
+    for (let i = 0; i < 10; i++) await create({ basis: "form", category: "other", body: `${i}`, email: `flood${i}@example.com` }, undefined, ip);
+    expect(await expectDbError(() => create({ basis: "form", category: "other", body: "x", email: "flood-x@example.com" }, undefined, ip))).toMatch(/too_many_requests/);
+    for (let i = 0; i < 5; i++) await create({ basis: "form", category: "other", body: `${i}`, email: "same@example.com" }, undefined, hash(`ip-same-${i}`));
+    expect(await expectDbError(() => create({ basis: "form", category: "other", body: "x", email: "same@example.com" }, undefined, hash("ip-same-x")))).toMatch(/too_many_requests/);
+    const ipc = hash("ip-check-flood");
+    for (let i = 0; i < 20; i++) await asService((c) => c.query("select inquiry_order_check($1, 9999, 'x@example.com', $2, null)", [f.shopId, ipc]));
+    expect(await expectDbError(() => asService((c) => c.query("select inquiry_order_check($1, 9999, 'x@example.com', $2, null)", [f.shopId, ipc])))).toMatch(/too_many_requests/);
+    expect(await expectDbError(() => create({ basis: "form", category: "bogus", body: "x", email: "a@example.com" }))).toMatch(/invalid_category/);
+    expect(await expectDbError(() => create({ basis: "form", category: "other", body: "  ", email: "a@example.com" }))).toMatch(/invalid_body/);
+    expect(await expectDbError(() => create({ basis: "form", category: "other", body: "x", email: "not-an-email" }))).toMatch(/invalid_email/);
+  });
+
+  it("AI 用トークン: inquiries:read / write は support の項目を持つ人だけ発行できる。連絡先は orders:pii があるときだけ。返事は新しいリンクとメールを作る", async () => {
+    const issue = async (uid: string, scopes: string[]) => {
+      const raw = `banto_${Math.random().toString(36).slice(2)}`;
+      const h = hash(raw);
+      await asUser(uid, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, $5)", [f.shopId, uid, h, raw.slice(0, 12), scopes]));
+      return h;
+    };
+    const api = <T>(fn: string, args: unknown[]) =>
+      asService(async (c) => (await c.query<{ r: T }>(`select ${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0]!.r);
+    const r = await create({ basis: "form", category: "product", body: "AI で読む", email: "ai@example.com", name: "AI 太郎" });
+    await get({ link_hash: (await getPool().query<{ token_hash: string }>("select token_hash from inquiry_links where inquiry_id = $1", [r.id])).rows[0]!.token_hash });
+    const reader = await issue(f.ownerId, ["inquiries:read"]);
+    const pii = await issue(f.ownerId, ["inquiries:read", "inquiries:write", "orders:pii"]);
+    // 発行者が support を持たなければ発行できない（integrations だけの人が support のスコープを付けても弾く）
+    const integ = await createAuthUser("integ@example.com");
+    await asUser(f.ownerId, (c) => c.query("select org_invite($1, 'integ@example.com', 'member', $2::jsonb, $3)", [orgId, JSON.stringify([{ shop_id: f.shopId, perms: ["integrations"] }]), hash("t-integ")]));
+    await withRole("authenticated", { sub: integ, email: "integ@example.com" }, (c) => c.query("select org_invitation_accept($1)", [hash("t-integ")]));
+    expect(await expectDbError(() => issue(integ, ["inquiries:read"]))).toMatch(/scope_not_permitted/);
+
+    const one = await api<J>("api_inquiry_get", [reader, r.number]);
+    expect(one).toMatchObject({ number: r.number, verified: true, messages: [{ author: "customer", body: "AI で読む" }] });
+    expect(one["contact"]).toBeUndefined();
+    expect(JSON.stringify(one)).not.toContain("ai@example.com");
+    const list = await api<{ items: J[]; pii: boolean }>("api_inquiries_list", [pii, "waiting_shop", 100, 0]);
+    expect(list.pii).toBe(true);
+    expect(list.items.find((x) => x.number === r.number)).toMatchObject({ contact: { email: "ai@example.com", name: "AI 太郎" } });
+    expect(await expectDbError(() => api("api_inquiry_reply", [reader, r.number, "返事", hash("x")]))).toMatch(/unauthorized/);
+
+    const links = Number((await getPool().query<{ n: string }>("select count(*) as n from inquiry_links where inquiry_id = $1", [r.id])).rows[0]!.n);
+    const rep = await api<{ inquiry: J; mail: J }>("api_inquiry_reply", [pii, r.number, "在庫あります", hash("ai-reply")]);
+    expect(rep.inquiry).toMatchObject({ status: "waiting_customer" });
+    expect(rep.mail).toMatchObject({ send: true, to: "ai@example.com", mail_from: "Shop <shop@example.com>", shop: { slug: "inq-shop" } });
+    expect(Number((await getPool().query<{ n: string }>("select count(*) as n from inquiry_links where inquiry_id = $1", [r.id])).rows[0]!.n)).toBe(links + 1);
+    // 書いた人は AI 用トークン（運営者の人ではない）
+    expect((await getPool().query("select author_user from inquiry_messages where inquiry_id = $1 and author = 'shop'", [r.id])).rows).toEqual([{ author_user: null }]);
+    expect(await api<J>("api_inquiry_set_status", [pii, r.number, "closed"])).toMatchObject({ status: "closed" });
+    expect(await expectDbError(() => api("api_inquiry_set_status", [pii, r.number, "bogus"]))).toMatch(/invalid_status/);
+    // モジュールが OFF のショップでは使えない
+    await getPool().query("update shops set settings = jsonb_set(settings, '{modules,inquiries}', 'false') where id = $1", [f.shopId]);
+    expect(await expectDbError(() => api("api_inquiry_get", [reader, r.number]))).toMatch(/module_disabled/);
+    await getPool().query("update shops set settings = jsonb_set(settings, '{modules,inquiries}', 'true') where id = $1", [f.shopId]);
+  });
+
+  it("バックアップ: 書き出した行を空のショップに戻す（注文番号・会員のメールアドレスで結び直す。リンクは戻さない）", async () => {
+    const pool = getPool();
+    const j = async (sql: string, args: unknown[]) => (await pool.query<{ r: unknown[] }>(`select coalesce(jsonb_agg(to_jsonb(x)), '[]'::jsonb) as r from (${sql}) x`, args)).rows[0]!.r;
+    const data = {
+      inquiries: await j("select * from inquiries where shop_id = $1", [f.shopId]),
+      inquiry_messages: await j("select * from inquiry_messages where shop_id = $1", [f.shopId]),
+      orders: await j("select id, number from orders where shop_id = $1", [f.shopId]),
+      customers: await j("select id, email from customers where shop_id = $1", [f.shopId]),
+    };
+    const to = await createShopFixture({ email: "inq-restore@example.com", slug: "inq-restore", publish: true });
+    await pool.query("insert into customers (shop_id, email, name) values ($1, 'member@example.com', '会員')", [to.shopId]);
+    await pool.query("insert into orders (shop_id, number, status, total_jpy, shipping_jpy, customer_email, payment_provider, payment_ref) values ($1, 1002, 'paid', 5000, 0, 'member@example.com', 'stripe', 'pi_r')", [to.shopId]);
+    const r = await asService(async (c) => (await c.query<{ r: { inquiries: number; inquiry_messages: number } }>("select restore_inquiries($1, $2::jsonb) as r", [to.shopId, JSON.stringify(data)])).rows[0]!.r);
+    expect(r.inquiries).toBe(data.inquiries.length);
+    expect(r.inquiry_messages).toBe(data.inquiry_messages.length);
+    const linked = (await pool.query("select i.customer_id is not null as member, o.number from inquiries i left join orders o on o.id = i.order_id where i.shop_id = $1 and i.origin = 'member' and o.number = 1002", [to.shopId])).rows;
+    expect(linked[0]).toEqual({ member: true, number: 1002 });
+    expect((await pool.query("select count(*)::int as n from inquiry_links where shop_id = $1", [to.shopId])).rows[0]).toEqual({ n: 0 });
+    const seq = (await pool.query<{ s: number; m: number }>("select inquiry_seq as s, (select max(number) from inquiries where shop_id = $1) as m from shops where id = $1", [to.shopId])).rows[0]!;
+    expect(seq.s).toBe(seq.m);
+    expect(await expectDbError(() => asService((c) => c.query("select restore_inquiries($1, $2::jsonb)", [to.shopId, JSON.stringify(data)])))).toMatch(/shop_not_empty/);
+  });
+
+  it("添付: 確認済みのチケットの返事にだけ 3 個まで。鍵はそのショップの接頭辞・種類と大きさは決まったものだけ。配るのはそのチケットを開ける人だけ。行を消すと実体を消す待ち行列へ", async () => {
+    const link = hash("att-link");
+    const r = await create({ basis: "form", category: "order", body: "破損しています", email: "att@example.com" }, link);
+    const file = (n: number, over: J = {}) => ({ key: `inq/${f.shopId}/${"k".repeat(20)}${n}`, filename: `photo${n}.jpg`, content_type: "image/jpeg", size: 1000, ...over });
+    const reply = (files: unknown[], access: J = { link_hash: link }) =>
+      asService(async (c) => (await c.query("select inquiry_customer_reply($1, $2::jsonb, '写真です', null, $3::jsonb) as r", [f.shopId, JSON.stringify(access), JSON.stringify(files)])).rows[0].r);
+    // 確定前は返事そのものができない
+    expect(await expectDbError(() => reply([file(1)]))).toMatch(/inquiry_not_found/);
+    await get({ link_hash: link });
+    await reply([file(1), file(2)]);
+    expect(Number((await getPool().query("select count(*) as n from inquiry_attachments where inquiry_id = $1", [r.id])).rows[0].n)).toBe(2);
+    expect(await expectDbError(() => reply([file(3), file(4), file(5), file(6)]))).toMatch(/too_many_attachments/);
+    expect(await expectDbError(() => reply([file(7, { key: `inq/${other.shopId}/${"x".repeat(24)}` })]))).toMatch(/invalid_attachment/);
+    expect(await expectDbError(() => reply([file(8, { content_type: "text/html" })]))).toMatch(/invalid_attachment/);
+    expect(await expectDbError(() => reply([file(9, { size: 6 * 1024 * 1024 })]))).toMatch(/invalid_attachment/);
+    // 失敗した返事は残らない（同じ取引の中）
+    expect(Number((await getPool().query("select count(*) as n from inquiry_messages where inquiry_id = $1", [r.id])).rows[0].n)).toBe(2);
+
+    const att = (await getPool().query<{ id: string }>("select id from inquiry_attachments where inquiry_id = $1 order by storage_key", [r.id])).rows;
+    const view = (await get({ link_hash: link }))!.inquiry as { messages: { attachments: J[] }[] };
+    expect(view.messages[1]!.attachments).toEqual([expect.objectContaining({ id: att[0]!.id, filename: "photo1.jpg", content_type: "image/jpeg", size: 1000 }), expect.objectContaining({ filename: "photo2.jpg" })]);
+    const getAtt = (access: J, id: string) => asService(async (c) => (await c.query("select inquiry_attachment_get($1, $2::jsonb, $3) as r", [f.shopId, JSON.stringify(access), id])).rows[0].r);
+    expect(await getAtt({ link_hash: link }, att[0]!.id)).toMatchObject({ storage_key: `inq/${f.shopId}/${"k".repeat(20)}1`, content_type: "image/jpeg" });
+    // 別のチケットのリンクでは読めない
+    const otherLink = hash("att-other");
+    await create({ basis: "form", category: "other", body: "別件", email: "att2@example.com" }, otherLink);
+    await get({ link_hash: otherLink });
+    expect(await getAtt({ link_hash: otherLink }, att[0]!.id)).toBeNull();
+    // 運営側: support の項目
+    expect(await asUser(support, async (c) => (await c.query("select inquiry_attachment_admin_get($1) as r", [att[0]!.id])).rows[0].r)).toMatchObject({ inquiry_id: r.id });
+    expect(await asUser(catalogOnly, async (c) => (await c.query("select inquiry_attachment_admin_get($1) as r", [att[0]!.id])).rows[0].r)).toBeNull();
+    // 運営者の返事にも付けられる
+    await asUser(support, (c) => c.query("select inquiry_reply($1, '確認しました', $2, $3::jsonb)", [r.id, hash("att-reply"), JSON.stringify([file(10, { content_type: "application/pdf", filename: "返品の手順.pdf" })])]));
+
+    // 削除すると実体を消す待ち行列に積む → Cron が取り出し、消し終えたら外す
+    await asUser(support, (c) => c.query("select inquiry_delete($1)", [r.id]));
+    const keys = await asService(async (c) => (await c.query<{ r: string[] }>("select inquiry_attachment_trash_claim(50) as r")).rows[0]!.r);
+    expect(keys.sort()).toEqual([1, 10, 2].map((n) => `inq/${f.shopId}/${"k".repeat(20)}${n}`).sort());
+    // 取り出したばかりのものは、すぐには取り直さない
+    expect(await asService(async (c) => (await c.query<{ r: string[] }>("select inquiry_attachment_trash_claim(50) as r")).rows[0]!.r)).toEqual([]);
+    expect(await asService(async (c) => (await c.query<{ r: number }>("select inquiry_attachment_trash_done($1) as r", [keys])).rows[0]!.r)).toBe(3);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select inquiry_attachment_trash_claim(1)")))).toMatch(/permission denied/);
+  });
+
+  it("個人情報: 顧客の削除の依頼で連絡先と本文を消す。完了から日数が経ったもの・未確認のまま 30 日のものは Cron が消す。メールはプランの 1 日の数に入る", async () => {
+    const r = await create({ basis: "form", category: "other", body: "消してください", email: "erase@example.com" });
+    await asUser(f.ownerId, (c) => c.query("select mask_customer($1, 'Erase@example.com')", [f.shopId]));
+    expect(await row(r.id)).toMatchObject({ contact_email: null, contact_name: "[masked]", status: "closed" });
+    expect((await getPool().query("select body from inquiry_messages where inquiry_id = $1", [r.id])).rows).toEqual([{ body: "[masked]" }]);
+
+    const old = await create({ basis: "form", category: "other", body: "古い", email: "old@example.com" });
+    await getPool().query("update inquiries set email_verified_at = now(), status = 'closed', closed_at = now() - interval '400 days' where id = $1", [old.id]);
+    const spam = await create({ basis: "form", category: "other", body: "未確認", email: "spam@example.com" });
+    await getPool().query("update inquiries set created_at = now() - interval '31 days' where id = $1", [spam.id]);
+    const n = await asService(async (c) => (await c.query<{ n: number }>("select mask_inquiries(365) as n")).rows[0]!.n);
+    expect(n).toBeGreaterThanOrEqual(2);
+    expect(await row(old.id)).toMatchObject({ contact_email: null });
+    expect(await row(spam.id)).toBeUndefined();
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select mask_inquiries(1)")))).toMatch(/permission denied/);
+
+    const before = Number((await getPool().query<{ n: string }>("select banto_plan_mail_count() as n")).rows[0]!.n);
+    await create({ basis: "form", category: "other", body: "数える", email: "count@example.com" });
+    expect(Number((await getPool().query<{ n: string }>("select banto_plan_mail_count() as n")).rows[0]!.n)).toBe(before + 1);
+    // 削除（support の項目）
+    await asUser(support, (c) => c.query("select inquiry_delete($1)", [r.id]));
+    expect(await row(r.id)).toBeUndefined();
+  });
+});

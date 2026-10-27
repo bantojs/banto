@@ -48,6 +48,9 @@ CLAUDE.md §10 と同期させること。各ステップは「他人に渡せ�
       - [x] クーポン（配布型・使い捨てコード・自動発行・先着の獲得ボタン・WooCommerce からの取り込み。docs/knowledge/09-coupons.md）
       済（2026-10-16）: 速度の予算の検査（DB 往復回数のテスト、Worker サイズの上限）、商品マスタの拡張（0008_catalog: カテゴリー・ブランド・カスタム項目・SKU の選択肢 / JAN / 通常価格）、
       同梱モジュールの ON/OFF、WooCommerce インポーター（CSV。0009_catalog_import）。次: REST API 方式（数値メタの正確な移行・パーマリンク）
+- [ ] お問い合わせのチケット（同梱モジュール inquiries、docs/inquiries.md、docs/knowledge/14-inquiries.md）
+      済（2026-10-27）: フォーム（ゲスト・会員・注文から・購入完了の画面から）、確認画面、アドレスの確認、チケットの画面、運営者の画面と返事、メールはリンクだけ、ヘッドレス API、権限の項目 `support`、マスキング（0061）。
+      済（2026-10-27）: AI 用の操作（`inquiries:*`）、定型文、バックアップの書き出しと復元。添付ファイル（公開しないバケット）
 
 ## 組織・メンバー（v0.1 に同梱。docs/knowledge/11-organizations.md）
 

@@ -21,6 +21,8 @@ import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, CHECKOUT_STATUS_MIGRATION, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
+import { bindInquiryScope, inquiries } from "./inquiries";
+import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
@@ -100,11 +102,14 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
     publicBaseUrl: onDomain ? shopOrigin(publicBaseUrl(c), shop) : publicBaseUrl(c),
     themeSettings: (shop.settings ?? {})["theme_settings"] && typeof (shop.settings ?? {})["theme_settings"] === "object" ? ((shop.settings ?? {})["theme_settings"] as Record<string, unknown>) : {},
   };
+  const theme = resolveTheme(shop.settings ?? {});
+  // お問い合わせのリンク（同梱モジュール inquiries）。キャッシュ済みのショップ行だけで判定する（版の確認は画面を開いたときだけ）
+  if (moduleEnabled(shop.settings, INQUIRIES_MODULE) && theme.InquiryPage) ctx.inquiries = true;
   if (ctx.membersEnabled) {
     const member = await customerSession(c, { shop });
     ctx.member = member ? { email: member.email } : null;
   }
-  return { shop, sf, cart, ctx, theme: resolveTheme(shop.settings ?? {}) };
+  return { shop, sf, cart, ctx, theme };
 }
 
 // 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
@@ -112,9 +117,15 @@ bindScope(async (c) => {
   const s = await scope(c);
   if (!s) return null;
   const session = await customerSession(c, { shop: s.shop });
-  return { shop: s.shop, theme: s.theme, shopPath: s.ctx.shopPath, session };
+  return { shop: s.shop, theme: s.theme, shopPath: s.ctx.shopPath, session, ...(s.ctx.inquiries ? { inquiries: true } : {}) };
 });
 storefront.route("/", members);
+// お問い合わせ（同梱モジュール inquiries）も同じくショップの解決を借りる
+bindInquiryScope(async (c) => {
+  const s = await scope(c);
+  return s ? { shop: s.shop, sf: s.sf, ctx: s.ctx, theme: s.theme } : null;
+});
+storefront.route("/", inquiries);
 
 async function writeCart(c: Ctx, s: ShopScope, cart: Cart): Promise<void> {
   const secret = c.get("sessionSecret");
@@ -697,7 +708,10 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
   const result = await s.sf.lookupOrder(s.shop, number, email);
   if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
-  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE) }));
+  // この注文について問い合わせる（同梱モジュール inquiries）: 番号とメールアドレスが合った組を署名して、フォームに POST で渡す
+  const secret = c.get("sessionSecret");
+  const inquiry = secret && s.ctx.inquiries ? { token: await sealOrderToken(secret, s.shop.id, number, email) } : null;
+  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE), inquiry }));
 });
 
 /** 領収書（同梱モジュール receipt）。注文照会と同じく注文番号とメールアドレスで引く（GET の URL にメールアドレスを載せない） */
@@ -737,7 +751,9 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     const refresh = r.status === "pending" && Date.now() / 1000 - token.issuedAt < DONE_REFRESH_WINDOW_SECONDS;
     // 確定したときだけ購入とする（注文番号で重ねて数えないのは受け取る側の仕事）
     if (r.status === "confirmed" && r.order) track(c, "purchase", r.order.total_jpy, [], r.order.number);
-    return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free, status: r.status, orderNumber: r.order?.number ?? null, refresh }), 200, { "cache-control": "no-store" });
+    // この注文について問い合わせる（同梱モジュール inquiries）: 同じ状態トークンをフォームに渡す（返事は注文時のアドレスへ）
+    const inquiryUrl = r.status === "confirmed" && s.ctx.inquiries && (await inquiriesReady(s.sf, s.shop, s.theme)) ? `${s.ctx.shopPath}/inquiries/new?s=${encodeURIComponent(c.req.query("s") ?? "")}` : null;
+    return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free, status: r.status, orderNumber: r.order?.number ?? null, refresh, inquiryUrl }), 200, { "cache-control": "no-store" });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);
     return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free }));

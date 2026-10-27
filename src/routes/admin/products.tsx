@@ -96,7 +96,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const filtered = Boolean(q || state || after);
   const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("product.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "products" }}>
+    <AdminLayout title={`${shop.name} · ${t("product.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
       <PageHead title={t("product.list")}>
         <a class="btn secondary" href={`/admin/shops/${shop.id}/categories`}>
           {t("category.title")}
@@ -281,7 +281,7 @@ products.get("/:shopId/products/new", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
   return c.html(
-    <AdminLayout title={t("product.new")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list"), href: `/admin/shops/${shop.id}/products` }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "products" }}>
+    <AdminLayout title={t("product.new")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list"), href: `/admin/shops/${shop.id}/products` }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
       <PageHead title={t("product.new")} />
       <Flash flash={flash(c.req.query("flash"))} />
       <ProductForm action={`/admin/shops/${shop.id}/products/new`} catalog={await catalogContext(c, shop)} />
@@ -368,7 +368,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const catalog = await catalogContext(c, shop);
 
   return c.html(
-    <AdminLayout title={`${product.name} · ${t("product.edit")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list"), href: `/admin/shops/${shop.id}/products` }, { label: product.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "products" }}>
+    <AdminLayout title={`${product.name} · ${t("product.edit")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list"), href: `/admin/shops/${shop.id}/products` }, { label: product.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
       <PageHead
         title={
           <>
