@@ -140,6 +140,17 @@ v1.post("/products/:id/images/upload", async (c) => {
     return errorJson(c, e);
   }
 });
+// 画像を SKU の options の一部に結ぶ（0063）。{ options: { color: "レッド" } }、{} で商品全体
+v1.patch("/images/:id", async (c) =>
+  body(c)
+    .then((b) => {
+      const o = b["options"];
+      if (!o || typeof o !== "object" || Array.isArray(o)) throw new ApiError("invalid", "options must be an object", 400);
+      return api(c).imageSetOptions(c.req.param("id"), o as Record<string, unknown>);
+    })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
 v1.delete("/images/:id", async (c) => api(c).imageDelete(c.req.param("id")).then(() => c.body(null, 204)).catch((e) => errorJson(c, e)));
 
 v1.get("/orders", async (c) =>

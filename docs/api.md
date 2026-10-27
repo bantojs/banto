@@ -92,6 +92,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `category_save`【書き込み】 | products:write | `POST /categories` |
 | `sku_create` / `sku_update` / `sku_delete`【書き込み】 | products:write | `POST /products/{id}/skus`、`PATCH /skus/{id}`、`DELETE /skus/{id}` |
 | `product_image_add` / `product_image_delete`【書き込み】 | products:write | `POST /products/{id}/images`（URL から取り込み。http(s)・公開アドレス・5MB・画像のみ）、`DELETE /images/{id}` |
+| `product_image_set_options`【書き込み】 | products:write | `PATCH /images/{id}`（画像を SKU の選択肢に結ぶ。0063） |
 | `orders_list` / `order_get` | orders:read（個人情報は orders:pii） | `GET /orders`、`GET /orders/{id}` |
 | `order_update_status`【書き込み】 | orders:write（キャンセルは発行者の orders_cancel も） | `POST /orders/{id}/status` |
 | `stores_list` | shop:read | `GET /stores` |
@@ -122,6 +123,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `DELETE /skus/{id}` | products:write | 注文履歴がある SKU は削除できない（非公開にする） |
 | `POST /products/{id}/images` | products:write | `image_url`（Banto がその URL から取ってくる） |
 | `POST /products/{id}/images/upload` | products:write | 画像のファイルそのもの。下の「画像のファイルを送る」 |
+| `PATCH /images/{id}` | products:write | `options`（SKU の `options` の一部。`{ "color": "レッド" }` でそのカラーの全 SKU、`{ "color": "レッド", "size": "M" }` でその SKU だけ、`{}` で商品全体。鍵 5 つまで・値は 60 文字までの文字列）。返すのは商品。0063 |
 | `DELETE /images/{id}` | products:write | |
 | `GET /categories` | products:read | |
 | `POST /categories` | products:write | `slug` `name` `parent`（親の slug） `sort_order`。slug が同じなら更新 |

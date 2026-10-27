@@ -14,6 +14,7 @@ import { commerceApi } from "./commerce";
 import { memberCors, membersApi } from "./members";
 import { tryonApi } from "./tryon";
 import { inquiriesApi } from "./inquiries";
+import { imageOptionsOf } from "../../products/images";
 
 /**
  * ヘッドレス API（公開）。外部フロント（WordPress・Next.js 等）やプラグインが使う。docs/headless.md
@@ -170,7 +171,7 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       attributes: publicAttributes(productFields(shop.settings), p.attributes),
       updated_at: p.updated_at,
       images: detail.images.map((i) => imageUrl(d.mediaBaseUrl, i.storage_key)),
-      image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height })),
+      image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height, options: imageOptionsOf(i.options) })),
       skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
     },
   });

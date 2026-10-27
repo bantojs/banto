@@ -3,6 +3,7 @@ import { raw } from "hono/html";
 import type { StoreView, Theme, ThemeContext } from "../types";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
+import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
 
 /** パスキーのボタン（同梱モジュール passkey）。動きは `${shopPath}/account/passkey.js`（src/modules/passkey）が付ける */
 function PasskeyButton({ ctx, kind, returnTo }: { ctx: ThemeContext; kind: "login" | "register"; returnTo?: string | undefined }) {
@@ -295,9 +296,13 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ProductPage({ ctx, detail, added, categoryPath, attributes }) {
-    const { product, images, skus } = detail;
+  ProductPage({ ctx, detail, added, selectedSku, categoryPath, attributes }) {
+    const { product, skus } = detail;
     const inStock = skus.filter((s) => s.available > 0);
+    // SKU ごとの画像（0063）: ?sku= で選んだ SKU に結んだ画像を先頭に（スクリプトは選び直したときに同じ規則で並べ替える）
+    const chosen = skus.find((s) => s.code === selectedSku) ?? null;
+    const images = orderImagesForSku(detail.images, chosen?.options);
+    const skuImages = detail.images.some((img) => Object.keys(imageOptionsOf(img.options)).length > 0);
     const first = images[0];
     return (
       <Layout
@@ -329,12 +334,17 @@ export const defaultTheme: Theme = {
           {product.name}
         </p>
         <div class="product">
-          <div class="gallery">
-            {first ? <img src={imageUrl(ctx.mediaBaseUrl, first.storage_key)} width={first.width ?? undefined} height={first.height ?? undefined} alt={product.name} fetchpriority="high" decoding="async" /> : null}
+          <div class="gallery" data-sku-images={skuImages ? "" : undefined}>
+            {first ? <img src={imageUrl(ctx.mediaBaseUrl, first.storage_key)} width={first.width ?? undefined} height={first.height ?? undefined} alt={product.name} fetchpriority="high" decoding="async" data-main="" /> : null}
             {images.length > 1 ? (
               <div class="thumbs">
                 {images.map((img) => (
-                  <a href={imageUrl(ctx.mediaBaseUrl, img.storage_key)} target="_blank" rel="noopener">
+                  <a
+                    href={imageUrl(ctx.mediaBaseUrl, img.storage_key)}
+                    target="_blank"
+                    rel="noopener"
+                    {...(skuImages ? { "data-image-options": JSON.stringify(imageOptionsOf(img.options)), "data-index": String(detail.images.indexOf(img)), "data-src": imageUrl(ctx.mediaBaseUrl, img.storage_key) } : {})}
+                  >
                     <img src={imageUrl(ctx.mediaBaseUrl, img.thumb_key ?? img.storage_key)} alt="" loading="lazy" decoding="async" />
                   </a>
                 ))}
@@ -375,7 +385,7 @@ export const defaultTheme: Theme = {
                 <label for="sku_id">{t("store.variant")}</label>
                 <select id="sku_id" name="sku_id" required>
                   {skus.map((s) => (
-                    <option value={s.id} disabled={s.available <= 0}>
+                    <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
                       {skuLabel(s)} — {s.compare_at_price_jpy ? `${t("store.regular_price")} ${yen(s.compare_at_price_jpy)} → ` : ""}
                       {yen(s.price_jpy)}
                       {s.available <= 0 ? ` (${t("store.sold_out")})` : s.available <= 5 ? ` (${t("store.low_stock")})` : ""}
@@ -391,6 +401,7 @@ export const defaultTheme: Theme = {
                 </p>
               </form>
             ) : null}
+            {skuImages && skus.length > 1 ? <script dangerouslySetInnerHTML={{ __html: SKU_IMAGE_SCRIPT }} /> : null}
           </div>
         </div>
       </Layout>

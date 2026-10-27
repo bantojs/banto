@@ -194,6 +194,18 @@ export const MCP_TOOLS: McpTool[] = [
     run: (api, a) => api.imageAddFromUrl(str(a, "product_id", true)!, str(a, "image_url", true)!),
   },
   {
+    name: "product_image_set_options",
+    description:
+      "【書き込み】商品画像を SKU に結ぶ。options は SKU の options の一部（例: { color: \"レッド\" } でそのカラーの全サイズ、{ color: \"レッド\", size: \"M\" } でその SKU だけ、{} で商品全体）。お店の画面と商品フィードで、その SKU の画像が先頭になる。スコープ products:write。",
+    inputSchema: obj({ image_id: s("string"), options: { type: "object", additionalProperties: { type: "string" } } }, ["image_id", "options"]),
+    readOnly: false,
+    run: (api, a) => {
+      const o = a["options"];
+      if (!o || typeof o !== "object" || Array.isArray(o)) throw new ApiError("invalid", "options must be an object", 400);
+      return api.imageSetOptions(str(a, "image_id", true)!, o as Record<string, unknown>);
+    },
+  },
+  {
     name: "product_image_delete",
     description: "【書き込み】商品画像を削除する。スコープ products:write。",
     inputSchema: obj({ image_id: s("string") }, ["image_id"]),

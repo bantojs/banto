@@ -369,6 +369,8 @@ export const en: Record<MessageKey, string> = {
   "sku.none": "No SKUs yet. Prices and stock are kept per SKU, so add one first.",
   "sku.invalid": "Check the SKU code, price and stock values.",
 
+  "image.options_any": "Any",
+  "image.options_hint": "For each image you can choose which SKUs it shows (e.g. choose only a colour for all sizes of that colour, or a colour and a size for that one SKU). Leave all as \"Any\" for an image of the whole product. On the shop, the images of the selected SKU are shown first.",
   "image.list": "Images",
   "image.upload": "Upload image",
   "image.file": "File (JPEG / PNG / WebP / GIF / AVIF, up to 5 MB)",

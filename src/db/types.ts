@@ -87,6 +87,8 @@ export interface ProductImageRow {
   width: number | null;
   height: number | null;
   sort_order: number;
+  /** 0063。どの SKU の画像か（SKU の options の一部。{} なら商品全体）。src/products/images.ts */
+  options?: Record<string, string>;
   created_at: string;
 }
 

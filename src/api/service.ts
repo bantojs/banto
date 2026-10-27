@@ -13,6 +13,7 @@ import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
 import { API_INQUIRIES_MIGRATION } from "./tokens";
+import { SKU_IMAGES_MIGRATION } from "../products/images";
 import type { Mailer } from "../mail/send";
 import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
@@ -68,6 +69,7 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
     if (e.is("email_change_not_allowed")) throw new ApiError("invalid", "email_change_not_allowed: email addresses can only be changed from the admin screen", 400);
     if (/invalid_transition|hold_until_required|not_restockable/.test(e.dbMessage)) throw new ApiError("conflict", e.dbMessage.replace(/^.*?(invalid_transition|hold_until_required|not_restockable).*$/s, "$1"), 409);
+    if (e.is("invalid_options")) throw new ApiError("invalid", "invalid_options: an object of up to 5 string values (keys up to 40 characters, values up to 60) taken from the SKU options, or {} for the whole product", 400);
     if (e.is("invalid_extra_categories")) throw new ApiError("invalid", "invalid_extra_categories: an array of up to 20 category slugs", 400);
     if (e.is("category_not_found")) throw new ApiError("invalid", "category_not_found: create it with category_save first", 400);
     if (/category_too_deep|category_cycle/.test(e.dbMessage)) throw new ApiError("invalid", "categories can be at most 3 levels deep and cannot be moved under their own child", 400);
@@ -261,6 +263,16 @@ export class ApiService {
   async imageDelete(imageId: string): Promise<void> {
     const keys = await this.call<{ storage_key: string; thumb_key: string | null }>("api_image_delete", { p_image_id: imageId });
     await Promise.all([keys.storage_key, keys.thumb_key].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+  }
+
+  /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */
+  async imageSetOptions(imageId: string, options: Record<string, unknown>): Promise<Record<string, unknown>> {
+    uuidOr404(imageId);
+    if (!(await this.migratedTo(SKU_IMAGES_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `image options need the database update ${SKU_IMAGES_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    return this.call<Record<string, unknown>>("api_image_set_options", { p_image_id: imageId, p_options: options });
   }
 
   // ---- orders ----
