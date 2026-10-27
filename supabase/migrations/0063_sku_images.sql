@@ -134,6 +134,66 @@ $$;
 revoke execute on function api_image_set_options(text, uuid, jsonb) from public, anon, authenticated;
 grant execute on function api_image_set_options(text, uuid, jsonb) to service_role;
 
+-- 画像の登録と同時に SKU に結ぶ（URL からの取り込み・ファイルでの登録。0003・0037 を差し替え、引数 p_options を足す）。
+-- 登録と結びつけを 1 回で行う（途中で落ちて、結べていない画像が残らないように）。{}（既定）は商品全体（対応表があればトリガーが写す）
+drop function if exists api_image_add(text, uuid, text, integer);
+create or replace function api_image_add(p_token_hash text, p_product_id uuid, p_storage_key text, p_sort_order integer default null, p_options jsonb default '{}'::jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_sort integer;
+begin
+  v_tok := api_require(p_token_hash, 'products:write');
+  if not banto_image_options_ok(coalesce(p_options, 'null'::jsonb)) then raise exception 'invalid_options'; end if;
+  if not exists (select 1 from products where id = p_product_id and shop_id = v_tok.shop_id) then raise exception 'not_found'; end if;
+  if p_storage_key !~ ('^shops/' || v_tok.shop_id::text || '/') then raise exception 'invalid_storage_key'; end if;
+  select coalesce(p_sort_order, coalesce(max(sort_order), -1) + 1) into v_sort from product_images where product_id = p_product_id;
+  insert into product_images (shop_id, product_id, storage_key, sort_order, options) values (v_tok.shop_id, p_product_id, p_storage_key, v_sort, p_options);
+  return api_product_get(p_token_hash, p_product_id);
+end;
+$$;
+revoke execute on function api_image_add(text, uuid, text, integer, jsonb) from public, anon, authenticated;
+grant execute on function api_image_add(text, uuid, text, integer, jsonb) to service_role;
+
+drop function if exists api_image_add_file(text, uuid, text, text, integer, integer);
+create or replace function api_image_add_file(p_token_hash text, p_product_id uuid, p_storage_key text,
+                                              p_thumb_key text default null, p_width integer default null, p_height integer default null,
+                                              p_options jsonb default '{}'::jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_sort integer; v_prefix text; v_id uuid;
+begin
+  v_tok := api_require(p_token_hash, 'products:write');
+  if not banto_image_options_ok(coalesce(p_options, 'null'::jsonb)) then raise exception 'invalid_options'; end if;
+  if not exists (select 1 from products where id = p_product_id and shop_id = v_tok.shop_id) then raise exception 'not_found'; end if;
+  v_prefix := 'shops/' || v_tok.shop_id::text || '/products/' || p_product_id::text || '/';
+  if p_storage_key is null or left(p_storage_key, length(v_prefix)) <> v_prefix
+     or substr(p_storage_key, length(v_prefix) + 1) !~ '^[0-9a-f]{24}\.(jpg|png|webp|gif|avif)$' then
+    raise exception 'invalid_storage_key';
+  end if;
+  if p_thumb_key is not null and (left(p_thumb_key, length(v_prefix)) <> v_prefix
+     or substr(p_thumb_key, length(v_prefix) + 1) !~ ('^' || substr(p_storage_key, length(v_prefix) + 1, 24) || '\.thumb\.(jpg|png|webp|gif|avif)$')) then
+    raise exception 'invalid_thumb_key';
+  end if;
+  if (p_width is null) <> (p_height is null) or p_width not between 1 and 20000 or p_height not between 1 and 20000 then
+    raise exception 'invalid_dimensions';
+  end if;
+  select coalesce(max(sort_order), -1) + 1 into v_sort from product_images where product_id = p_product_id;
+  insert into product_images (shop_id, product_id, storage_key, thumb_key, width, height, sort_order, options)
+  values (v_tok.shop_id, p_product_id, p_storage_key, p_thumb_key, p_width, p_height, v_sort, p_options)
+  returning id into v_id;
+  -- products:write だけのトークンでも結果を返せるよう、api_product_get（products:read）ではなく整形だけを使う
+  return jsonb_build_object('image_id', v_id, 'product', (select api_product_json(p) from products p where p.id = p_product_id));
+end;
+$$;
+revoke execute on function api_image_add_file(text, uuid, text, text, integer, integer, jsonb) from public, anon, authenticated;
+grant execute on function api_image_add_file(text, uuid, text, text, integer, integer, jsonb) to service_role;
+
 -- ---------- 復元: restore_shop_data（0012）は options を知らないので、あとから写す ----------
 -- p_items = [{ storage_key, options }]。そのショップの、同じキーの画像に写す（1 回 5,000 件まで）
 create or replace function restore_product_image_options(p_shop_id uuid, p_items jsonb)

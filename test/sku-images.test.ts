@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { SKU_IMAGES_MIGRATION, imageOptionsFromForm, orderImagesForSku, skuOptionChoices } from "../src/products/images";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
@@ -14,7 +14,7 @@ function setup(opts: { appliedMigrations?: string[] } = {}) {
   const sb = new FakeSupabase(opts.appliedMigrations ? { appliedMigrations: opts.appliedMigrations } : {});
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules: { product_feed: true } } });
-  const tee = sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
+  const tee = sb.addProduct(shop.id, { id: crypto.randomUUID(), slug: "tee", name: "Tシャツ", published: true });
   const redM = sb.addSku(shop.id, tee.id, { code: "TEE-RED-M", price_jpy: 3000, available: 3, options: { color: "レッド", size: "M" } });
   const redL = sb.addSku(shop.id, tee.id, { code: "TEE-RED-L", price_jpy: 3000, available: 3, options: { color: "レッド", size: "L" } });
   const blueM = sb.addSku(shop.id, tee.id, { code: "TEE-BLUE-M", price_jpy: 3000, available: 3, options: { color: "ブルー", size: "M" } });
@@ -172,5 +172,72 @@ describe("SKU ごとの画像: 管理画面・AI 用 API・復元", () => {
     expect(decodeURIComponent(res.headers.get("location")!)).toContain("product_image_options: 3");
     const restored = sb.tables.product_images.filter((i) => i["shop_id"] === dst.id);
     expect(restored.find((i) => i["storage_key"] === "shops/s/red-l.webp")!["options"]).toEqual({ color: "レッド", size: "L" });
+  });
+});
+
+describe("SKU ごとの画像: 登録と同時に結ぶ（AI 用 API）", () => {
+  afterEach(() => externalHosts.clear());
+  const newest = (sb: FakeSupabase) => sb.tables.product_images[sb.tables.product_images.length - 1]!;
+
+  it("URL から: POST /products/{id}/images の options。MCP の product_image_add も同じ。形の違う options は 400 で画像を置かない", async () => {
+    const { sb, tee, app, storage, issue } = setup();
+    const tok = await issue(["products:read", "products:write"]);
+    externalHosts.set("https://images.example/", () => new Response(tinyPng(), { headers: { "content-type": "image/png" } }));
+    const post = (body: unknown) => app.request(`${BASE}/api/v1/products/${tee.id}/images`, { method: "POST", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    let res = await post({ image_url: "https://images.example/red.png", options: { color: "レッド" } });
+    expect(res.status).toBe(201);
+    expect(newest(sb)["options"]).toEqual({ color: "レッド" });
+    // 省略は商品全体
+    await post({ image_url: "https://images.example/all.png" });
+    expect(newest(sb)["options"]).toEqual({});
+    const before = storage.objects.size;
+    res = await post({ image_url: "https://images.example/x.png", options: "red" });
+    expect(res.status).toBe(400);
+    res = await post({ image_url: "https://images.example/x.png", options: { color: 1 } });
+    expect(res.status).toBe(400);
+    expect(storage.objects.size).toBe(before);
+
+    const mcp = await app.request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "product_image_add", arguments: { product_id: tee.id, image_url: "https://images.example/blue.png", options: { color: "ブルー", size: "M" } } } }),
+    });
+    expect(((await mcp.json()) as { result: { isError?: boolean } }).result.isError).toBeFalsy();
+    expect(newest(sb)["options"]).toEqual({ color: "ブルー", size: "M" });
+  });
+
+  it("ファイルで: multipart の options の欄、本文が画像そのものなら ?options=", async () => {
+    const { sb, tee, app, issue } = setup();
+    const tok = await issue(["products:write"]);
+    const upload = (qs: string, body: Uint8Array<ArrayBuffer>, contentType: string) =>
+      app.request(`${BASE}/api/v1/products/${tee.id}/images/upload${qs}`, { method: "POST", headers: { authorization: `Bearer ${tok}`, "content-type": contentType, "content-length": String(body.byteLength) }, body });
+    const png = tinyPng(16, 16);
+    let res = await upload(`?options=${encodeURIComponent(JSON.stringify({ color: "レッド", size: "L" }))}`, png, "image/png");
+    expect(res.status).toBe(201);
+    let id = ((await res.json()) as { image_id: string }).image_id;
+    expect(sb.tables.product_images.find((i) => i["id"] === id)!["options"]).toEqual({ color: "レッド", size: "L" });
+
+    const form = new FormData();
+    form.append("image", new Blob([png]), "a.png");
+    form.append("options", JSON.stringify({ color: "ブルー" }));
+    const req = new Request("http://x", { method: "POST", body: form });
+    const body = new Uint8Array(await req.arrayBuffer());
+    res = await upload("", body, req.headers.get("content-type")!);
+    expect(res.status).toBe(201);
+    id = ((await res.json()) as { image_id: string }).image_id;
+    expect(sb.tables.product_images.find((i) => i["id"] === id)!["options"]).toEqual({ color: "ブルー" });
+
+    expect((await upload("?options=not-json", png, "image/png")).status).toBe(400);
+  });
+
+  it("0063 が未適用なら、options を付けた登録は 409（付けなければ今までどおり登録できる）", async () => {
+    const { sb, tee, app, issue } = setup({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== SKU_IMAGES_MIGRATION) });
+    const tok = await issue(["products:write"]);
+    const png = tinyPng(16, 16);
+    const upload = (qs: string) => app.request(`${BASE}/api/v1/products/${tee.id}/images/upload${qs}`, { method: "POST", headers: { authorization: `Bearer ${tok}`, "content-type": "image/png", "content-length": String(png.byteLength) }, body: png });
+    const n = sb.tables.product_images.length;
+    expect((await upload(`?options=${encodeURIComponent('{"color":"レッド"}')}`)).status).toBe(409);
+    expect(sb.tables.product_images.length).toBe(n);
+    expect((await upload("")).status).toBe(201);
   });
 });

@@ -91,7 +91,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `product_create` / `product_update`【書き込み】 | products:write | `POST /products`、`PATCH /products/{id}` |
 | `category_save`【書き込み】 | products:write | `POST /categories` |
 | `sku_create` / `sku_update` / `sku_delete`【書き込み】 | products:write | `POST /products/{id}/skus`、`PATCH /skus/{id}`、`DELETE /skus/{id}` |
-| `product_image_add` / `product_image_delete`【書き込み】 | products:write | `POST /products/{id}/images`（URL から取り込み。http(s)・公開アドレス・5MB・画像のみ）、`DELETE /images/{id}` |
+| `product_image_add` / `product_image_delete`【書き込み】 | products:write | `POST /products/{id}/images`（URL から取り込み。http(s)・公開アドレス・5MB・画像のみ。`options` で SKU に結んで登録、0063）、`DELETE /images/{id}` |
 | `product_image_set_options`【書き込み】 | products:write | `PATCH /images/{id}`（画像を SKU の選択肢に結ぶ。0063） |
 | `orders_list` / `order_get` | orders:read（個人情報は orders:pii） | `GET /orders`、`GET /orders/{id}` |
 | `order_update_status`【書き込み】 | orders:write（キャンセルは発行者の orders_cancel も） | `POST /orders/{id}/status` |
@@ -121,8 +121,8 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `POST /products/{id}/skus` | products:write | `code` `name` `price_jpy` `available` `options` `compare_at_price_jpy` `gtin` |
 | `PATCH /skus/{id}` | products:write | 同上（`available` で在庫数を直接セット） |
 | `DELETE /skus/{id}` | products:write | 注文履歴がある SKU は削除できない（非公開にする） |
-| `POST /products/{id}/images` | products:write | `image_url`（Banto がその URL から取ってくる） |
-| `POST /products/{id}/images/upload` | products:write | 画像のファイルそのもの。下の「画像のファイルを送る」 |
+| `POST /products/{id}/images` | products:write | `image_url`（Banto がその URL から取ってくる）、`options`（任意。登録と同時に SKU に結ぶ。形は `PATCH /images/{id}` と同じ、0063） |
+| `POST /products/{id}/images/upload` | products:write | 画像のファイルそのもの。下の「画像のファイルを送る」。SKU に結ぶなら multipart の `options` の欄か `?options=`（JSON） |
 | `PATCH /images/{id}` | products:write | `options`（SKU の `options` の一部。`{ "color": "レッド" }` でそのカラーの全 SKU、`{ "color": "レッド", "size": "M" }` でその SKU だけ、`{}` で商品全体。鍵 5 つまで・値は 60 文字までの文字列）。返すのは商品。0063 |
 | `DELETE /images/{id}` | products:write | |
 | `GET /categories` | products:read | |
@@ -160,11 +160,14 @@ DB が 0032 より前のあいだは、`GET /shop` に `checkout_terms` が無�
 **画像のファイルを送る**（`POST /products/{id}/images/upload`、0037）: 本文に画像そのものを入れる（`Content-Type: image/jpeg` など）か、`multipart/form-data` で `image`（必須）と `thumbnail`（任意）を送ります。
 Banto は画像を縮小しないので（Worker の CPU の制限）、**長辺 1600px 程度に縮小した本画像**と、あれば **長辺 400px 程度のサムネイル**を送ってください（管理画面からのアップロードと同じ大きさ。サムネイルがあると一覧のページが軽くなります）。
 種類は中身の先頭のバイトで決め、申告の Content-Type は使いません。JPEG・PNG・WebP・GIF・AVIF だけで、SVG は受けません。本画像は 5MB、サムネイルは 1MB まで。`Content-Length` が要ります（無いと 411、大きすぎると 413）。寸法は見出しから読んで残します（AVIF は残しません）。
-応答は `{ "image_id", "product" }`。公開 URL のある画像なら、今までどおり `POST /products/{id}/images`（`image_url`）でも取り込めます（こちらはサムネイルなし）。
+応答は `{ "image_id", "product" }`。
+登録と同時に SKU に結ぶときは（0063）、multipart なら `options` の欄に、本文が画像そのものなら `?options=` に、`{"color":"レッド"}` のような JSON を入れます（形は `PATCH /images/{id}` と同じ。省略は商品全体）。登録と結びつけは 1 回の処理なので、結べずに画像だけ残ることはありません。DB が 0063 より前なら、`options` を付けた登録は 409 `migration_required` です（付けなければ今までどおり）。
+公開 URL のある画像なら、今までどおり `POST /products/{id}/images`（`image_url`）でも取り込めます（こちらはサムネイルなし）。
 
 ```bash
 curl -X POST -H "Authorization: Bearer banto_..." -H "Content-Type: image/webp" --data-binary @main.webp https://<ショップの URL>/api/v1/products/<id>/images/upload
 curl -X POST -H "Authorization: Bearer banto_..." -F image=@main.webp -F thumbnail=@thumb.webp https://<ショップの URL>/api/v1/products/<id>/images/upload
+curl -X POST -H "Authorization: Bearer banto_..." -F image=@red.webp -F 'options={"color":"レッド"}' https://<ショップの URL>/api/v1/products/<id>/images/upload
 ```
 
 クーポン（`/coupons`）はモジュール「クーポン」が ON のショップだけ使えます（OFF なら 409、`module_disabled`）。値引きの判定は今までどおりコア（docs/coupons.md）で、API は条件を登録するだけです。

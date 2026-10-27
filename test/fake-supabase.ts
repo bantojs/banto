@@ -33,6 +33,9 @@ interface User {
 
 export type Row = Record<string, unknown>;
 
+/** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
+const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
+
 type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
@@ -1993,27 +1996,29 @@ export class FakeSupabase {
       }
       case "api_image_add": {
         if (!need("products:write")) return unauthorized();
+        if (args["p_options"] !== undefined && badImageOptions(args["p_options"])) return json({ code: "P0001", message: "invalid_options" }, 400);
         const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
         if (!p) return notFound();
         if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/`)) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
-        this.tables.product_images.push({ id: `img-${++this.seq}`, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: null, width: null, height: null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now() });
+        this.tables.product_images.push({ id: `img-${++this.seq}`, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: null, width: null, height: null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now(), options: args["p_options"] ?? {} });
         return json(product(p));
       }
       case "api_image_add_file": {
         // 0037: キーの形の検査は test/db/api-image-upload.test.ts（本物の SQL）
         if (!need("products:write")) return unauthorized();
+        if (args["p_options"] !== undefined && badImageOptions(args["p_options"])) return json({ code: "P0001", message: "invalid_options" }, 400);
         const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
         if (!p) return notFound();
         if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/products/${p["id"]}/`)) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
         const id = `img-${++this.seq}`;
-        this.tables.product_images.push({ id, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now() });
+        this.tables.product_images.push({ id, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now(), options: args["p_options"] ?? {} });
         return json({ image_id: id, product: product(p) });
       }
       case "api_image_set_options": {
         // 0063: 形の検査（banto_image_options_ok）は test/db/sku-images.test.ts（本物の SQL）
         if (!need("products:write")) return unauthorized();
         const o = args["p_options"];
-        if (!o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Row).some((v) => typeof v !== "string" || v === "")) return json({ code: "P0001", message: "invalid_options" }, 400);
+        if (badImageOptions(o)) return json({ code: "P0001", message: "invalid_options" }, 400);
         const i = mine(this.tables.product_images.find((x) => x["id"] === args["p_image_id"]));
         if (!i) return notFound();
         i["options"] = o;

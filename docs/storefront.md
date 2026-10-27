@@ -49,5 +49,5 @@ Banto の本体は、分析サービスの仕様を持ちません（CLAUDE.md �
   - カラーとサイズ（例: レッド・M）… その SKU だけ
 - お店の商品ページで SKU を選ぶと、その SKU に結んだ画像が先頭に並び、大きな画像も切り替わります（細かく結んだ画像が先、次に商品全体の画像、ほかのカラーの画像は後ろ）。
 - `?sku=<品番>` を付けた URL は、最初からその SKU の画像で開きます（スクリプトが動かない環境でも同じ）。商品フィードの商品ページの URL にもこれが付きます（docs/product-feed.md）。
-- AI 用 API からは `PATCH /api/v1/images/{id}`（MCP の `product_image_set_options`）で結べます（docs/api.md）。ヘッドレスの公開 API は `image_variants[].options` を返します（docs/headless.md）。
+- AI 用 API からは、登録のときに `options` を付けて結ぶか（`POST /api/v1/products/{id}/images`・`/images/upload`、MCP の `product_image_add`）、登録したあとに `PATCH /api/v1/images/{id}`（MCP の `product_image_set_options`）で結べます（docs/api.md）。ヘッドレスの公開 API は `image_variants[].options` を返します（docs/headless.md）。
 - WooCommerce から取り込むと、バリエーションの画像はそのバリエーションの属性に結ばれます（docs/woo-import.md）。

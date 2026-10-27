@@ -104,6 +104,26 @@ describe.skipIf(!dbAvailable)("SKU ごとの画像（0063）", () => {
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select api_image_set_options($1, $2, $3)", [token, img.id, "{}"])))).toMatch(/permission denied/);
   });
 
+  it("AI 用 API: 登録と同時に結ぶ（api_image_add / api_image_add_file の p_options）。形が違えば画像の行を作らない。省略は商品全体", async () => {
+    const hex = "0123456789abcdef01234567";
+    const prefix = `shops/${a.shopId}/products/${a.productId}/`;
+    const call = <T>(sql: string, args: unknown[]) => asService(async (c) => (await c.query<{ r: T }>(sql, args)).rows[0]!.r);
+    const r = await call<{ image_id: string }>("select api_image_add_file($1, $2, $3, null, null, null, $4) as r", [token, a.productId, `${prefix}${hex}.webp`, JSON.stringify({ color: "レッド" })]);
+    const opts = (id: string) => getPool().query<{ o: Record<string, string> }>("select options as o from product_images where id = $1", [id]).then((x) => x.rows[0]!.o);
+    expect(await opts(r.image_id)).toEqual({ color: "レッド" });
+    const plain = await call<{ image_id: string }>("select api_image_add_file($1, $2, $3) as r", [token, a.productId, `${prefix}${hex.replace("0", "f")}.png`]);
+    expect(await opts(plain.image_id)).toEqual({});
+    const count = () => getPool().query("select count(*)::int as n from product_images where product_id = $1", [a.productId]).then((x) => x.rows[0]!.n as number);
+    const before = await count();
+    expect(await expectDbError(() => call("select api_image_add_file($1, $2, $3, null, null, null, $4) as r", [token, a.productId, `${prefix}${hex.replace("1", "e")}.png`, '{"color":1}']))).toMatch(/invalid_options/);
+    const viaUrl = await call<{ images: { storage_key: string; options: Record<string, string> }[] }>("select api_image_add($1, $2, $3, null, $4) as r", [token, a.productId, `shops/${a.shopId}/url.webp`, JSON.stringify({ size: "M" })]);
+    expect(viaUrl.images.find((i) => i.storage_key === `shops/${a.shopId}/url.webp`)!.options).toEqual({ size: "M" });
+    expect(await expectDbError(() => call("select api_image_add($1, $2, $3, null, $4) as r", [token, a.productId, `shops/${a.shopId}/bad.webp`, "[]"]))).toMatch(/invalid_options/);
+    expect(await count()).toBe(before + 1);
+    // 引数を足す前の呼び方（p_options なし）も通る
+    await call("select api_image_add($1, $2, $3) as r", [token, a.productId, `shops/${a.shopId}/old.webp`]);
+  });
+
   it("復元: restore_product_image_options は同じショップの同じキーの画像にだけ写す（service_role のみ）", async () => {
     await insertImage(a, "shops/a/restore.webp");
     await insertImage(b, "shops/a/restore.webp");

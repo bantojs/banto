@@ -52,6 +52,23 @@ export class ApiError extends Error {
   }
 }
 
+/** 画像の options の入力（0063）。無ければ undefined、object でなければ 400。中の値の形は SQL が確かめる */
+export function imageOptionsInput(v: unknown): Record<string, unknown> | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "object" || Array.isArray(v)) throw new ApiError("invalid", "options must be an object", 400);
+  return v as Record<string, unknown>;
+}
+
+/** multipart の欄・クエリの options（JSON の文字列） */
+export function parseOptionsText(v: unknown): unknown {
+  if (typeof v !== "string") throw new ApiError("invalid", "options must be a JSON object", 400);
+  try {
+    return JSON.parse(v);
+  } catch {
+    throw new ApiError("invalid", "options must be a JSON object", 400);
+  }
+}
+
 function mapRpcError(e: unknown): never {
   if (e instanceof PrivilegedRpcError) {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
@@ -173,7 +190,7 @@ export class ApiService {
   skuDelete = (skuId: string) => this.call<Record<string, unknown>>("api_sku_delete", { p_sku_id: skuId });
 
   /** 画像を URL から取り込む。http(s) のみ、プライベートアドレス不可、5MB まで、画像の Content-Type のみ */
-  async imageAddFromUrl(productId: string, url: string): Promise<Record<string, unknown>> {
+  async imageAddFromUrl(productId: string, url: string, options?: Record<string, unknown>): Promise<Record<string, unknown>> {
     // URL の形を先に確かめる（不正な URL で所有確認の RPC を呼ばない）
     try {
       const u = new URL(url);
@@ -181,6 +198,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "image_url must be an absolute http(s) URL", 400);
     }
+    const optionsArg = await this.imageOptionsArg(options);
     // 所有確認を先に（取得前に他ショップの product_id を弾く）
     await this.productGet({ id: productId });
     let image: Awaited<ReturnType<typeof fetchImage>>;
@@ -197,7 +215,7 @@ export class ApiService {
     const key = productImageKey(shop, productId, ext);
     await this.storage.put(key, buf, contentType);
     try {
-      return await this.call<Record<string, unknown>>("api_image_add", { p_product_id: productId, p_storage_key: key, p_sort_order: null });
+      return await this.call<Record<string, unknown>>("api_image_add", { p_product_id: productId, p_storage_key: key, p_sort_order: null, ...optionsArg });
     } catch (e) {
       await this.storage.delete(key).catch(() => undefined);
       throw e;
@@ -235,7 +253,7 @@ export class ApiService {
    * ファイルで送られた画像（とサムネイル）を置いて商品に登録する（0037）。縮小はしない（長辺 1600px 程度に縮小済みのものを送る）。
    * 種類は中身の先頭のバイトで決め、申告の Content-Type は信じない。SVG は受けない。寸法は見出しから読む（AVIF は読まない）。
    */
-  async imageUpload(productId: string, image: Uint8Array, thumbnail: Uint8Array | null): Promise<Record<string, unknown>> {
+  async imageUpload(productId: string, image: Uint8Array, thumbnail: Uint8Array | null, options?: Record<string, unknown>): Promise<Record<string, unknown>> {
     uuidOr404(productId);
     const main = sniffImage(image.subarray(0, 256));
     if (!main) throw new ApiError("invalid", "image must be JPEG, PNG, WebP, GIF or AVIF", 400);
@@ -245,6 +263,7 @@ export class ApiService {
     if (thumbnail && thumbnail.byteLength > MAX_THUMB_BYTES) throw new ApiError("invalid", "thumbnail is larger than 1MB", 400);
     // ストレージに書く前に、書き込みのスコープを確かめる（他のショップの商品は api_image_add_file が not_found にして、置いたものを消す）
     if (!(await this.call<boolean>("api_has_scope", { p_scope: "products:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
+    const optionsArg = await this.imageOptionsArg(options);
     const shop = await this.shopGetIdOnly();
     const key = productImageKey(shop, productId, main.ext);
     const tkey = thumbnail && thumb ? thumbKey(key, thumb.ext) : null;
@@ -253,7 +272,7 @@ export class ApiService {
     await this.storage.put(key, copy(image), main.contentType);
     try {
       if (tkey && thumbnail && thumb) await this.storage.put(tkey, copy(thumbnail), thumb.contentType);
-      return await this.call<Record<string, unknown>>("api_image_add_file", { p_product_id: productId, p_storage_key: key, p_thumb_key: tkey, p_width: size?.width ?? null, p_height: size?.height ?? null });
+      return await this.call<Record<string, unknown>>("api_image_add_file", { p_product_id: productId, p_storage_key: key, p_thumb_key: tkey, p_width: size?.width ?? null, p_height: size?.height ?? null, ...optionsArg });
     } catch (e) {
       await Promise.all([key, tkey].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
       throw e;
@@ -263,6 +282,19 @@ export class ApiService {
   async imageDelete(imageId: string): Promise<void> {
     const keys = await this.call<{ storage_key: string; thumb_key: string | null }>("api_image_delete", { p_image_id: imageId });
     await Promise.all([keys.storage_key, keys.thumb_key].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+  }
+
+  /**
+   * 登録と同時に SKU に結ぶときの引数（0063）。空なら引数を渡さない（0063 より前の DB でも今までどおり登録できる）。
+   * 形の検査は SQL（banto_image_options_ok）
+   */
+  private async imageOptionsArg(options: Record<string, unknown> | undefined): Promise<{ p_options?: Record<string, unknown> }> {
+    if (!options || Object.keys(options).length === 0) return {};
+    if (!(await this.migratedTo(SKU_IMAGES_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `image options need the database update ${SKU_IMAGES_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    return { p_options: options };
   }
 
   /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */

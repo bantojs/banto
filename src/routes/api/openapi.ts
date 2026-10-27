@@ -58,17 +58,17 @@ export function openapiDocument(origin: string, version: string): Record<string,
         patch: { summary: "商品を更新（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ slug: str, name: str, description: str, tags, category: str, extra_categories: { type: "array", items: str, maxItems: 20 }, brand: str, attributes: objAny, published: bool }) } } }, responses: { 200: resp("ok", product), ...errors } },
       },
       "/products/{id}/skus": { post: { summary: "SKU を追加（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ code: str, name: str, price_jpy: int, available: int, options: objAny, compare_at_price_jpy: nullableInt, gtin: str }, ["code", "price_jpy"]) } } }, responses: { 201: resp("created", product), ...errors } } },
-      "/products/{id}/images": { post: { summary: "画像を URL から追加（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ image_url: str }, ["image_url"]) } } }, responses: { 201: resp("created", product), ...errors } } },
+      "/products/{id}/images": { post: { summary: "画像を URL から追加（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ image_url: str, options: { type: "object", additionalProperties: str, description: "任意。SKU に結ぶ（PATCH /images/{id} と同じ形、0063）" } }, ["image_url"]) } } }, responses: { 201: resp("created", product), ...errors } } },
       "/products/{id}/images/upload": {
         post: {
           summary: "画像のファイルを送る（products:write）。本文が画像そのもの（Content-Type: image/*）か、multipart/form-data の image と thumbnail。縮小はしないので長辺 1600px 程度に縮小済みのものを送る。種類は中身で決め、SVG は受けない。5MB（サムネイル 1MB）まで。Content-Length が必要",
           security: bearer,
-          parameters: [{ name: "id", in: "path", required: true, schema: str }],
+          parameters: [{ name: "id", in: "path", required: true, schema: str }, { name: "options", in: "query", schema: str, description: "任意。SKU に結ぶ options の JSON（本文が画像そのもののとき。0063）" }],
           requestBody: {
             required: true,
             content: {
               "image/*": { schema: { type: "string", format: "binary" } },
-              "multipart/form-data": { schema: obj({ image: { type: "string", format: "binary" }, thumbnail: { type: "string", format: "binary", description: "長辺 400px 程度（任意）" } }, ["image"]) },
+              "multipart/form-data": { schema: obj({ image: { type: "string", format: "binary" }, thumbnail: { type: "string", format: "binary", description: "長辺 400px 程度（任意）" }, options: { type: "string", description: "任意。SKU に結ぶ options の JSON（0063）" } }, ["image"]) },
             },
           },
           responses: { 201: resp("created", obj({ image_id: str, product })), ...errors, 411: resp("Content-Length がない"), 413: resp("大きすぎる"), 415: resp("本文の形が違う") },
