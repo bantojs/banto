@@ -13,6 +13,8 @@ import { planLimitOf } from "../../plan/limits";
 import { t, type MessageKey } from "../../i18n";
 import { openJson, randomToken, sealJson } from "../../util/signed";
 import { buildCustomerMail, buildShopNotice, type InquiryMailShop } from "./mail";
+import { removeAttachments, storeAttachments, type StoredAttachment } from "./attachments";
+import type { StorageAdapter } from "../../adapters/types";
 import { moduleEnabled } from "../registry";
 import type { PublicShop, StorefrontData } from "../../storefront/data";
 import type { Theme } from "../../themes/types";
@@ -147,11 +149,26 @@ export interface InquiryDeps {
   mailer: Mailer | null;
   /** 管理画面の URL（PUBLIC_BASE_URL）。運営者へのお知らせのリンクに使う */
   adminBase: string;
+  /** 添付の置き場（公開しないバケット）。無ければ添付を受け付けない */
+  privateStorage?: StorageAdapter | null;
 }
 
 export type InquiryBasis = { kind: "form" } | { kind: "member"; customerId: string; epoch: number } | { kind: "order"; orderId: string } | { kind: "checkout"; quoteId: string };
 
-export type InquiryError = "disabled" | "unavailable" | "invalid" | "too_many" | "order_not_found" | "invalid_member" | "limit" | "closed" | "not_found";
+export type InquiryError =
+  | "disabled"
+  | "unavailable"
+  | "invalid"
+  | "too_many"
+  | "order_not_found"
+  | "invalid_member"
+  | "limit"
+  | "closed"
+  | "not_found"
+  | "attachments_unavailable"
+  | "attachment_too_many"
+  | "attachment_too_large"
+  | "attachment_type";
 
 function rpcError(e: unknown): InquiryError | null {
   if (planLimitOf(e)) return "limit"; // 1 日のメールの上限（0053、plan_limits.mail_per_day）
@@ -163,6 +180,8 @@ function rpcError(e: unknown): InquiryError | null {
   if (e.is("invalid_member")) return "invalid_member";
   if (e.is("inquiry_closed")) return "closed";
   if (e.is("inquiry_not_found")) return "not_found";
+  if (e.is("too_many_attachments")) return "attachment_too_many";
+  if (e.is("invalid_attachment")) return "attachment_type";
   if (e.is("invalid_category") || e.is("invalid_body") || e.is("invalid_email") || e.is("invalid_basis")) return "invalid";
   return null;
 }
@@ -245,21 +264,34 @@ export async function replyAsCustomer(
   access: { token: string } | { customerId: string; epoch: number; number: number },
   body: string,
   ip: string | null,
+  files: File[] = [],
 ): Promise<{ ok: true; number: number } | { ok: false; error: InquiryError }> {
   const text = body.replace(/\r\n?/g, "\n").trim().slice(0, BODY_MAX);
   if (!text) return { ok: false, error: "invalid" };
   const a = await accessOf(deps, access);
   if (!a) return { ok: false, error: "not_found" };
+  const stored = await storeFor(deps, shop.id, files);
+  if (!stored.ok) return stored;
   let r;
   try {
-    r = await deps.db.inquiryCustomerReply(shop.id, a, text, await ipHashOf(deps.secret, ip));
+    r = await deps.db.inquiryCustomerReply(shop.id, a, text, await ipHashOf(deps.secret, ip), stored.stored);
   } catch (e) {
+    if (deps.privateStorage && stored.stored.length > 0) await removeAttachments(deps.privateStorage, stored.stored.map((x) => x.key));
     const err = rpcError(e);
     if (err) return { ok: false, error: err };
     throw e;
   }
   await notifyShop(deps, shop, r.notify, r.mail_from, "reply", { id: r.id, number: r.number });
   return { ok: true, number: r.number };
+}
+
+/** 添付を置き場に置く（無ければ空。置き場が無いのに添付があれば断る） */
+export async function storeFor(deps: Pick<InquiryDeps, "privateStorage">, shopId: string, files: File[]): Promise<{ ok: true; stored: StoredAttachment[] } | { ok: false; error: InquiryError }> {
+  if (files.length === 0) return { ok: true, stored: [] };
+  if (!deps.privateStorage) return { ok: false, error: "attachments_unavailable" };
+  const r = await storeAttachments(deps.privateStorage, shopId, files);
+  if (!r.ok) return { ok: false, error: r.error === "too_many" ? "attachment_too_many" : r.error === "too_large" ? "attachment_too_large" : "attachment_type" };
+  return r;
 }
 
 /** リンクを送り直す（受付番号とメールアドレス）。合わなくても ok（送ったかどうかは返さない） */
@@ -318,4 +350,8 @@ export const ERROR_MESSAGES: Record<InquiryError, MessageKey> = {
   limit: "inq.error_limit",
   closed: "inq.error_closed",
   not_found: "inq.error_not_found",
+  attachments_unavailable: "inq.error_attachments_unavailable",
+  attachment_too_many: "inq.error_attachment_too_many",
+  attachment_too_large: "inq.error_attachment_too_large",
+  attachment_type: "inq.error_attachment_type",
 };

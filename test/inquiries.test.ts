@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase, type Row } from "./fake-supabase";
-import { BASE, Browser, appWith, externalHosts, memberLogin, memberMail } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, externalHosts, memberLogin, memberMail } from "./helpers";
 import { checkInquiry, fillTemplate, inquiryTemplates, openOrderToken, sealOrderToken } from "../src/modules/inquiries";
 import { buildCustomerMail, buildShopNotice } from "../src/modules/inquiries/mail";
 import { pageKind } from "../src/storefront/mode";
@@ -31,7 +31,7 @@ interface Ticket {
   claimed: number | null;
   return_to: string | null;
   links: Set<string>;
-  messages: { author: "customer" | "shop"; body: string; created_at: string }[];
+  messages: { author: "customer" | "shop"; body: string; created_at: string; attachments?: { id: string; key: string; filename: string; content_type: string; size: number }[] }[];
 }
 
 /** 0061 の関数の小さな真似（回数の制限・メールの記録は DB のテストで確かめる） */
@@ -41,7 +41,8 @@ function fakeInquiries(sb: FakeSupabase) {
   const err = (message: string) => json({ message }, 400);
   const view = (x: Ticket) => {
     const o = sb.tables.orders.find((r) => r["id"] === x.order_id);
-    return { id: x.id, number: x.number, status: x.status, category: x.category, created_at: "2026-10-27T00:00:00Z", last_message_at: "2026-10-27T00:00:00Z", verified: x.verified, claimed_order_number: x.claimed, order: o ? { number: o["number"], status: o["status"], created_at: o["created_at"], total_jpy: o["total_jpy"] } : null, messages: x.messages };
+    const messages = x.messages.map((m) => ({ author: m.author, body: m.body, created_at: m.created_at, attachments: (m.attachments ?? []).map((a) => ({ id: a.id, filename: a.filename, content_type: a.content_type, size: a.size })) }));
+    return { id: x.id, number: x.number, status: x.status, category: x.category, created_at: "2026-10-27T00:00:00Z", last_message_at: "2026-10-27T00:00:00Z", verified: x.verified, claimed_order_number: x.claimed, order: o ? { number: o["number"], status: o["status"], created_at: o["created_at"], total_jpy: o["total_jpy"] } : null, messages };
   };
   const summary = (o: Row) => ({ number: o["number"], status: o["status"], created_at: o["created_at"], total_jpy: o["total_jpy"], items: [{ name: "Tシャツ", qty: 1 }] });
   const byAccess = (shop: unknown, a: Record<string, unknown>) =>
@@ -110,7 +111,8 @@ function fakeInquiries(sb: FakeSupabase) {
         const t = byAccess(shop, a["p_access"] as Record<string, unknown>);
         if (!t || !t.verified) return err("inquiry_not_found");
         if (t.status === "closed") return err("inquiry_closed");
-        t.messages.push({ author: "customer", body: String(a["p_body"]), created_at: "2026-10-27T00:00:00Z" });
+        const files = ((a["p_attachments"] ?? []) as { key: string; filename: string; content_type: string; size: number }[]).map((f, i) => ({ ...f, id: `00000000-0000-4000-8000-${String(t.messages.length * 10 + i).padStart(12, "0")}` }));
+        t.messages.push({ author: "customer", body: String(a["p_body"]), created_at: "2026-10-27T00:00:00Z", attachments: files });
         t.status = "waiting_shop";
         return json({ id: t.id, number: t.number, notify: { send: true, to: "shop@example.com" }, mail_from: from });
       }
@@ -138,6 +140,11 @@ function fakeInquiries(sb: FakeSupabase) {
         const shop = sb.tables.shops[0]!;
         return json({ inquiry: { ...view(t), contact: undefined }, mail: { send: true, to: t.contact_email, mail_from: from, return_to: t.return_to, shop: { id: shop["id"], name: shop["name"], slug: shop["slug"], domain: null, settings: shop["settings"] } } });
       }
+      case "inquiry_attachment_get": {
+        const t = byAccess(shop, a["p_access"] as Record<string, unknown>);
+        const f = t?.messages.flatMap((m) => m.attachments ?? []).find((x) => x.id === a["p_attachment_id"]);
+        return json(f ? { storage_key: f.key, content_type: f.content_type, filename: f.filename, size: f.size } : null);
+      }
       case "inquiry_set_status": {
         tickets.find((x) => x.id === a["p_inquiry_id"])!.status = String(a["p_status"]);
         return new Response(null, { status: 204 });
@@ -151,7 +158,7 @@ function fakeInquiries(sb: FakeSupabase) {
   return tickets;
 }
 
-function setup(opts: { module?: boolean; members?: boolean; storefront?: string } = {}) {
+function setup(opts: { module?: boolean; members?: boolean; storefront?: string; privateStorage?: MemoryStorage } = {}) {
   const sb = new FakeSupabase();
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, {
@@ -167,7 +174,7 @@ function setup(opts: { module?: boolean; members?: boolean; storefront?: string 
   const mail = memberMail(sb, shop.id);
   disposers.push(mail.dispose);
   const tickets = fakeInquiries(sb);
-  const app = appWith(sb, { RESEND_API_KEY: "re_test" });
+  const app = appWith(sb, { RESEND_API_KEY: "re_test" }, undefined, undefined, opts.privateStorage);
   return { sb, shop, app, mail, tickets, b: new Browser(app) };
 }
 
@@ -320,6 +327,59 @@ describe("お問い合わせ（同梱テーマ）", () => {
     const { b } = setup({ storefront: "off" });
     expect((await b.get("/my-shop/inquiries/new")).status).toBe(200);
     expect((await b.get("/my-shop/cart")).status).toBe(404);
+  });
+});
+
+describe("お問い合わせの添付ファイル（公開しない置き場）", () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+  async function openedGuest(b: Browser, mail: ReturnType<typeof memberMail>) {
+    await b.post("/my-shop/inquiries/submit", { category: "order", body: "破損", email: "att@example.com" });
+    await b.post("/my-shop/inquiries/open", { t: new URL(mail.link("att@example.com")).searchParams.get("t")! });
+  }
+
+  it("確定したチケットの返事に画像を添付 → 公開しない置き場に置き、そのチケットを開ける人にだけ nosniff・sandbox で配る。公開の /media からは読めない", async () => {
+    const priv = new MemoryStorage(`${BASE}/never`);
+    const { app, b, mail, tickets } = setup({ privateStorage: priv });
+    await openedGuest(b, mail);
+    let html = await (await b.get("/my-shop/inquiries/thread")).text();
+    expect(html).toContain('enctype="multipart/form-data"');
+    expect(html).toContain('name="files"');
+    const res = await b.postMultipart("/my-shop/inquiries/reply", { body: "写真です", files: new File([jpeg], "../../etc/破損.jpg", { type: "text/plain" }) });
+    expect(res.headers.get("location")).toBe("/my-shop/inquiries/thread?flash=sent");
+    const stored = tickets[0]!.messages[1]!.attachments![0]!;
+    expect(stored).toMatchObject({ filename: "破損.jpg", content_type: "image/jpeg", size: jpeg.byteLength });
+    expect(stored.key.startsWith(`inq/${tickets[0]!.shop_id}/`)).toBe(true);
+    expect(priv.objects.has(stored.key)).toBe(true);
+    html = await (await b.get("/my-shop/inquiries/thread")).text();
+    const href = `/my-shop/inquiries/attachments/${stored.id}`;
+    expect(html).toContain(href);
+    const file = await b.get(href);
+    expect(file.status).toBe(200);
+    expect(file.headers.get("content-type")).toBe("image/jpeg");
+    expect(file.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(file.headers.get("content-security-policy")).toContain("sandbox");
+    expect(file.headers.get("cache-control")).toContain("no-store");
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(jpeg);
+    // 別の端末（チケットを開いていない）・公開の /media からは読めない
+    expect((await new Browser(app).get(href)).status).toBe(404);
+    expect((await new Browser(app).get(`/media/${stored.key}`)).status).toBe(404);
+  });
+
+  it("中身が画像・PDF でないファイル・5MB を超えるファイルは断り、置き場に何も残さない。置き場が無ければ添付の欄を出さない", async () => {
+    const priv = new MemoryStorage(`${BASE}/never`);
+    const { b, mail, tickets } = setup({ privateStorage: priv });
+    await openedGuest(b, mail);
+    let res = await b.postMultipart("/my-shop/inquiries/reply", { body: "x", files: new File(["<script>alert(1)</script>"], "a.jpg", { type: "image/jpeg" }) });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("画像（JPEG・PNG・WebP）と PDF だけ");
+    res = await b.postMultipart("/my-shop/inquiries/reply", { body: "x", files: new File([new Uint8Array(5 * 1024 * 1024 + 1).fill(0xff)], "big.jpg") });
+    expect(res.status).toBe(400);
+    expect(priv.objects.size).toBe(0);
+    expect(tickets[0]!.messages).toHaveLength(1);
+
+    const plain = setup();
+    await openedGuest(plain.b, plain.mail);
+    expect(await (await plain.b.get("/my-shop/inquiries/thread")).text()).not.toContain('name="files"');
   });
 });
 

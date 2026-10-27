@@ -12,8 +12,12 @@
   // keep_vars が無いと、ビルドのたびに wrangler が画面で入れた変数を消してしまう。
   "keep_vars": true,
 
-  // R2: 商品画像。キーは不要（Binding）
-  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "banto-media" }],
+  // R2: 商品画像（MEDIA、公開してよい）と、公開しない置き場（PRIVATE、お問い合わせの添付。カスタムドメインを付けない。docs/inquiries.md）。
+  // キーは不要（Binding）。無いバケットは wrangler deploy が作る
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "banto-media" },
+    { "binding": "PRIVATE", "bucket_name": "banto-private" }
+  ],
 
   // 在庫予約の期限解放・hooks 配信・メール送信（SchedulerAdapter 経由で呼ぶ）
   "triggers": { "crons": ["*/5 * * * *"] }

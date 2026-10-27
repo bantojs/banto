@@ -118,8 +118,46 @@ create index on inquiry_checks(shop_id, email_hash, created_at);
 alter table inquiry_checks enable row level security;
 create policy inquiry_checks_none on inquiry_checks for select using (false);
 
-revoke all on inquiries, inquiry_messages, inquiry_links, inquiry_mails, inquiry_checks from anon;
-revoke insert, update, delete on inquiries, inquiry_messages, inquiry_links, inquiry_mails, inquiry_checks from authenticated;
+-- 添付ファイル（人間の決定 2026-10-27）。実体は公開しないバケット（StorageAdapter の privateStorage）に置き、ここには鍵と形だけ。
+-- 配るのは Worker が権限を確かめてからだけ（inquiry_attachment_get / inquiry_attachment_admin_get）。行を消すと、実体を消す待ち行列に積む
+create table inquiry_attachments (
+  id uuid primary key default gen_random_uuid(),
+  shop_id uuid not null references shops(id) on delete cascade,
+  inquiry_id uuid not null references inquiries(id) on delete cascade,
+  message_id uuid not null references inquiry_messages(id) on delete cascade,
+  storage_key text not null unique check (storage_key ~ '^inq/[0-9a-f-]{36}/[A-Za-z0-9_-]{20,100}$'),
+  filename text not null check (length(filename) between 1 and 100),
+  content_type text not null check (content_type in ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')),
+  size integer not null check (size between 1 and 5242880),
+  created_at timestamptz not null default now()
+);
+create index on inquiry_attachments(message_id);
+create index on inquiry_attachments(inquiry_id);
+alter table inquiry_attachments enable row level security;
+create policy inquiry_attachments_select on inquiry_attachments for select using (banto_shop_perm(shop_id, 'support'));
+
+-- 実体（オブジェクト）を消す待ち行列。Cron が privateStorage から消して行を消す（ショップを消しても実体は消す）
+create table inquiry_attachment_trash (
+  storage_key text primary key,
+  created_at timestamptz not null default now(),
+  claimed_at timestamptz
+);
+alter table inquiry_attachment_trash enable row level security;
+create policy inquiry_attachment_trash_none on inquiry_attachment_trash for select using (false);
+
+create or replace function banto_inquiry_attachment_trash()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into inquiry_attachment_trash (storage_key) values (old.storage_key) on conflict (storage_key) do nothing;
+  return old;
+end;
+$$;
+revoke execute on function banto_inquiry_attachment_trash() from public, anon, authenticated;
+drop trigger if exists inquiry_attachments_trash on inquiry_attachments;
+create trigger inquiry_attachments_trash after delete on inquiry_attachments for each row execute function banto_inquiry_attachment_trash();
+
+revoke all on inquiries, inquiry_messages, inquiry_links, inquiry_mails, inquiry_checks, inquiry_attachments, inquiry_attachment_trash from anon;
+revoke insert, update, delete on inquiries, inquiry_messages, inquiry_links, inquiry_mails, inquiry_checks, inquiry_attachments, inquiry_attachment_trash from authenticated;
 
 -- ---------- 部品（関数の中からだけ使う） ----------
 create or replace function banto_inquiries_on(p_shop_id uuid)
@@ -183,6 +221,35 @@ begin
 end;
 $$;
 
+-- 添付の行を作る（返事の関数から。Worker が privateStorage に置いた後）。1 通 3 個・1 件のチケットで 20 個まで。
+-- p_files: [{ key, filename, content_type, size }]。鍵はそのショップの接頭辞（inq/<shop_id>/）だけ
+create or replace function banto_inquiry_attach(p_shop_id uuid, p_inquiry_id uuid, p_message_id uuid, p_files jsonb)
+returns integer language plpgsql security definer set search_path = public as $$
+declare v_f jsonb; v_n integer := 0;
+begin
+  if p_files is null or jsonb_typeof(p_files) <> 'array' or jsonb_array_length(p_files) = 0 then return 0; end if;
+  if jsonb_array_length(p_files) > 3 then raise exception 'too_many_attachments'; end if;
+  if (select count(*) from inquiry_attachments where inquiry_id = p_inquiry_id) + jsonb_array_length(p_files) > 20 then raise exception 'too_many_attachments'; end if;
+  for v_f in select * from jsonb_array_elements(p_files) loop
+    if coalesce(v_f->>'key', '') not like 'inq/' || p_shop_id::text || '/%' then raise exception 'invalid_attachment'; end if;
+    if coalesce(v_f->>'size', '') !~ '^[0-9]{1,8}$' then raise exception 'invalid_attachment'; end if;
+    insert into inquiry_attachments (shop_id, inquiry_id, message_id, storage_key, filename, content_type, size)
+    values (p_shop_id, p_inquiry_id, p_message_id, v_f->>'key', left(coalesce(nullif(btrim(v_f->>'filename'), ''), 'file'), 100), v_f->>'content_type', (v_f->>'size')::integer);
+    v_n := v_n + 1;
+  end loop;
+  return v_n;
+exception when check_violation or unique_violation then
+  raise exception 'invalid_attachment';
+end;
+$$;
+
+create or replace function banto_inquiry_message_attachments(p_message_id uuid, p_filename boolean)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'content_type', a.content_type, 'size', a.size)
+                            || case when p_filename then jsonb_build_object('filename', a.filename) else '{}'::jsonb end order by a.created_at, a.id), '[]'::jsonb)
+    from inquiry_attachments a where a.message_id = p_message_id;
+$$;
+
 -- お客様に見せるチケット（連絡先・運営者の名前・IP は出さない）
 create or replace function banto_inquiry_view(p_id uuid)
 returns jsonb language sql stable security definer set search_path = public as $$
@@ -191,7 +258,8 @@ returns jsonb language sql stable security definer set search_path = public as $
     'last_message_at', i.last_message_at, 'verified', i.email_verified_at is not null, 'claimed_order_number', i.claimed_order_number,
     'order', (select jsonb_build_object('number', o.number, 'status', o.status, 'created_at', o.created_at, 'total_jpy', o.total_jpy)
                 from orders o where o.id = i.order_id and o.shop_id = i.shop_id),
-    'messages', coalesce((select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at) order by m.created_at, m.id)
+    'messages', coalesce((select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at,
+                                                               'attachments', banto_inquiry_message_attachments(m.id, true)) order by m.created_at, m.id)
                             from inquiry_messages m where m.inquiry_id = i.id), '[]'::jsonb))
     from inquiries i where i.id = p_id;
 $$;
@@ -463,9 +531,9 @@ $$;
 
 -- お客様が続きを書く。完了したチケットには書けない（新しく問い合わせてもらう）
 -- 戻り値: { id, number, notify: { send, to }, mail_from }
-create or replace function inquiry_customer_reply(p_shop_id uuid, p_access jsonb, p_body text, p_ip_hash text)
+create or replace function inquiry_customer_reply(p_shop_id uuid, p_access jsonb, p_body text, p_ip_hash text, p_attachments jsonb default '[]'::jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare v_id uuid; v_i inquiries%rowtype; v_body text := left(btrim(coalesce(p_body, '')), 5000); v_send boolean; v_to text;
+declare v_id uuid; v_i inquiries%rowtype; v_body text := left(btrim(coalesce(p_body, '')), 5000); v_send boolean; v_to text; v_msg uuid;
 begin
   if auth.role() is distinct from 'service_role' then
     raise exception 'inquiry_customer_reply: service_role only' using errcode = '42501';
@@ -480,7 +548,8 @@ begin
   if (select count(*) from inquiry_messages where inquiry_id = v_id and author = 'customer' and created_at > now() - interval '1 hour') >= 10 then
     raise exception 'too_many_requests' using detail = 'inquiry';
   end if;
-  insert into inquiry_messages (shop_id, inquiry_id, author, body) values (p_shop_id, v_id, 'customer', v_body);
+  insert into inquiry_messages (shop_id, inquiry_id, author, body) values (p_shop_id, v_id, 'customer', v_body) returning id into v_msg;
+  perform banto_inquiry_attach(p_shop_id, v_id, v_msg, p_attachments);
   update inquiries set status = 'waiting_shop', last_message_at = now(), updated_at = now() where id = v_id;
   perform banto_enqueue_inquiry_hook(p_shop_id, 'inquiry.updated',
     jsonb_build_object('inquiry_id', v_id, 'number', v_i.number, 'shop_id', p_shop_id, 'status', 'waiting_shop', 'change', 'message', 'author', 'customer'));
@@ -532,23 +601,25 @@ begin
     'member_match', v_i.customer_id is null and v_i.contact_email is not null
                     and exists (select 1 from customers c where c.shop_id = v_i.shop_id and lower(c.email) = lower(v_i.contact_email)),
     'order', case when v_i.order_id is not null then banto_inquiry_order_summary(v_i.order_id) || jsonb_build_object('order_id', v_i.order_id) end,
-    'messages', coalesce((select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at) order by m.created_at, m.id)
+    'messages', coalesce((select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at,
+                                                               'attachments', banto_inquiry_message_attachments(m.id, true)) order by m.created_at, m.id)
                             from inquiry_messages m where m.inquiry_id = v_i.id), '[]'::jsonb));
 end;
 $$;
 
 -- 返事を書く。お客様の返事待ちにし、チケットへの新しいリンクを作る（Worker がメールで知らせる）。完了したチケットに書けば開き直す
 -- 戻り値: { number, send, to, mail_from, return_to }
-create or replace function inquiry_reply(p_inquiry_id uuid, p_body text, p_link_hash text)
+create or replace function inquiry_reply(p_inquiry_id uuid, p_body text, p_link_hash text, p_attachments jsonb default '[]'::jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
-declare v_i inquiries%rowtype; v_body text := left(btrim(coalesce(p_body, '')), 5000); v_send boolean := false;
+declare v_i inquiries%rowtype; v_body text := left(btrim(coalesce(p_body, '')), 5000); v_send boolean := false; v_msg uuid;
 begin
   select * into v_i from inquiries where id = p_inquiry_id for update;
   if not found or not banto_shop_perm(v_i.shop_id, 'support') then raise exception 'inquiry_not_found' using errcode = '42501'; end if;
   if v_i.masked_at is not null then raise exception 'inquiry_masked'; end if;
   if length(v_body) = 0 then raise exception 'invalid_body'; end if;
   if coalesce(p_link_hash, '') !~ '^[0-9a-f]{64}$' then raise exception 'invalid_link'; end if;
-  insert into inquiry_messages (shop_id, inquiry_id, author, author_user, body) values (v_i.shop_id, v_i.id, 'shop', auth.uid(), v_body);
+  insert into inquiry_messages (shop_id, inquiry_id, author, author_user, body) values (v_i.shop_id, v_i.id, 'shop', auth.uid(), v_body) returning id into v_msg;
+  perform banto_inquiry_attach(v_i.shop_id, v_i.id, v_msg, p_attachments);
   update inquiries set status = 'waiting_customer', last_message_at = now(), updated_at = now(), closed_at = null where id = v_i.id;
   insert into inquiry_links (shop_id, inquiry_id, token_hash, expires_at) values (v_i.shop_id, v_i.id, p_link_hash, now() + interval '30 days');
   if v_i.contact_email is not null then v_send := banto_inquiry_issue_mail(v_i.shop_id, v_i.id, 'reply', v_i.contact_email); end if;
@@ -597,6 +668,8 @@ begin
   update inquiry_messages m set body = '[masked]'
     from inquiries i
    where m.inquiry_id = i.id and i.status = 'closed' and i.masked_at is null and i.closed_at < now() - make_interval(days => greatest(p_days, 1));
+  delete from inquiry_attachments a using inquiries i
+   where a.inquiry_id = i.id and i.status = 'closed' and i.masked_at is null and i.closed_at < now() - make_interval(days => greatest(p_days, 1));
   update inquiries set contact_email = null, contact_name = '[masked]', ip_hash = null, masked_at = now(), updated_at = now()
    where status = 'closed' and masked_at is null and closed_at < now() - make_interval(days => greatest(p_days, 1));
   get diagnostics v_n = row_count;
@@ -632,6 +705,8 @@ begin
   update inquiry_messages m set body = '[masked]'
     from inquiries i
    where m.inquiry_id = i.id and i.shop_id = p_shop_id and lower(i.contact_email) = lower(btrim(p_email));
+  delete from inquiry_attachments a using inquiries i
+   where a.inquiry_id = i.id and i.shop_id = p_shop_id and lower(i.contact_email) = lower(btrim(p_email));
   update inquiries
      set contact_email = null, contact_name = '[masked]', ip_hash = null, masked_at = now(), updated_at = now(),
          status = 'closed', closed_at = coalesce(closed_at, now())
@@ -670,8 +745,8 @@ revoke execute on function inquiry_get(uuid, jsonb) from public, anon, authentic
 grant execute on function inquiry_get(uuid, jsonb) to service_role;
 revoke execute on function inquiry_member_list(uuid, uuid, integer) from public, anon, authenticated;
 grant execute on function inquiry_member_list(uuid, uuid, integer) to service_role;
-revoke execute on function inquiry_customer_reply(uuid, jsonb, text, text) from public, anon, authenticated;
-grant execute on function inquiry_customer_reply(uuid, jsonb, text, text) to service_role;
+revoke execute on function inquiry_customer_reply(uuid, jsonb, text, text, jsonb) from public, anon, authenticated;
+grant execute on function inquiry_customer_reply(uuid, jsonb, text, text, jsonb) to service_role;
 revoke execute on function inquiry_resend_link(uuid, integer, text, text, text, text) from public, anon, authenticated;
 grant execute on function inquiry_resend_link(uuid, integer, text, text, text, text) to service_role;
 revoke execute on function mask_inquiries(integer) from public, anon, authenticated;
@@ -679,8 +754,8 @@ grant execute on function mask_inquiries(integer) to service_role;
 
 revoke execute on function inquiry_admin_get(uuid) from public, anon;
 grant execute on function inquiry_admin_get(uuid) to authenticated;
-revoke execute on function inquiry_reply(uuid, text, text) from public, anon;
-grant execute on function inquiry_reply(uuid, text, text) to authenticated;
+revoke execute on function inquiry_reply(uuid, text, text, jsonb) from public, anon;
+grant execute on function inquiry_reply(uuid, text, text, jsonb) to authenticated;
 revoke execute on function inquiry_set_status(uuid, text) from public, anon;
 grant execute on function inquiry_set_status(uuid, text) to authenticated;
 revoke execute on function inquiry_delete(uuid) from public, anon;
@@ -739,7 +814,8 @@ returns jsonb language sql stable security definer set search_path = public as $
     'order', (select jsonb_build_object('number', o.number, 'status', o.status, 'total_jpy', o.total_jpy, 'created_at', o.created_at) from orders o where o.id = p_i.order_id),
     'created_at', p_i.created_at, 'last_message_at', p_i.last_message_at, 'closed_at', p_i.closed_at)
   || case when p_messages then jsonb_build_object('messages', coalesce((
-          select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at) order by m.created_at, m.id)
+          select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at,
+                                              'attachments', banto_inquiry_message_attachments(m.id, p_pii)) order by m.created_at, m.id)
             from inquiry_messages m where m.inquiry_id = p_i.id), '[]'::jsonb)) else '{}'::jsonb end
   || case when p_pii then jsonb_build_object('contact', jsonb_build_object('email', p_i.contact_email, 'name', p_i.contact_name)) else '{}'::jsonb end;
 $$;
@@ -891,5 +967,71 @@ end;
 $$;
 revoke execute on function restore_inquiries(uuid, jsonb) from public, anon, authenticated;
 grant execute on function restore_inquiries(uuid, jsonb) to service_role;
+
+-- ---------- 添付を配る・実体を消す ----------
+-- お客様（リンクのトークンか会員）。そのチケットの添付だけ。戻り値: { storage_key, content_type, filename, size } か null
+create or replace function inquiry_attachment_get(p_shop_id uuid, p_access jsonb, p_attachment_id uuid)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare v_id uuid;
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'inquiry_attachment_get: service_role only' using errcode = '42501';
+  end if;
+  v_id := banto_inquiry_access(p_shop_id, coalesce(p_access, '{}'::jsonb));
+  if v_id is null then return null; end if;
+  return (select jsonb_build_object('storage_key', a.storage_key, 'content_type', a.content_type, 'filename', a.filename, 'size', a.size)
+            from inquiry_attachments a join inquiries i on i.id = a.inquiry_id
+           where a.id = p_attachment_id and a.inquiry_id = v_id and i.email_verified_at is not null);
+end;
+$$;
+
+-- 運営側（support の項目）
+create or replace function inquiry_attachment_admin_get(p_attachment_id uuid)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('storage_key', a.storage_key, 'content_type', a.content_type, 'filename', a.filename, 'size', a.size, 'shop_id', a.shop_id, 'inquiry_id', a.inquiry_id)
+    from inquiry_attachments a where a.id = p_attachment_id and banto_shop_perm(a.shop_id, 'support');
+$$;
+
+-- Cron: 消す実体を取り出す（1 時間たっても終わらないものは取り直す）→ 消したら done
+create or replace function inquiry_attachment_trash_claim(p_limit integer)
+returns text[] language plpgsql security definer set search_path = public as $$
+declare v_keys text[];
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'inquiry_attachment_trash_claim: service_role only' using errcode = '42501';
+  end if;
+  with picked as (
+    select storage_key from inquiry_attachment_trash
+     where claimed_at is null or claimed_at < now() - interval '1 hour'
+     order by created_at limit greatest(1, least(coalesce(p_limit, 50), 200)) for update skip locked),
+  upd as (update inquiry_attachment_trash t set claimed_at = now() from picked where t.storage_key = picked.storage_key returning t.storage_key)
+  select coalesce(array_agg(storage_key), '{}') into v_keys from upd;
+  return v_keys;
+end;
+$$;
+
+create or replace function inquiry_attachment_trash_done(p_keys text[])
+returns integer language plpgsql security definer set search_path = public as $$
+declare v_n integer;
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'inquiry_attachment_trash_done: service_role only' using errcode = '42501';
+  end if;
+  delete from inquiry_attachment_trash where storage_key = any(coalesce(p_keys, '{}'));
+  get diagnostics v_n = row_count;
+  return v_n;
+end;
+$$;
+
+revoke execute on function banto_inquiry_attach(uuid, uuid, uuid, jsonb) from public, anon, authenticated, service_role;
+revoke execute on function banto_inquiry_message_attachments(uuid, boolean) from public, anon, authenticated, service_role;
+revoke execute on function inquiry_attachment_get(uuid, jsonb, uuid) from public, anon, authenticated;
+grant execute on function inquiry_attachment_get(uuid, jsonb, uuid) to service_role;
+revoke execute on function inquiry_attachment_admin_get(uuid) from public, anon;
+grant execute on function inquiry_attachment_admin_get(uuid) to authenticated;
+revoke execute on function inquiry_attachment_trash_claim(integer) from public, anon, authenticated;
+grant execute on function inquiry_attachment_trash_claim(integer) to service_role;
+revoke execute on function inquiry_attachment_trash_done(text[]) from public, anon, authenticated;
+grant execute on function inquiry_attachment_trash_done(text[]) to service_role;
 
 insert into banto_migrations (version) values ('0061_mod_inquiries');

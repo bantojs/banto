@@ -42,6 +42,13 @@ import {
   type InquiryInput,
 } from "../../modules/inquiries";
 import { inquiryLinkHash } from "../../members/auth";
+import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf } from "../../modules/inquiries/attachments";
+import type { InquiryAccess } from "../../db/privileged";
+
+/** 画面の開く手段を DB に渡す形にする（リンクのトークンは HMAC に） */
+async function accessOf(s: Ready, a: { token: string } | { customerId: string; epoch: number; number: number }): Promise<InquiryAccess> {
+  return "token" in a ? { link_hash: await inquiryLinkHash(s.deps.secret, a.token) } : { customer_id: a.customerId, epoch: a.epoch, number: a.number };
+}
 import { createMailer } from "../../mail/send";
 import { openStatusToken } from "../../commerce/checkout";
 import { shopHome } from "../../storefront/urls";
@@ -79,7 +86,8 @@ async function scope(c: Ctx): Promise<Ready | null> {
   if (!secret || !db) return null;
   const doFetch = c.get("deps").fetch;
   const member = s.ctx.membersEnabled ? await customerSession(c, { shop: s.shop }) : null;
-  return { ...s, page: s.theme.InquiryPage.bind(s.theme), deps: { db, secret, mailer: createMailer(c.get("adapters"), doFetch), adminBase: publicBaseUrl(c) }, member };
+  const privateStorage = c.get("adapters").privateStorage ?? null;
+  return { ...s, page: s.theme.InquiryPage.bind(s.theme), deps: { db, secret, mailer: createMailer(c.get("adapters"), doFetch), adminBase: publicBaseUrl(c), privateStorage }, member };
 }
 
 export const inquiries = new Hono<AppEnv>();
@@ -218,7 +226,8 @@ async function accessFor(c: Ctx, s: Ready, n: string | undefined): Promise<{ tok
   return token ? { token } : null;
 }
 
-function threadView(v: InquiryView, replyHidden: Record<string, string>): InquiryThreadView {
+function threadView(s: Ready, v: InquiryView, replyHidden: Record<string, string>): InquiryThreadView {
+  const q = replyHidden["n"] ? `?n=${replyHidden["n"]}` : "";
   return {
     number: v.number,
     status: v.status,
@@ -227,8 +236,10 @@ function threadView(v: InquiryView, replyHidden: Record<string, string>): Inquir
     created_at: v.created_at,
     order: v.order ? { number: v.order.number } : null,
     claimed_order_number: v.claimed_order_number,
-    messages: v.messages,
+    messages: v.messages.map((m) => ({ ...m, attachments: (m.attachments ?? []).map((a) => ({ href: `${s.ctx.shopPath}/inquiries/attachments/${a.id}${q}`, filename: a.filename, content_type: a.content_type, size: a.size })) })),
     canReply: v.status !== "closed",
+    canAttach: !!s.deps.privateStorage,
+    attachAccept: ATTACHMENT_ACCEPT,
     replyHidden,
   };
 }
@@ -237,7 +248,7 @@ async function threadPage(c: Ctx, s: Ready, n: string | undefined, extra: { erro
   const access = await accessFor(c, s, n);
   const v = access ? await openInquiry(s.deps, s.shop, access) : null;
   if (!v) return render(c, s, { step: "resend", values: {}, error: t("inq.link_expired") }, 404);
-  return render(c, s, { step: "thread", values: {}, inquiry: threadView(v, access && "customerId" in access ? { n: String(v.number) } : {}), ...extra }, status);
+  return render(c, s, { step: "thread", values: {}, inquiry: threadView(s, v, access && "customerId" in access ? { n: String(v.number) } : {}), ...extra }, status);
 }
 
 inquiries.get("/:shop/inquiries/thread", async (c: Ctx) => {
@@ -250,12 +261,28 @@ inquiries.get("/:shop/inquiries/thread", async (c: Ctx) => {
 inquiries.post("/:shop/inquiries/reply", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const f = await formFields(c);
-  const access = await accessFor(c, s, f["n"]);
+  const raw = await c.req.parseBody({ all: true });
+  const field = (k: string) => {
+    const v = raw[k];
+    const one = Array.isArray(v) ? v[0] : v;
+    return typeof one === "string" ? one : undefined;
+  };
+  const access = await accessFor(c, s, field("n"));
   if (!access) return render(c, s, { step: "resend", values: {}, error: t("inq.link_expired") }, 404);
-  const r = await replyAsCustomer(s.deps, s.shop, access, f["body"] ?? "", await clientIpFor(c, s.shop));
-  if (!r.ok) return threadPage(c, s, f["n"], { error: t(ERROR_MESSAGES[r.error]) }, r.error === "too_many" ? 429 : 409);
+  const r = await replyAsCustomer(s.deps, s.shop, access, field("body") ?? "", await clientIpFor(c, s.shop), filesOf(raw));
+  if (!r.ok) return threadPage(c, s, field("n"), { error: t(ERROR_MESSAGES[r.error]) }, r.error === "too_many" ? 429 : r.error.startsWith("attachment") ? 400 : 409);
   return c.redirect(`${s.ctx.shopPath}/inquiries/thread?${"customerId" in access ? `n=${r.number}&` : ""}flash=sent`, 303);
+});
+
+/** 添付を配る（そのチケットを開ける人だけ。会員は ?n=<受付番号>、それ以外はこの端末の Cookie のリンク） */
+inquiries.get("/:shop/inquiries/attachments/:id{[0-9a-f-]{36}}", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !s.deps.privateStorage) return notFound(c);
+  const access = await accessFor(c, s, c.req.query("n"));
+  const a = access ? await accessOf(s, access) : null;
+  const meta = a ? await s.deps.db.inquiryAttachmentGet(s.shop.id, a, c.req.param("id") ?? "") : null;
+  const res = meta ? await attachmentResponse(s.deps.privateStorage, meta) : null;
+  return res ?? notFound(c);
 });
 
 inquiries.get("/:shop/inquiries/resend", async (c: Ctx) => {

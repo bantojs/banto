@@ -188,7 +188,14 @@ export interface InquiryView {
   verified: boolean;
   claimed_order_number: number | null;
   order: { number: number; status: string; created_at: string; total_jpy: number } | null;
-  messages: { author: "customer" | "shop"; body: string; created_at: string }[];
+  messages: { author: "customer" | "shop"; body: string; created_at: string; attachments: InquiryAttachmentMeta[] }[];
+}
+
+export interface InquiryAttachmentMeta {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
 }
 
 export interface InquiryListItem {
@@ -265,8 +272,13 @@ export interface PrivilegedDb {
   inquiryPeek(shopId: string, linkHash: string): Promise<{ number: number } | null>;
   inquiryGet(shopId: string, access: InquiryAccess): Promise<{ inquiry: InquiryView; notify: InquiryNotify | null; mail_from: string | null } | null>;
   inquiryMemberList(shopId: string, customerId: string, epoch: number): Promise<InquiryListItem[] | null>;
-  inquiryCustomerReply(shopId: string, access: InquiryAccess, body: string, ipHash: string | null): Promise<{ id: string; number: number; notify: InquiryNotify; mail_from: string | null }>;
+  inquiryCustomerReply(shopId: string, access: InquiryAccess, body: string, ipHash: string | null, attachments?: { key: string; filename: string; content_type: string; size: number }[]): Promise<{ id: string; number: number; notify: InquiryNotify; mail_from: string | null }>;
   inquiryResendLink(shopId: string, number: number, email: string, linkHash: string, ipHash: string | null, emailHash: string | null): Promise<{ send: boolean; mail_from: string; to: string | null; number: number | null }>;
+  /** 添付 1 つ（そのチケットを開けるときだけ）。実体は Worker が privateStorage から配る */
+  inquiryAttachmentGet(shopId: string, access: InquiryAccess, attachmentId: string): Promise<{ storage_key: string; content_type: string; filename: string; size: number } | null>;
+  /** 消す添付の実体の鍵を取り出す・消し終えたら知らせる（Cron） */
+  inquiryAttachmentTrashClaim(limit: number): Promise<string[]>;
+  inquiryAttachmentTrashDone(keys: string[]): Promise<number>;
   /** 完了から days 日の連絡先と本文を消す・未確認のまま 30 日のものを消す（Cron） */
   maskInquiries(days: number): Promise<number>;
   /** 組織への招待のリンクを開いたとき（0024）。token_hash は SHA-256。無ければ null */
@@ -471,7 +483,10 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     inquiryPeek: (shopId, linkHash) => rpc("inquiry_peek", { p_shop_id: shopId, p_link_hash: linkHash }),
     inquiryGet: (shopId, access) => rpc("inquiry_get", { p_shop_id: shopId, p_access: access }),
     inquiryMemberList: (shopId, customerId, epoch) => rpc("inquiry_member_list", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
-    inquiryCustomerReply: (shopId, access, body, ipHash) => rpc("inquiry_customer_reply", { p_shop_id: shopId, p_access: access, p_body: body, p_ip_hash: ipHash }),
+    inquiryCustomerReply: (shopId, access, body, ipHash, attachments) => rpc("inquiry_customer_reply", { p_shop_id: shopId, p_access: access, p_body: body, p_ip_hash: ipHash, p_attachments: attachments ?? [] }),
+    inquiryAttachmentGet: (shopId, access, attachmentId) => rpc("inquiry_attachment_get", { p_shop_id: shopId, p_access: access, p_attachment_id: attachmentId }),
+    inquiryAttachmentTrashClaim: (limit) => rpc("inquiry_attachment_trash_claim", { p_limit: limit }),
+    inquiryAttachmentTrashDone: (keys) => rpc("inquiry_attachment_trash_done", { p_keys: keys }),
     inquiryResendLink: (shopId, number, email, linkHash, ipHash, emailHash) =>
       rpc("inquiry_resend_link", { p_shop_id: shopId, p_number: number, p_email: email, p_link_hash: linkHash, p_ip_hash: ipHash, p_email_hash: emailHash }),
     maskInquiries: (days) => rpc("mask_inquiries", { p_days: days }),

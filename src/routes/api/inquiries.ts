@@ -28,6 +28,8 @@ import { memberFromRequest, type ApiMember } from "./members";
 import { clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import type { InquiryView } from "../../db/privileged";
 import { t } from "../../i18n";
+import { inquiryLinkHash } from "../../members/auth";
+import { attachmentResponse, filesOf } from "../../modules/inquiries/attachments";
 
 /**
  * ヘッドレスのお問い合わせ（同梱モジュール inquiries。docs/headless.md「お問い合わせ」、docs/inquiries.md）。認証なし、CORS 許可。
@@ -38,7 +40,8 @@ import { t } from "../../i18n";
  *   POST /api/shops/:shop/inquiries               { category, body, name?, email?, order_number?, order_token?, checkout_token?, return_to? }
  *                                                 → 201 { number, verified, mail_sent }
  *   POST /api/shops/:shop/inquiries/view          { token } か（会員）{ number } → { inquiry }
- *   POST /api/shops/:shop/inquiries/reply         { token | number, body } → { number }
+ *   POST /api/shops/:shop/inquiries/reply         { token | number, body } → { number }（添付は multipart/form-data の files、3 個・5MB・画像と PDF）
+ *   POST /api/shops/:shop/inquiries/attachments/:id { token | number } → ファイル（そのチケットの添付だけ）
  *   POST /api/shops/:shop/inquiries/resend        { number, email, return_to? } → 202（合ったかどうかは返さない）
  *   GET  /api/shops/:shop/inquiries               （会員）自分の問い合わせの一覧
  * メールのリンクは return_to（settings.headless.return_origins の許可リストのオリジンだけ）に ?banto_inquiry=<token> を付けた URL。
@@ -65,7 +68,7 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   if (!(await inquiriesReady(sf, shop))) return c.json({ error: "inquiries_disabled" }, 404);
   const m = await memberFromRequest(c, shop);
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
-  return { shop, member: m.member, deps: { db, secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), adminBase: publicBaseUrl(c) } };
+  return { shop, member: m.member, deps: { db, secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), adminBase: publicBaseUrl(c), privateStorage: c.get("adapters").privateStorage ?? null } };
 }
 
 async function body(c: Ctx): Promise<Record<string, unknown> | null> {
@@ -88,6 +91,10 @@ const STATUS: Record<InquiryError, 400 | 401 | 404 | 409 | 429 | 503> = {
   limit: 429,
   closed: 409,
   not_found: 404,
+  attachments_unavailable: 409,
+  attachment_too_many: 400,
+  attachment_too_large: 400,
+  attachment_type: 400,
 };
 const fail = (c: Ctx, error: InquiryError) => c.json({ error, message: t(ERROR_MESSAGES[error]) }, STATUS[error]);
 
@@ -167,12 +174,28 @@ inquiriesApi.post("/shops/:shop/inquiries/view", async (c: Ctx) => {
 inquiriesApi.post("/shops/:shop/inquiries/reply", async (c: Ctx) => {
   const s = await scope(c);
   if (s instanceof Response) return s;
-  const b = await body(c);
+  // JSON か、添付があれば multipart/form-data（token | number・body・files）
+  const multipart = (c.req.header("content-type") ?? "").startsWith("multipart/form-data");
+  const raw = multipart ? await c.req.parseBody({ all: true }) : null;
+  const b: Record<string, unknown> | null = raw ? Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v])) : await body(c);
   const access = accessOf(s, b);
   if (!access) return c.json({ error: "not_found" }, 404);
-  const r = await replyAsCustomer(s.deps, s.shop, access, str(b?.["body"]) ?? "", await clientIpFor(c, s.shop));
+  const r = await replyAsCustomer(s.deps, s.shop, access, str(b?.["body"]) ?? "", await clientIpFor(c, s.shop), raw ? filesOf(raw) : []);
   if (!r.ok) return fail(c, r.error);
   return c.json({ number: r.number });
+});
+
+/** 添付を受け取る。リンクのトークンを URL に載せないよう POST（{ token } か、会員は { number }） */
+inquiriesApi.post("/shops/:shop/inquiries/attachments/:id{[0-9a-f-]{36}}", async (c: Ctx) => {
+  const s = await scope(c);
+  if (s instanceof Response) return s;
+  const storage = s.deps.privateStorage;
+  const access = accessOf(s, await body(c));
+  if (!storage || !access) return c.json({ error: "not_found" }, 404);
+  const a = "token" in access ? { link_hash: await inquiryLinkHash(s.deps.secret, access.token) } : { customer_id: access.customerId, epoch: access.epoch, number: access.number };
+  const meta = await s.deps.db.inquiryAttachmentGet(s.shop.id, a, c.req.param("id") ?? "");
+  const res = meta ? await attachmentResponse(storage, meta) : null;
+  return res ?? c.json({ error: "not_found" }, 404);
 });
 
 inquiriesApi.post("/shops/:shop/inquiries/resend", async (c: Ctx) => {

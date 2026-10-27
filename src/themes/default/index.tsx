@@ -1468,6 +1468,7 @@ export const defaultTheme: Theme = {
           ) : (
             <p class="muted">{order ? t("inq.reply_to_order") : t("inq.reply_to_member")}</p>
           )}
+          <p class="muted">{t("inq.attach_after_verify")}</p>
           <p>
             <button type="submit">{t("inq.to_confirm")}</button>
           </p>
@@ -1554,13 +1555,32 @@ export const defaultTheme: Theme = {
                 {m.author === "shop" ? ctx.shop.name : t("inq.from_you")} · {formatDateTime(m.created_at)}
               </p>
               {text(m.body)}
+              {m.attachments.length > 0 ? (
+                <ul>
+                  {m.attachments.map((a) => (
+                    <li>
+                      <a href={a.href} target="_blank" rel="noopener noreferrer">
+                        {a.filename}
+                      </a>{" "}
+                      <span class="muted">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ))}
           {inquiry.canReply ? (
-            <form method="post" action={`${ctx.shopPath}/inquiries/reply`}>
+            <form method="post" action={`${ctx.shopPath}/inquiries/reply`} enctype={inquiry.canAttach ? "multipart/form-data" : undefined}>
               {hiddenFields(inquiry.replyHidden)}
               <label for="body">{t("inq.reply")}</label>
               <textarea id="body" name="body" rows={6} maxlength={5000} required></textarea>
+              {inquiry.canAttach ? (
+                <>
+                  <label for="files">{t("inq.attach")}</label>
+                  <input id="files" type="file" name="files" multiple accept={inquiry.attachAccept} />
+                  <p class="muted">{t("inq.attach_help")}</p>
+                </>
+              ) : null}
               <p>
                 <button type="submit">{t("inq.reply_submit")}</button>
               </p>

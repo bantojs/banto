@@ -17,7 +17,8 @@ import { returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/che
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { yen } from "../../routes/common";
-import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel } from "./index";
+import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } from "./attachments";
+import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -49,13 +50,17 @@ const FLASH: Record<string, MessageKey> = {
   status: "inq.admin_status_saved",
   deleted: "inq.admin_deleted",
   empty: "inq.error_body",
+  attachments_unavailable: "inq.error_attachments_unavailable",
+  attachment_too_many: "inq.error_attachment_too_many",
+  attachment_too_large: "inq.error_attachment_too_large",
+  attachment_type: "inq.error_attachment_type",
   generic: "inq.admin_error",
 };
 
 function Flash({ code }: { code?: string | undefined }) {
   const key = code ? FLASH[code] : undefined;
   if (!key) return null;
-  return <p class={code === "empty" || code === "generic" || code === "sent_no_mail" ? "error" : "notice"}>{t(key)}</p>;
+  return <p class={code === "empty" || code === "generic" || code === "sent_no_mail" || !!code?.startsWith("attachment") ? "error" : "notice"}>{t(key)}</p>;
 }
 
 interface Row {
@@ -197,7 +202,7 @@ interface Detail {
   masked: boolean;
   member_match: boolean;
   order: { order_id: string; number: number; status: string; created_at: string; total_jpy: number; items: { name: string | null; qty: number }[] } | null;
-  messages: { author: "customer" | "shop"; body: string; created_at: string }[];
+  messages: { author: "customer" | "shop"; body: string; created_at: string; attachments?: { id: string; filename: string; content_type: string; size: number }[] }[];
 }
 
 async function detail(c: AdminContext): Promise<{ shop: ShopRow; d: Detail } | null> {
@@ -281,6 +286,18 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
             {m.author === "shop" ? t("inq.from_shop") : t("inq.from_customer")} · {formatDateTime(m.created_at)}
           </p>
           <Body text={m.body} />
+          {(m.attachments ?? []).length > 0 ? (
+            <ul>
+              {(m.attachments ?? []).map((a) => (
+                <li>
+                  <a href={`${base(shop)}/${d.id}/attachments/${a.id}`} target="_blank" rel="noopener noreferrer">
+                    {a.filename}
+                  </a>{" "}
+                  <span class="muted">({Math.max(1, Math.round(a.size / 1024))} KB)</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </section>
       ))}
 
@@ -302,10 +319,17 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
               </button>
             </form>
           ) : null}
-          <form method="post" action={`${base(shop)}/${d.id}/reply`}>
+          <form method="post" action={`${base(shop)}/${d.id}/reply`} enctype={c.get("adapters").privateStorage ? "multipart/form-data" : undefined}>
             <textarea name="body" rows={8} maxlength={BODY_MAX} required>
               {draft}
             </textarea>
+            {c.get("adapters").privateStorage ? (
+              <>
+                <label for="files">{t("inq.attach")}</label>
+                <input id="files" type="file" name="files" multiple accept={ATTACHMENT_ACCEPT} />
+                <p class="muted">{t("inq.attach_help")}</p>
+              </>
+            ) : null}
             <p class="muted">{t("inq.reply_help")}</p>
             <p>
               <button type="submit">{t("inq.reply_submit")}</button>
@@ -341,20 +365,42 @@ inquiriesAdmin.post("/:id/reply", requireOwner, async (c: AdminContext) => {
   const x = await detail(c);
   if (!x) return c.notFound();
   const back = `${base(x.shop)}/${x.d.id}`;
-  const body = ((await formFields(c)).body ?? "").replace(/\r\n?/g, "\n").trim().slice(0, BODY_MAX);
+  const raw = await c.req.parseBody({ all: true });
+  const rawBody = Array.isArray(raw["body"]) ? raw["body"][0] : raw["body"];
+  const body = (typeof rawBody === "string" ? rawBody : "").replace(/\r\n?/g, "\n").trim().slice(0, BODY_MAX);
   if (!body) return c.redirect(`${back}?flash=empty`);
   const secret = sessionSecret(c);
   if (!secret) return c.redirect(`${back}?flash=generic`);
+  const privateStorage = c.get("adapters").privateStorage ?? null;
+  const stored = await storeFor({ privateStorage }, x.shop.id, filesOf(raw));
+  if (!stored.ok) return c.redirect(`${back}?flash=${stored.error}`);
   const token = randomToken(32);
   let r: { number: number; send: boolean; to: string | null; mail_from: string | null; return_to: string | null };
   try {
-    r = await owner(c).db.rpc("inquiry_reply", { p_inquiry_id: x.d.id, p_body: body, p_link_hash: await inquiryLinkHash(secret, token) });
+    r = await owner(c).db.rpc("inquiry_reply", { p_inquiry_id: x.d.id, p_body: body, p_link_hash: await inquiryLinkHash(secret, token), p_attachments: stored.stored });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${back}?flash=generic`);
+    if (privateStorage && stored.stored.length > 0) await removeAttachments(privateStorage, stored.stored.map((a) => a.key));
+    if (e instanceof DbError) return c.redirect(`${back}?flash=${/too_many_attachments/.test(e.message) ? "attachment_too_many" : "generic"}`);
     throw e;
   }
   const sent = await sendReplyNotice({ mailer: createMailer(c.get("adapters"), c.get("deps").fetch) }, x.shop, r, linkFor(c, x.shop, r.return_to, token));
   return c.redirect(`${back}?flash=${sent ? "sent" : "sent_no_mail"}`);
+});
+
+/** 添付を配る（support の項目。inquiry_attachment_admin_get が確かめる） */
+inquiriesAdmin.get("/:id/attachments/:aid", requireOwner, async (c: AdminContext) => {
+  const x = await detail(c);
+  const storage = c.get("adapters").privateStorage;
+  if (!x || !storage) return c.notFound();
+  let meta: { storage_key: string; content_type: string; filename: string; inquiry_id: string } | null = null;
+  try {
+    meta = await owner(c).db.rpc("inquiry_attachment_admin_get", { p_attachment_id: param(c, "aid") });
+  } catch (e) {
+    if (e instanceof DbError && e.code === "22P02") return c.notFound();
+    throw e;
+  }
+  if (!meta || meta.inquiry_id !== x.d.id) return c.notFound();
+  return (await attachmentResponse(storage, meta)) ?? c.notFound();
 });
 
 inquiriesAdmin.post("/:id/status", requireOwner, async (c: AdminContext) => {

@@ -62,6 +62,11 @@
 - 定型文: `settings.inquiries.templates`（10 個まで、`{name}` `{number}` `{shop}`）。差し込みは JavaScript を使わず `?template=<番号>` で返事の欄に入れて開き直す。編集は `settings` の項目（ショップの行の更新の守りに合わせる）。
 - バックアップ: 書き出しは RLS の経路（運営者の JWT）で `inquiries` / `inquiry_messages`。復元は `restore_inquiries`（注文番号・会員のメールアドレスで結び直す。リンクのトークンは戻さない）。
 
-## 7. 次に作るもの
+## 7. 添付ファイル（2026-10-27、人間の決定）
 
-- 添付ファイル（検討中。公開しないバケットを別に作る案）。
+- **公開しないバケットを別に作る**（R2 `banto-private`、Binding `PRIVATE`、アダプタの `privateStorage`。Node は `PRIVATE_MEDIA_DIR` / `S3_PRIVATE_BUCKET`）。商品画像の `MEDIA` は R2 のカスタムドメインで丸ごと公開する運用を勧めている（docs/setup.md §7）ので、同じバケットに置くとキーが漏れたら止められない。配るのは Worker が権限を確かめてからだけ（`inquiry_attachment_get` / `inquiry_attachment_admin_get`）。
+- **確認済みのチケットへの返事だけ**（最初のフォームでは受けない）。確定前のいたずらで容量を使わせないため。1 通 3 個・5MB・1 件 20 個、JPEG / PNG / WebP / PDF を中身の先頭で判定（`src/modules/inquiries/attachments.ts`）。
+- 流れ: Worker が先に置く → 返事の関数に鍵を渡す（DB が接頭辞 `inq/<shop_id>/`・種類・大きさ・数を確かめる）→ 断られたら置いた実体を消す。行を消すとトリガーが `inquiry_attachment_trash` に積み、Cron が実体を消して外す（ショップの削除でも積む）。
+- 配るときは `X-Content-Type-Options: nosniff`・`Content-Security-Policy: default-src 'none'; sandbox`・`Cache-Control: private, no-store`、PDF は `attachment`。
+- AI には中身を渡さない（種類と大きさだけ）。バックアップには入れない。
+- 費用は R2 の無料枠に収まる見込み（docs/inquiries.md「添付ファイル」）。wrangler 4 の `deploy` は無いバケットを作る（既定で有効な provisioning）。実機の Workers Builds で作られるかは要確認。

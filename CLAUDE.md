@@ -62,6 +62,7 @@ Banto（番頭）は、個人・中小事業者向けの **セルフホスト型
 | インターフェース | Workers 実装 | 脱出先の実装（後で） |
 | --- | --- | --- |
 | `StorageAdapter` | R2 Binding | `src/adapters/node/`: ローカル FS（`MEDIA_DIR`）/ S3 互換 API（SigV4 自前実装、`S3_*`） |
+| `StorageAdapter`（`privateStorage`、任意） | R2 Binding `PRIVATE`（公開しない。お問い合わせの添付、0061） | `PRIVATE_MEDIA_DIR` / `S3_PRIVATE_BUCKET`。無ければ添付の欄を出さない。配るのは Worker が権限を確かめてからだけ |
 | `ConfigAdapter` | `env` | process.env |
 | `SchedulerAdapter` | Cron Trigger | setInterval（`CRON_INTERVAL_SECONDS`） |
 | `CacheAdapter` | isolate メモリ（Cache API は未使用） | プロセス内メモリ |

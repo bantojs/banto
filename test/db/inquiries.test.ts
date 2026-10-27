@@ -241,6 +241,50 @@ describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () =
     expect(await expectDbError(() => asService((c) => c.query("select restore_inquiries($1, $2::jsonb)", [to.shopId, JSON.stringify(data)])))).toMatch(/shop_not_empty/);
   });
 
+  it("添付: 確認済みのチケットの返事にだけ 3 個まで。鍵はそのショップの接頭辞・種類と大きさは決まったものだけ。配るのはそのチケットを開ける人だけ。行を消すと実体を消す待ち行列へ", async () => {
+    const link = hash("att-link");
+    const r = await create({ basis: "form", category: "order", body: "破損しています", email: "att@example.com" }, link);
+    const file = (n: number, over: J = {}) => ({ key: `inq/${f.shopId}/${"k".repeat(20)}${n}`, filename: `photo${n}.jpg`, content_type: "image/jpeg", size: 1000, ...over });
+    const reply = (files: unknown[], access: J = { link_hash: link }) =>
+      asService(async (c) => (await c.query("select inquiry_customer_reply($1, $2::jsonb, '写真です', null, $3::jsonb) as r", [f.shopId, JSON.stringify(access), JSON.stringify(files)])).rows[0].r);
+    // 確定前は返事そのものができない
+    expect(await expectDbError(() => reply([file(1)]))).toMatch(/inquiry_not_found/);
+    await get({ link_hash: link });
+    await reply([file(1), file(2)]);
+    expect(Number((await getPool().query("select count(*) as n from inquiry_attachments where inquiry_id = $1", [r.id])).rows[0].n)).toBe(2);
+    expect(await expectDbError(() => reply([file(3), file(4), file(5), file(6)]))).toMatch(/too_many_attachments/);
+    expect(await expectDbError(() => reply([file(7, { key: `inq/${other.shopId}/${"x".repeat(24)}` })]))).toMatch(/invalid_attachment/);
+    expect(await expectDbError(() => reply([file(8, { content_type: "text/html" })]))).toMatch(/invalid_attachment/);
+    expect(await expectDbError(() => reply([file(9, { size: 6 * 1024 * 1024 })]))).toMatch(/invalid_attachment/);
+    // 失敗した返事は残らない（同じ取引の中）
+    expect(Number((await getPool().query("select count(*) as n from inquiry_messages where inquiry_id = $1", [r.id])).rows[0].n)).toBe(2);
+
+    const att = (await getPool().query<{ id: string }>("select id from inquiry_attachments where inquiry_id = $1 order by storage_key", [r.id])).rows;
+    const view = (await get({ link_hash: link }))!.inquiry as { messages: { attachments: J[] }[] };
+    expect(view.messages[1]!.attachments).toEqual([expect.objectContaining({ id: att[0]!.id, filename: "photo1.jpg", content_type: "image/jpeg", size: 1000 }), expect.objectContaining({ filename: "photo2.jpg" })]);
+    const getAtt = (access: J, id: string) => asService(async (c) => (await c.query("select inquiry_attachment_get($1, $2::jsonb, $3) as r", [f.shopId, JSON.stringify(access), id])).rows[0].r);
+    expect(await getAtt({ link_hash: link }, att[0]!.id)).toMatchObject({ storage_key: `inq/${f.shopId}/${"k".repeat(20)}1`, content_type: "image/jpeg" });
+    // 別のチケットのリンクでは読めない
+    const otherLink = hash("att-other");
+    await create({ basis: "form", category: "other", body: "別件", email: "att2@example.com" }, otherLink);
+    await get({ link_hash: otherLink });
+    expect(await getAtt({ link_hash: otherLink }, att[0]!.id)).toBeNull();
+    // 運営側: support の項目
+    expect(await asUser(support, async (c) => (await c.query("select inquiry_attachment_admin_get($1) as r", [att[0]!.id])).rows[0].r)).toMatchObject({ inquiry_id: r.id });
+    expect(await asUser(catalogOnly, async (c) => (await c.query("select inquiry_attachment_admin_get($1) as r", [att[0]!.id])).rows[0].r)).toBeNull();
+    // 運営者の返事にも付けられる
+    await asUser(support, (c) => c.query("select inquiry_reply($1, '確認しました', $2, $3::jsonb)", [r.id, hash("att-reply"), JSON.stringify([file(10, { content_type: "application/pdf", filename: "返品の手順.pdf" })])]));
+
+    // 削除すると実体を消す待ち行列に積む → Cron が取り出し、消し終えたら外す
+    await asUser(support, (c) => c.query("select inquiry_delete($1)", [r.id]));
+    const keys = await asService(async (c) => (await c.query<{ r: string[] }>("select inquiry_attachment_trash_claim(50) as r")).rows[0]!.r);
+    expect(keys.sort()).toEqual([1, 10, 2].map((n) => `inq/${f.shopId}/${"k".repeat(20)}${n}`).sort());
+    // 取り出したばかりのものは、すぐには取り直さない
+    expect(await asService(async (c) => (await c.query<{ r: string[] }>("select inquiry_attachment_trash_claim(50) as r")).rows[0]!.r)).toEqual([]);
+    expect(await asService(async (c) => (await c.query<{ r: number }>("select inquiry_attachment_trash_done($1) as r", [keys])).rows[0]!.r)).toBe(3);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select inquiry_attachment_trash_claim(1)")))).toMatch(/permission denied/);
+  });
+
   it("個人情報: 顧客の削除の依頼で連絡先と本文を消す。完了から日数が経ったもの・未確認のまま 30 日のものは Cron が消す。メールはプランの 1 日の数に入る", async () => {
     const r = await create({ basis: "form", category: "other", body: "消してください", email: "erase@example.com" });
     await asUser(f.ownerId, (c) => c.query("select mask_customer($1, 'Erase@example.com')", [f.shopId]));

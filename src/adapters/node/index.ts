@@ -1,6 +1,7 @@
 /**
  * Node.js 向けアダプタ（脱出経路、ARCHITECTURE.md「ポータビリティ方針」）。
  *   StorageAdapter  … S3 互換 API（S3_* が設定されていれば）/ ローカルディレクトリ（MEDIA_DIR、既定 ./data/media）
+ *   privateStorage  … 公開しない置き場（お問い合わせの添付）。S3 なら S3_PRIVATE_BUCKET、ローカルなら PRIVATE_MEDIA_DIR（既定 ./data/private。/media からは読めない）
  *   ConfigAdapter   … process.env
  *   CacheAdapter    … プロセス内メモリ
  *   SchedulerAdapter… setInterval（CRON_INTERVAL_SECONDS、既定 300）
@@ -123,10 +124,31 @@ export function createStorage(config: ConfigAdapter, fetchImpl?: typeof fetch): 
   return new FsStorage(config.get("MEDIA_DIR") ?? join(process.cwd(), "data", "media"), publicBaseUrl);
 }
 
+/** 公開しない置き場。S3 を使う構成は S3_PRIVATE_BUCKET があるときだけ（公開のバケットとは別に作る）。無ければ添付を出さない */
+export function createPrivateStorage(config: ConfigAdapter, fetchImpl?: typeof fetch): StorageAdapter | undefined {
+  const endpoint = config.get("S3_ENDPOINT");
+  if (endpoint) {
+    const bucket = config.get("S3_PRIVATE_BUCKET");
+    if (!bucket) return undefined;
+    return new S3Storage({
+      endpoint,
+      region: config.get("S3_REGION") ?? "auto",
+      bucket,
+      accessKeyId: config.secret("S3_ACCESS_KEY_ID"),
+      secretAccessKey: config.secret("S3_SECRET_ACCESS_KEY"),
+      publicBaseUrl: "",
+      pathStyle: config.get("S3_PATH_STYLE") !== "false",
+      fetch: fetchImpl,
+    });
+  }
+  return new FsStorage(config.get("PRIVATE_MEDIA_DIR") ?? join(process.cwd(), "data", "private"), "");
+}
+
 export function createNodeAdapters(env: Record<string, string | undefined> = process.env, fetchImpl?: typeof fetch): Adapters & { scheduler: IntervalScheduler } {
   const config = new EnvConfig(env);
   return {
     storage: createStorage(config, fetchImpl),
+    ...((p) => (p ? { privateStorage: p } : {}))(createPrivateStorage(config, fetchImpl)),
     config,
     cache: new MemoryCache(),
     scheduler: new IntervalScheduler(),

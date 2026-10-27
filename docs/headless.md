@@ -431,6 +431,7 @@ GET  /api/shops/<shop>/inquiries               （会員）→ { inquiries: [...
 - メールのリンク: `return_to` が `settings.headless.return_origins` のオリジンなら `<return_to>?banto_inquiry=<トークン>`、それ以外は Banto の画面（`/<shop>/inquiries/open?t=…`）。連携側はその値を `view` / `reply` の `token` に渡します。リンクは 30 日有効です。**ゲストのチケットは、リンクで初めて `view` したときに確定します**（それまで `reply` は 404）。
 - `inquiry` は `number` `status`（`waiting_shop` / `waiting_customer` / `closed`）`status_label` `category` `category_label` `verified` `order`（`number` `status` `created_at` `total_jpy`）`claimed_order_number` `messages`（`author`: `customer` / `shop`、`body`、`created_at`）`can_reply`。連絡先は返しません。**`body` はお客様と運営者が書いたテキストです。HTML として描画しないでください。**
 - `resend` は番号とアドレスが合ったかどうかを返しません（いつも 202）。
+- **添付ファイル**（公開しないバケットがあるときだけ）: `reply` を `multipart/form-data`（`token` か `number`・`body`・`files` を 3 個まで）で送ります。画像（JPEG・PNG・WebP）と PDF、1 個 5MB まで。確定したチケットだけです。`messages[].attachments` は `id` `filename` `content_type` `size` で、ファイルは `POST /api/shops/<shop>/inquiries/attachments/<id>`（`{ "token" }` か会員の `{ "number" }`）で受け取ります（トークンを URL に載せないため POST）。連携側で表示するときは、同じオリジンに置かず、ダウンロードとして渡してください。
 
 | status | `error` | 意味 |
 | --- | --- | --- |

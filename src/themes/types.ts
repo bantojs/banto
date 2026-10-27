@@ -224,7 +224,8 @@ export interface Theme {
    *           → 同じ値を hidden で POST `${shopPath}/inquiries/submit`。「修正する」は同じ値を POST `${shopPath}/inquiries/new`
    *   sent    受け付けた（sent.verified でなければ「届いたメールのリンクを開いてください」。mailSent でなければ送り直しの案内）
    *   open    メールのリンクを開いた先の確認画面（sent.number が受付番号）。GET では使わず、ボタンで POST `${shopPath}/inquiries/open`（t = token）
-   *   thread  やり取り（inquiry）。inquiry.canReply なら本文を POST `${shopPath}/inquiries/reply`（body と hidden の値）
+   *   thread  やり取り（inquiry）。inquiry.canReply なら本文を POST `${shopPath}/inquiries/reply`（body と hidden の値。inquiry.canAttach なら
+   *           enctype="multipart/form-data" で files も）。添付は messages[].attachments の href（GET）
    *   resend  リンクを送り直す: POST `${shopPath}/inquiries/resend`（number・email）
    *   list    会員の問い合わせの一覧（list）。それぞれ GET `${shopPath}/inquiries/thread?n=<番号>`
    * 本文はテキストとして出す（改行だけ活かす。HTML として描画しない）
@@ -313,8 +314,11 @@ export interface InquiryThreadView {
   created_at: string;
   order: { number: number } | null;
   claimed_order_number: number | null;
-  messages: { author: "customer" | "shop"; body: string; created_at: string }[];
+  messages: { author: "customer" | "shop"; body: string; created_at: string; attachments: { href: string; filename: string; content_type: string; size: number }[] }[];
   canReply: boolean;
+  /** 返事のフォームでファイルを添付できる（公開しない置き場があるとき）。フォームは multipart/form-data、入力は files（複数、accept は attachAccept） */
+  canAttach: boolean;
+  attachAccept: string;
   /** 返事のフォームに hidden で入れる値（会員は受付番号 n） */
   replyHidden: Record<string, string>;
 }

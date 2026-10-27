@@ -57,7 +57,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "sales_summary", "set_stock", "ship_orders", "shop_oauth_client_delete", "shop_oauth_client_save", "shop_secret_save",
   "store_set_hours", "stores_set_special_days", "tryon_request_detail", "tryon_restock", "tryon_store_shops", "tryon_update",
   // 0061: お問い合わせ（同梱モジュール inquiries）。中で support の項目を確かめる
-  "inquiry_admin_get", "inquiry_delete", "inquiry_reply", "inquiry_set_status",
+  "inquiry_admin_get", "inquiry_attachment_admin_get", "inquiry_delete", "inquiry_reply", "inquiry_set_status",
 ]);
 
 /** 列の権限。must: その役割がその列にその権限を持ってはいけない */
