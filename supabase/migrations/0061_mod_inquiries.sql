@@ -129,6 +129,8 @@ create table inquiry_attachments (
   filename text not null check (length(filename) between 1 and 100),
   content_type text not null check (content_type in ('image/jpeg', 'image/png', 'image/webp', 'application/pdf')),
   size integer not null check (size between 1 and 5242880),
+  -- 1 通の中の順番（送った順。同じ取引の中では created_at が同じになるため）
+  position smallint not null default 0 check (position between 0 and 2),
   created_at timestamptz not null default now()
 );
 create index on inquiry_attachments(message_id);
@@ -233,8 +235,8 @@ begin
   for v_f in select * from jsonb_array_elements(p_files) loop
     if coalesce(v_f->>'key', '') not like 'inq/' || p_shop_id::text || '/%' then raise exception 'invalid_attachment'; end if;
     if coalesce(v_f->>'size', '') !~ '^[0-9]{1,8}$' then raise exception 'invalid_attachment'; end if;
-    insert into inquiry_attachments (shop_id, inquiry_id, message_id, storage_key, filename, content_type, size)
-    values (p_shop_id, p_inquiry_id, p_message_id, v_f->>'key', left(coalesce(nullif(btrim(v_f->>'filename'), ''), 'file'), 100), v_f->>'content_type', (v_f->>'size')::integer);
+    insert into inquiry_attachments (shop_id, inquiry_id, message_id, storage_key, filename, content_type, size, position)
+    values (p_shop_id, p_inquiry_id, p_message_id, v_f->>'key', left(coalesce(nullif(btrim(v_f->>'filename'), ''), 'file'), 100), v_f->>'content_type', (v_f->>'size')::integer, v_n);
     v_n := v_n + 1;
   end loop;
   return v_n;
@@ -246,7 +248,7 @@ $$;
 create or replace function banto_inquiry_message_attachments(p_message_id uuid, p_filename boolean)
 returns jsonb language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'content_type', a.content_type, 'size', a.size)
-                            || case when p_filename then jsonb_build_object('filename', a.filename) else '{}'::jsonb end order by a.created_at, a.id), '[]'::jsonb)
+                            || case when p_filename then jsonb_build_object('filename', a.filename) else '{}'::jsonb end order by a.position), '[]'::jsonb)
     from inquiry_attachments a where a.message_id = p_message_id;
 $$;
 
