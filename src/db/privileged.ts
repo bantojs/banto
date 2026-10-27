@@ -372,6 +372,8 @@ export interface PrivilegedDb {
   restoreHistory(shopId: string, tables: Record<string, unknown>): Promise<Record<string, number>>;
   /** 復元の後で会員の外部の ID と独自項目を戻す（0047）。customers は書き出しのまま */
   restoreCustomerMaster(shopId: string, customers: unknown[]): Promise<Record<string, number>>;
+  /** お問い合わせとやり取り（0061）。注文番号・会員のメールアドレスで新しい行に結び直す */
+  restoreInquiries(shopId: string, data: Record<string, unknown[]>): Promise<Record<string, number>>;
   /**
    * AI 用トークン経由の操作（docs/ai-access.md）。呼べるのは api_* だけで、各 RPC が SQL 側で
    * トークン・スコープ・ショップ所有を検証する。p_token_hash は Worker で SHA-256 にした値。
@@ -568,6 +570,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     restoreCommerce: (shopId, tables) => rpc("restore_commerce", { p_shop_id: shopId, p_data: tables }),
     restoreHistory: (shopId, tables) => rpc("restore_history", { p_shop_id: shopId, p_data: tables }),
     restoreCustomerMaster: (shopId, customers) => rpc("restore_customer_master", { p_shop_id: shopId, p_data: { customers } }),
+    restoreInquiries: (shopId, data) => rpc("restore_inquiries", { p_shop_id: shopId, p_data: data }),
     async shopStripeAccount(shopId) {
       // お客様の画面（anon）には渡さない列（0028）。決済ページを作るときだけ service_role で読む
       const res = await doFetch(`${base}/rest/v1/shops?select=stripe_account_id&id=eq.${encodeURIComponent(shopId)}`, { headers });

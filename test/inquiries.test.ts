@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase, type Row } from "./fake-supabase";
 import { BASE, Browser, appWith, externalHosts, memberLogin, memberMail } from "./helpers";
-import { checkInquiry, openOrderToken, sealOrderToken } from "../src/modules/inquiries";
+import { checkInquiry, fillTemplate, inquiryTemplates, openOrderToken, sealOrderToken } from "../src/modules/inquiries";
 import { buildCustomerMail, buildShopNotice } from "../src/modules/inquiries/mail";
 import { pageKind } from "../src/storefront/mode";
 
@@ -130,6 +130,14 @@ function fakeInquiries(sb: FakeSupabase) {
         t.links.add(String(a["p_link_hash"]));
         return json({ number: t.number, send: true, to: t.contact_email, mail_from: from, return_to: t.return_to });
       }
+      case "api_inquiry_reply": {
+        const t = tickets.find((x) => x.shop_id === sb.tables.shops[0]!["id"] && x.number === a["p_number"])!;
+        t.messages.push({ author: "shop", body: String(a["p_body"]), created_at: "2026-10-27T00:00:00Z" });
+        t.status = "waiting_customer";
+        t.links.add(String(a["p_link_hash"]));
+        const shop = sb.tables.shops[0]!;
+        return json({ inquiry: { ...view(t), contact: undefined }, mail: { send: true, to: t.contact_email, mail_from: from, return_to: t.return_to, shop: { id: shop["id"], name: shop["name"], slug: shop["slug"], domain: null, settings: shop["settings"] } } });
+      }
       case "inquiry_set_status": {
         tickets.find((x) => x.id === a["p_inquiry_id"])!.status = String(a["p_status"]);
         return new Response(null, { status: 204 });
@@ -139,6 +147,7 @@ function fakeInquiries(sb: FakeSupabase) {
   };
   externalHosts.set(`${sb.url}/rest/v1/rpc/inquiry_`, handler);
   externalHosts.set(`${sb.url}/rest/v1/inquiries`, handler);
+  externalHosts.set(`${sb.url}/rest/v1/rpc/api_inquiry_reply`, handler);
   return tickets;
 }
 
@@ -189,6 +198,13 @@ describe("お問い合わせの部品（src/modules/inquiries）", () => {
     const n = buildShopNotice("new", shop, { number: 7, category: "order" }, "https://example.com/admin/x");
     expect(n.subject).toContain("注文・配送について");
     expect(n.text).toContain("https://example.com/admin/x");
+  });
+
+  it("定型文: 題と本文のあるものだけ 10 個まで。{name}・{number}・{shop} を置き換える", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ title: `t${i}`, body: `b${i}` }));
+    expect(inquiryTemplates([{ title: "", body: "x" }, { title: "a\nb", body: " 本文\r\n " }, ...many])).toHaveLength(10);
+    expect(inquiryTemplates([{ title: "a\nb", body: " 本文\r\n2 " }])).toEqual([{ title: "a b", body: "本文\n2" }]);
+    expect(fillTemplate("{name} 様（{number}）{shop} {other}", { name: null, number: 3, shop: "マイショップ" })).toBe("お客様 様（3）マイショップ {other}");
   });
 
   it("お問い合わせの画面は、お店の画面の使い方に関係なく残す", () => {
@@ -331,6 +347,12 @@ describe("お問い合わせ（管理画面）", () => {
     expect(m.text).toContain(`${BASE}/my-shop/inquiries/open?t=`);
     expect(tickets[0]!.status).toBe("waiting_customer");
 
+    // 定型文を登録して、返事の欄に差し込む
+    res = await admin.post(`/admin/shops/${shop.id}/modules/inquiries/settings`, { notify_email: "", tpl_title_0: "発送のご連絡", tpl_body_0: "{name}、受付番号 {number} の件、{shop} です。", tpl_title_1: "", tpl_body_1: "" });
+    expect(res.headers.get("location")).toContain("flash=saved");
+    html = await (await admin.get(`/admin/shops/${shop.id}/modules/inquiries/inq-1?template=0`)).text();
+    expect(html).toContain("お客様、受付番号 1 の件、マイショップ です。");
+
     res = await admin.post(`/admin/shops/${shop.id}/modules/inquiries/inq-1/status`, { status: "closed" });
     expect(res.headers.get("location")).toContain("flash=status");
     const link = mail.link("guest@example.com");
@@ -338,6 +360,22 @@ describe("お問い合わせ（管理画面）", () => {
     html = await (await guest.get("/my-shop/inquiries/thread")).text();
     expect(html).toContain("本日発送しました");
     expect(html).not.toContain('action="/my-shop/inquiries/reply"');
+  });
+});
+
+describe("お問い合わせ（AI 用 API）", () => {
+  it("返事を書くと、お客様にはリンクだけのメール。宛先は応答に出さない", async () => {
+    const { app, mail } = setup();
+    const res0 = await app.request(`${BASE}/api/shops/my-shop/inquiries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "other", body: "質問", email: "ai-guest@example.com" }) });
+    expect(res0.status).toBe(201);
+    const res = await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer banto_${"a".repeat(43)}` }, body: JSON.stringify({ body: "AI からの返事です" }) });
+    const r = (await res.json()) as Record<string, unknown>;
+    expect(r).toMatchObject({ number: 1, status: "waiting_customer", mail_sent: true });
+    expect(JSON.stringify(r)).not.toContain("ai-guest@example.com");
+    const m = mail.sent.filter((x) => x.to === "ai-guest@example.com").at(-1)!;
+    expect(m.subject).toContain("返事がありました");
+    expect(m.text).not.toContain("AI からの返事です");
+    expect(m.text).toContain(`${BASE}/my-shop/inquiries/open?t=`);
   });
 });
 

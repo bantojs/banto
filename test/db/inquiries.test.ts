@@ -175,6 +175,72 @@ describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () =
     expect(await expectDbError(() => create({ basis: "form", category: "other", body: "x", email: "not-an-email" }))).toMatch(/invalid_email/);
   });
 
+  it("AI 用トークン: inquiries:read / write は support の項目を持つ人だけ発行できる。連絡先は orders:pii があるときだけ。返事は新しいリンクとメールを作る", async () => {
+    const issue = async (uid: string, scopes: string[]) => {
+      const raw = `banto_${Math.random().toString(36).slice(2)}`;
+      const h = hash(raw);
+      await asUser(uid, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, $5)", [f.shopId, uid, h, raw.slice(0, 12), scopes]));
+      return h;
+    };
+    const api = <T>(fn: string, args: unknown[]) =>
+      asService(async (c) => (await c.query<{ r: T }>(`select ${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0]!.r);
+    const r = await create({ basis: "form", category: "product", body: "AI で読む", email: "ai@example.com", name: "AI 太郎" });
+    await get({ link_hash: (await getPool().query<{ token_hash: string }>("select token_hash from inquiry_links where inquiry_id = $1", [r.id])).rows[0]!.token_hash });
+    const reader = await issue(f.ownerId, ["inquiries:read"]);
+    const pii = await issue(f.ownerId, ["inquiries:read", "inquiries:write", "orders:pii"]);
+    // 発行者が support を持たなければ発行できない（integrations だけの人が support のスコープを付けても弾く）
+    const integ = await createAuthUser("integ@example.com");
+    await asUser(f.ownerId, (c) => c.query("select org_invite($1, 'integ@example.com', 'member', $2::jsonb, $3)", [orgId, JSON.stringify([{ shop_id: f.shopId, perms: ["integrations"] }]), hash("t-integ")]));
+    await withRole("authenticated", { sub: integ, email: "integ@example.com" }, (c) => c.query("select org_invitation_accept($1)", [hash("t-integ")]));
+    expect(await expectDbError(() => issue(integ, ["inquiries:read"]))).toMatch(/scope_not_permitted/);
+
+    const one = await api<J>("api_inquiry_get", [reader, r.number]);
+    expect(one).toMatchObject({ number: r.number, verified: true, messages: [{ author: "customer", body: "AI で読む" }] });
+    expect(one["contact"]).toBeUndefined();
+    expect(JSON.stringify(one)).not.toContain("ai@example.com");
+    const list = await api<{ items: J[]; pii: boolean }>("api_inquiries_list", [pii, "waiting_shop", 100, 0]);
+    expect(list.pii).toBe(true);
+    expect(list.items.find((x) => x.number === r.number)).toMatchObject({ contact: { email: "ai@example.com", name: "AI 太郎" } });
+    expect(await expectDbError(() => api("api_inquiry_reply", [reader, r.number, "返事", hash("x")]))).toMatch(/unauthorized/);
+
+    const links = Number((await getPool().query<{ n: string }>("select count(*) as n from inquiry_links where inquiry_id = $1", [r.id])).rows[0]!.n);
+    const rep = await api<{ inquiry: J; mail: J }>("api_inquiry_reply", [pii, r.number, "在庫あります", hash("ai-reply")]);
+    expect(rep.inquiry).toMatchObject({ status: "waiting_customer" });
+    expect(rep.mail).toMatchObject({ send: true, to: "ai@example.com", mail_from: "Shop <shop@example.com>", shop: { slug: "inq-shop" } });
+    expect(Number((await getPool().query<{ n: string }>("select count(*) as n from inquiry_links where inquiry_id = $1", [r.id])).rows[0]!.n)).toBe(links + 1);
+    // 書いた人は AI 用トークン（運営者の人ではない）
+    expect((await getPool().query("select author_user from inquiry_messages where inquiry_id = $1 and author = 'shop'", [r.id])).rows).toEqual([{ author_user: null }]);
+    expect(await api<J>("api_inquiry_set_status", [pii, r.number, "closed"])).toMatchObject({ status: "closed" });
+    expect(await expectDbError(() => api("api_inquiry_set_status", [pii, r.number, "bogus"]))).toMatch(/invalid_status/);
+    // モジュールが OFF のショップでは使えない
+    await getPool().query("update shops set settings = jsonb_set(settings, '{modules,inquiries}', 'false') where id = $1", [f.shopId]);
+    expect(await expectDbError(() => api("api_inquiry_get", [reader, r.number]))).toMatch(/module_disabled/);
+    await getPool().query("update shops set settings = jsonb_set(settings, '{modules,inquiries}', 'true') where id = $1", [f.shopId]);
+  });
+
+  it("バックアップ: 書き出した行を空のショップに戻す（注文番号・会員のメールアドレスで結び直す。リンクは戻さない）", async () => {
+    const pool = getPool();
+    const j = async (sql: string, args: unknown[]) => (await pool.query<{ r: unknown[] }>(`select coalesce(jsonb_agg(to_jsonb(x)), '[]'::jsonb) as r from (${sql}) x`, args)).rows[0]!.r;
+    const data = {
+      inquiries: await j("select * from inquiries where shop_id = $1", [f.shopId]),
+      inquiry_messages: await j("select * from inquiry_messages where shop_id = $1", [f.shopId]),
+      orders: await j("select id, number from orders where shop_id = $1", [f.shopId]),
+      customers: await j("select id, email from customers where shop_id = $1", [f.shopId]),
+    };
+    const to = await createShopFixture({ email: "inq-restore@example.com", slug: "inq-restore", publish: true });
+    await pool.query("insert into customers (shop_id, email, name) values ($1, 'member@example.com', '会員')", [to.shopId]);
+    await pool.query("insert into orders (shop_id, number, status, total_jpy, shipping_jpy, customer_email, payment_provider, payment_ref) values ($1, 1002, 'paid', 5000, 0, 'member@example.com', 'stripe', 'pi_r')", [to.shopId]);
+    const r = await asService(async (c) => (await c.query<{ r: { inquiries: number; inquiry_messages: number } }>("select restore_inquiries($1, $2::jsonb) as r", [to.shopId, JSON.stringify(data)])).rows[0]!.r);
+    expect(r.inquiries).toBe(data.inquiries.length);
+    expect(r.inquiry_messages).toBe(data.inquiry_messages.length);
+    const linked = (await pool.query("select i.customer_id is not null as member, o.number from inquiries i left join orders o on o.id = i.order_id where i.shop_id = $1 and i.origin = 'member' and o.number = 1002", [to.shopId])).rows;
+    expect(linked[0]).toEqual({ member: true, number: 1002 });
+    expect((await pool.query("select count(*)::int as n from inquiry_links where shop_id = $1", [to.shopId])).rows[0]).toEqual({ n: 0 });
+    const seq = (await pool.query<{ s: number; m: number }>("select inquiry_seq as s, (select max(number) from inquiries where shop_id = $1) as m from shops where id = $1", [to.shopId])).rows[0]!;
+    expect(seq.s).toBe(seq.m);
+    expect(await expectDbError(() => asService((c) => c.query("select restore_inquiries($1, $2::jsonb)", [to.shopId, JSON.stringify(data)])))).toMatch(/shop_not_empty/);
+  });
+
   it("個人情報: 顧客の削除の依頼で連絡先と本文を消す。完了から日数が経ったもの・未確認のまま 30 日のものは Cron が消す。メールはプランの 1 日の数に入る", async () => {
     const r = await create({ basis: "form", category: "other", body: "消してください", email: "erase@example.com" });
     await asUser(f.ownerId, (c) => c.query("select mask_customer($1, 'Erase@example.com')", [f.shopId]));

@@ -17,7 +17,7 @@ import { returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/che
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { yen } from "../../routes/common";
-import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_STATUSES, categoryLabel, inquirySettings, sendReplyNotice, statusLabel } from "./index";
+import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel } from "./index";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -143,6 +143,18 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
             <label for="notify_email">{t("inq.notify_email")}</label>
             <input id="notify_email" type="email" name="notify_email" value={s.notify_email ?? ""} maxlength={254} />
             <p class="muted">{t("inq.notify_email_help")}</p>
+            <h3>{t("inq.templates")}</h3>
+            <p class="muted">{t("inq.templates_help")}</p>
+            {Array.from({ length: Math.min(MAX_TEMPLATES, s.templates.length + 2) }, (_, i) => (
+              <fieldset>
+                <label for={`tpl_title_${i}`}>{tf("inq.template_title", { n: i + 1 })}</label>
+                <input id={`tpl_title_${i}`} name={`tpl_title_${i}`} value={s.templates[i]?.title ?? ""} maxlength={TEMPLATE_TITLE_MAX} />
+                <label for={`tpl_body_${i}`}>{t("inq.template_body")}</label>
+                <textarea id={`tpl_body_${i}`} name={`tpl_body_${i}`} rows={4} maxlength={TEMPLATE_BODY_MAX}>
+                  {s.templates[i]?.body ?? ""}
+                </textarea>
+              </fieldset>
+            ))}
             <p>
               <button type="submit">{t("shop.save")}</button>
             </p>
@@ -157,9 +169,10 @@ inquiriesAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop || !can(c.get("shopAccess"), "settings")) return c.notFound();
   const f = await formFields(c);
+  const templates = inquiryTemplates(Array.from({ length: MAX_TEMPLATES }, (_, i) => ({ title: f[`tpl_title_${i}`] ?? "", body: f[`tpl_body_${i}`] ?? "" })));
   const inquiries = { ...((shop.settings ?? {})["inquiries"] as Record<string, unknown> | undefined), notify_email: (f.notify_email ?? "").trim() || null };
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), inquiries: { ...inquiries, notify_email: inquirySettings({ inquiries }).notify_email } } }, { id: shop.id });
+    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), inquiries: { ...inquiries, notify_email: inquirySettings({ inquiries }).notify_email, templates } } }, { id: shop.id });
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`${base(shop)}?flash=generic`);
     throw e;
@@ -208,6 +221,10 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
   if (!x) return c.notFound();
   const { shop, d } = x;
   const access = c.get("shopAccess");
+  // 定型文を差し込む（?template=<番号>。JavaScript を使わず、返事の欄に入れた状態で開き直す）
+  const templates = inquirySettings(shop.settings).templates;
+  const picked = templates[Number(c.req.query("template") ?? "-1")];
+  const draft = picked ? fillTemplate(picked.body, { name: d.contact_name, number: d.number, shop: shop.name }) : "";
   return c.html(
     <AdminLayout title={`#${d.number} · ${t("mod.inquiries.name")}`} nav crumbs={crumbs(shop, `#${d.number}`)} shopTabs={tabs(c, shop)}>
       <PageHead title={tf("inq.admin_title", { number: d.number })} sub={`${categoryLabel(d.category)} · ${statusLabel(d.status)} · ${t(`inq.origin_${d.origin}` as MessageKey)}`} />
@@ -271,8 +288,24 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
         <>
           <h2>{t("inq.reply")}</h2>
           {!d.verified ? <p class="error">{t("inq.unverified_warning")}</p> : null}
+          {templates.length > 0 ? (
+            <form method="get" action={`${base(shop)}/${d.id}`}>
+              <select name="template" aria-label={t("inq.templates")}>
+                {templates.map((tp, i) => (
+                  <option value={String(i)} selected={picked === tp}>
+                    {tp.title}
+                  </option>
+                ))}
+              </select>{" "}
+              <button type="submit" class="secondary small">
+                {t("inq.template_insert")}
+              </button>
+            </form>
+          ) : null}
           <form method="post" action={`${base(shop)}/${d.id}/reply`}>
-            <textarea name="body" rows={8} maxlength={BODY_MAX} required></textarea>
+            <textarea name="body" rows={8} maxlength={BODY_MAX} required>
+              {draft}
+            </textarea>
             <p class="muted">{t("inq.reply_help")}</p>
             <p>
               <button type="submit">{t("inq.reply_submit")}</button>

@@ -40,16 +40,47 @@ export async function inquiriesReady(sf: Pick<StorefrontData, "migratedTo">, sho
   return sf.migratedTo(INQUIRIES_MIGRATION);
 }
 
+export interface InquiryTemplate {
+  title: string;
+  body: string;
+}
+
 export interface InquirySettings {
   /** 運営者へのお知らせの宛先（無ければショップの問い合わせ先 settings.contact_email） */
   notify_email: string | null;
+  /** 返事の定型文（運営者の画面で差し込む。{name}・{number}・{shop} を置き換える） */
+  templates: InquiryTemplate[];
 }
+
+export const MAX_TEMPLATES = 10;
+export const TEMPLATE_TITLE_MAX = 50;
+export const TEMPLATE_BODY_MAX = 2000;
 
 export function inquirySettings(settings: Record<string, unknown> | null | undefined): InquirySettings {
   const raw = (settings ?? {})["inquiries"];
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const v = typeof o["notify_email"] === "string" ? o["notify_email"].trim() : "";
-  return { notify_email: v && isEmailLike(v) ? v : null };
+  return { notify_email: v && isEmailLike(v) ? v : null, templates: inquiryTemplates(o["templates"]) };
+}
+
+/** 定型文（題と本文の両方があるものだけ、MAX_TEMPLATES 個まで） */
+export function inquiryTemplates(v: unknown): InquiryTemplate[] {
+  if (!Array.isArray(v)) return [];
+  const out: InquiryTemplate[] = [];
+  for (const x of v) {
+    if (!x || typeof x !== "object") continue;
+    const r = x as Record<string, unknown>;
+    const title = typeof r["title"] === "string" ? r["title"].replace(/[\r\n]+/g, " ").trim().slice(0, TEMPLATE_TITLE_MAX) : "";
+    const body = typeof r["body"] === "string" ? r["body"].replace(/\r\n?/g, "\n").trim().slice(0, TEMPLATE_BODY_MAX) : "";
+    if (title && body) out.push({ title, body });
+    if (out.length >= MAX_TEMPLATES) break;
+  }
+  return out;
+}
+
+/** 定型文の {name}（お客様のお名前。無ければ「お客様」）・{number}（受付番号）・{shop}（ショップ名）を置き換える */
+export function fillTemplate(body: string, vars: { name: string | null; number: number; shop: string }): string {
+  return body.replace(/\{(name|number|shop)\}/g, (_, k: string) => (k === "name" ? vars.name || t("inq.template_default_name") : k === "number" ? String(vars.number) : vars.shop));
 }
 
 const isEmailLike = (s: string) => s.length <= 254 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);

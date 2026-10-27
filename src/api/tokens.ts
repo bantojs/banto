@@ -18,12 +18,17 @@ export const API_SCOPES = [
   "coupons:write",
   "customers:read",
   "customers:write",
+  "inquiries:read",
+  "inquiries:write",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
 /** クーポンと会員のスコープ（0036 が当たるまで発行できない） */
 export const API_COUPONS_CUSTOMERS_MIGRATION = "0036_api_coupons_customers";
 export const SCOPES_0036: readonly ApiScope[] = ["coupons:read", "coupons:write", "customers:read", "customers:write"];
+/** お問い合わせのスコープ（0061 が当たるまで発行できない。src/modules/inquiries の INQUIRIES_MIGRATION と同じ版） */
+export const API_INQUIRIES_MIGRATION = "0061_mod_inquiries";
+export const SCOPES_0061: readonly ApiScope[] = ["inquiries:read", "inquiries:write"];
 
 /** 既定で選ばれるスコープ（読み取りのみ、個人情報なし） */
 export const DEFAULT_SCOPES: readonly ApiScope[] = ["products:read", "orders:read", "shop:read", "stats:read"];
@@ -32,7 +37,7 @@ export const DEFAULT_SCOPES: readonly ApiScope[] = ["products:read", "orders:rea
  * スコープに対応する、ショップの権限の項目（0028 の banto_scope_perm と同じ。判定は DB が行い、ここは画面の出し分け用）。
  * 発行者がその項目を持たないスコープは付けられず、項目を外すとそのスコープだけ効かなくなる。shop:read は発行できる人なら誰でも。
  */
-export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing"> = {
+export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support"> = {
   "products:read": "catalog",
   "products:write": "catalog",
   "orders:read": "orders",
@@ -45,6 +50,8 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "coupons:write": "marketing",
   "customers:read": "customers",
   "customers:write": "customers",
+  "inquiries:read": "support",
+  "inquiries:write": "support",
 };
 
 export function isApiScope(s: string): s is ApiScope {

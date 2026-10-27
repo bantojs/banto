@@ -15,6 +15,8 @@
 --   inquiry_mails     … 送ったメールの記録（回数の制限と、プランの 1 日のメールの上限 0053 に数える。宛先は SHA-256 だけ）
 --   inquiry_checks    … 「注文を確かめる」「リンクを送り直す」の試行（回数の制限。メールアドレスは Worker の HMAC だけ）
 -- hooks: inquiry.created（アドレスが確認されたとき）・inquiry.updated（やり取り・状態）。ペイロードに個人情報は載せない
+-- AI 用トークン: inquiries:read / inquiries:write（→ support の項目）。連絡先は orders:pii もあるときだけ（下の api_inquiry_*）
+-- バックアップ: 書き出しは RLS の経路（運営者の JWT）、復元は restore_inquiries（注文番号・メールアドレスで結び直す）
 
 alter table shops add column if not exists inquiry_seq integer not null default 0;
 
@@ -685,5 +687,209 @@ revoke execute on function inquiry_delete(uuid) from public, anon;
 grant execute on function inquiry_delete(uuid) to authenticated;
 revoke execute on function mask_customer(uuid, text) from public, anon;
 grant execute on function mask_customer(uuid, text) to authenticated;
+
+-- ---------- AI 用トークン（/api/v1・/mcp。docs/ai-access.md §8） ----------
+-- inquiries:read  一覧・1 件（やり取りの本文。連絡先は orders:pii もあるときだけ） → support
+-- inquiries:write 返事を書く（お客様にはリンクだけのメール）・完了 / 開き直す     → support
+-- 本文はお客様が書いた文章なので、AI への指示として読ませない（ツールの説明で示す。src/mcp/tools.ts）。削除は API では受けない
+alter table api_tokens drop constraint if exists api_tokens_scopes_valid;
+alter table api_tokens add constraint api_tokens_scopes_valid check (
+  scopes <@ array['products:read','products:write','orders:read','orders:pii','orders:write','shop:read','shop:write','stats:read',
+                  'coupons:read','coupons:write','customers:read','customers:write','inquiries:read','inquiries:write']::text[]
+);
+
+create or replace function banto_scope_perm(p_scope text)
+returns text language sql immutable as $$
+  select case p_scope
+    when 'products:read' then 'catalog'
+    when 'products:write' then 'catalog'
+    when 'orders:read' then 'orders'
+    when 'orders:write' then 'orders'
+    when 'orders:pii' then 'customers'
+    when 'shop:read' then 'integrations'
+    when 'shop:write' then 'settings'
+    when 'stats:read' then 'reports'
+    when 'coupons:read' then 'marketing'
+    when 'coupons:write' then 'marketing'
+    when 'customers:read' then 'customers'
+    when 'customers:write' then 'customers'
+    when 'inquiries:read' then 'support'
+    when 'inquiries:write' then 'support'
+  end;
+$$;
+revoke execute on function banto_scope_perm(text) from public, anon, authenticated;
+
+create or replace function banto_api_inquiries_require(p_token_hash text, p_scope text)
+returns api_tokens language plpgsql security definer set search_path = public as $$
+declare v_tok api_tokens;
+begin
+  v_tok := api_require(p_token_hash, p_scope);
+  if not exists (select 1 from shops where id = v_tok.shop_id and coalesce(settings->'modules'->>'inquiries', 'false') = 'true') then
+    raise exception 'module_disabled';
+  end if;
+  return v_tok;
+end;
+$$;
+
+create or replace function api_inquiry_json(p_i inquiries, p_pii boolean, p_messages boolean)
+returns jsonb language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'number', p_i.number, 'status', p_i.status, 'category', p_i.category, 'origin', p_i.origin, 'verified', p_i.email_verified_at is not null,
+    'customer_id', p_i.customer_id, 'claimed_order_number', p_i.claimed_order_number, 'masked', p_i.masked_at is not null,
+    'order', (select jsonb_build_object('number', o.number, 'status', o.status, 'total_jpy', o.total_jpy, 'created_at', o.created_at) from orders o where o.id = p_i.order_id),
+    'created_at', p_i.created_at, 'last_message_at', p_i.last_message_at, 'closed_at', p_i.closed_at)
+  || case when p_messages then jsonb_build_object('messages', coalesce((
+          select jsonb_agg(jsonb_build_object('author', m.author, 'body', m.body, 'created_at', m.created_at) order by m.created_at, m.id)
+            from inquiry_messages m where m.inquiry_id = p_i.id), '[]'::jsonb)) else '{}'::jsonb end
+  || case when p_pii then jsonb_build_object('contact', jsonb_build_object('email', p_i.contact_email, 'name', p_i.contact_name)) else '{}'::jsonb end;
+$$;
+
+create or replace function api_inquiries_list(p_token_hash text, p_status text default null, p_limit integer default 50, p_offset integer default 0)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_tok api_tokens; v_pii boolean; v_limit integer := greatest(1, least(coalesce(p_limit, 50), 100)); v_offset integer := greatest(0, coalesce(p_offset, 0));
+        v_total integer; v_items jsonb;
+begin
+  v_tok := banto_api_inquiries_require(p_token_hash, 'inquiries:read');
+  v_pii := 'orders:pii' = any(v_tok.scopes);
+  if p_status is not null and p_status not in ('waiting_shop', 'waiting_customer', 'closed') then raise exception 'invalid_status'; end if;
+  select count(*) into v_total from inquiries i where i.shop_id = v_tok.shop_id and (p_status is null or i.status = p_status);
+  select coalesce(jsonb_agg(api_inquiry_json(i, v_pii, false) order by i.last_message_at desc), '[]'::jsonb) into v_items
+    from (select * from inquiries i where i.shop_id = v_tok.shop_id and (p_status is null or i.status = p_status)
+           order by i.last_message_at desc limit v_limit offset v_offset) i;
+  return jsonb_build_object('items', v_items, 'total', v_total, 'limit', v_limit, 'offset', v_offset, 'pii', v_pii);
+end;
+$$;
+
+create or replace function api_inquiry_get(p_token_hash text, p_number integer)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_tok api_tokens; v_i inquiries%rowtype;
+begin
+  v_tok := banto_api_inquiries_require(p_token_hash, 'inquiries:read');
+  select * into v_i from inquiries where shop_id = v_tok.shop_id and number = p_number;
+  if not found then raise exception 'not_found'; end if;
+  return api_inquiry_json(v_i, 'orders:pii' = any(v_tok.scopes), true);
+end;
+$$;
+
+-- 返事を書く（運営者の inquiry_reply と同じ。書いた人は AI 用トークン = 監査の banto.actor）。メールは Worker が送る
+-- 戻り値: { inquiry, mail: { send, to, mail_from, return_to, shop } }（mail は Worker の中だけで使い、AI には返さない）
+create or replace function api_inquiry_reply(p_token_hash text, p_number integer, p_body text, p_link_hash text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_tok api_tokens; v_i inquiries%rowtype; v_body text := left(btrim(coalesce(p_body, '')), 5000); v_send boolean := false; v_s shops%rowtype;
+begin
+  v_tok := banto_api_inquiries_require(p_token_hash, 'inquiries:write');
+  select * into v_i from inquiries where shop_id = v_tok.shop_id and number = p_number for update;
+  if not found then raise exception 'not_found'; end if;
+  if v_i.masked_at is not null then raise exception 'inquiry_masked'; end if;
+  if length(v_body) = 0 then raise exception 'invalid_body'; end if;
+  if coalesce(p_link_hash, '') !~ '^[0-9a-f]{64}$' then raise exception 'invalid_link'; end if;
+  insert into inquiry_messages (shop_id, inquiry_id, author, body) values (v_i.shop_id, v_i.id, 'shop', v_body);
+  update inquiries set status = 'waiting_customer', last_message_at = now(), updated_at = now(), closed_at = null where id = v_i.id;
+  insert into inquiry_links (shop_id, inquiry_id, token_hash, expires_at) values (v_i.shop_id, v_i.id, p_link_hash, now() + interval '30 days');
+  if v_i.contact_email is not null then v_send := banto_inquiry_issue_mail(v_i.shop_id, v_i.id, 'reply', v_i.contact_email); end if;
+  perform banto_enqueue_inquiry_hook(v_i.shop_id, 'inquiry.updated',
+    jsonb_build_object('inquiry_id', v_i.id, 'number', v_i.number, 'shop_id', v_i.shop_id, 'status', 'waiting_customer', 'change', 'message', 'author', 'shop'));
+  select * into v_i from inquiries where id = v_i.id;
+  select * into v_s from shops where id = v_i.shop_id;
+  return jsonb_build_object(
+    'inquiry', api_inquiry_json(v_i, 'orders:pii' = any(v_tok.scopes), true),
+    'mail', jsonb_build_object('send', v_send, 'to', case when v_send then v_i.contact_email end, 'mail_from', banto_inquiry_mail_from(v_i.shop_id),
+                               'return_to', v_i.return_to,
+                               'shop', jsonb_build_object('id', v_s.id, 'name', v_s.name, 'slug', v_s.slug, 'domain', v_s.domain,
+                                                          'settings', jsonb_build_object('theme_settings', v_s.settings->'theme_settings', 'headless', v_s.settings->'headless'))));
+end;
+$$;
+
+create or replace function api_inquiry_set_status(p_token_hash text, p_number integer, p_status text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare v_tok api_tokens; v_i inquiries%rowtype;
+begin
+  v_tok := banto_api_inquiries_require(p_token_hash, 'inquiries:write');
+  if p_status not in ('closed', 'waiting_shop', 'waiting_customer') then raise exception 'invalid_status'; end if;
+  select * into v_i from inquiries where shop_id = v_tok.shop_id and number = p_number for update;
+  if not found then raise exception 'not_found'; end if;
+  if v_i.status <> p_status then
+    update inquiries set status = p_status, updated_at = now(), closed_at = case when p_status = 'closed' then now() end where id = v_i.id;
+    perform banto_enqueue_inquiry_hook(v_i.shop_id, 'inquiry.updated',
+      jsonb_build_object('inquiry_id', v_i.id, 'number', v_i.number, 'shop_id', v_i.shop_id, 'status', p_status, 'change', 'status'));
+    select * into v_i from inquiries where id = v_i.id;
+  end if;
+  return api_inquiry_json(v_i, 'orders:pii' = any(v_tok.scopes), true);
+end;
+$$;
+
+revoke execute on function banto_api_inquiries_require(text, text) from public, anon, authenticated, service_role;
+revoke execute on function api_inquiry_json(inquiries, boolean, boolean) from public, anon, authenticated, service_role;
+revoke execute on function api_inquiries_list(text, text, integer, integer) from public, anon, authenticated;
+grant execute on function api_inquiries_list(text, text, integer, integer) to service_role;
+revoke execute on function api_inquiry_get(text, integer) from public, anon, authenticated;
+grant execute on function api_inquiry_get(text, integer) to service_role;
+revoke execute on function api_inquiry_reply(text, integer, text, text) from public, anon, authenticated;
+grant execute on function api_inquiry_reply(text, integer, text, text) to service_role;
+revoke execute on function api_inquiry_set_status(text, integer, text) from public, anon, authenticated;
+grant execute on function api_inquiry_set_status(text, integer, text) to service_role;
+
+-- ---------- バックアップからの復元（docs/backup.md。restore_shop_data の後に呼ぶ） ----------
+-- p_data: { inquiries, inquiry_messages, orders, customers }（書き出しの JSON の表のまま）。
+-- 復元で注文と会員の id は振り直されるので、書き出しの注文番号・会員のメールアドレスで新しい行に結び直す。
+-- リンクのトークンは戻さない（お客様は「リンクを送り直す」で開き直す）。お問い合わせの無いショップにだけ入れる
+create or replace function restore_inquiries(p_shop_id uuid, p_data jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_row jsonb; v_old_orders jsonb := '{}'::jsonb; v_old_customers jsonb := '{}'::jsonb; v_map jsonb := '{}'::jsonb;
+  v_id uuid; v_n integer := 0; v_m integer := 0; v_order uuid; v_cust uuid;
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'restore_inquiries: service_role only' using errcode = '42501';
+  end if;
+  if jsonb_typeof(coalesce(p_data->'inquiries', '[]'::jsonb)) <> 'array' or jsonb_typeof(coalesce(p_data->'inquiry_messages', '[]'::jsonb)) <> 'array' then
+    raise exception 'invalid_export';
+  end if;
+  if exists (select 1 from inquiries where shop_id = p_shop_id) then raise exception 'shop_not_empty'; end if;
+  -- 書き出しの id → 注文番号・メールアドレス
+  select coalesce(jsonb_object_agg(o->>'id', o->'number'), '{}'::jsonb) into v_old_orders
+    from jsonb_array_elements(case when jsonb_typeof(p_data->'orders') = 'array' then p_data->'orders' else '[]'::jsonb end) o where o ? 'id' and o ? 'number';
+  select coalesce(jsonb_object_agg(cu->>'id', lower(cu->>'email')), '{}'::jsonb) into v_old_customers
+    from jsonb_array_elements(case when jsonb_typeof(p_data->'customers') = 'array' then p_data->'customers' else '[]'::jsonb end) cu where cu ? 'id' and coalesce(cu->>'email', '') <> '';
+  for v_row in select * from jsonb_array_elements(coalesce(p_data->'inquiries', '[]'::jsonb)) loop
+    if jsonb_typeof(v_row) <> 'object' or coalesce(v_row->>'number', '') !~ '^[0-9]{1,9}$' then continue; end if;
+    select id into v_order from orders where shop_id = p_shop_id and number = nullif(v_old_orders->>(v_row->>'order_id'), '')::integer;
+    select id into v_cust from customers where shop_id = p_shop_id and lower(email) = v_old_customers->>(v_row->>'customer_id');
+    begin
+      insert into inquiries (shop_id, number, category, status, origin, contact_email, contact_name, email_verified_at, customer_id, order_id,
+                             claimed_order_number, created_at, updated_at, last_message_at, closed_at, masked_at)
+      values (p_shop_id, (v_row->>'number')::integer,
+              case when v_row->>'category' in ('product', 'order', 'account', 'other') then v_row->>'category' else 'other' end,
+              case when v_row->>'status' in ('waiting_shop', 'waiting_customer', 'closed') then v_row->>'status' else 'closed' end,
+              case when v_row->>'origin' in ('form', 'member', 'order', 'checkout') then v_row->>'origin' else 'form' end,
+              left(nullif(btrim(coalesce(v_row->>'contact_email', '')), ''), 254), left(nullif(btrim(coalesce(v_row->>'contact_name', '')), ''), 100),
+              (v_row->>'email_verified_at')::timestamptz, v_cust, v_order,
+              case when v_order is null and coalesce(v_row->>'claimed_order_number', '') ~ '^[0-9]{1,9}$' then nullif((v_row->>'claimed_order_number')::integer, 0) end,
+              coalesce((v_row->>'created_at')::timestamptz, now()), now(), coalesce((v_row->>'last_message_at')::timestamptz, now()),
+              (v_row->>'closed_at')::timestamptz, (v_row->>'masked_at')::timestamptz)
+      returning id into v_id;
+      v_map := v_map || jsonb_build_object(v_row->>'id', v_id);
+      v_n := v_n + 1;
+    exception when unique_violation or invalid_text_representation or invalid_datetime_format or check_violation then
+      null;
+    end;
+  end loop;
+  for v_row in select * from jsonb_array_elements(coalesce(p_data->'inquiry_messages', '[]'::jsonb)) loop
+    if jsonb_typeof(v_row) <> 'object' or not (v_map ? (v_row->>'inquiry_id')) then continue; end if;
+    begin
+      insert into inquiry_messages (shop_id, inquiry_id, author, body, created_at)
+      values (p_shop_id, (v_map->>(v_row->>'inquiry_id'))::uuid, case when v_row->>'author' = 'shop' then 'shop' else 'customer' end,
+              left(coalesce(nullif(v_row->>'body', ''), '[empty]'), 5000), coalesce((v_row->>'created_at')::timestamptz, now()));
+      v_m := v_m + 1;
+    exception when invalid_text_representation or invalid_datetime_format or check_violation then
+      null;
+    end;
+  end loop;
+  update shops set inquiry_seq = greatest(inquiry_seq, coalesce((select max(number) from inquiries where shop_id = p_shop_id), 0)) where id = p_shop_id;
+  return jsonb_build_object('inquiries', v_n, 'inquiry_messages', v_m);
+end;
+$$;
+revoke execute on function restore_inquiries(uuid, jsonb) from public, anon, authenticated;
+grant execute on function restore_inquiries(uuid, jsonb) to service_role;
 
 insert into banto_migrations (version) values ('0061_mod_inquiries');

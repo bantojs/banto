@@ -656,6 +656,8 @@ export const en: Record<MessageKey, string> = {
   "tokens.scope.coupons_write": "Create, update and delete coupons; issue them to members and revoke them",
   "tokens.scope.customers_read": "Read members (email address, name, address: personal data)",
   "tokens.scope.customers_write": "Create members, update names and addresses, delete members (email addresses cannot be changed)",
+  "tokens.scope.inquiries_read": "Read inquiries and their conversation (contact details only together with the buyer details scope)",
+  "tokens.scope.inquiries_write": "Reply to inquiries (the customer gets a link-only email) and close them",
 
   "store.subtotal_tax_included": "Items (tax included)",
   "store.tax_included": "tax incl.",
@@ -1766,4 +1768,10 @@ export const en: Record<MessageKey, string> = {
   "inq.closed_note": "This inquiry is closed. To continue,",
   "inq.new": "Send a new inquiry",
   "inq.list_empty": "No inquiries yet.",
+  "inq.templates": "Reply templates",
+  "inq.templates_help": "Save frequent replies and insert them into the reply box (up to 10). {name} becomes the customer's name, {number} the inquiry number and {shop} the shop name. Templates with an empty title or body are removed.",
+  "inq.template_title": "Template {n} title",
+  "inq.template_body": "Body",
+  "inq.template_insert": "Insert",
+  "inq.template_default_name": "customer",
 };

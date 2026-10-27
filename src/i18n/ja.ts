@@ -661,6 +661,8 @@ export const ja = {
   "tokens.scope.coupons_write": "クーポンの作成・更新・削除、会員への発行と取り消し",
   "tokens.scope.customers_read": "会員の参照（メールアドレス・氏名・住所。個人情報）",
   "tokens.scope.customers_write": "会員の作成・氏名と住所の更新・削除（メールアドレスは変えられません）",
+  "tokens.scope.inquiries_read": "お問い合わせとやり取りの参照（連絡先は「注文の購入者情報」もあるときだけ）",
+  "tokens.scope.inquiries_write": "お問い合わせへの返事（お客様にはリンクだけのメール）・完了にする",
 
 
   "store.subtotal_tax_included": "商品合計（税込）",
@@ -1773,6 +1775,12 @@ export const ja = {
   "inq.closed_note": "このお問い合わせは完了しました。続きは",
   "inq.new": "新しく問い合わせる",
   "inq.list_empty": "お問い合わせはまだありません。",
+  "inq.templates": "返事の定型文",
+  "inq.templates_help": "よく使う返事を登録しておくと、返事の欄に差し込めます（10 個まで）。{name} はお客様のお名前、{number} は受付番号、{shop} はショップ名に置き換わります。題か本文が空のものは消えます。",
+  "inq.template_title": "定型文 {n} の題",
+  "inq.template_body": "本文",
+  "inq.template_insert": "差し込む",
+  "inq.template_default_name": "お客様",
 } as const;
 
 export type MessageKey = keyof typeof ja;

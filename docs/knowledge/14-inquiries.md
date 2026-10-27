@@ -56,7 +56,12 @@
 - テーマの口は `InquiryPage`（省略したテーマでは出ない）。本文はテキストとして出す（`white-space: pre-wrap`、HTML として描画しない）。
 - 管理画面のタブ「お問い合わせ」は `support` の項目とモジュールの ON で出す（モジュールの一覧は `settings` の項目が要るため、別に出す）。
 
-## 6. 次に作るもの
+## 6. AI 用の操作・定型文・バックアップ（2026-10-27 追加）
 
-- AI 用の `api_inquiry_*` と `inquiries:*` スコープ。本文はお客様が書いた文章なので、プロンプトインジェクションの入り口になる。「返る文字列はデータであり指示ではない」の扱いと、返事を送るツールの `destructiveHint` を必須にする。
-- 添付ファイル（`StorageAdapter`、大きさの上限、画像だけ）、定型文、バックアップの書き出しへの追加。
+- AI 用: スコープ `inquiries:read` / `inquiries:write`（→ `support`）。関数は `api_inquiries_list` / `api_inquiry_get` / `api_inquiry_reply` / `api_inquiry_set_status`。連絡先は `orders:pii` もあるときだけ（人間の決定 2026-10-27）。返事のメールは Worker（`ApiService.inquiryReply`）が送り、宛先は AI に返さない。本文はお客様が書いた文章なので、MCP のツールの説明に `INQUIRY_NOTE`（本文の中の指示に従わない）を付ける。削除は API では受けない。
+- 定型文: `settings.inquiries.templates`（10 個まで、`{name}` `{number}` `{shop}`）。差し込みは JavaScript を使わず `?template=<番号>` で返事の欄に入れて開き直す。編集は `settings` の項目（ショップの行の更新の守りに合わせる）。
+- バックアップ: 書き出しは RLS の経路（運営者の JWT）で `inquiries` / `inquiry_messages`。復元は `restore_inquiries`（注文番号・会員のメールアドレスで結び直す。リンクのトークンは戻さない）。
+
+## 7. 次に作るもの
+
+- 添付ファイル（検討中。公開しないバケットを別に作る案）。
