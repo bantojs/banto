@@ -11,6 +11,39 @@ import type { InquiryMailDeps } from "../api/service";
 
 export type Ctx = Context<AppEnv>;
 
+/** AI 用（/api/v1・/mcp）の JSON の本文の上限。商品の説明を何本か送っても足りる大きさ */
+export const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
+/**
+ * 本文を上限まで読む。超えたら null（申告の Content-Length が上限より大きければ読まずに、
+ * 申告より長く送られても上限で止める）
+ */
+export async function readBodyLimited(req: Request, max: number): Promise<Uint8Array | null> {
+  const declared = Number(req.headers.get("content-length") ?? NaN);
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!req.body) return new Uint8Array();
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const ch of chunks) {
+    out.set(ch, at);
+    at += ch.byteLength;
+  }
+  return out;
+}
+
 /**
  * フォーム POST の CSRF 対策。Cookie は SameSite=Lax だが、念のため Origin / Sec-Fetch-Site も見る。
  * Origin が付いていて自分と違えば 403（`null`（sandbox の iframe・data: 由来）も違うとみなす。ホスティングで他人のサイトと兄弟サブドメインに並ぶと

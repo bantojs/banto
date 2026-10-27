@@ -3,7 +3,7 @@ import type { AppEnv } from "../app";
 import { createPrivilegedDb } from "../db/privileged";
 import { ApiService } from "../api/service";
 import { bearerToken } from "../api/tokens";
-import { inquiryMailFor, migrationStateFor, type Ctx } from "./common";
+import { MAX_JSON_BODY_BYTES, inquiryMailFor, migrationStateFor, readBodyLimited, type Ctx } from "./common";
 import { handleJsonRpc } from "../mcp/server";
 import { BANTO_VERSION } from "../version";
 
@@ -20,9 +20,11 @@ mcp.post("/", async (c: Ctx) => {
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !serviceRoleKey) return c.json({ error: { code: "upstream", message: "not configured" } }, 503);
 
+  const raw = await readBodyLimited(c.req.raw, MAX_JSON_BODY_BYTES);
+  if (!raw) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "request body is larger than 1MB" } }, 413);
   let body: unknown;
   try {
-    body = await c.req.json();
+    body = JSON.parse(new TextDecoder().decode(raw));
   } catch {
     return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
   }

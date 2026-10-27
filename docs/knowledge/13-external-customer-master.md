@@ -65,6 +65,7 @@ C が不可の理由:
 
   - これで衝突・更新時刻の比較・往復のループ止めが要らない。「新しい方が勝つ」と同期済みハッシュは、本当に双方向の項目を足したくなったときの最後の手段（他のサービスも、項目ごとの方向が本流で、時刻勝負は少数の双方向項目だけ: HubSpot–Salesforce の項目ごとの規則、Shopify → HubSpot の一方向）。
   - 外部 → Banto は Banto の API を通る（Banto の行が唯一の正で、入口が会員ページと API の 2 つあるだけ）。`attributes` の値は `customer_fields` の定義で検査する。
+  - `name`・`default_address` も `customers:write`（`api_customer_update` / `api_customer_upsert`、0050 の版）で書ける。運営者の道具が Banto の行を直す入口・移行のときの一度だけの投入として残した（表の向きと実装がずれていたので、書けるまま docs を実装に合わせた。2026-10-27）。CRM から定期的に写す同期の向きには使わない（会員ページで本人が直した値を古い値で上書きする。Banto は時刻を比べない）。docs/ai-access.md §7 の注記。
   - `email` の変更は外部から当てない（0036 の決定と同じ理由: アカウントの受け渡しになる）。変えるのは管理画面の `member_set_email` だけ。
   - 退会・削除依頼（`mask_customer`）は hooks で知らせるだけ。外部側の消し方は外部の責任。外部での削除を Banto の退会に写すかは設定（既定 OFF）。
   - `attributes` が入れば、クーポンの条件（宣言型 JSON）に属性の条件（例: ランク）を足せる。判定はコアの一本道のまま。→ **実装済み（2026-10-23、0049 `conditions.attributes`）**。docs/coupons.md「会員の項目の条件」。
