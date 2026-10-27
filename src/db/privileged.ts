@@ -233,7 +233,7 @@ export interface PrivilegedDb {
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
   attachReservationCustomer(reservationId: string, shopId: string, customer: ReservationCustomer): Promise<void>;
   /** クーポンのコードからキャンペーンを引く（0010）。subject があればその人の使用回数も返す */
-  /** customerId は 0049 が当たっているときだけ渡す（関数の引数が増えるのは 0049 から） */
+  /** customerId: ログイン中の会員（0049。行に会員の独自項目が載る）。ゲストは渡さない */
   couponLookup(shopId: string, codes: string[], subject: string | null, customerId?: string | null): Promise<unknown[]>;
   /** 予約に値引きを付け、クーポンの回数（全体・1 人あたり）を原子的に予約する。取れなければ coupon_* で失敗し、何も変えない */
   applyReservationDiscounts(reservationId: string, shopId: string, subject: string, discounts: ReservationDiscounts): Promise<void>;
@@ -452,7 +452,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     reserveStock: (shopId, items, ttlSeconds, limits) =>
       rpc<string>("reserve_stock", {
         p_shop_id: shopId, p_items: items, p_ttl_seconds: ttlSeconds,
-        // 0029 より前の DB には渡さない（引数の名前が合わず関数が見つからない）。呼び出し側が migrated() で決める
+        // 予約の上限の材料（0029、reserveLimits() で作る）
         ...(limits ? { p_quote_id: limits.quoteId, p_subject_hash: limits.subjectHash, p_ip_hash: limits.ipHash } : {}),
       }),
     confirmReservation: (reservationId, shopId, order) =>

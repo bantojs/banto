@@ -104,10 +104,9 @@ describe("WooCommerce インポーター: CSV の解析と対応付け（ブラ�
 
     const tee = plan.products.find((p) => p.payload.slug === "tee-01")!;
     expect(tee.payload).toMatchObject({ brand: "HANARE", category_slug: cut.slug, attributes: { material: "綿100％" } });
-    // 主カテゴリーの祖先でないカテゴリー（セール）は追加カテゴリー（0042 より前の DB ではサーバーがタグに写す）
+    // 主カテゴリーの祖先でないカテゴリー（セール）は追加カテゴリー
     expect(tee.payload.tags).toEqual(["NEW", "夏物", "バリューライン"]);
     expect(tee.payload.extra_category_slugs).toEqual([plan.categories.find((c) => c.name === "セール")!.slug]);
-    expect(tee.payload.extra_category_names).toEqual(["セール"]);
     expect(tee.payload.skus.map((k) => k.code)).toEqual(["TEE-01-BK", "tee-01-12"]);
     expect(tee.payload.skus[1]!.available).toBe(0);
     expect(tee.images).toEqual(["https://shop.example/a.jpg", "https://shop.example/b.jpg", "https://shop.example/bk.jpg"]);
@@ -375,7 +374,7 @@ describe("WooCommerce インポーター: REST API（ブラウザから WooComme
     const plan = w.build(a, { ...OPTS, fields: a.fields.filter((f) => f.suggested).map((f) => ({ source: f.source, key: f.key, label: f.label, type: f.type })) });
     expect(plan.products.find((p) => p.payload.slug === "mug")!.payload.attributes).toEqual({ material: "綿100％", length_cm: 9 });
     const tee2 = plan.products.find((p) => p.payload.slug === "tee-01")!;
-    expect(tee2.payload).toMatchObject({ brand: "HANARE", tags: ["NEW"], extra_category_names: ["セール"] });
+    expect(tee2.payload).toMatchObject({ brand: "HANARE", tags: ["NEW"], extra_category_slugs: [plan.categories.find((c) => c.name === "セール")!.slug] });
     expect(plan.categories.find((c) => c.name === "カットソー")!.parent_slug).toBe(plan.categories.find((c) => c.name === "トップス")!.slug);
 
     // 旧 URL → 新 URL

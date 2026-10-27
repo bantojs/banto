@@ -3,6 +3,7 @@ import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
 import { ADDRESS, BASE, Browser, WEBHOOK_SECRET, appWith, confirmAddress, memberLogin, memberMail } from "./helpers";
 import { customerCookieName } from "../src/routes/storefront/members";
+import { sealSession } from "../src/members/auth";
 
 let disposers: (() => void)[] = [];
 afterEach(() => {
@@ -220,18 +221,16 @@ describe("会員機能（店ごとのアカウント・パスワードなし）"
     }
   });
 
-  it("0045 より前の Cookie（セッションの行が無い）は、0045 を当てた後はログインし直してもらう", async () => {
-    const { sb, shop, mail, b } = setup();
-    sb.appliedMigrations.splice(sb.appliedMigrations.indexOf("0045_member_sessions"), 1);
+  it("0045 より前の Cookie（セッションの行が無い）は、ログインし直してもらう", async () => {
+    const { sb, shop, mail, app, b } = setup();
     await memberLogin(b, mail, "/my-shop", "member@example.com");
-    expect(sb.memberSessions).toHaveLength(0);
-    expect((await b.get("/my-shop/account")).status).toBe(200);
-    sb.appliedMigrations.push("0045_member_sessions");
-    // 適用済みの版の一覧は isolate に 60 秒覚えるので、新しいアプリで確かめる
-    const after = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }));
-    after.cookies.set(customerCookieName(shop.id), b.cookies.get(customerCookieName(shop.id))!);
-    expect((await after.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/account/login");
-    expect(after.cookies.has(customerCookieName(shop.id))).toBe(false);
+    const row = sb.tables.customers.find((c) => c["email"] === "member@example.com")!;
+    // sid の無い Cookie（0045 より前の形）を同じ秘密で作る
+    const now = Math.floor(Date.now() / 1000);
+    const old = new Browser(app);
+    old.cookies.set(customerCookieName(shop.id), await sealSession("test-session-secret", shop.id, { cid: String(row["id"]), ep: Number(row["session_epoch"] ?? 0), email: "member@example.com", exp: now + 3600, iat: now }));
+    expect((await old.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/account/login");
+    expect(old.cookies.has(customerCookieName(shop.id))).toBe(false);
   });
 
   it("改ざんした Cookie・他店の Cookie では入れない。ログアウトで Cookie を消す", async () => {

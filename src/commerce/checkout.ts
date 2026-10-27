@@ -19,7 +19,7 @@ import { StripeError, type StripeClient } from "../payments/stripe";
 import { KomojuError, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
 import { t, type MessageKey } from "../i18n";
 import { EMPTY_DISCOUNT, couponSubject, customerAttributesOf, evaluateDiscounts, parseCampaigns, type DiscountLine, type DiscountResult, type RejectedCoupon } from "./discounts";
-import { COUPON_ATTRIBUTES_MIGRATION, MARKETING_CONSENT_MIGRATION, marketingConsentEnabled } from "../customers/fields";
+import { marketingConsentEnabled } from "../customers/fields";
 import { shopHome } from "../storefront/urls";
 import { checkDelivery, deliveryText, isDeliverySlot } from "../modules/delivery-time";
 import { rateFor, shopTaxRates, taxBreakdown, taxClassOf, taxRoundingOf, type TaxGroup } from "./tax";
@@ -41,8 +41,6 @@ export const CHECKOUT_TTL_SECONDS = STRIPE_CHECKOUT_EXPIRES_SECONDS + 5 * 60;
 /** quote の有効期限。確認画面を開いたまま放置された場合は出し直す */
 export const QUOTE_TTL_SECONDS = 60 * 60;
 
-/** 戻り先の画面が注文の状態を引ける版（checkout_status、0035） */
-export const CHECKOUT_STATUS_MIGRATION = "0035_checkout_status";
 /** 照会トークンの期限。戻り先の画面を後から開き直しても引けるように長め（返るのは注文番号・状態・合計だけで、個人情報は無い） */
 export const STATUS_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 /** 確定時に success_url へ付ける照会トークンのクエリ名（ヘッドレス）。同梱テーマは /checkout/done?s= */
@@ -79,8 +77,6 @@ export function withQueryParam(url: string, key: string, value: string): string 
   const frag = hash >= 0 ? url.slice(hash) : "";
   return `${base}${base.includes("?") ? "&" : "?"}${encodeURIComponent(key)}=${encodeURIComponent(value)}${frag}`;
 }
-/** 予約の上限（quote は 1 回限り・同じ人・同じ IP）を DB が持つ版 */
-export const RESERVATION_LIMITS_MIGRATION = "0029_reservation_limits";
 /**
  * 決済事業者が受け付ける最低額（Stripe の円は 50 円）。1〜49 円の注文は確定できない。
  * 0 円の注文（クーポンで全額値引き・0 円の商品）は決済なしで確定する（placeOrder、02-decisions.md）
@@ -131,7 +127,7 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
  * 実体は coupon_lookup（service_role、0010）。購入者の画面からキャンペーンの表を直接は読ませない
  */
 export interface CouponSource {
-  /** customerId: ログイン中の会員（0049 が当たっているときだけ渡す。行に会員の独自項目 customer_attributes が載る） */
+  /** customerId: ログイン中の会員（行に会員の独自項目 customer_attributes が載る。0049） */
   lookup(codes: string[], subject: string | null, customerId?: string | null): Promise<unknown[]>;
 }
 
@@ -150,8 +146,7 @@ export async function discountCart(ctx: DiscountContext, priced: PricedCart, cod
   const subject = await couponSubject(ctx.member, email);
   // 会員の独自項目の条件（0049）: ログイン中の会員の id を渡して、判定の材料に attributes を載せてもらう（往復は増やさない）
   const memberId = ctx.member?.id ?? null;
-  const withAttributes = memberId ? await ctx.sf.migratedTo(COUPON_ATTRIBUTES_MIGRATION) : false;
-  const [rows, categories] = await Promise.all([ctx.coupons.lookup(codes, subject, withAttributes ? memberId : null), ctx.sf.listCategories(ctx.shop)]);
+  const [rows, categories] = await Promise.all([ctx.coupons.lookup(codes, subject, memberId), ctx.sf.listCategories(ctx.shop)]);
   const parent = new Map(categories.map((c) => [c.id, c.parent_id ?? null]));
   const lines: DiscountLine[] = priced.lines.map((l) => ({
     sku_id: l.sku.id,
@@ -279,7 +274,7 @@ export interface Confirmation {
   /** 申込みの撤回・解除の条件。未設定なら null（返品ポリシーのページを案内する） */
   cancellation: string | null;
   ship_to: { name: string; email: string; phone: string; postal_code: string; state: string; city: string; line1: string; line2: string };
-  /** 「お得な情報やセールの案内を受け取る」（0050）。欄を出さないショップ・0050 より前の DB では null（未回答） */
+  /** 「お得な情報やセールの案内を受け取る」（0050）。欄を出さないショップでは null（未回答） */
   marketing_consent: boolean | null;
   /** 法務ページ（絶対 URL） */
   links: { legal: string; privacy: string; returns: string };
@@ -346,7 +341,7 @@ export interface QuoteContext {
   coupons?: CouponSource | null;
   /** ログイン中の会員（会員限定のクーポン・1 人あたりの回数を会員 ID で数える） */
   member?: { id: string } | null;
-  /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定 × 0050 が当たっている。呼び出し側が consentCollected() で決める） */
+  /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定。呼び出し側が consentCollected() で決める） */
   consent?: boolean;
 }
 
@@ -398,9 +393,9 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
   return { ok: true, quote, token: await sealJson(ctx.secret, payload), confirmation: confirmationOf(ctx, priced.lines, priced.subtotal, quote, discount), lines: priced.lines, discount };
 }
 
-/** 同意の欄を出すか: ショップの設定（settings.marketing_consent）が ON で、DB が 0050 以降 */
-export async function consentCollected(sf: StorefrontData, shop: PublicShop): Promise<boolean> {
-  return marketingConsentEnabled(shop.settings) && (await sf.migratedTo(MARKETING_CONSENT_MIGRATION));
+/** 同意の欄を出すか: ショップの設定（settings.marketing_consent）が ON */
+export function consentCollected(shop: PublicShop): boolean {
+  return marketingConsentEnabled(shop.settings);
 }
 
 function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, quote: Quote, discount: DiscountResult): Confirmation {
@@ -565,7 +560,7 @@ export interface PlaceOrderInput {
   /** 会員としてログイン中なら（世代は予約に紐づけるときに DB が確かめる） */
   customerId?: string;
   customerEpoch?: number;
-  /** 予約の上限（0029）。DB が 0029 より前なら null（呼び出し側が migrated() で決める） */
+  /** 予約の上限（0029、reserveLimits() で作る） */
   limits?: ReserveLimits | null;
 }
 
@@ -577,9 +572,8 @@ export function discountLabel(discount: DiscountResult): string {
   return `${t("coupon.label")} ${discount.applied.map((a) => a.code).join(" + ")}`.slice(0, 40);
 }
 
-/** 予約の上限の材料（0029）。DB が 0029 より前なら null（reserve_stock に渡さない） */
-export async function reserveLimits(sf: StorefrontData, secret: string, quote: Quote, ip: string | null, member: { id: string } | null): Promise<ReserveLimits | null> {
-  if (!(await sf.migratedTo(RESERVATION_LIMITS_MIGRATION))) return null;
+/** 予約の上限の材料（0029） */
+export async function reserveLimits(secret: string, quote: Quote, ip: string | null, member: { id: string } | null): Promise<ReserveLimits> {
   const who = member?.id ? `c:${member.id.toLowerCase()}` : `e:${quote.address.customer_email.trim().toLowerCase()}`;
   return { quoteId: quote.id, subjectHash: await subjectHash(secret, who), ipHash: ip ? await ipHash(secret, ip) : null };
 }
@@ -710,9 +704,6 @@ export function returnOrigins(settings: Record<string, unknown> | null | undefin
   const list = raw && typeof raw === "object" ? (raw as Record<string, unknown>)["return_origins"] : null;
   return Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
 }
-
-/** IP ごとの上限の設定が DB に入った版（api_shop_update が 2 つの上限を受ける。管理画面の欄を出す判定にも使う） */
-export const RELAY_LIMITS_MIGRATION = "0033_relay_limits";
 
 /**
  * IP を 1 つの書き方にそろえる（比較と保存のため）。IPv4 はそのまま（各オクテット 0〜255、先頭の 0 は不可）、

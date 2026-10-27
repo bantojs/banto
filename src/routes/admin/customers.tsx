@@ -15,10 +15,9 @@ import { DbError, type Filter } from "../../db/client";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
 import { tf } from "../../i18n";
 import { createMailer, sendMail } from "../../mail/send";
-import { migrated } from "../../db/migration-state";
 import { moduleEnabled } from "../../modules/registry";
-import { PASSKEY_MIGRATION, PASSKEY_MODULE } from "../../modules/passkey";
-import { CUSTOMER_ATTRIBUTES_ADMIN_MIGRATION, CUSTOMER_MASTER_MIGRATION, MARKETING_CONSENT_MIGRATION, attributeRows, attributesFromForm, customerFields, externalRef, type CustomerField } from "../../customers/fields";
+import { PASSKEY_MODULE } from "../../modules/passkey";
+import { attributeRows, attributesFromForm, customerFields, externalRef, type CustomerField } from "../../customers/fields";
 
 /**
  * 会員一覧・削除（退会依頼への対応）・メールアドレスの変更（メールを失った会員の救済）。/admin/shops/:shopId/customers
@@ -35,10 +34,10 @@ interface CustomerRow {
   default_address: Record<string, unknown> | null;
   created_at: string;
   last_login_at?: string | null;
-  /** 0047。外部の顧客マスタでの ID と独自項目の値（適用前の DB では選ばない） */
+  /** 0047。外部の顧客マスタでの ID と独自項目の値 */
   external_ref?: Record<string, unknown> | null;
   attributes?: Record<string, unknown> | null;
-  /** 0050。案内メールの同意（null = 未回答）。適用前の DB では選ばない */
+  /** 0050。案内メールの同意（null = 未回答） */
   marketing_consent?: boolean | null;
   marketing_consent_at?: string | null;
   marketing_consent_source?: string | null;
@@ -46,19 +45,17 @@ interface CustomerRow {
 
 /**
  * 一覧と CSV で共通: メール・氏名の部分一致（q）、独自項目 1 つの値の部分一致（f / v）、案内メールの同意で DB で絞り、
- * 新しい順に limit 件（after より後ろ）を読む。独自項目・外部の ID の列は 0047 が当たっているときだけ選ぶ
+ * 新しい順に limit 件（after より後ろ）を読む
  */
 async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>, opts: { limit: number; after?: PagePosition }) {
   const { db } = owner(c);
-  const master = await migrated({ db, cache: c.get("adapters").cache }, CUSTOMER_MASTER_MIGRATION);
-  const consentOn = master && (await migrated({ db, cache: c.get("adapters").cache }, MARKETING_CONSENT_MIGRATION));
-  const fields: CustomerField[] = master ? customerFields(settings) : [];
-  const columns = ["id,email,name,default_address,created_at,last_login_at", ...(master ? ["external_ref,attributes"] : []), ...(consentOn ? ["marketing_consent,marketing_consent_at,marketing_consent_source"] : [])].join(",");
+  const fields: CustomerField[] = customerFields(settings);
+  const columns = "id,email,name,default_address,created_at,last_login_at,external_ref,attributes,marketing_consent,marketing_consent_at,marketing_consent_source";
   const q = (c.req.query("q") ?? "").trim().slice(0, 100);
   const f = (c.req.query("f") ?? "").trim();
   const v = (c.req.query("v") ?? "").trim().slice(0, 100);
   // 案内メールの同意で絞る（0050）: yes / no / none（未回答）
-  const consent = consentOn && ["yes", "no", "none"].includes(c.req.query("consent") ?? "") ? c.req.query("consent")! : "";
+  const consent = ["yes", "no", "none"].includes(c.req.query("consent") ?? "") ? c.req.query("consent")! : "";
   const where: Filter[] = [];
   if (q) where.push({ or: [{ col: "email", op: "contains", value: q }, { col: "name", op: "contains", value: q }] });
   if (f && v && fields.some((x) => x.key === f)) where.push({ col: `attributes->>${f}`, op: "contains", value: v });
@@ -70,7 +67,7 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
     q || attr
       ? await searchRows<CustomerRow>(c, { kind: "customers", shopId, q, filters: { ...(attr ? { field: f, value: v } : {}), ...(consent ? { consent } : {}) }, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns })
       : null;
-  if (searched) return { master, consentOn, fields, rows: searched, q, f, v, consent, filtered };
+  if (searched) return { fields, rows: searched, q, f, v, consent, filtered };
   const rows: CustomerRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {
@@ -81,26 +78,25 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { master, consentOn, fields, rows, q, f, v, consent, filtered };
+  return { fields, rows, q, f, v, consent, filtered };
 }
 
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");
 
 
 customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
-  const { master, consentOn, fields, q, f, v, consent, filtered } = list;
+  const { fields, q, f, v, consent, filtered } = list;
   const page = splitPage(list.rows, (r) => r.created_at);
   const rows = page.rows;
-  const editable = master && fields.length > 0 && (await migrated({ db, cache: c.get("adapters").cache }, CUSTOMER_ATTRIBUTES_ADMIN_MIGRATION));
+  const editable = fields.length > 0;
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(f ? { f, v } : {}), ...(consent ? { consent } : {}) }).toString();
-  const passkeys = moduleEnabled(shop.settings, PASSKEY_MODULE) && (await migrated({ db, cache: c.get("adapters").cache }, PASSKEY_MIGRATION));
+  const passkeys = moduleEnabled(shop.settings, PASSKEY_MODULE);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("customers.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "customers" }}>
       <PageHead title={t("customers.title")} />
@@ -141,20 +137,18 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                 <input type="search" name="v" value={v} placeholder={t("customers.filter_value")} aria-label={t("customers.filter_value")} />
               </>
             ) : null}
-            {consentOn ? (
-              <select name="consent" aria-label={t("customers.consent_filter")}>
-                <option value="">{t("customers.consent_filter")}</option>
-                <option value="yes" selected={consent === "yes"}>
-                  {t("customers.consent_yes")}
-                </option>
-                <option value="no" selected={consent === "no"}>
-                  {t("customers.consent_no")}
-                </option>
-                <option value="none" selected={consent === "none"}>
-                  {t("customers.consent_none")}
-                </option>
-              </select>
-            ) : null}
+            <select name="consent" aria-label={t("customers.consent_filter")}>
+              <option value="">{t("customers.consent_filter")}</option>
+              <option value="yes" selected={consent === "yes"}>
+                {t("customers.consent_yes")}
+              </option>
+              <option value="no" selected={consent === "no"}>
+                {t("customers.consent_no")}
+              </option>
+              <option value="none" selected={consent === "none"}>
+                {t("customers.consent_none")}
+              </option>
+            </select>
             <button type="submit" class="secondary small">
               {t("order.search")}
             </button>
@@ -169,8 +163,8 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                 <th>{t("login.email")}</th>
                 <th>{t("store.address_name")}</th>
                 <th>{t("store.address_state")}</th>
-                {master ? <th>{t("customers.attributes")}</th> : null}
-                {consentOn ? <th>{t("customers.consent")}</th> : null}
+                <th>{t("customers.attributes")}</th>
+                <th>{t("customers.consent")}</th>
                 <th>{t("order.date")}</th>
                 <th></th>
               </tr>
@@ -181,22 +175,20 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                   <td>{r.email ?? "-"}</td>
                   <td>{r.name ?? "-"}</td>
                   <td>{typeof r.default_address?.["state"] === "string" ? String(r.default_address["state"]) : "-"}</td>
-                  {master ? (
-                    <td>
-                      {attributeRows(fields, r.attributes).map((a) => (
-                        <span class="muted" style="display:block">
-                          {a.label}: {a.value}
-                        </span>
-                      ))}
-                      {externalRef(r.external_ref) ? (
-                        <span class="muted" style="display:block">
-                          {t("customers.external_ref")}: {externalRef(r.external_ref)!.provider} / {externalRef(r.external_ref)!.id}
-                        </span>
-                      ) : null}
-                      {attributeRows(fields, r.attributes).length === 0 && !externalRef(r.external_ref) ? "-" : null}
-                    </td>
-                  ) : null}
-                  {consentOn ? <td>{consentLabel(r.marketing_consent)}</td> : null}
+                  <td>
+                    {attributeRows(fields, r.attributes).map((a) => (
+                      <span class="muted" style="display:block">
+                        {a.label}: {a.value}
+                      </span>
+                    ))}
+                    {externalRef(r.external_ref) ? (
+                      <span class="muted" style="display:block">
+                        {t("customers.external_ref")}: {externalRef(r.external_ref)!.provider} / {externalRef(r.external_ref)!.id}
+                      </span>
+                    ) : null}
+                    {attributeRows(fields, r.attributes).length === 0 && !externalRef(r.external_ref) ? "-" : null}
+                  </td>
+                  <td>{consentLabel(r.marketing_consent)}</td>
                   <td>{formatDateTime(r.created_at, { dateOnly: true })}</td>
                   <td>
                     <details>
@@ -238,7 +230,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                           {t("customers.change_email")}
                         </button>
                       </form>
-                      {consentOn && r.marketing_consent === true ? (
+                      {r.marketing_consent === true ? (
                         <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/consent/withdraw${query ? `?${query}` : ""}`}>
                           <button type="submit" class="secondary small">
                             {t("customers.consent_withdraw")}
@@ -275,14 +267,14 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const { master, consentOn, fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS });
-  const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", ...(consentOn ? ["marketing_consent", "marketing_consent_at", "marketing_consent_source"] : []), ...(master ? ["external_provider", "external_id", ...fields.map((f) => f.key)] : [])];
+  const { fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS });
+  const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key)];
   const lines = rows.map((r) => {
     const a = (r.default_address ?? {}) as Record<string, unknown>;
     const ref = externalRef(r.external_ref);
     const attrs = r.attributes && typeof r.attributes === "object" ? r.attributes : {};
-    const consentCols = consentOn ? [r.marketing_consent === true ? "yes" : r.marketing_consent === false ? "no" : "", r.marketing_consent_at ? formatDateTime(r.marketing_consent_at) : "", r.marketing_consent_source ?? ""] : [];
-    return [r.id, r.email, r.name, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], formatDateTime(r.created_at), r.last_login_at ? formatDateTime(r.last_login_at) : "", ...consentCols, ...(master ? [ref?.provider ?? "", ref?.id ?? "", ...fields.map((f) => attrs[f.key] ?? "")] : [])].map(csvCell).join(",");
+    const consentCols = [r.marketing_consent === true ? "yes" : r.marketing_consent === false ? "no" : "", r.marketing_consent_at ? formatDateTime(r.marketing_consent_at) : "", r.marketing_consent_source ?? ""];
+    return [r.id, r.email, r.name, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], formatDateTime(r.created_at), r.last_login_at ? formatDateTime(r.last_login_at) : "", ...consentCols, ref?.provider ?? "", ref?.id ?? "", ...fields.map((f) => attrs[f.key] ?? "")].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n";
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="customers-${shop.slug}.csv"`, "Cache-Control": "no-store" });
@@ -367,7 +359,6 @@ customers.post("/:shopId/customers/:customerId/passkeys/reset", requireOwner, as
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, PASSKEY_MIGRATION))) return c.redirect(`/admin/shops/${shopId}/customers`);
   await db.rpc("member_passkeys_reset", { p_shop_id: shopId, p_customer_id: param(c, "customerId") });
   return c.redirect(`/admin/shops/${shopId}/customers?flash=passkeys_reset`);
 });

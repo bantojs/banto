@@ -10,15 +10,12 @@ import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { migrated } from "../../db/migration-state";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
 import { owner, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
 import { scope } from "./admin";
 import { COUPON_CSV_COLUMNS, MAX_COUPON_CSV_BYTES, couponCsv, parseCouponCsv } from "./csv";
-
-export const COUPON_IMPORT_MIGRATION = "0043_coupon_import";
 
 export const couponImport = new Hono<AppEnv>();
 
@@ -41,13 +38,12 @@ function reason(raw: string): string {
   return rest.length > 0 ? `${text}: ${rest.join(":").trim()}` : text;
 }
 
-function Page(props: { base: string; ready: boolean; csv?: string; results?: RowResult[]; done?: boolean; fatal?: string | null }) {
+function Page(props: { base: string; csv?: string; results?: RowResult[]; done?: boolean; fatal?: string | null }) {
   const counts = { ok: 0, created: 0, existing: 0, error: 0 };
   for (const r of props.results ?? []) counts[r.status]++;
   return (
     <div>
       <p class="muted">{t("coupons.import.intro")}</p>
-      {!props.ready ? <p class="error">{tf("coupons.import.migration_required", { version: COUPON_IMPORT_MIGRATION })}</p> : null}
       {props.fatal ? <p class="error">{t(`coupons.import.fatal.${props.fatal}` as MessageKey)}</p> : null}
       {props.results ? (
         <div>
@@ -106,7 +102,7 @@ function Page(props: { base: string; ready: boolean; csv?: string; results?: Row
         <label for="csv">{t("coupons.import.paste")}</label>
         <textarea id="csv" name="csv" rows={6} style="width:100%;max-width:60rem;font-family:monospace"></textarea>
         <p>
-          <button type="submit" disabled={!props.ready}>
+          <button type="submit">
             {t("coupons.import.check")}
           </button>{" "}
           <a href={`${props.base}/import/template.csv`}>{t("coupons.import.template")}</a>
@@ -142,8 +138,6 @@ function Page(props: { base: string; ready: boolean; csv?: string; results?: Row
   );
 }
 
-const ready = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COUPON_IMPORT_MIGRATION);
-
 function layout(c: AdminContext, shop: { id: string; name: string }, body: Child) {
   const base = `/admin/shops/${shop.id}/modules/coupons`;
   return c.html(
@@ -157,7 +151,7 @@ function layout(c: AdminContext, shop: { id: string; name: string }, body: Child
 couponImport.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  return layout(c, shop, <Page base={`/admin/shops/${shop.id}/modules/coupons`} ready={await ready(c)} />);
+  return layout(c, shop, <Page base={`/admin/shops/${shop.id}/modules/coupons`} />);
 });
 
 couponImport.get("/template.csv", requireOwner, async (c: AdminContext) => {
@@ -174,28 +168,27 @@ couponImport.post("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const base = `/admin/shops/${shop.id}/modules/coupons`;
-  if (!(await ready(c))) return layout(c, shop, <Page base={base} ready={false} />);
   const body = await c.req.parseBody();
   const file = body["file"];
   let csv = typeof body["csv"] === "string" ? body["csv"] : "";
   if (file && typeof file !== "string" && file.size > 0) {
-    if (file.size > MAX_COUPON_CSV_BYTES) return layout(c, shop, <Page base={base} ready fatal="too_large" />);
+    if (file.size > MAX_COUPON_CSV_BYTES) return layout(c, shop, <Page base={base} fatal="too_large" />);
     csv = await file.text();
   }
-  if (csv.length > MAX_COUPON_CSV_BYTES) return layout(c, shop, <Page base={base} ready fatal="too_large" />);
-  if (!csv.trim()) return layout(c, shop, <Page base={base} ready fatal="empty" />);
+  if (csv.length > MAX_COUPON_CSV_BYTES) return layout(c, shop, <Page base={base} fatal="too_large" />);
+  if (!csv.trim()) return layout(c, shop, <Page base={base} fatal="empty" />);
   const parsed = parseCouponCsv(csv);
-  if (parsed.fatal) return layout(c, shop, <Page base={base} ready fatal={parsed.fatal} />);
+  if (parsed.fatal) return layout(c, shop, <Page base={base} fatal={parsed.fatal} />);
   const write = body["step"] === "import";
   let fromDb: RowResult[] = [];
   if (parsed.rows.length > 0) {
     try {
       fromDb = await owner(c).db.rpc<RowResult[]>("import_coupons", { p_shop_id: shop.id, p_rows: parsed.rows, p_dry_run: !write });
     } catch (e) {
-      if (e instanceof DbError) return layout(c, shop, <Page base={base} ready fatal="db" />);
+      if (e instanceof DbError) return layout(c, shop, <Page base={base} fatal="db" />);
       throw e;
     }
   }
   const results = [...fromDb, ...parsed.errors.map((x): RowResult => ({ line: x.line, status: "error", code: x.code || null, error: x.error }))].sort((a, b) => a.line - b.line);
-  return layout(c, shop, <Page base={base} ready csv={csv} results={results} done={write} />);
+  return layout(c, shop, <Page base={base} csv={csv} results={results} done={write} />);
 });

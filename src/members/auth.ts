@@ -65,9 +65,8 @@ export function maskEmail(email: string): string {
 /**
  * 端末ごとのセッション（0045_member_sessions、監査 M9）。ログインのたびに DB に 1 行作り、Cookie とトークンにその ID（sid）を入れる。
  * ログアウト・一覧からの取り消し・refresh の使い回しの検知で、その端末だけを止められる。
- * 0045 が当たるまでは sid なしの今までの形で動く（docs/upgrade.md「適用するまでのあいだ」）。当たった後は sid の無い Cookie・トークンを通さない。
+ * sid の無い Cookie・トークン（0045 より前に発行したもの）は通さない。
  */
-export const MEMBER_SESSIONS_MIGRATION = "0045_member_sessions";
 
 export interface MemberSession {
   /** 会員 ID（customers.id） */

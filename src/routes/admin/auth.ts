@@ -4,13 +4,10 @@ import { DbError } from "../../db/client";
 import { openSession, sealSession, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, type SessionData } from "../../auth/session";
 import type { AuthSession } from "../../auth/supabase";
 import { authClient, dbClient, isSecureRequest, sessionSecret, type AdminContext } from "./context";
-import { appliedMigrations, migrated } from "../../db/migration-state";
+import { appliedMigrations } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ipHash, subjectHash } from "../../members/auth";
 import { clientIp } from "../common";
-
-/** 運営者の二段階認証（0054）。DB が aal1 の JWT を止める（banto_pre_request） */
-export const OPERATOR_MFA_MIGRATION = "0054_operator_mfa";
 
 /** DB が「二段階認証がまだ」と言って止めたか（banto_pre_request の 'mfa_required:<state>'） */
 export function mfaRequiredOf(e: unknown): "challenge" | "enroll" | null {
@@ -28,15 +25,6 @@ export function sessionAal(session: SessionData): string {
   } catch {
     return "aal1";
   }
-}
-
-/** 運営者のセッションの世代と、管理者ログインの回数の制限を DB が持つ版 */
-export const ADMIN_SESSIONS_MIGRATION = "0030_admin_sessions";
-
-function adminSessionsReady(c: AdminContext): Promise<boolean> {
-  const db = dbClient(c);
-  if (!db) return Promise.resolve(false);
-  return migrated({ db, cache: c.get("adapters").cache }, ADMIN_SESSIONS_MIGRATION);
 }
 
 function readCookie(c: AdminContext, name: string): string | undefined {
@@ -110,7 +98,7 @@ export async function adminDbReady(c: AdminContext): Promise<boolean> {
 
 /**
  * 管理者ログインの回数の制限（0030、監査 M2）。Supabase の /token の制限は Worker の出口 IP でまとめて掛かるので、Banto が
- * アドレス（HMAC）と IP（HMAC）ごとに数える。計算（Supabase への問い合わせ）の前に判定する。0030 より前の DB では何もしない。
+ * アドレス（HMAC）と IP（HMAC）ごとに数える。計算（Supabase への問い合わせ）の前に判定する。
  * 戻り値の record は、試した結果を記録する（成功したらそのアドレスの失敗を消す）
  */
 export async function adminLoginGuard(c: AdminContext, email: string): Promise<{ allowed: boolean; record: (success: boolean) => Promise<void> }> {
@@ -119,7 +107,7 @@ export async function adminLoginGuard(c: AdminContext, email: string): Promise<{
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!secret || !url || !serviceRoleKey || !(await adminSessionsReady(c))) return none;
+  if (!secret || !url || !serviceRoleKey) return none;
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   const emailHash = await subjectHash(secret, `admin:${email.trim().toLowerCase()}`);
   const ip = clientIp(c);
@@ -128,9 +116,8 @@ export async function adminLoginGuard(c: AdminContext, email: string): Promise<{
   return { allowed: r.allowed !== false, record: (success) => db.adminLoginRecord(emailHash, ipH, success) };
 }
 
-/** ログアウト: 世代を上げて、この人のすべての Cookie を無効にする（0030）。古い DB では何もしない */
+/** ログアウト: 世代を上げて、この人のすべての Cookie を無効にする（0030） */
 export async function bumpSessionEpoch(c: AdminContext, session: SessionData): Promise<void> {
-  if (!(await adminSessionsReady(c))) return;
   const db = dbClient(c, session.access_token);
   if (!db) return;
   await db.rpc("admin_session_bump", {}).catch(() => undefined);
@@ -144,16 +131,12 @@ export async function bumpSessionEpoch(c: AdminContext, session: SessionData): P
 export async function ensureOwnerRow(c: AdminContext, session: SessionData): Promise<"ok" | "not_owner" | "stale"> {
   const db = dbClient(c, session.access_token);
   if (!db) return "not_owner";
-  if (await adminSessionsReady(c)) {
-    // 0030: メンバーかどうかと世代を 1 回で。Cookie の世代が古ければ（ログアウト済み）入れない
-    const me = await db.rpc<{ member: boolean; epoch?: number }>("banto_admin_me", {});
-    if (me?.member) {
-      const epoch = typeof me.epoch === "number" ? me.epoch : 0;
-      if (session.epoch === undefined) session.epoch = epoch; // ログイン直後: 世代を Cookie に入れる
-      else if (session.epoch !== epoch) return "stale";
-      return "ok";
-    }
-  } else if (await db.from<{ org_id: string }>("org_members").selectOne("org_id", { eq: { user_id: session.user_id } })) {
+  // 0030: メンバーかどうかと世代を 1 回で。Cookie の世代が古ければ（ログアウト済み）入れない
+  const me = await db.rpc<{ member: boolean; epoch?: number }>("banto_admin_me", {});
+  if (me?.member) {
+    const epoch = typeof me.epoch === "number" ? me.epoch : 0;
+    if (session.epoch === undefined) session.epoch = epoch; // ログイン直後: 世代を Cookie に入れる
+    else if (session.epoch !== epoch) return "stale";
     return "ok";
   }
   try {
@@ -191,7 +174,7 @@ export const requireOwner: MiddlewareHandler<AppEnv> = async (c, next) => {
     clearSessionCookie(c);
     return c.redirect(state === "stale" ? "/admin/login" : "/admin/login?error=not_owner");
   }
-  // 0030 を当てた後の最初のリクエスト: 世代を Cookie に入れ直す（以後ログアウトで切れる）
+  // 世代の無い Cookie（ログイン直後・0030 より前に作った Cookie）: 世代を Cookie に入れ直す（以後ログアウトで切れる）
   if (!hadEpoch && session.epoch !== undefined) await setSessionCookie(c, session);
   c.set("session", session);
   c.set("db", dbClient(c, session.access_token) ?? undefined);

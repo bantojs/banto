@@ -77,16 +77,6 @@ describe("REST /api/v1 のクーポン", () => {
     expect(r.status).toBe(409);
     expect(((await r.json()) as { error: { message: string } }).error.message).toMatch(/module_disabled/);
   });
-
-  it("DB が 0036 より前なら 409 migration_required。無効なトークンには 401 のまま（DB の版を明かさない）", async () => {
-    const { app, issue, sb } = await setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0036_api_coupons_customers");
-    const tok = await issue(["shop:read"]);
-    const r = await rest(app, tok, "GET", "/coupons");
-    expect(r.status).toBe(409);
-    expect(r.json.error!.code).toBe("migration_required");
-    expect((await rest(app, generateApiToken(), "GET", "/customers")).status).toBe(401);
-  });
 });
 
 describe("REST /api/v1 の会員", () => {
@@ -152,26 +142,6 @@ describe("REST /api/v1 の会員: 顧客マスタの外部連携（0047）", () 
     // 読み取りのトークンでは upsert できない
     expect((await rest(app, await issue(["customers:read"]), "POST", "/customers/upsert", { email: "x@example.com" })).status).toBe(401);
   });
-
-  it("0047 より前の DB: upsert・attributes・external_ref・新しい絞り込みは 409 migration_required。今までの項目はそのまま", async () => {
-    const { app, issue, sb, memberId } = await setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0047_customer_master");
-    const tok = await issue(["customers:read", "customers:write"]);
-    for (const r of [
-      await rest(app, tok, "POST", "/customers/upsert", { email: "x@example.com" }),
-      await rest(app, tok, "POST", "/customers", { email: "y@example.com", attributes: { rank: "gold" } }),
-      await rest(app, tok, "PATCH", `/customers/${memberId}`, { external_ref: { provider: "hubspot", id: "1" } }),
-      await rest(app, tok, "GET", "/customers?external_provider=hubspot"),
-    ]) {
-      expect(r.status).toBe(409);
-      expect(r.json.error!.code).toBe("migration_required");
-      expect(r.json.error!.message).toContain("0047_customer_master");
-    }
-    expect((await rest(app, tok, "PATCH", `/customers/${memberId}`, { name: "そのまま" })).status).toBe(200);
-    expect((await rest(app, tok, "GET", "/customers")).status).toBe(200);
-    // 無効なトークンには DB の版を明かさない
-    expect((await rest(app, "banto_invalid", "POST", "/customers/upsert", { email: "x@example.com" })).status).toBe(401);
-  });
 });
 
 describe("MCP /mcp のクーポン・会員", () => {
@@ -206,7 +176,7 @@ describe("MCP /mcp のクーポン・会員", () => {
 });
 
 describe("管理画面: トークンの発行に新しいスコープ", () => {
-  it("0036 が当たっていればクーポン・会員のスコープが出る。既定では選ばれていない", async () => {
+  it("クーポン・会員のスコープが出る。既定では選ばれていない", async () => {
     const { app, shop } = await setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const html = await (await b.get(`/admin/shops/${shop.id}/tokens`)).text();
@@ -214,14 +184,5 @@ describe("管理画面: トークンの発行に新しいスコープ", () => {
       expect(html).toContain(`value="${sc}"`);
       expect(html).not.toMatch(new RegExp(`value="${sc}" checked`));
     }
-  });
-
-  it("0036 より前の DB では出さない", async () => {
-    const { app, shop, sb } = await setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0036_api_coupons_customers");
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await b.get(`/admin/shops/${shop.id}/tokens`)).text();
-    expect(html).not.toContain('value="customers:read"');
-    expect(html).toContain('value="orders:pii"');
   });
 });

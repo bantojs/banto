@@ -8,11 +8,8 @@ import { productCategoryIds } from "../src/products/categories";
  * 商品の追加カテゴリー（0042）とクーポンのタグの条件の、Worker 側。
  * 同じショップのカテゴリーだけ・カテゴリーの削除で外れる・取り込みと復元は test/db/extra-categories.test.ts（実 PostgreSQL）。
  */
-const MIGRATION = "0042_product_extra_categories";
-
-function setup(opts: { migrated?: boolean } = {}) {
+function setup() {
   const sb = new FakeSupabase();
-  if (opts.migrated === false) sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== MIGRATION);
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules: { coupons: true, woo_import: true } } });
   const wear = sb.addCategory(shop.id, { slug: "wear", name: "ウェア", sort_order: 0 });
@@ -79,7 +76,7 @@ describe("追加カテゴリー: お店の画面と公開 API", () => {
 });
 
 describe("追加カテゴリー: 管理画面と AI 用 API", () => {
-  it("商品の編集画面でチェックを付けて保存する。0042 より前の DB では出さず、列も送らない", async () => {
+  it("商品の編集画面でチェックを付けて保存する", async () => {
     const { sb, shop, app, sale, goods, tee } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const base = `/admin/shops/${shop.id}/products/${tee.id}`;
@@ -87,17 +84,9 @@ describe("追加カテゴリー: 管理画面と AI 用 API", () => {
     const res = await admin.post(base, { name: "Tシャツ", slug: "tee", category_id: String(tee["category_id"]), [`xcat_${sale.id}`]: "on", [`xcat_${goods.id}`]: "on", published: "on" });
     expect(res.headers.get("location")).toContain("flash=saved");
     expect(sb.tables.products.find((p) => p["id"] === tee.id)!["extra_category_ids"]).toEqual([sale.id, goods.id]);
-
-    const old = setup({ migrated: false });
-    const oldAdmin = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    const oldBase = `/admin/shops/${old.shop.id}/products/${old.mug.id}`;
-    expect(await (await oldAdmin.get(oldBase)).text()).not.toContain("xcat_");
-    await oldAdmin.post(oldBase, { name: "マグ", slug: "mug", category_id: String(old.goods.id), published: "on" });
-    // 送らないので、既存の値（DB に列があれば）も変えない
-    expect(old.sb.tables.products.find((p) => p["id"] === old.mug.id)!["extra_category_ids"]).toEqual([old.tops.id, old.sale.id]);
   });
 
-  it("REST: extra_categories を slug で付け外しする。0042 より前の DB では 409 migration_required", async () => {
+  it("REST: extra_categories を slug で付け外しする", async () => {
     const { app, issue, tee } = setup();
     const tok = await issue(["products:read", "products:write"]);
     let r = await rest(app, tok, "PATCH", `/products/${tee.id}`, { extra_categories: ["sale", "goods"] });
@@ -106,30 +95,19 @@ describe("追加カテゴリー: 管理画面と AI 用 API", () => {
     r = await rest(app, tok, "PATCH", `/products/${tee.id}`, { extra_categories: ["nope"] });
     expect(r.status).toBe(400);
     expect(r.json.error!.message).toMatch(/category_not_found/);
-
-    const old = setup({ migrated: false });
-    const oldTok = await old.issue(["products:read", "products:write"]);
-    r = await rest(old.app, oldTok, "PATCH", `/products/${old.tee.id}`, { extra_categories: ["sale"] });
-    expect(r.status).toBe(409);
-    expect(r.json.error!.code).toBe("migration_required");
-    // 項目を書けないトークンには DB の版を明かさない
-    const readOnly = await old.issue(["products:read"]);
-    expect((await rest(old.app, readOnly, "PATCH", `/products/${old.tee.id}`, { extra_categories: ["sale"] })).status).toBe(401);
-    // 追加カテゴリーを使わない更新はそのまま通る
-    expect((await rest(old.app, oldTok, "PATCH", `/products/${old.tee.id}`, { name: "T" })).status).toBe(200);
   });
 
-  it("WooCommerce の取り込み: 0042 より前の DB では追加カテゴリーをタグに写す", async () => {
-    const { sb, shop, app } = setup({ migrated: false });
+  it("WooCommerce の取り込み: 追加カテゴリーは slug で付ける（タグには写さない）", async () => {
+    const { sb, shop, app, sale } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const res = await admin.postJson(`/admin/shops/${shop.id}/modules/woo-import/batch`, {
-      products: [{ slug: "wc-1", name: "取り込み", tags: ["NEW"], category_slug: "goods", extra_category_slugs: ["sale"], extra_category_names: ["セール"], skus: [{ code: "WC-1", price_jpy: 100, available: 1 }] }],
+      products: [{ slug: "wc-1", name: "取り込み", tags: ["NEW"], category_slug: "goods", extra_category_slugs: ["sale"], skus: [{ code: "WC-1", price_jpy: 100, available: 1 }] }],
       overwrite_stock: true,
     });
     expect(await res.json()).toMatchObject({ products_created: 1, errors: [] });
     const p = sb.tables.products.find((x) => x["slug"] === "wc-1")!;
-    expect(p["tags"]).toEqual(["NEW", "セール"]);
-    expect(p["extra_category_ids"] ?? []).toEqual([]);
+    expect(p["tags"]).toEqual(["NEW"]);
+    expect(p["extra_category_ids"]).toEqual([sale.id]);
   });
 });
 
@@ -143,13 +121,5 @@ describe("クーポンのタグの条件", () => {
     expect(sb.tables.coupon_campaigns[0]!["conditions"]).toEqual({ tags: ["冬", "セール"], exclude_tags: ["福袋"] });
     const html = await (await admin.get(`${base}/${sb.tables.coupon_campaigns[0]!["id"]}`)).text();
     expect(html).toContain('value="冬, セール"');
-  });
-
-  it("REST: 0042 より前の DB でタグの条件を送ると 409 migration_required", async () => {
-    const { app, issue } = setup({ migrated: false });
-    const tok = await issue(["coupons:read", "coupons:write"]);
-    const r = await rest(app, tok, "POST", "/coupons", { name: "冬", kind: "percent", value: 10, conditions: { tags: ["冬"] } });
-    expect(r.status).toBe(409);
-    expect(r.json.error!.message).toMatch(/conditions\.tags/);
   });
 });

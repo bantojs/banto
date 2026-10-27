@@ -76,9 +76,8 @@ describe("クーポン CSV の読み書き", () => {
   });
 });
 
-function setup(opts: { migrated?: boolean } = {}) {
+function setup() {
   const sb = new FakeSupabase();
-  if (opts.migrated === false) sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0043_coupon_import");
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules: { coupons: true, woo_import: true } } });
   const tee = sb.addProduct(shop.id, { slug: "tee", name: "T", published: true });
@@ -123,15 +122,6 @@ describe("クーポンの「CSV から取り込む」", () => {
     const parsed = parseCouponCsv(await tpl.text());
     expect(parsed.errors).toEqual([]);
     expect(parsed.rows).toHaveLength(2);
-  });
-
-  it("DB が 0043 より前なら、取り込みのボタンを出さず、送られても DB を呼ばない", async () => {
-    const { sb, shop, app } = setup({ migrated: false });
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const base = `/admin/shops/${shop.id}/modules/coupons`;
-    expect(await (await admin.get(`${base}/import`)).text()).toContain("0043_coupon_import");
-    await admin.post(`${base}/import`, { step: "import", csv: `${HEADER}\nX,x,fixed,100` });
-    expect(sb.lastImport).toBeNull();
   });
 });
 

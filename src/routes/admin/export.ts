@@ -8,7 +8,6 @@ import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
-import { CUSTOMER_MASTER_MIGRATION } from "../../customers/fields";
 import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 
 /**
@@ -129,10 +128,8 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     Object.assign(counts, await privileged.restoreCommerce(shopId, commerce));
     // 取り込んだ過去の注文の ID と品名、SKU の無い明細（0023）
     Object.assign(counts, await privileged.restoreHistory(shopId, commerce));
-    // 会員の外部の ID と独自項目（0047）。0047 より前の DB なら関数が無いので飛ばす
-    if (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, CUSTOMER_MASTER_MIGRATION)) {
-      Object.assign(counts, await privileged.restoreCustomerMaster(shopId, pick("customers")));
-    }
+    // 会員の外部の ID と独自項目（0047）
+    Object.assign(counts, await privileged.restoreCustomerMaster(shopId, pick("customers")));
     // お問い合わせとやり取り（0061）。書き出しに入っているときだけ
     if (pick("inquiries").length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION))) {
       Object.assign(counts, await privileged.restoreInquiries(shopId, { inquiries: pick("inquiries"), inquiry_messages: pick("inquiry_messages"), orders: pick("orders"), customers: pick("customers") }));

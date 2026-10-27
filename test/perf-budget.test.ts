@@ -9,7 +9,8 @@ import { Browser, appWith, memberLogin, memberMail } from "./helpers";
  * 増やす必要があるときは、理由を docs/knowledge/02-decisions.md に書いてからこの数字を変える。
  */
 const BUDGET = {
-  // 初回（キャッシュなし）: 適用済みの版 1（banto_setup_state。isolate ごとに 60 秒、0028 で +1、2026-10-18 02-decisions.md）
+  // 初回（キャッシュなし）: 適用済みの版 1（banto_setup_state。isolate ごとに 60 秒、2026-10-18 02-decisions.md。v0.2.0 からは土台 0054 より後の版の判定。
+  // 並べて判定しても StorefrontData が 1 回にまとめる）
   // + ショップ行 1 + カテゴリー 1 + 一覧の 1 ページ 1 とタグ・カテゴリーの件数 1（並列。0058 で全件 3 回 → 2 回、2026-10-26 02-decisions.md）
   cold: { "/my-shop": 5, "/api/shops/my-shop/products": 5 },
   // 2 回目以降（isolate のキャッシュが効いている）

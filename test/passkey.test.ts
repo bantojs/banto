@@ -146,7 +146,7 @@ describe("パスキー（同梱モジュール passkey、0046）", () => {
     await addPasskey(b, sb);
   });
 
-  it("出さないもの: 独自ドメインの無いショップ・Banto の URL・モジュールが OFF・0046 の前", async () => {
+  it("出さないもの: 独自ドメインの無いショップ・Banto の URL・モジュールが OFF", async () => {
     const noDomain = setup({ domain: null });
     const base = new Browser(noDomain.app);
     await memberLogin(base, noDomain.mail, "/my-shop", "m@example.com");
@@ -160,13 +160,7 @@ describe("パスキー（同梱モジュール passkey、0046）", () => {
     const off = setup({ module: false });
     expect(await (await off.b.get("/account/login")).text()).not.toContain("data-banto-passkey");
     expect((await off.b.postJson("/account/passkey/login/options", {})).status).toBe(404);
-    disposers.forEach((d) => d());
-    disposers = [];
-
-    const old = setup();
-    old.sb.appliedMigrations.splice(old.sb.appliedMigrations.indexOf("0046_mod_passkey"), 1);
-    expect((await old.b.postJson("/account/passkey/login/options", {})).status).toBe(404);
-    expect((await old.b.get("/account/passkey.js")).status).toBe(404);
+    expect((await off.b.get("/account/passkey.js")).status).toBe(404);
   });
 
   it("ヘッドレス: ショップのドメインのパスキーの画面へ送り、引き換え券で連携サイトへ戻す", async () => {

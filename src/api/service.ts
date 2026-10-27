@@ -12,8 +12,7 @@ import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
-import { RELAY_LIMITS_MIGRATION } from "../commerce/checkout";
-import { API_COUPONS_CUSTOMERS_MIGRATION, API_INQUIRIES_MIGRATION } from "./tokens";
+import { API_INQUIRIES_MIGRATION } from "./tokens";
 import type { Mailer } from "../mail/send";
 import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
@@ -33,16 +32,11 @@ export interface InquiryMailDeps {
 export const INQUIRY_API_STATUSES = ["closed", "waiting_shop", "waiting_customer"] as const;
 export type InquiryApiStatus = (typeof INQUIRY_API_STATUSES)[number];
 export const isInquiryApiStatus = (v: unknown): v is InquiryApiStatus => typeof v === "string" && (INQUIRY_API_STATUSES as readonly string[]).includes(v);
-import { COUPON_ATTRIBUTES_MIGRATION, CUSTOMER_MASTER_MIGRATION, MARKETING_CONSENT_MIGRATION } from "../customers/fields";
 
 /** 商品画像のファイルを送る（api_image_add_file）版 */
-import { EXTRA_CATEGORIES_MIGRATION } from "../products/categories";
 /** クーポンの条件のブランドと支払い方法（banto_api_coupon_apply が受け付ける版） */
-export const COUPON_BRAND_PAYMENT_MIGRATION = "0044_coupon_brand_payment";
-export const API_IMAGE_UPLOAD_MIGRATION = "0037_api_image_upload";
 
 /** 購入前の確認画面の文言（checkout_terms）を api_shop_get / api_shop_update が扱う版 */
-export const API_CHECKOUT_TERMS_MIGRATION = "0032_api_checkout_terms";
 
 export type ApiErrorCode = "unauthorized" | "forbidden" | "not_found" | "invalid" | "conflict" | "migration_required" | "upstream";
 
@@ -147,16 +141,6 @@ export class ApiService {
     return this.migrationState ? migrated(this.migrationState, version) : Promise.resolve(false);
   }
 
-  /**
-   * 古い DB が黙って捨てる（または知らない鍵で断る）項目を、わかる理由で断る。
-   * DB の版はその項目を書けるトークンにだけ明かす（スコープが無ければ 401）
-   */
-  private async requireMigration(field: string, version: string, scope: string): Promise<void> {
-    if (await this.migratedTo(version)) return;
-    if (!(await this.call<boolean>("api_has_scope", { p_scope: scope }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
-    throw new ApiError("migration_required", `${field} needs the database update ${version}; apply it from /admin/update`, 409);
-  }
-
   private async call<T>(fn: `api_${string}`, args: Record<string, unknown>): Promise<T> {
     try {
       return await this.db.apiRpc<T>(fn, { p_token_hash: this.tokenHash, ...args });
@@ -167,19 +151,7 @@ export class ApiService {
 
   // ---- shop ----
   shopGet = () => this.call<Record<string, unknown>>("api_shop_get", {});
-  shopUpdate = async (values: Record<string, unknown>) => {
-    // 0032 より前の DB は checkout_terms を黙って捨てるので、保存したと誤解させないように断る（DB の版は shop:write を持つトークンにだけ明かす）
-    // 同じく 0033 より前の DB は IP ごとの上限（max_pending_per_ip / login_per_ip_per_hour）を黙って捨てる
-    const needs: [string, string][] = [];
-    if (values["checkout_terms"] !== undefined) needs.push(["checkout_terms", API_CHECKOUT_TERMS_MIGRATION]);
-    if (values["max_pending_per_ip"] !== undefined || values["login_per_ip_per_hour"] !== undefined) needs.push(["max_pending_per_ip / login_per_ip_per_hour", RELAY_LIMITS_MIGRATION]);
-    for (const [field, version] of needs) {
-      if (await this.migratedTo(version)) continue;
-      if (!(await this.call<boolean>("api_has_scope", { p_scope: "shop:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
-      throw new ApiError("migration_required", `${field} needs the database update ${version}; apply it from /admin/update`, 409);
-    }
-    return this.call<Record<string, unknown>>("api_shop_update", { p_values: values });
-  };
+  shopUpdate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_shop_update", { p_values: values });
 
   // ---- products ----
   productsList = (q: ListQuery = {}) =>
@@ -190,14 +162,8 @@ export class ApiService {
       p_offset: q.offset ?? 0,
     });
   productGet = (ref: { id?: string; slug?: string }) => this.call<Record<string, unknown>>("api_product_get", { p_product_id: ref.id ?? null, p_slug: ref.slug ?? null });
-  productCreate = async (values: Record<string, unknown>) => {
-    if (values["extra_categories"] !== undefined) await this.requireMigration("extra_categories", EXTRA_CATEGORIES_MIGRATION, "products:write");
-    return this.call<Record<string, unknown>>("api_product_create", { p_values: values });
-  };
-  productUpdate = async (id: string, values: Record<string, unknown>) => {
-    if (values["extra_categories"] !== undefined) await this.requireMigration("extra_categories", EXTRA_CATEGORIES_MIGRATION, "products:write");
-    return this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
-  };
+  productCreate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_product_create", { p_values: values });
+  productUpdate = (id: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
   skuCreate = (productId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_create", { p_product_id: productId, p_values: values });
   skuUpdate = (skuId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_update", { p_sku_id: skuId, p_values: values });
   categoriesList = () => this.call<Record<string, unknown>[]>("api_categories_list", {});
@@ -269,10 +235,6 @@ export class ApiService {
    */
   async imageUpload(productId: string, image: Uint8Array, thumbnail: Uint8Array | null): Promise<Record<string, unknown>> {
     uuidOr404(productId);
-    if (!(await this.migratedTo(API_IMAGE_UPLOAD_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `image upload needs the database update ${API_IMAGE_UPLOAD_MIGRATION}; apply it from /admin/update`, 409);
-    }
     const main = sniffImage(image.subarray(0, 256));
     if (!main) throw new ApiError("invalid", "image must be JPEG, PNG, WebP, GIF or AVIF", 400);
     if (image.byteLength > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 400);
@@ -331,7 +293,7 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
 
   // ---- お問い合わせ（0061。inquiries:read / inquiries:write、モジュール inquiries が ON のショップだけ）----
-  /** 0061 より前の DB では関数が無いので、有効なトークンであることだけ確かめてから DB の版を返す（need0036 と同じ） */
+  /** 0061 より前の DB では関数が無いので、有効なトークンであることだけ確かめてから DB の版を返す */
   private async call0061<T>(scope: string, fn: `api_${string}`, args: Record<string, unknown>): Promise<T> {
     if (!(await this.migratedTo(API_INQUIRIES_MIGRATION))) {
       await this.call("api_token_shop", {});
@@ -368,21 +330,8 @@ export class ApiService {
   inquirySetStatus = (number: number, status: InquiryApiStatus) => this.call0061<Record<string, unknown>>("inquiries:write", "api_inquiry_set_status", { p_number: number, p_status: status });
 
   // ---- クーポン（0036。coupons:read / coupons:write、モジュール coupons が ON のショップだけ）----
-  /**
-   * 0036 より前の DB では関数が無いので、先に断る。その DB ではこれらのスコープのトークンは作れないので、
-   * 有効なトークンであることだけ確かめてから DB の版を返す（無効なトークンには unauthorized）
-   */
-  private async need0036(scope: string): Promise<void> {
-    if (await this.migratedTo(API_COUPONS_CUSTOMERS_MIGRATION)) return;
-    await this.call("api_token_shop", {});
-    throw new ApiError("migration_required", `this endpoint needs the database update ${API_COUPONS_CUSTOMERS_MIGRATION}; apply it from /admin/update (${scope})`, 409);
-  }
-  private async call0036<T>(scope: string, fn: `api_${string}`, args: Record<string, unknown>): Promise<T> {
-    await this.need0036(scope);
-    return this.call<T>(fn, args);
-  }
   couponsList = (q: { query?: string; active?: boolean; limit?: number; offset?: number } = {}) =>
-    this.call0036<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("coupons:read", "api_coupons_list", {
+    this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("api_coupons_list", {
       p_query: q.query ?? null,
       p_active: q.active ?? null,
       p_limit: q.limit ?? 50,
@@ -390,30 +339,12 @@ export class ApiService {
     });
   // id の形の検査（uuidOr404）は同期で投げるので、どれも async にして Promise の失敗として返す
   /** id（UUID）かコードで 1 件 */
-  couponGet = async (ref: string) => this.call0036<Record<string, unknown>>("coupons:read", "api_coupon_get", isUuid(ref) ? { p_campaign_id: ref, p_code: null } : { p_campaign_id: null, p_code: ref });
-  couponCreate = async (values: Record<string, unknown>) => {
-    await this.needTagConditions(values);
-    return this.call0036<Record<string, unknown>>("coupons:write", "api_coupon_create", { p_values: values });
-  };
-  couponUpdate = async (id: string, values: Record<string, unknown>) => {
-    const campaignId = uuidOr404(id);
-    await this.needTagConditions(values);
-    return this.call0036<Record<string, unknown>>("coupons:write", "api_coupon_update", { p_campaign_id: campaignId, p_values: values });
-  };
-  /** タグ（0042）・ブランドと支払い方法（0044）の条件。古い DB は知らない鍵として断るので、わかる理由で先に断る */
-  private async needTagConditions(values: Record<string, unknown>): Promise<void> {
-    const cond = values["conditions"];
-    if (!cond || typeof cond !== "object") return;
-    const has = (keys: string[]) => keys.some((k) => k in cond);
-    if (!has(["tags", "exclude_tags", "brands", "exclude_brands", "payment_methods", "attributes"])) return;
-    await this.need0036("coupons:write");
-    if (has(["tags", "exclude_tags"])) await this.requireMigration("conditions.tags / exclude_tags", EXTRA_CATEGORIES_MIGRATION, "coupons:write");
-    if (has(["brands", "exclude_brands", "payment_methods"])) await this.requireMigration("conditions.brands / exclude_brands / payment_methods", COUPON_BRAND_PAYMENT_MIGRATION, "coupons:write");
-    if (has(["attributes"])) await this.requireMigration("conditions.attributes", COUPON_ATTRIBUTES_MIGRATION, "coupons:write");
-  }
-  couponDelete = async (id: string) => this.call0036<Record<string, unknown>>("coupons:write", "api_coupon_delete", { p_campaign_id: uuidOr404(id) });
+  couponGet = async (ref: string) => this.call<Record<string, unknown>>("api_coupon_get", isUuid(ref) ? { p_campaign_id: ref, p_code: null } : { p_campaign_id: null, p_code: ref });
+  couponCreate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_coupon_create", { p_values: values });
+  couponUpdate = async (id: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_coupon_update", { p_campaign_id: uuidOr404(id), p_values: values });
+  couponDelete = async (id: string) => this.call<Record<string, unknown>>("api_coupon_delete", { p_campaign_id: uuidOr404(id) });
   couponGrantsList = async (id: string, q: { status?: string; limit?: number; offset?: number } = {}) =>
-    this.call0036<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("coupons:read", "api_coupon_grants_list", {
+    this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("api_coupon_grants_list", {
       p_campaign_id: uuidOr404(id),
       p_status: q.status ?? null,
       p_limit: q.limit ?? 50,
@@ -422,29 +353,23 @@ export class ApiService {
   /** 会員 ID ごとに 1 枚と、誰でも 1 回使えるコードを count 枚（合わせて 500 まで） */
   couponGrantsIssue = async (id: string, customerIds: string[], count: number) => {
     if (customerIds.some((x) => !isUuid(x))) throw new ApiError("invalid", "customer_ids must be member ids (UUID)", 400);
-    return this.call0036<Record<string, unknown>>("coupons:write", "api_coupon_grants_issue", { p_campaign_id: uuidOr404(id), p_customer_ids: customerIds, p_count: count });
+    return this.call<Record<string, unknown>>("api_coupon_grants_issue", { p_campaign_id: uuidOr404(id), p_customer_ids: customerIds, p_count: count });
   };
-  couponGrantRevoke = async (grantId: string) => this.call0036<Record<string, unknown>>("coupons:write", "api_coupon_grant_revoke", { p_grant_id: uuidOr404(grantId) });
+  couponGrantRevoke = async (grantId: string) => this.call<Record<string, unknown>>("api_coupon_grant_revoke", { p_grant_id: uuidOr404(grantId) });
 
   // ---- 会員（0036。customers:read / customers:write。メールアドレスは変えられない）----
   // 0047: external_ref（外部の ID）・attributes（独自項目。定義は shops.settings.customer_fields）・updated_since・upsert（docs/knowledge/13-external-customer-master.md）
   customersList = async (q: { query?: string; email?: string; limit?: number; offset?: number; externalProvider?: string; externalId?: string; updatedSince?: string; marketingConsent?: boolean } = {}) => {
     const extra: Record<string, unknown> = {};
-    if (q.marketingConsent !== undefined) {
-      await this.need0036("customers:read");
-      await this.requireMigration("marketing_consent", MARKETING_CONSENT_MIGRATION, "customers:read");
-      extra["p_marketing_consent"] = q.marketingConsent;
-    }
+    if (q.marketingConsent !== undefined) extra["p_marketing_consent"] = q.marketingConsent;
     if (q.externalProvider !== undefined || q.externalId !== undefined || q.updatedSince !== undefined) {
-      await this.need0036("customers:read");
-      await this.requireMigration("external_provider / external_id / updated_since", CUSTOMER_MASTER_MIGRATION, "customers:read");
       if (q.updatedSince !== undefined && Number.isNaN(Date.parse(q.updatedSince))) throw new ApiError("invalid", "updated_since must be an ISO 8601 date-time", 400);
       if (q.externalId !== undefined && !q.externalProvider) throw new ApiError("invalid", "external_id needs external_provider", 400);
       extra["p_external_provider"] = q.externalProvider ?? null;
       extra["p_external_id"] = q.externalId ?? null;
       extra["p_updated_since"] = q.updatedSince ?? null;
     }
-    return this.call0036<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("customers:read", "api_customers_list", {
+    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("api_customers_list", {
       p_query: q.query ?? null,
       p_email: q.email ?? null,
       p_limit: q.limit ?? 50,
@@ -452,34 +377,12 @@ export class ApiService {
       ...extra,
     });
   };
-  customerGet = async (id: string) => this.call0036<Record<string, unknown>>("customers:read", "api_customer_get", { p_customer_id: uuidOr404(id) });
-  customerCreate = async (values: Record<string, unknown>) => {
-    await this.requireCustomerMaster(values);
-    return this.call0036<Record<string, unknown>>("customers:write", "api_customer_create", { p_values: values });
-  };
-  customerUpdate = async (id: string, values: Record<string, unknown>) => {
-    await this.requireCustomerMaster(values);
-    return this.call0036<Record<string, unknown>>("customers:write", "api_customer_update", { p_customer_id: uuidOr404(id), p_values: values });
-  };
+  customerGet = async (id: string) => this.call<Record<string, unknown>>("api_customer_get", { p_customer_id: uuidOr404(id) });
+  customerCreate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_create", { p_values: values });
+  customerUpdate = async (id: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_update", { p_customer_id: uuidOr404(id), p_values: values });
   /** メールアドレスで引いて、あれば渡した鍵だけ更新、無ければ作る（外部のマスタからの同期の窓口。email は変えない） */
-  customerUpsert = async (values: Record<string, unknown>) => {
-    await this.need0036("customers:write");
-    await this.requireMigration("customer upsert", CUSTOMER_MASTER_MIGRATION, "customers:write");
-    return this.call<Record<string, unknown>>("api_customer_upsert", { p_values: values });
-  };
-  customerDelete = async (id: string) => this.call0036<Record<string, unknown>>("customers:write", "api_customer_delete", { p_customer_id: uuidOr404(id) });
-  /** attributes / external_ref は 0047 から（古い DB では invalid_field で断られるより先に、わかる理由で断る） */
-  private async requireCustomerMaster(values: Record<string, unknown>): Promise<void> {
-    if (!values || typeof values !== "object") return;
-    if ("marketing_consent" in values) {
-      await this.need0036("customers:write");
-      await this.requireMigration("marketing_consent", MARKETING_CONSENT_MIGRATION, "customers:write");
-    }
-    if (!("attributes" in values) && !("external_ref" in values)) return;
-    await this.need0036("customers:write");
-    await this.requireMigration("attributes / external_ref", CUSTOMER_MASTER_MIGRATION, "customers:write");
-  }
-
+  customerUpsert = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_upsert", { p_values: values });
+  customerDelete = async (id: string) => this.call<Record<string, unknown>>("api_customer_delete", { p_customer_id: uuidOr404(id) });
   // ---- stats ----
   salesSummary = (from: string, to: string, groupBy: "day" | "month" | "product" = "day") =>
     this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy });

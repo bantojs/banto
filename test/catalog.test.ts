@@ -182,10 +182,10 @@ describe("商品マスタの拡張: バックアップの往復", () => {
 });
 
 describe("会員の項目（顧客マスタの外部連携、0047）: 管理画面", () => {
-  it("定義を保存し、会員の一覧に独自項目と外部の ID が出る。0047 より前の DB では列を選ばない", async () => {
+  it("定義を保存し、会員の一覧に独自項目と外部の ID が出る", async () => {
     const { sb, shop, app } = setup({ members_enabled: true });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    let res = await admin.post(`/admin/shops/${shop.id}/customer-fields`, { definitions: "rank | 会員ランク | select | regular/gold\nnewsletter | メルマガ | select | yes/no\nBad Key | x | text" });
+    const res = await admin.post(`/admin/shops/${shop.id}/customer-fields`, { definitions: "rank | 会員ランク | select | regular/gold\nnewsletter | メルマガ | select | yes/no\nBad Key | x | text" });
     expect(res.headers.get("location")).toContain("flash=customer_fields_saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({
       customer_fields: [
@@ -196,21 +196,10 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
     expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain("rank | 会員ランク | select | regular/gold");
 
     sb.tables.customers.push({ id: crypto.randomUUID(), shop_id: shop.id, email: "m@example.com", name: "会員", attributes: { rank: "gold", stale: "x" }, external_ref: { provider: "hubspot", id: "101" }, created_at: "2026-10-23T00:00:00Z" });
-    let html = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();
+    const html = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();
     expect(html).toContain("会員ランク: gold");
     expect(html).toContain("hubspot / 101");
     expect(html).not.toContain("stale"); // 定義に無い鍵は出さない
-
-    // 0047 より前の DB（適用済みの一覧は isolate に覚えるので、別のアプリで）
-    const old = setup({ members_enabled: true, customer_fields: (sb.tables.shops[0]!["settings"] as Record<string, unknown>)["customer_fields"] });
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== "0047_customer_master");
-    old.sb.tables.customers.push({ ...sb.tables.customers[0]!, shop_id: old.shop.id });
-    const oldAdmin = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    res = await oldAdmin.get(`/admin/shops/${old.shop.id}/customers`);
-    html = await res.text();
-    expect(res.status).toBe(200);
-    expect(html).toContain("m@example.com");
-    expect(html).not.toContain("hubspot / 101");
   });
 
   it("独自項目を手で直す（customer_set_attributes）、項目の値で絞る、CSV に書き出す", async () => {
@@ -247,14 +236,5 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
     expect(text).toContain(`${m1},gold@example.com,金,090,,東京都,,,,`);
     expect(text).toContain(",hubspot,7,gold,");
     expect(text).not.toContain("plain@example.com");
-
-    // 0048 より前の DB では編集フォームを出さない（一覧と CSV はそのまま）
-    const old = setup({ members_enabled: true, customer_fields: [{ key: "rank", label: "会員ランク", type: "select", options: ["regular", "gold"] }] });
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== "0048_customer_attributes_admin");
-    old.sb.tables.customers.push({ id: m1, shop_id: old.shop.id, email: "gold@example.com", attributes: { rank: "gold" }, created_at: "2026-10-23T00:00:00Z" });
-    const oldAdmin = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    html = await (await oldAdmin.get(`/admin/shops/${old.shop.id}/customers`)).text();
-    expect(html).toContain("会員ランク: gold");
-    expect(html).not.toContain('name="attr_rank"');
   });
 });

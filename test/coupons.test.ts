@@ -261,16 +261,6 @@ describe("クーポン: 会員の独自項目の条件（0049）", () => {
     expect(await (await m.get("/my-shop/cart")).text()).not.toContain("対象の会員の方だけ");
     const html = await (await m.post("/my-shop/checkout/stripe", { ...ADDRESS, customer_email: "member@example.com" })).text();
     expect(html).toContain("値引き（GOLD");
-    // 0049 より前の DB では会員 id を渡さない（条件のあるクーポンは使えない）
-    const old = setup({ settings: { members_enabled: true, customer_fields: FIELDS } });
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== "0049_coupon_attributes");
-    old.campaign({ name: "ゴールド", code: "GOLD", kind: "fixed", value: 500, conditions: { attributes: { rank: ["gold"] } } });
-    const m2 = new Browser(old.app);
-    await memberLogin(m2, old.mail, "/my-shop", "member@example.com");
-    old.sb.tables.customers.find((c) => c["email"] === "member@example.com")!["attributes"] = { rank: "gold" };
-    await m2.post("/my-shop/cart/add", { sku_id: old.teeM.id, qty: "1" });
-    await m2.get("/my-shop/cart?coupon=GOLD");
-    expect(await (await m2.get("/my-shop/cart")).text()).toContain("対象の会員の方だけ");
   });
 
   it("管理画面: 会員の項目の条件を印とカンマ区切りで登録する。定義が無ければ案内だけ", async () => {

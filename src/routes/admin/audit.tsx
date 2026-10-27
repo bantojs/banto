@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { AUDIT_LOG_MIGRATION, auditKeepDays, type AuditRow } from "../../audit";
-import { migrated } from "../../db/migration-state";
+import { auditKeepDays, type AuditRow } from "../../audit";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout } from "./layout";
@@ -109,24 +108,21 @@ audit.get("/org/audit", requireOwner, requireOrgAdmin, async (c: AdminContext) =
   const wanted = c.req.query("org");
   const o = orgs.find((x) => x.org_id === wanted) ?? orgs[0] ?? null;
   if (!o) return c.redirect("/admin?flash=forbidden");
-  const ready = await migrated({ db, cache: c.get("adapters").cache }, AUDIT_LOG_MIGRATION);
   const pageRaw = c.req.query("page");
   const page = pageRaw && /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
   const q = `?org=${o.org_id}`;
   const keepDays = auditKeepDays(c.get("adapters").config.get("AUDIT_LOG_KEEP_DAYS"));
 
-  const [rows, memberRows, shopRows] = ready
-    ? await Promise.all([
-        db.from<AuditRow>("audit_log").select("id,org_id,shop_id,actor_kind,actor_id,action,target_type,target_id,detail,created_at", {
-          eq: { org_id: o.org_id },
-          order: "id.desc",
-          limit: PAGE,
-          offset: (page - 1) * PAGE,
-        }),
-        db.rpc<MemberRef[]>("org_members_list", { p_org_id: o.org_id }),
-        db.from<{ id: string; name: string }>("shops").select("id,name", { eq: { org_id: o.org_id } }),
-      ])
-    : [[], [], []];
+  const [rows, memberRows, shopRows] = await Promise.all([
+    db.from<AuditRow>("audit_log").select("id,org_id,shop_id,actor_kind,actor_id,action,target_type,target_id,detail,created_at", {
+      eq: { org_id: o.org_id },
+      order: "id.desc",
+      limit: PAGE,
+      offset: (page - 1) * PAGE,
+    }),
+    db.rpc<MemberRef[]>("org_members_list", { p_org_id: o.org_id }),
+    db.from<{ id: string; name: string }>("shops").select("id,name", { eq: { org_id: o.org_id } }),
+  ]);
   const members = new Map((memberRows ?? []).map((m) => [m.user_id, m.email]));
   const shops = new Map(shopRows.map((s) => [s.id, s.name]));
 
@@ -136,45 +132,37 @@ audit.get("/org/audit", requireOwner, requireOrgAdmin, async (c: AdminContext) =
         {t("audit.title")}: {o.name}
       </h1>
       <p>{t("audit.intro")}</p>
-      {!ready ? (
-        <p class="notice">
-          {t("audit.needs_update")} <a href="/admin/update">{t("update.title")}</a>
-        </p>
-      ) : (
-        <>
-          <p>{tf("audit.keep", { days: keepDays })}</p>
-          {rows.length === 0 ? <p>{t("audit.empty")}</p> : null}
-          {rows.length > 0 ? (
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("audit.when")}</th>
-                  <th>{t("audit.who")}</th>
-                  <th>{t("audit.what")}</th>
-                  <th>{t("audit.target")}</th>
-                  <th>{t("audit.shop")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr>
-                    <td>{formatDateTime(r.created_at)}</td>
-                    <td>{actor(r, members)}</td>
-                    <td>{describe(r)}</td>
-                    <td>{target(r, members, shops)}</td>
-                    <td>{r.shop_id ? (shops.get(r.shop_id) ?? short(r.shop_id)) : ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : null}
-          <p>
-            {page > 1 ? <a href={`/admin/org/audit${q}&page=${page - 1}`}>{t("audit.newer")}</a> : null}
-            {page > 1 && rows.length === PAGE ? " · " : ""}
-            {rows.length === PAGE ? <a href={`/admin/org/audit${q}&page=${page + 1}`}>{t("audit.older")}</a> : null}
-          </p>
-        </>
-      )}
+      <p>{tf("audit.keep", { days: keepDays })}</p>
+      {rows.length === 0 ? <p>{t("audit.empty")}</p> : null}
+      {rows.length > 0 ? (
+        <table>
+          <thead>
+            <tr>
+              <th>{t("audit.when")}</th>
+              <th>{t("audit.who")}</th>
+              <th>{t("audit.what")}</th>
+              <th>{t("audit.target")}</th>
+              <th>{t("audit.shop")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr>
+                <td>{formatDateTime(r.created_at)}</td>
+                <td>{actor(r, members)}</td>
+                <td>{describe(r)}</td>
+                <td>{target(r, members, shops)}</td>
+                <td>{r.shop_id ? (shops.get(r.shop_id) ?? short(r.shop_id)) : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      <p>
+        {page > 1 ? <a href={`/admin/org/audit${q}&page=${page - 1}`}>{t("audit.newer")}</a> : null}
+        {page > 1 && rows.length === PAGE ? " · " : ""}
+        {rows.length === PAGE ? <a href={`/admin/org/audit${q}&page=${page + 1}`}>{t("audit.older")}</a> : null}
+      </p>
     </AdminLayout>,
   );
 });

@@ -19,7 +19,7 @@ import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
-import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, CHECKOUT_STATUS_MIGRATION, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
@@ -445,7 +445,7 @@ storefront.post("/:shop/tryon/confirm", async (c: Ctx) => {
   return tryonPage(c, s, tr, { step: "confirm", store: view, values: r.input, visitLabel: r.input.visit_date ? dateLabel(r.input.visit_date) : null });
 });
 
-/** 同じ人・同じ IP の開いている申し込みの上限に使う IP の HMAC（0029。p_customer.ip_hash で渡すので古い DB は無視する） */
+/** 同じ人・同じ IP の開いている申し込みの上限に使う IP の HMAC（0029。p_customer.ip_hash で渡す） */
 async function tryonIpHash(c: Ctx, shop: { id: string }): Promise<string | null> {
   const secret = c.get("sessionSecret");
   const ip = await clientIpFor(c, shop);
@@ -618,7 +618,7 @@ storefront.post("/:shop/checkout", async (c: Ctx) => {
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
   const edited = addressValues(f);
   const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
-  return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: total, delivery: deliveryOptions(s.shop.settings), consent: await consentCollected(s.sf, s.shop) }));
+  return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: total, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop) }));
 });
 
 /**
@@ -637,7 +637,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   if (!secret) return c.redirect(`${cartUrl}?error=config`);
   const base = publicBaseUrl(c);
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
-  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: await consentCollected(s.sf, s.shop) };
+  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop) };
   const f = await formFields(c);
 
   // 1. 配送先 → 最終確認画面
@@ -664,7 +664,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   }
   const deps = placeOrderDeps(c, setup);
   if (!deps) return c.redirect(`${cartUrl}?error=config`);
-  const statusToken = quote.id && (await s.sf.migratedTo(CHECKOUT_STATUS_MIGRATION)) ? await sealStatusToken(secret, s.shop.id, quote.id) : null;
+  const statusToken = quote.id ? await sealStatusToken(secret, s.shop.id, quote.id) : null;
   const placed = await placeOrder(deps, {
     shop: s.shop,
     quote,
@@ -675,7 +675,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
     successUrl: statusToken ? withQueryParam(`${shopHome(base, s.shop)}/checkout/done`, "s", statusToken) : `${shopHome(base, s.shop)}/checkout/done`,
     cancelUrl: `${shopHome(base, s.shop)}/cart`,
     ...(member ? { customerId: member.cid, customerEpoch: member.ep } : {}),
-    limits: await reserveLimits(s.sf, secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
+    limits: await reserveLimits(secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
   });
   // 全端末からログアウトした後の古いセッション: ログインし直してもらう
   if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);

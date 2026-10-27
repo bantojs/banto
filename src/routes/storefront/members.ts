@@ -24,7 +24,6 @@ import { PREFECTURES, isPrefecture } from "../../commerce/shipping";
 import type { PrivilegedDb } from "../../db/privileged";
 import { t, tf, type MessageKey } from "../../i18n";
 import {
-  MEMBER_SESSIONS_MIGRATION,
   SESSION_ABSOLUTE_SECONDS,
   SESSION_CHECK_SECONDS,
   SESSION_SECONDS,
@@ -55,7 +54,7 @@ import type { PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
 import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
-import { PASSKEY_CLIENT_JS, PASSKEY_MIGRATION, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
+import { PASSKEY_CLIENT_JS, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
 import { COSE_ALGS, WebAuthnError, b64urlEncode, newChallenge, readAssertion, sameUserHandle, userHandleOf, verifyAssertion, verifyRegistration, type Expected } from "../../members/webauthn";
 import { returnOrigins, safeReturnUrl, consentCollected } from "../../commerce/checkout";
 
@@ -92,12 +91,6 @@ async function writeSession(c: Ctx, s: { shop: { id: string }; shopPath: string 
   c.header("Set-Cookie", session ? cookieHeader(name, await sealSession(secret, s.shop.id, session), path, isSecureRequest(c), SESSION_SECONDS) : cookieHeader(name, "", path, isSecureRequest(c), 0), { append: true });
 }
 
-/** 0045（端末ごとのセッション）が当たっているか。当たるまでは sid の無い今までの形で動く */
-export async function memberSessionsReady(c: Ctx): Promise<boolean> {
-  const sf = storefrontData(c);
-  return sf ? sf.migratedTo(MEMBER_SESSIONS_MIGRATION) : false;
-}
-
 const cookiePath = (c: Ctx, shop: { slug: string; domain?: string | null }) => (onShopDomain(c, shop) ? "" : `/${shop.slug}`);
 
 /** 1 つのリクエストの中では 1 回だけ確かめる（ページの部品ごとに呼ばれるため） */
@@ -122,8 +115,7 @@ async function verifySession(c: Ctx, shop: { id: string; slug: string; domain?: 
   if (!v) return null;
   const target = { shop, shopPath: cookiePath(c, shop) };
   if (!v.sid) {
-    // 0045 より前の Cookie。当たった後は通さない（ログインし直してもらう。行の無いセッションは取り消せないため）
-    if (!(await memberSessionsReady(c))) return v;
+    // 0045 より前の Cookie は通さない（ログインし直してもらう。行の無いセッションは取り消せないため）
     await writeSession(c, target, null);
     return null;
   }
@@ -203,7 +195,7 @@ async function scope(c: Ctx): Promise<Scope | null> {
 const notFound = (c: Ctx) => c.text(t("store.not_found"), 404);
 /** ログイン画面に出す方法（パスワード・LINE・Google） */
 async function loginOptions(c: Ctx, shop: PublicShop): Promise<{ password: boolean; providers: Provider[]; passkey: boolean }> {
-  return { password: (shop.settings ?? {})["members_password"] === true, providers: enabledProviders(shop), passkey: await passkeyReady(c, shop) };
+  return { password: (shop.settings ?? {})["members_password"] === true, providers: enabledProviders(shop), passkey: passkeyReady(c, shop) };
 }
 /** ショップで使える外部のログイン（モジュールが ON で、提供元の設定があるもの）。キャッシュ済みのショップ行だけで判定する */
 export function enabledProviders(shop: PublicShop): Provider[] {
@@ -285,7 +277,7 @@ members.get("/:shop/account", async (c: Ctx) => {
       sessions: Boolean(s.session.sid && s.theme.MemberSessionsPage),
       passkeys: opts.passkey && Boolean(s.theme.MemberPasskeysPage),
       receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE),
-      consent: (await (async () => { const d = storefrontData(c); return d ? consentCollected(d, s.shop) : false; })()),
+      consent: consentCollected(s.shop),
       coupons: withCoupons ? (coupons ?? []) : null,
       tryon: withTryon
         ? (tryon ?? []).map((r) => ({
@@ -420,19 +412,15 @@ async function signIn(c: Ctx, s: Scope, v: { customer_id: string; session_epoch:
 }
 
 /**
- * ログインした端末のセッションを始める（0045 が当たっていれば行を作り、その ID を Cookie に入れる）。
+ * ログインした端末のセッションを始める（行を作り、その ID を Cookie に入れる）。
  * 世代が変わっていた（ログインの途中で全端末からログアウトされた等）なら false
  */
 async function startWebSession(c: Ctx, s: { shop: { id: string }; shopPath: string }, v: { customer_id: string; session_epoch: number; email: string }): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000);
-  let sid: string | undefined;
-  if (await memberSessionsReady(c)) {
-    const db = privilegedFor(c);
-    const id = db ? await db.memberSessionStart(s.shop.id, v.customer_id, v.session_epoch, "web", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS) : null;
-    if (!id) return false;
-    sid = id;
-  }
-  await writeSession(c, s, { cid: v.customer_id, ep: v.session_epoch, email: v.email, exp: now + SESSION_SECONDS, iat: now, ...(sid ? { sid, chk: now } : {}) });
+  const db = privilegedFor(c);
+  const sid = db ? await db.memberSessionStart(s.shop.id, v.customer_id, v.session_epoch, "web", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS) : null;
+  if (!sid) return false;
+  await writeSession(c, s, { cid: v.customer_id, ep: v.session_epoch, email: v.email, exp: now + SESSION_SECONDS, iat: now, sid, chk: now });
   return true;
 }
 
@@ -546,8 +534,7 @@ members.post("/:shop/account/address", async (c: Ctx) => {
 members.post("/:shop/account/consent", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const sfc = storefrontData(c);
-  if (!sfc || !(await consentCollected(sfc, s.shop))) return notFound(c);
+  if (!consentCollected(s.shop)) return notFound(c);
   const f = await formFields(c);
   const ok = await withMember(c, s, (db, m) => db.memberSetMarketingConsent(s.shop.id, m.cid, m.ep, f.marketing_consent === "1"));
   return c.redirect(ok ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account/login`);
@@ -603,13 +590,11 @@ members.post("/:shop/account/sessions/:id{[0-9a-f-]{36}}/revoke", async (c: Ctx)
 // ---------- パスキー（同梱モジュール passkey、0046） ----------
 
 /**
- * パスキーが使えるか: 会員機能とモジュールが ON・ショップに独自ドメインがあり、そのドメインの上で開いている・0046 が当たっている。
+ * パスキーが使えるか: 会員機能とモジュールが ON・ショップに独自ドメインがあり、そのドメインの上で開いている。
  * RP ID はショップのドメイン（人間の決定 2026-10-23）。Banto の URL にパスで同居するショップには出さない
  */
-export async function passkeyReady(c: Ctx, shop: PublicShop): Promise<boolean> {
-  if (!membersEnabled(shop) || !moduleEnabled(shop.settings, PASSKEY_MODULE) || !shop.domain || !onShopDomain(c, shop)) return false;
-  const sf = storefrontData(c);
-  return sf ? sf.migratedTo(PASSKEY_MIGRATION) : false;
+export function passkeyReady(c: Ctx, shop: PublicShop): boolean {
+  return membersEnabled(shop) && moduleEnabled(shop.settings, PASSKEY_MODULE) && Boolean(shop.domain) && onShopDomain(c, shop);
 }
 
 const passkeyExpected = (shop: PublicShop): Expected => ({ origin: `https://${shop.domain}`, rpId: shop.domain ?? "" });
@@ -631,21 +616,21 @@ async function jsonBody(c: Ctx): Promise<Record<string, unknown>> {
 async function passkeyScope(c: Ctx): Promise<{ s: Scope; deps: LoginDeps } | null> {
   const s = await scope(c);
   const deps = loginDeps(c);
-  if (!s || !deps || !(await passkeyReady(c, s.shop))) return null;
+  if (!s || !deps || !passkeyReady(c, s.shop)) return null;
   c.header("Cache-Control", "no-store");
   return { s, deps };
 }
 
 members.get("/:shop/account/passkey.js", async (c: Ctx) => {
   const s = await scope(c);
-  if (!s || !(await passkeyReady(c, s.shop))) return notFound(c);
+  if (!s || !passkeyReady(c, s.shop)) return notFound(c);
   return c.body(PASSKEY_CLIENT_JS, 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff" });
 });
 
 /** ヘッドレスの連携サイトから来た、パスキーだけの画面（GET /api/shops/:shop/members/passkey から転送される） */
 members.get("/:shop/account/passkey", async (c: Ctx) => {
   const s = await scope(c);
-  if (!s || !(await passkeyReady(c, s.shop))) return notFound(c);
+  if (!s || !passkeyReady(c, s.shop)) return notFound(c);
   const returnTo = safeReturnUrl(c.req.query("return_to"), returnOrigins(s.shop.settings), "");
   if (!returnTo) return c.text(t("member.oauth_failed"), 400);
   privatePage(c);
@@ -767,7 +752,7 @@ members.post("/:shop/account/passkey/register", async (c: Ctx) => {
 
 members.get("/:shop/account/passkeys", async (c: Ctx) => {
   const s = await scope(c);
-  if (!s || !s.theme.MemberPasskeysPage || !(await passkeyReady(c, s.shop))) return notFound(c);
+  if (!s || !s.theme.MemberPasskeysPage || !passkeyReady(c, s.shop)) return notFound(c);
   const db = privilegedFor(c);
   if (!s.session?.sid || !db) return c.redirect(`${s.shopPath}/account/login`);
   const rows = await db.memberPasskeysList(s.shop.id, s.session.cid, s.session.ep);
@@ -793,7 +778,7 @@ members.get("/:shop/account/passkeys", async (c: Ctx) => {
 
 members.post("/:shop/account/passkeys/:id{[0-9a-f-]{36}}/delete", async (c: Ctx) => {
   const s = await scope(c);
-  if (!s || !(await passkeyReady(c, s.shop))) return notFound(c);
+  if (!s || !passkeyReady(c, s.shop)) return notFound(c);
   const db = privilegedFor(c);
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   // false は「無い・他人のもの」か「古いセッション」。古いセッションなら一覧の画面がログインへ送る

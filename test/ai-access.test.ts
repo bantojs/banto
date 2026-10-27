@@ -89,25 +89,6 @@ describe("REST /api/v1", () => {
     expect((await rest(app, ro, "PATCH", "/shop", { checkout_terms: { delivery: "x" } })).status).toBe(401);
   });
 
-  it("ショップ: DB が 0032 より前なら checkout_terms は 409 migration_required（黙って捨てない）。ほかの項目は今までどおり", async () => {
-    const { app, issue, sb } = await setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0032_api_checkout_terms");
-    const tok = await issue(["shop:read", "shop:write"]);
-    let res = await rest(app, tok, "PATCH", "/shop", { name: "新店名", checkout_terms: { delivery: "翌日発送" } });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("migration_required");
-    expect(sb.tables.shops.find((x) => x["slug"] === "my-shop")!["name"]).toBe("マイショップ");
-
-    // DB の版は shop:write を持つトークンにだけ明かす
-    const ro = await issue(["shop:read"]);
-    expect((await rest(app, ro, "PATCH", "/shop", { checkout_terms: { delivery: "x" } })).status).toBe(401);
-    expect((await rest(app, generateApiToken(), "PATCH", "/shop", { checkout_terms: { delivery: "x" } })).status).toBe(401);
-
-    res = await rest(app, tok, "PATCH", "/shop", { name: "新店名" });
-    expect(res.status).toBe(200);
-    expect(await res.json()).not.toHaveProperty("checkout_terms");
-  });
-
   it("商品: 一覧 → 作成 → SKU → 更新 → 画像（URL 取り込み、SSRF 拒否）", async () => {
     const { app, issue, sb, storage, shop } = await setup();
     const tok = await issue(["products:read", "products:write"]);

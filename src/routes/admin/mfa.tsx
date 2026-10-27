@@ -6,7 +6,7 @@ import { migrated } from "../../db/migration-state";
 import { t, type MessageKey } from "../../i18n";
 import { AdminLayout } from "./layout";
 import { authClient, dbClient, formFields, type AdminContext } from "./context";
-import { adminLoginGuard, ensureOwnerRow, loadSession, OPERATOR_MFA_MIGRATION, sessionAal, setSessionCookie, toSessionData } from "./auth";
+import { adminLoginGuard, ensureOwnerRow, loadSession, sessionAal, setSessionCookie, toSessionData } from "./auth";
 
 /**
  * 運営者の二段階認証（0054、docs/hardening.md）。Supabase Auth（GoTrue）の TOTP。
@@ -108,23 +108,11 @@ mfa.post("/mfa", async (c: AdminContext) => {
 /** 0057: 二段階認証の登録・解除の監査（org_member_mfa_self）が使える DB か */
 const MEMBER_REAUTH_MIGRATION = "0057_member_reauth";
 
-async function ready(c: AdminContext): Promise<boolean> {
-  const db = dbClient(c);
-  return Boolean(db && (await migrated({ db, cache: c.get("adapters").cache }, OPERATOR_MFA_MIGRATION)));
-}
-
 mfa.get("/mfa/setup", async (c: AdminContext) => {
   const session = await loadSession(c);
   const auth = authClient(c);
   if (!session || !auth) return c.redirect("/admin/login");
   if (session.mfa === "challenge") return c.redirect("/admin/mfa");
-  if (!(await ready(c))) {
-    return c.html(
-      <Shell title={t("mfa.title")}>
-        <p>{t("mfa.needs_update")}</p>
-      </Shell>,
-    );
-  }
   const factor = verifiedTotp(await auth.getUser(session.access_token));
   const flash = c.req.query("flash");
   const notice: MessageKey | null = flash === "enabled" ? "mfa.enabled" : flash === "disabled" ? "mfa.disabled" : null;
@@ -190,7 +178,6 @@ mfa.post("/mfa/setup", async (c: AdminContext) => {
   const auth = authClient(c);
   if (!session || !auth) return c.redirect("/admin/login");
   if (session.mfa === "challenge") return c.redirect("/admin/mfa");
-  if (!(await ready(c))) return c.redirect("/admin/mfa/setup");
   const user = await auth.getUser(session.access_token);
   if (verifiedTotp(user)) return c.redirect("/admin/mfa/setup");
   // 前に途中でやめた登録（unverified）は消してから始める（GoTrue は同じ名前の登録を重ねられない）

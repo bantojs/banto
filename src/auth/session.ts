@@ -13,7 +13,7 @@ export interface SessionData {
   expires_at: number;
   user_id: string;
   email?: string;
-  /** 運営者のセッションの世代（0030。ログアウトで上がり、古い Cookie は使えなくなる）。0030 より前の DB では無い */
+  /** 運営者のセッションの世代（0030。ログアウトで上がり、古い Cookie は使えなくなる）。ログイン直後は無い（requireOwner が入れる） */
   epoch?: number;
   /**
    * 二段階認証の途中（0054）。challenge: パスワードは済んだが 6 桁がまだ / enroll: 組織が必須にしたのにまだ登録していない。

@@ -7,15 +7,6 @@
  */
 import { fieldDefinitions, formatFieldDefinitions, parseFieldRows, type ProductField } from "../products/fields";
 
-/** customers.external_ref / attributes、customer.* hooks、api_customer_upsert が使える版 */
-export const CUSTOMER_MASTER_MIGRATION = "0047_customer_master";
-/** 運営者が管理画面で独自項目を直せる版（customer_set_attributes） */
-export const CUSTOMER_ATTRIBUTES_ADMIN_MIGRATION = "0048_customer_attributes_admin";
-/** クーポンの条件に会員の独自項目（conditions.attributes）を使える版。coupon_lookup が p_customer_id を受ける */
-export const COUPON_ATTRIBUTES_MIGRATION = "0049_coupon_attributes";
-/** 「お得な情報やセールの案内を受け取る」の同意（customers.marketing_consent、orders.marketing_consent）がある版 */
-export const MARKETING_CONSENT_MIGRATION = "0050_marketing_consent";
-
 /**
  * ショップが同意の欄を出すか（shops.settings.marketing_consent、既定 OFF）。
  * 同意は本人の行為なので、欄を出さないショップでは「未回答」のまま（false を書かない）

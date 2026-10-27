@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, appWith, memberMail } from "./helpers";
+import { issueTokens } from "../src/members/auth";
 
 let dispose: (() => void) | null = null;
 afterEach(() => {
@@ -26,14 +27,6 @@ function setup() {
     return { status: res.status, json: (await res.json()) as Record<string, unknown> };
   };
   return { sb, shop, mail, call };
-}
-
-function setupWith(sb: FakeSupabase) {
-  const app = appWith(sb, { RESEND_API_KEY: "re_test" });
-  return async (path: string, body?: unknown) => {
-    const res = await app.request(`${BASE}${path}`, { method: "POST", headers: { origin: "https://wp.example.com", "content-type": "application/json" }, body: JSON.stringify(body) });
-    return { status: res.status, json: (await res.json()) as Record<string, unknown> };
-  };
 }
 
 describe("ヘッドレスの会員 API（店ごと・パスワードなし）", () => {
@@ -120,18 +113,14 @@ describe("ヘッドレスの会員 API（店ごと・パスワードなし）", 
     expect((await call("/api/shops/my-shop/members/refresh", { refresh_token: c2["refresh_token"] })).status).toBe(401);
   });
 
-  it("0045 より前に発行した（セッションの行の無い）refresh は、0045 を当てた後は通さない。当てる前は今までどおり", async () => {
-    const { sb, mail, call } = setup();
-    sb.appliedMigrations.splice(sb.appliedMigrations.indexOf("0045_member_sessions"), 1);
+  it("0045 より前に発行した（セッションの行の無い）refresh は通さない", async () => {
+    const { sb, shop, mail, call } = setup();
     const ch = (await call("/api/shops/my-shop/members/login", { email: "old@example.com" })).json["challenge_id"];
-    const v = (await call("/api/shops/my-shop/members/verify", { challenge_id: ch, code: mail.code("old@example.com") })).json;
-    expect(sb.memberSessions).toHaveLength(0);
-    const r = await call("/api/shops/my-shop/members/refresh", { refresh_token: v["refresh_token"] });
-    expect(r.status).toBe(200);
-    sb.appliedMigrations.push("0045_member_sessions");
-    // 適用済みの版の一覧は isolate に 60 秒覚えるので、新しいアプリで確かめる
-    const fresh = setupWith(sb);
-    expect(await fresh("/api/shops/my-shop/members/refresh", { refresh_token: r.json["refresh_token"] })).toEqual({ status: 401, json: { error: "invalid_refresh_token" } });
+    await call("/api/shops/my-shop/members/verify", { challenge_id: ch, code: mail.code("old@example.com") });
+    const row = sb.tables.customers.find((c) => c["email"] === "old@example.com")!;
+    // sid の無いトークン（0045 より前の形）を同じ秘密で作る
+    const old = await issueTokens("test-session-secret", shop.id, String(row["id"]), Number(row["session_epoch"] ?? 0), null);
+    expect(await call("/api/shops/my-shop/members/refresh", { refresh_token: old.refresh_token })).toEqual({ status: 401, json: { error: "invalid_refresh_token" } });
   });
 
   it("return_to は許可リストのオリジンだけ。リンクのトークンで verify できる", async () => {

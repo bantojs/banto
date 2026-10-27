@@ -11,7 +11,7 @@ import { formatDateTime } from "../../i18n/time";
 import { randomToken } from "../../util/signed";
 import { AdminLayout, Copyable, PageHead } from "./layout";
 import { authClient, dbClient, formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
-import { adminLoginGuard, OPERATOR_MFA_MIGRATION, requireOwner, setSessionCookie, toSessionData } from "./auth";
+import { adminLoginGuard, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { migrated } from "../../db/migration-state";
 import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 import { myOrgs, PERM_TEMPLATES, requireOrgAdmin, SHOP_PERMS, isShopPerm, type OrgRole, type ShopPerm } from "./access";
@@ -244,13 +244,10 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
   const shopName = new Map(shops.map((s) => [s.id, s.name]));
   const storeName = new Map(stores.map((s) => [s.id, s.name]));
   // 運営者の二段階認証（0054）: 組織が必須か・メンバーごとの登録の有無
-  const mfaReady = await migrated({ db, cache: c.get("adapters").cache }, OPERATOR_MFA_MIGRATION);
-  const [mfaOrg, mfaRows] = mfaReady
-    ? await Promise.all([
-        db.from<{ require_mfa: boolean }>("organizations").selectOne("require_mfa", { eq: { id: o.org_id } }),
-        db.rpc<{ user_id: string; has_mfa: boolean }[]>("org_members_mfa", { p_org_id: o.org_id }),
-      ])
-    : [null, []];
+  const [mfaOrg, mfaRows] = await Promise.all([
+    db.from<{ require_mfa: boolean }>("organizations").selectOne("require_mfa", { eq: { id: o.org_id } }),
+    db.rpc<{ user_id: string; has_mfa: boolean }[]>("org_members_mfa", { p_org_id: o.org_id }),
+  ]);
   const hasMfa = new Map(mfaRows.map((r) => [r.user_id, r.has_mfa]));
   const me = c.get("session")?.user_id;
   const flash = c.req.query("flash");
@@ -288,7 +285,7 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
             <th>{t("login.email")}</th>
             <th>{t("org.role")}</th>
             <th>{t("nav.shops")}</th>
-            {mfaReady ? <th>{t("org.mfa")}</th> : null}
+            <th>{t("org.mfa")}</th>
             <th></th>
           </tr>
         </thead>
@@ -317,16 +314,14 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
                     ].join(" / ") || "-"
                   : t("org.all_shops")}
               </td>
-              {mfaReady ? (
-                <td>
-                  {hasMfa.get(m.user_id) ? <span class="badge ok">{t("mfa.on")}</span> : "-"}
-                  {hasMfa.get(m.user_id) && m.user_id !== me && (m.role !== "owner" || o.role === "owner") ? (
-                    <form method="post" action={`/admin/org/members/${m.user_id}/mfa-reset${q}`}>
-                      <button type="submit">{t("org.mfa_reset")}</button>
-                    </form>
-                  ) : null}
-                </td>
-              ) : null}
+              <td>
+                {hasMfa.get(m.user_id) ? <span class="badge ok">{t("mfa.on")}</span> : "-"}
+                {hasMfa.get(m.user_id) && m.user_id !== me && (m.role !== "owner" || o.role === "owner") ? (
+                  <form method="post" action={`/admin/org/members/${m.user_id}/mfa-reset${q}`}>
+                    <button type="submit">{t("org.mfa_reset")}</button>
+                  </form>
+                ) : null}
+              </td>
               <td>
                 <a href={`/admin/org/members/${m.user_id}${q}`}>{t("org.edit")}</a>
               </td>
@@ -335,18 +330,14 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
         </tbody>
       </table>
 
-      {mfaReady ? (
-        <>
-          <h2>{t("org.mfa")}</h2>
-          <p>{t("org.mfa_intro")}</p>
-          <p>{mfaOrg?.require_mfa ? t("org.mfa_required") : t("org.mfa_optional")}</p>
-          {o.role === "owner" ? (
-            <form method="post" action={`/admin/org/mfa${q}`}>
-              <input type="hidden" name="required" value={mfaOrg?.require_mfa ? "0" : "1"} />
-              <button type="submit">{mfaOrg?.require_mfa ? t("org.mfa_require_off") : t("org.mfa_require_on")}</button>
-            </form>
-          ) : null}
-        </>
+      <h2>{t("org.mfa")}</h2>
+      <p>{t("org.mfa_intro")}</p>
+      <p>{mfaOrg?.require_mfa ? t("org.mfa_required") : t("org.mfa_optional")}</p>
+      {o.role === "owner" ? (
+        <form method="post" action={`/admin/org/mfa${q}`}>
+          <input type="hidden" name="required" value={mfaOrg?.require_mfa ? "0" : "1"} />
+          <button type="submit">{mfaOrg?.require_mfa ? t("org.mfa_require_off") : t("org.mfa_require_on")}</button>
+        </form>
       ) : null}
 
       <h2>{t("org.invitations")}</h2>

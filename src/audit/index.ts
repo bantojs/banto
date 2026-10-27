@@ -3,8 +3,6 @@
  * 書くのは DB のトリガーだけ。Worker は「誰がやったか」を名乗る（特権経路）か、読む（管理画面）だけ。
  */
 
-export const AUDIT_LOG_MIGRATION = "0051_audit_log";
-
 /** 保持日数の既定（Cron の prune_audit_log。環境変数 AUDIT_LOG_KEEP_DAYS で変更、30 日より短くはならない） */
 export const DEFAULT_AUDIT_KEEP_DAYS = 365;
 
