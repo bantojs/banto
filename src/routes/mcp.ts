@@ -36,6 +36,7 @@ mcp.post("/", async (c: Ctx) => {
     config: c.get("adapters").config,
     migrationState: migrationStateFor(c, url),
     inquiryMail: inquiryMailFor(c),
+    privateStorage: c.get("adapters").privateStorage ?? null,
   });
   const serverInfo = { name: "banto", version: BANTO_VERSION };
 

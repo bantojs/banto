@@ -285,6 +285,43 @@ describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () =
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select inquiry_attachment_trash_claim(1)")))).toMatch(/permission denied/);
   });
 
+  it("AI 用 API の添付（0064）: 返事に添付できる（形と数は管理画面と同じ検査）。受け取りは inquiries:read と orders:pii で、そのショップのその受付番号の添付だけ", async () => {
+    const issue = async (scopes: string[]) => {
+      const h = hash(`banto_att_${Math.random()}`);
+      await asUser(f.ownerId, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, $5)", [f.shopId, f.ownerId, h, "banto_att", scopes]));
+      return h;
+    };
+    const api = <T>(fn: string, args: unknown[]) =>
+      asService(async (c) => (await c.query<{ r: T }>(`select ${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0]!.r);
+    const r = await create({ basis: "form", category: "order", body: "AI で添付", email: "ai-att@example.com" });
+    const other2 = await create({ basis: "form", category: "other", body: "別件", email: "ai-att2@example.com" });
+    const writer = await issue(["inquiries:read", "inquiries:write"]);
+    const pii = await issue(["inquiries:read", "orders:pii"]);
+    const file = (n: number, over: J = {}) => ({ key: `inq/${f.shopId}/${"a".repeat(20)}${n}`, filename: `交換${n}.pdf`, content_type: "application/pdf", size: 2000, ...over });
+    const rep = await api<{ inquiry: { messages: { author: string; attachments: J[] }[] } }>("api_inquiry_reply", [writer, r.number, "手順書です", hash("ai-att-1"), JSON.stringify([file(1)])]);
+    // orders:pii の無いトークンにはファイル名を返さない
+    expect(rep.inquiry.messages.at(-1)!.attachments).toEqual([{ id: expect.any(String), content_type: "application/pdf", size: 2000 }]);
+    const attId = (await getPool().query<{ id: string }>("select id from inquiry_attachments where inquiry_id = $1", [r.id])).rows[0]!.id;
+    const messages = () => getPool().query("select count(*)::int as n from inquiry_messages where inquiry_id = $1", [r.id]).then((x) => x.rows[0].n as number);
+    const before = await messages();
+    expect(await expectDbError(() => api("api_inquiry_reply", [writer, r.number, "x", hash("ai-att-2"), JSON.stringify([file(2, { key: `inq/${other.shopId}/${"b".repeat(24)}` })])]))).toMatch(/invalid_attachment/);
+    expect(await expectDbError(() => api("api_inquiry_reply", [writer, r.number, "x", hash("ai-att-3"), JSON.stringify([file(3, { content_type: "text/html" })])]))).toMatch(/invalid_attachment/);
+    expect(await expectDbError(() => api("api_inquiry_reply", [writer, r.number, "x", hash("ai-att-4"), JSON.stringify([file(4), file(5), file(6), file(7)])]))).toMatch(/too_many_attachments/);
+    expect(await messages()).toBe(before);
+    // 添付なしの呼び方（0061 と同じ引数）も通る
+    await api("api_inquiry_reply", [writer, r.number, "文字だけ", hash("ai-att-5")]);
+
+    expect(await api<J>("api_inquiry_attachment_get", [pii, r.number, attId])).toEqual({ storage_key: `inq/${f.shopId}/${"a".repeat(20)}1`, content_type: "application/pdf", filename: "交換1.pdf", size: 2000 });
+    expect(await expectDbError(() => api("api_inquiry_attachment_get", [writer, r.number, attId]))).toMatch(/pii_scope_required/);
+    expect(await expectDbError(() => api("api_inquiry_attachment_get", [pii, other2.number, attId]))).toMatch(/not_found/);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select api_inquiry_attachment_get($1, $2, $3)", [pii, r.number, attId])))).toMatch(/permission denied/);
+    // 他のショップのトークンでは読めない
+    const otherTok = hash(`banto_att_other_${Math.random()}`);
+    await getPool().query("update shops set settings = settings || '{\"modules\":{\"inquiries\":true}}'::jsonb where id = $1", [other.shopId]);
+    await asUser(other.ownerId, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, $5)", [other.shopId, other.ownerId, otherTok, "banto_att", ["inquiries:read", "orders:pii"]]));
+    expect(await expectDbError(() => api("api_inquiry_attachment_get", [otherTok, r.number, attId]))).toMatch(/not_found/);
+  });
+
   it("個人情報: 顧客の削除の依頼で連絡先と本文を消す。完了から日数が経ったもの・未確認のまま 30 日のものは Cron が消す。メールはプランの 1 日の数に入る", async () => {
     const r = await create({ basis: "form", category: "other", body: "消してください", email: "erase@example.com" });
     await asUser(f.ownerId, (c) => c.query("select mask_customer($1, 'Erase@example.com')", [f.shopId]));

@@ -68,5 +68,5 @@
 - **確認済みのチケットへの返事だけ**（最初のフォームでは受けない）。確定前のいたずらで容量を使わせないため。1 通 3 個・5MB・1 件 20 個、JPEG / PNG / WebP / PDF を中身の先頭で判定（`src/modules/inquiries/attachments.ts`）。
 - 流れ: Worker が先に置く → 返事の関数に鍵を渡す（DB が接頭辞 `inq/<shop_id>/`・種類・大きさ・数を確かめる）→ 断られたら置いた実体を消す。行を消すとトリガーが `inquiry_attachment_trash` に積み、Cron が実体を消して外す（ショップの削除でも積む）。
 - 配るときは `X-Content-Type-Options: nosniff`・`Content-Security-Policy: default-src 'none'; sandbox`・`Cache-Control: private, no-store`、PDF は `attachment`。
-- AI には中身を渡さない（種類と大きさだけ）。バックアップには入れない。
+- MCP（AI）には中身を渡さない（種類と大きさだけ）。運営者の道具向けに、REST（`/api/v1`）でだけ受け取りと返事への添付ができる（0064、人間の決定 2026-10-27。受け取りは `inquiries:read` と `orders:pii`、関数は `api_inquiry_attachment_get`・`api_inquiry_reply` の `p_attachments`）。バックアップには入れない。
 - 費用は R2 の無料枠に収まる見込み（docs/inquiries.md「添付ファイル」）。wrangler 4 の `deploy` は無いバケットを作る（既定で有効な provisioning）。実機の Workers Builds で作られるかは要確認。

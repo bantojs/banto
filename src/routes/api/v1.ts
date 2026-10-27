@@ -7,6 +7,7 @@ import { MAX_JSON_BODY_BYTES, inquiryMailFor, migrationStateFor, readBodyLimited
 import { BANTO_VERSION } from "../../version";
 import { openapiDocument } from "./openapi";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES } from "../../media/images";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, filesOf } from "../../modules/inquiries/attachments";
 
 /**
  * REST API v1（AI 用トークン、docs/ai-access.md）。Cookie は見ない。
@@ -37,6 +38,7 @@ apiV1.use("*", async (c, next) => {
     config: c.get("adapters").config,
     migrationState: migrationStateFor(c, url),
     inquiryMail: inquiryMailFor(c),
+    privateStorage: c.get("adapters").privateStorage ?? null,
   });
   c.set("api", api);
   await next();
@@ -182,15 +184,35 @@ v1.get("/inquiries", async (c) =>
     .catch((e) => errorJson(c, e)),
 );
 v1.get("/inquiries/:number{[0-9]+}", async (c) => api(c).inquiryGet(Number(c.req.param("number"))).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
-v1.post("/inquiries/:number{[0-9]+}/reply", async (c) =>
-  body(c)
-    .then((b) => {
-      if (typeof b["body"] !== "string" || !b["body"].trim()) throw new ApiError("invalid", "body is required", 400);
-      return api(c).inquiryReply(Number(c.req.param("number")), b["body"]);
-    })
-    .then((r) => c.json(r))
-    .catch((e) => errorJson(c, e)),
-);
+// 返事。JSON の { body } か、添付するなら multipart/form-data の body と files（3 個まで、画像・PDF、1 個 5MB。0064）
+v1.post("/inquiries/:number{[0-9]+}/reply", async (c) => {
+  try {
+    const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    let text: unknown;
+    let files: File[] = [];
+    if (type === "multipart/form-data") {
+      const length = Number(c.req.header("content-length") ?? NaN);
+      if (!Number.isFinite(length)) throw new ApiError("invalid", "Content-Length is required", 411);
+      if (length > MAX_ATTACHMENTS * MAX_ATTACHMENT_BYTES + 64 * 1024) throw new ApiError("invalid", "up to 3 files of 5MB each", 413);
+      let form: Record<string, unknown>;
+      try {
+        form = await c.req.parseBody({ all: true });
+      } catch {
+        throw new ApiError("invalid", "could not read the multipart body", 400);
+      }
+      text = form["body"];
+      files = filesOf(form);
+    } else {
+      text = (await body(c))["body"];
+    }
+    if (typeof text !== "string" || !text.trim()) throw new ApiError("invalid", "body is required", 400);
+    return c.json(await api(c).inquiryReply(Number(c.req.param("number")), text, files));
+  } catch (e) {
+    return errorJson(c, e);
+  }
+});
+// お客様の添付を受け取る（0064。inquiries:read と orders:pii）。応答はファイルそのもの
+v1.get("/inquiries/:number{[0-9]+}/attachments/:id", async (c) => api(c).inquiryAttachment(Number(c.req.param("number")), c.req.param("id")).catch((e) => errorJson(c, e)));
 v1.post("/inquiries/:number{[0-9]+}/status", async (c) =>
   body(c)
     .then((b) => {

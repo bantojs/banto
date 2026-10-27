@@ -12,7 +12,8 @@ import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
-import { API_INQUIRIES_MIGRATION } from "./tokens";
+import { API_INQUIRIES_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
+import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
 import { SKU_IMAGES_MIGRATION } from "../products/images";
 import type { Mailer } from "../mail/send";
 import { inquiryLinkHash } from "../members/auth";
@@ -75,6 +76,9 @@ function mapRpcError(e: unknown): never {
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
     // クーポンと会員（0036）
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries) in the admin screen", 409);
+    if (e.is("pii_scope_required")) throw new ApiError("unauthorized", "attachments need the orders:pii scope as well as inquiries:read", 401);
+    if (e.is("too_many_attachments")) throw new ApiError("invalid", "invalid_attachment: up to 3 files per reply and 20 per inquiry", 400);
+    if (e.is("invalid_attachment")) throw new ApiError("invalid", "invalid_attachment", 400);
     if (e.is("inquiry_masked")) throw new ApiError("conflict", "inquiry_masked: the contact details and messages of this inquiry were erased", 409);
     if (e.is("invalid_body")) throw new ApiError("invalid", "invalid_body: body must be 1 to 5000 characters", 400);
     if (e.is("coupon_in_use")) throw new ApiError("conflict", "coupon_in_use: a coupon that has been used cannot be deleted; set active to false instead", 409);
@@ -146,14 +150,16 @@ export class ApiService {
     /** 外から渡された URL を開く fetch（Node では社内のアドレスに繋がない。監査 M12） */
     private readonly publicFetch: typeof fetch = fetchImpl,
     private readonly inquiryMail: InquiryMailDeps | null = null,
+    /** お問い合わせの添付の置き場（公開しない。無ければ添付を受け付けない） */
+    private readonly privateStorage: StorageAdapter | null = null,
   ) {}
 
   /** migrationState: 新しいマイグレーションを使う項目を、適用されるまで受け付けないため（null なら新しい項目は受け付けない） */
   static async forToken(
     rawToken: string,
-    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null },
+    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined },
   ): Promise<ApiService> {
-    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null);
+    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null);
   }
 
   private migratedTo(version: string): Promise<boolean> {
@@ -356,21 +362,55 @@ export class ApiService {
    * 返事を書く。お客様にはリンクだけのメール（本文は載せない）。リンクの行き先は管理画面の返事と同じ
    * （連携サイトの画面が今の許可リストにあればそこ、無ければ Banto の画面）。宛先は AI に返さない
    */
-  inquiryReply = async (number: number, body: string): Promise<Record<string, unknown>> => {
+  inquiryReply = async (number: number, body: string, files: File[] = []): Promise<Record<string, unknown>> => {
     const deps = this.inquiryMail;
     if (!deps) throw new ApiError("upstream", "not configured (SESSION_SECRET)", 503);
     const token = randomToken(32);
-    const r = await this.call0061<{ inquiry: Record<string, unknown>; mail: { send: boolean; to: string | null; mail_from: string | null; return_to: string | null; shop: InquiryMailShop } }>(
-      "inquiries:write",
-      "api_inquiry_reply",
-      { p_number: number, p_body: body, p_link_hash: await inquiryLinkHash(deps.secret, token) },
-    );
+    const args: Record<string, unknown> = { p_number: number, p_body: body, p_link_hash: await inquiryLinkHash(deps.secret, token) };
+    // 添付（0064）: 先に公開しない置き場へ置き、返事の関数に鍵を渡す（数・種類・大きさは DB も確かめる）。断られたら置いた実体を消す
+    let stored: string[] = [];
+    if (files.length > 0) {
+      const storage = await this.attachmentStorage();
+      const shopId = (await this.call<{ shop_id: string }>("api_token_shop", {})).shop_id;
+      const r = await storeAttachments(storage, shopId, files);
+      if (!r.ok) {
+        const message = r.error === "too_many" ? "up to 3 files per reply" : r.error === "too_large" ? "each file must be 5MB or smaller" : "files must be JPEG, PNG, WebP or PDF";
+        throw new ApiError("invalid", `invalid_attachment: ${message}`, 400);
+      }
+      stored = r.stored.map((f) => f.key);
+      args["p_attachments"] = r.stored;
+    }
+    let r: { inquiry: Record<string, unknown>; mail: { send: boolean; to: string | null; mail_from: string | null; return_to: string | null; shop: InquiryMailShop } };
+    try {
+      r = await this.call0061("inquiries:write", "api_inquiry_reply", args);
+    } catch (e) {
+      if (stored.length > 0) await removeAttachments(this.privateStorage!, stored);
+      throw e;
+    }
     const shop = r.mail.shop;
     const target = r.mail.return_to ? safeReturnUrl(r.mail.return_to, returnOrigins(shop.settings), "") : "";
     const link = target ? withQueryParam(target, "banto_inquiry", token) : `${shopHome(deps.publicBase, shop)}/inquiries/open?t=${token}`;
     const sent = await sendReplyNotice({ mailer: deps.mailer }, shop, { ...r.mail, number }, link);
     return { ...r.inquiry, mail_sent: sent };
   };
+  /** 添付を扱える置き場（0064 の適用と、公開しない置き場の設定が要る） */
+  private async attachmentStorage(): Promise<StorageAdapter> {
+    if (!(await this.migratedTo(API_INQUIRY_ATTACHMENTS_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `attachments need the database update ${API_INQUIRY_ATTACHMENTS_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    if (!this.privateStorage) throw new ApiError("conflict", "attachments_unavailable: the private bucket (PRIVATE) is not configured", 409);
+    return this.privateStorage;
+  }
+  /** お客様の添付を受け取る（0064。inquiries:read と orders:pii）。中身の種類は DB の値で、nosniff を付けて渡す */
+  async inquiryAttachment(number: number, attachmentId: string): Promise<Response> {
+    uuidOr404(attachmentId);
+    const storage = await this.attachmentStorage();
+    const meta = await this.call<{ storage_key: string; content_type: string; filename: string }>("api_inquiry_attachment_get", { p_number: number, p_attachment_id: attachmentId });
+    const res = await attachmentResponse(storage, meta);
+    if (!res) throw new ApiError("not_found", "not found", 404);
+    return res;
+  }
   inquirySetStatus = (number: number, status: InquiryApiStatus) => this.call0061<Record<string, unknown>>("inquiries:write", "api_inquiry_set_status", { p_number: number, p_status: status });
 
   // ---- クーポン（0036。coupons:read / coupons:write、モジュール coupons が ON のショップだけ）----

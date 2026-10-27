@@ -4,6 +4,7 @@ import { BASE, Browser, MemoryStorage, appWith, externalHosts, memberLogin, memb
 import { checkInquiry, fillTemplate, inquiryTemplates, openOrderToken, sealOrderToken } from "../src/modules/inquiries";
 import { buildCustomerMail, buildShopNotice } from "../src/modules/inquiries/mail";
 import { pageKind } from "../src/storefront/mode";
+import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 
 /**
  * お問い合わせ（同梱モジュール inquiries）の画面とヘッドレス API。
@@ -134,7 +135,8 @@ function fakeInquiries(sb: FakeSupabase) {
       }
       case "api_inquiry_reply": {
         const t = tickets.find((x) => x.shop_id === sb.tables.shops[0]!["id"] && x.number === a["p_number"])!;
-        t.messages.push({ author: "shop", body: String(a["p_body"]), created_at: "2026-10-27T00:00:00Z" });
+        const files = ((a["p_attachments"] ?? []) as { key: string; filename: string; content_type: string; size: number }[]).map((f, i) => ({ ...f, id: `00000000-0000-4000-9000-${String(t.messages.length * 10 + i).padStart(12, "0")}` }));
+        t.messages.push({ author: "shop", body: String(a["p_body"]), created_at: "2026-10-27T00:00:00Z", attachments: files });
         t.status = "waiting_customer";
         t.links.add(String(a["p_link_hash"]));
         const shop = sb.tables.shops[0]!;
@@ -144,6 +146,12 @@ function fakeInquiries(sb: FakeSupabase) {
         const t = byAccess(shop, a["p_access"] as Record<string, unknown>);
         const f = t?.messages.flatMap((m) => m.attachments ?? []).find((x) => x.id === a["p_attachment_id"]);
         return json(f ? { storage_key: f.key, content_type: f.content_type, filename: f.filename, size: f.size } : null);
+      }
+      case "api_inquiry_attachment_get": {
+        // 0064 の真似（inquiries:read と orders:pii の確かめは test/db/inquiries.test.ts）
+        const t = tickets.find((x) => x.shop_id === sb.tables.shops[0]!["id"] && x.number === a["p_number"]);
+        const f = t?.messages.flatMap((m) => m.attachments ?? []).find((x) => x.id === a["p_attachment_id"]);
+        return f ? json({ storage_key: f.key, content_type: f.content_type, filename: f.filename, size: f.size }) : err("not_found");
       }
       case "inquiry_set_status": {
         tickets.find((x) => x.id === a["p_inquiry_id"])!.status = String(a["p_status"]);
@@ -155,6 +163,7 @@ function fakeInquiries(sb: FakeSupabase) {
   externalHosts.set(`${sb.url}/rest/v1/rpc/inquiry_`, handler);
   externalHosts.set(`${sb.url}/rest/v1/inquiries`, handler);
   externalHosts.set(`${sb.url}/rest/v1/rpc/api_inquiry_reply`, handler);
+  externalHosts.set(`${sb.url}/rest/v1/rpc/api_inquiry_attachment_get`, handler);
   return tickets;
 }
 
@@ -436,6 +445,75 @@ describe("お問い合わせ（AI 用 API）", () => {
     expect(m.subject).toContain("返事がありました");
     expect(m.text).not.toContain("AI からの返事です");
     expect(m.text).toContain(`${BASE}/my-shop/inquiries/open?t=`);
+  });
+});
+
+describe("お問い合わせ（AI 用 API の添付、0064）", () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+  let auth: { authorization: string } = { authorization: "" };
+  const multipart = async (fields: Record<string, string | File | File[]>) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) for (const x of Array.isArray(v) ? v : [v]) form.append(k, x);
+    const req = new Request("http://x", { method: "POST", body: form });
+    const body = new Uint8Array(await req.arrayBuffer());
+    return { body, headers: { "content-type": req.headers.get("content-type")!, "content-length": String(body.byteLength) } };
+  };
+  async function ticket(app: ReturnType<typeof appWith>, sb: FakeSupabase) {
+    const raw = generateApiToken();
+    const shop = sb.tables.shops[0]!;
+    sb.tables.api_tokens.push({ id: "tok-att", shop_id: shop["id"], owner_id: shop["owner_id"], name: "t", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes: ["inquiries:read", "inquiries:write", "orders:pii"], expires_at: null, revoked_at: null, last_used_at: null, created_at: "" });
+    auth = { authorization: `Bearer ${raw}` };
+    await app.request(`${BASE}/api/shops/my-shop/inquiries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "order", body: "破損していました", email: "att-ai@example.com" }) });
+  }
+
+  it("返事に添付する（multipart）→ 公開しない置き場に置き、そのチケットの添付として受け取れる。メールに本文も添付も載せない", async () => {
+    const priv = new MemoryStorage(`${BASE}/never`);
+    const { app, sb, mail, tickets } = setup({ privateStorage: priv });
+    await ticket(app, sb);
+    const m = await multipart({ body: "交換品の写真です", files: new File([jpeg], "交換品.jpg", { type: "text/plain" }) });
+    let res = await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { ...auth, ...m.headers }, body: m.body });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ number: 1, mail_sent: true });
+    const stored = tickets[0]!.messages.at(-1)!.attachments![0]!;
+    expect(stored).toMatchObject({ filename: "交換品.jpg", content_type: "image/jpeg", size: jpeg.byteLength });
+    expect(priv.objects.has(stored.key)).toBe(true);
+    const sent = mail.sent.filter((x) => x.to === "att-ai@example.com").at(-1)!;
+    expect(sent.text).not.toContain("交換品");
+
+    res = await app.request(`${BASE}/api/v1/inquiries/1/attachments/${stored.id}`, { headers: auth });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(jpeg);
+    expect((await app.request(`${BASE}/api/v1/inquiries/1/attachments/00000000-0000-4000-8000-999999999999`, { headers: auth })).status).toBe(404);
+    expect((await app.request(`${BASE}/api/v1/inquiries/1/attachments/not-a-uuid`, { headers: auth })).status).toBe(404);
+  });
+
+  it("画像・PDF でないファイル・4 個以上は 400 で、置き場にも返事にも何も残さない。JSON の返事は今までどおり", async () => {
+    const priv = new MemoryStorage(`${BASE}/never`);
+    const { app, sb, tickets } = setup({ privateStorage: priv });
+    await ticket(app, sb);
+    let m = await multipart({ body: "x", files: new File(["<script>alert(1)</script>"], "a.jpg", { type: "image/jpeg" }) });
+    expect((await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { ...auth, ...m.headers }, body: m.body })).status).toBe(400);
+    m = await multipart({ body: "x", files: [1, 2, 3, 4].map((i) => new File([jpeg], `${i}.jpg`)) });
+    expect((await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { ...auth, ...m.headers }, body: m.body })).status).toBe(400);
+    m = await multipart({ files: new File([jpeg], "a.jpg") });
+    expect((await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { ...auth, ...m.headers }, body: m.body })).status).toBe(400);
+    expect(priv.objects.size).toBe(0);
+    expect(tickets[0]!.messages).toHaveLength(1);
+    const res = await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify({ body: "文字だけ" }) });
+    expect(res.status).toBe(200);
+  });
+
+  it("公開しない置き場が無ければ、添付つきの返事と受け取りは 409（文字だけの返事はできる）", async () => {
+    const { app, sb, tickets } = setup();
+    await ticket(app, sb);
+    const m = await multipart({ body: "x", files: new File([jpeg], "a.jpg") });
+    const res = await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { ...auth, ...m.headers }, body: m.body });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { message: string } }).error.message).toContain("attachments_unavailable");
+    expect(tickets[0]!.messages).toHaveLength(1);
+    expect((await app.request(`${BASE}/api/v1/inquiries/1/attachments/00000000-0000-4000-8000-000000000001`, { headers: auth })).status).toBe(409);
   });
 });
 
