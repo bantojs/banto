@@ -4,7 +4,7 @@ import { DbError } from "../../db/client";
 import { BUNDLED_PLUGINS, bundledPluginUrl, findBundledPlugin } from "../../plugins";
 import { t, tf } from "../../i18n";
 import { mailTransportName } from "../../mail/send";
-import { AdminLayout, PageHead } from "./layout";
+import { AdminLayout, Copyable, PageHead } from "./layout";
 import { publicBaseUrl } from "../common";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
@@ -59,7 +59,7 @@ plugins.get("/:shopId/plugins", requireOwner, async (c: AdminContext) => {
             {missing.length > 0 ? (
               <p class="notice">
                 {t("plugins.missing_secrets")} <code>{missing.join(", ")}</code>
-                <pre>{missing.map((m) => `npx wrangler secret put ${m}`).join("\n")}</pre>
+                <Copyable value={missing.map((m) => `npx wrangler secret put ${m}`).join("\n")} />
               </p>
             ) : null}
             {malformed.length > 0 ? (

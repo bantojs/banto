@@ -22,7 +22,11 @@ async function appliedVersions(c: AdminContext): Promise<string[]> {
 function Page(props: { pending: string[]; applied: string[]; error?: string | null; done?: string[]; projectRef: string | null }) {
   return (
     <AdminLayout title={t("update.title")} nav crumbs={[{ label: t("update.title") }]}>
-      <PageHead title={t("update.title")} />
+      <PageHead title={t("update.title")}>
+        <a class="btn secondary" href="/admin">
+          {t("nav.dashboard")}
+        </a>
+      </PageHead>
       <p>
         {t("dashboard.version")}: v{BANTO_VERSION}
       </p>
@@ -30,6 +34,13 @@ function Page(props: { pending: string[]; applied: string[]; error?: string | nu
         <p class="notice">
           {t("migrate.done")} {props.done.join(", ")}
           {props.pending.length > 0 ? ` ${t("migrate.more")}` : null}
+        </p>
+      ) : null}
+      {props.done && props.done.length > 0 && props.pending.length === 0 ? (
+        <p>
+          <a class="btn" href="/admin">
+            {t("migrate.to_dashboard")}
+          </a>
         </p>
       ) : null}
       {props.pending.length === 0 ? (

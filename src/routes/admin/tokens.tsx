@@ -4,7 +4,7 @@ import { DbError } from "../../db/client";
 import { API_COUPONS_CUSTOMERS_MIGRATION, API_INQUIRIES_MIGRATION, API_SCOPES, DEFAULT_SCOPES, SCOPES_0036, SCOPES_0061, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { AdminLayout, PageHead } from "./layout";
+import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
@@ -146,7 +146,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
       <section class="card">
       <h2>{t("tokens.howto")}</h2>
       <p>{t("tokens.howto_body")}</p>
-      <pre>{JSON.stringify({ mcpServers: { banto: { type: "http", url: `${base}/mcp`, headers: { Authorization: "Bearer banto_..." } } } }, null, 2)}</pre>
+      <Copyable value={JSON.stringify({ mcpServers: { banto: { type: "http", url: `${base}/mcp`, headers: { Authorization: "Bearer banto_..." } } } }, null, 2)} name={t("tokens.howto")} />
       <p class="muted">
         REST: <code>{base}/api/v1</code>（OpenAPI: <code>{base}/api/v1/openapi.json</code>）· <a href="https://github.com/bantojs/banto/blob/main/docs/ai-access.md" target="_blank" rel="noopener">docs/ai-access.md</a>
       </p>
@@ -191,12 +191,12 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
         </a>
       </PageHead>
       <p class="notice">{t("tokens.issued_once")}</p>
-      <pre>{raw}</pre>
+      <Copyable value={raw} name={t("tokens.title")} />
       <p>
         {t("tokens.scopes")}: {scopes.join(", ")}
       </p>
       <h2>{t("tokens.howto")}</h2>
-      <pre>{JSON.stringify({ mcpServers: { banto: { type: "http", url: `${publicBaseUrl(c)}/mcp`, headers: { Authorization: `Bearer ${raw}` } } } }, null, 2)}</pre>
+      <Copyable value={JSON.stringify({ mcpServers: { banto: { type: "http", url: `${publicBaseUrl(c)}/mcp`, headers: { Authorization: `Bearer ${raw}` } } } }, null, 2)} name={t("tokens.howto")} />
     </AdminLayout>,
     { headers: { "Cache-Control": "no-store" } },
   );

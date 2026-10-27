@@ -5,7 +5,7 @@ import { DbError } from "../../db/client";
 import { pendingMigrations } from "../../db/migrations";
 import { t, type MessageKey } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
-import { AdminLayout, PageHead } from "./layout";
+import { AdminLayout, Copyable, PageHead } from "./layout";
 import {
   REQUIRED_PUBLIC_VARS,
   REQUIRED_SECRETS,
@@ -102,7 +102,7 @@ function EnvSection(props: { checks: EnvCheck[]; ok: boolean }) {
           {props.checks.map((x) => (
             <tr>
               <td>
-                <code>{x.name}</code>
+                <Copyable inline value={x.name} />
                 {x.secret ? <span class="badge">Secret</span> : null}
               </td>
               <td class={x.ok ? "" : "error"}>{x.ok ? t("setup.env.ok") : t("setup.env.missing")}</td>
@@ -116,14 +116,14 @@ function EnvSection(props: { checks: EnvCheck[]; ok: boolean }) {
           <ol>
             {missing.map((x) => (
               <li>
-                <code>{x.name}</code>: {x.secret ? t("setup.env.add_secret") : t("setup.env.add_var")} {t(`setup.env.where.${x.name}` as MessageKey)}
-                {x.name === "SESSION_SECRET" ? <pre>{generateSecret()}</pre> : null}
+                <Copyable inline value={x.name} />: {x.secret ? t("setup.env.add_secret") : t("setup.env.add_var")} {t(`setup.env.where.${x.name}` as MessageKey)}
+                {x.name === "SESSION_SECRET" ? <Copyable value={generateSecret()} name="SESSION_SECRET" /> : null}
               </li>
             ))}
           </ol>
           <details>
             <summary>{t("setup.env.cli")}</summary>
-            <pre>{missing.map((x) => `npx wrangler secret put ${x.name}`).join("\n")}</pre>
+            <Copyable value={missing.map((x) => `npx wrangler secret put ${x.name}`).join("\n")} />
           </details>
         </div>
       ) : null}
@@ -131,7 +131,7 @@ function EnvSection(props: { checks: EnvCheck[]; ok: boolean }) {
   );
 }
 
-function DbSection(props: { db: DbState; migrateError?: string | null; migrated?: string[]; projectRef: string | null }) {
+function DbSection(props: { db: DbState; migrateError?: string | null; migrated?: string[]; projectRef: string | null; hasOwner: boolean }) {
   const { db } = props;
   const ok = db.status === "ok" && db.pending.length === 0;
   const needsMigration = db.status === "no_migrations" || (db.status === "ok" && db.pending.length > 0);
@@ -160,6 +160,19 @@ function DbSection(props: { db: DbState; migrateError?: string | null; migrated?
           {needsMigration ? ` ${t("migrate.more")}` : null}
         </p>
       ) : null}
+      {props.migrated && props.migrated.length > 0 && ok ? (
+        <p>
+          {props.hasOwner ? (
+            <a class="btn" href="/admin">
+              {t("migrate.to_dashboard")}
+            </a>
+          ) : (
+            <a class="btn" href="#owner">
+              {t("migrate.to_owner")}
+            </a>
+          )}
+        </p>
+      ) : null}
       {needsMigration ? <MigrateForm action="/admin/setup/migrate" pending={db.pending} error={props.migrateError} projectRef={props.projectRef} /> : null}
       {db.status === "ok" ? (
         <p>
@@ -172,7 +185,7 @@ function DbSection(props: { db: DbState; migrateError?: string | null; migrated?
 
 function OwnerSection(props: { enabled: boolean; hasOwner: boolean; error: string | null; info?: string }) {
   return (
-    <section class="step" data-state={props.hasOwner ? "ok" : props.enabled ? undefined : "ng"}>
+    <section class="step" id="owner" data-state={props.hasOwner ? "ok" : props.enabled ? undefined : "ng"}>
       <h2>
         {t("setup.step.owner")}
         {props.hasOwner ? <span class="badge ok">{t("setup.env.ok")}</span> : null}
@@ -265,7 +278,7 @@ async function renderSetup(c: AdminContext, opts: { error?: string; info?: strin
       <div class="narrow">
         <PageHead title={t("setup.title")} sub={t("setup.intro")} />
         <EnvSection checks={env.checks} ok={env.ok} />
-        <DbSection db={db} migrateError={opts.migrateError} migrated={c.req.query("migrated")?.split(",").filter(Boolean)} projectRef={projectRefFromUrl(c.get("adapters").config.get("SUPABASE_URL"))} />
+        <DbSection db={db} migrateError={opts.migrateError} migrated={c.req.query("migrated")?.split(",").filter(Boolean)} projectRef={projectRefFromUrl(c.get("adapters").config.get("SUPABASE_URL"))} hasOwner={db.hasOwner} />
         <OwnerSection enabled={env.ok && dbOk} hasOwner={db.hasOwner} error={db.hasOwner ? null : err} info={opts.info} />
         <ShopSection enabled={env.ok && dbOk && db.hasOwner} done={db.shopCount > 0} error={db.hasOwner ? err : null} loggedIn={loggedIn} />
       </div>

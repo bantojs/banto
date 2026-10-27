@@ -1,6 +1,6 @@
 import { raw } from "hono/html";
 import type { Child } from "hono/jsx";
-import { t, getLocale, type MessageKey } from "../../i18n";
+import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
 import { moduleEnabled } from "../../modules/registry";
 
@@ -8,7 +8,7 @@ import { moduleEnabled } from "../../modules/registry";
  * 管理画面の見た目（全画面で共通）。白と黒を基調に、細い線・余白・角丸のカードで組む。
  * 素の要素（見出し・表・フォーム・ボタン・通知）にも効かせるので、各画面は class を足さなくても同じ見た目になる。
  * 色は変数で持ち、OS の設定でダークにも切り替わる。フォントは OS のもの（外部のフォントを読みに行かない）。
- * スクリプトは使わない（フォームの送信だけで操作できる作りを保つ）。
+ * 操作はフォームの送信だけでできる作りを保つ。スクリプトは「コピー」のボタンだけ（COPY_SCRIPT。動かなければボタンを出さず、値は選んでコピーできる）。
  */
 // 固定の文字列（利用者の入力を含まない）なので raw で出す。JSX のままだと " と > がエスケープされ、font-family や子の選択子が効かない
 const css = `
@@ -204,6 +204,18 @@ dl.kv dt{font-size:.8rem;color:var(--fg-muted);margin-top:.6rem}
 dl.kv dt:first-child{margin-top:0}
 dl.kv dd{margin:.1rem 0 0;word-break:break-all}
 .pre{white-space:pre-line}
+/* コピーのボタン（Copyable）。ボタンはスクリプトが動くときだけ出る */
+.copyable{position:relative}
+.copyable>pre{padding-right:6.5rem}
+.copyable>button.copy{position:absolute;top:.5rem;right:.5rem}
+.copy-inline{display:inline-flex;align-items:center;gap:.25rem}
+button.copy{height:28px;padding:0 .6rem;font-size:.8rem;background:var(--bg);color:var(--fg);border-color:var(--border-strong)}
+button.copy:hover{opacity:1;background:var(--bg-subtle)}
+button.copy[hidden]{display:none}
+button.copy.icon{width:28px;padding:0}
+button.copy svg{width:14px;height:14px;flex:none}
+button.copy[data-state=done]{color:var(--ok);border-color:var(--ok)}
+button.copy[data-state=failed]{color:var(--err);border-color:var(--err)}
 .danger-zone{border-color:color-mix(in srgb,var(--err) 30%,var(--border))}
 .danger-zone form{margin:.5rem 0}
 .danger-zone button{width:100%}
@@ -256,6 +268,72 @@ function tabAllowed(access: ShopTabs["access"], perm: string): boolean {
   if (!access) return true;
   if (perm === "any") return true;
   return access.role === "owner" || access.role === "admin" || access.perms.includes(perm);
+}
+
+/**
+ * コピーのボタン。押すと値をクリップボードに入れ、「コピーしました」に変わる。
+ * http の画面（安全な接続でない）など Clipboard API が使えないときは、値を選んだ状態にして execCommand で試す。
+ * 固定の文字列なので raw で出す（利用者の入力を含まない）。
+ */
+const COPY_SCRIPT = `(function(){
+  function label(b,key){var l=b.querySelector(".copy-label");var v=b.getAttribute(key);if(l)l.textContent=v;else{b.setAttribute("aria-label",v);b.title=v;}}
+  function pick(b){var el=document.getElementById(b.getAttribute("data-copy-target")||"");if(!el)return false;var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();s.removeAllRanges();s.addRange(r);try{return document.execCommand("copy");}catch(e){return false;}}
+  function show(b,ok){b.setAttribute("data-state",ok?"done":"failed");label(b,ok?"data-done":"data-failed");clearTimeout(b._t);b._t=setTimeout(function(){b.removeAttribute("data-state");label(b,"data-label");},2000);}
+  document.querySelectorAll("button.copy[data-copy]").forEach(function(b){
+    b.hidden=false;
+    b.addEventListener("click",function(){
+      var v=b.getAttribute("data-copy");
+      if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(v).then(function(){show(b,true);},function(){show(b,pick(b));});}
+      else show(b,pick(b));
+    });
+  });
+})();`;
+
+let copySeq = 0;
+
+const COPY_ICON = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+    <path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.5" />
+  </svg>
+);
+
+/**
+ * 値とコピーのボタン。block は <pre>（鍵・トークン・設定の JSON）、inline は <code>（変数の名前）の横に小さなボタン。
+ * name はボタンの読み上げに使う（inline は文字を出さないため）。
+ */
+export function Copyable(props: { value: string; inline?: boolean; name?: string }) {
+  const id = `copy-${++copySeq}`;
+  const what = props.name ?? props.value;
+  const common = {
+    type: "button" as const,
+    class: props.inline ? "copy icon" : "copy",
+    hidden: true,
+    "data-copy": props.value,
+    "data-copy-target": id,
+    "data-label": props.inline ? tf("copy.named", { name: what }) : t("copy.button"),
+    "data-done": t("copy.done"),
+    "data-failed": t("copy.failed"),
+  };
+  if (props.inline) {
+    return (
+      <span class="copy-inline">
+        <code id={id}>{props.value}</code>
+        <button {...common} aria-label={tf("copy.named", { name: what })} title={tf("copy.named", { name: what })}>
+          {COPY_ICON}
+        </button>
+      </span>
+    );
+  }
+  return (
+    <div class="copyable">
+      <pre id={id}>{props.value}</pre>
+      <button {...common} aria-label={props.name ? tf("copy.named", { name: what }) : undefined}>
+        {COPY_ICON}
+        <span class="copy-label">{t("copy.button")}</span>
+      </button>
+    </div>
+  );
 }
 
 /** 画面の題名と、右に並べる操作（作成のボタンなど）。Vercel のダッシュボードと同じ並び */
@@ -331,6 +409,7 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
           <p>{t("app.disclaimer")}</p>
           <p>Banto v{BANTO_VERSION} · MIT License</p>
         </footer>
+        <script>{raw(COPY_SCRIPT)}</script>
       </body>
     </html>
   );

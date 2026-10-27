@@ -78,6 +78,10 @@ describe("マイグレーション適用フォーム", () => {
     expect(await res.json()).toEqual({ ok: true, applied: BUNDLED_MIGRATIONS.slice(41), remaining: [], next: "/admin/setup?migrated=" });
     expect(queries).toHaveLength(1 + BUNDLED_MIGRATIONS.length - 41);
     expect(sb.appliedMigrations).toEqual([...BUNDLED_MIGRATIONS]);
+    // 当て終わった画面から次の手順へ進める（運営者がまだいなければ登録の欄へ）
+    const doneHtml = await (await b.get(`/admin/setup?migrated=${BUNDLED_MIGRATIONS.slice(41).join(",")}`)).text();
+    expect(doneHtml).toContain('href="#owner"');
+    expect(doneHtml).toContain('id="owner"');
 
     // 当て終わった後の送り直し（二度押し）も JSON
     res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" }, { headers: { "X-Banto-Migrate": "step" } });
@@ -150,6 +154,10 @@ describe("マイグレーション適用フォーム", () => {
     sb2.addUser("owner@example.com", "password-123", { owner: true });
     const b2 = await Browser.loggedIn(appWith(sb2), "owner@example.com", "password-123");
     expect(await (await b2.get("/admin/update")).text()).toContain("データベースは最新です");
+    // 適用し終えた画面からダッシュボードへ戻れる
+    html = await (await b2.get("/admin/update?done=0061_mod_inquiries")).text();
+    expect(html).toContain("ダッシュボードへ戻る");
+    expect(html).toContain('<a class="btn" href="/admin">');
     expect((await b2.get("/admin")).status).toBe(200);
   });
 
