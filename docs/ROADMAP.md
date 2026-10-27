@@ -79,4 +79,4 @@ CLAUDE.md §10 と同期させること。各ステップは「他人に渡せ�
 
 ## 将来（条件が揃った時のみ）
 
-- 有料ホスティング版（プール型 DB、AGPL への切り替え検討） — docs/ARCHITECTURE.md「将来拡張」参照
+- ホスティングして提供する場合の方針（フォークせずタグを依存に・事業者ごとに分ける・MIT + 商標） — docs/ARCHITECTURE.md「ホスティングして提供する場合」、docs/knowledge/02-decisions.md 2026-10-23 参照
