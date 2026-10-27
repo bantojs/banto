@@ -102,7 +102,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(f ? { f, v } : {}), ...(consent ? { consent } : {}) }).toString();
   const passkeys = moduleEnabled(shop.settings, PASSKEY_MODULE) && (await migrated({ db, cache: c.get("adapters").cache }, PASSKEY_MIGRATION));
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("customers.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "customers" }}>
+    <AdminLayout title={`${shop.name} · ${t("customers.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "customers" }}>
       <PageHead title={t("customers.title")} />
       {c.req.query("flash") === "deleted" ? <p class="notice">{t("customers.deleted")}</p> : null}
       {c.req.query("flash") === "email_changed" ? <p class="notice">{t("customers.email_changed")}</p> : null}

@@ -34,6 +34,7 @@ main{max-width:60rem;margin:0 auto;padding:1.5rem 1rem}
 footer{max-width:60rem;margin:3rem auto 2rem;padding:0 1rem;font-size:.85rem;opacity:.8}footer a{margin-right:1rem}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(14rem,1fr));gap:1.25rem}
 .card{border:1px solid color-mix(in srgb,CanvasText 12%,transparent);border-radius:.5rem;overflow:hidden}
+.msg{border:1px solid color-mix(in srgb,CanvasText 12%,transparent);border-radius:.5rem;padding:.25rem 1rem;margin:.75rem 0}
 .card a{display:block;color:inherit;text-decoration:none}
 .card .thumb{aspect-ratio:1/1;background:color-mix(in srgb,CanvasText 6%,transparent);display:flex;align-items:center;justify-content:center;overflow:hidden}
 .card img{width:100%;height:100%;object-fit:cover}
@@ -145,6 +146,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
               <a href={`${ctx.shopPath}/returns`}>{t("shop.return_policy")}</a>
               <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_title")}</a>
               <a href={`${ctx.shopPath}/orders/lookup`}>{t("store.lookup_title")}</a>
+              {ctx.inquiries ? <a href={`${ctx.shopPath}/inquiries/new`}>{t("inq.title")}</a> : null}
             </p>
           ) : null}
           <p class="muted">{t("store.powered_by")}</p>
@@ -859,6 +861,11 @@ export const defaultTheme: Theme = {
           <p class="muted">
             {t("member.login_first_time")} <a href={`${ctx.shopPath}/privacy`}>{t("member.privacy_link")}</a>
           </p>
+          {ctx.inquiries ? (
+            <p class="muted">
+              {t("inq.login_trouble")} <a href={`${ctx.shopPath}/inquiries/new?category=account`}>{t("inq.title")}</a>
+            </p>
+          ) : null}
         </div>
       );
     } else if (mode === "code") {
@@ -876,6 +883,11 @@ export const defaultTheme: Theme = {
           <p>
             <a href={`${ctx.shopPath}/account/login`}>{t("member.resend")}</a>
           </p>
+          {ctx.inquiries ? (
+            <p class="muted">
+              {t("inq.code_trouble")} <a href={`${ctx.shopPath}/inquiries/new?category=account`}>{t("inq.title")}</a>
+            </p>
+          ) : null}
         </div>
       );
     } else {
@@ -985,6 +997,11 @@ export const defaultTheme: Theme = {
           </section>
         ) : null}
         <h2>{t("member.orders")}</h2>
+        {ctx.inquiries ? (
+          <p>
+            <a href={`${ctx.shopPath}/inquiries`}>{t("inq.my_inquiries")}</a>
+          </p>
+        ) : null}
         {orders.length === 0 ? <p>{t("member.no_orders")}</p> : null}
         {orders.length > 0 ? (
           <table>
@@ -995,6 +1012,7 @@ export const defaultTheme: Theme = {
                 <th>{t("store.total")}</th>
                 <th>{t("order.status")}</th>
                 {receipt ? <th></th> : null}
+                {ctx.inquiries ? <th></th> : null}
               </tr>
             </thead>
             <tbody>
@@ -1011,6 +1029,11 @@ export const defaultTheme: Theme = {
                           {t("receipt.link")}
                         </a>
                       ) : null}
+                    </td>
+                  ) : null}
+                  {ctx.inquiries ? (
+                    <td>
+                      <a href={`${ctx.shopPath}/inquiries/new?order=${String(o["number"])}`}>{t("inq.about_order")}</a>
                     </td>
                   ) : null}
                 </tr>
@@ -1372,7 +1395,229 @@ export const defaultTheme: Theme = {
     );
   },
 
-  OrderLookupPage({ ctx, result, error, values, receipt }) {
+  InquiryPage({ ctx, step, categories, values, hidden, askEmail, order, orders, orderUnmatched, sent, token, inquiry, list, error, info }) {
+    const hiddenFields = (h: Record<string, string> | undefined) => Object.entries(h ?? {}).map(([k, v]) => <input type="hidden" name={k} value={v} />);
+    const text = (body: string) => <div style="white-space:pre-wrap;overflow-wrap:anywhere">{body}</div>;
+    const orderBox = order ? (
+      <div class="msg">
+        <p>
+          <strong>{tf("inq.order_heading", { number: order.number })}</strong>
+          {` · ${formatDateTime(order.created_at, { dateOnly: true })} · ${yen(order.total_jpy)} · ${t(`order.status.${order.status}` as MessageKey)}`}
+        </p>
+        <p class="muted">{order.items.map((i) => `${i.name ?? ""} ×${i.qty}`).join("、")}</p>
+      </div>
+    ) : null;
+    const resendForm = (
+      <form method="post" action={`${ctx.shopPath}/inquiries/resend`}>
+        <p>{t("inq.resend_intro")}</p>
+        <label for="r-number">{t("inq.number")}</label>
+        <input id="r-number" type="text" name="number" inputmode="numeric" required />
+        <label for="r-email">{t("store.address_email")}</label>
+        <input id="r-email" type="email" name="email" value={values.email ?? ""} required autocomplete="email" />
+        <p>
+          <button type="submit">{t("inq.resend_submit")}</button>
+        </p>
+      </form>
+    );
+    let body: Child;
+    if (step === "form") {
+      body = (
+        <form method="post" action={`${ctx.shopPath}/inquiries/confirm`}>
+          {hiddenFields(hidden)}
+          <p>{t("inq.form_intro")}</p>
+          {orderBox}
+          <label for="category">{t("inq.category")}</label>
+          <select id="category" name="category" required>
+            <option value="">{t("inq.category_choose")}</option>
+            {categories.map((c) => (
+              <option value={c.value} selected={c.value === values.category}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          {!order ? (
+            <>
+              <label for="order_number">{t("inq.order_number")}</label>
+              {orders && orders.length > 0 ? (
+                <select id="order_number" name="order_number">
+                  <option value="">{t("inq.order_none_choose")}</option>
+                  {orders.map((o) => (
+                    <option value={String(o.number)} selected={String(o.number) === values.order_number}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input id="order_number" type="text" name="order_number" inputmode="numeric" value={values.order_number ?? ""} maxlength={12} />
+              )}
+              <p class="muted">{t("inq.order_number_help")}</p>
+            </>
+          ) : null}
+          <label for="body">{t("inq.body")}</label>
+          <textarea id="body" name="body" rows={8} maxlength={5000} required>
+            {values.body ?? ""}
+          </textarea>
+          <label for="name">{t("store.address_name")}</label>
+          <input id="name" name="name" value={values.name ?? ""} maxlength={100} autocomplete="name" />
+          {askEmail ? (
+            <>
+              <label for="email">{t("store.address_email")}</label>
+              <input id="email" type="email" name="email" value={values.email ?? ""} maxlength={254} required autocomplete="email" />
+              <p class="muted">{t("inq.email_help")}</p>
+            </>
+          ) : (
+            <p class="muted">{order ? t("inq.reply_to_order") : t("inq.reply_to_member")}</p>
+          )}
+          <p>
+            <button type="submit">{t("inq.to_confirm")}</button>
+          </p>
+        </form>
+      );
+    } else if (step === "confirm") {
+      const label = categories.find((c) => c.value === values.category)?.label ?? "";
+      body = (
+        <div>
+          <h2>{t("inq.confirm_title")}</h2>
+          {orderBox}
+          {orderUnmatched ? <p class="muted">{tf("inq.order_unmatched", { number: values.order_number ?? "" })}</p> : null}
+          <table>
+            <tbody>
+              <tr>
+                <th>{t("inq.category")}</th>
+                <td>{label}</td>
+              </tr>
+              {values.name ? (
+                <tr>
+                  <th>{t("store.address_name")}</th>
+                  <td>{values.name}</td>
+                </tr>
+              ) : null}
+              {askEmail ? (
+                <tr>
+                  <th>{t("store.address_email")}</th>
+                  <td>{values.email}</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+          {text(values.body ?? "")}
+          <form method="post" action={`${ctx.shopPath}/inquiries/submit`}>
+            {hiddenFields(hidden)}
+            <p>
+              <button type="submit">{t("inq.submit")}</button>
+            </p>
+          </form>
+          <form method="post" action={`${ctx.shopPath}/inquiries/new`}>
+            {hiddenFields(hidden)}
+            <button type="submit">{t("inq.edit")}</button>
+          </form>
+        </div>
+      );
+    } else if (step === "sent") {
+      body = (
+        <div>
+          <p class="notice">{tf("inq.sent", { number: sent?.number ?? "" })}</p>
+          <p>{sent?.verified ? t("inq.sent_verified") : t("inq.sent_verify")}</p>
+          {sent && !sent.mailSent ? (
+            <>
+              <p class="error">{t("inq.sent_mail_failed")}</p>
+              {resendForm}
+            </>
+          ) : null}
+          <p>
+            <a href={ctx.shopPath || "/"}>{t("store.continue")}</a>
+          </p>
+        </div>
+      );
+    } else if (step === "open") {
+      body = (
+        <div>
+          <p>{tf("inq.open_intro", { number: sent?.number ?? "" })}</p>
+          <form method="post" action={`${ctx.shopPath}/inquiries/open`}>
+            <input type="hidden" name="t" value={token ?? ""} />
+            <p>
+              <button type="submit">{t("inq.open_submit")}</button>
+            </p>
+          </form>
+        </div>
+      );
+    } else if (step === "thread" && inquiry) {
+      body = (
+        <div>
+          <p>
+            {tf("inq.number_label", { number: inquiry.number })} · {inquiry.categoryLabel} · {inquiry.statusLabel}
+            {inquiry.order ? ` · ${tf("inq.order_heading", { number: inquiry.order.number })}` : inquiry.claimed_order_number ? ` · ${tf("inq.order_heading", { number: inquiry.claimed_order_number })}` : ""}
+          </p>
+          {inquiry.messages.map((m) => (
+            <div class="msg" style={m.author === "shop" ? "margin-left:2rem" : "margin-right:2rem"}>
+              <p class="muted">
+                {m.author === "shop" ? ctx.shop.name : t("inq.from_you")} · {formatDateTime(m.created_at)}
+              </p>
+              {text(m.body)}
+            </div>
+          ))}
+          {inquiry.canReply ? (
+            <form method="post" action={`${ctx.shopPath}/inquiries/reply`}>
+              {hiddenFields(inquiry.replyHidden)}
+              <label for="body">{t("inq.reply")}</label>
+              <textarea id="body" name="body" rows={6} maxlength={5000} required></textarea>
+              <p>
+                <button type="submit">{t("inq.reply_submit")}</button>
+              </p>
+            </form>
+          ) : (
+            <p class="muted">
+              {t("inq.closed_note")} <a href={`${ctx.shopPath}/inquiries/new`}>{t("inq.new")}</a>
+            </p>
+          )}
+        </div>
+      );
+    } else if (step === "list") {
+      body = (
+        <div>
+          <p>
+            <a class="button" href={`${ctx.shopPath}/inquiries/new`}>
+              {t("inq.new")}
+            </a>
+          </p>
+          {ctx.member ? (
+            (list ?? []).length === 0 ? (
+              <p class="muted">{t("inq.list_empty")}</p>
+            ) : (
+              <table>
+                <tbody>
+                  {(list ?? []).map((r) => (
+                    <tr>
+                      <td>
+                        <a href={`${ctx.shopPath}/inquiries/thread?n=${r.number}`}>{tf("inq.number_label", { number: r.number })}</a>
+                      </td>
+                      <td>{r.categoryLabel}</td>
+                      <td>{r.statusLabel}</td>
+                      <td>{formatDateTime(r.last_message_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          ) : (
+            resendForm
+          )}
+        </div>
+      );
+    } else {
+      body = resendForm;
+    }
+    return (
+      <Layout title={t("inq.title")} ctx={ctx} seo={{ noindex: true }}>
+        <h1>{t("inq.title")}</h1>
+        {error ? <p class="error">{error}</p> : null}
+        {info ? <p class="notice">{info}</p> : null}
+        {body}
+      </Layout>
+    );
+  },
+
+  OrderLookupPage({ ctx, result, error, values, receipt, inquiry }) {
     const r = result ?? null;
     return (
       <Layout title={t("store.lookup_title")} ctx={ctx} seo={{ noindex: true }}>
@@ -1457,13 +1702,21 @@ export const defaultTheme: Theme = {
                 </p>
               </form>
             ) : null}
+            {inquiry ? (
+              <form method="post" action={`${ctx.shopPath}/inquiries/new`}>
+                <input type="hidden" name="o" value={inquiry.token} />
+                <button type="submit">
+                  {t("inq.about_order")}
+                </button>
+              </form>
+            ) : null}
           </div>
         ) : null}
       </Layout>
     );
   },
 
-  CheckoutDone({ ctx, free, status, orderNumber, refresh }) {
+  CheckoutDone({ ctx, free, status, orderNumber, refresh, inquiryUrl }) {
     const body =
       status === "confirmed" && orderNumber != null
         ? tf("store.thanks_confirmed", { n: orderNumber })
@@ -1478,6 +1731,11 @@ export const defaultTheme: Theme = {
       <Layout title={t("store.thanks_title")} ctx={ctx} seo={{ noindex: true }} refreshSeconds={status === "pending" && refresh ? 4 : undefined}>
         <h1>{t("store.thanks_title")}</h1>
         <p>{body}</p>
+        {inquiryUrl ? (
+          <p>
+            <a href={inquiryUrl}>{t("inq.about_order")}</a>
+          </p>
+        ) : null}
         <p>
           <a href={ctx.shopPath || "/"}>{t("store.continue")}</a>
         </p>

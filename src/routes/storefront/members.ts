@@ -182,6 +182,8 @@ interface Scope {
   theme: Theme;
   shopPath: string;
   session: MemberSession | null;
+  /** お問い合わせ（同梱モジュール inquiries）のリンクを出す */
+  inquiries?: boolean;
 }
 
 /** storefront/index.tsx の scope() を再利用せず、会員ルートに必要な最小限だけ組む */
@@ -208,7 +210,7 @@ export function enabledProviders(shop: PublicShop): Provider[] {
   return PROVIDERS.filter((p) => moduleEnabled(shop.settings, providerModule(p)) && providerClientId(shop.settings, p) !== null);
 }
 
-const ctxOf = (s: Scope, member?: { email: string }) => ({ shop: s.shop, shopPath: s.shopPath, mediaBaseUrl: "", cartCount: 0, ...(member ? { member } : {}) });
+const ctxOf = (s: Scope, member?: { email: string }) => ({ shop: s.shop, shopPath: s.shopPath, mediaBaseUrl: "", cartCount: 0, ...(member ? { member } : {}), ...(s.inquiries ? { inquiries: true } : {}) });
 /**
  * ログインの画面はキャッシュさせず、リンクのトークンを Referer で外のサイトに出さない。
  * no-referrer にはしない: 本物のブラウザは no-referrer のページのフォームの POST に `Origin: null` を付け、csrfGuard がそれを拒む

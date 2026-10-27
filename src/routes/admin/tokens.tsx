@@ -59,7 +59,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const base = publicBaseUrl(c);
   const flash = c.req.query("flash");
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("tokens.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "tokens" }}>
+    <AdminLayout title={`${shop.name} · ${t("tokens.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "tokens" }}>
       <PageHead title={t("tokens.title")} sub={t("tokens.intro")}>
         <a class="btn" href="#issue">
           {t("tokens.issue")}
@@ -179,7 +179,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   }
   // 生トークンはこの応答にだけ出す（URL やログに載せない）
   return c.html(
-    <AdminLayout title={t("tokens.issued")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title"), href: `/admin/shops/${shop.id}/tokens` }, { label: t("tokens.issued") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "tokens" }}>
+    <AdminLayout title={t("tokens.issued")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("tokens.title"), href: `/admin/shops/${shop.id}/tokens` }, { label: t("tokens.issued") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "tokens" }}>
       <PageHead title={t("tokens.issued")}>
         <a class="btn secondary" href={`/admin/shops/${shop.id}/tokens`}>
           {t("tokens.title")}

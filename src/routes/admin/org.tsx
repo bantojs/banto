@@ -13,6 +13,7 @@ import { AdminLayout, PageHead } from "./layout";
 import { authClient, dbClient, formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { adminLoginGuard, OPERATOR_MFA_MIGRATION, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { migrated } from "../../db/migration-state";
+import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 import { myOrgs, PERM_TEMPLATES, requireOrgAdmin, SHOP_PERMS, isShopPerm, type OrgRole, type ShopPerm } from "./access";
 
 /**
@@ -40,6 +41,7 @@ const PERM_LABEL: Record<ShopPerm, MessageKey> = {
   stores: "perm.stores",
   settings: "perm.settings",
   integrations: "perm.integrations",
+  support: "perm.support",
 };
 const ROLE_LABEL: Record<OrgRole, MessageKey> = {
   owner: "org.role.owner",
@@ -52,6 +54,7 @@ const TEMPLATE_LABEL: Record<string, MessageKey> = {
   fulfillment: "org.template.fulfillment",
   marketing: "org.template.marketing",
   stores: "org.template.stores",
+  support: "org.template.support",
 };
 const isRole = (v: unknown): v is OrgRole => v === "owner" || v === "admin" || v === "member";
 
@@ -136,7 +139,12 @@ function readShopPerms(
   return out;
 }
 
-function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; current?: { shop_id: string; perms: string[] }[]; currentStores?: { store_id: string; perms: string[] }[] }) {
+/** support（お問い合わせ、0061）は DB に入るまで出さない（入る前の DB は項目を知らず、黙って落とす） */
+async function shopPermsHere(c: AdminContext): Promise<readonly ShopPerm[]> {
+  return (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION)) ? SHOP_PERMS : SHOP_PERMS.filter((p) => p !== "support");
+}
+
+function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; current?: { shop_id: string; perms: string[] }[]; currentStores?: { store_id: string; perms: string[] }[]; perms: readonly ShopPerm[] }) {
   return (
     <>
       {props.shops.length > 0 ? (
@@ -157,13 +165,13 @@ function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; curr
                   <td>
                     <select name={`tpl.${s.id}`}>
                       <option value="">{t("org.template.custom")}</option>
-                      {Object.keys(PERM_TEMPLATES).map((k) => (
+                      {Object.keys(PERM_TEMPLATES).filter((k) => PERM_TEMPLATES[k]!.every((p) => props.perms.includes(p))).map((k) => (
                         <option value={k}>{t(TEMPLATE_LABEL[k]!)}</option>
                       ))}
                     </select>
                   </td>
                   <td>
-                    {SHOP_PERMS.map((p) => (
+                    {props.perms.map((p) => (
                       <label style="display:inline-block;margin:0 .75rem 0 0">
                         <input type="checkbox" name={`perm.${s.id}`} value={p} checked={have.has(p)} /> {t(PERM_LABEL[p])}
                       </label>
@@ -373,7 +381,7 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
         <label for="role">{t("org.role")}</label>
         <RoleSelect value="member" canOwner={o.role === "owner"} />
         <p>{t("org.role_help")}</p>
-        <ShopPermsFields shops={shops} stores={stores} />
+        <ShopPermsFields shops={shops} stores={stores} perms={await shopPermsHere(c)} />
         <p>
           <button type="submit">{t("org.invite_submit")}</button>
         </p>
@@ -469,7 +477,7 @@ org.get("/org/members/:userId", requireOwner, requireOrgAdmin, async (c: AdminCo
         <label for="role">{t("org.role")}</label>
         <RoleSelect value={m.role} canOwner={o.role === "owner"} />
         <p>{t("org.role_help")}</p>
-        <ShopPermsFields shops={shops} stores={stores} current={m.shops} currentStores={m.stores} />
+        <ShopPermsFields shops={shops} stores={stores} current={m.shops} currentStores={m.stores} perms={await shopPermsHere(c)} />
         <p>
           <button type="submit">{t("shop.save")}</button>
         </p>

@@ -165,6 +165,59 @@ export interface MemberTryonRequest {
   items: { name: string | null; sku: string | null; qty: number }[];
 }
 
+/** お問い合わせの注文の要約（0061。住所・連絡先は入らない） */
+export interface InquiryOrderSummary {
+  number: number;
+  status: string;
+  created_at: string;
+  total_jpy: number;
+  items: { name: string | null; qty: number }[];
+}
+
+/** チケットを開く手段: メールのリンクのトークンの HMAC か、ログイン中の会員と受付番号 */
+export type InquiryAccess = { link_hash: string } | { customer_id: string; epoch: number; number: number };
+
+/** お客様に見せるチケット（0061 の banto_inquiry_view。連絡先は入らない） */
+export interface InquiryView {
+  id: string;
+  number: number;
+  status: "waiting_shop" | "waiting_customer" | "closed";
+  category: string;
+  created_at: string;
+  last_message_at: string;
+  verified: boolean;
+  claimed_order_number: number | null;
+  order: { number: number; status: string; created_at: string; total_jpy: number } | null;
+  messages: { author: "customer" | "shop"; body: string; created_at: string }[];
+}
+
+export interface InquiryListItem {
+  number: number;
+  status: InquiryView["status"];
+  category: string;
+  created_at: string;
+  last_message_at: string;
+  order_number: number | null;
+}
+
+/** 運営者へのお知らせ（DB が「送ってよい」と決めたときだけ to が入る） */
+export interface InquiryNotify {
+  send: boolean;
+  to: string | null;
+}
+
+export interface InquiryCreated {
+  id: string;
+  number: number;
+  verified: boolean;
+  /** お客様の宛先（ゲストは入れたアドレス、会員・注文からは会員・注文時のアドレス）。画面には出さない */
+  to: string;
+  mail_from: string;
+  send: boolean;
+  kind: "verify" | "created";
+  notify: InquiryNotify | null;
+}
+
 export interface PrivilegedDb {
   /** 在庫を原子的に減算して予約を作る。在庫不足なら insufficient_stock */
   reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null): Promise<string>;
@@ -205,6 +258,17 @@ export interface PrivilegedDb {
   tryonExpire(today: string): Promise<number>;
   /** 終わった試着の申し込みの個人情報を消す（Cron） */
   maskTryonRequests(days: number): Promise<number>;
+  /** お問い合わせ（同梱モジュール inquiries、0061）。お客様の経路だけ（運営側は RLS と authenticated の関数） */
+  inquiryOrderCheck(shopId: string, number: number, email: string, ipHash: string | null, emailHash: string | null): Promise<InquiryOrderSummary | null>;
+  inquiryOrderRef(shopId: string, ref: Record<string, unknown>): Promise<(InquiryOrderSummary & { order_id: string }) | null>;
+  inquiryCreate(shopId: string, input: Record<string, unknown>, linkHash: string, ipHash: string | null): Promise<InquiryCreated>;
+  inquiryPeek(shopId: string, linkHash: string): Promise<{ number: number } | null>;
+  inquiryGet(shopId: string, access: InquiryAccess): Promise<{ inquiry: InquiryView; notify: InquiryNotify | null; mail_from: string | null } | null>;
+  inquiryMemberList(shopId: string, customerId: string, epoch: number): Promise<InquiryListItem[] | null>;
+  inquiryCustomerReply(shopId: string, access: InquiryAccess, body: string, ipHash: string | null): Promise<{ id: string; number: number; notify: InquiryNotify; mail_from: string | null }>;
+  inquiryResendLink(shopId: string, number: number, email: string, linkHash: string, ipHash: string | null, emailHash: string | null): Promise<{ send: boolean; mail_from: string; to: string | null; number: number | null }>;
+  /** 完了から days 日の連絡先と本文を消す・未確認のまま 30 日のものを消す（Cron） */
+  maskInquiries(days: number): Promise<number>;
   /** 組織への招待のリンクを開いたとき（0024）。token_hash は SHA-256。無ければ null */
   orgInvitationPeek(tokenHash: string): Promise<{ email: string; org_name: string; role: string; valid: boolean; user_exists: boolean } | null>;
   /** 先着のクーポンを獲得する（0020） */
@@ -399,6 +463,16 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     tryonLineRecipient: (requestId, shopId) => rpc("tryon_line_recipient", { p_request_id: requestId, p_shop_id: shopId }),
     tryonExpire: (today) => rpc("tryon_expire", { p_today: today }),
     maskTryonRequests: (days) => rpc("mask_tryon_requests", { p_days: days }),
+    inquiryOrderCheck: (shopId, number, email, ipHash, emailHash) => rpc("inquiry_order_check", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, p_email_hash: emailHash }),
+    inquiryOrderRef: (shopId, ref) => rpc("inquiry_order_ref", { p_shop_id: shopId, p_ref: ref }),
+    inquiryCreate: (shopId, input, linkHash, ipHash) => rpc("inquiry_create", { p_shop_id: shopId, p_input: input, p_link_hash: linkHash, p_ip_hash: ipHash }),
+    inquiryPeek: (shopId, linkHash) => rpc("inquiry_peek", { p_shop_id: shopId, p_link_hash: linkHash }),
+    inquiryGet: (shopId, access) => rpc("inquiry_get", { p_shop_id: shopId, p_access: access }),
+    inquiryMemberList: (shopId, customerId, epoch) => rpc("inquiry_member_list", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
+    inquiryCustomerReply: (shopId, access, body, ipHash) => rpc("inquiry_customer_reply", { p_shop_id: shopId, p_access: access, p_body: body, p_ip_hash: ipHash }),
+    inquiryResendLink: (shopId, number, email, linkHash, ipHash, emailHash) =>
+      rpc("inquiry_resend_link", { p_shop_id: shopId, p_number: number, p_email: email, p_link_hash: linkHash, p_ip_hash: ipHash, p_email_hash: emailHash }),
+    maskInquiries: (days) => rpc("mask_inquiries", { p_days: days }),
     memberClaimCoupon: (shopId, customerId, epoch, campaignId) => rpc("member_claim_coupon", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_campaign_id: campaignId }),
     memberCoupons: (shopId, customerId, epoch) => rpc("member_coupons", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
     memberOrder: (shopId, customerId, epoch, number) => rpc("member_order", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),

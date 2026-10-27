@@ -32,7 +32,7 @@ receiptAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const raw = ((shop.settings ?? {})["receipt"] ?? {}) as Record<string, unknown>;
   const flash = c.req.query("flash");
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("receipt.module_title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("receipt.module_title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("receipt.module_title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("receipt.module_title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("receipt.module_title")} />
       {flash === "saved" ? <p class="notice">{t("receipt.saved")}</p> : null}
       {flash === "invalid" ? <p class="error">{t("receipt.invalid_number")}</p> : null}

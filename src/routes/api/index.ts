@@ -13,6 +13,7 @@ import { cors } from "hono/cors";
 import { commerceApi } from "./commerce";
 import { memberCors, membersApi } from "./members";
 import { tryonApi } from "./tryon";
+import { inquiriesApi } from "./inquiries";
 
 /**
  * ヘッドレス API（公開）。外部フロント（WordPress・Next.js 等）やプラグインが使う。docs/headless.md
@@ -30,6 +31,7 @@ api.use("/shops/*", (c, next) => (/^\/api\/shops\/[^/]+\/members(\/|$)/.test(c.r
 api.route("/", commerceApi);
 api.route("/", membersApi);
 api.route("/", tryonApi);
+api.route("/", inquiriesApi);
 
 function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   const cfg = c.get("adapters").config;

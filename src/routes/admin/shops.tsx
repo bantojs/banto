@@ -123,7 +123,7 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
   const missing = missingTerms(shop.settings);
   const termLabel = { delivery: t("terms.delivery"), cancellation: t("terms.cancellation"), payment_note: t("terms.payment_note") };
   return (
-    <AdminLayout title={`${shop.name} · ${t("shop.settings")}`} nav crumbs={[{ label: shop.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: props.access, active: "settings" }}>
+    <AdminLayout title={`${shop.name} · ${t("shop.settings")}`} nav crumbs={[{ label: shop.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "settings" }}>
       <PageHead title={shop.name} sub={t("shop.settings")} />
       {missing.length > 0 ? (
         <p class="notice">
@@ -493,7 +493,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
   // ショップの設定の項目が無いメンバーには、触れる画面へのメニューだけ出す
   if (!can(c.get("shopAccess"), "settings")) {
     return c.html(
-      <AdminLayout title={shop.name} nav crumbs={[{ label: shop.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "settings" }}>
+      <AdminLayout title={shop.name} nav crumbs={[{ label: shop.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "settings" }}>
         <PageHead title={shop.name} sub={t("access.nav_only")} />
         <ShopNav shop={shop} access={c.get("shopAccess")} publicBaseUrl={publicBaseUrl(c)} />
       </AdminLayout>,

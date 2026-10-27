@@ -42,7 +42,7 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     const flash = c.req.query("flash");
     const base = `/admin/shops/${shop.id}/modules/${p}-login`;
     return c.html(
-      <AdminLayout title={`${shop.name} · ${tf("social.title", { name })}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: name }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+      <AdminLayout title={`${shop.name} · ${tf("social.title", { name })}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
         <PageHead title={tf("social.title", { name })} />
         {flash === "saved" ? <p class="notice">{t("social.saved")}</p> : null}
         {flash === "deleted" ? <p class="notice">{t("social.deleted")}</p> : null}

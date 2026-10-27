@@ -31,7 +31,7 @@ ga4Admin.get("/", requireOwner, async (c: AdminContext) => {
   const flash = c.req.query("flash");
   const id = ga4Id(shop.settings);
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("mod.ga4.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.ga4.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mod.ga4.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.ga4.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("mod.ga4.name")} />
       {flash === "saved" ? <p class="notice">{t("ga4.saved")}</p> : null}
       {flash === "invalid" ? <p class="error">{t("ga4.invalid")}</p> : null}

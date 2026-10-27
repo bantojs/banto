@@ -757,7 +757,7 @@ export class FakeSupabase {
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
   private orgRpc(fn: string, args: Record<string, unknown>, uid: string | null): Response | null {
-    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations"];
+    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support"];
     const role = (org: unknown) => this.orgMembers.find((m) => m.org_id === org && m.user_id === uid)?.role ?? null;
     const isAdmin = (org: unknown) => ["owner", "admin"].includes(role(org) ?? "");
     const err = (message: string) => json({ code: "P0001", message }, 400);

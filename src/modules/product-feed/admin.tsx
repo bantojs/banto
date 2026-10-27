@@ -33,7 +33,7 @@ productFeedAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const flash = c.req.query("flash");
   const baseMissing = !c.get("adapters").config.get("PUBLIC_BASE_URL") && !shop.domain;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("feed.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("feed.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("feed.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("feed.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("feed.title")} />
       {flash === "generated" ? <p class="notice">{t("feed.generated")}</p> : null}
       {flash === "started" ? <p class="notice">{t("feed.started")}</p> : null}

@@ -26,7 +26,7 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
   const base = `/admin/shops/${shop.id}/line-messaging`;
   const flash = c.req.query("flash");
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "plugins" }}>
+    <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
       <PageHead title={t("linemsg.title")} />
       {flash === "saved" ? <p class="notice">{t("linemsg.saved")}</p> : null}
       {flash === "deleted" ? <p class="notice">{t("linemsg.deleted")}</p> : null}

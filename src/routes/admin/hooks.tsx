@@ -165,7 +165,7 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   const names = new Map(endpoints.map((e) => [e.id, e.name]));
   const f = flash(c.req.query("flash"));
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("hooks.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "hooks" }}>
+    <AdminLayout title={`${shop.name} · ${t("hooks.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
       <PageHead title={t("hooks.title")} sub={t("hooks.intro")}>
         <a class="btn" href="#add">
           {t("hooks.add")}
@@ -272,7 +272,7 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   const manifest = await fetchManifest(url, c.get("deps").fetch);
   return c.html(
-    <AdminLayout title={t("hooks.add")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "hooks" }}>
+    <AdminLayout title={t("hooks.add")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
       <PageHead title={t("hooks.add")} />
       {manifest ? (
         <p class="notice">
@@ -348,7 +348,7 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const f = flash(c.req.query("flash"));
   return c.html(
-    <AdminLayout title={endpoint.name} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }, { label: endpoint.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "hooks" }}>
+    <AdminLayout title={endpoint.name} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }, { label: endpoint.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
       <PageHead
         title={
           <>

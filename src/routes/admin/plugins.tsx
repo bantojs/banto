@@ -32,7 +32,7 @@ plugins.get("/:shopId/plugins", requireOwner, async (c: AdminContext) => {
   const cfg = c.get("adapters").config;
   const base = publicBaseUrl(c);
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("plugins.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "plugins" }}>
+    <AdminLayout title={`${shop.name} · ${t("plugins.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
       <PageHead title={t("plugins.title")} sub={t("plugins.intro")}>
         <a class="btn secondary" href={`/admin/shops/${shop.id}/hooks`}>
           {t("hooks.title")}

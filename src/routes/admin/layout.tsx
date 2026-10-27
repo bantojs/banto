@@ -2,6 +2,7 @@ import { raw } from "hono/html";
 import type { Child } from "hono/jsx";
 import { t, getLocale, type MessageKey } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
+import { moduleEnabled } from "../../modules/registry";
 
 /**
  * 管理画面の見た目（全画面で共通）。白と黒を基調に、細い線・余白・角丸のカードで組む。
@@ -231,16 +232,19 @@ export interface Crumb {
 
 /** ショップの中の画面の上に出すタブ。権限の無い項目は出さない（ShopAccess は loadShop が c.set("shopAccess") に置く） */
 export interface ShopTabs {
-  shop: { id: string; name: string };
+  /** settings があれば、ON の同梱モジュールのタブも出す（お問い合わせ） */
+  shop: { id: string; name: string; settings?: Record<string, unknown> | null };
   access?: { role: string; perms: readonly string[] };
   active?: ShopTab;
 }
-export type ShopTab = "products" | "orders" | "customers" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
+export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
 
-const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string }[] = [
+const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module?: string }[] = [
   { id: "products", path: "/products", label: "product.list", perm: "catalog" },
   { id: "orders", path: "/orders", label: "order.list", perm: "orders" },
   { id: "customers", path: "/customers", label: "customers.title", perm: "customers" },
+  // お問い合わせ（同梱モジュール inquiries。support の項目だけの人が入れるように、モジュールの一覧とは別にタブを出す）
+  { id: "inquiries", path: "/modules/inquiries", label: "mod.inquiries.name", perm: "support", module: "inquiries" },
   { id: "modules", path: "/modules", label: "modules.title", perm: "settings" },
   { id: "plugins", path: "/plugins", label: "plugins.title", perm: "integrations" },
   { id: "hooks", path: "/hooks", label: "tabs.hooks", perm: "integrations" },
@@ -315,7 +319,7 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
         </header>
         {tabs ? (
           <nav class="tabs" aria-label={tabs.shop.name}>
-            {TABS.filter((tb) => tabAllowed(tabs.access, tb.perm)).map((tb) => (
+            {TABS.filter((tb) => tabAllowed(tabs.access, tb.perm) && (!tb.module || moduleEnabled(tabs.shop.settings, tb.module))).map((tb) => (
               <a href={`/admin/shops/${tabs.shop.id}${tb.path}`} aria-current={tabs.active === tb.id ? "page" : undefined}>
                 {t(tb.label)}
               </a>
