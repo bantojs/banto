@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { STOREFRONT_MODES, safeHttpsUrl, storefrontSettings } from "../../storefront/mode";
-import { STOREFRONT_SETTINGS_MIGRATION } from "../../storefront/data";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { DomainAttachResult, DomainState } from "../../adapters/types";
@@ -13,8 +12,6 @@ import { can, shopAccess, type ShopAccess, type ShopPerm } from "./access";
 import { bundledPluginUrl } from "../../plugins";
 import { PREFECTURES, parseShippingSettings, taxRate } from "../../commerce/shipping";
 import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, returnOrigins, shopLimit } from "../../commerce/checkout";
-import { migrated } from "../../db/migration-state";
-import { RELAY_LIMITS_MIGRATION } from "../common";
 import { formatFieldDefinitions, parseFieldDefinitions, productFields } from "../../products/fields";
 import { customerFields, parseCustomerFieldDefinitions } from "../../customers/fields";
 import { enabledModules } from "../../modules/registry";
@@ -114,7 +111,7 @@ export function ShopNav({ shop, access, publicBaseUrl }: { shop: ShopRow; access
 }
 
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; relayReady: boolean; storefrontReady: boolean; domain: { provider: boolean; state: DomainState | null } }) {
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null } }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -365,33 +362,27 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
 
         <section class="card" id="storefront">
           <h2>{t("sfmode.title")}</h2>
-          {props.storefrontReady ? (
-            <form method="post" action={`/admin/shops/${shop.id}/storefront`}>
-              <p class="muted">{t("sfmode.intro")}</p>
-              {(["full", "checkout", "off"] as const).map((m) => (
-                <p>
-                  <label>
-                    <input type="radio" name="mode" value={m} checked={storefrontSettings(shop.settings).mode === m} /> <strong>{t(`sfmode.mode_${m}` as MessageKey)}</strong>
-                    <br />
-                    <span class="muted">{t(`sfmode.mode_${m}_hint` as MessageKey)}</span>
-                  </label>
-                </p>
-              ))}
-              <label for="site_url">{t("sfmode.site_url")}</label>
-              <input id="site_url" type="url" name="site_url" value={storefrontSettings(shop.settings).siteUrl ?? ""} placeholder="https://example.com" style="width:100%;max-width:40rem" />
-              <label for="product_url">{t("sfmode.product_url")}</label>
-              <input id="product_url" type="text" name="product_url" value={storefrontSettings(shop.settings).productUrl ?? ""} placeholder="https://example.com/product/{slug}/" style="width:100%;max-width:40rem" />
-              <p class="muted">{t("sfmode.urls_hint")}</p>
-              <p class="muted">{t("sfmode.analytics_hint")}</p>
+          <form method="post" action={`/admin/shops/${shop.id}/storefront`}>
+            <p class="muted">{t("sfmode.intro")}</p>
+            {(["full", "checkout", "off"] as const).map((m) => (
               <p>
-                <button type="submit">{t("shop.save")}</button>
+                <label>
+                  <input type="radio" name="mode" value={m} checked={storefrontSettings(shop.settings).mode === m} /> <strong>{t(`sfmode.mode_${m}` as MessageKey)}</strong>
+                  <br />
+                  <span class="muted">{t(`sfmode.mode_${m}_hint` as MessageKey)}</span>
+                </label>
               </p>
-            </form>
-          ) : (
-            <p class="notice">
-              {t("sfmode.needs_update")} <a href="/admin/update">{t("update.title")}</a>
+            ))}
+            <label for="site_url">{t("sfmode.site_url")}</label>
+            <input id="site_url" type="url" name="site_url" value={storefrontSettings(shop.settings).siteUrl ?? ""} placeholder="https://example.com" style="width:100%;max-width:40rem" />
+            <label for="product_url">{t("sfmode.product_url")}</label>
+            <input id="product_url" type="text" name="product_url" value={storefrontSettings(shop.settings).productUrl ?? ""} placeholder="https://example.com/product/{slug}/" style="width:100%;max-width:40rem" />
+            <p class="muted">{t("sfmode.urls_hint")}</p>
+            <p class="muted">{t("sfmode.analytics_hint")}</p>
+            <p>
+              <button type="submit">{t("shop.save")}</button>
             </p>
-          )}
+          </form>
         </section>
 
         <section class="card" id="headless">
@@ -403,20 +394,16 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
               {returnOrigins(shop.settings).join("\n")}
             </textarea>
             <p class="muted">{t("headless.return_origins_hint")}</p>
-            {props.relayReady ? (
-              <>
-                <label for="relay_ips">{t("headless.relay_ips")}</label>
-                <textarea id="relay_ips" name="relay_ips" rows={2} style="width:100%;max-width:40rem" placeholder="203.0.113.10">
-                  {relayIps(shop.settings).join("\n")}
-                </textarea>
-                <p class="muted">{t("headless.relay_ips_hint")}</p>
-                <label for="max_pending_per_ip">{t("headless.max_pending_per_ip")}</label>
-                <input id="max_pending_per_ip" type="number" name="max_pending_per_ip" min={1} max={9999} value={String(shopLimit(shop.settings, "checkout", "max_pending_per_ip", 20))} />
-                <label for="login_per_ip_per_hour">{t("headless.login_per_ip_per_hour")}</label>
-                <input id="login_per_ip_per_hour" type="number" name="login_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "members_login_limits", "per_ip_per_hour", 30))} />
-                <p class="muted">{t("headless.limits_hint")}</p>
-              </>
-            ) : null}
+            <label for="relay_ips">{t("headless.relay_ips")}</label>
+            <textarea id="relay_ips" name="relay_ips" rows={2} style="width:100%;max-width:40rem" placeholder="203.0.113.10">
+              {relayIps(shop.settings).join("\n")}
+            </textarea>
+            <p class="muted">{t("headless.relay_ips_hint")}</p>
+            <label for="max_pending_per_ip">{t("headless.max_pending_per_ip")}</label>
+            <input id="max_pending_per_ip" type="number" name="max_pending_per_ip" min={1} max={9999} value={String(shopLimit(shop.settings, "checkout", "max_pending_per_ip", 20))} />
+            <label for="login_per_ip_per_hour">{t("headless.login_per_ip_per_hour")}</label>
+            <input id="login_per_ip_per_hour" type="number" name="login_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "members_login_limits", "per_ip_per_hour", 30))} />
+            <p class="muted">{t("headless.limits_hint")}</p>
             <p>
               <button type="submit">{t("shop.save")}</button>
             </p>
@@ -503,14 +490,11 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
   const base = publicBaseUrl(c);
   const stripeKeySet = Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_WEBHOOK_SECRET"));
   const direct = await db.from<{ id: string; enabled: boolean }>("hook_endpoints").selectOne("id,enabled", { eq: { shop_id: shop.id, url: bundledPluginUrl("stripe") } });
-  const relayReady = await migrated({ db, cache: c.get("adapters").cache }, RELAY_LIMITS_MIGRATION);
-  const storefrontReady = await migrated({ db, cache: c.get("adapters").cache }, STOREFRONT_SETTINGS_MIGRATION);
   // 独自ドメインの提供元（ホスティングの提供者）。状態は提供元に 1 回だけ聞く。失敗しても画面は出す
   const provider = c.get("adapters").domain;
   const domainState = provider && shop.domain ? await provider.status(shop.domain, { id: shop.id, slug: shop.slug }).catch(() => null) : null;
   return c.html(
     <ShopSettingsPage
-      storefrontReady={storefrontReady}
       domain={{ provider: Boolean(provider), state: domainState }}
       shop={shop}
       access={c.get("shopAccess")}
@@ -519,7 +503,6 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))}
       stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet}
       stripeKeySet={stripeKeySet}
-      relayReady={relayReady}
     />,
   );
 });

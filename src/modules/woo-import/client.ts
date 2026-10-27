@@ -1371,7 +1371,6 @@ export function wooImporter() {
 
     const products = analysis.products.map((p) => {
       // 主カテゴリー: いちばん深いもの。祖先でない他のカテゴリーは追加カテゴリーにする
-      // （0042 より前の DB では、サーバーが extra_category_names をタグに写す）
       const deepest = [...p.categoryPaths].sort((a, b) => b.length - a.length)[0] ?? null;
       const extraPaths = p.categoryPaths.filter((path) => deepest && !deepest.slice(0, path.length).every((n, i) => n === path[i]));
       const brand = opts.brandMode === "last" ? p.brands[p.brands.length - 1] : p.brands[0];
@@ -1414,7 +1413,6 @@ export function wooImporter() {
           attributes,
           category_slug: deepest ? categorySlug(deepest) : null,
           extra_category_slugs: [...new Set(extraPaths.map((path) => categorySlug(path)))],
-          extra_category_names: [...new Set(extraPaths.map((path) => path[path.length - 1]!))],
           skus,
         },
         images: [...new Set([...p.images, ...(opts.includeVariationImages ? variationImages : [])])],
@@ -1474,12 +1472,10 @@ export function wooImporter() {
     /** ストアフロントのショップのトップの URL（https://…/my-shop か独自ドメイン）。旧 URL → 新 URL の一覧に使う */
     shopUrl: string;
     t: Record<string, string>;
-    /** 画像を裏で取り込める（0039 が当たっている） */
-    queue?: boolean;
     /** 裏の取り込みで大きすぎて止まった画像（このページで縮小して取り込む） */
     large?: { slug: string; url: string }[];
     /** クーポンの CSV 取り込みの画面（同梱モジュール coupons、0043）。要確認のクーポンを直したら、ここから入れる */
-    couponImport?: string;
+    couponImport: string;
   }
 
   function mount(root: El, cfg: MountConfig) {
@@ -1772,7 +1768,7 @@ export function wooImporter() {
               el("p", {}, t("coupons_review_intro")),
               el("details", {}, el("summary", {}, t("coupons_show_codes")), keys),
               el("p", {}, reviewLink, " ", idsLink, " ", reviewLog),
-              el("p", { class: "muted" }, t("coupons_review_next"), " ", cfg.couponImport ? el("a", { href: cfg.couponImport }, t("coupons_review_import_link")) : t("coupons_review_needs_update")),
+              el("p", { class: "muted" }, t("coupons_review_next"), " ", el("a", { href: cfg.couponImport }, t("coupons_review_import_link"))),
               el("label", {}, t("coupons_review_mode"), " ", reviewMode),
             );
           }
@@ -2106,11 +2102,7 @@ export function wooImporter() {
         const imageCount = requests.reduce((n, r) => n + r.urls.length, 0);
         const imgBtn = el("button", { type: "button" }, t("start_images", { n: imageCount }));
         const queueBtn = el("button", { type: "button" }, t("queue_images", { n: imageCount }));
-        if (cfg.queue) {
-          log.append(el("p", {}, t("images_choice")), el("ul", {}, el("li", {}, t("images_choice_browser")), el("li", {}, t("images_choice_queue"))), el("p", {}, imgBtn, " ", queueBtn));
-        } else {
-          log.append(el("p", {}, imgBtn));
-        }
+        log.append(el("p", {}, t("images_choice")), el("ul", {}, el("li", {}, t("images_choice_browser")), el("li", {}, t("images_choice_queue"))), el("p", {}, imgBtn, " ", queueBtn));
         imgBtn.addEventListener("click", () => {
           imgBtn.disabled = true;
           queueBtn.disabled = true;

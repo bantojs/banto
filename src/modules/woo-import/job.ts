@@ -4,13 +4,10 @@
  * 1 枚ごとの失敗は理由のコードで記録し（一時的なものは DB がやり直す）、ジョブ全体は落とさない。
  */
 import type { Adapters } from "../../adapters/types";
-import { createDbClient } from "../../db/client";
-import { migrated } from "../../db/migration-state";
 import type { ImageImportJob, PrivilegedDb } from "../../db/privileged";
 import { fetchImage, ImageFetchError } from "../../media/fetch-image";
 import { wcImageKey } from "./keys";
 
-export const IMAGE_QUEUE_MIGRATION = "0039_mod_woo_import_queue";
 /** 同時に取りに行く数（相手のサイトに負担をかけすぎない） */
 const CONCURRENCY = 4;
 
@@ -41,12 +38,7 @@ export async function runImageImport(adapters: Adapters, db: PrivilegedDb, doFet
 }
 
 export function registerImageImportJob(adapters: Adapters, db: PrivilegedDb, doFetch: typeof fetch): void {
-  const cfg = adapters.config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
   adapters.scheduler.register("image_import", async () => {
-    // 0039 が当たるまでは何もしない（関数が無いエラーでほかのジョブと /health を止めない）
-    if (!url || !anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, IMAGE_QUEUE_MIGRATION))) return;
     await runImageImport(adapters, db, doFetch);
   });
 }

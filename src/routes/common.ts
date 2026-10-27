@@ -8,7 +8,6 @@ import { STOREFRONT_CACHE_TTL } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
-export { RELAY_LIMITS_MIGRATION } from "../commerce/checkout";
 
 export type Ctx = Context<AppEnv>;
 

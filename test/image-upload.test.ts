@@ -182,14 +182,4 @@ describe("POST /api/v1/products/{id}/images/upload", () => {
     expect((await upload(app, tok, "not-a-uuid", png, h)).status).toBe(404);
     expect(storage.objects.size).toBe(0);
   });
-
-  it("DB が 0037 より前は 409 migration_required", async () => {
-    const { app, issue, mug, sb } = await setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0037_api_image_upload");
-    const png = tinyPng();
-    const tok = await issue(["products:write"]);
-    const r = await upload(app, tok, mug.id, png, { "content-type": "image/png", "content-length": String(png.byteLength) });
-    expect(r.status).toBe(409);
-    expect(r.json.error!.code).toBe("migration_required");
-  });
 });

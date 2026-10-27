@@ -19,9 +19,7 @@ import { registerImageImportJob } from "../modules/woo-import/job";
 import { todayHere } from "../modules/store-tryon";
 import { createDbClient } from "../db/client";
 import { migrated } from "../db/migration-state";
-import { MEMBER_SESSIONS_MIGRATION } from "../members/auth";
-import { PASSKEY_MIGRATION } from "../modules/passkey";
-import { AUDIT_LOG_MIGRATION, auditKeepDays } from "../audit";
+import { auditKeepDays } from "../audit";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -50,11 +48,8 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const raw = cfg.get("MASK_ORDERS_AFTER_DAYS");
     const days = raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS;
     await db.maskShippedOrders(days);
-    // 監査ログの保持（0051。適用されるまでは呼ばない）
-    const anonKey = cfg.get("SUPABASE_ANON_KEY");
-    if (anonKey && (await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, AUDIT_LOG_MIGRATION))) {
-      await db.pruneAuditLog(auditKeepDays(cfg.get("AUDIT_LOG_KEEP_DAYS")));
-    }
+    // 監査ログの保持（0051）
+    await db.pruneAuditLog(auditKeepDays(cfg.get("AUDIT_LOG_KEEP_DAYS")));
   });
 
   // hooks の配信。1 回に取り出す数は DB が Workers のプランで決める（claim_hook_deliveries、0056）
@@ -64,13 +59,11 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     await deliverPendingHooks({ db, sessionSecret, fetch: doFetch, config: cfg, socket: adapters.socket });
   });
 
-  // 期限切れのログインのコードを消す（0012）。終わった会員のセッション（0045）とパスキーの challenge（0046）も消す（適用されるまでは呼ばない）
+  // 期限切れのログインのコードを消す（0012）。終わった会員のセッション（0045）とパスキーの challenge（0046）も消す
   adapters.scheduler.register("member_login_cleanup", async () => {
     await db.memberLoginCleanup();
-    const anonKey = cfg.get("SUPABASE_ANON_KEY");
-    const state = anonKey ? { db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache } : null;
-    if (state && (await migrated(state, MEMBER_SESSIONS_MIGRATION))) await db.memberSessionCleanup();
-    if (state && (await migrated(state, PASSKEY_MIGRATION))) await db.memberPasskeyCleanup();
+    await db.memberSessionCleanup();
+    await db.memberPasskeyCleanup();
   });
 
   // お店で試着（0025）。期限はショップの時間帯の日付で比べる

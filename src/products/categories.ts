@@ -27,9 +27,6 @@ export function categoryTree(rows: CategoryRow[]): CategoryNode[] {
   return roots;
 }
 
-/** 追加カテゴリー（products.extra_category_ids）とクーポンのタグの条件が使える DB の版（migrated() で判定） */
-export const EXTRA_CATEGORIES_MIGRATION = "0042_product_extra_categories";
-
 /** 商品が属するカテゴリー（主カテゴリー + 追加カテゴリー、0042）。絞り込みとクーポンの条件はこれで判定する */
 export function productCategoryIds(p: { category_id?: string | null; extra_category_ids?: string[] | null }): string[] {
   const out = p.category_id ? [p.category_id] : [];

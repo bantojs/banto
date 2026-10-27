@@ -16,8 +16,6 @@ import { normalizeTags } from "../../products/tags";
 import { cleanAttributes, productFields, type ProductField } from "../../products/fields";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
-import { migrated } from "../../db/migration-state";
-import { EXTRA_CATEGORIES_MIGRATION } from "../../products/categories";
 
 export const products = new Hono<AppEnv>();
 
@@ -165,15 +163,11 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
 interface CatalogContext {
   categories: CategoryRow[];
   fields: ProductField[];
-  /** 追加カテゴリー（0042）が使えるか */
-  extraCategories: boolean;
 }
 
-const extraCategoriesReady = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, EXTRA_CATEGORIES_MIGRATION);
-
 async function catalogContext(c: AdminContext, shop: ShopRow): Promise<CatalogContext> {
-  const [categories, extraCategories] = await Promise.all([loadCategories(owner(c).db, shop.id), extraCategoriesReady(c)]);
-  return { categories, fields: productFields(shop.settings), extraCategories };
+  const categories = await loadCategories(owner(c).db, shop.id);
+  return { categories, fields: productFields(shop.settings) };
 }
 
 function ProductForm(props: { action: string; product?: ProductRow; catalog: CatalogContext }) {
@@ -205,7 +199,7 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
               </option>
             ))}
           </select>
-          {props.catalog.extraCategories && categories.length > 1 ? (
+          {categories.length > 1 ? (
             <fieldset>
               <legend>{t("product.extra_categories")}</legend>
               <div style="display:flex;flex-wrap:wrap;gap:.25rem 1rem">
@@ -289,8 +283,7 @@ products.get("/:shopId/products/new", requireOwner, async (c: AdminContext) => {
   );
 });
 
-/** extraCategories: 追加カテゴリーが使える DB なら true（0042 より前の DB には列を送らない） */
-function productValues(f: Record<string, string>, fields: ProductField[], extraCategories: boolean): Partial<ProductRow> | "invalid_slug" {
+function productValues(f: Record<string, string>, fields: ProductField[]): Partial<ProductRow> | "invalid_slug" {
   const slug = (f.slug ?? "").trim();
   if (!SLUG_RE.test(slug)) return "invalid_slug";
   const description = (f.description ?? "").trim();
@@ -303,10 +296,8 @@ function productValues(f: Record<string, string>, fields: ProductField[], extraC
     description: description === "" ? null : description,
     tags: normalizeTags(f.tags ?? ""),
     category_id: f.category_id || null,
-    // 主カテゴリーと同じもの・重複はトリガーが外す。ほかのショップのカテゴリーは弾く（category_not_found）
-    ...(extraCategories
-      ? { extra_category_ids: Object.keys(f).filter((k) => k.startsWith("xcat_") && f[k] === "on").map((k) => k.slice(5)).slice(0, 20) }
-      : {}),
+    // 追加カテゴリー（0042）。主カテゴリーと同じもの・重複はトリガーが外す。ほかのショップのカテゴリーは弾く（category_not_found）
+    extra_category_ids: Object.keys(f).filter((k) => k.startsWith("xcat_") && f[k] === "on").map((k) => k.slice(5)).slice(0, 20),
     brand: brand || null,
     attributes: cleanAttributes(fields, attrInput),
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
@@ -319,7 +310,7 @@ products.post("/:shopId/products/new", requireOwner, async (c: AdminContext) => 
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const values = productValues(await formFields(c), productFields(shop.settings), await extraCategoriesReady(c));
+  const values = productValues(await formFields(c), productFields(shop.settings));
   if (values === "invalid_slug") return c.redirect(`/admin/shops/${shopId}/products/new?flash=invalid_slug`);
   if (!values.name) return c.redirect(`/admin/shops/${shopId}/products/new?flash=generic`);
   try {
@@ -532,7 +523,7 @@ products.post("/:shopId/products/:productId", requireOwner, async (c: AdminConte
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const values = productValues(await formFields(c), productFields(shop.settings), await extraCategoriesReady(c));
+  const values = productValues(await formFields(c), productFields(shop.settings));
   if (values === "invalid_slug") return c.redirect(`${base}?flash=invalid_slug`);
   if (!values.name) return c.redirect(`${base}?flash=generic`);
   try {

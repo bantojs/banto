@@ -164,19 +164,4 @@ describe("中継元の IP（0033）", () => {
     expect((await check(await token(["products:read"]), { "cf-connecting-ip": RELAY })).status).toBe(401);
     expect((await check("nope", { "cf-connecting-ip": RELAY })).status).toBe(401);
   });
-
-  it("AI 用 API: 0033 より前の DB は 2 つの上限を黙って捨てるので、409 migration_required で断る（ほかの項目も保存しない）", async () => {
-    const { sb, shop, app, ownerId } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0033_relay_limits"); // 版の一覧はキャッシュされるので最初の呼び出しの前に
-    const raw = generateApiToken();
-    sb.tables.api_tokens.push({ id: "tok-1", shop_id: shop.id, owner_id: ownerId, name: "t", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes: ["shop:read", "shop:write"], expires_at: null, revoked_at: null, last_used_at: null, created_at: "" });
-    const rest = (method: string, body?: unknown) =>
-      app.request(`${BASE}/api/v1/shop`, { method, headers: { authorization: `Bearer ${raw}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-    const old = await rest("PATCH", { name: "新店名", login_per_ip_per_hour: 50 });
-    expect(old.status).toBe(409);
-    expect(((await old.json()) as { error: { code: string } }).error.code).toBe("migration_required");
-    expect(sb.tables.shops[0]!["name"]).toBe("S");
-    expect(await (await rest("GET")).json()).not.toHaveProperty("max_pending_per_ip");
-    expect((await rest("PATCH", { name: "新店名" })).status).toBe(200);
-  });
 });

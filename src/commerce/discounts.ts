@@ -174,7 +174,7 @@ export interface EvaluateContext {
   ancestors: (categoryId: string) => string[];
   /** 選んだ支払い方法（確認画面と確定）。カートではまだ決まっていないので無し（支払い方法の条件は仮に通す） */
   payment?: { provider: "stripe" | "komoju" };
-  /** ログイン中の会員の独自項目（0049。coupon_lookup が載せる）。会員でない・0049 より前の DB なら無し */
+  /** ログイン中の会員の独自項目（0049。coupon_lookup が載せる）。会員でなければ無し */
   attributes?: Record<string, unknown> | null;
 }
 

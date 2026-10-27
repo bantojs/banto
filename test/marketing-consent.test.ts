@@ -14,7 +14,7 @@ afterEach(() => {
   for (const d of disposers.splice(0)) d();
 });
 
-function setup(opts: { consent?: boolean; members?: boolean; migrated?: boolean } = {}) {
+function setup(opts: { consent?: boolean; members?: boolean } = {}) {
   const sb = new FakeSupabase();
   const stripe = new FakeStripe();
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
@@ -32,7 +32,6 @@ function setup(opts: { consent?: boolean; members?: boolean; migrated?: boolean 
   const sku = sb.addSku(shop.id, tee.id, { code: "TEE-M", price_jpy: 3000, available: 50 });
   const mail = memberMail(sb, shop.id);
   disposers.push(mail.dispose);
-  if (opts.migrated === false) sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0050_marketing_consent");
   const app = appWith(sb, { RESEND_API_KEY: "re_test" }, undefined, stripe);
   const issue = async (scopes: string[]) => {
     const raw = generateApiToken();
@@ -75,12 +74,6 @@ describe("案内メールの同意: お店の画面", () => {
     const [s2] = [...off.stripe.sessions][0]!;
     await off.stripe.deliver(off.app, BASE, off.stripe.event(s2, "checkout.session.completed"), WEBHOOK_SECRET);
     expect(off.sb.tables.orders[0]!["marketing_consent"]).toBeNull();
-
-    // 0050 より前の DB: 設定が ON でも欄を出さない
-    const old = setup({ members: false, migrated: false });
-    const b3 = new Browser(old.app);
-    await b3.post("/my-shop/cart/add", { sku_id: old.sku.id, qty: "1" });
-    expect(await (await b3.post("/my-shop/checkout", { provider: "stripe" })).text()).not.toContain('name="marketing_consent"');
   });
 
   it("会員の注文の選択は会員にも写る。会員ページで本人が変えられる（設定が OFF なら欄も経路も無い）", async () => {
@@ -158,7 +151,7 @@ describe("案内メールの同意: 管理画面と AI 用 API", () => {
     expect(sb.tables.customers.find((c) => c["id"] === yes)).toMatchObject({ marketing_consent: false, marketing_consent_source: "admin" });
   });
 
-  it("REST: 同意で絞る、false は書ける、true は 400 consent_requires_person。0050 より前の DB は 409", async () => {
+  it("REST: 同意で絞る、false は書ける、true は 400 consent_requires_person", async () => {
     const { sb, shop, app, issue } = setup();
     const tok = await issue(["customers:read", "customers:write"]);
     const id = crypto.randomUUID();
@@ -174,11 +167,5 @@ describe("案内メールの同意: 管理画面と AI 用 API", () => {
     expect(up.json.error!.message).toMatch(/consent_requires_person/);
     expect((await rest("PATCH", `/customers/${id}`, { marketing_consent: false })).json).toMatchObject({ marketing_consent: false, marketing_consent_source: "api" });
     expect((await rest("POST", "/customers/upsert", { email: "m@example.com", marketing_consent: "no" })).status).toBe(400);
-
-    const old = setup({ migrated: false });
-    const tok2 = await old.issue(["customers:read", "customers:write"]);
-    const r = await old.app.request(`${BASE}/api/v1/customers?marketing_consent=true`, { headers: { authorization: `Bearer ${tok2}` } });
-    expect(r.status).toBe(409);
-    expect(((await r.json()) as { error: { message: string } }).error.message).toContain("0050_marketing_consent");
   });
 });

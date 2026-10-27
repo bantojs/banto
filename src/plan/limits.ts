@@ -4,10 +4,6 @@
  * 文言と API のエラーに直すだけ。上限は service_role か直接の SQL でしか書けないので、ここに書き込みは無い。
  */
 
-export const PLAN_LIMITS_MIGRATION = "0052_plan_limits";
-/** mail_per_day が banto_plan_usage に出る版 */
-export const PLAN_MAIL_LIMIT_MIGRATION = "0053_plan_mail_limit";
-
 /** mail_per_day（0053）: 会員のログインのコードと組織への招待の 1 日（UTC）の数。送り手を共有する構成で評判を守るふた */
 export const PLAN_LIMIT_KINDS = ["shops", "products", "customers", "members", "mail_per_day"] as const;
 export type PlanLimitKind = (typeof PLAN_LIMIT_KINDS)[number];

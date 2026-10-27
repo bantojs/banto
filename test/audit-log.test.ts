@@ -8,8 +8,8 @@ import { registerJobs } from "../src/jobs";
 import type { ScheduledJob } from "../src/adapters/types";
 
 /** 監査ログ（0051）の Worker 側: 管理画面の一覧、特権経路の名乗り、Cron の掃除。本物の記録は test/db/audit-log.test.ts */
-function setup(opts: { applied?: boolean } = {}) {
-  const sb = new FakeSupabase(opts.applied === false ? { appliedMigrations: ["0024_organizations", "0030_admin_sessions"] } : {});
+function setup() {
+  const sb = new FakeSupabase();
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "main", name: "本店" });
   const orgId = String(shop["org_id"]);
@@ -44,16 +44,6 @@ describe("監査ログ（0051、管理画面）", () => {
     expect(page).toContain("365 日");
     // 組織の画面からリンク
     expect(await (await admin.get("/admin/org")).text()).toContain(`/admin/org/audit?org=${orgId}`);
-  });
-
-  it("0051 が未適用なら、一覧の代わりに更新の案内を出す（止まらない）", async () => {
-    const { app } = setup({ applied: false });
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const res = await admin.get("/admin/org/audit");
-    expect(res.status).toBe(200);
-    const page = await res.text();
-    expect(page).toContain("0051_audit_log");
-    expect(page).not.toContain("<table");
   });
 
   it("組織の owner / admin でなければ見られない（member はダッシュボードへ）", async () => {
@@ -105,13 +95,13 @@ describe("監査ログ（0051、特権経路と Cron）", () => {
     expect(sb.tables.orders[0]!["status"]).toBe("cancelled");
   });
 
-  it("AUDIT_LOG_KEEP_DAYS は数字だけ受け、既定は 365。Cron の mask_shipped_orders が適用済みのときだけ prune_audit_log を呼ぶ", async () => {
+  it("AUDIT_LOG_KEEP_DAYS は数字だけ受け、既定は 365。Cron の mask_shipped_orders が prune_audit_log も呼ぶ", async () => {
     expect(auditKeepDays(undefined)).toBe(365);
     expect(auditKeepDays("90")).toBe(90);
     expect(auditKeepDays("abc")).toBe(365);
 
-    const run = async (applied: boolean) => {
-      const sb = new FakeSupabase(applied ? {} : { appliedMigrations: ["0024_organizations"] });
+    const run = async () => {
+      const sb = new FakeSupabase();
       const vars = { SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, SESSION_SECRET: "s", PUBLIC_BASE_URL: "https://b.example", AUDIT_LOG_KEEP_DAYS: "90" };
       const jobs = new Map<string, ScheduledJob>();
       const adapters = { ...memoryAdapters(vars), scheduler: { register: (name: string, job: ScheduledJob) => void jobs.set(name, job), runAll: async () => undefined } };
@@ -128,7 +118,6 @@ describe("監査ログ（0051、特権経路と Cron）", () => {
       await jobs.get("mask_shipped_orders")!();
       return pruned;
     };
-    expect(await run(true)).toEqual([{ p_days: 90 }]);
-    expect(await run(false)).toEqual([]);
+    expect(await run()).toEqual([{ p_days: 90 }]);
   });
 });

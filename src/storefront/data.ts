@@ -5,7 +5,7 @@
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient, Row } from "../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../db/types";
-import { migrated } from "../db/migration-state";
+import { BASELINE_MIGRATION, appliedMigrations } from "../db/migration-state";
 import { descendantIds, inCategories } from "../products/categories";
 import { tagCounts } from "../products/tags";
 import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
@@ -33,13 +33,6 @@ export interface PublicShop {
   /** 公開の鍵だけ（publicShopSettings） */
   settings: Record<string, unknown>;
 }
-
-/** 0028 が当たっている DB では shop_public_get を使う。それより前の DB では列を選んで読む（その DB では anon が settings を読める） */
-export const HARDENING_MIGRATION = "0028_security_hardening";
-export const PUBLIC_SHOP_COLUMNS = "id,slug,name,published,legal_notice,privacy_policy,return_policy,stripe_account_id,settings,domain";
-
-/** お店の画面の使い方（storefront）と、同梱モジュール ga4 の測定 ID（analytics）を公開の settings に足す版。当たる前は、お客様の画面には渡らない（既定の動きのまま） */
-export const STOREFRONT_SETTINGS_MIGRATION = "0041_storefront_settings";
 
 /**
  * 0055: anon は products.attributes を読めない（非公開の独自項目を隠す）。当たっている DB では列を選んで読み、
@@ -75,7 +68,7 @@ export function publicShopSettings(settings: Record<string, unknown> | null | un
   return out;
 }
 
-/** 管理画面（owner の JWT で読んだ行）や 0028 より前の DB の行から、お客様の画面の形にする */
+/** 管理画面（owner の JWT で読んだ行）から、お客様の画面の形にする */
 export function toPublicShop(row: Pick<ShopRow, "id" | "slug" | "name" | "published" | "legal_notice" | "privacy_policy" | "return_policy" | "stripe_account_id" | "settings" | "domain">): PublicShop {
   return {
     id: row.id, slug: row.slug, name: row.name, published: row.published,
@@ -83,8 +76,6 @@ export function toPublicShop(row: Pick<ShopRow, "id" | "slug" | "name" | "publis
     domain: row.domain ?? null, stripe_connected: Boolean(row.stripe_account_id), settings: publicShopSettings(row.settings),
   };
 }
-
-type LegacyShopRow = Parameters<typeof toPublicShop>[0];
 
 export interface CouponClaimInfo {
   id: string;
@@ -134,14 +125,14 @@ export class StorefrontData {
     private cache: CacheAdapter,
   ) {}
 
-  /** その版のマイグレーションが当たっていれば true（isolate ごとに 60 秒覚える。docs/upgrade.md「適用するまでのあいだ」） */
-  migratedTo(version: string): Promise<boolean> {
-    return migrated({ db: this.db, cache: this.cache }, version);
-  }
+  /** 適用済みの版の一覧（このインスタンスでは 1 回だけ引く。並列の判定が同時にキャッシュを外して二重に問い合わせないように） */
+  private applied?: Promise<ReadonlySet<string>>;
 
-  /** 0028 が当たっていれば true */
-  private hardened(): Promise<boolean> {
-    return this.migratedTo(HARDENING_MIGRATION);
+  /** その版のマイグレーションが当たっていれば true（isolate ごとに 60 秒覚える。docs/upgrade.md「適用するまでのあいだ」） */
+  async migratedTo(version: string): Promise<boolean> {
+    if (version <= BASELINE_MIGRATION) return true;
+    this.applied ??= appliedMigrations({ db: this.db, cache: this.cache });
+    return (await this.applied).has(version);
   }
 
   /** anon で products を読むときの列（0055 が当たっていれば attributes を除いた列、前は *） */
@@ -150,21 +141,13 @@ export class StorefrontData {
   }
 
   async listShops(): Promise<PublicShop[]> {
-    if (await this.hardened()) {
-      const rows = await this.db.rpc<PublicShop[] | null>("shop_public_list", {});
-      return Array.isArray(rows) ? rows : [];
-    }
-    const rows = await this.db.from<LegacyShopRow>("shops").select(PUBLIC_SHOP_COLUMNS, { eq: { published: true }, order: "created_at.asc" });
-    return rows.map(toPublicShop);
+    const rows = await this.db.rpc<PublicShop[] | null>("shop_public_list", {});
+    return Array.isArray(rows) ? rows : [];
   }
 
   private async fetchShop(by: { slug: string } | { domain: string }): Promise<PublicShop | null> {
-    if (await this.hardened()) {
-      const r = await this.db.rpc<PublicShop | null>("shop_public_get", "slug" in by ? { p_slug: by.slug } : { p_domain: by.domain });
-      return r && typeof r === "object" ? r : null;
-    }
-    const row = await this.db.from<LegacyShopRow>("shops").selectOne(PUBLIC_SHOP_COLUMNS, { eq: { ...by, published: true } });
-    return row ? toPublicShop(row) : null;
+    const r = await this.db.rpc<PublicShop | null>("shop_public_get", "slug" in by ? { p_slug: by.slug } : { p_domain: by.domain });
+    return r && typeof r === "object" ? r : null;
   }
 
   async shopBySlug(slug: string): Promise<PublicShop | null> {

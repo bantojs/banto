@@ -1795,13 +1795,12 @@ export class FakeSupabase {
         const sh = this.tables.shops.find((x) => x["id"] === shopId)!;
         const terms = ((sh["settings"] as Row | undefined)?.["checkout_terms"] ?? {}) as Row;
         const term = (k: string) => (typeof terms[k] === "string" && (terms[k] as string).trim() ? (terms[k] as string).trim() : null);
-        const checkoutTerms = this.appliedMigrations.includes("0032_api_checkout_terms") ? { checkout_terms: { delivery: term("delivery"), cancellation: term("cancellation"), payment_note: term("payment_note") } } : {};
+        const checkoutTerms = { checkout_terms: { delivery: term("delivery"), cancellation: term("cancellation"), payment_note: term("payment_note") } };
         const lim = (section: string, key: string, dflt: number) => {
           const v = String(((sh["settings"] as Row | undefined)?.[section] as Row | undefined)?.[key] ?? "");
           return /^[0-9]{1,4}$/.test(v) ? Number(v) : dflt;
         };
-        // 0033 より前の DB は IP ごとの上限を返さない（本物と同じ）
-        const ipLimits = this.appliedMigrations.includes("0033_relay_limits") ? { max_pending_per_ip: lim("checkout", "max_pending_per_ip", 20), login_per_ip_per_hour: lim("members_login_limits", "per_ip_per_hour", 30) } : {};
+        const ipLimits = { max_pending_per_ip: lim("checkout", "max_pending_per_ip", 20), login_per_ip_per_hour: lim("members_login_limits", "per_ip_per_hour", 30) };
         return json({ id: sh["id"], slug: sh["slug"], name: sh["name"], published: sh["published"], legal_notice: sh["legal_notice"], privacy_policy: sh["privacy_policy"], return_policy: sh["return_policy"], ...checkoutTerms, low_stock_threshold: 3, ...ipLimits, stripe_connected: Boolean(sh["stripe_account_id"]) });
       }
       case "api_shop_update": {
@@ -1810,8 +1809,7 @@ export class FakeSupabase {
         const v = args["p_values"] as Row;
         if (v["published"] === true && !(sh["legal_notice"] || v["legal_notice"])) return json({ code: "23514", message: 'violates check constraint "shops_publish_requires_legal"' }, 400);
         for (const k of ["name", "legal_notice", "privacy_policy", "return_policy", "published"]) if (v[k] !== undefined) sh[k] = v[k];
-        // 0032 より前の DB は checkout_terms を黙って捨てる（本物と同じ）
-        if (v["checkout_terms"] !== undefined && this.appliedMigrations.includes("0032_api_checkout_terms")) {
+        if (v["checkout_terms"] !== undefined) {
           const inTerms = v["checkout_terms"] as Row;
           const settings = (sh["settings"] ?? {}) as Row;
           const terms = { ...((settings["checkout_terms"] ?? {}) as Row) };
@@ -1825,9 +1823,9 @@ export class FakeSupabase {
           }
           sh["settings"] = { ...settings, checkout_terms: terms };
         }
-        // 0033: IP ごとの上限（1〜9999）。0033 より前の DB は黙って捨てる（本物と同じ）
+        // 0033: IP ごとの上限（1〜9999）
         for (const [k, section, key] of [["max_pending_per_ip", "checkout", "max_pending_per_ip"], ["login_per_ip_per_hour", "members_login_limits", "per_ip_per_hour"]] as const) {
-          if (v[k] === undefined || !this.appliedMigrations.includes("0033_relay_limits")) continue;
+          if (v[k] === undefined) continue;
           const n = Number(v[k]);
           if (!Number.isInteger(n) || n < 1 || n > 9999) return json({ code: "P0001", message: `invalid_${k}` }, 400);
           const settings = { ...((sh["settings"] ?? {}) as Row) };
@@ -2533,7 +2531,6 @@ export class FakeSupabase {
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
     if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_")) || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client") {
-      if (!this.appliedMigrations.includes("0012_member_auth")) return json({ code: "PGRST202", message: "Could not find the function" }, 404);
       return this.memberRpc(fn, args);
     }
     if (fn === "attach_reservation_customer") {
@@ -2875,6 +2872,8 @@ export class FakeSupabase {
       this.webhookEvents.add(key);
       return json(fresh);
     }
+    // 監査ログの保持（0051。Cron の mask_shipped_orders と同じ回）。監査ログの行はここでは持たない
+    if (fn === "prune_audit_log") return json(0);
     if (fn === "mask_shipped_orders") {
       const days = Number(args["p_days"] ?? 180);
       let n = 0;

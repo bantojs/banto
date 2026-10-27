@@ -40,7 +40,7 @@ export function openapiDocument(origin: string, version: string): Record<string,
     paths: {
       "/shop": {
         get: { summary: "ショップ設定を取得（shop:read）", security: bearer, responses: { 200: resp("ok"), ...errors } },
-        patch: { summary: "ショップ設定を更新（shop:write）", security: bearer, requestBody: { content: { "application/json": { schema: obj({ name: str, legal_notice: str, privacy_policy: str, return_policy: str, checkout_terms: { ...obj({ delivery: nullableStr, cancellation: nullableStr, payment_note: nullableStr }), description: "購入前の確認画面の文言。渡した鍵だけ変え、null か空文字で消す（各 2000 文字まで）。DB が 0032 より前なら 409 migration_required" }, published: bool, low_stock_threshold: int, max_pending_per_ip: { ...int, description: "同じ IP の未確定の予約の上限（1〜9999）。DB が 0033 より前なら 409 migration_required" }, login_per_ip_per_hour: { ...int, description: "同じ IP からの会員ログインのコード発行の 1 時間の上限（1〜9999）" } }) } } }, responses: { 200: resp("ok"), ...errors } },
+        patch: { summary: "ショップ設定を更新（shop:write）", security: bearer, requestBody: { content: { "application/json": { schema: obj({ name: str, legal_notice: str, privacy_policy: str, return_policy: str, checkout_terms: { ...obj({ delivery: nullableStr, cancellation: nullableStr, payment_note: nullableStr }), description: "購入前の確認画面の文言。渡した鍵だけ変え、null か空文字で消す（各 2000 文字まで）" }, published: bool, low_stock_threshold: int, max_pending_per_ip: { ...int, description: "同じ IP の未確定の予約の上限（1〜9999）" }, login_per_ip_per_hour: { ...int, description: "同じ IP からの会員ログインのコード発行の 1 時間の上限（1〜9999）" } }) } } }, responses: { 200: resp("ok"), ...errors } },
       },
       "/relay-check": {
         get: { summary: "この通信を Banto がどの IP として数えるか（shop:read）。サーバー側で中継する連携の接続テスト用", security: bearer, responses: { 200: resp("ok", obj({ ip: { type: ["string", "null"], description: "Banto に届いた送信元の IP" }, forwarded_ip: { type: ["string", "null"], description: "X-Banto-Client-IP の値" }, trusted_relay: { type: "boolean", description: "送信元が中継元として宣言されているか" }, effective_ip: { type: ["string", "null"], description: "回数の制限に使う IP" } })), ...errors } },
@@ -61,7 +61,7 @@ export function openapiDocument(origin: string, version: string): Record<string,
       "/products/{id}/images": { post: { summary: "画像を URL から追加（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ image_url: str }, ["image_url"]) } } }, responses: { 201: resp("created", product), ...errors } } },
       "/products/{id}/images/upload": {
         post: {
-          summary: "画像のファイルを送る（products:write）。本文が画像そのもの（Content-Type: image/*）か、multipart/form-data の image と thumbnail。縮小はしないので長辺 1600px 程度に縮小済みのものを送る。種類は中身で決め、SVG は受けない。5MB（サムネイル 1MB）まで。Content-Length が必要。DB が 0037 より前は 409 migration_required",
+          summary: "画像のファイルを送る（products:write）。本文が画像そのもの（Content-Type: image/*）か、multipart/form-data の image と thumbnail。縮小はしないので長辺 1600px 程度に縮小済みのものを送る。種類は中身で決め、SVG は受けない。5MB（サムネイル 1MB）まで。Content-Length が必要",
           security: bearer,
           parameters: [{ name: "id", in: "path", required: true, schema: str }],
           requestBody: {

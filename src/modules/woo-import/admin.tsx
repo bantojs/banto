@@ -5,10 +5,6 @@ import { DbError } from "../../db/client";
 import type { ProductImageRow, ProductRow, ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { migrated } from "../../db/migration-state";
-import { IMAGE_QUEUE_MIGRATION } from "./job";
-import { EXTRA_CATEGORIES_MIGRATION } from "../../products/categories";
-import { COUPON_IMPORT_MIGRATION } from "../coupons/import";
 import { couponCsv } from "../coupons/csv";
 import { isoToZonedInput } from "../../i18n/time";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
@@ -73,7 +69,7 @@ const CLIENT_KEYS = [
   "resize_step", "resize_done", "img_fail_too_large_original", "img_fail_decode", "img_fail_resize",
   "images_choice", "images_choice_browser", "images_choice_queue", "queue_images", "queue_step", "queue_done", "queue_missing", "queue_reload",
   "coupons_skipped_title", "coupons_skip_count", "coupons_notes_title", "coupons_show_codes", "coupons_list_download", "coupons_csv_skipped", "coupons_csv_note",
-  "coupons_review_title", "coupons_review_intro", "coupons_review_download", "coupons_review_ids", "coupons_review_save", "coupons_review_next", "coupons_review_import_link", "coupons_review_needs_update",
+  "coupons_review_title", "coupons_review_intro", "coupons_review_download", "coupons_review_ids", "coupons_review_save", "coupons_review_next", "coupons_review_import_link",
   "coupons_review_mode", "coupons_review_skip", "coupons_review_inactive",
 ] as const;
 
@@ -84,14 +80,13 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
   for (const k of CLIENT_KEYS) dict[k] = t(`woo.${k}` as MessageKey);
   const membersEnabled = (shop.settings ?? {})["members_enabled"] === true;
   const passwordsEnabled = membersEnabled && (shop.settings ?? {})["members_password"] === true;
-  // 画像を裏で取り込む（0039）。当たっていなければ、予約のボタンも進み具合も出さない
-  const queueReady = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_QUEUE_MIGRATION);
-  const queue = queueReady ? await owner(c).db.rpc<QueueSummary | null>("image_import_summary", { p_shop_id: shop.id }) : null;
+  // 画像を裏で取り込む（0039）の進み具合
+  const queue = await owner(c).db.rpc<QueueSummary | null>("image_import_summary", { p_shop_id: shop.id });
   // 裏の取り込みで大きすぎて止まった画像（このページで縮小して取り込める）
   const large = (queue?.failures ?? []).filter((f) => f.code === "too_large").map((f) => ({ slug: f.slug, url: f.url }));
-  // 要確認のクーポンを直して入れる画面（0043）。当たっていなければリンクを出さない
-  const couponImport = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COUPON_IMPORT_MIGRATION)) ? `/admin/shops/${shop.id}/modules/coupons/import` : undefined;
-  const cfg = { base: `/admin/shops/${shop.id}/modules/woo-import`, shopUrl: shopHome(publicBaseUrl(c), shop), t: dict, queue: queueReady, large, couponImport };
+  // 要確認のクーポンを直して入れる画面（0043）
+  const couponImport = `/admin/shops/${shop.id}/modules/coupons/import`;
+  const cfg = { base: `/admin/shops/${shop.id}/modules/woo-import`, shopUrl: shopHome(publicBaseUrl(c), shop), t: dict, large, couponImport };
   // </script> を閉じさせない（< をエスケープ）
   const json = JSON.stringify(cfg).replace(/</g, "\\u003c");
   const script = `${CLIENT_PRELUDE}(${wooImporter.toString()})().mount(document.getElementById("woo-import"), ${json});`;
@@ -224,27 +219,13 @@ wooImport.post("/fields", requireOwner, async (c: AdminContext) => {
   return c.json({ fields: merged.length, added: merged.length - existing.length, skipped: incoming.length - (merged.length - existing.length) });
 });
 
-/**
- * 主カテゴリーのほかのカテゴリー（取り込み画面が extra_category_slugs / extra_category_names で送る）。
- * 0042 の DB なら追加カテゴリーに、それより前ならタグに写す（0042 までの取り込みと同じ）
- */
-function withExtraCategories(p: unknown, extraReady: boolean): unknown {
-  if (!p || typeof p !== "object") return p;
-  const { extra_category_names: names, ...rest } = p as Record<string, unknown>;
-  if (extraReady) return rest;
-  const { extra_category_slugs: _slugs, ...old } = rest;
-  const tags = Array.isArray(old["tags"]) ? (old["tags"] as unknown[]) : [];
-  return Array.isArray(names) && names.length > 0 ? { ...old, tags: [...tags, ...names] } : old;
-}
-
 wooImport.post("/batch", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const body = await jsonBody(c);
   if (!body) return c.json({ error: "invalid_request" }, 400);
   try {
-    const extraReady = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, EXTRA_CATEGORIES_MIGRATION);
-    const products = (Array.isArray(body["products"]) ? (body["products"] as unknown[]) : []).map((p) => withExtraCategories(p, extraReady));
+    const products = Array.isArray(body["products"]) ? (body["products"] as unknown[]) : [];
     const result = await owner(c).db.rpc<Record<string, unknown>>("import_catalog", {
       p_shop_id: shop.id,
       p_batch: { categories: Array.isArray(body["categories"]) ? body["categories"] : [], products, overwrite_stock: body["overwrite_stock"] !== false },
@@ -393,9 +374,6 @@ function ImageQueueSection({ shopId, q, flash }: { shopId: string; q: QueueSumma
 
 const MAX_QUEUE_PRODUCTS = 100;
 
-/** 大きすぎる画像を縮小して取り込んだとき、裏の予約を取り込み済みにする（0040） */
-export const IMAGE_RESOLVE_MIGRATION = "0040_mod_woo_import_resolve";
-
 /**
  * 元の画像を中継する（5MB を超えた画像を、このページのブラウザで縮小するため。40MB まで）。
  * 守りは URL からの取り込みと同じ（http(s)・社内のアドレス不可・リダイレクト先も確かめる・中身が画像のものだけ）。保存はしない。
@@ -442,9 +420,8 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
   const product = await db.from<ProductRow>("products").selectOne("id", { eq: { shop_id: shop.id, slug } });
   if (!product) return c.json({ error: "not_found" }, 404);
   const existing = await db.from<ProductImageRow>("product_images").select("storage_key,sort_order", { eq: { product_id: product.id } });
-  const resolve = async () => {
-    if (await migrated({ db, cache: c.get("adapters").cache }, IMAGE_RESOLVE_MIGRATION)) await db.rpc("image_import_resolve", { p_shop_id: shop.id, p_product_id: product.id, p_url: url });
-  };
+  // 大きすぎる画像を縮小して取り込んだとき、裏の予約を取り込み済みにする（0040）
+  const resolve = () => db.rpc("image_import_resolve", { p_shop_id: shop.id, p_product_id: product.id, p_url: url });
   if (existing.some((i) => i.storage_key.includes(wcImageTag(url)))) {
     await resolve();
     return c.json({ added: 0, skipped: 1 });
@@ -479,7 +456,6 @@ wooImport.post("/images/queue", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const { db } = owner(c);
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, IMAGE_QUEUE_MIGRATION))) return c.json({ error: "migration_required" }, 409);
   const body = await jsonBody(c);
   const items = Array.isArray(body?.["items"]) ? (body!["items"] as unknown[]) : null;
   if (!items || items.length === 0 || items.length > MAX_QUEUE_PRODUCTS) return c.json({ error: "invalid_request" }, 400);

@@ -95,15 +95,6 @@ describe("画像を裏で取り込む", () => {
     expect(sb.imageJobs[0]!.status).toBe("pending");
     expect(storage.objects.size).toBe(0);
   });
-
-  it("DB が 0039 より前なら、Cron は何もせず、予約のボタンも出さない", async () => {
-    const { sb, shop, storage, app } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0039_mod_woo_import_queue");
-    await cron(sb, storage)();
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await admin.get(`/admin/shops/${shop.id}/modules/woo-import`)).text()).toContain('"queue":false');
-    expect((await admin.postJson(`/admin/shops/${shop.id}/modules/woo-import/images/queue`, { items: [{ slug: "tee", urls: ["https://old.example/a.png"] }] })).status).toBe(409);
-  });
 });
 
 describe("サイトの設定（/admin/site）", () => {
@@ -119,15 +110,6 @@ describe("サイトの設定（/admin/site）", () => {
     expect(html).toMatch(/value="paid" checked/);
     await admin.postJson(`/admin/shops/${shop.id}/modules/woo-import/images/queue`, { items: [{ slug: "tee", urls: ["https://old.example/a.png"] }] });
     expect(await (await admin.get(`/admin/shops/${shop.id}/modules/woo-import`)).text()).toContain("5 分おきに 150 枚ずつ");
-  });
-
-  it("DB が 0038 より前なら、アップデートへ案内する", async () => {
-    const { sb, app } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0038_site_settings");
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get("/admin/site")).text();
-    expect(html).toContain("データベースの更新（0038）");
-    expect(html).not.toContain('name="workers_plan"');
   });
 });
 

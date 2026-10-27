@@ -23,9 +23,6 @@ export const API_SCOPES = [
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
-/** クーポンと会員のスコープ（0036 が当たるまで発行できない） */
-export const API_COUPONS_CUSTOMERS_MIGRATION = "0036_api_coupons_customers";
-export const SCOPES_0036: readonly ApiScope[] = ["coupons:read", "coupons:write", "customers:read", "customers:write"];
 /** お問い合わせのスコープ（0061 が当たるまで発行できない。src/modules/inquiries の INQUIRIES_MIGRATION と同じ版） */
 export const API_INQUIRIES_MIGRATION = "0061_mod_inquiries";
 export const SCOPES_0061: readonly ApiScope[] = ["inquiries:read", "inquiries:write"];

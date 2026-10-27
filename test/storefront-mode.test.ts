@@ -148,15 +148,6 @@ describe("管理画面: お店の画面の使い方", () => {
     await admin.post(`/admin/shops/${shop.id}/storefront`, { mode: "full", site_url: "", product_url: "" });
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({ storefront: { mode: "full", site_url: null, product_url: null } });
   });
-
-  it("DB が 0041 より前なら、設定の欄の代わりにアップデートへ案内する", async () => {
-    const { sb, shop, app } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0041_storefront_settings");
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
-    expect(html).toContain("データベースの更新（0041）");
-    expect(html).not.toContain('name="site_url"');
-  });
 });
 
 describe("管理画面: 同梱モジュール ga4", () => {

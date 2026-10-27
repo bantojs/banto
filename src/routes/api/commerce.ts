@@ -6,7 +6,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
-import { CHECKOUT_STATUS_MIGRATION, STATUS_QUERY_PARAM, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
+import { STATUS_QUERY_PARAM, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { memberFromRequest, type ApiMember } from "./members";
 import { clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
@@ -51,7 +51,7 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   const m = await memberFromRequest(c, shop);
   // トークンが付いているのに確かめられない: 連携側はトークンを更新して呼び直す（黙ってゲスト扱いにすると、会員の値引きが消えて見える）
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
-  return { sf, shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: await consentCollected(sf, shop) };
+  return { sf, shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop) };
 }
 
 async function jsonBody(c: Ctx): Promise<Record<string, unknown> | null> {
@@ -209,7 +209,7 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   const allowed = returnOrigins(s.shop.settings);
   const shopUrl = shopHome(s.base, s.shop);
   // 照会トークン（0035）: 戻り先の画面が「確定したか・注文番号」を引ける。success_url にも付ける（連携側はクエリから拾える）
-  const statusToken = quote.id && (await s.sf.migratedTo(CHECKOUT_STATUS_MIGRATION)) ? await sealStatusToken(s.secret, s.shop.id, quote.id) : null;
+  const statusToken = quote.id ? await sealStatusToken(s.secret, s.shop.id, quote.id) : null;
   const successUrl = safeReturnUrl(body.success_url, allowed, `${shopUrl}/checkout/done`);
   const placed = await placeOrder(deps, {
     shop: s.shop,
@@ -221,7 +221,7 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
     cancelUrl: safeReturnUrl(body.cancel_url, allowed, `${shopUrl}/cart`),
     // 会員の注文として紐づける（会員は自分の注文を /members/me や会員ページで読める）
     ...(s.member ? { customerId: s.member.id, customerEpoch: s.member.epoch } : {}),
-    limits: await reserveLimits(s.sf, s.secret, quote, await clientIpFor(c, s.shop), s.member ? { id: s.member.id } : null),
+    limits: await reserveLimits(s.secret, quote, await clientIpFor(c, s.shop), s.member ? { id: s.member.id } : null),
   });
   if (!placed.ok) {
     if (placed.error === "stock") return c.json({ error: "stock" }, 409);

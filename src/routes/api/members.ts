@@ -6,8 +6,7 @@ import { startLogin, verifyLogin } from "../../members/login";
 import { returnOrigins, safeReturnUrl } from "../../commerce/checkout";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
-import { enabledProviders, loginDeps, memberSessionsReady, membersEnabled, startOAuth } from "../storefront/members";
-import { storefrontData } from "../storefront/domain";
+import { enabledProviders, loginDeps, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
 import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
@@ -15,7 +14,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
 import type { PrivilegedDb } from "../../db/privileged";
-import { PASSKEY_MIGRATION, PASSKEY_MODULE } from "../../modules/passkey";
+import { PASSKEY_MODULE } from "../../modules/passkey";
 
 /**
  * ヘッドレスの会員（docs/headless.md「会員」、設計は docs/knowledge/10-members-identity.md）。
@@ -99,11 +98,10 @@ export async function memberFromRequest(c: Ctx, shop: PublicShop): Promise<{ ok:
 }
 
 /**
- * ログインに成功した会員にトークンを渡す。0045 が当たっていれば、この端末のセッションの行を作る。
+ * ログインに成功した会員にトークンを渡す。この端末のセッションの行（0045）を作る。
  * 世代が変わっていた（ログインの途中で全端末からログアウトされた等）なら null
  */
 async function grant(c: Ctx, db: PrivilegedDb, secret: string, shopId: string, customerId: string, epoch: number) {
-  if (!(await memberSessionsReady(c))) return issueTokens(secret, shopId, customerId, epoch, null);
   const sid = await db.memberSessionStart(shopId, customerId, epoch, "api", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS);
   if (!sid) return null;
   return issueTokens(secret, shopId, customerId, epoch, { sid, gen: 0, expiresAt: Math.floor(Date.now() / 1000) + SESSION_ABSOLUTE_SECONDS });
@@ -133,7 +131,7 @@ membersApi.get("/shops/:shop/members/config", async (c: Ctx) => {
   const shop = await shopFor(c);
   if (!shop) return c.json({ error: "not_found" }, 404);
   if (!membersEnabled(shop)) return c.json({ enabled: false });
-  const login = ["email_code", "email_link", ...((shop.settings ?? {})["members_password"] === true ? ["password"] : []), ...enabledProviders(shop), ...((await passkeyOffered(c, shop)) ? ["passkey"] : [])];
+  const login = ["email_code", "email_link", ...((shop.settings ?? {})["members_password"] === true ? ["password"] : []), ...enabledProviders(shop), ...(passkeyOffered(shop) ? ["passkey"] : [])];
   return c.json({ enabled: true, login });
 });
 
@@ -194,12 +192,6 @@ membersApi.post("/shops/:shop/members/refresh", async (c: Ctx) => {
   if (!secret || !db) return c.json({ error: "not_configured" }, 503);
   const r = await openToken(secret, shop.id, str((await body(c))["refresh_token"]), "r");
   if (!r) return c.json({ error: "invalid_refresh_token" }, 401);
-  if (!(await memberSessionsReady(c))) {
-    // 0045 より前: 世代だけを確かめる（全端末からログアウト・退会の後は更新できない）
-    const rec = await db.memberGet(shop.id, r.cid, r.ep, false);
-    if (!rec) return c.json({ error: "invalid_refresh_token" }, 401);
-    return c.json(await issueTokens(secret, shop.id, r.cid, r.ep, null));
-  }
   // セッションの行の無い（0045 より前に発行した）refresh は通さない。ログインし直してもらう
   if (!r.sid || r.gen === undefined) return c.json({ error: "invalid_refresh_token" }, 401);
   const rot = await db.memberSessionRefresh(shop.id, r.cid, r.ep, r.sid, r.gen);
@@ -347,17 +339,15 @@ membersApi.get("/shops/:shop/members/oauth/:provider", async (c: Ctx) => {
   return startOAuth(c, shop, p, "api", { return_to: returnTo });
 });
 
-/** ヘッドレスでパスキーを出せるか（モジュールが ON・独自ドメインがある・0046 が当たっている）。画面はショップのドメインの上 */
-async function passkeyOffered(c: Ctx, shop: PublicShop): Promise<boolean> {
-  if (!moduleEnabled(shop.settings, PASSKEY_MODULE) || !shop.domain) return false;
-  const sf = storefrontData(c);
-  return sf ? sf.migratedTo(PASSKEY_MIGRATION) : false;
+/** ヘッドレスでパスキーを出せるか（モジュールが ON・独自ドメインがある）。画面はショップのドメインの上 */
+function passkeyOffered(shop: PublicShop): boolean {
+  return moduleEnabled(shop.settings, PASSKEY_MODULE) && Boolean(shop.domain);
 }
 
 membersApi.get("/shops/:shop/members/passkey", async (c: Ctx) => {
   const shop = await shopFor(c);
   if (!shop) return c.json({ error: "not_found" }, 404);
-  if (!membersEnabled(shop) || !(await passkeyOffered(c, shop))) return c.json({ error: "passkey_disabled" }, 409);
+  if (!membersEnabled(shop) || !passkeyOffered(shop)) return c.json({ error: "passkey_disabled" }, 409);
   // 戻り先は許可リストのオリジンだけ（引き換え券を渡すので、オープンリダイレクトにしない）
   const returnTo = safeReturnUrl(c.req.query("return_to"), returnOrigins(shop.settings), "");
   if (!returnTo) return c.json({ error: "invalid_return_to" }, 400);
