@@ -15,7 +15,12 @@ describe("セットアップウィザード（Step 3）", () => {
     expect(html).toContain("API Keys → service_role");
     expect(html).toContain("npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY"); // 開発者向けの折りたたみ
     expect(html).toContain("SESSION_SECRET"); // 新しい導入では必須（2026-10-18）。貼る値をその場で作って出す
-    expect(html).toMatch(/<pre>[A-Za-z0-9_-]{40,}<\/pre>/);
+    const secret = /<pre id="(copy-\d+)">([A-Za-z0-9_-]{40,})<\/pre>/.exec(html);
+    expect(secret).not.toBeNull();
+    // コピーのボタン: 貼る値と変数の名前。スクリプトが動くときだけ出す（hidden で描く）
+    expect(html).toContain(`data-copy="${secret![2]}" data-copy-target="${secret![1]}"`);
+    expect(html).toMatch(/<button type="button" class="copy icon" hidden="" data-copy="SESSION_SECRET"/);
+    expect(html).toContain("navigator.clipboard");
     expect(html).not.toContain(sb.anonKey);
     expect(html).toContain("先に上の項目を解決してください");
     expect(html).not.toContain('action="/admin/setup/owner"');

@@ -96,5 +96,5 @@ Supabase のパスワードが漏れても管理画面に入れないので、�
 ## 7. 更新を止めない
 
 Banto の更新は管理画面の **アップデート** に表示されます。セキュリティ修正はリリースノートに **[security]** と書くので、
-その表示が出たら GitHub のフォークで **Sync fork** → Cloudflare が自動デプロイ → 未適用マイグレーションがあれば画面から適用、の順で当ててください（[docs/upgrade.md](upgrade.md)）。
+その表示が出たら GitHub のコピーを Banto に追いつかせる（Deploy ボタンのコピーは「Banto に追いつく」のワークフロー、フォークは **Sync fork**）→ Cloudflare が自動デプロイ → 未適用マイグレーションがあれば画面から適用、の順で当ててください（[docs/upgrade.md](upgrade.md)）。
 脆弱性を見つけた場合の報告先は [SECURITY.md](../SECURITY.md) です。

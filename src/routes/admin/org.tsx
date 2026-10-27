@@ -9,7 +9,7 @@ import { createMailer, MailError, sendMail } from "../../mail/send";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { randomToken } from "../../util/signed";
-import { AdminLayout, PageHead } from "./layout";
+import { AdminLayout, Copyable, PageHead } from "./layout";
 import { authClient, dbClient, formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { adminLoginGuard, OPERATOR_MFA_MIGRATION, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { migrated } from "../../db/migration-state";
@@ -446,7 +446,7 @@ org.post("/org/invite", requireOwner, requireOrgAdmin, async (c: AdminContext) =
     <AdminLayout title={t("org.invite")} nav>
       <PageHead title={t("org.invite")} />
       <p class="notice">{t("org.invited_nomail")}</p>
-      <pre>{link}</pre>
+      <Copyable value={link} />
       <p>
         <a href={back}>{t("org.title")}</a>
       </p>

@@ -8,7 +8,7 @@ import { endpointSecret, signHookPayload } from "../../hooks/signing";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { AdminLayout, PageHead } from "./layout";
+import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, sessionSecret, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
@@ -365,7 +365,7 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         <div>
           <h2>{t("hooks.secret")}</h2>
           <p class="muted">{t("hooks.secret_hint")}</p>
-          {signing ? <pre>{signing}</pre> : <p class="error">{t("error.secret_missing")}</p>}
+          {signing ? <Copyable value={signing} name={t("hooks.secret")} /> : <p class="error">{t("error.secret_missing")}</p>}
           <h2>{t("hooks.test")}</h2>
           <form method="post" action={`${base}/test`}>
             <button type="submit">{t("hooks.test_send")}</button>

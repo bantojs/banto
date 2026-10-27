@@ -273,6 +273,7 @@ describe("管理画面: AI 連携（トークン）", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     html = await res.text();
     const raw = html.match(/banto_[A-Za-z0-9_-]{40,50}/)![0];
+    expect(html).toContain(`data-copy="${raw}"`); // コピーのボタン
     const row = sb.tables.api_tokens[0]!;
     expect(row["token_hash"]).toBe(await hashApiToken(raw));
     expect(row["prefix"]).toBe(raw.slice(0, 12));

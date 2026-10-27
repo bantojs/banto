@@ -2,7 +2,7 @@
 
 Banto のアップデートは2手順です。どのバージョンからでも最新に上げられます。
 
-1. **コードを最新にする**（GitHub のコピーを同期 → Cloudflare が自動で再配置）
+1. **コードを最新にする**（GitHub のコピーを Banto に追いつかせる → Cloudflare が自動で再配置）
 2. **管理画面の「アップデート」でデータベースの変更を適用する**
 
 管理画面のダッシュボードには、現在のバージョン、GitHub 上の最新リリース、未適用の変更があるかが表示されます。
@@ -13,8 +13,74 @@ Banto のアップデートは2手順です。どのバージョンからでも�
 
 **Deploy ボタンで導入した場合**
 
-1. GitHub で自分のコピー（`あなたの名前/banto`）を開き、**Sync fork → Update branch** を押します。
-2. Cloudflare が自動で再配置します（Cloudflare の画面 → Workers & Pages → banto → デプロイ で進行を確認できます）。
+Deploy ボタンは、あなたの GitHub に Banto の**コピー**（フォークではない、別のリポジトリ）を作り、Cloudflare をそのコピーにつなぎます。
+コピーには Banto の更新が自動では届かず、フォークではないので GitHub の「Sync fork」も出ません。
+次のどちらかでコピーを追いつかせると、Cloudflare が自動で再配置します（Cloudflare の画面 → Workers & Pages → あなたの Worker → デプロイ で進行を確認できます）。
+
+コピーには Cloudflare が手を入れています: `wrangler.jsonc` の `name` がリポジトリの名前（Worker の名前）になり、`.github/workflows/` の CI が外れています。
+`name` が Worker の名前と違うと Cloudflare のビルドが止まるので、下の手順はどちらも `name` だけをあなたのコピーの値に保ちます。
+コピーのほかのファイルは Banto の内容で置き換わるので、**コピーを直接編集しないでください**（設定は Cloudflare の「変数とシークレット」と管理画面に置きます）。
+
+*A. GitHub の画面だけで（おすすめ。コマンド不要）*
+
+最初の 1 回だけ、コピーに更新用のワークフローを置きます。
+
+1. GitHub で自分のコピーを開き、**Add file → Create new file** を押します。
+2. ファイル名に `.github/workflows/sync-banto.yml` と入れ、下の内容をそのまま貼って **Commit changes** を押します。
+
+```yaml
+# Banto（bantojs/banto）の最新の main に、このコピーを追いつかせる。
+# wrangler.jsonc の name（Worker の名前）だけはこのコピーの値を保つ。ほかのファイルは Banto の内容で置き換わる。
+name: Banto に追いつく
+on:
+  workflow_dispatch:
+  # 毎週自動で追いつかせるなら、次の 2 行の先頭の # を外す（月曜 3:00 UTC）
+  # schedule:
+  #   - cron: "0 3 * * 1"
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Banto の内容に置き換える
+        run: |
+          set -euo pipefail
+          name=$(sed -n 's/^  "name": "\([^"]*\)",$/\1/p' wrangler.jsonc | head -n 1)
+          test -n "$name"
+          keep=$(mktemp)
+          cp .github/workflows/sync-banto.yml "$keep"
+          git fetch --quiet --depth 1 https://github.com/bantojs/banto.git main
+          git rm -r --quiet .
+          git checkout FETCH_HEAD -- .
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp "$keep" .github/workflows/sync-banto.yml
+          sed -i "0,/^  \"name\": \"banto\",\$/s//  \"name\": \"$name\",/" wrangler.jsonc
+          git add -A
+          if git diff --cached --quiet; then echo "すでに最新です"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "chore: Banto $(node -p 'require("./package.json").version') に追いつく"
+          git push
+```
+
+3. 更新するときは、コピーの **Actions → Banto に追いつく → Run workflow** を押します。
+   - 「すでに最新です」と出たら、更新はありません。
+   - Actions が無効と出たら、コピーの **Settings → Actions → General** で Actions を許可し、「Workflow permissions」を **Read and write permissions** にします。
+
+自動にする（`schedule` の # を外す）と、Banto の main に入った変更が週に 1 回あなたのショップに届きます。
+データベースの変更（次の §2）は自動では当たりませんが、当てるまでのあいだもショップは止まりません（下の「適用するまでのあいだ」）。
+MAJOR の更新を自動で受けたくない場合は、手動（Run workflow）のままにしてください。
+
+*B. コマンドで（git を使える人）*
+
+コピーを clone したディレクトリで、上のワークフローの `run:` の中身と同じことをします（最後の `git push` で Cloudflare が再配置します）。
+
+**リポジトリをインポートで導入した場合（フォーク）**
+
+GitHub でフォークを開き、**Sync fork → Update branch** を押します。フォークを編集していなければ衝突しません。
 
 **コマンドで導入した場合**
 
@@ -104,4 +170,7 @@ GitHub Releases のリリースノートに「手動対応」の項があれば�
 | --- | --- |
 | 再配置後に管理画面が開かない | 新しい変数・シークレットが未設定。`/admin/setup` を開くと不足が一覧されます |
 | 「未適用のマイグレーションがあります」が消えない | アップデート画面で適用したか。エラーが出た場合はその内容を確認 |
-| Sync fork に「This branch is out-of-date」以外の表示 | Cloudflare が作ったコピーを直接編集していると衝突します。編集していなければ Update branch で進めます |
+| 追いつかせたあと Cloudflare のビルドが止まる | ログに Worker の名前が違うと出ていれば、`wrangler.jsonc` の `name` が Worker の名前と違います。コピーの `name` を Worker の名前に直します |
+| 「Banto に追いつく」が `git push` で失敗する | コピーの Settings → Actions → General の「Workflow permissions」を Read and write permissions にします |
+| 「Banto に追いつく」が `workflow` の権限が無いと言って止まる | コピーに `sync-banto.yml` 以外のワークフローがあると、それを消す push が断られます。GitHub の画面でそのファイルを消してから、もう一度 Run workflow を押します |
+| Sync fork に「This branch is out-of-date」以外の表示（フォーク） | フォークを直接編集していると衝突します。編集していなければ Update branch で進めます |
