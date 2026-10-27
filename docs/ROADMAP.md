@@ -79,4 +79,4 @@ CLAUDE.md §10 と同期させること。各ステップは「他人に渡せ�
 
 ## 将来（条件が揃った時のみ）
 
-- ホスティングして提供する場合の方針（フォークせずタグを依存に・事業者ごとに分ける・MIT + 商標） — docs/ARCHITECTURE.md「ホスティングして提供する場合」、docs/knowledge/02-decisions.md 2026-10-23 参照
+- ホスティングして提供する場合の方針（フォークせずタグを依存に・事業者ごとに分ける・MIT のまま） — docs/ARCHITECTURE.md「ホスティングして提供する場合」、docs/knowledge/02-decisions.md 2026-10-23 参照
