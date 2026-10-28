@@ -56,7 +56,7 @@ import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
 import { PASSKEY_CLIENT_JS, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
 import { COSE_ALGS, WebAuthnError, b64urlEncode, newChallenge, readAssertion, sameUserHandle, userHandleOf, verifyAssertion, verifyRegistration, type Expected } from "../../members/webauthn";
-import { returnOrigins, safeReturnUrl, consentCollected } from "../../commerce/checkout";
+import { returnOrigins, safeReturnUrl, consentCollected, withQueryParam } from "../../commerce/checkout";
 
 export type { MemberSession };
 
@@ -652,6 +652,38 @@ members.get("/:shop/account/passkey", async (c: Ctx) => {
   return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "passkey", options: { passkey: true }, returnTo }));
 });
 
+/**
+ * ヘッドレスの会員がパスキーを追加する画面（0070）。連携サイトが会員トークンで受け取った券（?t=）を持って来る。
+ * GET は確かめの画面だけ（券を使わない）。ボタンの POST で券を使い、この端末に新しいセッションを作って、パスキーを追加するボタンを出す
+ */
+members.get("/:shop/account/passkey/add", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !passkeyReady(c, s.shop)) return notFound(c);
+  const returnTo = safeReturnUrl(c.req.query("return_to"), returnOrigins(s.shop.settings), "");
+  const ticket = c.req.query("t") ?? "";
+  if (!returnTo || !/^[0-9a-f-]{36}\.[A-Za-z0-9_-]{20,100}$/.test(ticket)) return c.text(t("passkey.add_link_failed"), 400);
+  privatePage(c);
+  return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "passkey_add", ticket, returnTo }));
+});
+
+members.post("/:shop/account/passkey/add", async (c: Ctx) => {
+  const s = await scope(c);
+  const deps = loginDeps(c);
+  if (!s || !deps || !passkeyReady(c, s.shop)) return notFound(c);
+  const f = await formFields(c);
+  const returnTo = safeReturnUrl(f.return_to, returnOrigins(s.shop.settings), "");
+  const m = /^([0-9a-f-]{36})\.([A-Za-z0-9_-]{20,100})$/.exec(f.t ?? "");
+  if (!returnTo || !m) return c.text(t("passkey.add_link_failed"), 400);
+  const r = await deps.db.memberPasskeyTicketTake(s.shop.id, m[1]!, await linkHash(deps.secret, m[2]!));
+  privatePage(c);
+  if (!r.ok) return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "passkey_add", error: t("passkey.add_link_expired"), returnTo }), 400);
+  // この端末のセッション（追加が済んだら取り消す）。作ったばかりなので、パスキーの追加の 15 分の決まりを満たす
+  if (!(await startWebSession(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) {
+    return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "passkey_add", error: t("passkey.add_link_expired"), returnTo }), 400);
+  }
+  return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "passkey_register", returnTo }));
+});
+
 members.post("/:shop/account/passkey/login/options", async (c: Ctx) => {
   const p = await passkeyScope(c);
   if (!p) return c.json({ error: "not_found" }, 404);
@@ -762,6 +794,13 @@ members.post("/:shop/account/passkey/register", async (c: Ctx) => {
   }
   // 盗まれたセッションで足されたときに本人が気づけるように、知らせる
   if (r.mail_from && r.email) await afterResponse(c, sendPasskeyAddedNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account/passkeys` }));
+  // ヘッドレスの追加（0070）: この端末のセッションは追加のためだけに作ったので取り消し、連携サイトへ戻す
+  const returnTo = safeReturnUrl(b["return_to"], returnOrigins(s.shop.settings), "");
+  if (returnTo) {
+    await deps.db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(() => false);
+    await writeSession(c, s, null);
+    return c.json({ redirect: withQueryParam(returnTo, "banto_passkey", "added") });
+  }
   return c.json({ redirect: `${s.shopPath}/account/passkeys?flash=added` });
 });
 

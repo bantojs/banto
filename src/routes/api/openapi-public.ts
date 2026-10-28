@@ -280,6 +280,9 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       "/shops/{shop}/members/oauth/{provider}": {
         get: { summary: "LINE / Google のログインを始める（リダイレクト。戻ると return_to に引き換え券）", parameters: [shopPath, { name: "provider", in: "path", required: true, schema: { type: "string", enum: ["line", "google"] } }, { name: "return_to", in: "query", required: true, schema: str }], responses: { 302: { description: "提供元の同意画面へ" }, 400: err("invalid_return_to"), 409: err("provider_disabled"), 404: common[404] } },
       },
+      "/shops/{shop}/members/passkey/add": {
+        post: { summary: "パスキーを追加する画面へ送る券（ログインしてから 15 分以内の会員トークン。0070）。返る url へ会員のブラウザを送ると、追加して return_to?banto_passkey=added に戻る", security: member, parameters: [shopPath], requestBody: body(obj({ return_to: { ...str, description: "許可リスト（return_origins）のオリジンだけ" } }, ["return_to"])), responses: { 200: ok(obj({ url: str, expires_in: int })), 400: err("invalid_return_to"), 401: err("invalid_member_token・member_token_required"), 403: err("reauth（ログインし直してから）"), 409: err("passkey_disabled・members_disabled・migration_required"), 429: err("too_many_requests"), ...common } },
+      },
       "/shops/{shop}/members/passkey": {
         get: { summary: "パスキーのログイン画面へ（ショップの独自ドメインの上。戻ると return_to に引き換え券）", parameters: [shopPath, { name: "return_to", in: "query", required: true, schema: str }], responses: { 302: { description: "ショップのドメインのパスキーの画面へ" }, 400: err("invalid_return_to"), 409: err("passkey_disabled"), 404: common[404] } },
       },
@@ -370,6 +373,7 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/members/password": "setMemberPassword",
   "get /shops/{shop}/members/oauth/{provider}": "startMemberOAuth",
   "get /shops/{shop}/members/passkey": "startMemberPasskey",
+  "post /shops/{shop}/members/passkey/add": "startMemberPasskeyAdd",
   "get /shops/{shop}/members/orders/{number}": "getMemberOrder",
   "get /shops/{shop}/members/orders/{number}/receipt": "getMemberOrderReceipt",
   "get /shops/{shop}/members/tryon": "listMemberTryonRequests",

@@ -270,3 +270,5 @@ RLS は有効にして、ポリシーは「誰にも見せない」1 つ（`usin
 - **本物のブラウザでの確認**（2026-10-23）: Chromium（Playwright）の仮想の認証器で、ES256・EdDSA・RS256 の応答が検証を通ることと、お店の画面の「追加 → ログアウト → パスキーでログイン」が通しで動くことを確かめた（テストの認証器 `test/webauthn-authenticator.ts` は、検証の部品とは別に CBOR を組む）。このときに、会員の画面の `Referrer-Policy: no-referrer` のせいでフォームの POST が `Origin: null` になり、csrfGuard（0031 の Low の修正で null を拒む）に拒まれていた既存の不具合を見つけて直した（03-pitfalls.md）。
 - **後で**: ログイン画面のメールアドレスの欄でパスキーを候補に出す（conditional UI）、連携サイトの画面の上で直接使う（Related Origin Requests）、運営者の会員の画面にパスキーの数を出す。
 
+
+- **ヘッドレスの追加（2026-10-28、0070）**: 会員トークン（ログインしてから 15 分以内の api のセッション）で `member_passkey_ticket_create` の券（2 分・1 回限り）→ ショップのドメインの `/account/passkey/add`（GET は確かめ、POST で `member_passkey_ticket_take`）→ 新しい web のセッション → 既存の追加の API（`return_to` があれば、済んだらそのセッションを取り消して連携サイトへ）。

@@ -334,6 +334,10 @@ export interface PrivilegedDb {
   /** 終わったセッションを消す（Cron） */
   memberSessionCleanup(): Promise<number>;
   /** パスキーの challenge を出す（0046）。register はログインしてから 15 分以内のセッションだけ */
+  /** ヘッドレスのパスキーの追加の券（0070。15 分以内の api のセッションだけ） */
+  memberPasskeyTicketCreate(shopId: string, customerId: string, epoch: number, sessionId: string, tokenHash: string): Promise<{ ok: true; id: string } | { ok: false; reason: "disabled" | "session" | "reauth" | "limited" }>;
+  /** 券を使う（1 回限り）。合わなければ ok: false */
+  memberPasskeyTicketTake(shopId: string, ticketId: string, tokenHash: string): Promise<{ ok: true; customer_id: string; session_epoch: number; email: string | null } | { ok: false }>;
   memberPasskeyBegin(shopId: string, purpose: "login" | "register", challengeHash: string, ipHash: string | null, member?: { customerId: string; epoch: number; sessionId: string }): Promise<PasskeyBegin>;
   memberPasskeyRegister(
     shopId: string,
@@ -543,6 +547,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       rpc("member_session_revoke", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_reason: reason }),
     memberSessionsList: (shopId, customerId, epoch) => rpc("member_sessions_list", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
     memberSessionCleanup: () => rpc<number>("member_session_cleanup", {}),
+    memberPasskeyTicketCreate: (shopId, customerId, epoch, sessionId, tokenHash) => rpc("member_passkey_ticket_create", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_token_hash: tokenHash }),
+    memberPasskeyTicketTake: (shopId, ticketId, tokenHash) => rpc("member_passkey_ticket_take", { p_shop_id: shopId, p_ticket_id: ticketId, p_token_hash: tokenHash }),
     memberPasskeyBegin: (shopId, purpose, challengeHash, ipHash, member) =>
       rpc("member_passkey_begin", {
         p_shop_id: shopId,

@@ -158,6 +158,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** 0070 のパスキーの追加の券 */
+  passkeyTickets: Row[] = [];
   /** 0067 の order_lookup_failures（外れた照会） */
   orderLookupFailures: { shop_id: unknown; number: number; ip: string | null; at: number }[] = [];
   /** legal_links_record に渡った結果（0062） */
@@ -2563,6 +2565,26 @@ export class FakeSupabase {
       case "member_session_cleanup":
       case "member_passkey_cleanup":
         return json(0);
+      // 0070: ヘッドレスのパスキーの追加の券（15 分以内の api のセッションだけ・2 分・1 回限り）
+      case "member_passkey_ticket_create": {
+        const settings = (shop?.["settings"] ?? {}) as Row;
+        if (!shop?.["domain"] || !enabled || ((settings["modules"] ?? {}) as Row)["passkey"] !== true) return json({ ok: false, reason: "disabled" });
+        if (!args["p_session_id"] || !this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now)) return json({ ok: false, reason: "session" });
+        const ms = this.memberSessions.find((x) => x["id"] === args["p_session_id"])!;
+        if (ms["kind"] !== "api") return json({ ok: false, reason: "session" });
+        if (now - Date.parse(String(ms["created_at"])) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
+        const id = crypto.randomUUID();
+        this.passkeyTickets.push({ id, shop_id: shopId, customer_id: args["p_customer_id"], epoch: args["p_epoch"], session_id: args["p_session_id"], token_hash: args["p_token_hash"], expires_at: now + 120_000, used_at: null });
+        return json({ ok: true, id });
+      }
+      case "member_passkey_ticket_take": {
+        const tk = this.passkeyTickets.find((x) => x["id"] === args["p_ticket_id"] && x["shop_id"] === shopId);
+        if (!tk || tk["token_hash"] !== args["p_token_hash"] || tk["used_at"] || Number(tk["expires_at"]) < now) return json({ ok: false });
+        tk["used_at"] = now;
+        if (!this.liveMemberSession(shopId, tk["customer_id"], tk["epoch"], tk["session_id"], now)) return json({ ok: false });
+        const c = this.tables.customers.find((x) => x["id"] === tk["customer_id"]);
+        return json({ ok: true, customer_id: tk["customer_id"], session_epoch: tk["epoch"], email: c?.["email"] ?? null });
+      }
       case "member_passkey_begin": {
         const settings = (shop?.["settings"] ?? {}) as Row;
         const domain = shop?.["domain"] ? String(shop["domain"]) : null;

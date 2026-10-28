@@ -119,7 +119,12 @@ export interface Theme {
    */
   MemberAuthPage(props: {
     ctx: ThemeContext;
-    mode: "login" | "code" | "verify" | "passkey";
+    /**
+     * passkey_add: ヘッドレスの会員がパスキーを追加する確かめの画面（0070）。ticket を POST `${shopPath}/account/passkey/add`（t, return_to）で送るボタン。
+     * passkey_register: 券を使った後の、この端末のパスキーを追加するボタン（data-banto-passkey="register" と data-return-to）
+     */
+    mode: "login" | "code" | "verify" | "passkey" | "passkey_add" | "passkey_register";
+    ticket?: string;
     error?: string;
     info?: string;
     email?: string;
