@@ -59,6 +59,8 @@ export function publicShopSettings(settings: Record<string, unknown> | null | un
     out["headless"] = { return_origins: src["headless"]["return_origins"] ?? [] };
     // 注文照会のページ（0066）
     if (typeof src["headless"]["order_page_url"] === "string") (out["headless"] as Record<string, unknown>)["order_page_url"] = src["headless"]["order_page_url"];
+    // 会員ページ（0069）
+    if (typeof src["headless"]["account_page_url"] === "string") (out["headless"] as Record<string, unknown>)["account_page_url"] = src["headless"]["account_page_url"];
   }
   if (isObject(src["oauth"])) {
     const oauth: Record<string, Record<string, unknown>> = {};

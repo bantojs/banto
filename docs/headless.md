@@ -432,6 +432,14 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 - `receipt`（同梱モジュール receipt が ON で、支払い済み・発送済みの注文だけ。ほかは `409 receipt_not_available`、モジュールが OFF なら `404 receipt_disabled`）は、領収書（適格簡易請求書）の記載事項と計算結果です: `kind`（登録番号があれば `qualified_simplified_invoice`、無ければ `receipt`）`issuer` `invoice_number` `proviso`（但し書き）`issued_at` `number` `order_date` `items`（`line_total_jpy`、軽減税率の対象は `reduced: true`。表示に ※ を付けて凡例を添える）`shipping_jpy` `discounts` `total_jpy` `tax`（税率ごとの `rate` `amount_jpy`（税込の対象額）`tax_jpy`（うち消費税額））。**税の計算は Banto の結果をそのまま表示してください**（連携側で計算し直すと端数が合わなくなります）。宛名は購入者が連携側の画面で入れるものとして、Banto は受け取りません。
 - 応答はキャッシュさせません（`Cache-Control: no-store`）。メールアドレスを URL に載せないため、ゲストの呼び出しは POST です。
 
+### 会員ページを連携サイトに向ける
+
+管理画面 → ショップ設定 → ヘッドレス連携の「会員ページ」に連携サイトのページの URL を入れると（`settings.headless.account_page_url`、0069。注文照会のページと同じく、許可リストのサイトの https の URL だけ）、会員へのお知らせのメール（ログインがありました・パスワードを決めました）のリンクがそのページになります。会員ページは会員の API（`/members/me`・`/members/address`・`/members/marketing-consent`・`/members/withdraw`、上の「会員」）で作ってください。入れなければ Banto の会員ページです。
+
+- パスキーを追加したお知らせのリンクは、今までどおり Banto のパスキーの一覧（ショップのドメイン）です（パスキーはショップのドメインに結びつくため）。
+- お店で試着のお知らせのメールの「お店」のリンクは、お店の画面を使わない（`checkout` / `off`）ショップでは外のサイト（`storefront.site_url`）になります。
+- 連携側のプラグインは、AI 用 API の `GET /api/v1/shop`（`shop:read`）の `headless`・`storefront` で、これらの設定が入っているかを確かめられます（0069）。
+
 ### 注文メールのリンクを連携サイトに向ける
 
 管理画面 → ショップ設定 → ヘッドレス連携の「注文照会のページ」に連携サイトのページの URL を入れると（`settings.headless.order_page_url`、0066。上の「決済後の戻り先として許可するサイト」にあるサイトの https の URL だけ）、

@@ -10,7 +10,7 @@ import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOA
 import { isProvider } from "../../modules/social-login/providers";
 import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
-import { shopHome } from "../../storefront/urls";
+import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
 import type { PrivilegedDb } from "../../db/privileged";
@@ -376,7 +376,7 @@ membersApi.post("/shops/:shop/members/password-login", async (c: Ctx) => {
   const r = await deps.db.memberPasswordLogin(shop.id, str(b["email"]), str(b["password"]), ip ? await ipHash(deps.secret, ip) : null);
   if (!r.ok) return c.json({ error: r.reason === "locked" ? "locked" : "invalid_password" }, r.reason === "locked" ? 429 : 401);
   // ヘッドレスには端末の印が無いので、毎回知らせる（docs/headless.md）
-  if (r.mail_from && r.email) await afterResponse(c, sendPasswordLoginNotice(deps, shop, { from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), shop)}/account` }));
+  if (r.mail_from && r.email) await afterResponse(c, sendPasswordLoginNotice(deps, shop, { from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), shop) }));
   const tokens = await grant(c, deps.db, deps.secret, shop.id, r.customer_id, r.session_epoch);
   if (!tokens) return c.json({ error: "invalid_password" }, 401);
   return c.json({ ...tokens, member: { id: r.customer_id, email: r.email, created: false } });
@@ -394,7 +394,7 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   const r = await deps.db.memberSetPassword(s.shop.id, s.member.id, s.member.epoch, password, s.member.sid);
   if (!r.ok) return r.reason === "reauth" ? c.json({ error: "reauth" }, 403) : c.json({ error: "invalid_member_token" }, 401);
   // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
-  if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+  if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });
