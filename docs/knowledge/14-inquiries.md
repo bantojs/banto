@@ -46,7 +46,7 @@
 - お客様の経路（service_role）: `inquiry_order_check`（ゲストの「注文を確かめる」、回数の制限つき）、`inquiry_order_ref`（注文トークン・照会トークン・会員の番号から注文の要約）、`inquiry_create`、`inquiry_peek`（リンクの確認画面）、`inquiry_get`（初めてリンクで開いたら確定）、`inquiry_member_list`、`inquiry_customer_reply`、`inquiry_resend_link`、`mask_inquiries`（Cron）。
 - 運営側（authenticated、中で `banto_shop_perm(shop, 'support')`）: `inquiry_admin_get`、`inquiry_reply`（新しいリンクを作る）、`inquiry_set_status`、`inquiry_delete`。`mask_customer`（`customers` の項目）を差し替えて、お問い合わせの連絡先と本文も消す。
 - 「メールを送ってよいか」は DB が決める（`banto_inquiry_issue_mail`。送ってよければ記録して true）。上限を超えたら送らないだけで、応答の形は変えない（会員のログインの `member_login_start` と同じ）。
-- 権限の項目 `support` を足した（`banto_shop_perms_all`・`org_member_shops` の検査）。招待とメンバーの設定は同じ関数を通るので、適用前の DB は項目を知らず黙って落とす。画面は 0061 が当たるまで項目を出さない。
+- 権限の項目 `support` を足した（`banto_shop_perms_all`・`org_member_shops` の検査）。招待とメンバーの設定は同じ関数を通るので、適用前の DB は項目を知らず黙って落とす。画面は 0061 が当たるまで項目を出さない（v0.3.0 で土台が 0061 に進み、この判定は消した）。
 
 ## 5. 画面とコード
 

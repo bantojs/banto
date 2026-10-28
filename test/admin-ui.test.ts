@@ -84,17 +84,6 @@ describe("管理画面の共通の見た目", () => {
     expect(csv).toContain("品0 x1");
   });
 
-  it("0059 より前の DB でも、検索は PostgREST の ilike で同じ結果", async () => {
-    const { sb, shop, app } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0059_admin_lists");
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get(`/admin/shops/${shop.id}/products?q=MUG`)).text();
-    expect(html).toContain("マグカップ");
-    expect(html).not.toContain("Tシャツ</a>");
-    const calls = sb.calls.filter((x) => x.includes("admin_search_ids"));
-    expect(calls).toEqual([]);
-  });
-
   it("会員の一覧: メール・氏名の部分一致で DB で絞る", async () => {
     const { sb, shop, app } = setup();
     sb.tables.customers.push({ id: "cu1", shop_id: shop.id, email: "yamada@example.com", name: "山田", default_address: null, created_at: "2026-10-01T00:00:00Z" });

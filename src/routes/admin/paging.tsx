@@ -1,5 +1,4 @@
 import type { Filter } from "../../db/client";
-import { migrated } from "../../db/migration-state";
 import { selectIn } from "../../db/select-in";
 import { owner, type AdminContext } from "./context";
 import { t } from "../../i18n";
@@ -54,20 +53,16 @@ export function Pager(props: { base: string; next: string | null; paged: boolean
   );
 }
 
-/** 部分一致の検索を RLS の外で行う関数（admin_search_ids）と、発行したクーポンの数（coupon_grant_counts）の版 */
-export const ADMIN_SEARCH_MIGRATION = "0059_admin_lists";
-
 /**
  * 部分一致の検索（名前・メールなど）のあるときの 1 ページ: admin_search_ids で id を探し（権限は関数が 1 回確かめる、
- * pg_trgm のインデックスが効く）、行そのものは RLS 越しに読む。0059 より前の DB なら null（呼び出し側が PostgREST の ilike で読む）。
+ * pg_trgm のインデックスが効く）、行そのものは RLS 越しに読む（0059）。
  * RLS の掛かった表では ilike がインデックスを使えず全件を見るため（docs/knowledge/02-decisions.md 2026-10-26）
  */
 export async function searchRows<T extends { id: string; created_at: string }>(
   c: AdminContext,
   opts: { kind: "products" | "orders" | "customers"; shopId: string; q: string; filters: Record<string, string>; after?: PagePosition; limit: number; columns: string },
-): Promise<T[] | null> {
+): Promise<T[]> {
   const { db } = owner(c);
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION))) return null;
   const rows: T[] = [];
   for (let after = opts.after; rows.length < opts.limit; ) {
     const n = Math.min(1000, opts.limit - rows.length);

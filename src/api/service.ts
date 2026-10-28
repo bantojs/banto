@@ -12,7 +12,7 @@ import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
-import { API_INQUIRIES_MIGRATION, API_INQUIRY_ASSIGNEE_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
+import { API_INQUIRY_ASSIGNEE_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
 import { SKU_IMAGES_MIGRATION } from "../products/images";
 import { SKU_OPTION_AXES_MIGRATION } from "../products/option-axes";
@@ -358,18 +358,10 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
 
   // ---- お問い合わせ（0061。inquiries:read / inquiries:write、モジュール inquiries が ON のショップだけ）----
-  /** 0061 より前の DB では関数が無いので、有効なトークンであることだけ確かめてから DB の版を返す */
-  private async call0061<T>(scope: string, fn: `api_${string}`, args: Record<string, unknown>): Promise<T> {
-    if (!(await this.migratedTo(API_INQUIRIES_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `this endpoint needs the database update ${API_INQUIRIES_MIGRATION}; apply it from /admin/update (${scope})`, 409);
-    }
-    return this.call<T>(fn, args);
-  }
   /** assignee: "none"（未割り当て）か担当者の user_id（0068 が要る） */
   inquiriesList = async (q: { status?: string; limit?: number; offset?: number; assignee?: string } = {}) => {
     if (q.assignee !== undefined) await this.requireAssignee();
-    return this.call0061<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("inquiries:read", "api_inquiries_list", {
+    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("api_inquiries_list", {
       p_status: q.status ?? null,
       p_limit: q.limit ?? 50,
       p_offset: q.offset ?? 0,
@@ -396,7 +388,7 @@ export class ApiService {
     const sent = deps && r.mail.to ? await sendAssignNotice({ mailer: deps.mailer, adminBase: deps.publicBase }, r.mail.shop, r.mail) : false;
     return { ...r.inquiry, mail_sent: sent };
   };
-  inquiryGet = (number: number) => this.call0061<Record<string, unknown>>("inquiries:read", "api_inquiry_get", { p_number: number });
+  inquiryGet = (number: number) => this.call<Record<string, unknown>>("api_inquiry_get", { p_number: number });
   /**
    * 返事を書く。お客様にはリンクだけのメール（本文は載せない）。リンクの行き先は管理画面の返事と同じ
    * （連携サイトの画面が今の許可リストにあればそこ、無ければ Banto の画面）。宛先は AI に返さない
@@ -421,7 +413,7 @@ export class ApiService {
     }
     let r: { inquiry: Record<string, unknown>; mail: { send: boolean; to: string | null; mail_from: string | null; return_to: string | null; shop: InquiryMailShop } };
     try {
-      r = await this.call0061("inquiries:write", "api_inquiry_reply", args);
+      r = await this.call("api_inquiry_reply", args);
     } catch (e) {
       if (stored.length > 0) await removeAttachments(this.privateStorage!, stored);
       throw e;
@@ -450,7 +442,7 @@ export class ApiService {
     if (!res) throw new ApiError("not_found", "not found", 404);
     return res;
   }
-  inquirySetStatus = (number: number, status: InquiryApiStatus) => this.call0061<Record<string, unknown>>("inquiries:write", "api_inquiry_set_status", { p_number: number, p_status: status });
+  inquirySetStatus = (number: number, status: InquiryApiStatus) => this.call<Record<string, unknown>>("api_inquiry_set_status", { p_number: number, p_status: status });
 
   // ---- クーポン（0036。coupons:read / coupons:write、モジュール coupons が ON のショップだけ）----
   couponsList = (q: { query?: string; active?: boolean; limit?: number; offset?: number } = {}) =>

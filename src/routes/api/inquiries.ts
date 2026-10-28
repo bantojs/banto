@@ -65,7 +65,7 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
   const shop = await sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
-  if (!(await inquiriesReady(sf, shop))) return c.json({ error: "inquiries_disabled" }, 404);
+  if (!inquiriesReady(shop)) return c.json({ error: "inquiries_disabled" }, 404);
   const m = await memberFromRequest(c, shop);
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
   return { shop, member: m.member, deps: { db, secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), adminBase: publicBaseUrl(c), privateStorage: c.get("adapters").privateStorage ?? null } };

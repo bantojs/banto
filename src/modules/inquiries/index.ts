@@ -17,11 +17,10 @@ import { buildCustomerMail, buildShopNotice, type InquiryMailShop } from "./mail
 import { removeAttachments, storeAttachments, type StoredAttachment } from "./attachments";
 import type { StorageAdapter } from "../../adapters/types";
 import { moduleEnabled } from "../registry";
-import type { PublicShop, StorefrontData } from "../../storefront/data";
+import type { PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes/types";
 
 export const INQUIRIES_MODULE = "inquiries";
-export const INQUIRIES_MIGRATION = "0061_mod_inquiries";
 /** 担当者（0068） */
 export const INQUIRY_ASSIGNEE_MIGRATION = "0068_mod_inquiries_assignee";
 
@@ -38,10 +37,9 @@ export const isCategory = (v: unknown): v is InquiryCategory => typeof v === "st
 export const categoryLabel = (c: string) => (isCategory(c) ? t(`inq.category_${c}` as MessageKey) : c);
 export const statusLabel = (s: string) => ((INQUIRY_STATUSES as readonly string[]).includes(s) ? t(`inq.status_${s}` as MessageKey) : s);
 
-/** そのショップで使えるか（モジュールが ON・0061 が当たっている・テーマに画面がある）。キャッシュ済みのショップ行と適用済みの版だけで判定 */
-export async function inquiriesReady(sf: Pick<StorefrontData, "migratedTo">, shop: Pick<PublicShop, "settings">, theme?: Pick<Theme, "InquiryPage">): Promise<boolean> {
-  if (!moduleEnabled(shop.settings, INQUIRIES_MODULE) || (theme && !theme.InquiryPage)) return false;
-  return sf.migratedTo(INQUIRIES_MIGRATION);
+/** そのショップで使えるか（モジュールが ON・テーマに画面がある）。キャッシュ済みのショップ行だけで判定 */
+export function inquiriesReady(shop: Pick<PublicShop, "settings">, theme?: Pick<Theme, "InquiryPage">): boolean {
+  return moduleEnabled(shop.settings, INQUIRIES_MODULE) && !(theme && !theme.InquiryPage);
 }
 
 export interface InquiryTemplate {

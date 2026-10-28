@@ -12,8 +12,6 @@ import { randomToken } from "../../util/signed";
 import { AdminLayout, Copyable, PageHead } from "./layout";
 import { authClient, dbClient, formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { adminLoginGuard, requireOwner, setSessionCookie, toSessionData } from "./auth";
-import { migrated } from "../../db/migration-state";
-import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 import { myOrgs, PERM_TEMPLATES, requireOrgAdmin, SHOP_PERMS, isShopPerm, type OrgRole, type ShopPerm } from "./access";
 
 /**
@@ -137,11 +135,6 @@ function readShopPerms(
     if (perms.length > 0) out.push({ shop_id: s.id, perms: [...new Set(perms)] });
   }
   return out;
-}
-
-/** support（お問い合わせ、0061）は DB に入るまで出さない（入る前の DB は項目を知らず、黙って落とす） */
-async function shopPermsHere(c: AdminContext): Promise<readonly ShopPerm[]> {
-  return (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION)) ? SHOP_PERMS : SHOP_PERMS.filter((p) => p !== "support");
 }
 
 function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; current?: { shop_id: string; perms: string[] }[]; currentStores?: { store_id: string; perms: string[] }[]; perms: readonly ShopPerm[] }) {
@@ -372,7 +365,7 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
         <label for="role">{t("org.role")}</label>
         <RoleSelect value="member" canOwner={o.role === "owner"} />
         <p>{t("org.role_help")}</p>
-        <ShopPermsFields shops={shops} stores={stores} perms={await shopPermsHere(c)} />
+        <ShopPermsFields shops={shops} stores={stores} perms={SHOP_PERMS} />
         <p>
           <button type="submit">{t("org.invite_submit")}</button>
         </p>
@@ -468,7 +461,7 @@ org.get("/org/members/:userId", requireOwner, requireOrgAdmin, async (c: AdminCo
         <label for="role">{t("org.role")}</label>
         <RoleSelect value={m.role} canOwner={o.role === "owner"} />
         <p>{t("org.role_help")}</p>
-        <ShopPermsFields shops={shops} stores={stores} current={m.shops} currentStores={m.stores} perms={await shopPermsHere(c)} />
+        <ShopPermsFields shops={shops} stores={stores} current={m.shops} currentStores={m.stores} perms={SHOP_PERMS} />
         <p>
           <button type="submit">{t("shop.save")}</button>
         </p>

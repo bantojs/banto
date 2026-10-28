@@ -2,19 +2,19 @@
  * 商品フィードを作って StorageAdapter（R2）に置く。Cron（1 時間ごと）と管理画面の「今すぐ作る」から呼ぶ。
  * データは anon の経路（公開中のものだけ）で読む。service_role は使わない。
  *
- * 0060 以降は分けて作る（商品が何十万件あっても 1 回の処理の問い合わせの数が増えないように。docs/knowledge/02-decisions.md 2026-10-26）:
+ * 分けて作る（0060。商品が何十万件あっても 1 回の処理の問い合わせの数が増えないように。docs/knowledge/02-decisions.md 2026-10-26）:
  *   1 回の処理で product_feed_page（id 順、1,000 商品ずつ）を数ページ読み、<item> の並びを 1 つのファイル（part）にして置く。
  *   途中の位置は feeds/<shop_id>/run.json。最後まで読んだら meta.json に run と part の数を書き、前の回の part を消す。
  *   配信（/<スラッグ>/feed/products.xml）は頭・part・尻をつないで流す（readFeed）。
  *   1 回に進める量は workers_plan（free は 3 ページ、paid は 10 ページ）と、part の大きさ（800 万文字）で決める。
- * 0060 より前の DB は全件を読んで 1 つのファイルに（feeds/<shop_id>/products.xml）。
+ * v0.2.0 までの 1 つのファイル（feeds/<shop_id>/products.xml）は、次に作り終えたときに消す。
  */
 import type { Adapters, StorageAdapter } from "../../adapters/types";
 import { createDbClient } from "../../db/client";
-import { CATALOG_PAGES_MIGRATION, StorefrontData, type PublicShop } from "../../storefront/data";
+import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
-import { FEED_TAIL, buildFeed, feedHead, feedItemsXml, feedXml, type FeedTarget } from "./feed";
+import { FEED_TAIL, buildFeed, feedHead, feedItemsXml, type FeedTarget } from "./feed";
 import { externalProductUrl } from "../../storefront/mode";
 
 export const FEED_MODULE = "product_feed";
@@ -85,19 +85,12 @@ function feedTarget(shop: PublicShop, bases: FeedBases): FeedTarget | null {
 }
 
 /**
- * フィードを作る（0060 以降は 1 回の処理の分だけ進める。読むページの数は workers_plan で決める）。
+ * フィードを作る（1 回の処理の分だけ進める。読むページの数は workers_plan で決める）。
  * 作り終えたら meta を、続きがあれば "in_progress" を、URL の起点が分からなければ null を返す
  */
 export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, shop: PublicShop, bases: FeedBases, now = new Date()): Promise<FeedMeta | "in_progress" | null> {
   const target = feedTarget(shop, bases);
   if (!target) return null;
-  if (!(await sf.migratedTo(CATALOG_PAGES_MIGRATION))) {
-    const result = buildFeed(await sf.feedCatalog(shop), target);
-    await putText(storage, feedKey(shop.id), feedXml(result, target), "application/xml; charset=utf-8");
-    const meta: FeedMeta = { generated_at: now.toISOString(), items: result.items.length, skipped: result.skipped };
-    await putText(storage, metaKey(shop.id), JSON.stringify(meta), "application/json");
-    return meta;
-  }
   let run = await readJson<FeedRun>(storage, runKey(shop.id));
   if (!run) {
     run = { run: now.getTime().toString(36), started_at: now.toISOString(), after: null, parts: 1, items: 0, skipped: { no_image: 0, no_price: 0 } };
@@ -139,7 +132,7 @@ export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, 
   return meta;
 }
 
-/** 配信: 分けて作ったものは頭・part・尻をつないで流す。0060 より前のものは 1 つのファイル。まだ無ければ null */
+/** 配信: 分けて作ったものは頭・part・尻をつないで流す。v0.2.0 までに作った 1 つのファイルはそのまま。まだ無ければ null */
 export async function readFeed(storage: StorageAdapter, shopId: string): Promise<ReadableStream | null> {
   const meta = await readFeedMeta(storage, shopId);
   if (!meta?.run || !meta.parts) return (await storage.get(feedKey(shopId)))?.body ?? null;

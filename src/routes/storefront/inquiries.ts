@@ -80,7 +80,7 @@ interface Ready extends Scope {
 async function scope(c: Ctx): Promise<Ready | null> {
   if (!resolveScope) return null;
   const s = await resolveScope(c);
-  if (!s || !s.theme.InquiryPage || !(await inquiriesReady(s.sf, s.shop, s.theme))) return null;
+  if (!s || !s.theme.InquiryPage || !inquiriesReady(s.shop, s.theme)) return null;
   const secret = c.get("sessionSecret");
   const db = privilegedFor(c);
   if (!secret || !db) return null;
