@@ -15,16 +15,17 @@ import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import type { ProductDetail, ProductListPage, PublicShop, StorefrontData } from "../../storefront/data";
 import { shopHome, shopOrigin } from "../../storefront/urls";
-import type { CartLine, ThemeContext } from "../../themes/types";
+import type { AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
-import { priceCart } from "../../commerce/checkout";
-import { escapeHtml, ThemeError } from "../../themes/liquid/engine";
+import { ADDRESS_FIELDS, priceCart, type Confirmation } from "../../commerce/checkout";
+import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
+import { ConfirmationBlock } from "../../themes/default/confirmation";
 import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
-import { extendShopify, type Paginate } from "../../themes/liquid/shopify";
+import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { sectionOverridesOf } from "../../themes/liquid/editor";
-import { cartObject, collectionObject, footerMenu, menuFromCategories, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
+import { cartObject, collectionObject, footerMenu, menuFromCategories, money, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS } from "../../themes/liquid/preview";
@@ -99,8 +100,16 @@ interface PageParts {
   categories: CategoryRow[];
   currentCategory?: string;
   paginate?: Paginate | null;
-  status?: 200 | 400 | 404;
+  status?: 200 | 400 | 404 | 409;
+  /** レジの画面（配送先・最終確認）: 外のスクリプトを止め（CSP）、覚えさせない。confirm は {% banto_confirmation %} を描いたときだけ */
+  checkout?: "address" | "confirm";
 }
+
+/**
+ * レジの画面の CSP（人間の決定 2026-10-28、docs/themes.md「レジ」）。住所・連絡先が載る画面なので、スクリプトはショップのドメインのもの
+ * （テーマの資産）だけ。インラインのスクリプトと外のスクリプト（分析のタグなど）は動かない。フォームの送り先は決済ページへの転送があるので縛らない
+ */
+export const CHECKOUT_CSP = "script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
 
 /** Liquid のテーマで 1 ページを描いた Response。描けなければ null */
 function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): Response | null {
@@ -140,6 +149,12 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     const r = renderThemePage(lt, { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview, overrides: sectionOverridesOf(choice.settings) });
     if (!r) return null;
     if (r.errors.length > 0) console.error("[banto] theme sections:", r.errors.slice(0, 5).join(" / "));
+    // 最終確認画面に Banto の表示（特商法）が無ければ描かない（既定のテーマで描く）
+    if (page.checkout === "confirm" && !r.html.includes(CONFIRMATION_MARK)) return null;
+    if (page.checkout) {
+      c.header("Content-Security-Policy", CHECKOUT_CSP);
+      c.header("Cache-Control", "private, no-store");
+    }
     if (!choice.preview) return c.html(r.html, page.status ?? 200);
     // プレビュー: 帯を出し、覚えさせず、検索エンジンに載せない
     const bar = `<div style="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#111;color:#fff;font:14px/1.6 sans-serif;padding:8px 12px">${escapeHtml(t("design.preview_bar"))} <a style="color:#9cf" href="?preview_theme=off">${escapeHtml(t("design.preview_end"))}</a></div>`;
@@ -246,6 +261,63 @@ export function renderSearch(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { 
     noindex: true,
     categories: p.categories,
     paginate: p.page ? paginateOf(p.page, p.after, p.link) : null,
+  });
+}
+
+/** 配送先の画面（templates/checkout）。checkout に値・都道府県・お届け日時・誤りを渡し、{% form 'checkout_address' %} で送らせる */
+export function renderCheckoutAddress(
+  c: Ctx,
+  s: LiquidScope,
+  choice: LiquidChoice,
+  p: { provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; categories: CategoryRow[]; status?: 200 | 400 },
+): Response | null {
+  const fee = (pref: string) => p.shipping.table?.find((x) => x.prefecture === pref)?.fee;
+  const checkout = {
+    provider: p.provider,
+    values: Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, p.values[k] ?? ""]).concat([["marketing_consent", p.values.marketing_consent ?? ""]])),
+    error: p.error ?? null,
+    subtotal_price: money(p.subtotal),
+    shipping_summary: p.shipping.summary,
+    free_shipping_over: p.shipping.freeOver === null ? null : money(p.shipping.freeOver),
+    free_shipping_applied: p.shipping.freeOver !== null && p.subtotal >= p.shipping.freeOver,
+    prefectures: p.prefectures.map((name) => ({ name, shipping_price: fee(name) === undefined ? null : money(fee(name)) })),
+    delivery: p.delivery ? { dates: p.delivery.dates, slots: p.delivery.slots, note: t("delivery.note") } : null,
+    marketing_consent: Boolean(p.consent),
+    cart_url: `${s.ctx.shopPath}/cart`,
+  };
+  return render(c, s, choice, { template: "checkout", values: { checkout }, title: t("store.address_title"), path: "/checkout", noindex: true, categories: p.categories, checkout: "address", ...(p.status ? { status: p.status } : {}) });
+}
+
+/**
+ * 最終確認画面（templates/checkout_confirm）。表示の項目は Banto が描く {% banto_confirmation %}（同梱テーマと同じ部品）。
+ * テーマはその外側（見出し・注文の要約・案内）を作る。checkout.confirmation は要約に使う値（金額は 100 倍の整数）
+ */
+export async function renderCheckoutConfirm(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { confirmation: Confirmation; quote: string; error?: string; categories: CategoryRow[]; status?: 200 | 409 }): Promise<Response | null> {
+  const cf = p.confirmation;
+  const block = await Promise.resolve(ConfirmationBlock({ shopPath: s.ctx.shopPath, confirmation: cf, quote: p.quote, ...(p.error ? { error: p.error } : {}) }).toString());
+  const checkout = {
+    provider: cf.payment.provider,
+    error: p.error ?? null,
+    confirmation: {
+      lines: cf.lines.map((l) => ({ title: l.product_name, variant_title: l.sku_name, sku: l.code, quantity: l.qty, price: money(l.unit_price_jpy), line_price: money(l.line_total_jpy), reduced_tax: l.reduced })),
+      subtotal_price: money(cf.subtotal_jpy),
+      shipping_price: money(cf.shipping_jpy),
+      total_discount: money(cf.discount_jpy),
+      total_price: money(cf.total_jpy),
+      payment_method: cf.payment.method,
+      free: Boolean(cf.payment.free),
+    },
+    cart_url: `${s.ctx.shopPath}/cart`,
+  };
+  return render(c, s, choice, {
+    template: "checkout_confirm",
+    values: { checkout, __banto_confirmation: new SafeHtml(block) },
+    title: t("confirm.title"),
+    path: "/checkout",
+    noindex: true,
+    categories: p.categories,
+    checkout: "confirm",
+    ...(p.status ? { status: p.status } : {}),
   });
 }
 

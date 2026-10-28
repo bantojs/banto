@@ -111,6 +111,10 @@ export function checkThemeBundle(raw: unknown, engineOpts: EngineOptions = {}): 
       errors.push(`${path}: invalid JSON`);
     }
   }
+  // 最終確認画面（特商法）を描くテーマは、Banto の表示の部品を置く（無ければ取り込まない。docs/themes.md「レジ」）
+  if ((files["templates/checkout_confirm.liquid"] !== undefined || files["templates/checkout_confirm.json"] !== undefined) && !Object.entries(files).some(([p, src]) => p.endsWith(".liquid") && /\{%-?\s*banto_confirmation\s*-?%\}/.test(src))) {
+    errors.push("templates/checkout_confirm: {% banto_confirmation %} is required");
+  }
   if (errors.length > 0) return { ok: false, errors };
 
   const engine = createThemeEngine(files as ThemeFiles, engineOpts);
