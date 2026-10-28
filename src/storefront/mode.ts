@@ -51,8 +51,9 @@ export function pageKind(rest: string): PageKind {
   if (/^\/orders\/(lookup|receipt)$/.test(r)) return "system";
   if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";
   if (/^\/account\/(verify|code)$/.test(r)) return "system";
-  // パスキーでのログイン（同梱モジュール passkey）: ヘッドレスのログインもショップのドメインのこの画面を通るので、どの使い方でも残す
-  if (/^\/account\/passkey(\.js|\/login(\/options)?)?$/.test(r)) return "system";
+  // パスキーでのログイン・追加（同梱モジュール passkey）: ヘッドレスのログインと追加もショップのドメインのこの画面を通るので、どの使い方でも残す
+  // 追加（0070）: ヘッドレスの会員が券を持って来る画面と、その後の追加の API
+  if (/^\/account\/passkey(\.js|\/login(\/options)?|\/add|\/register(\/options)?)?$/.test(r)) return "system";
   // お問い合わせ（同梱モジュール inquiries）: メールのリンクが指すので、どの使い方でも残す
   if (/^\/inquiries(\/(new|confirm|submit|open|thread|reply|resend|attachments\/[0-9a-f-]{36}))?$/.test(r)) return "system";
   return "shopping";

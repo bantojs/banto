@@ -8,13 +8,15 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, clientIpFor, migrationStateFor, param, publicBaseUrl, type Ctx } from "../common";
+import { migrated } from "../../db/migration-state";
+import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
 import type { PrivilegedDb } from "../../db/privileged";
-import { PASSKEY_MODULE } from "../../modules/passkey";
+import { PASSKEY_ADD_MIGRATION, PASSKEY_MODULE } from "../../modules/passkey";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
 import { receiptAvailable, receiptData } from "../../modules/receipt/data";
 
@@ -44,6 +46,7 @@ import { receiptAvailable, receiptData } from "../../modules/receipt/data";
  *   POST /api/shops/:shop/members/password    { password }（Bearer）パスワードを決める・変える → 新しいトークン（ほかの端末はログアウト）
  *   GET  /api/shops/:shop/members/oauth/:provider?return_to=…  LINE・Google へ送り出す（ブラウザで開く。0014）。戻ってきたら
  *        `<return_to>?banto_handoff=<券>` に戻すので、/members/verify に { handoff } で渡す（2 分・1 回限り）
+ *   POST /api/shops/:shop/members/passkey/add { return_to }（Bearer、ログインしてから 15 分以内）→ { url }: パスキーを追加する画面へ送る券（0070）
  *   GET  /api/shops/:shop/members/passkey?return_to=…  ショップのドメインのパスキーの画面へ送り出す（同梱モジュール passkey、0046）。
  *        パスキーは RP ID = ショップのドメインなので、連携サイトの上では使わない。戻り方は LINE・Google と同じ引き換え券
  *
@@ -414,6 +417,34 @@ membersApi.get("/shops/:shop/members/oauth/:provider", async (c: Ctx) => {
 function passkeyOffered(shop: PublicShop): boolean {
   return moduleEnabled(shop.settings, PASSKEY_MODULE) && Boolean(shop.domain);
 }
+
+/**
+ * パスキーを追加する画面へ送る券（0070）。会員トークン（ログインしてから 15 分以内のセッション）で受け取り、返る url へ会員のブラウザを送る。
+ * ショップのドメインの画面でボタンを押すとその端末のパスキーを追加し、`<return_to>?banto_passkey=added` に戻る（券は 2 分・1 回限り）
+ */
+membersApi.post("/shops/:shop/members/passkey/add", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!passkeyOffered(s.shop)) return c.json({ error: "passkey_disabled" }, 409);
+  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  if (!state || !(await migrated(state, PASSKEY_ADD_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  const returnTo = safeReturnUrl(str((await body(c))["return_to"]), returnOrigins(s.shop.settings), "");
+  if (!returnTo) return c.json({ error: "invalid_return_to" }, 400);
+  // 0045 より前に発行したトークン（セッションの行が無い）は、ログインし直してから
+  if (!s.member.sid) return c.json({ error: "reauth" }, 403);
+  const db = privilegedFor(c);
+  const secret = c.get("sessionSecret");
+  if (!db || !secret) return c.json({ error: "not_configured" }, 503);
+  const token = randomToken(32);
+  const r = await db.memberPasskeyTicketCreate(s.shop.id, s.member.id, s.member.epoch, s.member.sid, await linkHash(secret, token));
+  if (!r.ok) {
+    if (r.reason === "reauth") return c.json({ error: "reauth" }, 403);
+    if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
+    if (r.reason === "limited") return c.json({ error: "too_many_requests" }, 429);
+    return c.json({ error: "passkey_disabled" }, 409);
+  }
+  return c.json({ url: `https://${s.shop.domain}/account/passkey/add?t=${r.id}.${token}&return_to=${encodeURIComponent(returnTo)}`, expires_in: 120 }, 200, NO_STORE);
+});
 
 membersApi.get("/shops/:shop/members/passkey", async (c: Ctx) => {
   const shop = await shopFor(c);

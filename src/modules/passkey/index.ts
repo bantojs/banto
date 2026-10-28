@@ -11,6 +11,8 @@ import { t, tf } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 
 export const PASSKEY_MODULE = "passkey";
+/** ヘッドレスの会員がパスキーを追加する券（0070） */
+export const PASSKEY_ADD_MIGRATION = "0070_mod_passkey_headless_add";
 
 /**
  * ブラウザのスクリプト（`${shopPath}/account/passkey.js`）。テーマは次の印を付けた要素を置く（src/themes/types.ts）:
@@ -65,7 +67,7 @@ export const PASSKEY_CLIENT_JS = `(function () {
       });
     });
   }
-  function register() {
+  function register(el) {
     return post("passkey/register/options", {}).then(function (o) {
       if (!o.publicKey) return o;
       var pk = o.publicKey;
@@ -76,6 +78,7 @@ export const PASSKEY_CLIENT_JS = `(function () {
         var r = c.response;
         return post("passkey/register", {
           challenge_id: o.challenge_id,
+          return_to: el.getAttribute("data-return-to") || undefined,
           credential: { id: c.id, rawId: b2u(c.rawId), type: c.type, response: { clientDataJSON: b2u(r.clientDataJSON), attestationObject: b2u(r.attestationObject) } }
         });
       });
@@ -92,7 +95,7 @@ export const PASSKEY_CLIENT_JS = `(function () {
       ev.preventDefault();
       if (el.disabled) return;
       el.disabled = true;
-      var run = el.getAttribute("data-banto-passkey") === "register" ? register() : login(el);
+      var run = el.getAttribute("data-banto-passkey") === "register" ? register(el) : login(el);
       run.then(function (r) {
         if (r && r.redirect) { location.assign(r.redirect); return; }
         el.disabled = false;

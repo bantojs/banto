@@ -354,7 +354,10 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 ほかのログインの方法（ショップの設定で有効なときだけ。`/members/config` の `login` に出ます）:
 
 - **パスワード**（`password`）: `POST /api/shops/<shop>/members/password-login` `{ "email", "password" }` → verify と同じ形のトークン。間違いが続くと 429 `locked`（コードでは入れる）。パスワードを決める・変えるのは `POST /api/shops/<shop>/members/password` `{ "password" }`（Bearer）→ 新しいトークンの組（ほかの端末はログアウト）。password-login に成功すると、会員に「パスワードでログインしました」のメールが毎回届きます（同梱テーマの画面では、初めての端末のときだけ。docs/members.md 3-2）。
-- **パスキー**（`passkey`。同梱モジュール passkey、ショップに独自ドメインがあるときだけ）: ブラウザで `GET /api/shops/<shop>/members/passkey?return_to=<許可リストの URL>` を開くと、**ショップのドメインの** パスキーの画面へ進み、ログインすると `<return_to>?banto_handoff=<券>` に戻ります。あとは LINE・Google と同じく `verify` `{ "handoff" }` でトークンに引き換えます。パスキーはショップのドメインに結びつくので、連携サイトの画面の上では使いません（会員がパスキーを追加するのも、ショップのドメインのマイページです）。
+- **パスキー**（`passkey`。同梱モジュール passkey、ショップに独自ドメインがあるときだけ）: ブラウザで `GET /api/shops/<shop>/members/passkey?return_to=<許可リストの URL>` を開くと、**ショップのドメインの** パスキーの画面へ進み、ログインすると `<return_to>?banto_handoff=<券>` に戻ります。あとは LINE・Google と同じく `verify` `{ "handoff" }` でトークンに引き換えます。パスキーはショップのドメインに結びつくので、連携サイトの画面の上では使いません。
+  - **パスキーの追加**（0070）: `POST /api/shops/<shop>/members/passkey/add` `{ "return_to": "<許可リストの URL>" }`（Bearer）→ `{ "url", "expires_in": 120 }`。会員のブラウザを `url`（ショップのドメインの追加の画面）へ送ると、ボタンを 2 回（続ける → この端末のパスキーを追加）押して、`<return_to>?banto_passkey=added` に戻ります。券は 2 分・1 回限りです。
+  - 追加できるのは **ログインしてから 15 分以内の会員トークン** だけです（盗まれたトークンからパスキーを足して居座れないように。会員ページと同じ決まり）。過ぎていたら 403 `reauth`。login からやり直してもらってから呼んでください。追加すると、会員に「パスキーを追加しました」のメールが届きます。
+  - 追加のためにショップのドメインに作るログインは、追加が済むと取り消します（その端末に Banto のログインは残りません）。
 - **LINE・Google**（`line`・`google`）: ブラウザで `GET /api/shops/<shop>/members/oauth/<line|google>?return_to=<許可リストの URL>` を開くと同意画面へ進み、戻ると `<return_to>?banto_handoff=<券>` に戻ります（失敗したら `banto_error=…`）。連携側は `POST /api/shops/<shop>/members/verify` `{ "handoff": "<券>" }` でトークンに引き換えます（2 分・1 回限り。トークンそのものは URL に載せません）。
 
 トークンはショップごとです（別のショップでは使えません）。本文で受け渡すので、Cookie は使いません。保存するなら連携側のサーバーのセッションに置き、ブラウザの localStorage には置かないでください。

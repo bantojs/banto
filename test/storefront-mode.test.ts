@@ -21,9 +21,9 @@ function setup(settings: Record<string, unknown> = {}) {
 
 describe("画面の種類と転送先（src/storefront/mode.ts）", () => {
   it("どのモードでも残す画面は system", () => {
-    for (const p of ["/legal", "/privacy", "/returns", "/shipping", "/orders/lookup", "/orders/receipt", "/checkout/done", "/account/verify", "/account/code", "/account/passkey", "/account/passkey.js", "/account/passkey/login/options", "/account/passkey/login", "/feed/products.xml"]) expect(pageKind(p)).toBe("system");
-    // パスキーの追加・一覧は会員ページの続き（使い方の設定に従う）
-    for (const p of ["/account/passkeys", "/account/passkey/register", "/account/passkey/register/options"]) expect(pageKind(p)).toBe("shopping");
+    for (const p of ["/legal", "/privacy", "/returns", "/shipping", "/orders/lookup", "/orders/receipt", "/checkout/done", "/account/verify", "/account/code", "/account/passkey", "/account/passkey.js", "/account/passkey/login/options", "/account/passkey/login", "/account/passkey/add", "/account/passkey/register/options", "/account/passkey/register", "/feed/products.xml"]) expect(pageKind(p)).toBe("system");
+    // パスキーの一覧・削除は会員ページの続き（使い方の設定に従う）
+    for (const p of ["/account/passkeys", "/account/passkeys/00000000-0000-4000-8000-000000000000/delete"]) expect(pageKind(p)).toBe("shopping");
     for (const p of ["", "/", "/p/tee"]) expect(pageKind(p)).toBe("catalog");
     for (const p of ["/cart", "/buy", "/checkout", "/checkout/stripe", "/account", "/account/login", "/stores", "/tryon", "/coupons/x"]) expect(pageKind(p)).toBe("shopping");
   });

@@ -829,12 +829,33 @@ export const defaultTheme: Theme = {
     );
   },
 
-  MemberAuthPage({ ctx, mode, error, info, email, challenge, token, options, returnTo }) {
+  MemberAuthPage({ ctx, mode, error, info, email, challenge, token, options, returnTo, ticket }) {
     const input = "width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box";
-    const titles = { login: "member.login_title", code: "member.code_title", verify: "member.verify_title", passkey: "member.login_title" } as const;
+    const titles = { login: "member.login_title", code: "member.code_title", verify: "member.verify_title", passkey: "member.login_title", passkey_add: "passkey.add_title", passkey_register: "passkey.add_title" } as const;
     const title = t(titles[mode]);
     let body: Child;
-    if (mode === "passkey") {
+    if (mode === "passkey_add") {
+      body = ticket ? (
+        <form method="post" action={`${ctx.shopPath}/account/passkey/add`}>
+          <p>{t("passkey.add_intro")}</p>
+          <input type="hidden" name="t" value={ticket} />
+          <input type="hidden" name="return_to" value={returnTo ?? ""} />
+          <p>
+            <button type="submit">{t("passkey.add_continue")}</button>
+          </p>
+        </form>
+      ) : (
+        <p>{returnTo ? <a href={returnTo}>{t("passkey.add_back")}</a> : null}</p>
+      );
+    } else if (mode === "passkey_register") {
+      body = (
+        <div>
+          <p>{t("passkey.add_ready")}</p>
+          <PasskeyButton ctx={ctx} kind="register" returnTo={returnTo} />
+          <p class="muted">{returnTo ? <a href={returnTo}>{t("passkey.add_back")}</a> : null}</p>
+        </div>
+      );
+    } else if (mode === "passkey") {
       body = (
         <div>
           <PasskeyButton ctx={ctx} kind="login" returnTo={returnTo} />

@@ -179,6 +179,56 @@ describe("パスキー（同梱モジュール passkey、0046）", () => {
     expect(acc.headers.get("location")).toBe("https://wp.example.com/");
   });
 
+  it("ヘッドレスの追加（0070）: 会員トークン → 券 → ショップのドメインの画面で追加 → 連携サイトへ戻る。その端末のセッションは残さない", async () => {
+    const { sb, mail, app, shop } = setup();
+    (shop["settings"] as Record<string, unknown>)["storefront"] = { mode: "off", site_url: "https://wp.example.com/" };
+    const api = (path: string, body?: unknown, token?: string) =>
+      app.request(`${BASE}${path}`, { method: body === undefined ? "GET" : "POST", headers: { origin: "https://wp.example.com", "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const ch = (await json(await api("/api/shops/my-shop/members/login", { email: "h@example.com" })))["challenge_id"];
+    const access = String((await json(await api("/api/shops/my-shop/members/verify", { challenge_id: ch, code: mail.code("h@example.com") })))["access_token"]);
+    expect((await api("/api/shops/my-shop/members/passkey/add", { return_to: "https://evil.example/cb" }, access)).status).toBe(400);
+    expect((await api("/api/shops/my-shop/members/passkey/add", { return_to: "https://wp.example.com/my/" })).status).toBe(401);
+    const r = await json(await api("/api/shops/my-shop/members/passkey/add", { return_to: "https://wp.example.com/my/" }, access));
+    const url = new URL(String(r["url"]));
+    expect(`${url.origin}${url.pathname}`).toBe(`${SHOP_URL}/account/passkey/add`);
+    expect(r["expires_in"]).toBe(120);
+
+    const page = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }), SHOP_URL);
+    // GET は確かめの画面だけ（券は使わない）
+    let html = await (await page.get(`${url.pathname}${url.search}`)).text();
+    expect(html).toContain('action="/account/passkey/add"');
+    expect(sb.passkeyTickets[0]!["used_at"]).toBeNull();
+    html = await (await page.post("/account/passkey/add", { t: url.searchParams.get("t")!, return_to: "https://wp.example.com/my/" })).text();
+    expect(html).toContain('data-banto-passkey="register"');
+    expect(html).toContain('data-return-to="https://wp.example.com/my/"');
+    // 同じ券はもう使えない
+    expect((await new Browser(appWith(sb), SHOP_URL).post("/account/passkey/add", { t: url.searchParams.get("t")!, return_to: "https://wp.example.com/my/" })).status).toBe(400);
+
+    const o = await json(await page.postJson("/account/passkey/register/options", {}));
+    const pk = o["publicKey"] as { challenge: string; user: { id: string } };
+    const { response } = await createCredential(pk.challenge, new Uint8Array(Buffer.from(pk.user.id, "base64url")), { ...EXPECTED, step: 0 });
+    const done = await json(await page.postJson("/account/passkey/register", { challenge_id: o["challenge_id"], credential: response, return_to: "https://wp.example.com/my/" }));
+    expect(done).toEqual({ redirect: "https://wp.example.com/my/?banto_passkey=added" });
+    expect(sb.memberPasskeys).toHaveLength(1);
+    // 追加のためだけに作ったこの端末のセッションは取り消す
+    const web = sb.memberSessions.filter((x) => x["kind"] === "web");
+    expect(web).toHaveLength(1);
+    expect(web[0]!["revoked_at"]).not.toBeNull();
+    expect(mail.sent.some((m) => m.subject.includes("パスキーを追加しました"))).toBe(true);
+  });
+
+  it("ヘッドレスの追加: ログインしてから 15 分を過ぎた会員トークンでは券を出さない", async () => {
+    const { sb, mail, app } = setup();
+    const api = (path: string, body: unknown, token?: string) =>
+      app.request(`${BASE}${path}`, { method: "POST", headers: { origin: "https://wp.example.com", "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+    const ch = (await json(await api("/api/shops/my-shop/members/login", { email: "h@example.com" })))["challenge_id"];
+    const access = String((await json(await api("/api/shops/my-shop/members/verify", { challenge_id: ch, code: mail.code("h@example.com") })))["access_token"]);
+    sb.memberSessions[0]!["created_at"] = new Date(Date.now() - 16 * 60_000).toISOString();
+    const res = await api("/api/shops/my-shop/members/passkey/add", { return_to: "https://wp.example.com/my/" }, access);
+    expect(res.status).toBe(403);
+    expect(await json(res)).toEqual({ error: "reauth" });
+  });
+
   it("ヘッドレス: ショップのドメインのパスキーの画面へ送り、引き換え券で連携サイトへ戻す", async () => {
     const { sb, mail, app, b } = setup();
     await memberLogin(b, mail, "", "m@example.com");
