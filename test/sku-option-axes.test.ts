@@ -213,6 +213,25 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     expect(sb.tables.products.find((x) => x["id"] === p.id)).toMatchObject({ option_axes: null, option_axes_custom: false });
   });
 
+  it("ヘッドレス・AI 用 API は配列とオブジェクトでやり取りする（区切りの文字を読まない）。カンマ・読点を含む値もそのまま", async () => {
+    const { sb, shop, app, issue } = setup();
+    const tok = await issue(["products:read", "products:write"]);
+    const p = sb.addProduct(shop.id, { slug: "cable", name: "ケーブル", published: true, option_axes: null });
+    const call = (method: string, path: string, body: unknown) => app.request(`${BASE}/api/v1${path}`, { method, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    let res = await call("PUT", `/products/${p.id}/option-axes`, { option_axes: [{ key: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", values: ["赤、白のボーダー"] }] });
+    expect(res.status).toBe(200);
+    res = await call("POST", `/products/${p.id}/skus`, { code: "C-1", price_jpy: 1000, available: 1, options: { 長さ: "1,000mm", 柄: "赤、白のボーダー" } });
+    expect(res.status).toBe(201);
+    await call("POST", `/products/${p.id}/skus`, { code: "C-2", price_jpy: 1200, available: 1, options: { 長さ: "2,000mm", 柄: "赤、白のボーダー" } });
+    const detail = (await (await app.request(`${BASE}/api/shops/my-shop/products/cable`)).json()) as { product: { option_axes: unknown; skus: { options: unknown }[] } };
+    expect(detail.product.option_axes).toEqual([{ key: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", values: ["赤、白のボーダー"] }]);
+    expect(detail.product.skus[0]!.options).toEqual({ 長さ: "1,000mm", 柄: "赤、白のボーダー" });
+    // お店の画面の軸ごとの選択欄にも、値はそのまま載る
+    const html = await (await new Browser(app).get("/my-shop/p/cable")).text();
+    expect(html).toContain("1,000mm");
+    expect(html).toContain('data-options="{&quot;長さ&quot;:&quot;1,000mm&quot;,&quot;柄&quot;:&quot;赤、白のボーダー&quot;}"');
+  });
+
   it("バックアップの書き出しと復元で、ショップ・カテゴリー・商品の軸が戻る", async () => {
     const { sb, shop, tops, app } = setup();
     sb.tables.shops[0]!["option_axes"] = [];
