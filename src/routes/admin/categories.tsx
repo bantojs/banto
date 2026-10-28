@@ -10,7 +10,7 @@ import { loadShop } from "./shops";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { migrated } from "../../db/migration-state";
 import { SKU_OPTION_AXES_MIGRATION, optionAxesFromForm } from "../../products/option-axes";
-import { AxesEditor, appliedText, axesErrorCode, axesText } from "./option-axes";
+import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
 
 /**
@@ -187,6 +187,8 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
           </form>
           </section>
         </div>
+      {/* チップの入力（値の候補）。ページのすべての入力欄ができてから動かす */}
+      {axesOn ? <ChipsScript /> : null}
     </AdminLayout>,
   );
 });

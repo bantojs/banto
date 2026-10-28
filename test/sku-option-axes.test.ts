@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
-import { codeFromPattern, combinations, displayOptionAxes, inferOptionAxes, optionAxesFromForm, resolveOptionAxes } from "../src/products/option-axes";
+import { OPTION_AXES_SCRIPT, codeFromPattern, combinations, displayOptionAxes, inferOptionAxes, optionAxesFromForm, resolveOptionAxes } from "../src/products/option-axes";
+import { CHIPS_SCRIPT } from "../src/routes/admin/option-axes";
+import { SKU_IMAGE_SCRIPT } from "../src/products/images";
 import type { CategoryRow } from "../src/db/types";
 
 /**
@@ -49,8 +51,14 @@ describe("SKU を分ける軸: 判定（src/products/option-axes.ts）", () => {
     expect(displayOptionAxes(null, skus.slice(0, 1))).toEqual([]);
   });
 
+  it("画面に埋め込むスクリプトは JavaScript として読める（テンプレート文字列の \\n が改行に化けていない）", () => {
+    for (const src of [CHIPS_SCRIPT, OPTION_AXES_SCRIPT, SKU_IMAGE_SCRIPT]) expect(() => new Function(src)).not.toThrow();
+  });
+
   it("入力欄 → 軸、組み合わせ、品番のひな形", () => {
-    expect(optionAxesFromForm({ axes_mode: "axes", "axis.0.key": "カラー", "axis.0.values": "レッド、ブルー,レッド", "axis.1.key": "", "axis.2.key": "サイズ" })).toEqual([{ key: "カラー", values: ["レッド", "ブルー"] }, { key: "サイズ" }]);
+    expect(optionAxesFromForm({ axes_mode: "axes", "axis.0.key": "カラー", "axis.0.values": "レッド\nブルー\r\nレッド\n ", "axis.1.key": "", "axis.2.key": "サイズ" })).toEqual([{ key: "カラー", values: ["レッド", "ブルー"] }, { key: "サイズ" }]);
+    // 区切りは改行だけ。カンマや読点を含む値はそのまま 1 つ
+    expect(optionAxesFromForm({ axes_mode: "axes", "axis.0.key": "長さ", "axis.0.values": "1,000mm\n赤、白のボーダー" })).toEqual([{ key: "長さ", values: ["1,000mm", "赤、白のボーダー"] }]);
     expect(optionAxesFromForm({ axes_mode: "axes", "axis.0.key": "a", "axis.1.key": "a" })).toBe("invalid");
     expect(optionAxesFromForm({ axes_mode: "only_code" })).toEqual([]);
     expect(optionAxesFromForm({ axes_mode: "inherit", "axis.0.key": "x" })).toBeNull();
@@ -101,6 +109,18 @@ describe("SKU を分ける軸: 管理画面", () => {
     expect(await (await admin.get(`/admin/shops/${shop.id}/products/${p.id}?flash=matrix&n=2&skip=1`)).text()).toContain("2 個の SKU を作りました");
   });
 
+  it("軸を決めていない商品の SKU の選択肢は 1 行に 1 つ。値にカンマを入れられる", async () => {
+    const { sb, shop, app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const p = sb.addProduct(shop.id, { slug: "free", name: "自由", option_axes: null });
+    const base = `/admin/shops/${shop.id}/products/${p.id}`;
+    await admin.post(`${base}/skus`, { code: "F-1", price_jpy: "1000", options: "長さ=1,000mm\r\n色=赤、白", available: "0" });
+    expect(sb.tables.skus.find((k) => k["code"] === "F-1")!["options"]).toEqual({ 長さ: "1,000mm", 色: "赤、白" });
+    const html = await (await admin.get(base)).text();
+    expect(html).toContain('name="options" rows="3"');
+    expect(html).toContain(">長さ=1,000mm\n色=赤、白</textarea>");
+  });
+
   it("商品で決める・上の段に戻す・今の SKU から推す。SKU が合わない軸は保存しない", async () => {
     const { sb, shop, tops, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
@@ -126,6 +146,10 @@ describe("SKU を分ける軸: 管理画面", () => {
     let html = await (await admin.get(`/admin/shops/${shop.id}/categories`)).text();
     expect(html).toContain("SKU を分ける軸");
     expect(html).toContain(`action="/admin/shops/${shop.id}/option-axes/shop"`);
+    // 値の候補はチップの入力（正体は 1 行に 1 つの textarea）
+    expect(html).toContain('<textarea name="axis.0.values" rows="3" aria-label="ウェア 値の候補');
+    expect(html).toMatch(/data-chips="" [^>]*>レッド\nブルー<\/textarea>/);
+    expect(html).toContain('querySelectorAll("textarea[data-chips]")');
     let res = await admin.post(`/admin/shops/${shop.id}/option-axes/shop`, { axes_mode: "only_code" });
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/categories?flash=axes_saved#option-axes`);
     expect(sb.tables.shops[0]!["option_axes"]).toEqual([]);
@@ -187,6 +211,25 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     });
     expect(((await mcp.json()) as { result: { isError?: boolean } }).result.isError).toBeFalsy();
     expect(sb.tables.products.find((x) => x["id"] === p.id)).toMatchObject({ option_axes: null, option_axes_custom: false });
+  });
+
+  it("ヘッドレス・AI 用 API は配列とオブジェクトでやり取りする（区切りの文字を読まない）。カンマ・読点を含む値もそのまま", async () => {
+    const { sb, shop, app, issue } = setup();
+    const tok = await issue(["products:read", "products:write"]);
+    const p = sb.addProduct(shop.id, { slug: "cable", name: "ケーブル", published: true, option_axes: null });
+    const call = (method: string, path: string, body: unknown) => app.request(`${BASE}/api/v1${path}`, { method, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    let res = await call("PUT", `/products/${p.id}/option-axes`, { option_axes: [{ key: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", values: ["赤、白のボーダー"] }] });
+    expect(res.status).toBe(200);
+    res = await call("POST", `/products/${p.id}/skus`, { code: "C-1", price_jpy: 1000, available: 1, options: { 長さ: "1,000mm", 柄: "赤、白のボーダー" } });
+    expect(res.status).toBe(201);
+    await call("POST", `/products/${p.id}/skus`, { code: "C-2", price_jpy: 1200, available: 1, options: { 長さ: "2,000mm", 柄: "赤、白のボーダー" } });
+    const detail = (await (await app.request(`${BASE}/api/shops/my-shop/products/cable`)).json()) as { product: { option_axes: unknown; skus: { options: unknown }[] } };
+    expect(detail.product.option_axes).toEqual([{ key: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", values: ["赤、白のボーダー"] }]);
+    expect(detail.product.skus[0]!.options).toEqual({ 長さ: "1,000mm", 柄: "赤、白のボーダー" });
+    // お店の画面の軸ごとの選択欄にも、値はそのまま載る
+    const html = await (await new Browser(app).get("/my-shop/p/cable")).text();
+    expect(html).toContain("1,000mm");
+    expect(html).toContain('data-options="{&quot;長さ&quot;:&quot;1,000mm&quot;,&quot;柄&quot;:&quot;赤、白のボーダー&quot;}"');
   });
 
   it("バックアップの書き出しと復元で、ショップ・カテゴリー・商品の軸が戻る", async () => {

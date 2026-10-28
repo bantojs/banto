@@ -19,7 +19,7 @@ import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
 import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices, SKU_IMAGES_MIGRATION } from "../../products/images";
 import { migrated } from "../../db/migration-state";
 import { MAX_COMBINATIONS, SKU_OPTION_AXES_MIGRATION, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
-import { AxesEditor, axesErrorCode, axesText } from "./option-axes";
+import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./option-axes";
 
 export const products = new Hono<AppEnv>();
 
@@ -516,6 +516,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         </p>
       </form>
       {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} /> : null}
+      {axesOn ? <ChipsScript /> : null}
 
       <h2 id="images">{t("image.list")}</h2>
       {images.length === 0 ? (
@@ -639,10 +640,10 @@ products.post("/:shopId/products/:productId/delete", requireOwner, async (c: Adm
 });
 
 // ---------- SKU ----------
-/** 選択肢の入力（「サイズ=M, 色=黒」）→ オブジェクト。5 個まで、キー 40 文字・値 60 文字 */
+/** 選択肢の入力（1 行に 1 つ「サイズ=M」）→ オブジェクト。5 個まで、キー 40 文字・値 60 文字。区切りは改行だけ（値にカンマを入れられるように） */
 export function parseOptions(input: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const part of input.split(/[,、\n]/)) {
+  for (const part of input.split(/\r?\n/)) {
     const [k, ...rest] = part.split(/[=＝:：]/);
     const key = (k ?? "").trim().slice(0, 40);
     const value = rest.join("=").trim().slice(0, 60);
@@ -651,10 +652,10 @@ export function parseOptions(input: string): Record<string, string> {
   return out;
 }
 
-function formatOptions(options: Record<string, string | number>): string {
+function formatOptions(options: Record<string, string | number>, separator = ", "): string {
   return Object.entries(options)
     .map(([k, v]) => `${k}=${v}`)
-    .join(", ");
+    .join(separator);
 }
 
 /** SKU の選択肢の欄。軸を決めた商品は軸ごとの欄（値の候補つき）、品番だけの商品は欄なし、決めていなければ自由入力（0065） */
@@ -683,7 +684,9 @@ function SkuOptionFields(props: { sku?: SkuRow; axes: OptionAxes | null | undefi
   return (
     <>
       <label for={`options${suffix}`}>{t("sku.options")}</label>
-      <input id={`options${suffix}`} type="text" name="options" value={s ? formatOptions(s.options ?? {}) : ""} placeholder={t("sku.options_placeholder")} />
+      <textarea id={`options${suffix}`} name="options" rows={3} placeholder={t("sku.options_placeholder")}>
+        {s ? formatOptions(s.options ?? {}, "\n") : ""}
+      </textarea>
     </>
   );
 }
@@ -731,7 +734,7 @@ function MatrixForm(props: { action: string; axes: OptionAxes; slug: string }) {
             </label>
           ))}
           <label for={`mx_other_${i}`}>{t("axes.matrix_other")}</label>
-          <input id={`mx_other_${i}`} type="text" name={`mx_other.${i}`} />
+          <ChipsInput id={`mx_other_${i}`} name={`mx_other.${i}`} values={[]} label={`${a.key} ${t("axes.matrix_other")}`} />
         </fieldset>
       ))}
       <label for="mx_code">{t("axes.matrix_code")}</label>

@@ -62,7 +62,7 @@ describe("商品マスタの拡張: 管理画面", () => {
     const base = `/admin/shops/${shop.id}/products/${product["id"]}`;
     expect((await admin.post(`${base}/skus`, { code: "TEE-M", price_jpy: "3000", compare_at_price_jpy: "3000", available: "1" })).headers.get("location")).toContain("flash=sku_invalid");
     expect((await admin.post(`${base}/skus`, { code: "TEE-M", price_jpy: "3000", gtin: "123", available: "1" })).headers.get("location")).toContain("flash=sku_invalid");
-    res = await admin.post(`${base}/skus`, { code: "TEE-M", price_jpy: "3000", compare_at_price_jpy: "4000", gtin: "4901234567894", options: "サイズ=M, 色＝黒", available: "5" });
+    res = await admin.post(`${base}/skus`, { code: "TEE-M", price_jpy: "3000", compare_at_price_jpy: "4000", gtin: "4901234567894", options: "サイズ=M\n色＝黒", available: "5" });
     expect(res.headers.get("location")).toContain("flash=saved");
     const sku = sb.tables.skus[0]!;
     expect(sku).toMatchObject({ options: { サイズ: "M", 色: "黒" }, gtin: "4901234567894", compare_at_price_jpy: 4000 });
