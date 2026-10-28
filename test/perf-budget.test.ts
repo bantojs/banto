@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
-import { Browser, appWith, memberLogin, memberMail } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, memberLogin, memberMail } from "./helpers";
+import { forgetThemes } from "../src/themes/liquid/cache";
 
 /**
  * 速度の予算（docs/ARCHITECTURE.md「速度の予算」、CLAUDE.md §7）。
@@ -124,5 +125,29 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     } finally {
       mail.dispose();
     }
+  });
+
+  it("Liquid のテーマ（0071）: 初回はプランの確認が 1 回増えるだけ（テーマは置き場から読み、DB は引かない）。2 回目からは TSX と同じ", async () => {
+    forgetThemes();
+    const sb = new FakeSupabase();
+    sb.sitePlan = "paid";
+    const owner = sb.addUser("o@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const p = sb.addProduct(shop.id, { slug: "tee", name: "T", published: true, tags: ["x"] });
+    sb.addSku(shop.id, p.id, { code: "A", price_jpy: 1000, available: 3 });
+    const v = "11111111-2222-4333-8444-555555555555";
+    const row = sb.tables.shops[0]!;
+    row["domain"] = "shop.example.jp";
+    row["theme_public"] = { id: v, storage_key: `themes/${shop.id}/${v}/bundle.json`, settings: {} };
+    const storage = new MemoryStorage(`${BASE}/media`);
+    const files = { "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>", "templates/index.liquid": "{% for p in collection.products %}{{ p.title }}{% endfor %}", "templates/product.liquid": "{{ product.title }}" };
+    await storage.put(`themes/${shop.id}/${v}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
+    const b = new Browser(appWith(sb, {}, storage), "https://shop.example.jp");
+    const cold = await calls(sb, () => b.get("/"));
+    expect(cold.filter((x) => x.includes("banto_site_plan"))).toHaveLength(1);
+    expect(cold).toHaveLength(BUDGET.cold["/my-shop"] + 1);
+    for (const path of ["/", "/p/tee"]) await b.get(path);
+    expect(await calls(sb, () => b.get("/"))).toHaveLength(BUDGET.warm["/my-shop"]);
+    expect(await calls(sb, () => b.get("/p/tee"))).toHaveLength(BUDGET.warm["/my-shop/p/tee"]);
   });
 });

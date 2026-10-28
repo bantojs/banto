@@ -154,6 +154,7 @@ export function createNodeAdapters(env: Record<string, string | undefined> = pro
     scheduler: new IntervalScheduler(),
     // 画像の URL 取り込みは、名前を引いた先が社内のアドレスなら繋がない（監査 M12）
     publicFetch: createPublicFetch(),
+    cpuUnlimited: true,
     socket: nodeSockets,
   };
 }

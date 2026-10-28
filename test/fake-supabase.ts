@@ -1651,6 +1651,8 @@ export class FakeSupabase {
       domain: s["domain"] ?? null, stripe_connected: Boolean(s["stripe_account_id"]),
       settings: publicShopSettings((s["settings"] ?? {}) as Record<string, unknown>),
       legal_links: this.legalLinksLive(s),
+      // 0071: 公開中のテーマの版（独自ドメインのあるショップだけ）。テストは shops の行に theme_public を置く
+      theme: s["domain"] && s["theme_public"] ? s["theme_public"] : null,
     };
   }
 

@@ -107,4 +107,9 @@ export interface Adapters {
   publicFetch?: typeof fetch;
   /** 独自ドメインの提供元。無ければ案内だけ（セルフホストの既定） */
   domain?: DomainAdapter;
+  /**
+   * 1 リクエストの CPU の上限を気にしなくてよいランタイム（Node）。Liquid のテーマは Workers の有料プランかこれのときだけ描く
+   * （docs/themes.md。Workers はサイトの設定 workers_plan で判定する）
+   */
+  cpuUnlimited?: boolean;
 }
