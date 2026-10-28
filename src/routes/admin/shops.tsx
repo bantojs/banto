@@ -9,6 +9,7 @@ import { formatDateTime } from "../../i18n/time";
 import { migrated } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ORDER_LOOKUP_LIMITS_MIGRATION, ORDER_LOOKUP_MIGRATION, orderPageUrl } from "../../orders/lookup";
+import { ACCOUNT_PAGE_MIGRATION, memberAccountPage } from "../../storefront/urls";
 import { LEGAL_CHECK_HOURS, LEGAL_KINDS, LEGAL_LINKS_MIGRATION, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
@@ -51,6 +52,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     legal_links_checked: "legal_links.checked",
     legal_links_invalid: "legal_links.invalid",
     order_page_invalid: "headless.order_page_invalid",
+    account_page_invalid: "headless.account_page_invalid",
     storefront_saved: "sfmode.saved",
     storefront_invalid: "sfmode.invalid",
     domain_saved: "domain.saved",
@@ -173,7 +175,7 @@ function LegalLinksSection(props: { shop: ShopRow }) {
   );
 }
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean; orderPageReady: boolean; orderLimitsReady: boolean }) {
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean; orderPageReady: boolean; orderLimitsReady: boolean; accountPageReady: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -463,6 +465,13 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
                 <p class="muted">{t("headless.order_page_url_hint")}</p>
               </>
             ) : null}
+            {props.accountPageReady ? (
+              <>
+                <label for="account_page_url">{t("headless.account_page_url")}</label>
+                <input id="account_page_url" type="url" name="account_page_url" value={memberAccountPage(shop.settings) ?? ""} placeholder="https://example.com/my-account/" style="width:100%;max-width:40rem" />
+                <p class="muted">{t("headless.account_page_url_hint")}</p>
+              </>
+            ) : null}
             <label for="relay_ips">{t("headless.relay_ips")}</label>
             <textarea id="relay_ips" name="relay_ips" rows={2} style="width:100%;max-width:40rem" placeholder="203.0.113.10">
               {relayIps(shop.settings).join("\n")}
@@ -583,6 +592,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       legalLinksReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, LEGAL_LINKS_MIGRATION))}
       orderPageReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_MIGRATION))}
       orderLimitsReady={await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_LIMITS_MIGRATION)}
+      accountPageReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, ACCOUNT_PAGE_MIGRATION))}
     />,
   );
 });
@@ -800,13 +810,15 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
     const kept = Object.fromEntries(Object.entries(links).filter(([k, v]) => !(LEGAL_KINDS as readonly string[]).includes(k) || (typeof v === "string" && parseLegalUrl(v, origins).ok)));
     headless.legal_links = kept;
   }
-  // 注文照会のページ（0066）。欄はその版が入っているときだけ出る。無ければ今の値を持ち越す（許可から外したサイトなら外す）
-  const orderPage = parseLegalUrl(f.order_page_url ?? (typeof headless.order_page_url === "string" ? headless.order_page_url : ""), origins);
-  if (!orderPage.ok) {
-    if (f.order_page_url !== undefined) return c.redirect(`/admin/shops/${shopId}?flash=order_page_invalid#headless`);
-    delete headless.order_page_url;
-  } else if (orderPage.url) headless.order_page_url = orderPage.url;
-  else delete headless.order_page_url;
+  // 注文照会のページ（0066）・会員ページ（0069）。欄はその版が入っているときだけ出る。無ければ今の値を持ち越す（許可から外したサイトなら外す）
+  for (const [key, flashCode] of [["order_page_url", "order_page_invalid"], ["account_page_url", "account_page_invalid"]] as const) {
+    const page = parseLegalUrl(f[key] ?? (typeof headless[key] === "string" ? headless[key] : ""), origins);
+    if (!page.ok) {
+      if (f[key] !== undefined) return c.redirect(`/admin/shops/${shopId}?flash=${flashCode}#headless`);
+      delete headless[key];
+    } else if (page.url) headless[key] = page.url;
+    else delete headless[key];
+  }
   const limit = (v: string | undefined, dflt: number) => {
     const n = Number.parseInt(v ?? "", 10);
     return Number.isInteger(n) && n >= 1 && n <= 9999 ? n : dflt;

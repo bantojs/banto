@@ -19,7 +19,8 @@ export interface TryonContact {
   customer_phone: string | null;
   note: string | null;
   store: Pick<StoreRow, "name" | "postal_code" | "address" | "phone" | "hours" | "special_days"> & { email: string | null; notify_email: boolean };
-  shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; settings?: Record<string, unknown> | null };
+  /** storefront は 0069 から（お店の画面を使わないショップは、メールの「お店」のリンクを外のサイトへ） */
+  shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; settings?: Record<string, unknown> | null; storefront?: { mode?: string | null; site_url?: string | null } | null };
   items: { name: string | null; sku: string | null; qty: number; unit_price_jpy: number }[];
 }
 
@@ -53,7 +54,11 @@ export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: s
   const out: TryonMail[] = [];
   const shopName = c.shop.name;
   const head = `${c.customer_name ?? "お客"} 様\n\n`;
-  const foot = `${c.shop.contact_email ? `\nお問い合わせ: ${c.shop.contact_email}\n` : ""}${publicBaseUrl || c.shop.domain ? `\n${shopHome(publicBaseUrl ?? "", c.shop)}\n` : ""}\n${shopName}`;
+  // お店のリンク: お店の画面を使わない（off / checkout）ショップは外のサイト、それ以外は Banto のお店のトップ
+  const sf = c.shop.storefront;
+  const site = sf && sf.mode && sf.mode !== "full" && typeof sf.site_url === "string" && sf.site_url.startsWith("https://") ? sf.site_url : null;
+  const home = site ?? (publicBaseUrl || c.shop.domain ? shopHome(publicBaseUrl ?? "", c.shop) : null);
+  const foot = `${c.shop.contact_email ? `\nお問い合わせ: ${c.shop.contact_email}\n` : ""}${home ? `\n${home}\n` : ""}\n${shopName}`;
   if (event === "tryon.requested") {
     if (c.customer_email) {
       const when = c.visit_date ? `ご来店予定日: ${dateLabel(c.visit_date)}\n店舗でご用意ができしだい、あらためてお知らせします。` : "店舗に商品が届きしだい、あらためてお知らせします。";

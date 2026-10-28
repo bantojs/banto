@@ -47,7 +47,7 @@ import { privilegedFor } from "../payment-deps";
 import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
-import { shopHome, shopOrigin } from "../../storefront/urls";
+import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
 import type { AddressFormValues } from "../../themes/types";
 import type { PublicShop } from "../../storefront/data";
@@ -525,22 +525,21 @@ async function withMember(c: Ctx, s: Scope, fn: (db: PrivilegedDb, session: Memb
   return ok;
 }
 
+/** 会員の既定の住所（会員ページとヘッドレスの会員 API で同じ形。都道府県でない値は null） */
+export function memberAddressFrom(f: Record<string, unknown>): { name: string; address: Record<string, unknown> } {
+  const str = (k: string, max: number) => (typeof f[k] === "string" ? (f[k] as string) : "").trim().slice(0, max);
+  const name = str("customer_name", 200);
+  const state = str("state", 20);
+  return {
+    name,
+    address: { name, phone: str("phone", 50), postal_code: str("postal_code", 20), country: "JP", state: isPrefecture(state) ? state : null, city: str("city", 200), line1: str("line1", 200), line2: str("line2", 200) || null },
+  };
+}
+
 members.post("/:shop/account/address", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const f = await formFields(c);
-  const name = (f.customer_name ?? "").trim().slice(0, 200);
-  const state = (f.state ?? "").trim();
-  const address = {
-    name,
-    phone: (f.phone ?? "").trim().slice(0, 50),
-    postal_code: (f.postal_code ?? "").trim().slice(0, 20),
-    country: "JP",
-    state: isPrefecture(state) ? state : null,
-    city: (f.city ?? "").trim().slice(0, 200),
-    line1: (f.line1 ?? "").trim().slice(0, 200),
-    line2: (f.line2 ?? "").trim().slice(0, 200) || null,
-  };
+  const { name, address } = memberAddressFrom(await formFields(c));
   const ok = await withMember(c, s, (db, m) => db.memberSaveAddress(s.shop.id, m.cid, m.ep, name || null, address));
   return c.redirect(ok ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account/login`);
 });
@@ -857,7 +856,7 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
   }
   // 初めての端末なら本人に知らせる（使い回しのパスワードで入られたときに気づけるように）
   if (r.mail_from && r.email && !(await knownDevice(deps.secret, s.shop.id, r.customer_id, c.req.header("cookie")))) {
-    await afterResponse(c, sendPasswordLoginNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+    await afterResponse(c, sendPasswordLoginNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   }
   if (!(await signIn(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
   return c.redirect(`${s.shopPath}/account`);
@@ -887,7 +886,7 @@ members.post("/:shop/account/password", async (c: Ctx) => {
   }
   // 本人に知らせる（盗まれたセッションから足されても気づけるように。送信元が無ければ送らない）
   const ld = loginDeps(c);
-  if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+  if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   return c.redirect(`${s.shopPath}/account?flash=password_saved`);
 });
 

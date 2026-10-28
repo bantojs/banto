@@ -3,16 +3,16 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
-import { returnOrigins, safeReturnUrl } from "../../commerce/checkout";
+import { consentCollected, returnOrigins, safeReturnUrl } from "../../commerce/checkout";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
-import { enabledProviders, loginDeps, membersEnabled, startOAuth } from "../storefront/members";
+import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
 import { afterResponse, clientIpFor, migrationStateFor, param, publicBaseUrl, type Ctx } from "../common";
 import { migrated } from "../../db/migration-state";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
-import { shopHome } from "../../storefront/urls";
+import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
 import type { PrivilegedDb } from "../../db/privileged";
@@ -31,7 +31,9 @@ import { receiptAvailable, receiptData } from "../../modules/receipt/data";
  *   POST /api/shops/:shop/members/verify      { challenge_id, code } か { challenge_id, token } → { access_token, refresh_token, expires_in, member }
  *   POST /api/shops/:shop/members/refresh     { refresh_token } → 新しい組。refresh は 1 回ごとに変わる（前のものは使えない）。
  *        前のものをもう一度使うと、使い回し（盗まれた）と見なしてそのセッションごと取り消す（0045。同時の呼び出しのために、回した直後の 30 秒だけは通す）
- *   GET  /api/shops/:shop/members/me          トークンの会員と、このショップでの注文（住所は返さない）
+ *   GET  /api/shops/:shop/members/me          トークンの会員（名前・既定の住所・案内メールの同意）と、このショップでの注文（注文の住所は返さない）
+ *   POST /api/shops/:shop/members/address     既定の住所を保存 / POST …/marketing-consent { consent } 案内メールの同意 /
+ *   POST …/withdraw { confirm: true } 退会（会員ページと同じ操作。会員本人の操作として）
  *   GET  /api/shops/:shop/members/orders/:number          その会員の注文 1 件（0066。lookup_order と同じ形）と receipt_available
  *   GET  /api/shops/:shop/members/orders/:number/receipt  領収書のデータ（同梱モジュール receipt。JSON だけで、体裁は連携サイト）
  *   POST /api/shops/:shop/members/logout      この端末をログアウト（Bearer か { refresh_token }。セッションを取り消す、0045）
@@ -265,9 +267,48 @@ membersApi.get("/shops/:shop/members/me", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   const rec = await db.memberGet(s.shop.id, s.member.id, s.member.epoch, true);
   if (!rec) return c.json({ error: "invalid_member_token" }, 401);
-  // 住所などの個人情報は返さない（連携側の画面に要るのは注文の状態と金額）
+  // 注文の住所は返さない（連携側の画面に要るのは注文の状態と金額）。会員本人の既定の住所と案内メールの同意は、マイページのために返す
   const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
-  return c.json({ id: rec.customer.id, email: rec.customer.email, orders });
+  const consent = consentCollected(s.shop) ? { marketing_consent: rec.customer.marketing_consent ?? null } : {};
+  return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, orders }, 200, { "cache-control": "no-store" });
+});
+
+/** 既定の住所を保存する（会員ページの「住所を保存」と同じ。チェックアウトの欄の初期値になる） */
+membersApi.post("/shops/:shop/members/address", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const { name, address } = memberAddressFrom(await body(c));
+  const ok = await db.memberSaveAddress(s.shop.id, s.member.id, s.member.epoch, name || null, address);
+  return ok ? c.json({ ok: true, name: name || null, address }) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+/**
+ * 「お得な情報やセールの案内を受け取る」（0050）。会員本人がログインして選ぶので、受け取る（true）も受け取らない（false）も本人の行為
+ * （人間の決定 2026-10-28）。ショップがこの欄を使っていなければ 404
+ */
+membersApi.post("/shops/:shop/members/marketing-consent", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!consentCollected(s.shop)) return c.json({ error: "consent_disabled" }, 404);
+  const consent = (await body(c))["consent"];
+  if (typeof consent !== "boolean") return c.json({ error: "invalid_request", field: "consent" }, 400);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const ok = await db.memberSetMarketingConsent(s.shop.id, s.member.id, s.member.epoch, consent);
+  return ok ? c.json({ ok: true, marketing_consent: consent }) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+/** 退会（会員ページの「退会する」と同じ: 会員の行を消す。注文は残る）。取り消せないので { confirm: true } が要る */
+membersApi.post("/shops/:shop/members/withdraw", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if ((await body(c))["confirm"] !== true) return c.json({ error: "confirm_required" }, 400);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const ok = await db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch);
+  return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
 });
 
 /** 会員の注文 1 件（0066。注文照会のページで会員の注文を開くとき。住所・アドレスは返さない） */
@@ -338,7 +379,7 @@ membersApi.post("/shops/:shop/members/password-login", async (c: Ctx) => {
   const r = await deps.db.memberPasswordLogin(shop.id, str(b["email"]), str(b["password"]), ip ? await ipHash(deps.secret, ip) : null);
   if (!r.ok) return c.json({ error: r.reason === "locked" ? "locked" : "invalid_password" }, r.reason === "locked" ? 429 : 401);
   // ヘッドレスには端末の印が無いので、毎回知らせる（docs/headless.md）
-  if (r.mail_from && r.email) await afterResponse(c, sendPasswordLoginNotice(deps, shop, { from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), shop)}/account` }));
+  if (r.mail_from && r.email) await afterResponse(c, sendPasswordLoginNotice(deps, shop, { from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), shop) }));
   const tokens = await grant(c, deps.db, deps.secret, shop.id, r.customer_id, r.session_epoch);
   if (!tokens) return c.json({ error: "invalid_password" }, 401);
   return c.json({ ...tokens, member: { id: r.customer_id, email: r.email, created: false } });
@@ -356,7 +397,7 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   const r = await deps.db.memberSetPassword(s.shop.id, s.member.id, s.member.epoch, password, s.member.sid);
   if (!r.ok) return r.reason === "reauth" ? c.json({ error: "reauth" }, 403) : c.json({ error: "invalid_member_token" }, 401);
   // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
-  if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+  if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });

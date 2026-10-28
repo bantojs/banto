@@ -32,3 +32,27 @@ export function normalizeDomain(input: string): string | null | "invalid" {
   if (v.length > 253 || !DOMAIN_RE.test(v)) return "invalid";
   return v;
 }
+
+/** 会員ページの URL の設定（0069） */
+export const ACCOUNT_PAGE_MIGRATION = "0069_headless_account_page";
+
+/** 設定された会員ページ（https の文字列だけ。許可リストは保存のときに確かめている）。無ければ null */
+export function memberAccountPage(settings: Record<string, unknown> | null | undefined): string | null {
+  const h = (settings ?? {})["headless"];
+  const v = h && typeof h === "object" && !Array.isArray(h) ? (h as Record<string, unknown>)["account_page_url"] : null;
+  return typeof v === "string" && v.startsWith("https://") ? v : null;
+}
+
+/**
+ * 会員ページの絶対 URL（会員へのお知らせのメールのリンク）。会員ページを連携サイトに向けていれば（settings.headless.account_page_url、0069。
+ * 許可リストのオリジンの https だけ）そこ、無ければ Banto の /account
+ */
+export function memberAccountUrl(baseUrl: string, shop: ShopUrlParts & { settings?: Record<string, unknown> | null }): string {
+  const page = memberAccountPage(shop.settings);
+  const h = (shop.settings ?? {})["headless"];
+  const list = h && typeof h === "object" && !Array.isArray(h) ? (h as Record<string, unknown>)["return_origins"] : null;
+  const origins = Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : [];
+  // 保存のときに確かめているが、許可リストから外れたサイトには向けない
+  if (page && URL.canParse(page) && origins.includes(new URL(page).origin)) return page;
+  return `${shopHome(baseUrl, shop)}/account`;
+}

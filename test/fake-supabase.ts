@@ -3042,7 +3042,8 @@ export class FakeSupabase {
         const product = this.tables.products.find((p) => p["id"] === sku?.["product_id"]);
         return { name: product?.["name"] ?? null, sku: sku?.["name"] ?? sku?.["code"] ?? null, qty: it["qty"], unit_price_jpy: it["unit_price_jpy"] };
       });
-      return json({ ...r, store: st, shop: { name: sh["name"], slug: sh["slug"], domain: sh["domain"] ?? null, contact_email: (sh["settings"] as Row | undefined)?.["contact_email"] ?? null }, items });
+      const sf = ((sh["settings"] as Row | undefined)?.["storefront"] ?? {}) as Row;
+      return json({ ...r, store: st, shop: { name: sh["name"], slug: sh["slug"], domain: sh["domain"] ?? null, contact_email: (sh["settings"] as Row | undefined)?.["contact_email"] ?? null, storefront: { mode: sf["mode"] ?? null, site_url: sf["site_url"] ?? null } }, items });
     }
     if (fn === "restore_tax" || fn === "restore_history") return json({});
     // 0047: 会員の外部の ID と独自項目を id で突き合わせて戻す
