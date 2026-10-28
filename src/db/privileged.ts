@@ -304,8 +304,8 @@ export interface PrivilegedDb {
   memberPasswordLogin(shopId: string, email: string, password: string, ipHash: string | null): Promise<MemberLoginResult>;
   /** パスワードを決める・変える（0013）。新しい世代を返す（世代が合わなければ null） */
   /**
-   * パスワードの設定。0057 以降はログインしてから 15 分以内のセッション（sessionId）だけ（過ぎていれば reason: 'reauth'）。
-   * 成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる）。0057 より前の DB では整数（新しい世代）が返るので、同じ形に直す
+   * パスワードの設定。ログインしてから 15 分以内のセッション（sessionId）だけ（0057。過ぎていれば reason: 'reauth'）。
+   * 成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる）
    */
   memberSetPassword(shopId: string, customerId: string, epoch: number, password: string, sessionId?: string): Promise<MemberSetPasswordResult>;
   /** WordPress のパスワードの取り込み（0013、bcrypt の形式だけ）。呼び出し側が owner の所有を確かめてから呼ぶ */
@@ -520,11 +520,10 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     imageImportFinish: (results) => rpc("image_import_finish", { p_results: results }),
     memberPasswordLogin: (shopId, email, password, ipHash) => rpc("member_password_login", { p_shop_id: shopId, p_email: email, p_password: password, p_ip_hash: ipHash }),
     memberSetPassword: async (shopId, customerId, epoch, password, sessionId) => {
-      const r = await rpc<number | { ok: boolean; reason?: string; epoch?: number; email?: string | null; mail_from?: string | null } | null>("member_set_password", {
+      const r = await rpc<{ ok: boolean; reason?: string; epoch?: number; email?: string | null; mail_from?: string | null } | null>("member_set_password", {
         p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_password: password, ...(sessionId ? { p_session_id: sessionId } : {}),
       });
       if (r === null || r === undefined) return { ok: false, reason: "session" };
-      if (typeof r === "number") return { ok: true, epoch: r, email: null, mail_from: null }; // 0057 より前
       if (r.ok && typeof r.epoch === "number") return { ok: true, epoch: r.epoch, email: r.email ?? null, mail_from: r.mail_from ?? null };
       return { ok: false, reason: r.reason === "reauth" ? "reauth" : "session" };
     },

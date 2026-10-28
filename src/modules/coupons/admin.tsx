@@ -17,10 +17,8 @@ import { moduleEnabled } from "../registry";
 import { customerFields, type CustomerField } from "../../customers/fields";
 import { membersEnabled } from "../../routes/storefront/members";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, splitPage, type PagePosition } from "../../routes/admin/paging";
-import { migrated } from "../../db/migration-state";
 
 /** 管理画面の一覧の材料を表示する分だけ数える（coupon_stats_for）。docs/knowledge/02-decisions.md 2026-10-26 */
-export const ADMIN_LISTS_MIGRATION = "0059_admin_lists";
 
 /**
  * 同梱モジュール「クーポン」（coupons、既定 OFF）の管理画面。docs/coupons.md
@@ -45,14 +43,11 @@ export async function scope(c: AdminContext): Promise<ShopRow | null> {
 const loadCampaigns = (db: DbClient, shopId: string, after?: PagePosition) =>
   db.from<CouponCampaignRow>("coupon_campaigns").select("*", { eq: { shop_id: shopId }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 });
 
-/** 使われた・押さえ中の数。0059 以降は表示するキャンペーンの分だけ数える（それより前はショップ全体） */
+/** 使われた・押さえ中の数。表示するキャンペーンの分だけ数える（0059） */
 async function loadStats(c: AdminContext, shopId: string, campaignIds: string[]): Promise<Record<string, { used: number; held: number }>> {
   const { db } = owner(c);
   try {
-    if (await migrated({ db, cache: c.get("adapters").cache }, ADMIN_LISTS_MIGRATION)) {
-      return campaignIds.length === 0 ? {} : ((await db.rpc<Record<string, { used: number; held: number }> | null>("coupon_stats_for", { p_shop_id: shopId, p_campaign_ids: campaignIds })) ?? {});
-    }
-    return (await db.rpc<Record<string, { used: number; held: number }> | null>("coupon_stats", { p_shop_id: shopId })) ?? {};
+    return campaignIds.length === 0 ? {} : ((await db.rpc<Record<string, { used: number; held: number }> | null>("coupon_stats_for", { p_shop_id: shopId, p_campaign_ids: campaignIds })) ?? {});
   } catch {
     return {};
   }
@@ -600,13 +595,10 @@ const GRANTS_CSV_MAX = 10000;
 /** 発行したクーポン: 状態ごとの数（DB で数える）と、新しい順の 1 ページ（after より後ろ） */
 async function loadGrants(c: AdminContext, shopId: string, campaignId: string, after?: PagePosition) {
   const { db } = owner(c);
-  // 状態ごとの数: 0059 以降は権限を 1 回確かめて数える関数（RLS 越しだと行ごとに権限の関数を呼ぶので 10 万枚で秒単位）
+  // 状態ごとの数: 権限を 1 回確かめて数える関数（0059。RLS 越しだと行ごとに権限の関数を呼ぶので 10 万枚で秒単位）
   const countAll = async (): Promise<number[]> => {
-    if (await migrated({ db, cache: c.get("adapters").cache }, ADMIN_LISTS_MIGRATION)) {
-      const r = (await db.rpc<Record<string, number> | null>("coupon_grant_counts", { p_shop_id: shopId, p_campaign_id: campaignId })) ?? {};
-      return GRANT_STATUSES.map((st) => Number(r[st] ?? 0));
-    }
-    return Promise.all(GRANT_STATUSES.map((status) => db.from<GrantRow>("coupon_grants").count({ eq: { campaign_id: campaignId, status } })));
+    const r = (await db.rpc<Record<string, number> | null>("coupon_grant_counts", { p_shop_id: shopId, p_campaign_id: campaignId })) ?? {};
+    return GRANT_STATUSES.map((st) => Number(r[st] ?? 0));
   };
   const [counts, rows] = await Promise.all([
     countAll(),

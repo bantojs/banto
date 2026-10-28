@@ -3072,6 +3072,8 @@ export class FakeSupabase {
       return json(n);
     }
     if (fn === "mask_tryon_requests") return json(0);
+    if (fn === "mask_inquiries") return json(0);
+    if (fn === "inquiry_attachment_trash_claim") return json([]);
     if (fn === "restore_commerce") {
       // 0022 の受け口だけ再現（中身は DB テスト test/db/tracking.test.ts）
       this.lastRestoreCommerce = args["p_data"] as Record<string, Row[]>;

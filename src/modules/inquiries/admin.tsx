@@ -18,7 +18,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { yen } from "../../routes/common";
 import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } from "./attachments";
-import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_ASSIGNEE_MIGRATION, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
+import { BODY_MAX, INQUIRIES_MODULE, INQUIRY_ASSIGNEE_MIGRATION, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -33,8 +33,7 @@ export const inquiriesAdmin = new Hono<AppEnv>();
 
 async function scope(c: AdminContext): Promise<ShopRow | null> {
   const shop = await loadShop(c, param(c, "shopId"), "support");
-  if (!shop || !moduleEnabled(shop.settings, INQUIRIES_MODULE)) return null;
-  return (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION)) ? shop : null;
+  return shop && moduleEnabled(shop.settings, INQUIRIES_MODULE) ? shop : null;
 }
 
 const base = (shop: ShopRow) => `/admin/shops/${shop.id}/modules/inquiries`;

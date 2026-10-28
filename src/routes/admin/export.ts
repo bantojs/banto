@@ -8,7 +8,6 @@ import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
-import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 import { SKU_IMAGES_MIGRATION } from "../../products/images";
 import { SKU_OPTION_AXES_MIGRATION } from "../../products/option-axes";
 
@@ -40,7 +39,7 @@ const TABLES: { name: string; order: string; eq?: Record<string, string>; column
   { name: "coupon_grants", order: "created_at.asc" },
 ];
 
-/** お問い合わせ（0061）。当たってから書き出す */
+/** お問い合わせ（0061） */
 const INQUIRY_TABLES: typeof TABLES = [
   { name: "inquiries", order: "created_at.asc", columns: "id,number,category,status,origin,contact_email,contact_name,email_verified_at,customer_id,order_id,claimed_order_number,created_at,last_message_at,closed_at,masked_at" },
   { name: "inquiry_messages", order: "created_at.asc", columns: "id,inquiry_id,author,body,created_at" },
@@ -63,8 +62,7 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  const inquiries = await migrated({ db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION);
-  for (const tbl of [...TABLES, ...(inquiries ? INQUIRY_TABLES : [])]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,
@@ -136,7 +134,7 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     // 会員の外部の ID と独自項目（0047）
     Object.assign(counts, await privileged.restoreCustomerMaster(shopId, pick("customers")));
     // お問い合わせとやり取り（0061）。書き出しに入っているときだけ
-    if (pick("inquiries").length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRIES_MIGRATION))) {
+    if (pick("inquiries").length > 0) {
       Object.assign(counts, await privileged.restoreInquiries(shopId, { inquiries: pick("inquiries"), inquiry_messages: pick("inquiry_messages"), orders: pick("orders"), customers: pick("customers") }));
     }
     // 画像を SKU に結んだもの（0063）。結んだ画像があるときだけ

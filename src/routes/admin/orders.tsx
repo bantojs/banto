@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { csvCell } from "../../util/csv";
 import type { AppEnv } from "../../app";
-import { DbError, type Filter } from "../../db/client";
+import { DbError } from "../../db/client";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
 import { selectIn } from "../../db/select-in";
 import type { OrderItemRow, OrderRow, SkuRow } from "../../db/types";
@@ -73,19 +73,13 @@ async function listOrders(c: AdminContext, shopId: string, opts: { limit: number
   const status = c.req.query("status") ?? "";
   const eq: Record<string, string> = { shop_id: shopId };
   if (["paid", "shipped", "cancelled", "refunded"].includes(status)) eq["status"] = status;
-  const where: Filter[] = [];
-  if (q) {
-    const n = /^\d{1,9}$/.test(q) ? Number(q) : null;
-    where.push({ or: [...(n !== null ? [{ col: "number", op: "eq", value: n } as const] : []), { col: "payment_ref", op: "eq", value: q }, { col: "customer_email", op: "contains", value: q }, { col: "customer_name", op: "contains", value: q }] });
-  }
-  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
-  const searched = q ? await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: eq["status"] ? { status: eq["status"] } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" }) : null;
-  if (searched) return { rows: searched, q, status: eq["status"] ?? "" };
+  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
+  if (q) return { rows: await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: eq["status"] ? { status: eq["status"] } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" }), q, status: eq["status"] ?? "" };
   const rows: OrderListRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {
     const n = Math.min(1000, opts.limit - rows.length);
-    const page = await db.from<OrderListRow>("orders").select("*", { eq, where: after ? [...where, olderThan(after)] : where, order: "created_at.desc,id.desc", limit: n });
+    const page = await db.from<OrderListRow>("orders").select("*", { eq, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: n });
     rows.push(...page);
     if (page.length < n) break;
     const last = page[page.length - 1]!;

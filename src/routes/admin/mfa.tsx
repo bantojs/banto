@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { AuthError, verifiedTotp, type TotpEnrollment } from "../../auth/supabase";
 import type { SessionData } from "../../auth/session";
-import { migrated } from "../../db/migration-state";
 import { t, type MessageKey } from "../../i18n";
 import { AdminLayout } from "./layout";
 import { authClient, dbClient, formFields, type AdminContext } from "./context";
@@ -105,9 +104,6 @@ mfa.post("/mfa", async (c: AdminContext) => {
 });
 
 // ---------- 自分の設定: 登録・解除 ----------
-/** 0057: 二段階認証の登録・解除の監査（org_member_mfa_self）が使える DB か */
-const MEMBER_REAUTH_MIGRATION = "0057_member_reauth";
-
 mfa.get("/mfa/setup", async (c: AdminContext) => {
   const session = await loadSession(c);
   const auth = authClient(c);
@@ -239,9 +235,9 @@ mfa.post("/mfa/disable", async (c: AdminContext) => {
   return c.redirect("/admin/mfa/setup?flash=disabled");
 });
 
-/** 二段階認証の登録・解除を監査ログに残す（0057 の org_member_mfa_self。適用前の DB では何もしない） */
+/** 二段階認証の登録・解除を監査ログに残す（0057 の org_member_mfa_self） */
 async function auditMfa(c: AdminContext, session: SessionData, action: "enabled" | "disabled"): Promise<void> {
   const db = dbClient(c, session.access_token);
-  if (!db || !(await migrated({ db, cache: c.get("adapters").cache }, MEMBER_REAUTH_MIGRATION))) return;
+  if (!db) return;
   await db.rpc("org_member_mfa_self", { p_action: action }).catch((e: unknown) => console.error("[banto] mfa audit:", e));
 }

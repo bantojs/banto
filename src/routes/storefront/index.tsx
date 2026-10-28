@@ -4,7 +4,7 @@ import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../store
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import type { AppEnv } from "../../app";
-import { CATALOG_PAGES_MIGRATION, type StorefrontData, type PublicShop } from "../../storefront/data";
+import { type StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
 import { addCoupon, addItem, cartCookieHeader, cartCookieName, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
@@ -187,18 +187,12 @@ function pageUrls(entries: { shop: PublicShop; home: string; own: boolean }[]): 
 }
 
 /**
- * 0060 以降は索引（sitemapindex）: ページのファイル 1 つと、ショップごとの商品のファイル（10,000 件ずつ）。
- * それより前の DB は 1 つのファイルに全部（商品は全件を読む）
+ * 索引（sitemapindex、0060）: ページのファイル 1 つと、ショップごとの商品のファイル（10,000 件ずつ）。
  */
 storefront.get("/sitemap.xml", async (c: Ctx) => {
   const sf = data(c);
   if (!sf) return c.notFound();
   const entries = await sitemapShops(c, sf);
-  if (!(await sf.migratedTo(CATALOG_PAGES_MIGRATION))) {
-    const urls = pageUrls(entries);
-    for (const { shop, home } of entries) if (storefrontSettings(shop.settings).mode === "full") for (const { product } of await sf.listProducts(shop)) urls.push(`${home}/p/${product.slug}`);
-    return xmlResponse(c, urlset(urls.map((u) => `  <url><loc>${xmlEsc(u)}</loc></url>`)));
-  }
   const own = await hostShop(c);
   const files = [own ? `${shopOrigin(publicBaseUrl(c), own)}/sitemap-pages.xml` : `${publicBaseUrl(c)}/sitemap-pages.xml`];
   for (const { shop, home } of entries) {
@@ -218,7 +212,7 @@ storefront.get("/sitemap-pages.xml", async (c: Ctx) => {
 storefront.get("/:shop/:file{sitemap-products-[0-9]{1,4}\\.xml}", async (c: Ctx) => {
   const sf = data(c);
   const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
-  if (!sf || !shop || storefrontSettings(shop.settings).mode !== "full" || !(await sf.migratedTo(CATALOG_PAGES_MIGRATION))) return c.notFound();
+  if (!sf || !shop || storefrontSettings(shop.settings).mode !== "full") return c.notFound();
   const n = Number(/([0-9]+)/.exec(param(c, "file"))![1]);
   if (n < 1) return c.notFound();
   const rows = await sf.productSlugs(shop, (n - 1) * SITEMAP_PRODUCTS_PER_FILE, SITEMAP_PRODUCTS_PER_FILE);
@@ -792,7 +786,7 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     // 確定したときだけ購入とする（注文番号で重ねて数えないのは受け取る側の仕事）
     if (r.status === "confirmed" && r.order) track(c, "purchase", r.order.total_jpy, [], r.order.number);
     // この注文について問い合わせる（同梱モジュール inquiries）: 同じ状態トークンをフォームに渡す（返事は注文時のアドレスへ）
-    const inquiryUrl = r.status === "confirmed" && s.ctx.inquiries && (await inquiriesReady(s.sf, s.shop, s.theme)) ? `${s.ctx.shopPath}/inquiries/new?s=${encodeURIComponent(c.req.query("s") ?? "")}` : null;
+    const inquiryUrl = r.status === "confirmed" && s.ctx.inquiries && inquiriesReady(s.shop, s.theme) ? `${s.ctx.shopPath}/inquiries/new?s=${encodeURIComponent(c.req.query("s") ?? "")}` : null;
     return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free, status: r.status, orderNumber: r.order?.number ?? null, refresh, inquiryUrl }), 200, { "cache-control": "no-store" });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);

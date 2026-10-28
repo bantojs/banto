@@ -57,17 +57,14 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
   // 案内メールの同意で絞る（0050）: yes / no / none（未回答）
   const consent = ["yes", "no", "none"].includes(c.req.query("consent") ?? "") ? c.req.query("consent")! : "";
   const where: Filter[] = [];
-  if (q) where.push({ or: [{ col: "email", op: "contains", value: q }, { col: "name", op: "contains", value: q }] });
-  if (f && v && fields.some((x) => x.key === f)) where.push({ col: `attributes->>${f}`, op: "contains", value: v });
   if (consent) where.push(consent === "none" ? { col: "marketing_consent", op: "is", value: null } : { col: "marketing_consent", op: "is", value: consent === "yes" });
   const attr = Boolean(f && v && fields.some((x) => x.key === f));
   const filtered = Boolean(q || attr || consent || opts.after);
-  // 部分一致（氏名・メール・独自項目）は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
-  const searched =
-    q || attr
-      ? await searchRows<CustomerRow>(c, { kind: "customers", shopId, q, filters: { ...(attr ? { field: f, value: v } : {}), ...(consent ? { consent } : {}) }, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns })
-      : null;
-  if (searched) return { fields, rows: searched, q, f, v, consent, filtered };
+  // 部分一致（氏名・メール・独自項目）は RLS の外の検索の関数で（0059。インデックスが効く）
+  if (q || attr) {
+    const rows = await searchRows<CustomerRow>(c, { kind: "customers", shopId, q, filters: { ...(attr ? { field: f, value: v } : {}), ...(consent ? { consent } : {}) }, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns });
+    return { fields, rows, q, f, v, consent, filtered };
+  }
   const rows: CustomerRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {

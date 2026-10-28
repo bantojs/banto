@@ -99,13 +99,11 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const where: Filter[] = [];
-  if (q) where.push({ or: [{ col: "name", op: "contains", value: q }, { col: "slug", op: "contains", value: q.toLowerCase() }] });
   if (state) where.push({ col: "published", op: "eq", value: state === "published" });
   if (after) where.push(olderThan(after));
   const columns = "id,slug,name,published,created_at";
-  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）。当たる前の DB は PostgREST の ilike
-  const searched = q ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters: state ? { state } : {}, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : null;
-  const page = splitPage(searched ?? (await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 })), (p) => p.created_at);
+  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
+  const page = splitPage(q ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters: state ? { state } : {}, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : (await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 })), (p) => p.created_at);
   const rows = page.rows;
   const filtered = Boolean(q || state || after);
   const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;
