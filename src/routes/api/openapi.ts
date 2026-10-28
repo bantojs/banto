@@ -78,6 +78,15 @@ export function openapiDocument(origin: string, version: string): Record<string,
         patch: { summary: "SKU を更新（products:write）。available で在庫数を直接セット", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ code: str, name: str, price_jpy: int, available: int, options: objAny, compare_at_price_jpy: nullableInt, gtin: str }) } } }, responses: { 200: resp("ok", product), ...errors } },
         delete: { summary: "SKU を削除（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], responses: { 200: resp("ok", product), ...errors } },
       },
+      "/products/{id}/option-axes": {
+        put: {
+          summary: "商品の SKU を分ける軸を決める（products:write。0065）。[] は品番だけ、null は決めない。今の SKU が合わなければ 400 option_axes_mismatch",
+          security: bearer,
+          parameters: [{ name: "id", in: "path", required: true, schema: str }],
+          requestBody: { required: true, content: { "application/json": { schema: obj({ option_axes: { type: ["array", "null"], maxItems: 3, items: obj({ key: str, values: { type: "array", items: str, maxItems: 100 } }, ["key"]) } }, ["option_axes"]) } } },
+          responses: { 200: resp("product", product), ...errors },
+        },
+      },
       "/images/{id}": {
         delete: { summary: "画像を削除（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], responses: { 204: resp("deleted"), ...errors } },
         patch: {

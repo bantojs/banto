@@ -60,6 +60,8 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "inquiry_admin_get", "inquiry_attachment_admin_get", "inquiry_delete", "inquiry_reply", "inquiry_set_status",
   "legal_links_record", // 0062: 法務のページの外の URL の確認結果（中で integrations の項目を確かめる）
   "banto_image_options_ok", // 0063: product_images.options の CHECK（値の形を見るだけ）
+  "banto_option_axes_ok", // 0065: shops / categories / products の option_axes の CHECK（値の形を見るだけ）
+  "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
 ]);
 

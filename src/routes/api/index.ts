@@ -15,6 +15,7 @@ import { memberCors, membersApi } from "./members";
 import { tryonApi } from "./tryon";
 import { inquiriesApi } from "./inquiries";
 import { imageOptionsOf } from "../../products/images";
+import { displayOptionAxes } from "../../products/option-axes";
 import { publicOpenapiDocument } from "./openapi-public";
 
 /**
@@ -176,6 +177,8 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       images: detail.images.map((i) => imageUrl(d.mediaBaseUrl, i.storage_key)),
       image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height, options: imageOptionsOf(i.options) })),
       skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
+      /** SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値（出てくる順）。軸の無い商品は [] */
+      option_axes: optionAxesForSelect(p.option_axes, detail.skus),
     },
   });
 });
@@ -192,6 +195,13 @@ api.get("/shops/:shop/categories", async (c: Ctx) => {
   const walk = (nodes: CategoryNode[]): Node[] => nodes.map((n) => ({ slug: n.slug, name: n.name, count: facets.categories[n.id] ?? 0, children: walk(n.children) }));
   return c.json({ categories: walk(categoryTree(categories)) });
 });
+
+function optionAxesForSelect(axes: unknown, skus: readonly { options?: Record<string, string | number> }[]): { key: string; values: string[] }[] {
+  return displayOptionAxes(axes, skus).map((a) => ({
+    key: a.key,
+    values: [...new Set(skus.map((k) => String((k.options ?? {})[a.key] ?? "").trim()).filter(Boolean))],
+  }));
+}
 
 function categoryRef(cat: CategoryRow | undefined): { slug: string; name: string } | null {
   return cat ? { slug: cat.slug, name: cat.name } : null;

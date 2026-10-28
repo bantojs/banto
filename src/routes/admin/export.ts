@@ -10,6 +10,7 @@ import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
 import { INQUIRIES_MIGRATION } from "../../modules/inquiries";
 import { SKU_IMAGES_MIGRATION } from "../../products/images";
+import { SKU_OPTION_AXES_MIGRATION } from "../../products/option-axes";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -115,6 +116,9 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
   if (!url || !serviceRoleKey) return c.redirect(`${base}?flash=generic`);
   try {
     const privileged = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
+    // SKU を分ける軸（0065）: 戻す間はショップの既定を外す（商品を戻したときに既定が写り、SKU が合わずに止まらないように）。最後に戻す
+    const axesOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION);
+    if (axesOn && shop.option_axes !== null && shop.option_axes !== undefined) await privileged.restoreOptionAxes(shopId, { shop: null });
     const counts = await privileged.restoreShopData(shopId, tables);
     // 0006 が知らない列（タグ・カテゴリー・ブランド・カスタム項目・SKU の拡張）を戻す（0008）
     Object.assign(counts, await privileged.restoreCatalog(shopId, { categories: tables["categories"] ?? [], products: tables["products"] ?? [], skus: tables["skus"] ?? [] }));
@@ -141,6 +145,19 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
       .map((r) => ({ storage_key: r["storage_key"], options: r["options"] }));
     if (imageOptions.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION))) {
       Object.assign(counts, await privileged.restoreProductImageOptions(shopId, imageOptions));
+    }
+    if (axesOn) {
+      const backupShop = (parsed as { shop?: { option_axes?: unknown } }).shop;
+      const shopAxes = backupShop && "option_axes" in backupShop ? backupShop.option_axes : (shop.option_axes ?? null);
+      const rows = (name: string) => pick(name).filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && Array.isArray((r as Record<string, unknown>)["option_axes"]));
+      Object.assign(
+        counts,
+        await privileged.restoreOptionAxes(shopId, {
+          shop: shopAxes ?? null,
+          categories: rows("categories").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"] })),
+          products: rows("products").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"], option_axes_custom: r["option_axes_custom"] === true })),
+        }),
+      );
     }
     const detail = Object.entries(counts)
       .map(([k, v]) => `${k}: ${v}`)

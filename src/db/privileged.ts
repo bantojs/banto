@@ -392,6 +392,8 @@ export interface PrivilegedDb {
   restoreInquiries(shopId: string, data: Record<string, unknown[]>): Promise<Record<string, number>>;
   /** 画像を SKU に結んだもの（0063）を、復元した画像に写す（キーで結ぶ） */
   restoreProductImageOptions(shopId: string, items: { storage_key: unknown; options: unknown }[]): Promise<Record<string, number>>;
+  /** SKU を分ける軸（0065）。ショップ・カテゴリー・商品の軸を戻す（商品は SKU に合うものだけ）。{ shop: null } だけで呼ぶと既定を外す */
+  restoreOptionAxes(shopId: string, data: { shop?: unknown; categories?: unknown[]; products?: unknown[] }): Promise<Record<string, number>>;
   /**
    * AI 用トークン経由の操作（docs/ai-access.md）。呼べるのは api_* だけで、各 RPC が SQL 側で
    * トークン・スコープ・ショップ所有を検証する。p_token_hash は Worker で SHA-256 にした値。
@@ -595,6 +597,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     restoreCustomerMaster: (shopId, customers) => rpc("restore_customer_master", { p_shop_id: shopId, p_data: { customers } }),
     restoreInquiries: (shopId, data) => rpc("restore_inquiries", { p_shop_id: shopId, p_data: data }),
     restoreProductImageOptions: (shopId, items) => rpc("restore_product_image_options", { p_shop_id: shopId, p_items: items }),
+    restoreOptionAxes: (shopId, data) => rpc("restore_option_axes", { p_shop_id: shopId, p_data: data }),
     async shopStripeAccount(shopId) {
       // お客様の画面（anon）には渡さない列（0028）。決済ページを作るときだけ service_role で読む
       const res = await doFetch(`${base}/rest/v1/shops?select=stripe_account_id&id=eq.${encodeURIComponent(shopId)}`, { headers });

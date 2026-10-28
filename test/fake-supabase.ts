@@ -724,6 +724,11 @@ export class FakeSupabase {
           row["org_id"] = this.orgMembers.find((m) => m.user_id === uid && m.role !== "member")?.org_id ?? null;
           if (row["owner_id"] && !this.owners.has(String(row["owner_id"]))) row["owner_id"] = null;
         }
+        if (table === "products" && (row["option_axes"] === undefined || row["option_axes"] === null) && !row["option_axes_custom"]) row["option_axes"] = this.resolveAxes(String(row["shop_id"]), (row["category_id"] as string | null) ?? null);
+        if (table === "skus") {
+          const bad = this.axesViolation(row);
+          if (bad) return json({ code: "P0001", message: bad }, 400);
+        }
         if (table === "skus") this.tables.inventory.push({ sku_id: row["id"], shop_id: row["shop_id"], available: 0, updated_at: this.now() });
         if (table === "product_images" && !Object.keys((row["options"] as Row | undefined) ?? {}).length) {
           row["options"] = this.imageHints.find((h) => h.product_id === row["product_id"] && String(row["storage_key"]).includes(h.tag))?.options ?? {};
@@ -744,6 +749,15 @@ export class FakeSupabase {
           return json({ code: "23514", message: 'new row for relation "shops" violates check constraint "shops_publish_requires_legal"' }, 400);
         }
         if (this.uniqueViolation(table, next, r["id"])) return json({ code: "23505", message: "duplicate key value violates unique constraint" }, 409);
+        // 0065 の守り（規則は test/db/sku-option-axes.test.ts）
+        if (table === "skus" && "options" in values) {
+          const bad = this.axesViolation(next);
+          if (bad) return json({ code: "P0001", message: bad }, 400);
+        }
+        if (table === "products" && "option_axes" in values && Array.isArray(next["option_axes"]) && JSON.stringify(next["option_axes"]) !== JSON.stringify(r["option_axes"])) {
+          const bad = this.productAxesViolation(String(r["id"]), next["option_axes"] as Row[]);
+          if (bad) return json({ code: "P0001", message: bad }, 400);
+        }
         Object.assign(r, next);
         updated.push(r);
       }
@@ -755,6 +769,45 @@ export class FakeSupabase {
       return new Response(null, { status: 204 });
     }
     return json({ message: "method not allowed" }, 405);
+  }
+
+  /** 0065: 主カテゴリーから上へ、無ければショップの軸 */
+  resolveAxes(shopId: string, categoryId: string | null): unknown {
+    let cur = categoryId ? this.tables.categories.find((c) => c["id"] === categoryId && c["shop_id"] === shopId) : undefined;
+    for (let i = 0; cur && i < 10; i++) {
+      if (cur["option_axes"] !== undefined && cur["option_axes"] !== null) return cur["option_axes"];
+      const parent = cur["parent_id"];
+      cur = parent ? this.tables.categories.find((c) => c["id"] === parent) : undefined;
+    }
+    return this.tables.shops.find((x) => x["id"] === shopId)?.["option_axes"] ?? null;
+  }
+
+  private static fits(options: unknown, axes: Row[]): boolean {
+    const o = (options ?? {}) as Record<string, unknown>;
+    const keys = Object.keys(o).sort();
+    const want = axes.map((a) => String(a["key"])).sort();
+    return keys.length === want.length && keys.every((k, i) => k === want[i]) && Object.values(o).every((v) => String(v ?? "").trim() !== "");
+  }
+
+  private static sameOptions(a: unknown, b: unknown): boolean {
+    const norm = (o: unknown) => JSON.stringify(Object.entries((o ?? {}) as Record<string, unknown>).sort());
+    return norm(a) === norm(b);
+  }
+
+  /** SKU の行が商品の軸に合わなければエラーの文 */
+  private axesViolation(sku: Row): string | null {
+    const axes = this.tables.products.find((p) => p["id"] === sku["product_id"])?.["option_axes"];
+    if (!Array.isArray(axes)) return null;
+    if (!FakeSupabase.fits(sku["options"], axes as Row[])) return "option_axes_mismatch";
+    if (axes.length > 0 && this.tables.skus.some((k) => k["product_id"] === sku["product_id"] && k["id"] !== sku["id"] && FakeSupabase.sameOptions(k["options"], sku["options"]))) return "option_combination_exists";
+    return null;
+  }
+
+  private productAxesViolation(productId: string, axes: Row[]): string | null {
+    const skus = this.tables.skus.filter((k) => k["product_id"] === productId);
+    if (skus.some((k) => !FakeSupabase.fits(k["options"], axes))) return "option_axes_mismatch";
+    if (axes.length > 0 && skus.some((k, i) => skus.some((o, j) => j > i && FakeSupabase.sameOptions(k["options"], o["options"])))) return "option_combination_exists";
+    return null;
   }
 
   private cascadeDelete(table: TableName, row: Row) {
@@ -1149,6 +1202,30 @@ export class FakeSupabase {
     if (fn === "sales_summary") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json({ code: "42501", message: "shop_not_found" }, 403);
       return json(this.salesSummary(args["p_shop_id"] as string, String(args["p_from"]), String(args["p_to"]), String(args["p_group_by"] ?? "day")));
+    }
+    if (fn === "option_axes_apply") {
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const root = (args["p_category_id"] as string | null) ?? null;
+      const tree = new Set<string>();
+      if (root) {
+        tree.add(root);
+        for (let changed = true; changed; ) {
+          changed = false;
+          for (const c of this.tables.categories) if (c["shop_id"] === shopId && c["parent_id"] && tree.has(String(c["parent_id"])) && !tree.has(String(c["id"]))) (tree.add(String(c["id"])), (changed = true));
+        }
+      }
+      let applied = 0, unchanged = 0;
+      const skipped: Row[] = [];
+      for (const p of this.tables.products.filter((x) => x["shop_id"] === shopId && !x["option_axes_custom"] && (!root || tree.has(String(x["category_id"]))))) {
+        const axes = this.resolveAxes(shopId, (p["category_id"] as string | null) ?? null);
+        if (JSON.stringify(axes ?? null) === JSON.stringify(p["option_axes"] ?? null)) { unchanged++; continue; }
+        const bad = Array.isArray(axes) ? this.productAxesViolation(String(p["id"]), axes as Row[]) : null;
+        if (bad) { skipped.push({ slug: p["slug"], reason: bad }); continue; }
+        p["option_axes"] = axes;
+        applied++;
+      }
+      return json({ applied, unchanged, skipped });
     }
     if (fn === "product_image_hints_set") {
       const shopId = args["p_shop_id"] as string;
@@ -1642,6 +1719,7 @@ export class FakeSupabase {
       id: p["id"], slug: p["slug"], name: p["name"], description: p["description"] ?? null, tags: p["tags"] ?? [], brand: p["brand"] ?? null, attributes: p["attributes"] ?? {},
       category: (() => { const c = this.tables.categories.find((x) => x["id"] === p["category_id"]); return c ? { id: c["id"], slug: c["slug"], name: c["name"], parent_id: c["parent_id"] ?? null, sort_order: c["sort_order"] ?? 0 } : null; })(),
       extra_categories: ((p["extra_category_ids"] ?? []) as string[]).flatMap((id) => this.tables.categories.filter((c) => c["id"] === id).map((c) => ({ id: c["id"], slug: c["slug"], name: c["name"], parent_id: c["parent_id"] ?? null, sort_order: c["sort_order"] ?? 0 }))),
+      option_axes: p["option_axes"] ?? null,
       published: p["published"], created_at: p["created_at"], updated_at: p["updated_at"],
       images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"], options: i["options"] ?? {} })),
       skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ id: k["id"], code: k["code"], name: k["name"] ?? null, price_jpy: k["price_jpy"], compare_at_price_jpy: k["compare_at_price_jpy"] ?? null, options: k["options"] ?? {}, gtin: k["gtin"] ?? null, available: this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0 })),
@@ -1956,6 +2034,8 @@ export class FakeSupabase {
         if (!p) return notFound();
         const v = args["p_values"] as Row;
         if (this.tables.skus.some((k) => k["shop_id"] === shopId && k["code"] === v["code"])) return json({ code: "23505", message: "duplicate key value violates unique constraint" }, 409);
+        const badAxes = this.axesViolation({ id: null, product_id: p["id"], options: (v["options"] as Row) ?? {} });
+        if (badAxes) return json({ code: "P0001", message: badAxes }, 400);
         this.addSku(shopId, p["id"] as string, { code: v["code"], name: v["name"] ?? null, price_jpy: v["price_jpy"], options: (v["options"] as Row) ?? {}, gtin: v["gtin"] ?? null, compare_at_price_jpy: v["compare_at_price_jpy"] ?? null, available: Number(v["available"] ?? 0) });
         return json(product(p));
       }
@@ -1964,6 +2044,10 @@ export class FakeSupabase {
         const k = mine(this.tables.skus.find((x) => x["id"] === args["p_sku_id"]));
         if (!k) return notFound();
         const v = args["p_values"] as Row;
+        if (v["options"] !== undefined) {
+          const badAxes = this.axesViolation({ ...k, options: v["options"] });
+          if (badAxes) return json({ code: "P0001", message: badAxes }, 400);
+        }
         for (const key of ["code", "name", "price_jpy", "options", "gtin", "compare_at_price_jpy"]) if (v[key] !== undefined) k[key] = v[key];
         if (v["available"] !== undefined) {
           if (Number(v["available"]) < 0) return json({ code: "P0001", message: "invalid_available" }, 400);
@@ -2013,6 +2097,19 @@ export class FakeSupabase {
         const id = `img-${++this.seq}`;
         this.tables.product_images.push({ id, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now(), options: args["p_options"] ?? {} });
         return json({ image_id: id, product: product(p) });
+      }
+      case "api_product_set_option_axes": {
+        if (!need("products:write")) return unauthorized();
+        const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
+        if (!p) return notFound();
+        const axes = args["p_axes"] ?? null;
+        if (axes !== null && (!Array.isArray(axes) || axes.length > 3 || axes.some((a) => !a || typeof (a as Row)["key"] !== "string" || !(a as Row)["key"]))) return json({ code: "P0001", message: "invalid_option_axes" }, 400);
+        if (Array.isArray(axes)) {
+          const bad = this.productAxesViolation(String(p["id"]), axes as Row[]);
+          if (bad) return json({ code: "P0001", message: bad }, 400);
+        }
+        Object.assign(p, { option_axes: axes, option_axes_custom: axes !== null });
+        return json(product(p));
       }
       case "api_image_set_options": {
         // 0063: 形の検査（banto_image_options_ok）は test/db/sku-images.test.ts（本物の SQL）
@@ -2841,6 +2938,21 @@ export class FakeSupabase {
     if (fn === "record_heartbeat") {
       this.heartbeats.set(String(args["p_name"]), Date.now());
       return new Response(null, { status: 204 });
+    }
+    if (fn === "restore_option_axes") {
+      const shopId = args["p_shop_id"] as string;
+      const d = args["p_data"] as { shop?: unknown; categories?: Row[]; products?: Row[] };
+      if ("shop" in d) this.tables.shops.find((x) => x["id"] === shopId)!["option_axes"] = d.shop ?? null;
+      let c = 0, p = 0, skip = 0;
+      for (const x of d.categories ?? []) { const row = this.tables.categories.find((r) => r["shop_id"] === shopId && r["slug"] === x["slug"]); if (row) { row["option_axes"] = x["option_axes"]; c++; } }
+      for (const x of d.products ?? []) {
+        const row = this.tables.products.find((r) => r["shop_id"] === shopId && r["slug"] === x["slug"]);
+        if (!row) continue;
+        if (this.productAxesViolation(String(row["id"]), x["option_axes"] as Row[])) { skip++; continue; }
+        Object.assign(row, { option_axes: x["option_axes"], option_axes_custom: x["option_axes_custom"] === true });
+        p++;
+      }
+      return json({ option_axes_categories: c, option_axes_products: p, option_axes_skipped: skip });
     }
     if (fn === "restore_product_image_options") {
       let n = 0;

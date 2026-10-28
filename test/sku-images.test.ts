@@ -92,7 +92,7 @@ describe("SKU ごとの画像: お店の画面", () => {
     const html = await (await new Browser(app).get("/my-shop/p/tee?sku=TEE-RED-L")).text();
     expect(html).not.toContain("data-sku-images");
     expect(html).not.toContain("data-image-options");
-    expect(html).not.toContain('getElementById("sku_id")');
+    expect(html).not.toContain(".gallery[data-sku-images]");
     expect(mainSrc(html)).toBe(`${BASE}/media/shops/s/all.webp`);
   });
 

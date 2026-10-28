@@ -18,6 +18,8 @@ import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
 import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices, SKU_IMAGES_MIGRATION } from "../../products/images";
 import { migrated } from "../../db/migration-state";
+import { MAX_COMBINATIONS, SKU_OPTION_AXES_MIGRATION, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
+import { AxesEditor, axesErrorCode, axesText } from "./option-axes";
 
 export const products = new Hono<AppEnv>();
 
@@ -33,10 +35,22 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     image_type: "image.invalid_type",
     image_size: "image.too_large",
     generic: "error.generic",
+    axes_saved: "axes.saved",
+    axes_invalid: "axes.invalid",
+    axes_mismatch: "axes.mismatch",
+    axes_duplicate: "axes.duplicate",
+    infer_failed: "axes.infer_failed",
+    matrix_empty: "axes.matrix_empty",
   };
+  if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
   const key = map[code];
   if (!key) return null;
-  return { kind: code === "saved" ? "ok" : "error", text: t(key) };
+  return { kind: code === "saved" || code === "axes_saved" ? "ok" : "error", text: t(key) };
+}
+
+/** 一括作成の結果（?flash=matrix&n=&skip=） */
+function matrixFlash(q: (k: string) => string | undefined): string | null {
+  return q("flash") === "matrix" ? tf("axes.matrix_created", { n: q("n") ?? "0", skip: q("skip") ?? "0" }) : null;
 }
 
 const Flash = (props: { flash: ReturnType<typeof flash> }) =>
@@ -361,6 +375,11 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const catalog = await catalogContext(c, shop);
   // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
   const optionChoices = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION)) ? skuOptionChoices(skus) : [];
+  // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
+  const axesOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION);
+  const axes = axesOn ? optionAxesOf(product.option_axes) : null;
+  const upper = axesOn ? resolveOptionAxes(catalog.categories, product.category_id, shop.option_axes) : null;
+  const matrixMsg = matrixFlash((k) => c.req.query(k));
 
   return c.html(
     <AdminLayout title={`${product.name} · ${t("product.edit")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list"), href: `/admin/shops/${shop.id}/products` }, { label: product.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
@@ -380,8 +399,47 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         </a>
       </PageHead>
       <Flash flash={flash(c.req.query("flash"))} />
+      {matrixMsg ? <p class="notice">{matrixMsg}</p> : null}
       {product.published && !shop.published ? <p class="notice">{t("product.unpublished_shop")}</p> : null}
       <ProductForm action={base} product={product} catalog={catalog} />
+
+      {axesOn && upper ? (
+        <section class="card" id="option-axes">
+          <h2>{t("axes.title")}</h2>
+          <p>
+            {t("axes.current")}: <strong>{axesText(product.option_axes ?? null)}</strong>
+            {product.option_axes_custom ? <span class="muted"> （{t("axes.custom")}）</span> : null}
+          </p>
+          <p class="muted">
+            {tf("axes.upper", { label: axesText(upper.axes), from: upper.from ? (upper.from.kind === "category" ? tf("axes.from_category", { name: upper.from.name }) : t("axes.from_shop")) : t("axes.from_none") })}
+          </p>
+          <details>
+            <summary>{t("product.edit")}</summary>
+            <form method="post" action={`${base}/option-axes`}>
+              <AxesEditor name={product.name} axes={product.option_axes ?? null} modes={["none", "only_code", "axes"]} />
+              <button type="submit" class="secondary">
+                {t("shop.save")}
+              </button>
+            </form>
+          </details>
+          <p>
+            {JSON.stringify(upper.axes) !== JSON.stringify(axes) || product.option_axes_custom ? (
+              <form method="post" action={`${base}/option-axes/reset`} style="display:inline">
+                <button type="submit" class="secondary small">
+                  {t("axes.reset")}
+                </button>
+              </form>
+            ) : null}{" "}
+            {skus.length > 0 ? (
+              <form method="post" action={`${base}/option-axes/infer`} style="display:inline">
+                <button type="submit" class="secondary small">
+                  {t("axes.infer")}
+                </button>
+              </form>
+            ) : null}
+          </p>
+        </section>
+      ) : null}
 
       <h2 id="skus">{t("sku.list")}</h2>
       {skus.length === 0 ? (
@@ -417,7 +475,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
                   <details>
                     <summary>{t("sku.edit")}</summary>
                     <form method="post" action={`${base}/skus/${s.id}`}>
-                      <SkuFields sku={s} />
+                      <SkuFields sku={s} axes={axes} />
                       <button type="submit">{t("shop.save")}</button>
                     </form>
                   </details>
@@ -450,13 +508,14 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         <input id="sku_name" type="text" name="name" maxlength={200} />
         <label for="price_jpy">{t("sku.price")}</label>
         <input id="price_jpy" type="number" name="price_jpy" min={0} step={1} required />
-        <SkuExtraFields />
+        <SkuExtraFields axes={axes} />
         <label for="available">{t("sku.stock")}</label>
         <input id="available" type="number" name="available" min={0} step={1} value="0" />
         <p>
           <button type="submit">{t("sku.add")}</button>
         </p>
       </form>
+      {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} /> : null}
 
       <h2 id="images">{t("image.list")}</h2>
       {images.length === 0 ? (
@@ -598,13 +657,43 @@ function formatOptions(options: Record<string, string | number>): string {
     .join(", ");
 }
 
-function SkuExtraFields(props: { sku?: SkuRow }) {
+/** SKU の選択肢の欄。軸を決めた商品は軸ごとの欄（値の候補つき）、品番だけの商品は欄なし、決めていなければ自由入力（0065） */
+function SkuOptionFields(props: { sku?: SkuRow; axes: OptionAxes | null | undefined; suffix: string }) {
+  const { sku: s, axes, suffix } = props;
+  if (axes && axes.length === 0) return <input type="hidden" name="options_mode" value="none" />;
+  if (axes) {
+    return (
+      <fieldset>
+        <legend>{t("axes.sku_options")}</legend>
+        <input type="hidden" name="options_mode" value="axes" />
+        {axes.map((a, i) => (
+          <span style="display:inline-block;margin-right:.75rem">
+            <label for={`opt${suffix}_${i}`}>{a.key}</label>
+            <input id={`opt${suffix}_${i}`} type="text" name={`opt.${i}`} value={s ? String((s.options ?? {})[a.key] ?? "") : ""} required maxlength={60} list={`axis${suffix}_${i}`} style="width:9rem" />
+            <datalist id={`axis${suffix}_${i}`}>
+              {(a.values ?? []).map((v) => (
+                <option value={v} />
+              ))}
+            </datalist>
+          </span>
+        ))}
+      </fieldset>
+    );
+  }
+  return (
+    <>
+      <label for={`options${suffix}`}>{t("sku.options")}</label>
+      <input id={`options${suffix}`} type="text" name="options" value={s ? formatOptions(s.options ?? {}) : ""} placeholder={t("sku.options_placeholder")} />
+    </>
+  );
+}
+
+function SkuExtraFields(props: { sku?: SkuRow; axes?: OptionAxes | null }) {
   const s = props.sku;
   const suffix = s ? `_${s.id}` : "";
   return (
     <div>
-      <label for={`options${suffix}`}>{t("sku.options")}</label>
-      <input id={`options${suffix}`} type="text" name="options" value={s ? formatOptions(s.options ?? {}) : ""} placeholder={t("sku.options_placeholder")} />
+      <SkuOptionFields sku={s} axes={props.axes} suffix={suffix} />
       <label for={`compare_at${suffix}`}>{t("sku.compare_at")}</label>
       <input id={`compare_at${suffix}`} type="number" name="compare_at_price_jpy" min={0} step={1} value={s?.compare_at_price_jpy ? String(s.compare_at_price_jpy) : ""} />
       <label for={`gtin${suffix}`}>{t("sku.gtin")}</label>
@@ -613,7 +702,7 @@ function SkuExtraFields(props: { sku?: SkuRow }) {
   );
 }
 
-function SkuFields(props: { sku: SkuRow }) {
+function SkuFields(props: { sku: SkuRow; axes?: OptionAxes | null }) {
   const s = props.sku;
   return (
     <div>
@@ -621,20 +710,74 @@ function SkuFields(props: { sku: SkuRow }) {
       <input id={`name_${s.id}`} type="text" name="name" value={s.name ?? ""} maxlength={200} />
       <label for={`price_${s.id}`}>{t("sku.price")}</label>
       <input id={`price_${s.id}`} type="number" name="price_jpy" min={0} step={1} required value={String(s.price_jpy)} />
-      <SkuExtraFields sku={s} />
+      <SkuExtraFields sku={s} axes={props.axes} />
     </div>
   );
 }
 
+/** 組み合わせの一括作成（0065）。値の候補にチェック・ほかの値を足す → 組み合わせの数だけ SKU */
+function MatrixForm(props: { action: string; axes: OptionAxes; slug: string }) {
+  const pattern = [props.slug.toUpperCase(), ...props.axes.map((a) => `{${a.key}}`)].join("-");
+  return (
+    <form method="post" action={props.action} class="card">
+      <h3>{t("axes.matrix")}</h3>
+      <p class="muted">{tf("axes.matrix_hint", { max: MAX_COMBINATIONS })}</p>
+      {props.axes.map((a, i) => (
+        <fieldset>
+          <legend>{a.key}</legend>
+          {(a.values ?? []).map((v) => (
+            <label style="display:inline-block;margin-right:.75rem">
+              <input type="checkbox" name={`mx.${i}`} value={v} checked /> {v}
+            </label>
+          ))}
+          <label for={`mx_other_${i}`}>{t("axes.matrix_other")}</label>
+          <input id={`mx_other_${i}`} type="text" name={`mx_other.${i}`} />
+        </fieldset>
+      ))}
+      <label for="mx_code">{t("axes.matrix_code")}</label>
+      <input id="mx_code" type="text" name="code_pattern" value={pattern} required maxlength={100} />
+      <label for="mx_price">{t("sku.price")}</label>
+      <input id="mx_price" type="number" name="price_jpy" min={0} step={1} required />
+      <label for="mx_stock">{t("sku.stock")}</label>
+      <input id="mx_stock" type="number" name="available" min={0} step={1} value="0" />
+      <p>
+        <button type="submit">{t("axes.matrix")}</button>
+      </p>
+    </form>
+  );
+}
+
 /** SKU の拡張欄（0008）。フォームに欄が出ていたときだけ値を返す。不正なら "sku_invalid" */
-function skuExtraValues(f: Record<string, string>, price: number): Partial<SkuRow> | "sku_invalid" {
-  if (f.options === undefined && f.gtin === undefined && f.compare_at_price_jpy === undefined) return {};
+function skuExtraValues(f: Record<string, string>, price: number, axes: OptionAxes | null = null): Partial<SkuRow> | "sku_invalid" {
+  if (f.options === undefined && f.options_mode === undefined && f.gtin === undefined && f.compare_at_price_jpy === undefined) return {};
   const gtin = (f.gtin ?? "").trim();
   if (gtin && !/^([0-9]{8}|[0-9]{12,14})$/.test(gtin)) return "sku_invalid";
   const compareRaw = (f.compare_at_price_jpy ?? "").trim();
   const compare = compareRaw === "" ? null : Number.parseInt(compareRaw, 10);
   if (compare !== null && (!Number.isInteger(compare) || compare <= price)) return "sku_invalid";
-  return { options: parseOptions(f.options ?? ""), gtin: gtin || null, compare_at_price_jpy: compare };
+  return { options: skuOptionsFromForm(f, axes), gtin: gtin || null, compare_at_price_jpy: compare };
+}
+
+/** 選択肢の欄 → options。軸ごとの欄（opt.0 …）なら軸の鍵で、品番だけなら空、自由入力なら「サイズ=M, 色=黒」 */
+function skuOptionsFromForm(f: Record<string, string>, axes: OptionAxes | null): Record<string, string> {
+  if (f.options_mode === "none") return {};
+  if (f.options_mode === "axes" && axes) {
+    const out: Record<string, string> = {};
+    axes.forEach((a, i) => {
+      const v = (f[`opt.${i}`] ?? "").trim().slice(0, 60);
+      if (v) out[a.key] = v;
+    });
+    return out;
+  }
+  return parseOptions(f.options ?? "");
+}
+
+/** 商品の軸（SKU を書くときの欄の読み方に使う。0065 の前なら null） */
+async function productAxes(c: AdminContext, shopId: string, productId: string): Promise<OptionAxes | null> {
+  const { db } = owner(c);
+  if (!(await migrated({ db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION))) return null;
+  const p = await db.from<ProductRow>("products").selectOne("option_axes", { eq: { id: productId, shop_id: shopId } });
+  return p ? optionAxesOf(p.option_axes) : null;
 }
 
 products.post("/:shopId/products/:productId/skus", requireOwner, async (c: AdminContext) => {
@@ -650,12 +793,14 @@ products.post("/:shopId/products/:productId/skus", requireOwner, async (c: Admin
     return c.redirect(`${base}?flash=sku_invalid`);
   }
   const name = (f.name ?? "").trim();
-  const extra = skuExtraValues(f, price);
+  const extra = skuExtraValues(f, price, await productAxes(c, shopId, productId));
   if (extra === "sku_invalid") return c.redirect(`${base}?flash=sku_invalid`);
   try {
     const [sku] = await db.from<SkuRow>("skus").insert({ shop_id: shopId, product_id: productId, code, name: name || null, price_jpy: price, ...extra });
     if (available > 0) await db.rpc("set_stock", { p_sku_id: sku!.id, p_available: available });
   } catch (e) {
+    const axesError = axesErrorCode(e);
+    if (axesError) return c.redirect(`${base}?flash=${axesError}#skus`);
     if (e instanceof DbError && e.status === 409) return c.redirect(`${base}?flash=sku_taken`);
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
@@ -671,16 +816,116 @@ products.post("/:shopId/products/:productId/skus/:skuId", requireOwner, async (c
   const f = await formFields(c);
   const price = Number.parseInt(f.price_jpy ?? "", 10);
   if (!Number.isInteger(price) || price < 0) return c.redirect(`${base}?flash=sku_invalid`);
-  const extra = skuExtraValues(f, price);
+  const extra = skuExtraValues(f, price, await productAxes(c, shopId, productId));
   if (extra === "sku_invalid") return c.redirect(`${base}?flash=sku_invalid`);
   const name = (f.name ?? "").trim().slice(0, 200);
   try {
     await db.from<SkuRow>("skus").update({ name: name || null, price_jpy: price, ...extra }, { id: skuId, product_id: productId, shop_id: shopId });
   } catch (e) {
+    const axesError = axesErrorCode(e);
+    if (axesError) return c.redirect(`${base}?flash=${axesError}#skus`);
     if (e instanceof DbError) return c.redirect(`${base}?flash=sku_invalid`);
     throw e;
   }
   return c.redirect(`${base}?flash=saved`);
+});
+
+// ---------- SKU を分ける軸（0065） ----------
+/** この商品で軸を決める（上書きした扱い。一括で当てるときに飛ばす） */
+products.post("/:shopId/products/:productId/option-axes", requireOwner, async (c: AdminContext) => {
+  const { shopId, productId } = params(c);
+  const base = `/admin/shops/${shopId}/products/${productId}`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const axes = optionAxesFromForm(await formFields(c));
+  if (axes === "invalid") return c.redirect(`${base}?flash=axes_invalid#option-axes`);
+  return saveAxes(c, base, shopId, productId, axes, true);
+});
+
+/** 上の段（主カテゴリー → ショップ）の軸に戻す */
+products.post("/:shopId/products/:productId/option-axes/reset", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const { shopId, productId } = params(c);
+  const base = `/admin/shops/${shopId}/products/${productId}`;
+  const shop = await loadShop(c, shopId, "catalog");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const product = await db.from<ProductRow>("products").selectOne("category_id", { eq: { id: productId, shop_id: shopId } });
+  if (!product) return c.text(t("product.not_found"), 404);
+  const upper = resolveOptionAxes(await loadCategories(db, shopId), product.category_id, shop.option_axes);
+  return saveAxes(c, base, shopId, productId, upper.axes, false);
+});
+
+/** 今の SKU から推す（どの SKU も同じ項目を持つときだけ） */
+products.post("/:shopId/products/:productId/option-axes/infer", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const { shopId, productId } = params(c);
+  const base = `/admin/shops/${shopId}/products/${productId}`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const skus = await db.from<SkuRow>("skus").select("options", { eq: { product_id: productId, shop_id: shopId } });
+  const axes = inferOptionAxes(skus);
+  if (!axes) return c.redirect(`${base}?flash=infer_failed#option-axes`);
+  return saveAxes(c, base, shopId, productId, axes, true);
+});
+
+async function saveAxes(c: AdminContext, base: string, shopId: string, productId: string, axes: OptionAxes | null, custom: boolean) {
+  try {
+    await owner(c).db.from<ProductRow>("products").update({ option_axes: axes, option_axes_custom: custom && axes !== null }, { id: productId, shop_id: shopId });
+  } catch (e) {
+    const code = axesErrorCode(e);
+    if (code) return c.redirect(`${base}?flash=${code}#option-axes`);
+    throw e;
+  }
+  return c.redirect(`${base}?flash=axes_saved#option-axes`);
+}
+
+/** 組み合わせの一括作成。すでにある組み合わせ・品番が重なるものは飛ばす */
+products.post("/:shopId/products/:productId/sku-matrix", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const { shopId, productId } = params(c);
+  const base = `/admin/shops/${shopId}/products/${productId}`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const axes = await productAxes(c, shopId, productId);
+  if (!axes || axes.length === 0) return c.redirect(`${base}?flash=generic`);
+  const raw = await c.req.parseBody({ all: true });
+  const list = (k: string) => {
+    const v = raw[k];
+    return (Array.isArray(v) ? v : v === undefined ? [] : [v]).filter((x): x is string => typeof x === "string");
+  };
+  const one = (k: string) => list(k)[0] ?? "";
+  const chosen: Record<string, string[]> = {};
+  axes.forEach((a, i) => {
+    const vals = [...list(`mx.${i}`).map((v) => v.trim().slice(0, 60)), ...parseAxisValues(one(`mx_other.${i}`))].filter(Boolean);
+    chosen[a.key] = [...new Set(vals)];
+  });
+  const combos = combinations(axes, chosen);
+  if (combos === null) return c.redirect(`${base}?flash=matrix_too_many#skus`);
+  if (combos.length === 0) return c.redirect(`${base}?flash=matrix_empty#skus`);
+  const price = Number.parseInt(one("price_jpy"), 10);
+  const available = Number.parseInt(one("available") || "0", 10);
+  const pattern = one("code_pattern").trim();
+  if (!pattern || !Number.isInteger(price) || price < 0 || !Number.isInteger(available) || available < 0) return c.redirect(`${base}?flash=sku_invalid#skus`);
+  const existing = await db.from<SkuRow>("skus").select("code,options", { eq: { product_id: productId, shop_id: shopId } });
+  const have = new Set(existing.map((k) => JSON.stringify(Object.fromEntries(Object.entries(k.options ?? {}).map(([kk, vv]) => [kk, String(vv)]).sort()))));
+  let created = 0;
+  let skipped = 0;
+  for (const options of combos) {
+    if (have.has(JSON.stringify(Object.entries(options).sort().reduce<Record<string, string>>((o, [k, v]) => ({ ...o, [k]: v }), {})))) {
+      skipped++;
+      continue;
+    }
+    try {
+      const [sku] = await db.from<SkuRow>("skus").insert({ shop_id: shopId, product_id: productId, code: codeFromPattern(pattern, options), name: null, price_jpy: price, options });
+      if (available > 0) await db.rpc("set_stock", { p_sku_id: sku!.id, p_available: available });
+      created++;
+    } catch (e) {
+      // 品番が重なった・同じ組み合わせ（同時に作られた）は飛ばして続ける
+      if (e instanceof DbError && (e.status === 409 || axesErrorCode(e) === "axes_duplicate")) {
+        skipped++;
+        continue;
+      }
+      throw e;
+    }
+  }
+  return c.redirect(`${base}?flash=matrix&n=${created}&skip=${skipped}#skus`);
 });
 
 products.post("/:shopId/products/:productId/skus/:skuId/stock", requireOwner, async (c: AdminContext) => {
