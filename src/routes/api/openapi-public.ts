@@ -75,11 +75,12 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
   );
   const inquiryAccess = obj({ token: { ...str, description: "メールのリンクのトークン（banto_inquiry）" }, number: { ...int, description: "会員（会員トークンが要る）の受付番号" } }, [], "token か（会員なら）number のどちらか");
 
-  return {
+  const doc = {
     openapi: "3.1.0",
     info: {
       title: "Banto ヘッドレス API",
       version,
+      license: { name: "MIT", identifier: "MIT" },
       description:
         "連携側の画面（WordPress・Next.js・LP など）から使う公開 API。認証なし・CORS *（会員の API だけは許可リストのオリジン）。判定（価格・在庫・送料・税・クーポン・確定）は Banto が行い、連携側は返った値を表示する。使い方は docs/headless.md。運営者の道具・AI 向けは /api/v1/openapi.json。",
     },
@@ -281,4 +282,51 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       "/shops/{shop}/inquiries/resend": { post: { summary: "リンクを送り直す（番号とアドレスが合ったかは返さない）", parameters: [shopPath], requestBody: body(obj({ number: int, email: str, return_to: str }, ["number", "email"])), responses: { 202: { description: "受け付けた" }, 400: err("invalid_request"), 404: err("inquiries_disabled"), 429: err("too_many・limit") } } },
     },
   };
+  // 生成したクライアントのメソッド名（operationId）。ルートを足したらここにも足す（test/openapi-public.test.ts が抜けを検査する）
+  for (const [path, ops] of Object.entries(doc.paths) as [string, Record<string, Record<string, unknown>>][]) {
+    for (const [method, op] of Object.entries(ops)) {
+      const id = OPERATION_IDS[`${method} ${path}`];
+      if (id) op["operationId"] = id;
+    }
+  }
+  return doc;
 }
+
+const OPERATION_IDS: Record<string, string> = {
+  "get /openapi.json": "getOpenapi",
+  "get /shops": "listShops",
+  "get /shops/{shop}": "getShop",
+  "get /shops/{shop}/products": "listProducts",
+  "get /shops/{shop}/products/{product}": "getProduct",
+  "get /shops/{shop}/categories": "listCategories",
+  "get /shops/{shop}/cart": "getCart",
+  "post /shops/{shop}/cart": "updateCart",
+  "post /shops/{shop}/checkout/quote": "createCheckoutQuote",
+  "post /shops/{shop}/checkout": "placeCheckout",
+  "get /shops/{shop}/checkout/status": "getCheckoutStatus",
+  "get /shops/{shop}/members/config": "getMemberConfig",
+  "post /shops/{shop}/members/login": "startMemberLogin",
+  "post /shops/{shop}/members/verify": "verifyMemberLogin",
+  "post /shops/{shop}/members/refresh": "refreshMemberToken",
+  "post /shops/{shop}/members/logout": "logoutMember",
+  "post /shops/{shop}/members/logout-all": "logoutMemberEverywhere",
+  "get /shops/{shop}/members/sessions": "listMemberSessions",
+  "post /shops/{shop}/members/sessions/{id}/revoke": "revokeMemberSession",
+  "get /shops/{shop}/members/me": "getMember",
+  "post /shops/{shop}/members/password-login": "loginMemberWithPassword",
+  "post /shops/{shop}/members/password": "setMemberPassword",
+  "get /shops/{shop}/members/oauth/{provider}": "startMemberOAuth",
+  "get /shops/{shop}/members/passkey": "startMemberPasskey",
+  "get /shops/{shop}/members/tryon": "listMemberTryonRequests",
+  "post /shops/{shop}/members/tryon/{number}/cancel": "cancelMemberTryonRequest",
+  "get /shops/{shop}/stores": "listStores",
+  "post /shops/{shop}/tryon": "createTryonRequest",
+  "get /shops/{shop}/inquiries/config": "getInquiryConfig",
+  "post /shops/{shop}/inquiries/order-check": "checkInquiryOrder",
+  "get /shops/{shop}/inquiries": "listMemberInquiries",
+  "post /shops/{shop}/inquiries": "createInquiry",
+  "post /shops/{shop}/inquiries/view": "viewInquiry",
+  "post /shops/{shop}/inquiries/reply": "replyToInquiry",
+  "post /shops/{shop}/inquiries/attachments/{id}": "getInquiryAttachment",
+  "post /shops/{shop}/inquiries/resend": "resendInquiryLink",
+};
