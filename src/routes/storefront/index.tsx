@@ -19,8 +19,9 @@ import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
-import { ADDRESS_FIELDS, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
-import { bindScope, customerPrefill, customerSession, members, membersEnabled } from "./members";
+import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
+import { bindScope, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
+import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
@@ -699,10 +700,37 @@ storefront.get("/:shop/shipping", async (c: Ctx) => {
   return c.html(s.theme.ShippingPage({ ctx: s.ctx, shipping: shippingSummary(s.shop), payments: options }));
 });
 
+/**
+ * 注文照会（0066）。注文メールのリンクは ?banto_order=<番号>（会員の注文なら &banto_member=1）。
+ * 注文照会のページを連携サイトに向けていれば、そこへ同じクエリのまま移す（画面は連携サイトが作る）。
+ * 会員の注文: ログイン中ならその注文をそのまま出す。ログインしていなければログインの画面へ送り、ログインした後にこの注文へ戻す。
+ * ゲストの注文は番号とメールアドレスで開く（番号だけ埋めておく）
+ */
 storefront.get("/:shop/orders/lookup", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values: {} }));
+  const number = orderNumberParam(c.req.query("banto_order"));
+  const member = c.req.query("banto_member") === "1";
+  const page = orderPageUrl(s.shop.settings);
+  if (page && URL.canParse(page) && returnOrigins(s.shop.settings).includes(new URL(page).origin)) return c.redirect(number !== null ? orderLink(page, number, member) : page, 302);
+  const values = number !== null ? { number: String(number) } : {};
+  if (number !== null && member && s.ctx.membersEnabled) {
+    const session = await customerSession(c, s);
+    if (!session) {
+      rememberOrderAfterLogin(c, { shop: s.shop, shopPath: s.ctx.shopPath }, number);
+      return c.redirect(`${s.ctx.shopPath}/account/login`);
+    }
+    const db = privilegedFor(c);
+    const result = db ? await db.memberOrder(s.shop.id, session.cid, session.ep, number).catch(() => null) : null;
+    if (result) {
+      c.header("Cache-Control", "no-store");
+      const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && RECEIPT_STATUSES.includes(String(result["status"]));
+      const links = { receiptUrl: receipt ? `${s.ctx.shopPath}/account/orders/${number}/receipt` : null, inquiryUrl: s.ctx.inquiries ? `${s.ctx.shopPath}/inquiries/new?order=${number}` : null };
+      return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, member: links }));
+    }
+    // 別の会員の注文・ゲストで買った注文: 番号とメールアドレスで開く画面に戻す
+  }
+  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values }));
 });
 
 storefront.post("/:shop/orders/lookup", async (c: Ctx) => {

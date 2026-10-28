@@ -15,6 +15,8 @@ import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
 import type { PrivilegedDb } from "../../db/privileged";
 import { PASSKEY_MODULE } from "../../modules/passkey";
+import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
+import { receiptAvailable, receiptData } from "../../modules/receipt/data";
 
 /**
  * ヘッドレスの会員（docs/headless.md「会員」、設計は docs/knowledge/10-members-identity.md）。
@@ -28,6 +30,8 @@ import { PASSKEY_MODULE } from "../../modules/passkey";
  *   POST /api/shops/:shop/members/refresh     { refresh_token } → 新しい組。refresh は 1 回ごとに変わる（前のものは使えない）。
  *        前のものをもう一度使うと、使い回し（盗まれた）と見なしてそのセッションごと取り消す（0045。同時の呼び出しのために、回した直後の 30 秒だけは通す）
  *   GET  /api/shops/:shop/members/me          トークンの会員と、このショップでの注文（住所は返さない）
+ *   GET  /api/shops/:shop/members/orders/:number          その会員の注文 1 件（0066。lookup_order と同じ形）と receipt_available
+ *   GET  /api/shops/:shop/members/orders/:number/receipt  領収書のデータ（同梱モジュール receipt。JSON だけで、体裁は連携サイト）
  *   POST /api/shops/:shop/members/logout      この端末をログアウト（Bearer か { refresh_token }。セッションを取り消す、0045）
  *   GET  /api/shops/:shop/members/sessions    ログイン中の端末（0045）
  *   POST /api/shops/:shop/members/sessions/:id/revoke  その端末をログアウト（0045）
@@ -126,6 +130,7 @@ async function body(c: Ctx): Promise<Record<string, unknown>> {
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
+const NO_STORE = { "cache-control": "no-store" };
 
 membersApi.get("/shops/:shop/members/config", async (c: Ctx) => {
   const shop = await shopFor(c);
@@ -260,6 +265,31 @@ membersApi.get("/shops/:shop/members/me", async (c: Ctx) => {
   // 住所などの個人情報は返さない（連携側の画面に要るのは注文の状態と金額）
   const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
   return c.json({ id: rec.customer.id, email: rec.customer.email, orders });
+});
+
+/** 会員の注文 1 件（0066。注文照会のページで会員の注文を開くとき。住所・アドレスは返さない） */
+membersApi.get("/shops/:shop/members/orders/:number{[0-9]{1,9}}", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const order = await db.memberOrder(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")));
+  // 世代が違う（全端末からログアウト・退会）か、この会員の注文ではない。どちらかは返さない
+  if (!order) return c.json({ error: "not_found" }, 404, NO_STORE);
+  return c.json({ order, receipt_available: moduleEnabled(s.shop.settings, RECEIPT_MODULE) && receiptAvailable(order) }, 200, NO_STORE);
+});
+
+/** 会員の注文の領収書のデータ（同梱モジュール receipt。体裁は連携サイトが決める） */
+membersApi.get("/shops/:shop/members/orders/:number{[0-9]{1,9}}/receipt", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!moduleEnabled(s.shop.settings, RECEIPT_MODULE)) return c.json({ error: "receipt_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const order = (await db.memberOrder(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")))) as ReceiptOrder | null;
+  if (!order) return c.json({ error: "not_found" }, 404, NO_STORE);
+  if (!receiptAvailable(order)) return c.json({ error: "receipt_not_available" }, 409, NO_STORE);
+  return c.json({ receipt: receiptData(s.shop, order, new Date()) }, 200, NO_STORE);
 });
 
 membersApi.get("/shops/:shop/members/tryon", async (c: Ctx) => {

@@ -2790,7 +2790,9 @@ export class FakeSupabase {
       return json({ order_id: o["id"], number: o["number"], status: o["status"], created_at: o["created_at"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0, discount_jpy: o["discount_jpy"] ?? 0, discounts: o["discounts"] ?? [], payment_provider: o["payment_provider"] ?? null,
         customer_email: o["customer_email"] ?? null, customer_name: o["customer_name"] ?? null, shipping_address: o["shipping_address"] ?? null,
         tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"], number: o["tracking_number"] } : null,
-        shop: { name: sh["name"], slug: sh["slug"], contact_email: (sh["settings"] as Row | undefined)?.["contact_email"] ?? null, return_policy: sh["return_policy"] ?? null, tax: {} },
+        member: o["customer_id"] != null,
+        shop: { name: sh["name"], slug: sh["slug"], contact_email: (sh["settings"] as Row | undefined)?.["contact_email"] ?? null, return_policy: sh["return_policy"] ?? null, tax: {},
+          order_page_url: ((sh["settings"] as Row | undefined)?.["headless"] as Row | undefined)?.["order_page_url"] ?? null, return_origins: ((sh["settings"] as Row | undefined)?.["headless"] as Row | undefined)?.["return_origins"] ?? null },
         items: this.orderItemsJson(o["id"]) });
     }
     const inv = (skuId: unknown) => this.tables.inventory.find((i) => i["sku_id"] === skuId);

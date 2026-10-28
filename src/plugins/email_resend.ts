@@ -9,6 +9,7 @@ import { createMailer, mailTransportMissing, type Mailer, sendMail } from "../ma
 import { shopHome } from "../storefront/urls";
 import { orderTaxBreakdown } from "../commerce/tax";
 import { trackingOf, trackingUrl } from "../orders/tracking";
+import { orderLink } from "../orders/lookup";
 import { buildTryonMails, type TryonContact } from "../modules/store-tryon/mail";
 
 export { RESEND_API_URL } from "../mail/transports/resend";
@@ -32,7 +33,10 @@ interface Contact {
   tax_rounding?: string | null;
   /** お問い合わせ番号（0022） */
   tracking?: { carrier: string; number: string } | null;
-  shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; return_policy: string | null; tax?: Record<string, unknown> | null };
+  /** 会員の注文か（0066） */
+  member?: boolean;
+  /** order_page_url・return_origins は 0066 から（注文照会のページを連携サイトに向けたとき） */
+  shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; return_policy: string | null; tax?: Record<string, unknown> | null; order_page_url?: string | null; return_origins?: string[] | null };
   items: { name: string | null; sku: string | null; qty: number; unit_price_jpy: number; tax_rate?: number | string | null; discount_jpy?: number | null }[];
 }
 
@@ -48,12 +52,25 @@ function addressLines(a: Record<string, unknown> | null): string {
     .join("\n");
 }
 
+/**
+ * 「ご注文の状況」のリンク（0066）。注文照会のページを連携サイトに向けていればそこへ、無ければ Banto の注文照会の画面へ。
+ * どちらも ?banto_order=<番号>（会員の注文なら &banto_member=1）を付ける。秘密は載せない（会員はログイン、ゲストはメールアドレスで開く）
+ */
+function orderPageLink(c: Contact, publicBaseUrl: string | undefined): string | null {
+  const page = c.shop.order_page_url;
+  // 保存のときに確かめているが、許可リストから外れたサイトには向けない
+  if (typeof page === "string" && page.startsWith("https://") && URL.canParse(page) && (c.shop.return_origins ?? []).includes(new URL(page).origin)) return orderLink(page, c.number, c.member === true);
+  if (!publicBaseUrl && !c.shop.domain) return null;
+  const banto = `${shopHome(publicBaseUrl ?? "", c.shop)}/orders/lookup`;
+  return URL.canParse(banto) ? orderLink(banto, c.number, c.member === true) : banto;
+}
+
 export function buildOrderEmail(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined): { subject: string; text: string } {
   const lines = c.items.map((i) => `・${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}  ${yen(i.unit_price_jpy * i.qty)}`).join("\n");
   const discount = c.discount_jpy ?? 0;
   const subtotal = c.total_jpy - c.shipping_jpy + discount;
   const discountLines = discount > 0 ? `${(c.discounts ?? []).map((d) => `値引き（${d.code}）: -${yen(d.amount_jpy)}`).join("\n") || `値引き: -${yen(discount)}`}\n` : "";
-  const lookup = publicBaseUrl || c.shop.domain ? `${shopHome(publicBaseUrl ?? "", c.shop)}/orders/lookup` : null;
+  const lookup = orderPageLink(c, publicBaseUrl);
   const head = `${c.customer_name ?? "お客"} 様\n\n`;
   // 税率ごとの対象額と消費税額（計算は src/commerce/tax.ts だけ）
   const tax = orderTaxBreakdown(c, c.shop.tax ?? {})

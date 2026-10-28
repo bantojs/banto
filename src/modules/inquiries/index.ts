@@ -12,6 +12,7 @@ import { MailError, sendMail, type Mailer } from "../../mail/send";
 import { planLimitOf } from "../../plan/limits";
 import { t, type MessageKey } from "../../i18n";
 import { openJson, randomToken, sealJson } from "../../util/signed";
+import { openOrderToken, sealOrderToken } from "../../orders/lookup";
 import { buildCustomerMail, buildShopNotice, type InquiryMailShop } from "./mail";
 import { removeAttachments, storeAttachments, type StoredAttachment } from "./attachments";
 import type { StorageAdapter } from "../../adapters/types";
@@ -27,8 +28,7 @@ export type InquiryCategory = (typeof INQUIRY_CATEGORIES)[number];
 export const INQUIRY_STATUSES = ["waiting_shop", "waiting_customer", "closed"] as const;
 export type InquiryStatus = (typeof INQUIRY_STATUSES)[number];
 export const BODY_MAX = 5000;
-/** 注文トークンの期限（注文照会の結果・会員の注文から開いたフォームに使う） */
-export const ORDER_TOKEN_SECONDS = 24 * 60 * 60;
+export { ORDER_TOKEN_SECONDS } from "../../orders/lookup";
 /** チケットを開いた端末に置く Cookie の期限（リンクのトークンの期限と同じ 30 日。DB が期限を確かめる） */
 export const THREAD_COOKIE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -113,19 +113,8 @@ export function checkInquiry(form: Record<string, string | undefined>, opts: { n
   return { input, error: null };
 }
 
-// ---------- 注文トークン ----------
-const orderSecret = (secret: string, shopId: string) => `${secret}|inquiry-order|${shopId}`;
-
-export function sealOrderToken(secret: string, shopId: string, number: number, email: string, now = Date.now()): Promise<string> {
-  return sealJson(orderSecret(secret, shopId), { n: number, e: email.trim().toLowerCase(), exp: Math.floor(now / 1000) + ORDER_TOKEN_SECONDS });
-}
-
-export async function openOrderToken(secret: string, shopId: string, raw: string | undefined, now = Date.now()): Promise<{ number: number; email: string } | null> {
-  if (!raw || raw.length > 1000) return null;
-  const v = (await openJson(orderSecret(secret, shopId), raw)) as { n?: unknown; e?: unknown; exp?: unknown } | null;
-  if (!v || typeof v.n !== "number" || typeof v.e !== "string" || typeof v.exp !== "number" || v.exp * 1000 < now) return null;
-  return { number: v.n, email: v.e };
-}
+// ---------- 注文トークン（src/orders/lookup.ts。注文照会・領収書と同じもの） ----------
+export { openOrderToken, sealOrderToken };
 
 // ---------- チケットを開いた端末の Cookie（リンクのトークンを封じて持つ） ----------
 const threadSecret = (secret: string, shopId: string) => `${secret}|inquiry-thread|${shopId}`;

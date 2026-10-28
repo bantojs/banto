@@ -8,6 +8,7 @@ import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { migrated } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
+import { ORDER_LOOKUP_MIGRATION, orderPageUrl } from "../../orders/lookup";
 import { LEGAL_CHECK_HOURS, LEGAL_KINDS, LEGAL_LINKS_MIGRATION, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
@@ -49,6 +50,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     legal_links_saved: "legal_links.saved",
     legal_links_checked: "legal_links.checked",
     legal_links_invalid: "legal_links.invalid",
+    order_page_invalid: "headless.order_page_invalid",
     storefront_saved: "sfmode.saved",
     storefront_invalid: "sfmode.invalid",
     domain_saved: "domain.saved",
@@ -171,7 +173,7 @@ function LegalLinksSection(props: { shop: ShopRow }) {
   );
 }
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean }) {
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean; orderPageReady: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -454,6 +456,13 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
               {returnOrigins(shop.settings).join("\n")}
             </textarea>
             <p class="muted">{t("headless.return_origins_hint")}</p>
+            {props.orderPageReady ? (
+              <>
+                <label for="order_page_url">{t("headless.order_page_url")}</label>
+                <input id="order_page_url" type="url" name="order_page_url" value={orderPageUrl(shop.settings) ?? ""} placeholder="https://example.com/order-status/" style="width:100%;max-width:40rem" />
+                <p class="muted">{t("headless.order_page_url_hint")}</p>
+              </>
+            ) : null}
             <label for="relay_ips">{t("headless.relay_ips")}</label>
             <textarea id="relay_ips" name="relay_ips" rows={2} style="width:100%;max-width:40rem" placeholder="203.0.113.10">
               {relayIps(shop.settings).join("\n")}
@@ -566,6 +575,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet}
       stripeKeySet={stripeKeySet}
       legalLinksReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, LEGAL_LINKS_MIGRATION))}
+      orderPageReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_MIGRATION))}
     />,
   );
 });
@@ -783,6 +793,13 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
     const kept = Object.fromEntries(Object.entries(links).filter(([k, v]) => !(LEGAL_KINDS as readonly string[]).includes(k) || (typeof v === "string" && parseLegalUrl(v, origins).ok)));
     headless.legal_links = kept;
   }
+  // 注文照会のページ（0066）。欄はその版が入っているときだけ出る。無ければ今の値を持ち越す（許可から外したサイトなら外す）
+  const orderPage = parseLegalUrl(f.order_page_url ?? (typeof headless.order_page_url === "string" ? headless.order_page_url : ""), origins);
+  if (!orderPage.ok) {
+    if (f.order_page_url !== undefined) return c.redirect(`/admin/shops/${shopId}?flash=order_page_invalid#headless`);
+    delete headless.order_page_url;
+  } else if (orderPage.url) headless.order_page_url = orderPage.url;
+  else delete headless.order_page_url;
   const limit = (v: string | undefined, dflt: number) => {
     const n = Number.parseInt(v ?? "", 10);
     return Number.isInteger(n) && n >= 1 && n <= 9999 ? n : dflt;

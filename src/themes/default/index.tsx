@@ -1654,22 +1654,24 @@ export const defaultTheme: Theme = {
     );
   },
 
-  OrderLookupPage({ ctx, result, error, values, receipt, inquiry }) {
+  OrderLookupPage({ ctx, result, error, values, receipt, inquiry, member }) {
     const r = result ?? null;
     return (
       <Layout title={t("store.lookup_title")} ctx={ctx} seo={{ noindex: true }}>
         <h1>{t("store.lookup_title")}</h1>
-        <p>{t("store.lookup_intro")}</p>
+        {member ? null : <p>{t("store.lookup_intro")}</p>}
         {error ? <p class="error">{error}</p> : null}
-        <form method="post" action={`${ctx.shopPath}/orders/lookup`}>
-          <label for="number">{t("store.lookup_number")}</label>
-          <input id="number" type="text" name="number" inputmode="numeric" value={values.number ?? ""} required />
-          <label for="email">{t("store.address_email")}</label>
-          <input id="email" type="email" name="email" value={values.email ?? ""} required />
-          <p>
-            <button type="submit">{t("store.lookup_submit")}</button>
-          </p>
-        </form>
+        {member ? null : (
+          <form method="post" action={`${ctx.shopPath}/orders/lookup`}>
+            <label for="number">{t("store.lookup_number")}</label>
+            <input id="number" type="text" name="number" inputmode="numeric" value={values.number ?? ""} required />
+            <label for="email">{t("store.address_email")}</label>
+            <input id="email" type="email" name="email" value={values.email ?? ""} required />
+            <p>
+              <button type="submit">{t("store.lookup_submit")}</button>
+            </p>
+          </form>
+        )}
         {r ? (
           <div>
             <h2>
@@ -1738,6 +1740,18 @@ export const defaultTheme: Theme = {
                   <button type="submit">{t("receipt.get")}</button>
                 </p>
               </form>
+            ) : null}
+            {member?.receiptUrl ? (
+              <p>
+                <a href={member.receiptUrl} target="_blank" rel="noopener">
+                  {t("receipt.get")}
+                </a>
+              </p>
+            ) : null}
+            {member?.inquiryUrl ? (
+              <p>
+                <a href={member.inquiryUrl}>{t("inq.about_order")}</a>
+              </p>
             ) : null}
             {inquiry ? (
               <form method="post" action={`${ctx.shopPath}/inquiries/new`}>

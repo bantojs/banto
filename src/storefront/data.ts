@@ -55,7 +55,11 @@ export function publicShopSettings(settings: Record<string, unknown> | null | un
   // 非公開の独自項目は定義（表示名）も見せない（0055 の banto_shop_public_settings と同じ）
   if (Array.isArray(src["product_fields"])) out["product_fields"] = src["product_fields"].filter((f) => isObject(f) && f["public"] !== false);
   // relay_ips（中継元の素の IP）は公開しない（0034）。Worker が service_role で読む
-  if (isObject(src["headless"])) out["headless"] = { return_origins: src["headless"]["return_origins"] ?? [] };
+  if (isObject(src["headless"])) {
+    out["headless"] = { return_origins: src["headless"]["return_origins"] ?? [] };
+    // 注文照会のページ（0066）
+    if (typeof src["headless"]["order_page_url"] === "string") (out["headless"] as Record<string, unknown>)["order_page_url"] = src["headless"]["order_page_url"];
+  }
   if (isObject(src["oauth"])) {
     const oauth: Record<string, Record<string, unknown>> = {};
     for (const [k, v] of Object.entries(src["oauth"])) {
