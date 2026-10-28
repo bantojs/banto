@@ -72,6 +72,7 @@ GET /api/shops/<shop>/categories
   - `brand`、`category`、`category_path`（最上位から主カテゴリーまで。パンくず用）、`extra_categories`（追加カテゴリー。主カテゴリーのほかに並ぶ棚）、`tags`、`updated_at`
   - `attributes`: カスタム項目のうち公開するもの（`[{ "key", "label", "value" }]`、管理画面で private にした項目は出ない）。公開にした項目の値はそのまま誰にでも見えるので、原価や仕入先など内部の値は private にする
   - `skus[]`: `code`・`name`・`options`（例: `{ "サイズ": "M", "色": "黒" }`）・`gtin`・`price_jpy`・`compare_at_price_jpy`・`in_stock`
+  - `option_axes`: SKU を分ける軸（0065。`[{ "key": "カラー", "values": ["レッド", "ブルー"] }, …]`。`values` は SKU に出てくる値）。軸ごとの選択欄（カラー → サイズ）を作り、選んだ値が `skus[].options` とすべて合う SKU の `id` をカートに入れてください。軸の無い商品は `[]`（SKU を 1 つの選択欄で選ぶ）
   - `image_variants[].options`: その画像を結んだ SKU の選択肢（0063。`{}` は商品全体）。画像の `options` の鍵と値がすべて SKU の `options` にあれば、その SKU の画像です。SKU を選んだら「当てはまる画像（鍵の多いもの先）→ 商品全体の画像 → ほかの画像」の順に並べると、同梱テーマと同じになります
 - `/categories` はカテゴリーの木です（3 段まで、`[{ "slug", "name", "count", "children": [...] }]`、`count` は子孫を含む公開中の商品数）。
 - パラメータの形が違えば `400 { "error": "invalid_request", "field": "<名前>" }` を返します。

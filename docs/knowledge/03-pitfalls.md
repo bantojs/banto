@@ -52,6 +52,11 @@
 | 会員のログイン・コード入力・マイページのフォームを送ると 403（CSRF） | `Referrer-Policy: no-referrer` のページからのフォームの POST に、ブラウザは `Origin: null` を付ける（Fetch の仕様）。0031 で csrfGuard が `null` を拒むようにした | 会員の画面と領収書の画面は `same-origin` に（対応済み）。テストの Browser は no-referrer のページからの POST を `Origin: null` にして再現する。CSRF を守る画面に no-referrer を付けない |
 | WebAuthn を試したいが、テスト用の証明書だと動かない | Chrome は証明書のエラーがあるページでは WebAuthn を使わせない | Playwright で `--host-resolver-rules=MAP shop.example.jp:443 127.0.0.1:<port>` と `--ignore-certificate-errors-spki-list=<自己署名の証明書の SPKI>` を付け、CDP の `WebAuthn.addVirtualAuthenticator` で仮想の認証器を足す。エージェントのプロキシを通らないよう `--no-proxy-server` |
 
+## SQL の差し替え
+
+- **列の CHECK で呼ぶ関数**（`banto_image_options_ok`・`banto_option_axes_ok` など）は、行を書くロール（管理画面の `authenticated`）に EXECUTE が要る。剥奪すると、その表への insert / update が `permission denied for function` で止まる（`check:rls` の allowlist に足す）。
+- **`import_catalog` は 0065 で包んである**（中身は `banto_import_catalog_0042` に改名、`import_catalog` は取り込みの間だけ SKU の軸を写さない設定を入れて中身を呼ぶ）。取り込みの中身を直すときは `banto_import_catalog_0042` を差し替える。`import_catalog` を `create or replace` で書き直すと包みが消える。
+
 ## 開発環境（このリポジトリで作業するとき）
 
 - `git push origin main` は**本番ビルドを直接走らせる**。壊れた状態で push しない（`npm run lint && npm test && npm run build:workers` を先に）。

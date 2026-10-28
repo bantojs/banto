@@ -15,6 +15,7 @@ import { planLimitOf } from "../plan/limits";
 import { API_INQUIRIES_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
 import { SKU_IMAGES_MIGRATION } from "../products/images";
+import { SKU_OPTION_AXES_MIGRATION } from "../products/option-axes";
 import type { Mailer } from "../mail/send";
 import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
@@ -90,6 +91,9 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
     if (e.is("email_change_not_allowed")) throw new ApiError("invalid", "email_change_not_allowed: email addresses can only be changed from the admin screen", 400);
     if (/invalid_transition|hold_until_required|not_restockable/.test(e.dbMessage)) throw new ApiError("conflict", e.dbMessage.replace(/^.*?(invalid_transition|hold_until_required|not_restockable).*$/s, "$1"), 409);
+    if (e.is("invalid_option_axes")) throw new ApiError("invalid", "invalid_option_axes: an array of up to 3 { key, values? } (keys up to 40 characters, no duplicates; values up to 100 strings of 60 characters), [] for SKU code only, or null to leave it unset", 400);
+    if (e.is("option_axes_mismatch")) throw new ApiError("invalid", "option_axes_mismatch: SKU options must have exactly the keys of the product's option_axes, with non-empty values", 400);
+    if (e.is("option_combination_exists")) throw new ApiError("conflict", "option_combination_exists: another SKU of this product has the same options", 409);
     if (e.is("invalid_options")) throw new ApiError("invalid", "invalid_options: an object of up to 5 string values (keys up to 40 characters, values up to 60) taken from the SKU options, or {} for the whole product", 400);
     if (e.is("invalid_extra_categories")) throw new ApiError("invalid", "invalid_extra_categories: an array of up to 20 category slugs", 400);
     if (e.is("category_not_found")) throw new ApiError("invalid", "category_not_found: create it with category_save first", 400);
@@ -301,6 +305,16 @@ export class ApiService {
       throw new ApiError("migration_required", `image options need the database update ${SKU_IMAGES_MIGRATION}; apply it from /admin/update`, 409);
     }
     return { p_options: options };
+  }
+
+  /** 商品の SKU を分ける軸を決める（0065。[] で品番だけ、null で決めない）。返すのは商品 */
+  async productSetOptionAxes(productId: string, axes: unknown): Promise<Record<string, unknown>> {
+    uuidOr404(productId);
+    if (!(await this.migratedTo(SKU_OPTION_AXES_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `option axes need the database update ${SKU_OPTION_AXES_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    return this.call<Record<string, unknown>>("api_product_set_option_axes", { p_product_id: productId, p_axes: axes });
   }
 
   /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */

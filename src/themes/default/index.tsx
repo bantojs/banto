@@ -4,6 +4,7 @@ import type { StoreView, Theme, ThemeContext } from "../types";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
+import { OPTION_AXES_SCRIPT, displayOptionAxes } from "../../products/option-axes";
 
 /** パスキーのボタン（同梱モジュール passkey）。動きは `${shopPath}/account/passkey.js`（src/modules/passkey）が付ける */
 function PasskeyButton({ ctx, kind, returnTo }: { ctx: ThemeContext; kind: "login" | "register"; returnTo?: string | undefined }) {
@@ -303,6 +304,9 @@ export const defaultTheme: Theme = {
     const chosen = skus.find((s) => s.code === selectedSku) ?? null;
     const images = orderImagesForSku(detail.images, chosen?.options);
     const skuImages = detail.images.some((img) => Object.keys(imageOptionsOf(img.options)).length > 0);
+    // SKU を分ける軸（0065）: 軸ごとの選択欄にする（スクリプト。無ければ下の 1 つの選択欄のまま）。軸を決めていない商品は SKU の項目から推す
+    const axes = skus.length > 1 ? displayOptionAxes(product.option_axes, skus) : [];
+    const axesOn = axes.length > 0;
     const first = images[0];
     return (
       <Layout
@@ -381,17 +385,18 @@ export const defaultTheme: Theme = {
             ) : null}
             {skus.length === 0 ? <p class="muted">{t("store.unavailable")}</p> : null}
             {skus.length > 0 ? (
-              <form method="post" action={`${ctx.shopPath}/cart/add`}>
+              <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axes.map((a) => ({ key: a.key }))) } : {})}>
                 <label for="sku_id">{t("store.variant")}</label>
                 <select id="sku_id" name="sku_id" required>
                   {skus.map((s) => (
-                    <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
+                    <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages || axesOn ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
                       {skuLabel(s)} — {s.compare_at_price_jpy ? `${t("store.regular_price")} ${yen(s.compare_at_price_jpy)} → ` : ""}
                       {yen(s.price_jpy)}
                       {s.available <= 0 ? ` (${t("store.sold_out")})` : s.available <= 5 ? ` (${t("store.low_stock")})` : ""}
                     </option>
                   ))}
                 </select>
+                {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
                 <label for="qty">{t("store.qty")}</label>
                 <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
                 <p>
@@ -402,6 +407,7 @@ export const defaultTheme: Theme = {
               </form>
             ) : null}
             {skuImages && skus.length > 1 ? <script dangerouslySetInnerHTML={{ __html: SKU_IMAGE_SCRIPT }} /> : null}
+            {axesOn ? <script dangerouslySetInnerHTML={{ __html: OPTION_AXES_SCRIPT }} /> : null}
           </div>
         </div>
       </Layout>

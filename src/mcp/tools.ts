@@ -197,6 +197,18 @@ export const MCP_TOOLS: McpTool[] = [
     run: (api, a) => api.imageAddFromUrl(str(a, "product_id", true)!, str(a, "image_url", true)!, imageOptionsInput(a["options"])),
   },
   {
+    name: "product_set_option_axes",
+    description:
+      "【書き込み】商品の SKU を分ける軸を決める（最大 3 つ。例: [{ key: \"カラー\", values: [\"レッド\", \"ブルー\"] }, { key: \"サイズ\" }]）。[] は品番だけ（SKU の options は空）、null は決めない（自由）。今の SKU の options が軸の鍵とちょうど同じでないと断られる（option_axes_mismatch）。軸を決めた商品の SKU は、options の鍵を軸に合わせて作る。スコープ products:write。",
+    inputSchema: obj({ product_id: s("string"), option_axes: { type: ["array", "null"], items: { type: "object", properties: { key: { type: "string" }, values: { type: "array", items: { type: "string" } } }, required: ["key"] } } }, ["product_id", "option_axes"]),
+    readOnly: false,
+    run: (api, a) => {
+      const v = a["option_axes"];
+      if (v !== null && !Array.isArray(v)) throw new ApiError("invalid", "option_axes must be an array or null", 400);
+      return api.productSetOptionAxes(str(a, "product_id", true)!, v);
+    },
+  },
+  {
     name: "product_image_set_options",
     description:
       "【書き込み】商品画像を SKU に結ぶ。options は SKU の options の一部（例: { color: \"レッド\" } でそのカラーの全サイズ、{ color: \"レッド\", size: \"M\" } でその SKU だけ、{} で商品全体）。お店の画面と商品フィードで、その SKU の画像が先頭になる。スコープ products:write。",

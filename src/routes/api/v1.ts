@@ -145,6 +145,18 @@ v1.post("/products/:id/images/upload", async (c) => {
     return errorJson(c, e);
   }
 });
+// 商品の SKU を分ける軸（0065）。{ option_axes: [{ key, values? }] | [] | null }
+v1.put("/products/:id/option-axes", async (c) =>
+  body(c)
+    .then((b) => {
+      if (!("option_axes" in b)) throw new ApiError("invalid", "option_axes is required (an array, or null)", 400);
+      const v = b["option_axes"];
+      if (v !== null && !Array.isArray(v)) throw new ApiError("invalid", "option_axes must be an array or null", 400);
+      return api(c).productSetOptionAxes(c.req.param("id"), v);
+    })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
 // 画像を SKU の options の一部に結ぶ（0063）。{ options: { color: "レッド" } }、{} で商品全体
 v1.patch("/images/:id", async (c) =>
   body(c)

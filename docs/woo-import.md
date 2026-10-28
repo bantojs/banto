@@ -102,7 +102,7 @@ Banto のサーバーは画像を縮小しません（Workers の CPU の制限�
 | WooCommerce | Banto |
 | --- | --- |
 | 商品（simple / variable） | 商品。スラッグは SKU を小文字にしたもの（無ければ `wc-<ID>`） |
-| バリエーション（variation） | SKU。属性（Attribute 1 name / value(s) …）は SKU の選択肢 |
+| バリエーション（variation） | SKU。属性（Attribute 1 name / value(s) …）は SKU の選択肢。カテゴリーの「SKU を分ける軸」は取り込んだ商品には写しません（属性の名前が軸と違うと取り込みが止まるため）。取り込んだ後に、カテゴリーの画面の「商品に当てる」か、商品の画面の「今の SKU から推す」で決めてください（0065） |
 | Regular price / Sale price | セール中（期間内、または期間の指定なし）ならセール価格を販売価格、標準価格を通常価格（取り消し線で表示）。これからのセール・終わったセールは標準価格 |
 | Tax status / Tax class | 税抜で入力していたときの換算にだけ使う（Banto の価格は税込） |
 | Stock / In stock? | 在庫数。数量の無い SKU（在庫管理なし・お取り寄せ可）は 0 |

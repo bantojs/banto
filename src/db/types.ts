@@ -17,6 +17,8 @@ export interface ShopRow {
   org_id?: string | null;
   /** 0062_legal_links。法務のページの外の URL を確かめた結果（legal_links_record だけが書く） */
   legal_links_state?: Record<string, unknown>;
+  /** 0065。SKU を分ける軸のショップの既定（ひな形）。src/products/option-axes.ts */
+  option_axes?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -38,6 +40,9 @@ export interface ProductRow {
   attributes?: Record<string, string | number>;
   /** 0017_tax。税の区分（standard 標準 / reduced 軽減 / exempt 非課税）。src/commerce/tax.ts */
   tax_class?: "standard" | "reduced" | "exempt";
+  /** 0065。SKU を分ける軸（null = 決めていない）と、商品で上書きしたか。src/products/option-axes.ts */
+  option_axes?: unknown;
+  option_axes_custom?: boolean;
   published: boolean;
   created_at: string;
   updated_at: string;
@@ -67,6 +72,8 @@ export interface CategoryRow {
   slug: string;
   name: string;
   sort_order: number;
+  /** 0065。SKU を分ける軸のひな形（null = 親・ショップを引き継ぐ） */
+  option_axes?: unknown;
   created_at: string;
 }
 

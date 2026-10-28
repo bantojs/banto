@@ -146,6 +146,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
                   attributes: arr(obj({ key: str, label: str, value: {} }), "公開のカスタム項目"), updated_at: str, images: arr(str),
                   image_variants: arr(obj({ url: str, thumb: str, width: nInt, height: nInt, options: { type: "object", additionalProperties: str, description: "結んだ SKU の選択肢（0063。{} は商品全体）" } })),
                   skus: arr(obj({ id: str, code: str, name: nStr, options: { type: "object", additionalProperties: str }, gtin: nStr, price_jpy: int, compare_at_price_jpy: nInt, in_stock: bool })),
+                  option_axes: arr(obj({ key: str, values: arr(str) }), "SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値。軸の無い商品は []"),
                 }),
               }),
             ),
