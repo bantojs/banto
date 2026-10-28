@@ -9,6 +9,7 @@ import type { CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
 import type { CategoryNode } from "../../products/categories";
 import { orderImagesForSku } from "../../products/images";
+import { getLocale } from "../../i18n";
 import { escapeHtml, SafeHtml } from "./engine";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -82,8 +83,10 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
   const images = orderImagesForSku(d.images, selected?.options ?? null).map((img) => imageObject(u, img, p.name));
   const optionNames: string[] = [];
   for (const s of d.skus) for (const k of Object.keys(s.options ?? {})) if (!optionNames.includes(k)) optionNames.push(k);
-  const variants = d.skus.map((s) => {
-    const opts = optionNames.map((k) => (s.options?.[k] === undefined ? null : String(s.options[k])));
+  // 選択肢の値は、選択肢の名前の並びと同じ位置で持つ（SKU ごとに鍵が違っても、位置がずれないように）
+  const optsBySku = d.skus.map((s) => optionNames.map((k) => (s.options?.[k] === undefined ? null : String(s.options[k]))));
+  const variants = d.skus.map((s, si) => {
+    const opts = optsBySku[si]!;
     return {
       id: s.id,
       title: s.name || opts.filter(Boolean).join(" / ") || s.code,
@@ -131,8 +134,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     options_with_values: optionNames.map((name, i) => ({
       name,
       position: i + 1,
-      values: [...new Set(variants.map((v) => v.options[i]).filter((x): x is string => Boolean(x)))],
-      selected_value: first?.options[i] ?? null,
+      values: [...new Set(optsBySku.map((o) => o[i]).filter((x): x is string => Boolean(x)))],
+      selected_value: first ? (optsBySku[variants.indexOf(first)]?.[i] ?? null) : null,
     })),
     selected_variant: selected ? first : null,
     selected_or_first_available_variant: first,
@@ -189,7 +192,7 @@ export function shopObject(shop: PublicShop, home: string, intro: string | undef
     currency: "JPY",
     money_format: "¥{{amount_no_decimals}}",
     money_with_currency_format: "¥{{amount_no_decimals}} JPY",
-    locale: "ja",
+    locale: getLocale(),
     enabled_currencies: [{ iso_code: "JPY", symbol: "¥" }],
   };
 }

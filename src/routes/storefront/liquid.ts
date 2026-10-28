@@ -10,7 +10,7 @@
 import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow } from "../../db/types";
-import { t } from "../../i18n";
+import { getLocale, t } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import type { ProductDetail, ProductListPage, PublicShop, StorefrontData } from "../../storefront/data";
@@ -42,13 +42,15 @@ export interface LiquidChoice {
 /** プレビューの券（管理画面の「デザイン」が作る。ショップと版を結び、30 分で切れる） */
 export const THEME_PREVIEW_SECONDS = 30 * 60;
 const PREVIEW_COOKIE = "banto_theme_preview";
+/** 券の鍵はプレビュー専用にする（サイトの秘密で署名するほかの値と取り違えさせない） */
+const previewKey = (secret: string): string => `${secret}:theme_preview`;
 
 export function sealThemePreview(secret: string, shopId: string, versionId: string, now = Date.now()): Promise<string> {
-  return sealJson(secret, { k: "theme_preview", s: shopId, v: versionId, exp: Math.floor(now / 1000) + THEME_PREVIEW_SECONDS });
+  return sealJson(previewKey(secret), { k: "theme_preview", s: shopId, v: versionId, exp: Math.floor(now / 1000) + THEME_PREVIEW_SECONDS });
 }
 
 async function openThemePreview(secret: string, token: string | undefined, shopId: string): Promise<string | null> {
-  const v = (await openJson(secret, token)) as { k?: unknown; s?: unknown; v?: unknown; exp?: unknown } | null;
+  const v = (await openJson(previewKey(secret), token)) as { k?: unknown; s?: unknown; v?: unknown; exp?: unknown } | null;
   if (!v || v.k !== "theme_preview" || v.s !== shopId || typeof v.v !== "string" || !/^[0-9a-f-]{36}$/.test(v.v) || typeof v.exp !== "number" || v.exp * 1000 < Date.now()) return null;
   return v.v;
 }
@@ -121,12 +123,12 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     page.jsonLd ? `<script type="application/ld+json">${jsonLdText(page.jsonLd)}</script>` : "",
   ].join("");
   const intro = typeof s.ctx.themeSettings?.["description"] === "string" ? (s.ctx.themeSettings["description"] as string) : undefined;
-  const url = new URL(c.req.url);
+  const path = relativePath(c, s);
   const globals: Record<string, unknown> = {
     shop: shopObject(s.shop, home, intro),
     settings: themeSettings(lt, choice.settings),
     routes: routesObject(shopPath),
-    request: { host: url.host, path: url.pathname, page_type: page.template, locale: { iso_code: "ja", primary: true, root_url: shopPath || "/" }, design_mode: false },
+    request: { host: new URL(origin).host, path, page_type: page.template, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
     cart: { item_count: s.ctx.cartCount, items: [], total_price: 0, items_subtotal_price: 0, currency: { iso_code: "JPY" } },
     customer: s.ctx.member ? { email: s.ctx.member.email } : null,
     linklists: {
@@ -174,14 +176,19 @@ export function renderListing(
     allTags: p.tags.map((x) => x.tag),
     ...(p.tag ? { currentTags: [p.tag] } : {}),
   });
+  // Banto のページ送りは位置（cursor）で進むので、今が何ページ目かは分からない。前は「最初のページ」、次は「次の 1 ページ」。
+  // 全体の数が分かれば pages を出す（テーマの {% if paginate.pages > 1 %} が効くように）
+  const previous = p.after ? { title: "«", url: p.link(null), is_link: true as const } : null;
+  const next = p.page.nextCursor ? { title: "»", url: p.link(p.page.nextCursor), is_link: true as const } : null;
+  const pages = p.page.total !== null ? Math.max(1, Math.ceil(p.page.total / p.page.limit)) : previous || next ? 2 : 1;
   const paginate: Paginate = {
     current_page: p.after ? 2 : 1,
     page_size: p.page.limit,
     items: p.page.total,
-    pages: null,
-    previous: p.after ? { title: "«", url: p.link(null), is_link: true } : null,
-    next: p.page.nextCursor ? { title: "»", url: p.link(p.page.nextCursor), is_link: true } : null,
-    parts: [],
+    pages,
+    previous,
+    next,
+    parts: [...(previous ? [{ title: "1", url: previous.url, is_link: true }] : []), { title: p.after ? "…" : "1", url: "", is_link: false }, ...(next ? [{ title: "»", url: next.url, is_link: true }] : [])],
   };
   const template: ThemeTemplate = filtered || !themeHasTemplate(choice.lt, "index") ? "collection" : "index";
   return render(c, s, choice, {
@@ -219,8 +226,16 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
   });
 }
 
-export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice): Response | null {
-  return render(c, s, choice, { template: "404", values: {}, title: t("store.not_found"), path: new URL(c.req.url).pathname, noindex: true, categories: [], status: 404 });
+export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {
+  return render(c, s, choice, { template: "404", values: {}, title: t("store.not_found"), path: relativePath(c, s), noindex: true, categories, status: 404 });
+}
+
+/** ショップのトップからのパス（独自ドメインでは domain.ts がパスの前にスラッグを足して処理しているので、それを外す） */
+function relativePath(c: Ctx, s: LiquidScope): string {
+  const p = new URL(c.req.url).pathname;
+  const prefix = `/${s.shop.slug}`;
+  if (s.ctx.shopPath === "" && (p === prefix || p.startsWith(`${prefix}/`))) return p.slice(prefix.length) || "/";
+  return p;
 }
 
 /**

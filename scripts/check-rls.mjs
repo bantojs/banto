@@ -63,7 +63,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "banto_option_axes_ok", // 0065: shops / categories / products の option_axes の CHECK（値の形を見るだけ）
   "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
   // 0071: テーマの版（中で design の項目を確かめる）
-  "theme_publish", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
+  "theme_preview_audit", "theme_publish", "theme_version_complete", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
 ]);
 

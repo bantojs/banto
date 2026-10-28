@@ -1144,12 +1144,20 @@ export class FakeSupabase {
       if (fn === "theme_version_create") {
         if (!can(args["p_shop_id"])) return err("shop_not_found", "42501");
         if (this.tables.theme_versions.filter((v) => v["shop_id"] === args["p_shop_id"]).length >= 20) return err("theme_versions_full");
-        this.tables.theme_versions.push({ id: args["p_id"], shop_id: args["p_shop_id"], name: args["p_name"], storage_key: `themes/${String(args["p_shop_id"])}/${String(args["p_id"])}/bundle.json`, size_bytes: args["p_size_bytes"], file_count: args["p_file_count"], manifest: args["p_manifest"] ?? {}, settings: args["p_settings"] ?? {}, created_by: uid, created_at: new Date().toISOString() });
+        this.tables.theme_versions.push({ id: args["p_id"], shop_id: args["p_shop_id"], name: args["p_name"], storage_key: `themes/${String(args["p_shop_id"])}/${String(args["p_id"])}/bundle.json`, size_bytes: args["p_size_bytes"], file_count: args["p_file_count"], manifest: args["p_manifest"] ?? {}, settings: args["p_settings"] ?? {}, complete: false, created_by: uid, created_at: new Date().toISOString() });
         return json(args["p_id"]);
       }
       const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"]);
+      const mine = v?.["shop_id"] === args["p_shop_id"] && can(args["p_shop_id"]);
+      if (fn === "theme_version_complete" || fn === "theme_preview_audit" || fn === "theme_version_set_settings") {
+        if (!v || !mine) return err("theme_not_found", "42501");
+        if (fn === "theme_version_complete") v["complete"] = true;
+        if (fn === "theme_version_set_settings") v["settings"] = args["p_settings"] ?? {};
+        if (fn === "theme_preview_audit") this.tables.audit_log.push({ id: this.tables.audit_log.length + 1, org_id: this.tables.shops.find((x) => x["id"] === args["p_shop_id"])?.["org_id"] ?? null, shop_id: args["p_shop_id"], actor_kind: "user", actor_id: uid, action: "shop.theme_previewed", target_type: "shop", target_id: String(args["p_shop_id"]), detail: { version: v["id"] }, created_at: new Date().toISOString() });
+        return json(null);
+      }
       if (fn === "theme_version_delete") {
-        if (!v || !can(v["shop_id"])) return err("theme_not_found", "42501");
+        if (!v || !mine) return err("theme_not_found", "42501");
         const shop = this.tables.shops.find((x) => x["id"] === v["shop_id"]);
         if (shop?.["theme_version_id"] === v["id"]) return err("theme_published");
         this.tables.theme_versions.splice(this.tables.theme_versions.indexOf(v), 1);
@@ -1160,6 +1168,7 @@ export class FakeSupabase {
         const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"])!;
         if (args["p_version_id"]) {
           if (!v || v["shop_id"] !== shop["id"]) return err("theme_not_found", "42501");
+          if (!v["complete"]) return err("theme_incomplete");
           if (!shop["domain"]) return err("theme_requires_domain");
         }
         shop["theme_version_id"] = args["p_version_id"] ?? null;

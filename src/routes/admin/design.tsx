@@ -12,6 +12,7 @@ import { extendShopify } from "../../themes/liquid/shopify";
 import { sealThemePreview } from "../storefront/liquid";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
+import { getLocale } from "../../i18n";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 
@@ -19,8 +20,9 @@ import { loadShop } from "./shops";
  * デザイン（Liquid のテーマ、0071、docs/themes.md）: /admin/shops/:shopId/design。項目 design の人だけ。
  *   GET  /                                   版の一覧・取り込み・使える条件
  *   POST /versions                           束ねたテーマ（JSON）を検査して置き、版を足す（ブラウザが zip を展開して送る）
- *   POST /versions/:id/assets/:name          資産を 1 つ置く（中身そのもの。版の束ねたファイルに名前があるものだけ）
- *   GET  /versions/:id/preview               ショップのドメインでプレビューを開く（署名付き、30 分）
+ *   POST /versions/:id/assets/:name          資産を 1 つ置く（中身そのもの。版の束ねたファイルに名前があるものだけ。置き終えた版には置けない）
+ *   POST /versions/:id/complete              資産を置き終えた（これで公開できるようになる）
+ *   GET  /versions/:id/preview               ショップのドメインでプレビューを開く（署名付き、30 分。監査ログに残す）
  *   POST /publish                            公開する・取り下げる（version が空なら既定のテーマに戻す）
  *   POST /versions/:id/delete                版を消す（公開中は消せない）。置き場のファイルも消す
  */
@@ -29,6 +31,7 @@ export const design = new Hono<AppEnv>();
 interface VersionRow {
   id: string;
   name: string;
+  complete: boolean;
   size_bytes: number;
   file_count: number;
   manifest: Record<string, unknown>;
@@ -41,6 +44,7 @@ const FLASH: Record<string, { kind: "ok" | "error"; key: MessageKey }> = {
   unpublished: { kind: "ok", key: "design.unpublished" },
   deleted: { kind: "ok", key: "design.deleted" },
   requires_domain: { kind: "error", key: "design.requires_domain" },
+  incomplete: { kind: "error", key: "design.incomplete" },
   full: { kind: "error", key: "design.full" },
   published_cannot_delete: { kind: "error", key: "design.published_cannot_delete" },
   generic: { kind: "error", key: "error.generic" },
@@ -48,6 +52,12 @@ const FLASH: Record<string, { kind: "ok" | "error"; key: MessageKey }> = {
 
 async function scope(c: AdminContext): Promise<ShopRow | null> {
   return loadShop(c, param(c, "shopId"), "design");
+}
+
+/** Liquid のテーマを描ける（Workers の有料プランか Node）。無料プランでは取り込みの検査だけで CPU の上限を超える */
+async function cpuOk(c: AdminContext): Promise<boolean> {
+  if (c.get("adapters").cpuUnlimited) return true;
+  return (await owner(c).db.rpc<string>("banto_site_plan", {}).catch(() => "free")) === "paid";
 }
 
 const base = (shop: ShopRow) => `/admin/shops/${shop.id}/design`;
@@ -87,6 +97,10 @@ const UPLOAD_SCRIPT = `(function(){
   var input=document.getElementById("theme-file"), status=document.getElementById("theme-status"), btn=form.querySelector("button[type=submit]");
   var MSG=JSON.parse(form.getAttribute("data-msg")||"{}");
   var TEXT=/^(layout|templates|sections|snippets)\\/[^\\/]+\\.liquid$|^(templates|sections|config|locales)\\/[^\\/]+\\.json$/;
+  // 翻訳は既定の言語とデプロイの言語だけを送る（ほかの言語と *.schema.json は使わない。束ねたファイルの大きさを抑える）
+  var LOCALE=form.getAttribute("data-locale")||"ja";
+  function wanted(n){ var m=/^locales\\/(.+)\\.json$/.exec(n); if(!m) return true; return /\\.default$/.test(m[1])&&!/\\.schema/.test(m[1])||m[1]===LOCALE; }
+  function readJson(res){ return res.text().then(function(t){ try{ return JSON.parse(t); }catch(e){ throw new Error(MSG.failed+" ("+res.status+")"); } }); }
   function say(s){ status.textContent=s; }
   function readZip(buf){
     var dv=new DataView(buf), eocd=-1;
@@ -120,7 +134,7 @@ const UPLOAD_SCRIPT = `(function(){
       if(first&&!/^(layout|templates|sections|snippets|config|locales|assets)$/.test(first)&&entries.every(function(e){return e.name.split("/")[0]===first;})) entries.forEach(function(e){ e.name=e.name.slice(first.length+1); });
       var files={}, assets=[], blobs={};
       return Promise.all(entries.map(function(e){
-        if(TEXT.test(e.name)) return unpack(e).then(function(b){ return b.text(); }).then(function(s){ files[e.name]=s; });
+        if(TEXT.test(e.name)&&wanted(e.name)) return unpack(e).then(function(b){ return b.text(); }).then(function(s){ files[e.name]=s; });
         var m=/^assets\\/([^\\/]+)$/.exec(e.name);
         if(m) return unpack(e).then(function(b){ assets.push(m[1]); blobs[m[1]]=b; });
         return null;
@@ -128,11 +142,11 @@ const UPLOAD_SCRIPT = `(function(){
         say(MSG.checking);
         var name=(form.elements.namedItem("name").value||"").trim()||file.name.replace(/\\.zip$/i,"");
         return fetch(form.action,{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({name:name,bundle:{format:1,files:files,assets:assets}})});
-      }).then(function(res){ return res.json(); }).then(function(r){
+      }).then(readJson).then(function(r){
         if(!r.ok){ throw new Error((r.errors||[MSG.failed]).slice(0,20).join("\\n")); }
         var i=0;
         function next(){
-          if(i>=assets.length){ location.href=r.next; return; }
+          if(i>=assets.length){ return fetch(r.complete,{method:"POST",credentials:"same-origin"}).then(function(res){ if(!res.ok) throw new Error(MSG.failed+" ("+res.status+")"); location.href=r.next; }); }
           var a=assets[i++]; say(MSG.assets+" "+i+" / "+assets.length);
           return fetch(r.assets+encodeURIComponent(a),{method:"POST",credentials:"same-origin",headers:{"content-type":"application/octet-stream"},body:blobs[a]}).then(function(res){ if(!res.ok) throw new Error(MSG.asset_failed+" "+a); return next(); });
         }
@@ -157,12 +171,12 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
     );
   }
   const [versions, published, plan] = await Promise.all([
-    db.from<VersionRow>("theme_versions").select("id,name,size_bytes,file_count,manifest,created_at", { eq: { shop_id: shop.id }, order: "created_at.desc" }),
+    db.from<VersionRow>("theme_versions").select("id,name,complete,size_bytes,file_count,manifest,created_at", { eq: { shop_id: shop.id }, order: "created_at.desc" }),
     db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } }),
     db.rpc<string>("banto_site_plan", {}).catch(() => "free"),
   ]);
   const current = published?.theme_version_id ?? null;
-  const cpuOk = Boolean(c.get("adapters").cpuUnlimited) || plan === "paid";
+  const canRender = Boolean(c.get("adapters").cpuUnlimited) || plan === "paid";
   const flash = FLASH[c.req.query("flash") ?? ""];
   const msg = {
     reading: t("design.js.reading"),
@@ -182,9 +196,10 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
         <h2>{t("design.conditions")}</h2>
         <ul>
           <li>{shop.domain ? tf("design.cond_domain_ok", { domain: shop.domain }) : t("design.cond_domain_ng")}</li>
-          <li>{cpuOk ? t("design.cond_plan_ok") : t("design.cond_plan_ng")}</li>
+          <li>{canRender ? t("design.cond_plan_ok") : t("design.cond_plan_ng")}</li>
         </ul>
-        {!shop.domain || !cpuOk ? <p class="muted">{t("design.cond_fallback")}</p> : null}
+        {!shop.domain || !canRender ? <p class="muted">{t("design.cond_fallback")}</p> : null}
+        {!shop.published ? <p class="muted">{t("design.cond_unpublished")}</p> : null}
       </section>
 
       <section>
@@ -208,12 +223,13 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
                   <td>
                     {v.name}
                     {v.id === current ? <span class="badge">{t("design.live")}</span> : null}
+                    {v.complete ? null : <span class="badge">{t("design.incomplete_badge")}</span>}
                   </td>
                   <td class="muted">{[v.manifest["theme_name"], v.manifest["theme_version"]].filter((x) => typeof x === "string").join(" ")}</td>
                   <td>{formatDateTime(v.created_at)}</td>
                   <td>{tf("design.size", { kb: Math.ceil(v.size_bytes / 1024), files: v.file_count })}</td>
                   <td class="actions">
-                    {shop.domain ? (
+                    {shop.domain && canRender && shop.published ? (
                       <a class="btn secondary" href={`${base(shop)}/versions/${v.id}/preview`} target="_blank" rel="noopener">
                         {t("design.preview")}
                       </a>
@@ -221,7 +237,7 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
                     {v.id === current ? null : (
                       <form method="post" action={`${base(shop)}/publish`} class="inline">
                         <input type="hidden" name="version" value={v.id} />
-                        <button type="submit" disabled={!shop.domain}>
+                        <button type="submit" disabled={!shop.domain || !v.complete}>
                           {t("design.publish")}
                         </button>
                       </form>
@@ -252,22 +268,25 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
       <section>
         <h2>{t("design.upload")}</h2>
         <p class="muted">{tf("design.upload_hint", { mb: Math.round(THEME_BUNDLE_LIMITS.assetBytes / 1048576) })}</p>
-        <form id="theme-form" method="post" action={`${base(shop)}/versions`} data-msg={JSON.stringify(msg)}>
-          <label>
-            {t("design.upload_name")}
-            <input type="text" name="name" maxlength={100} />
-          </label>
-          <label>
-            {t("design.upload_file")}
-            <input type="file" id="theme-file" accept=".zip,application/zip" required />
-          </label>
-          <button type="submit">{t("design.upload_button")}</button>
-          <p id="theme-status" class="muted" aria-live="polite" />
-          <noscript>
-            <p class="error">{t("design.noscript")}</p>
-          </noscript>
-        </form>
-        <script dangerouslySetInnerHTML={{ __html: UPLOAD_SCRIPT }} />
+        {canRender ? null : <p class="error">{t("design.upload_paid_only")}</p>}
+        {canRender ? (
+          <form id="theme-form" method="post" action={`${base(shop)}/versions`} data-msg={JSON.stringify(msg)} data-locale={getLocale()}>
+            <label>
+              {t("design.upload_name")}
+              <input type="text" name="name" maxlength={100} />
+            </label>
+            <label>
+              {t("design.upload_file")}
+              <input type="file" id="theme-file" accept=".zip,application/zip" required />
+            </label>
+            <button type="submit">{t("design.upload_button")}</button>
+            <p id="theme-status" class="muted" aria-live="polite" />
+            <noscript>
+              <p class="error">{t("design.noscript")}</p>
+            </noscript>
+          </form>
+        ) : null}
+        {canRender ? <script dangerouslySetInnerHTML={{ __html: UPLOAD_SCRIPT }} /> : null}
       </section>
     </AdminLayout>,
   );
@@ -277,11 +296,14 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
 design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.json({ ok: false, errors: [t("shop.not_found")] }, 404);
+  if (!(await cpuOk(c))) return c.json({ ok: false, errors: [t("design.upload_paid_only")] }, 409);
   const length = Number(c.req.header("content-length") ?? "0");
   if (length > THEME_BUNDLE_LIMITS.bundleChars * 2) return c.json({ ok: false, errors: [t("design.too_large")] }, 413);
   let body: { name?: unknown; bundle?: unknown };
   try {
-    body = (await c.req.json()) as { name?: unknown; bundle?: unknown };
+    const raw = (await c.req.json()) as unknown;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("body");
+    body = raw as { name?: unknown; bundle?: unknown };
   } catch {
     return c.json({ ok: false, errors: [t("error.generic")] }, 400);
   }
@@ -308,7 +330,7 @@ design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) =>
     if (e instanceof DbError && e.message.includes("theme_versions_full")) return c.json({ ok: false, errors: [t("design.full")] }, 409);
     throw e;
   }
-  return c.json({ ok: true, id, assets: `${base(shop)}/versions/${id}/assets/`, next: `${base(shop)}?flash=uploaded` });
+  return c.json({ ok: true, id, assets: `${base(shop)}/versions/${id}/assets/`, complete: `${base(shop)}/versions/${id}/complete`, next: `${base(shop)}?flash=uploaded` });
 });
 
 /** 資産を 1 つ置く。版の束ねたファイルに名前があり、決まった種類で、上限の大きさまで */
@@ -319,9 +341,10 @@ design.post("/:shopId/design/versions/:versionId/assets/:name", requireOwner, as
   if (!shop || !UUID.test(versionId)) return c.json({ ok: false }, 404);
   const type = assetType(name);
   if (!type) return c.json({ ok: false }, 400);
-  // 自分のショップの版か（RLS。design の項目）
-  const row = await owner(c).db.from<{ id: string }>("theme_versions").selectOne("id", { eq: { id: versionId, shop_id: shop.id } });
+  // 自分のショップの版か（RLS。design の項目）。置き終えた版の資産は差し替えさせない（公開中の JS を黙って替えさせない）
+  const row = await owner(c).db.from<{ id: string; complete: boolean }>("theme_versions").selectOne("id,complete", { eq: { id: versionId, shop_id: shop.id } });
   if (!row) return c.json({ ok: false }, 404);
+  if (row.complete) return c.json({ ok: false }, 409);
   const bundle = await readBundle(c, shop.id, versionId);
   if (!bundle || !bundle.assets.includes(name)) return c.json({ ok: false }, 404);
   const length = Number(c.req.header("content-length") ?? "0");
@@ -332,14 +355,35 @@ design.post("/:shopId/design/versions/:versionId/assets/:name", requireOwner, as
   return c.json({ ok: true });
 });
 
-/** ショップのドメインでプレビューを開く（券は押したときに作る。30 分） */
+/** 資産を置き終えた。束ねたファイルの資産がすべて置き場にあるかを確かめてから印を付ける */
+design.post("/:shopId/design/versions/:versionId/complete", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  const versionId = param(c, "versionId");
+  if (!shop || !UUID.test(versionId)) return c.json({ ok: false }, 404);
+  const bundle = await readBundle(c, shop.id, versionId);
+  if (!bundle) return c.json({ ok: false }, 404);
+  const storage = c.get("adapters").storage;
+  for (const a of bundle.assets) {
+    const obj = await storage.get(`themes/${shop.id}/${versionId}/assets/${a}`);
+    if (!obj) return c.json({ ok: false, missing: a }, 409);
+    await obj.body.cancel().catch(() => {});
+  }
+  await owner(c).db.rpc("theme_version_complete", { p_shop_id: shop.id, p_version_id: versionId });
+  return c.json({ ok: true });
+});
+
+/** ショップのドメインでプレビューを開く（券は押したときに作る。30 分。出したことを監査ログに残す） */
 design.get("/:shopId/design/versions/:versionId/preview", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   const versionId = param(c, "versionId");
   const secret = sessionSecret(c);
   if (!shop || !shop.domain || !secret || !UUID.test(versionId)) return c.text(t("shop.not_found"), 404);
-  const row = await owner(c).db.from<{ id: string }>("theme_versions").selectOne("id", { eq: { id: versionId, shop_id: shop.id } });
-  if (!row) return c.text(t("shop.not_found"), 404);
+  try {
+    await owner(c).db.rpc("theme_preview_audit", { p_shop_id: shop.id, p_version_id: versionId });
+  } catch (e) {
+    if (e instanceof DbError && e.message.includes("theme_not_found")) return c.text(t("shop.not_found"), 404);
+    throw e;
+  }
   const token = await sealThemePreview(secret, shop.id, versionId);
   return c.redirect(`${shopOrigin(publicBaseUrl(c), shop)}/?preview_theme=${versionId}&preview_token=${encodeURIComponent(token)}`);
 });
@@ -354,6 +398,7 @@ design.post("/:shopId/design/publish", requireOwner, async (c: AdminContext) => 
     await owner(c).db.rpc("theme_publish", { p_shop_id: shop.id, p_version_id: version || null });
   } catch (e) {
     if (e instanceof DbError && e.message.includes("theme_requires_domain")) return c.redirect(`${base(shop)}?flash=requires_domain`);
+    if (e instanceof DbError && e.message.includes("theme_incomplete")) return c.redirect(`${base(shop)}?flash=incomplete`);
     throw e;
   }
   // お客様の画面のショップ行のキャッシュは短い（30 秒）ので、そのまま待てば切り替わる
@@ -367,7 +412,7 @@ design.post("/:shopId/design/versions/:versionId/delete", requireOwner, async (c
   const bundle = await readBundle(c, shop.id, versionId);
   let prefix: string;
   try {
-    prefix = await owner(c).db.rpc<string>("theme_version_delete", { p_version_id: versionId });
+    prefix = await owner(c).db.rpc<string>("theme_version_delete", { p_shop_id: shop.id, p_version_id: versionId });
   } catch (e) {
     if (e instanceof DbError && e.message.includes("theme_published")) return c.redirect(`${base(shop)}?flash=published_cannot_delete`);
     throw e;

@@ -31,8 +31,12 @@ describe.skipIf(!dbAvailable)("テーマ（0071）", () => {
   });
   afterAll(closePool);
 
-  const create = (uid: string, shopId: string, name = "テーマ") =>
-    asUser(uid, async (c) => (await c.query<{ id: string }>("select theme_version_create($1, $2, $3, 1200, 5, $4::jsonb, $5::jsonb) as id", [shopId, randomUUID(), name, JSON.stringify({ theme_name: "T" }), JSON.stringify({ accent: "#333" })])).rows[0]!.id);
+  const create = (uid: string, shopId: string, name = "テーマ", complete = true) =>
+    asUser(uid, async (c) => {
+      const id = (await c.query<{ id: string }>("select theme_version_create($1, $2, $3, 1200, 5, $4::jsonb, $5::jsonb) as id", [shopId, randomUUID(), name, JSON.stringify({ theme_name: "T" }), JSON.stringify({ accent: "#333" })])).rows[0]!.id;
+      if (complete) await c.query("select theme_version_complete($1, $2)", [shopId, id]);
+      return id;
+    });
   const publicTheme = async (slug: string) => (await asAnon(async (c) => (await c.query<{ r: J }>("select shop_public_get($1) as r", [slug])).rows[0]!.r))["theme"];
 
   it("design の項目を持つ人（と owner）だけが版を足し・読める。置き場の鍵は DB が決める。表は直接書けない", async () => {
@@ -62,28 +66,58 @@ describe.skipIf(!dbAvailable)("テーマ（0071）", () => {
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select theme_publish($1, $2)", [f.shopId, foreign])))).toMatch(/theme_not_found/);
     expect(await expectDbError(() => asUser(catalogOnly, (c) => c.query("select theme_publish($1, null)", [f.shopId])))).toMatch(/shop_not_found/);
     // 設定の値を変えると、そのまま出る
-    await asUser(designer, (c) => c.query("select theme_version_set_settings($1, $2::jsonb)", [id, JSON.stringify({ accent: "#c33" })]));
+    await asUser(designer, (c) => c.query("select theme_version_set_settings($1, $2, $3::jsonb)", [f.shopId, id, JSON.stringify({ accent: "#c33" })]));
     expect((await publicTheme("th-shop") as J)["settings"]).toEqual({ accent: "#c33" });
     await getPool().query("update shops set domain = null where id = $1", [f.shopId]);
     expect(await publicTheme("th-shop")).toBeNull();
     await getPool().query("update shops set domain = 'th.example.com' where id = $1", [f.shopId]);
     // 公開中の版は消せない。取り下げてから消せる。戻り値は置き場の接頭辞
-    expect(await expectDbError(() => asUser(designer, (c) => c.query("select theme_version_delete($1)", [id])))).toMatch(/theme_published/);
+    expect(await expectDbError(() => asUser(designer, (c) => c.query("select theme_version_delete($1, $2)", [f.shopId, id])))).toMatch(/theme_published/);
     await asUser(designer, (c) => c.query("select theme_publish($1, null)", [f.shopId]));
     expect(await publicTheme("th-shop")).toBeNull();
-    const prefix = (await asUser(designer, (c) => c.query<{ p: string }>("select theme_version_delete($1) as p", [id]))).rows[0]!.p;
+    const prefix = (await asUser(designer, (c) => c.query<{ p: string }>("select theme_version_delete($1, $2) as p", [f.shopId, id]))).rows[0]!.p;
     expect(prefix).toBe(`themes/${f.shopId}/${id}/`);
+  });
+
+  it("資産を置き終えた（complete）版だけを公開できる。版の操作は URL のショップに結びつく（別のショップの id では消せない）。プレビューは監査ログに残る", async () => {
+    await getPool().query("update shops set domain = 'th.example.com' where id = $1", [f.shopId]);
+    const draft = await create(designer, f.shopId, "途中", false);
+    expect(await expectDbError(() => asUser(designer, (c) => c.query("select theme_publish($1, $2)", [f.shopId, draft])))).toMatch(/theme_incomplete/);
+    await asUser(designer, (c) => c.query("select theme_version_complete($1, $2)", [f.shopId, draft]));
+    await asUser(designer, (c) => c.query("select theme_publish($1, $2)", [f.shopId, draft]));
+    await asUser(designer, (c) => c.query("select theme_publish($1, null)", [f.shopId]));
+    // 両方のショップを持つ人でも、URL のショップと違うショップの版は消せない・変えられない
+    const theirs = await create(other.ownerId, other.shopId, "向こう");
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select theme_version_delete($1, $2)", [f.shopId, theirs])))).toMatch(/theme_not_found/);
+    expect(await expectDbError(() => asUser(other.ownerId, (c) => c.query("select theme_version_delete($1, $2)", [f.shopId, theirs])))).toMatch(/theme_not_found/);
+    expect(await expectDbError(() => asUser(other.ownerId, (c) => c.query("select theme_version_set_settings($1, $2, '{}')", [f.shopId, theirs])))).toMatch(/theme_not_found/);
+    expect(await expectDbError(() => asUser(catalogOnly, (c) => c.query("select theme_version_complete($1, $2)", [f.shopId, draft])))).toMatch(/theme_not_found/);
+    // プレビュー
+    await asUser(designer, (c) => c.query("select theme_preview_audit($1, $2)", [f.shopId, draft]));
+    const log = (await getPool().query<{ actor_id: string; detail: J }>("select actor_id, detail from audit_log where shop_id = $1 and action = 'shop.theme_previewed' order by id desc limit 1", [f.shopId])).rows[0]!;
+    expect(log).toEqual({ actor_id: designer, detail: { version: draft } });
+    expect(await expectDbError(() => asUser(catalogOnly, (c) => c.query("select theme_preview_audit($1, $2)", [f.shopId, draft])))).toMatch(/theme_not_found/);
+    expect(await expectDbError(() => asUser(designer, (c) => c.query("select theme_preview_audit($1, $2)", [f.shopId, theirs])))).toMatch(/theme_not_found/);
+    await asUser(designer, (c) => c.query("select theme_version_delete($1, $2)", [f.shopId, draft]));
+    await getPool().query("update shops set domain = null where id = $1", [f.shopId]);
   });
 
   it("公開中の版は theme_publish を通してしか変えられない（settings の項目で shops を直接書き換えても止まる。外すのは消えたときだけ）", async () => {
     const id = await create(designer, f.shopId, "直接");
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update shops set theme_version_id = $2 where id = $1", [f.shopId, id])))).toMatch(/theme_version_readonly/);
     expect(await expectDbError(() => asService((c) => c.query("update shops set theme_version_id = $2 where id = $1", [f.shopId, id])))).toMatch(/theme_version_readonly/);
+    // 取り下げ（null）も theme_publish だけ（settings の項目のスタッフが直接外せない）
+    await getPool().query("update shops set domain = 'th.example.com' where id = $1", [f.shopId]);
+    await asUser(f.ownerId, (c) => c.query("select theme_publish($1, $2)", [f.shopId, id]));
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update shops set theme_version_id = null where id = $1", [f.shopId])))).toMatch(/theme_version_readonly/);
+    await asUser(f.ownerId, (c) => c.query("select theme_publish($1, null)", [f.shopId]));
+    await getPool().query("update shops set domain = null where id = $1", [f.shopId]);
     // ほかの列の書き換えは今までどおり
     await asUser(f.ownerId, (c) => c.query("update shops set name = name where id = $1", [f.shopId]));
   });
 
   it("公開・取り下げは監査ログに残る（誰が・どの版から・どの版へ）", async () => {
+    await getPool().query("update shops set domain = 'th.example.com' where id = $1", [f.shopId]);
     const id = await create(designer, f.shopId, "監査");
     await asUser(designer, (c) => c.query("select theme_publish($1, $2)", [f.shopId, id]));
     await asUser(f.ownerId, (c) => c.query("select theme_publish($1, null)", [f.shopId]));

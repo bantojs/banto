@@ -7,7 +7,10 @@ import type { StorageAdapter } from "../../adapters/types";
 import { createThemeEngine, ThemeError, type EngineOptions, type ThemeEngine } from "./engine";
 import { THEME_BUNDLE_FORMAT, type ThemeBundle } from "./bundle";
 
-export const THEME_CACHE_LIMITS = { versions: 8, chars: 12 * 1024 * 1024 } as const;
+// Workers の isolate のメモリは 128 MB。元の文字 6 MiB で解析後 50 MiB ほどまで（お店の画面のほかの処理の分を残す）
+export const THEME_CACHE_LIMITS = { versions: 6, chars: 6 * 1024 * 1024 } as const;
+/** 無い・壊れた版を覚えておく秒数（そのあいだは置き場を読みに行かず、既定のテーマで描く） */
+export const THEME_MISS_SECONDS = 60;
 
 export interface LoadedTheme {
   id: string;
@@ -18,11 +21,18 @@ export interface LoadedTheme {
 
 const loaded = new Map<string, LoadedTheme>();
 const loading = new Map<string, Promise<LoadedTheme | null>>();
+const missed = new Map<string, { until: number; broken: boolean }>();
 
 /** テスト用: 覚えたテーマを捨てる */
 export function forgetThemes(): void {
   loaded.clear();
   loading.clear();
+  missed.clear();
+}
+
+function forgetMisses(): void {
+  const now = Date.now();
+  for (const [id, m] of missed) if (m.until <= now || missed.size > 64) missed.delete(id);
 }
 
 function remember(t: LoadedTheme): void {
@@ -48,19 +58,31 @@ export async function loadTheme(storage: StorageAdapter, theme: { id: string; st
     remember(hit);
     return hit;
   }
+  forgetMisses();
+  const miss = missed.get(theme.id);
+  if (miss && miss.until > Date.now()) {
+    if (miss.broken) throw new ThemeError(`theme bundle is broken: ${theme.id}`, "parse");
+    return null;
+  }
   let p = loading.get(theme.id);
   if (!p) {
     p = (async () => {
       const obj = await storage.get(theme.storage_key);
-      if (!obj) return null;
+      if (!obj) {
+        missed.set(theme.id, { until: Date.now() + THEME_MISS_SECONDS * 1000, broken: false });
+        return null;
+      }
       const text = await new Response(obj.body).text();
-      let bundle: ThemeBundle;
+      let bundle: ThemeBundle | null = null;
       try {
         bundle = JSON.parse(text) as ThemeBundle;
       } catch {
+        // 下で壊れた版として扱う
+      }
+      if (!bundle || bundle.format !== THEME_BUNDLE_FORMAT || typeof bundle.files !== "object") {
+        missed.set(theme.id, { until: Date.now() + THEME_MISS_SECONDS * 1000, broken: true });
         throw new ThemeError(`theme bundle is broken: ${theme.id}`, "parse");
       }
-      if (!bundle || bundle.format !== THEME_BUNDLE_FORMAT || typeof bundle.files !== "object") throw new ThemeError(`theme bundle is broken: ${theme.id}`, "parse");
       const t: LoadedTheme = { id: theme.id, bundle, engine: createThemeEngine(bundle.files, engineOpts), chars: text.length };
       remember(t);
       return t;

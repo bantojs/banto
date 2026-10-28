@@ -154,7 +154,8 @@ function notFound(c: Ctx, s?: ShopScope) {
 /** 一覧・商品のページの「見つかりません」。Liquid のテーマがあればその 404 で（docs/themes.md） */
 async function notFoundPage(c: Ctx, s: ShopScope) {
   const lt = await liquidThemeFor(c, s);
-  return (lt && renderNotFound(c, s, lt)) || notFound(c, s);
+  // テーマの 404 にもメニュー（カテゴリーの木）を出す。カテゴリーはキャッシュ済みなら往復なし
+  return (lt && renderNotFound(c, s, lt, await s.sf.listCategories(s.shop).catch(() => []))) || notFound(c, s);
 }
 
 // テーマの資産（ショップのドメインでだけ。src/routes/storefront/liquid.ts）
@@ -254,7 +255,9 @@ storefront.get("/:shop", async (c: Ctx) => {
   const categories = await s.sf.listCategories(s.shop);
   const category = categorySlug ? categories.find((x) => x.slug === categorySlug) : undefined;
   if (categorySlug && !category) return notFoundPage(c, s);
-  const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, categories, { cursor: after }), s.sf.productFacets(s.shop, categories)]);
+  // Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
+  const lt = await liquidThemeFor(c, s);
+  const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, categories, { cursor: after, ...(lt ? { count: true } : {}) }), s.sf.productFacets(s.shop, categories)]);
   if (!page) return notFoundPage(c, s);
   const link = (cursor: string | null) => {
     const q = new URLSearchParams();
@@ -264,7 +267,6 @@ storefront.get("/:shop", async (c: Ctx) => {
     const qs = q.toString();
     return `${s.ctx.shopPath || "/"}${qs ? `?${qs}` : ""}`;
   };
-  const lt = await liquidThemeFor(c, s);
   if (lt) {
     const filter = new URLSearchParams();
     if (tag) filter.set("tag", tag);
