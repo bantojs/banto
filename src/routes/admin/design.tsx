@@ -13,6 +13,7 @@ import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { getLocale } from "../../i18n";
 import { requireOwner } from "./auth";
+import { planLimitOf } from "../../plan/limits";
 import { loadShop } from "./shops";
 
 /**
@@ -303,6 +304,7 @@ design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) =>
   } catch (e) {
     await removeThemeBundle(storage, shop.id, id);
     if (e instanceof DbError && e.message.includes("theme_versions_full")) return c.json({ ok: false, errors: [t("design.full")] }, 409);
+    if (planLimitOf(e)?.kind === "theme_versions") return c.json({ ok: false, errors: [t("plan.limit_theme_versions")] }, 409);
     throw e;
   }
   return c.json({ ok: true, id, assets: `${base(shop)}/versions/${id}/assets/`, complete: `${base(shop)}/versions/${id}/complete`, next: `${base(shop)}?flash=uploaded` });
