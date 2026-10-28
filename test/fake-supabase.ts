@@ -1783,6 +1783,51 @@ export class FakeSupabase {
     const coupon = (c: Row): Row => ({ ...c, usage: { used: 0, held: 0 }, grants: { available: 0, held: 0, used: 0, revoked: 0 } });
     const member = (c: Row): Row => ({ id: c["id"], email: c["email"] ?? null, name: c["name"] ?? null, default_address: c["default_address"] ?? null, external_ref: c["external_ref"] ?? null, attributes: c["attributes"] ?? {}, marketing_consent: c["marketing_consent"] ?? null, marketing_consent_at: c["marketing_consent_at"] ?? null, marketing_consent_source: c["marketing_consent_source"] ?? null, created_at: c["created_at"] ?? null, updated_at: c["updated_at"] ?? null, last_login_at: c["last_login_at"] ?? null, orders: { count: 0, total_jpy: 0, last_order_at: null } });
     const page = (items: Row[]) => ({ items: items.slice(Number(args["p_offset"] ?? 0), Number(args["p_offset"] ?? 0) + Number(args["p_limit"] ?? 50)), total: items.length, limit: args["p_limit"], offset: args["p_offset"] });
+    // 0072: テーマ（スコープとショップの限定・状態だけ再現。本物の規則は test/db/theme-api.test.ts）
+    if (fn.startsWith("api_theme")) {
+      if (!need(fn === "api_theme_publish" ? "theme:publish" : "theme:write")) return unauthorized();
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const err = (message: string) => json({ code: "P0001", message }, 400);
+      const view = (t: Row): Row => ({ id: t["id"], name: t["name"], complete: Boolean(t["complete"]), published: shop["theme_version_id"] === t["id"], size_bytes: t["size_bytes"], file_count: t["file_count"], manifest: t["manifest"] ?? {}, created_at: t["created_at"] });
+      const ver = this.tables.theme_versions.find((t) => t["id"] === args["p_version_id"] && t["shop_id"] === shopId);
+      switch (fn) {
+        case "api_themes_list":
+          return json({ items: this.tables.theme_versions.filter((t) => t["shop_id"] === shopId).reverse().map(view), published_id: shop["theme_version_id"] ?? null, shop_id: shopId, domain: shop["domain"] ?? null, shop_published: shop["published"] === true, site_plan: this.sitePlan, max_versions: 20 });
+        case "api_theme_create": {
+          if (this.tables.theme_versions.filter((t) => t["shop_id"] === shopId).length >= 20) return err("theme_versions_full");
+          const row: Row = { id: args["p_id"], shop_id: shopId, name: args["p_name"], storage_key: `themes/${shopId}/${String(args["p_id"])}/bundle.json`, size_bytes: args["p_size_bytes"], file_count: args["p_file_count"], manifest: args["p_manifest"] ?? {}, settings: {}, complete: false, created_by: tok["owner_id"], created_at: this.now() };
+          this.tables.theme_versions.push(row);
+          return json({ ...view(row), shop_id: shopId, storage_key: row["storage_key"] });
+        }
+        case "api_theme_get":
+          return ver ? json({ ...view(ver), shop_id: shopId, storage_key: ver["storage_key"] }) : notFound();
+        case "api_theme_complete":
+          if (!ver) return notFound();
+          ver["complete"] = true;
+          return json(view(ver));
+        case "api_theme_preview":
+          if (!ver) return notFound();
+          if (!shop["domain"]) return err("theme_requires_domain");
+          if (shop["published"] !== true) return err("shop_unpublished");
+          this.tables.audit_log.push({ id: this.tables.audit_log.length + 1, org_id: shop["org_id"] ?? null, shop_id: shopId, actor_kind: "api_token", actor_id: tok["id"], action: "shop.theme_previewed", target_type: "shop", target_id: shopId, detail: { version: ver["id"] }, created_at: this.now() });
+          return json({ shop_id: shopId, slug: shop["slug"], domain: shop["domain"] });
+        case "api_theme_delete":
+          if (!ver) return notFound();
+          if (shop["theme_version_id"] === ver["id"]) return err("theme_published");
+          this.tables.theme_versions.splice(this.tables.theme_versions.indexOf(ver), 1);
+          return json(`themes/${shopId}/${String(ver["id"])}/`);
+        case "api_theme_publish": {
+          if (args["p_version_id"]) {
+            if (!ver) return notFound();
+            if (!ver["complete"]) return err("theme_incomplete");
+            if (!shop["domain"]) return err("theme_requires_domain");
+          }
+          shop["theme_version_id"] = args["p_version_id"] ?? null;
+          shop["theme_public"] = ver && args["p_version_id"] ? { id: ver["id"], storage_key: ver["storage_key"], settings: ver["settings"] } : null;
+          return json({ published_id: args["p_version_id"] ?? null });
+        }
+      }
+    }
     if (fn.startsWith("api_coupon")) {
       if (!need(/create|update|delete|issue|revoke/.test(fn) ? "coupons:write" : "coupons:read")) return unauthorized();
       const shop = this.tables.shops.find((x) => x["id"] === shopId);

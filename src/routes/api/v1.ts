@@ -3,11 +3,13 @@ import type { AppEnv } from "../../app";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ApiError, ApiService, imageOptionsInput, parseOptionsText, isInquiryApiStatus, isTryonApiStatus } from "../../api/service";
 import { bearerToken } from "../../api/tokens";
-import { MAX_JSON_BODY_BYTES, inquiryMailFor, migrationStateFor, readBodyLimited, relayStatus, type Ctx } from "../common";
+import { MAX_JSON_BODY_BYTES, inquiryMailFor, migrationStateFor, publicBaseUrl, readBodyLimited, relayStatus, type Ctx } from "../common";
 import { BANTO_VERSION } from "../../version";
 import { openapiDocument } from "./openapi";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES } from "../../media/images";
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, filesOf } from "../../modules/inquiries/attachments";
+import { THEME_BUNDLE_LIMITS } from "../../themes/liquid/bundle";
+import { THEME_UPLOAD_MAX_BYTES } from "../../themes/liquid/versions";
 
 /**
  * REST API v1（AI 用トークン、docs/ai-access.md）。Cookie は見ない。
@@ -39,6 +41,7 @@ apiV1.use("*", async (c, next) => {
     migrationState: migrationStateFor(c, url),
     inquiryMail: inquiryMailFor(c),
     privateStorage: c.get("adapters").privateStorage ?? null,
+    theme: { secret: c.get("sessionSecret") ?? null, publicBase: publicBaseUrl(c), cpuUnlimited: Boolean(c.get("adapters").cpuUnlimited) },
   });
   c.set("api", api);
   await next();
@@ -50,9 +53,9 @@ const api = (c: Ctx): ApiService => {
   return a;
 };
 
-async function body(c: Ctx): Promise<Record<string, unknown>> {
-  const raw = await readBodyLimited(c.req.raw, MAX_JSON_BODY_BYTES);
-  if (!raw) throw new ApiError("invalid", "request body is larger than 1MB", 413);
+async function body(c: Ctx, max = MAX_JSON_BODY_BYTES): Promise<Record<string, unknown>> {
+  const raw = await readBodyLimited(c.req.raw, max);
+  if (!raw) throw new ApiError("invalid", `request body is larger than ${Math.round(max / 1048576)}MB`, 413);
   let j: unknown;
   try {
     j = JSON.parse(new TextDecoder().decode(raw));
@@ -341,5 +344,39 @@ v1.get("/stats/inventory-low", async (c) =>
   api(c)
     .inventoryLow(c.req.query("threshold") ? int(c.req.query("threshold"), 3) : undefined)
     .then((r) => c.json({ items: r }))
+    .catch((e) => errorJson(c, e)),
+);
+
+// ---- テーマ（theme:write / theme:publish、0072、docs/themes.md）。CLI（cli/banto-theme.mjs）と GitHub Actions が使う。MCP には出さない ----
+// 取り込み: POST /themes（束ねたファイル）→ PUT /themes/:id/assets/:name（資産を 1 つずつ）→ POST /themes/:id/complete
+v1.get("/themes", async (c) => api(c).themesList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/themes", async (c) =>
+  body(c, THEME_UPLOAD_MAX_BYTES)
+    .then((b) => api(c).themeCreate(typeof b["name"] === "string" ? b["name"] : "", b["bundle"]))
+    .then((r) => c.json(r, 201))
+    .catch((e) => errorJson(c, e)),
+);
+v1.put("/themes/:id/assets/:name", async (c) => {
+  try {
+    const length = Number(c.req.header("content-length") ?? NaN);
+    if (!Number.isFinite(length)) throw new ApiError("invalid", "Content-Length is required", 411);
+    const read = await readBodyLimited(c.req.raw, THEME_BUNDLE_LIMITS.assetBytes);
+    if (!read) throw new ApiError("invalid", "invalid_asset: an asset can be up to 5MB", 413);
+    return c.json(await api(c).themeAssetPut(c.req.param("id"), c.req.param("name"), read.slice().buffer));
+  } catch (e) {
+    return errorJson(c, e);
+  }
+});
+v1.post("/themes/:id/complete", async (c) => api(c).themeComplete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/themes/:id/preview", async (c) => api(c).themePreview(c.req.param("id")).then((r) => c.json(r, 200, { "cache-control": "no-store" })).catch((e) => errorJson(c, e)));
+v1.delete("/themes/:id", async (c) => api(c).themeDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/themes/publish", async (c) =>
+  body(c)
+    .then((b) => {
+      const v = b["version_id"];
+      if (v !== null && typeof v !== "string") throw new ApiError("invalid", "version_id must be a string (or null to unpublish)", 400);
+      return api(c).themePublish(v);
+    })
+    .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),
 );

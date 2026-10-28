@@ -1,0 +1,48 @@
+# テーマのリポジトリに置く例（docs/themes.md「GitHub Actions から」）。
+#   - プルリクエスト: 新しい版として取り込み、プレビューのリンクをジョブの出力に出す（公開しない。theme:write のトークン）
+#   - main への push: 取り込んで公開する（theme:write と theme:publish のトークン）
+# リポジトリの Settings → Secrets and variables → Actions に置くもの:
+#   BANTO_URL（変数。Banto の URL = 管理画面を開く URL。ショップの独自ドメインではない）、BANTO_TOKEN_PREVIEW（theme:write）、BANTO_TOKEN_PUBLISH（theme:write + theme:publish）
+# banto-theme.mjs は Banto の cli/banto-theme.mjs をこのリポジトリに写したもの（依存なし。Banto を上げたら写し直す）
+name: banto-theme
+on:
+  pull_request:
+    paths: ["theme/**"]
+  push:
+    branches: [main]
+    paths: ["theme/**"]
+permissions:
+  contents: read
+concurrency:
+  group: banto-theme-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node .banto/banto-theme.mjs push theme --name "PR #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }}"
+        env:
+          BANTO_URL: ${{ vars.BANTO_URL }}
+          BANTO_TOKEN: ${{ secrets.BANTO_TOKEN_PREVIEW }}
+      - run: node .banto/banto-theme.mjs prune --keep 10
+        env:
+          BANTO_URL: ${{ vars.BANTO_URL }}
+          BANTO_TOKEN: ${{ secrets.BANTO_TOKEN_PREVIEW }}
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node .banto/banto-theme.mjs push theme --name "main ${{ github.sha }}" --publish
+        env:
+          BANTO_URL: ${{ vars.BANTO_URL }}
+          BANTO_TOKEN: ${{ secrets.BANTO_TOKEN_PUBLISH }}
