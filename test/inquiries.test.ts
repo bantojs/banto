@@ -31,9 +31,18 @@ interface Ticket {
   order_id: string | null;
   claimed: number | null;
   return_to: string | null;
+  /** 0068 */
+  assignee?: string | null;
   links: Set<string>;
   messages: { author: "customer" | "shop"; body: string; created_at: string; attachments?: { id: string; key: string; filename: string; content_type: string; size: number }[] }[];
 }
+
+const STAFF = "00000000-0000-4000-8000-000000000005";
+/** 担当にできる人（0068 の真似）: ショップの owner と、support の項目を持つスタッフ 1 人 */
+const ASSIGNEES = (sb: FakeSupabase) => [
+  { user_id: String(sb.tables.shops[0]!["owner_id"]), email: "owner@example.com" },
+  { user_id: STAFF, email: "staff@example.com" },
+];
 
 /** 0061 の関数の小さな真似（回数の制限・メールの記録は DB のテストで確かめる） */
 function fakeInquiries(sb: FakeSupabase) {
@@ -53,7 +62,10 @@ function fakeInquiries(sb: FakeSupabase) {
     const fn = u.pathname.replace("/rest/v1/rpc/", "");
     if (u.pathname === "/rest/v1/inquiries") {
       const shop = u.searchParams.get("shop_id")?.replace(/^eq\./, "");
-      return json(tickets.filter((x) => x.shop_id === shop).map((x) => ({ id: x.id, number: x.number, status: x.status, category: x.category, contact_email: x.contact_email, contact_name: null, email_verified_at: x.verified ? "2026-10-27T00:00:00Z" : null, order_id: x.order_id, claimed_order_number: x.claimed, last_message_at: "2026-10-27T00:00:00Z", created_at: "2026-10-27T00:00:00Z" })));
+      const who = u.searchParams.get("assignee_id");
+      const byWho = (x: Ticket) => !who || (who === "is.null" ? !x.assignee : x.assignee === who.replace(/^eq\./, ""));
+      return json(tickets.filter((x) => x.shop_id === shop && byWho(x)).map((x) => ({
+        ...(u.searchParams.get("select")?.includes("assignee_id") ? { assignee_id: x.assignee ?? null } : {}), id: x.id, number: x.number, status: x.status, category: x.category, contact_email: x.contact_email, contact_name: null, email_verified_at: x.verified ? "2026-10-27T00:00:00Z" : null, order_id: x.order_id, claimed_order_number: x.claimed, last_message_at: "2026-10-27T00:00:00Z", created_at: "2026-10-27T00:00:00Z" })));
     }
     const a = (await req.json()) as Record<string, unknown>;
     const shop = a["p_shop_id"];
@@ -124,7 +136,25 @@ function fakeInquiries(sb: FakeSupabase) {
       }
       case "inquiry_admin_get": {
         const t = tickets.find((x) => x.id === a["p_inquiry_id"]);
-        return json(t ? { ...view(t), shop_id: t.shop_id, origin: t.origin, contact_email: t.contact_email, contact_name: null, customer_id: t.customer_id, closed_at: null, masked: false, member_match: false, order: null } : null);
+        return json(t ? { ...view(t), shop_id: t.shop_id, origin: t.origin, contact_email: t.contact_email, contact_name: null, customer_id: t.customer_id, closed_at: null, masked: false, member_match: false, order: null, assignee_id: t.assignee ?? null } : null);
+      }
+      // 0068 の真似（担当にできる人の判定・知らせてよいかは test/db/inquiry-assignee.test.ts）
+      case "inquiry_assignees":
+      case "api_inquiry_assignees":
+        return json(ASSIGNEES(sb));
+      case "inquiry_assign":
+      case "api_inquiry_assign": {
+        const t = fn === "inquiry_assign" ? tickets.find((x) => x.id === a["p_inquiry_id"])! : tickets.find((x) => x.number === a["p_number"])!;
+        const to = (a["p_user"] as string | null) ?? null;
+        if (to && !ASSIGNEES(sb).some((x) => x.user_id === to)) return err("invalid_assignee");
+        const changed = (t.assignee ?? null) !== to;
+        t.assignee = to;
+        const owner = String(sb.tables.shops[0]!["owner_id"]);
+        const send = changed && !!to && (fn === "api_inquiry_assign" || to !== owner);
+        const r = { inquiry_id: t.id, number: t.number, send, to: send ? ASSIGNEES(sb).find((x) => x.user_id === to)!.email : null, mail_from: from };
+        if (fn === "inquiry_assign") return json(r);
+        const shop = sb.tables.shops[0]!;
+        return json({ inquiry: { ...view(t), assignee: to ? ASSIGNEES(sb).find((x) => x.user_id === to) : null }, mail: { ...r, shop: { id: shop["id"], name: shop["name"], slug: shop["slug"], domain: null, settings: shop["settings"] } } });
       }
       case "inquiry_reply": {
         const t = tickets.find((x) => x.id === a["p_inquiry_id"])!;
@@ -163,6 +193,7 @@ function fakeInquiries(sb: FakeSupabase) {
   externalHosts.set(`${sb.url}/rest/v1/rpc/inquiry_`, handler);
   externalHosts.set(`${sb.url}/rest/v1/inquiries`, handler);
   externalHosts.set(`${sb.url}/rest/v1/rpc/api_inquiry_reply`, handler);
+  externalHosts.set(`${sb.url}/rest/v1/rpc/api_inquiry_assign`, handler);
   externalHosts.set(`${sb.url}/rest/v1/rpc/api_inquiry_attachment_get`, handler);
   return tickets;
 }
@@ -429,6 +460,71 @@ describe("お問い合わせ（管理画面）", () => {
     html = await (await guest.get("/my-shop/inquiries/thread")).text();
     expect(html).toContain("本日発送しました");
     expect(html).not.toContain('action="/my-shop/inquiries/reply"');
+  });
+});
+
+describe("お問い合わせの担当者（0068）", () => {
+  it("管理画面: 担当を選ぶと本人にリンクだけのメール（自分なら送らない）。一覧に担当の列と「自分の担当」「未割り当て」の絞り込み", async () => {
+    const { app, shop, mail, tickets, b } = setup();
+    await b.post("/my-shop/orders/lookup", { number: "1001", email: "guest@example.com" });
+    const token = /name="o" value="([^"]+)"/.exec(await (await b.post("/my-shop/orders/lookup", { number: "1001", email: "guest@example.com" })).text())![1]!;
+    await b.post("/my-shop/inquiries/submit", { o: token, category: "order", body: "届きません" });
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const page = `/admin/shops/${shop.id}/modules/inquiries`;
+    let html = await (await admin.get(`${page}/inq-1`)).text();
+    expect(html).toContain(`action="${page}/inq-1/assign"`);
+    expect(html).toContain("staff@example.com");
+    expect(html).toContain("owner@example.com （自分）");
+
+    let res = await admin.post(`${page}/inq-1/assign`, { assignee: STAFF });
+    expect(res.headers.get("location")).toBe(`${page}/inq-1?flash=assigned`);
+    expect(tickets[0]!.assignee).toBe(STAFF);
+    const m = mail.sent.filter((x) => x.to === "staff@example.com").at(-1)!;
+    expect(m.subject).toContain("担当になりました");
+    expect(m.text).toContain(`${BASE}${page}/inq-1`);
+    expect(m.text).not.toContain("届きません");
+
+    html = await (await admin.get(page)).text();
+    expect(html).toContain("<td>staff@example.com</td>");
+    expect(await (await admin.get(`${page}?assignee=mine`)).text()).not.toContain(`${page}/inq-1"`);
+    expect(await (await admin.get(`${page}?assignee=none`)).text()).not.toContain(`${page}/inq-1"`);
+
+    const before = mail.sent.length;
+    res = await admin.post(`${page}/inq-1/assign`, { assignee: String(shop["owner_id"]) });
+    expect(res.headers.get("location")).toContain("flash=assigned");
+    expect(mail.sent.length).toBe(before);
+    expect(await (await admin.get(`${page}?assignee=mine`)).text()).toContain(`${page}/inq-1"`);
+    await admin.post(`${page}/inq-1/assign`, { assignee: "" });
+    expect(tickets[0]!.assignee).toBeNull();
+    expect(await (await admin.get(`${page}?assignee=none`)).text()).toContain(`${page}/inq-1"`);
+    expect((await admin.post(`${page}/inq-1/assign`, { assignee: "00000000-0000-4000-8000-000000000099" })).headers.get("location")).toContain("flash=generic");
+  });
+
+  it("0068 が当たる前は担当の欄も絞り込みも出さない", async () => {
+    const { app, shop, sb, b } = setup();
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0068_mod_inquiries_assignee");
+    await b.post("/my-shop/inquiries/submit", { category: "other", body: "質問", email: "q@example.com" });
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const page = `/admin/shops/${shop.id}/modules/inquiries`;
+    expect(await (await admin.get(page)).text()).not.toContain('name="assignee"');
+    expect((await admin.post(`${page}/inq-1/assign`, { assignee: STAFF })).status).toBe(404);
+  });
+
+  it("AI 用 API: 担当にできる人・担当を決める（本人にメール、宛先は応答に出さない）・一覧の絞り込み", async () => {
+    const { app, mail, tickets } = setup();
+    await app.request(`${BASE}/api/shops/my-shop/inquiries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "other", body: "質問", email: "ai-guest@example.com" }) });
+    const auth = { "content-type": "application/json", authorization: `Bearer banto_${"a".repeat(43)}` };
+    let res = await app.request(`${BASE}/api/v1/inquiries/assignees`, { headers: auth });
+    expect(((await res.json()) as { assignees: { email: string }[] }).assignees.map((x) => x.email)).toEqual(["owner@example.com", "staff@example.com"]);
+    res = await app.request(`${BASE}/api/v1/inquiries/1/assignee`, { method: "PUT", headers: auth, body: JSON.stringify({ user_id: STAFF }) });
+    const r = (await res.json()) as Record<string, unknown>;
+    expect(r).toMatchObject({ number: 1, assignee: { user_id: STAFF }, mail_sent: true });
+    expect(tickets[0]!.assignee).toBe(STAFF);
+    expect(mail.sent.filter((x) => x.to === "staff@example.com")).toHaveLength(1);
+    res = await app.request(`${BASE}/api/v1/inquiries/1/assignee`, { method: "PUT", headers: auth, body: JSON.stringify({ user_id: "nope" }) });
+    expect(res.status).toBe(400);
+    res = await app.request(`${BASE}/api/v1/inquiries/1/assignee`, { method: "PUT", headers: auth, body: JSON.stringify({ user_id: null }) });
+    expect(((await res.json()) as Record<string, unknown>)["assignee"]).toBeNull();
   });
 });
 

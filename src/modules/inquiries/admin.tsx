@@ -18,7 +18,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { yen } from "../../routes/common";
 import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } from "./attachments";
-import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
+import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_ASSIGNEE_MIGRATION, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -26,7 +26,8 @@ import { BODY_MAX, INQUIRIES_MIGRATION, INQUIRIES_MODULE, INQUIRY_STATUSES, MAX_
  *   POST .../settings                                       お知らせの宛先（settings の項目も要る）
  *   GET  .../:id                                            1 件（やり取り・結んだ注文・アドレスの確認）
  *   POST .../:id/reply, .../:id/status, .../:id/delete      返事を書く（お客様にはリンクだけのメール）・完了 / 開き直す・削除
- * 読むのは RLS（inquiries_select）と inquiry_admin_get、書くのは inquiry_reply / inquiry_set_status / inquiry_delete（0061）。
+ *   POST .../:id/assign                                     担当者を決める・外す（0068。担当になった人にリンクだけのメール）
+ * 読むのは RLS（inquiries_select）と inquiry_admin_get、書くのは inquiry_reply / inquiry_set_status / inquiry_delete（0061）・inquiry_assign（0068）。
  */
 export const inquiriesAdmin = new Hono<AppEnv>();
 
@@ -48,6 +49,8 @@ const FLASH: Record<string, MessageKey> = {
   sent: "inq.admin_reply_sent",
   sent_no_mail: "inq.admin_reply_no_mail",
   status: "inq.admin_status_saved",
+  assigned: "inq.admin_assigned",
+  assigned_no_mail: "inq.admin_assigned_no_mail",
   deleted: "inq.admin_deleted",
   empty: "inq.error_body",
   attachments_unavailable: "inq.error_attachments_unavailable",
@@ -60,7 +63,7 @@ const FLASH: Record<string, MessageKey> = {
 function Flash({ code }: { code?: string | undefined }) {
   const key = code ? FLASH[code] : undefined;
   if (!key) return null;
-  return <p class={code === "empty" || code === "generic" || code === "sent_no_mail" || !!code?.startsWith("attachment") ? "error" : "notice"}>{t(key)}</p>;
+  return <p class={code === "empty" || code === "generic" || code === "sent_no_mail" || code === "assigned_no_mail" || !!code?.startsWith("attachment") ? "error" : "notice"}>{t(key)}</p>;
 }
 
 interface Row {
@@ -75,21 +78,40 @@ interface Row {
   claimed_order_number: number | null;
   last_message_at: string;
   created_at: string;
+  /** 0068 */
+  assignee_id?: string | null;
 }
 
 const FILTERS = ["open", "waiting_shop", "waiting_customer", "closed", "unverified", "all"] as const;
+/** 担当者の絞り込み（0068）: all / mine（自分）/ none（未割り当て） */
+const ASSIGNEE_FILTERS = ["all", "mine", "none"] as const;
+
+interface Assignee {
+  user_id: string;
+  email: string;
+}
+
+/** 担当者にできる人（0068 が当たっていなければ null = 担当者の欄を出さない） */
+async function assigneesFor(c: AdminContext, shop: ShopRow): Promise<Assignee[] | null> {
+  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRY_ASSIGNEE_MIGRATION))) return null;
+  return (await owner(c).db.rpc<Assignee[] | null>("inquiry_assignees", { p_shop_id: shop.id })) ?? [];
+}
 
 inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const filter = (FILTERS as readonly string[]).includes(c.req.query("status") ?? "") ? c.req.query("status")! : "open";
-  const rows = await owner(c).db.from<Row>("inquiries").select("id,number,status,category,contact_email,contact_name,email_verified_at,order_id,claimed_order_number,last_message_at,created_at", {
-    eq: { shop_id: shop.id },
-    ...(filter === "open" ? { in: { status: ["waiting_shop", "waiting_customer"] } } : (INQUIRY_STATUSES as readonly string[]).includes(filter) ? { eq: { shop_id: shop.id, status: filter } } : {}),
+  const assignees = await assigneesFor(c, shop);
+  const who = assignees && (ASSIGNEE_FILTERS as readonly string[]).includes(c.req.query("assignee") ?? "") ? c.req.query("assignee")! : "all";
+  const eq: Record<string, string | null> = { shop_id: shop.id, ...((INQUIRY_STATUSES as readonly string[]).includes(filter) ? { status: filter } : {}), ...(who === "mine" ? { assignee_id: owner(c).session.user_id } : who === "none" ? { assignee_id: null } : {}) };
+  const rows = await owner(c).db.from<Row>("inquiries").select(`id,number,status,category,contact_email,contact_name,email_verified_at,order_id,claimed_order_number,last_message_at,created_at${assignees ? ",assignee_id" : ""}`, {
+    eq,
+    ...(filter === "open" ? { in: { status: ["waiting_shop", "waiting_customer"] } } : {}),
     order: "last_message_at.desc",
     limit: 200,
   });
   const list = filter === "unverified" ? rows.filter((r) => !r.email_verified_at) : rows;
+  const emailOf = new Map((assignees ?? []).map((a) => [a.user_id, a.email]));
   const s = inquirySettings(shop.settings);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("mod.inquiries.name")}`} nav crumbs={crumbs(shop)} shopTabs={tabs(c, shop)}>
@@ -103,6 +125,17 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
             </option>
           ))}
         </select>{" "}
+        {assignees ? (
+          <>
+            <select name="assignee" aria-label={t("inq.assignee")}>
+              {ASSIGNEE_FILTERS.map((f) => (
+                <option value={f} selected={f === who}>
+                  {t(`inq.assignee_filter_${f}` as MessageKey)}
+                </option>
+              ))}
+            </select>{" "}
+          </>
+        ) : null}
         <button type="submit" class="secondary small">
           {t("inq.filter")}
         </button>
@@ -118,6 +151,7 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
               <th>{t("inq.category")}</th>
               <th>{t("inq.contact")}</th>
               <th>{t("inq.order")}</th>
+              {assignees ? <th>{t("inq.assignee")}</th> : null}
               <th>{t("inq.last_message_at")}</th>
             </tr>
           </thead>
@@ -134,6 +168,7 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
                 <td>{categoryLabel(r.category)}</td>
                 <td>{[r.contact_name, r.contact_email].filter(Boolean).join(" / ")}</td>
                 <td>{r.order_id ? t("inq.order_linked") : r.claimed_order_number ? tf("inq.order_claimed", { number: r.claimed_order_number }) : ""}</td>
+                {assignees ? <td>{r.assignee_id ? (emailOf.get(r.assignee_id) ?? t("inq.assignee_unknown")) : <span class="muted">{t("inq.assignee_none")}</span>}</td> : null}
                 <td>{formatDateTime(r.last_message_at)}</td>
               </tr>
             ))}
@@ -201,6 +236,8 @@ interface Detail {
   closed_at: string | null;
   masked: boolean;
   member_match: boolean;
+  /** 0068 */
+  assignee_id?: string | null;
   order: { order_id: string; number: number; status: string; created_at: string; total_jpy: number; items: { name: string | null; qty: number }[] } | null;
   messages: { author: "customer" | "shop"; body: string; created_at: string; attachments?: { id: string; filename: string; content_type: string; size: number }[] }[];
 }
@@ -229,6 +266,7 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
   // 定型文を差し込む（?template=<番号>。JavaScript を使わず、返事の欄に入れた状態で開き直す）
   const templates = inquirySettings(shop.settings).templates;
   const picked = templates[Number(c.req.query("template") ?? "-1")];
+  const assignees = await assigneesFor(c, shop);
   const draft = picked ? fillTemplate(picked.body, { name: d.contact_name, number: d.number, shop: shop.name }) : "";
   return c.html(
     <AdminLayout title={`#${d.number} · ${t("mod.inquiries.name")}`} nav crumbs={crumbs(shop, `#${d.number}`)} shopTabs={tabs(c, shop)}>
@@ -275,6 +313,35 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
             <th>{t("inq.created_at")}</th>
             <td>{formatDateTime(d.created_at)}</td>
           </tr>
+          {assignees ? (
+            <tr>
+              <th>{t("inq.assignee")}</th>
+              <td>
+                <form method="post" action={`${base(shop)}/${d.id}/assign`}>
+                  <select name="assignee" aria-label={t("inq.assignee")}>
+                    <option value="" selected={!d.assignee_id}>
+                      {t("inq.assignee_none")}
+                    </option>
+                    {d.assignee_id && !assignees.some((a) => a.user_id === d.assignee_id) ? (
+                      <option value={d.assignee_id} selected>
+                        {t("inq.assignee_unknown")}
+                      </option>
+                    ) : null}
+                    {assignees.map((a) => (
+                      <option value={a.user_id} selected={a.user_id === d.assignee_id}>
+                        {a.email}
+                        {a.user_id === owner(c).session.user_id ? ` ${t("inq.assignee_me")}` : ""}
+                      </option>
+                    ))}
+                  </select>{" "}
+                  <button type="submit" class="secondary small">
+                    {t("inq.assign")}
+                  </button>
+                </form>
+                <p class="muted">{t("inq.assignee_help")}</p>
+              </td>
+            </tr>
+          ) : null}
         </tbody>
       </table>
       {d.category === "account" ? <p class="notice">{t("inq.account_warning")}</p> : null}
@@ -415,6 +482,24 @@ inquiriesAdmin.post("/:id/status", requireOwner, async (c: AdminContext) => {
     throw e;
   }
   return c.redirect(`${base(x.shop)}/${x.d.id}?flash=status`);
+});
+
+/** 担当者を決める・外す（0068。担当になった人には、自分で自分に割り当てたのでなければリンクだけのメール） */
+inquiriesAdmin.post("/:id/assign", requireOwner, async (c: AdminContext) => {
+  const x = await detail(c);
+  if (!x || !(await assigneesFor(c, x.shop))) return c.notFound();
+  const back = `${base(x.shop)}/${x.d.id}`;
+  const to = ((await formFields(c)).assignee ?? "").trim();
+  let r: { inquiry_id: string; number: number; send: boolean; to: string | null; mail_from: string | null };
+  try {
+    r = await owner(c).db.rpc("inquiry_assign", { p_inquiry_id: x.d.id, p_user: to || null });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${back}?flash=generic`);
+    throw e;
+  }
+  // 知らせる相手がいた（自分以外に割り当てた）のに送れなかったときだけ、そのことを出す
+  const notified = r.to ? await sendAssignNotice({ mailer: createMailer(c.get("adapters"), c.get("deps").fetch), adminBase: publicBaseUrl(c) }, x.shop, r) : true;
+  return c.redirect(`${back}?flash=${notified ? "assigned" : "assigned_no_mail"}`);
 });
 
 inquiriesAdmin.post("/:id/delete", requireOwner, async (c: AdminContext) => {

@@ -27,6 +27,8 @@ export type ApiScope = (typeof API_SCOPES)[number];
 export const API_INQUIRIES_MIGRATION = "0061_mod_inquiries";
 /** AI 用 API でお問い合わせの添付を扱う（返事に添付・お客様の添付を受け取る） */
 export const API_INQUIRY_ATTACHMENTS_MIGRATION = "0064_inquiry_api_attachments";
+/** お問い合わせの担当者（0068） */
+export const API_INQUIRY_ASSIGNEE_MIGRATION = "0068_mod_inquiries_assignee";
 export const SCOPES_0061: readonly ApiScope[] = ["inquiries:read", "inquiries:write"];
 
 /** 既定で選ばれるスコープ（読み取りのみ、個人情報なし） */

@@ -38,8 +38,8 @@ export function buildCustomerMail(kind: CustomerMailKind, shop: InquiryMailShop,
   };
 }
 
-/** 運営者へ: 新しい問い合わせ（アドレスが確かめられたとき）/ お客様から返事があった。中身は管理画面で読む */
-export function buildShopNotice(kind: "new" | "reply", shop: InquiryMailShop, inquiry: { number: number; category?: string }, adminUrl: string): Built {
+/** 運営者へ: 新しい問い合わせ（アドレスが確かめられたとき）/ お客様から返事があった / 担当になった（0068）。中身は管理画面で読む */
+export function buildShopNotice(kind: "new" | "reply" | "assign", shop: InquiryMailShop, inquiry: { number: number; category?: string }, adminUrl: string): Built {
   const vars = { shop: shop.name, number: inquiry.number, link: adminUrl, category: inquiry.category ? t(`inq.category_${inquiry.category}` as Parameters<typeof t>[0]) : "" };
   const intro = tf(`inq.notice_${kind}_intro`, vars);
   return {

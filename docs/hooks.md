@@ -18,7 +18,7 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 | `tryon.requested` | お店で試着の申し込み（同梱モジュール store_tryon、0025） | `request_id` `number` `shop_id` `store_id` `status` `visit_date` `customer_id` |
 | `tryon.updated` | お店で試着の状態が変わった（`sent` 店舗へ発送 / `ready` 取り置き開始 / `purchased` / `not_purchased` / `expired` / `cancelled`） | `request_id` `number` `shop_id` `store_id` `status` `hold_until` `customer_id` |
 | `inquiry.created` | お問い合わせが確定したとき（ゲストはメールのリンクでアドレスが確かめられたとき、会員・注文からは送ったとき。同梱モジュール inquiries、0061） | `inquiry_id` `number` `shop_id` `category` `status` `customer_id` `order_id` |
-| `inquiry.updated` | やり取りがあった（`change: "message"`、`author`: `customer` / `shop`）・状態が変わった（`change: "status"`） | `inquiry_id` `number` `shop_id` `status` `change` `author` |
+| `inquiry.updated` | やり取りがあった（`change: "message"`、`author`: `customer` / `shop`）・状態が変わった（`change: "status"`）・担当者が変わった（`change: "assignee"`、0068。担当者の id もアドレスも載せない） | `inquiry_id` `number` `shop_id` `status` `change` `author` |
 | `customer.created` | 会員の行ができたとき（初回のログイン、取り込み、API での作成。0047） | `customer_id` `shop_id` `external_ref`（外部の顧客マスタでの ID `{provider, id}`、無ければ null）`marketing_consent`（案内メールの同意 true / false / null = 未回答。0050） |
 | `customer.updated` | 会員のプロフィール（メールアドレス・氏名・住所・独自項目・外部の ID・案内メールの同意）が変わったとき。ログインの時刻やパスワードの変更では送らない | 同上 |
 | `customer.deleted` | 会員が退会した・運営者が削除したとき | 同上 |

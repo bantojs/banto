@@ -22,6 +22,8 @@ import type { Theme } from "../../themes/types";
 
 export const INQUIRIES_MODULE = "inquiries";
 export const INQUIRIES_MIGRATION = "0061_mod_inquiries";
+/** 担当者（0068） */
+export const INQUIRY_ASSIGNEE_MIGRATION = "0068_mod_inquiries_assignee";
 
 export const INQUIRY_CATEGORIES = ["product", "order", "account", "other"] as const;
 export type InquiryCategory = (typeof INQUIRY_CATEGORIES)[number];
@@ -197,6 +199,12 @@ async function trySend(mailer: Mailer | null, mail: Parameters<typeof sendMail>[
 async function notifyShop(deps: InquiryDeps, shop: InquiryMailShop, notify: { send: boolean; to: string | null } | null, from: string | null, kind: "new" | "reply", inquiry: { id: string; number: number; category?: string }) {
   if (!notify?.send || !notify.to || !from) return;
   await trySend(deps.mailer, { from, to: notify.to, ...buildShopNotice(kind, shop, inquiry, `${deps.adminBase}/admin/shops/${shop.id}/modules/inquiries/${inquiry.id}`) });
+}
+
+/** 担当になった人へのお知らせ（0068。DB が「送ってよい」と決めたときだけ。管理画面のチケットへのリンクだけで、本文は載せない） */
+export async function sendAssignNotice(deps: { mailer: Mailer | null; adminBase: string }, shop: InquiryMailShop, r: { inquiry_id: string; number: number; send: boolean; to: string | null; mail_from: string | null }): Promise<boolean> {
+  if (!r.send || !r.to || !r.mail_from) return false;
+  return trySend(deps.mailer, { from: r.mail_from, to: r.to, ...buildShopNotice("assign", shop, { number: r.number }, `${deps.adminBase}/admin/shops/${shop.id}/modules/inquiries/${r.inquiry_id}`) });
 }
 
 export type SubmitResult = { ok: true; number: number; verified: boolean; mailSent: boolean } | { ok: false; error: InquiryError };

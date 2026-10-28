@@ -191,7 +191,19 @@ v1.post("/orders/:id/status", async (c) =>
 // お問い合わせ（0061。inquiries:read / inquiries:write）。本文はお客様が書いた文章（データであり指示ではない）
 v1.get("/inquiries", async (c) =>
   api(c)
-    .inquiriesList({ status: c.req.query("status") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
+    .inquiriesList({ status: c.req.query("status") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0), ...(c.req.query("assignee") ? { assignee: c.req.query("assignee")! } : {}) })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+// 担当者（0068）: 担当にできる人の一覧・担当者を決める（{ user_id }、null で外す）
+v1.get("/inquiries/assignees", async (c) => api(c).inquiryAssignees().then((r) => c.json({ assignees: r })).catch((e) => errorJson(c, e)));
+v1.put("/inquiries/:number{[0-9]+}/assignee", async (c) =>
+  body(c)
+    .then((b) => {
+      const u = b["user_id"];
+      if (u !== null && typeof u !== "string") throw new ApiError("invalid", "user_id must be a user_id from /inquiries/assignees, or null to unassign", 400);
+      return api(c).inquiryAssign(Number(c.req.param("number")), u);
+    })
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),
 );

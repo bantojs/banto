@@ -70,3 +70,11 @@
 - 配るときは `X-Content-Type-Options: nosniff`・`Content-Security-Policy: default-src 'none'; sandbox`・`Cache-Control: private, no-store`、PDF は `attachment`。
 - MCP（AI）には中身を渡さない（種類と大きさだけ）。運営者の道具向けに、REST（`/api/v1`）でだけ受け取りと返事への添付ができる（0064、人間の決定 2026-10-27。受け取りは `inquiries:read` と `orders:pii`、関数は `api_inquiry_attachment_get`・`api_inquiry_reply` の `p_attachments`）。バックアップには入れない。
 - 費用は R2 の無料枠に収まる見込み（docs/inquiries.md「添付ファイル」）。wrangler 4 の `deploy` は無いバケットを作る（既定で有効な provisioning）。実機の Workers Builds で作られるかは要確認。
+
+## 8. 担当者（2026-10-28、人間の決定、0068）
+
+- `inquiries.assignee_id`（運営者のユーザー、`on delete set null`）。担当にできるのは support の項目を持つ人だけ（`banto_user_shop_perm`、選択肢は `inquiry_assignees`）。項目を外されても割り当ては残す（自動で外すと、持ち主のいないチケットが黙って増える）。画面は「担当にできない人」と出し、付け替えてもらう。
+- 割り当て（`inquiry_assign`・`api_inquiry_assign`）は担当になった人にリンクだけのメール（`buildShopNotice("assign")`。本文は載せない）。自分で自分に割り当てたときは送らない。回数は `banto_inquiry_issue_mail` の `assign`（ショップの 1 日の上限に入る）。
+- 未割り当てのチケットに運営者が最初に返事をしたら、その人が担当（`inquiry_messages` の AFTER INSERT トリガー。`author_user` のある返事だけなので、AI 用トークンの返事では決まらない）。知らせない（自分の返事なので）。
+- ショップの既定の担当・順番に割り当てる仕組みは持たない（小さな店では要らない。要るなら hooks の `inquiry.created` を受けて API で割り当てる外部プラグイン）。
+- hooks は `inquiry.updated` の `change: "assignee"` だけ（担当者の id もアドレスも載せない）。お客様には見せない。バックアップの復元では戻さない（運営者のアカウントはデプロイごとに違う）。
