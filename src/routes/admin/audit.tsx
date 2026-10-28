@@ -32,6 +32,7 @@ const ACTION_LABEL: Record<string, MessageKey> = {
   "shop.stripe_account_changed": "audit.action.shop.stripe_account_changed",
   "shop.published_changed": "audit.action.shop.published_changed",
   "shop.theme_published": "audit.action.shop.theme_published",
+  "shop.theme_previewed": "audit.action.shop.theme_previewed",
 };
 
 const STATUS_LABEL: Record<string, MessageKey> = {
@@ -75,6 +76,8 @@ function describe(r: AuditRow): string {
       return `${label}: ${str(d["name"])}`;
     case "shop.theme_published":
       return `${label}: ${d["from"] ? short(String(d["from"])) : t("audit.theme.default")} → ${d["to"] ? short(String(d["to"])) : t("audit.theme.default")}`;
+    case "shop.theme_previewed":
+      return `${label}: ${short(String(d["version"] ?? ""))}`;
     case "shop.published_changed":
       return `${label}: ${d["published"] === true ? t("audit.published.on") : t("audit.published.off")}`;
     case "customer.deleted":

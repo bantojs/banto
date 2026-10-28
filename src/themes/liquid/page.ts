@@ -6,10 +6,12 @@
  * SEO に要るもの（canonical・検索エンジンに載せない印・構造化データ）は本体が content_for_header に入れ、
  * テーマが content_for_header を書き忘れても </head> の前に入れる（テーマ任せにしない）。
  */
+import { Drop } from "liquidjs/dist/liquid.browser.mjs";
+import { getLocale } from "../../i18n";
 import { SafeHtml, ThemeError } from "./engine";
 import { stripJsonComments } from "./bundle";
 import type { LoadedTheme } from "./cache";
-import { readSectionSchemas, renderSectionGroup, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionSchema } from "./shopify";
+import { readSectionSchemas, renderSectionGroup, settingsWith, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionSchema, type SettingSchema } from "./shopify";
 
 export type ThemeTemplate = "index" | "collection" | "product" | "404";
 
@@ -19,6 +21,8 @@ interface Prepared {
   groups: Record<string, unknown>;
   templates: Map<string, { json: Group & { layout?: string | false } } | { liquid: true }>;
   settingsDefaults: Record<string, unknown>;
+  settingsSchema: SettingSchema[];
+  staticSections: Record<string, SectionData>;
 }
 type Group = { sections?: Record<string, SectionData>; order?: string[] };
 
@@ -75,24 +79,48 @@ function prepare(t: LoadedTheme, locale: string): Prepared {
   }
   // 設定の既定値: config/settings_schema.json の default、その上に config/settings_data.json の current
   const settingsDefaults: Record<string, unknown> = {};
+  const settingsSchema: SettingSchema[] = [];
   const schema = readJson(files["config/settings_schema.json"]);
-  if (Array.isArray(schema)) for (const group of schema) if (isObject(group) && Array.isArray(group["settings"])) for (const s of group["settings"]) if (isObject(s) && typeof s["id"] === "string" && s["default"] !== undefined) settingsDefaults[s["id"]] = s["default"];
+  if (Array.isArray(schema)) for (const group of schema) if (isObject(group) && Array.isArray(group["settings"])) for (const s of group["settings"]) if (isObject(s) && typeof s["id"] === "string") settingsSchema.push(s as SettingSchema);
   const data = readJson(files["config/settings_data.json"]);
   const current = isObject(data) ? (typeof data["current"] === "string" && isObject(data["presets"]) ? (data["presets"] as Record<string, unknown>)[data["current"]] : data["current"]) : undefined;
-  if (isObject(current)) for (const [k, v] of Object.entries(current)) if (k !== "sections" && k !== "content_for_index" && k !== "blocks") settingsDefaults[k] = v;
-  const p: Prepared = { schemas: readSectionSchemas(files), locales, groups, templates, settingsDefaults };
+  let staticSections: Record<string, SectionData> = {};
+  if (isObject(current)) {
+    for (const [k, v] of Object.entries(current)) if (k !== "sections" && k !== "content_for_index" && k !== "blocks") settingsDefaults[k] = v;
+    if (isObject(current["sections"])) staticSections = current["sections"] as Record<string, SectionData>;
+  }
+  const p: Prepared = { schemas: readSectionSchemas(files), locales, groups, templates, settingsDefaults, settingsSchema, staticSections };
   prepared.set(t, p);
   return p;
 }
 
 /** テーマにその種類のテンプレートがあるか（無ければ既定のテーマで描く） */
-export function themeHasTemplate(t: LoadedTheme, template: ThemeTemplate, locale = "ja"): boolean {
+export function themeHasTemplate(t: LoadedTheme, template: ThemeTemplate, locale: string = getLocale()): boolean {
   return prepare(t, locale).templates.has(template);
 }
 
-/** テーマの設定（宣言の既定値 + 運営者が選んだ値） */
-export function themeSettings(t: LoadedTheme, saved: Record<string, unknown> | null | undefined, locale = "ja"): Record<string, unknown> {
-  return { ...prepare(t, locale).settingsDefaults, ...(saved ?? {}) };
+/** テーマの設定（宣言の既定値 + settings_data.json + 運営者が選んだ値。HTML の種類は SafeHtml） */
+export function themeSettings(t: LoadedTheme, saved: Record<string, unknown> | null | undefined, locale: string = getLocale()): Record<string, unknown> {
+  const p = prepare(t, locale);
+  return settingsWith(p.settingsSchema, { ...p.settingsDefaults, ...(saved ?? {}) });
+}
+
+/** template（Shopify では文字列のように比べる: template == 'product'、template.name） */
+class TemplateDrop extends Drop {
+  readonly suffix = null;
+  readonly directory = null;
+  constructor(readonly name: string) {
+    super();
+  }
+  override valueOf(): string {
+    return this.name;
+  }
+  override toString(): string {
+    return this.name;
+  }
+  toJSON(): string {
+    return this.name;
+  }
 }
 
 export interface ThemePageInput {
@@ -113,11 +141,11 @@ const HEAD_MARK = "<!-- banto:head -->";
 
 /** 1 ページを描く。テンプレートが無ければ null。上限・テンプレートの誤りは ThemeError（呼び出し側は既定のテーマで描く） */
 export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: string; errors: string[] } | null {
-  const p = prepare(t, input.locale ?? "ja");
+  const p = prepare(t, input.locale ?? getLocale());
   const tpl = p.templates.get(input.template);
   if (!tpl) return null;
   const head = `${HEAD_MARK}${input.head}`;
-  const globals = { ...input.globals, template: { name: input.template, suffix: null, directory: null }, __groups: p.groups };
+  const globals = { ...input.globals, template: new TemplateDrop(input.template), __groups: p.groups };
   const env: RenderEnv = {
     engine: t.engine,
     versionId: t.id,
@@ -126,12 +154,14 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
     mediaBaseUrl: input.mediaBaseUrl,
     locales: p.locales,
     schemas: p.schemas,
+    staticSections: p.staticSections,
     globals,
     paginate: input.paginate ?? null,
     preview: Boolean(input.preview),
     errors: [],
   };
-  const html = withRenderEnv(env, () => {
+  // 1 ページの手数・出力の上限は、テンプレート・セクション・レイアウトで分け合う
+  const html = withRenderEnv(env, () => t.engine.page(() => {
     let content: string;
     if ("json" in tpl) {
       content = renderSectionGroup(tpl.json);
@@ -144,7 +174,7 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
     const layout = `layout/${env.layout ?? "theme"}`;
     if (!t.engine.has(layout)) throw new ThemeError(`template not found: ${layout}`, "missing");
     return t.engine.render(layout, { ...globals, content_for_layout: new SafeHtml(content), content_for_header: new SafeHtml(head) });
-  });
+  }));
   if (html.includes(HEAD_MARK)) return { html, errors: env.errors };
   // テーマが content_for_header を書かなかった: </head> の前（無ければ先頭）に入れる
   const i = html.search(/<\/head>/i);

@@ -75,6 +75,25 @@ describe("Liquid のテーマの描画の仕組み", () => {
     expect(THEME_LIMITS.steps).toBeGreaterThan(10_000);
   });
 
+  it("空のループ・中身の無いループも手数に数える。1 ページの手数はテンプレート・セクション・レイアウトで分け合う", () => {
+    const e = createThemeEngine({}, { limits: { steps: 1000 } });
+    expect(outcome(() => e.renderString("{% for i in (1..5000) %}{% endfor %}", {}))).toBe("ThemeError:limit");
+    const xs = Array.from({ length: 30 }, (_, i) => i);
+    const loop = "{% for a in xs %}{% for b in xs %}{% endfor %}{% endfor %}";
+    // 1 回なら収まる量でも、1 ページの中で何度も描けば止まる
+    expect(e.renderString(loop, { xs })).toBe("");
+    expect(outcome(() => e.page(() => Array.from({ length: 5 }, () => e.renderString(loop, { xs })).join("")))).toBe("ThemeError:limit");
+    // ページが変われば数え直す
+    expect(e.page(() => e.renderString(loop, { xs }))).toBe("");
+  });
+
+  it("capture は中身のエスケープを保つ（二重にしない・生に戻さない）。SafeHtml の大きさは文字の数", () => {
+    const e = createThemeEngine({});
+    expect(e.renderString("{% capture c %}<b>{{ x }}</b>{% endcapture %}{{ c }}|{{ c.size }}", { x: "<i>" })).toBe("<b>&lt;i&gt;</b>|16");
+    expect(e.renderString("{% capture c %}{{ x }}{% endcapture %}{% if c == '' %}E{% endif %}{% if c != blank %}N{% endif %}", { x: "a" })).toBe("N");
+    expect(e.renderString("{{ h.size }}|{% if h contains 'ok' %}Y{% endif %}", { h: new SafeHtml("<p>ok</p>") })).toBe("9|Y");
+  });
+
   it("出力の大きさの上限", () => {
     const e = createThemeEngine({}, { limits: { outputChars: 1000 } });
     expect(outcome(() => e.renderString("{% for i in (1..200) %}0123456789{% endfor %}", {}))).toBe("ThemeError:limit");
@@ -158,5 +177,14 @@ describe("テーマを isolate のメモリに置く", () => {
     expect(reads).toEqual(["themes/s/v1/bundle.json"]);
     expect(await loadTheme(storage, { id: "v2", storage_key: "themes/s/v2/bundle.json" })).toBeNull();
     await expect(loadTheme(storage, { id: "bad", storage_key: "themes/s/bad/bundle.json" })).rejects.toBeInstanceOf(ThemeError);
+  });
+
+  it("無い・壊れた版はしばらく覚えて、置き場を読みに行かない", async () => {
+    const { storage, reads } = store({ "themes/s/bad/bundle.json": JSON.stringify({ format: 99 }) });
+    for (let i = 0; i < 3; i++) {
+      expect(await loadTheme(storage, { id: "gone", storage_key: "themes/s/gone/bundle.json" })).toBeNull();
+      await expect(loadTheme(storage, { id: "bad", storage_key: "themes/s/bad/bundle.json" })).rejects.toBeInstanceOf(ThemeError);
+    }
+    expect(reads).toEqual(["themes/s/gone/bundle.json", "themes/s/bad/bundle.json"]);
   });
 });

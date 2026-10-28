@@ -13,9 +13,30 @@ import { stripJsonComments } from "./bundle";
 /** セクションの設定の宣言（{% schema %} の中身。使うのは既定値だけ） */
 export interface SectionSchema {
   name?: string;
-  settings?: { id?: string; default?: unknown }[];
-  blocks?: { type?: string; settings?: { id?: string; default?: unknown }[] }[];
+  settings?: SettingSchema[];
+  blocks?: { type?: string; settings?: SettingSchema[] }[];
   max_blocks?: number;
+  /** {% section %} で置いたセクション（JSON のテンプレートの外）の既定の設定とブロック */
+  default?: { settings?: Record<string, unknown>; blocks?: { type: string; settings?: Record<string, unknown> }[] };
+}
+export interface SettingSchema {
+  id?: string;
+  type?: string;
+  default?: unknown;
+}
+
+/** 1 つのテンプレート・まとまりに置けるセクションの数と、1 つのセクションのブロックの数（Shopify と同じ） */
+export const SECTION_LIMITS = { sections: 25, blocks: 50 } as const;
+/** HTML として出す設定の種類（テーマを書く人と design の項目を持つ人だけが決める値。テンプレートの中の HTML と同じ扱い） */
+const HTML_SETTING_TYPES = new Set(["richtext", "inline_richtext", "html"]);
+
+/** 設定の宣言に沿って値をそろえる: 既定値の上に値を重ね、HTML の種類の文字列は SafeHtml にする */
+export function settingsWith(schema: SettingSchema[] | undefined, values: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const st of schema ?? []) if (st.id && st.default !== undefined) out[st.id] = st.default;
+  Object.assign(out, values ?? {});
+  for (const st of schema ?? []) if (st.id && st.type && HTML_SETTING_TYPES.has(st.type) && typeof out[st.id] === "string") out[st.id] = new SafeHtml(out[st.id] as string);
+  return out;
 }
 
 /** JSON のテンプレート・セクションのまとまりの 1 つ */
@@ -48,6 +69,8 @@ export interface RenderEnv {
   /** 翻訳（locales/ja.json など。既定の言語にない鍵は既定のファイルから） */
   locales: Record<string, unknown>;
   schemas: Map<string, SectionSchema>;
+  /** config/settings_data.json の current.sections（{% section %} で置いたセクションの値） */
+  staticSections: Record<string, SectionData>;
   /** セクションの外から渡す値（product・collection など。セクションも同じものを読む） */
   globals: Record<string, unknown>;
   paginate: Paginate | null;
@@ -169,7 +192,9 @@ export function registerShopifyFilters(liquid: Liquid): void {
   });
   // 古い書き方（img_url: '400x'）
   liquid.registerFilter("img_url", (input: unknown, size?: unknown) => {
-    const m = /^(\d+)?x?(\d+)?$/.exec(String(size ?? ""));
+    // 長い入力で遅くならない形（数字は 5 桁まで）
+    const sz = String(size ?? "");
+    const m = sz.length <= 16 ? /^(\d{1,5})?(?:x(\d{1,5})?)?$/.exec(sz) : null;
     return imageUrlOf(input, m?.[1] ? Number(m[1]) : undefined, m?.[2] ? Number(m[2]) : undefined);
   });
   liquid.registerFilter("image_tag", (input: unknown, ...args: unknown[]) => {
@@ -235,8 +260,9 @@ export function registerShopifyFilters(liquid: Liquid): void {
     const d = new Date(String(v ?? ""));
     if (Number.isNaN(d.getTime())) return "";
     const p = positional(args);
-    const shown = p[0] ? liquid.filters["date"] && String(liquid.parseAndRenderSync(`{{ d | date: f }}`, { d: d.toISOString(), f: String(p[0]) })) : d.toISOString().slice(0, 10);
-    return new SafeHtml(`<time datetime="${escapeHtml(d.toISOString())}">${escapeHtml(shown)}</time>`);
+    // parseAndRenderSync の結果はもうエスケープ済み（二重にしない）
+    const shown = p[0] ? String(liquid.parseAndRenderSync(`{{ d | date: f }}`, { d: d.toISOString(), f: String(p[0]) })) : escapeHtml(d.toISOString().slice(0, 10));
+    return new SafeHtml(`<time datetime="${escapeHtml(d.toISOString())}">${shown}</time>`);
   });
 }
 
@@ -265,22 +291,20 @@ function parseBody(tag: Tag & { templates: Template[] }, name: string, token: Ta
 }
 
 /** セクションを 1 つ描く（section タグ・JSON のテンプレート・セクションのまとまりで共通）。誤りはそのセクションだけを空にする */
-export function renderSection(id: string, data: SectionData): string {
+export function renderSection(id: string, data: SectionData, index = 1): string {
   const e = env();
-  if (data.disabled) return "";
+  if (data.disabled || typeof data.type !== "string") return "";
   const schema = e.schemas.get(data.type) ?? {};
-  const defaults = Object.fromEntries((schema.settings ?? []).filter((s) => s.id && s.default !== undefined).map((s) => [s.id!, s.default]));
-  const order = data.block_order ?? Object.keys(data.blocks ?? {});
+  const order = [...new Set(data.block_order ?? Object.keys(data.blocks ?? {}))].slice(0, SECTION_LIMITS.blocks);
   const blocks = order
     .map((bid) => {
       const b = data.blocks?.[bid];
       if (!b || b.disabled) return null;
       const bs = (schema.blocks ?? []).find((x) => x.type === b.type);
-      const bdef = Object.fromEntries((bs?.settings ?? []).filter((s) => s.id && s.default !== undefined).map((s) => [s.id!, s.default]));
-      return { id: bid, type: b.type, settings: { ...bdef, ...(b.settings ?? {}) }, shopify_attributes: "" };
+      return { id: bid, type: b.type, settings: settingsWith(bs?.settings, b.settings), shopify_attributes: "" };
     })
     .filter(Boolean);
-  const section = { id, type: data.type, settings: { ...defaults, ...(data.settings ?? {}) }, blocks, index: 0 };
+  const section = { id, type: data.type, settings: settingsWith(schema.settings, data.settings), blocks, index, location: "template" };
   try {
     const html = e.engine.render(`sections/${data.type}`, { ...e.globals, section });
     return `<div id="section-${escapeHtml(id)}" class="theme-section">${html}</div>`;
@@ -293,12 +317,24 @@ export function renderSection(id: string, data: SectionData): string {
   }
 }
 
-/** JSON のセクションのまとまり（templates/*.json・sections/*.json）を順に描く */
+/** JSON のセクションのまとまり（templates/*.json・sections/*.json）を順に描く。同じ id は 1 回、数は 25 まで */
 export function renderSectionGroup(group: { sections?: Record<string, SectionData>; order?: string[] }): string {
-  const sections = group.sections ?? {};
-  return (group.order ?? Object.keys(sections))
-    .map((id) => (sections[id] ? renderSection(id, sections[id]!) : ""))
-    .join("");
+  const sections = isObject(group.sections) ? group.sections : {};
+  const order = [...new Set(Array.isArray(group.order) ? group.order.filter((x): x is string => typeof x === "string") : Object.keys(sections))].slice(0, SECTION_LIMITS.sections);
+  return order.map((id, i) => (isObject(sections[id]) ? renderSection(id, sections[id]!, i + 1) : "")).join("");
+}
+
+/** {% section 'x' %} で置いたセクション: settings_data.json の current.sections.x、無ければスキーマの default */
+function staticSection(type: string): SectionData {
+  const e = env();
+  const saved = e.staticSections[type];
+  if (isObject(saved)) return { ...saved, type };
+  const def = e.schemas.get(type)?.default;
+  const blocks: Record<string, { type: string; settings?: Record<string, unknown> }> = {};
+  (def?.blocks ?? []).slice(0, SECTION_LIMITS.blocks).forEach((b, i) => {
+    if (isObject(b) && typeof b.type === "string") blocks[`${b.type}-${i + 1}`] = { type: b.type, ...(isObject(b.settings) ? { settings: b.settings } : {}) };
+  });
+  return { type, ...(isObject(def?.settings) ? { settings: def!.settings } : {}), blocks, block_order: Object.keys(blocks) };
 }
 
 export function registerShopifyTags(liquid: Liquid): void {
@@ -377,7 +413,7 @@ export function registerShopifyTags(liquid: Liquid): void {
         this.type = m[1]!;
       }
       *render(_ctx: Context, emitter: Emitter) {
-        emitter.write(renderSection(this.type, { type: this.type }));
+        emitter.write(renderSection(this.type, staticSection(this.type)));
       }
     },
   );

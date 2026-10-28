@@ -101,6 +101,60 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     expect(res.headers.get("set-cookie")).toContain("Path=/");
   });
 
+  it("request.path・template はショップのドメインの道（スラッグなし）。ページ送りの番号は件数から", async () => {
+    const { get, sb, shop } = setup({
+      bundle: theme({
+        "templates/collection.liquid": `[{{ request.path }}|{{ template }}|{% if template == 'collection' %}C{% endif %}|{{ template.name }}]{% section 'main-collection' %}`,
+        "sections/main-collection.liquid": `{% paginate collection.products by 48 %}<p class="pages">{{ paginate.pages }}|{{ paginate.current_page }}|{% for part in paginate.parts %}{{ part.title }}{% endfor %}</p>{% endpaginate %}`,
+      }),
+    });
+    const cat = sb.tables.categories[0]!;
+    for (let i = 0; i < 50; i++) sb.addProduct(shop.id, { slug: `x${i}`, name: `X${i}`, published: true, category_id: cat["id"] });
+    const { html } = await get(`${DOMAIN}/?category=tops`);
+    expect(html).toContain("[/|collection|C|collection]");
+    // 51 件・48 件ずつ → 2 ページ。Banto は位置で進むので、番号の部品は今のページと「次」だけ
+    expect(html).toContain('<p class="pages">2|1|1»</p>');
+  });
+
+  it("静的なセクションは settings_data.json の current.sections の値とブロックを使う。richtext の設定は HTML のまま、text はエスケープ", async () => {
+    const { html } = await setup({
+      bundle: theme({
+        "templates/index.json": JSON.stringify({ sections: { top: { type: "top" } }, order: ["top"] }),
+        "sections/top.liquid": `{% section 'banner' %}`,
+        "sections/banner.liquid": `<h2>{{ section.settings.heading }}</h2><div class="rt">{{ section.settings.body }}</div>{% for b in section.blocks %}<i>{{ b.settings.label }}</i>{% endfor %}{{ section.index }}{% schema %}{"settings": [{"id": "heading", "type": "text", "default": "既定"}, {"id": "body", "type": "richtext", "default": "<p>既定</p>"}], "blocks": [{"type": "item", "settings": [{"id": "label", "type": "text"}]}]}{% endschema %}`,
+        "config/settings_data.json": JSON.stringify({ current: { sections: { banner: { type: "banner", settings: { heading: "<b>見出し</b>", body: "<p>本文</p>" }, blocks: { a: { type: "item", settings: { label: "一" } }, b: { type: "item", settings: { label: "二" } } }, block_order: ["a", "b", "a"] } } } }),
+      }),
+    }).get(`${DOMAIN}/`);
+    expect(html).toContain("<h2>&lt;b&gt;見出し&lt;/b&gt;</h2>");
+    expect(html).toContain('<div class="rt"><p>本文</p></div>');
+    expect(html).toContain("<i>一</i><i>二</i>1");
+  });
+
+  it("JSON のテンプレートのセクション・ブロックの数には上限がある（同じものを並べても 1 回）", async () => {
+    const sections: Record<string, unknown> = {};
+    for (let i = 0; i < 40; i++) sections[`s${i}`] = { type: "one" };
+    const { html } = await setup({
+      bundle: theme({
+        "templates/index.json": JSON.stringify({ sections, order: [...Object.keys(sections), "s0", "s0"] }),
+        "sections/one.liquid": `<u>{{ section.id }}</u>`,
+      }),
+    }).get(`${DOMAIN}/`);
+    expect(html.match(/<u>/g)).toHaveLength(25);
+  });
+
+  it("options_with_values の選ばれた値は軸ごとに合う（SKU の options の並びに左右されない）", async () => {
+    const { html } = await setup({
+      bundle: theme({ "templates/product.liquid": `{% for o in product.options_with_values %}[{{ o.name }}={{ o.selected_value }}:{{ o.values | join: ',' }}]{% endfor %}` }),
+    }).get(`${DOMAIN}/p/tee?sku=TEE-M`);
+    expect(html).toContain("[サイズ=M:S,M]");
+  });
+
+  it("見つからないページはテーマの 404（メニューも出る。canonical はスラッグなし）", async () => {
+    const { html } = await setup().get(`${DOMAIN}/p/none`);
+    expect(html).toContain('<a href="/?category=tops">トップス</a>');
+    expect(html).not.toContain("/s/p/none");
+  });
+
   it("見つからないページはテーマの 404", async () => {
     const { status, html } = await setup().get(`${DOMAIN}/p/none`);
     expect(status).toBe(404);

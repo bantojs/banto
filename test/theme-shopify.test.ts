@@ -6,7 +6,7 @@ import { extendShopify, withRenderEnv, type RenderEnv } from "../src/themes/liqu
 /** Shopify と同じ名前のフィルター・タグ（docs/themes.md）。中身は Banto のデータで作る */
 function render(src: string, scope: Record<string, unknown> = {}, locales: Record<string, unknown> = {}) {
   const engine = createThemeEngine({}, { extend: extendShopify, timezone: "Asia/Tokyo" });
-  const env: RenderEnv = { engine, versionId: "v1", shopOrigin: "https://shop.example.jp", shopPath: "", mediaBaseUrl: "https://m.example", locales, schemas: new Map(), globals: {}, paginate: null, preview: false, errors: [] };
+  const env: RenderEnv = { engine, versionId: "v1", shopOrigin: "https://shop.example.jp", shopPath: "", mediaBaseUrl: "https://m.example", locales, schemas: new Map(), staticSections: {}, globals: {}, paginate: null, preview: false, errors: [] };
   return withRenderEnv(env, () => engine.renderString(src, scope));
 }
 
@@ -21,6 +21,18 @@ describe("Shopify の名前のフィルター", () => {
     expect(render("{{ img | image_url: width: 400 | image_tag: class: 'c', loading: 'eager' }}", { img })).toBe('<img src="https://m.example/a.t.webp" alt="&quot;x&quot;" width="400" height="300" loading="eager" class="c">');
     expect(render("{{ product | image_url: width: 100 }}", { product: { featured_image: img } })).toBe("https://m.example/a.t.webp");
     expect(render("{{ nope | image_url }}")).toBe("");
+  });
+
+  it("img_url の大きさの指定は短い決まった形だけ（長い入力でも時間がかからない）", () => {
+    const img = { key: "a.webp", thumb_key: "a.t.webp", width: 1600, height: 1200 };
+    expect(render("{{ img | img_url: '300x300' }}|{{ img | img_url: 'master' }}|{{ img | img_url: '1200x1200' }}", { img })).toBe("https://m.example/a.t.webp|https://m.example/a.webp|https://m.example/a.webp");
+    const t0 = Date.now();
+    render("{{ img | img_url: s }}", { img, s: "1".repeat(50_000) + "y" });
+    expect(Date.now() - t0).toBeLessThan(200);
+  });
+
+  it("time_tag は二重にエスケープしない", () => {
+    expect(render("{{ d | time_tag: '%Y-%m-%d' }}", { d: "2026-10-28T00:00:00Z" })).toMatch(/^<time datetime="2026-10-28T00:00:00(\.000)?Z">2026-10-28<\/time>$/);
   });
 
   it("資産の URL はショップのドメインの /_theme/<版>/assets/。タグはエスケープ", () => {

@@ -36,7 +36,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -71,6 +71,7 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   tryon_items: "stores",
   inquiries: "support",
   inquiry_messages: "support",
+  theme_versions: "design",
 };
 
 /** POST の本文は 1 行のオブジェクトか行の配列。列の有無を見るために先頭の行を返す */
@@ -136,6 +137,7 @@ export class FakeSupabase {
     inquiries: [],
     inquiry_messages: [],
     audit_log: [],
+    theme_versions: [],
   };
   readonly calls: string[] = [];
   /** テスト用: 次の N リクエストを 503 で落とす（障害の再現） */
@@ -577,6 +579,7 @@ export class FakeSupabase {
   private writable(table: TableName, row: Row, uid: string | null, op: "insert" | "update" | "delete" = "insert"): boolean {
     if (!uid) return false;
     if (table === "audit_log") return false; // 書くのは DB のトリガーだけ（0051）
+    if (table === "theme_versions") return false; // 書くのは theme_* の関数だけ（0071）
     if (table === "shops") {
       if (op === "insert") return this.orgMembers.some((m) => m.user_id === uid && m.role !== "member");
       return this.ownedShopIds(uid).has(row["id"] as string) || (op === "update" && this.hasPerm(table, row, uid));
@@ -829,7 +832,7 @@ export class FakeSupabase {
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
   private orgRpc(fn: string, args: Record<string, unknown>, uid: string | null): Response | null {
-    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support"];
+    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design"];
     const role = (org: unknown) => this.orgMembers.find((m) => m.org_id === org && m.user_id === uid)?.role ?? null;
     const isAdmin = (org: unknown) => ["owner", "admin"].includes(role(org) ?? "");
     const err = (message: string) => json({ code: "P0001", message }, 400);
@@ -1134,6 +1137,45 @@ export class FakeSupabase {
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
+    // 0071: テーマの版（design の項目。本物の規則は test/db/themes.test.ts）
+    if (fn.startsWith("theme_")) {
+      const can = (shopId: unknown) => Boolean(uid) && (this.ownedShopIds(uid).has(String(shopId)) || this.memberPerms(uid, shopId).includes("design"));
+      const err = (message: string, code = "P0001") => json({ code, message }, 400);
+      if (fn === "theme_version_create") {
+        if (!can(args["p_shop_id"])) return err("shop_not_found", "42501");
+        if (this.tables.theme_versions.filter((v) => v["shop_id"] === args["p_shop_id"]).length >= 20) return err("theme_versions_full");
+        this.tables.theme_versions.push({ id: args["p_id"], shop_id: args["p_shop_id"], name: args["p_name"], storage_key: `themes/${String(args["p_shop_id"])}/${String(args["p_id"])}/bundle.json`, size_bytes: args["p_size_bytes"], file_count: args["p_file_count"], manifest: args["p_manifest"] ?? {}, settings: args["p_settings"] ?? {}, complete: false, created_by: uid, created_at: new Date().toISOString() });
+        return json(args["p_id"]);
+      }
+      const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"]);
+      const mine = v?.["shop_id"] === args["p_shop_id"] && can(args["p_shop_id"]);
+      if (fn === "theme_version_complete" || fn === "theme_preview_audit" || fn === "theme_version_set_settings") {
+        if (!v || !mine) return err("theme_not_found", "42501");
+        if (fn === "theme_version_complete") v["complete"] = true;
+        if (fn === "theme_version_set_settings") v["settings"] = args["p_settings"] ?? {};
+        if (fn === "theme_preview_audit") this.tables.audit_log.push({ id: this.tables.audit_log.length + 1, org_id: this.tables.shops.find((x) => x["id"] === args["p_shop_id"])?.["org_id"] ?? null, shop_id: args["p_shop_id"], actor_kind: "user", actor_id: uid, action: "shop.theme_previewed", target_type: "shop", target_id: String(args["p_shop_id"]), detail: { version: v["id"] }, created_at: new Date().toISOString() });
+        return json(null);
+      }
+      if (fn === "theme_version_delete") {
+        if (!v || !mine) return err("theme_not_found", "42501");
+        const shop = this.tables.shops.find((x) => x["id"] === v["shop_id"]);
+        if (shop?.["theme_version_id"] === v["id"]) return err("theme_published");
+        this.tables.theme_versions.splice(this.tables.theme_versions.indexOf(v), 1);
+        return json(`themes/${String(v["shop_id"])}/${String(v["id"])}/`);
+      }
+      if (fn === "theme_publish") {
+        if (!can(args["p_shop_id"])) return err("shop_not_found", "42501");
+        const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"])!;
+        if (args["p_version_id"]) {
+          if (!v || v["shop_id"] !== shop["id"]) return err("theme_not_found", "42501");
+          if (!v["complete"]) return err("theme_incomplete");
+          if (!shop["domain"]) return err("theme_requires_domain");
+        }
+        shop["theme_version_id"] = args["p_version_id"] ?? null;
+        shop["theme_public"] = v && args["p_version_id"] ? { id: v["id"], storage_key: v["storage_key"], settings: v["settings"] } : null;
+        return json(null);
+      }
+    }
     if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, uid, false);
     // 0055: 商品詳細（公開中のショップの公開中の商品だけ。attributes は公開の項目だけ）
     if (fn === "product_public_get") {

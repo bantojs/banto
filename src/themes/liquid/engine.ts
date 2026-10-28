@@ -11,7 +11,7 @@
  *   計算のあいだ時計が進まないので効かない。量（文字列・配列・範囲）は memoryLimit、出力の大きさはここで数える
  */
 /// <reference path="./liquidjs.d.ts" />
-import { Liquid, type Template } from "liquidjs/dist/liquid.browser.mjs";
+import { CaptureTag, Drop, Liquid, type Context, type Template } from "liquidjs/dist/liquid.browser.mjs";
 
 /** テーマのファイルの形（束ねたファイルの中身）。鍵は "layout/theme.liquid" のような置き場の相対パス */
 export type ThemeFiles = Readonly<Record<string, string>>;
@@ -40,10 +40,25 @@ export class ThemeError extends Error {
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const escapeHtml = (v: unknown): string => String(v ?? "").replace(/[&<>"']/g, (ch) => ESC[ch]!);
-/** 本体が作った HTML（エスケープせずに出す）。テーマが作った文字列は SafeHtml にならない */
-export class SafeHtml {
-  constructor(readonly html: string) {}
-  toString(): string {
+/**
+ * エスケープ済みの HTML（エスケープせずに出す）。本体が作った HTML と、テンプレートが描いた結果（capture）だけがこれになる。
+ * テンプレートからは文字列と同じに見える（比べる・contains・size・フィルター・json。liquidjs の Drop の valueOf と自前の size / length）
+ */
+export class SafeHtml extends Drop {
+  readonly size: number;
+  readonly length: number;
+  constructor(readonly html: string) {
+    super();
+    this.size = html.length;
+    this.length = html.length;
+  }
+  override valueOf(): string {
+    return this.html;
+  }
+  override toString(): string {
+    return this.html;
+  }
+  toJSON(): string {
     return this.html;
   }
 }
@@ -68,6 +83,8 @@ class StepCounter {
 
 export interface ThemeEngine {
   readonly liquid: Liquid;
+  /** 1 ページを描く（中の render はすべて 1 つの手数・出力の上限を分け合う） */
+  page<T>(fn: () => T): T;
   /** そのテンプレートがあるか（"templates/product" や "sections/header"、snippets は名前だけ） */
   has(name: string): boolean;
   /** 1 つのテンプレートを描く（同期）。上限を超えたら ThemeError(kind: "limit") */
@@ -116,14 +133,26 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     const y = Number(b);
     return Number.isInteger(x) && Number.isInteger(y) ? Math.floor(x / y) : x / y;
   });
+  // capture の中身はテンプレートが描いた結果（値はもうエスケープ済み）。もう一度エスケープしない（Shopify のテーマはこれを多用する）
+  liquid.registerTag(
+    "capture",
+    class extends CaptureTag {
+      override *render(ctx: Context): Generator<unknown, void, string> {
+        yield* super.render(ctx);
+        const scope = ctx.bottom() as Record<string, unknown>;
+        if (typeof scope[this.variable] === "string") scope[this.variable] = new SafeHtml(scope[this.variable] as string);
+      }
+    },
+  );
   opts.extend?.(liquid);
 
-  // 手数を数える: liquidjs はテンプレートの部品の並びを renderTemplates で 1 つずつ描くので、その入口で部品の数を足す
+  // 手数を数える: liquidjs はテンプレートの部品の並びを renderTemplates で 1 つずつ描くので、その入口で部品の数を足す。
+  // 中身が空の for も 1 回ごとに 1 手（数えないと、空のループの入れ子でいくらでも回せる）
   const counter = new StepCounter();
   const renderer = liquid.renderer;
   const original = renderer.renderTemplates.bind(renderer);
   renderer.renderTemplates = function* (tpls, ctx, emitter) {
-    counter.steps += tpls.length;
+    counter.steps += Math.max(1, tpls.length);
     if (counter.steps > limits.steps) throw new ThemeError(`theme render step limit exceeded (${limits.steps})`, "limit");
     return yield* original(tpls, ctx, emitter);
   };
@@ -144,10 +173,15 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     return t;
   };
 
-  // セクションの中から入れ子で描く（section タグ）ときは数え直さない。1 ページ全体で 1 つの上限
+  // 1 ページ全体で 1 つの上限。page() の中（レイアウト・テンプレート・セクション）では数え直さず、出力も足していく。
+  // page() の外（検査・1 つだけ描く）では 1 回ごとに数え直す
   let depth = 0;
+  let pageOutput = 0;
   const run = (tpls: Template[], scope: Record<string, unknown>): string => {
-    if (depth === 0) counter.reset();
+    if (depth === 0) {
+      counter.reset();
+      pageOutput = 0;
+    }
     depth++;
     let out: unknown;
     try {
@@ -161,12 +195,23 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
       depth--;
     }
     const html = String(out ?? "");
-    if (html.length > limits.outputChars) throw new ThemeError(`theme output limit exceeded (${limits.outputChars})`, "limit");
+    pageOutput += html.length;
+    if (html.length > limits.outputChars || pageOutput > limits.outputChars * 2) throw new ThemeError(`theme output limit exceeded (${limits.outputChars})`, "limit");
     return html;
   };
 
   return {
     liquid,
+    page: <T,>(fn: () => T): T => {
+      counter.reset();
+      pageOutput = 0;
+      depth++;
+      try {
+        return fn();
+      } finally {
+        depth--;
+      }
+    },
     has: (name) => name in templates,
     render: (name, scope) => run(parse(name), scope),
     renderString: (source, scope) => {

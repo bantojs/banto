@@ -5,7 +5,9 @@
 --   - 扱えるのは新しい権限の項目 design（組織の owner / admin を含む）。書き込みは下の関数だけ
 --   - 公開できるのは独自ドメインのあるショップだけ。テーマの JS が管理画面と同じオリジンで動かないように
 --     （管理画面は独自ドメインでは出さない。src/routes/storefront/domain.ts）。Workers のプランの判定は Worker が行う
---   - 公開・取り下げは監査ログに残す（DB のトリガーだけが書く、0051）
+--   - 資産（CSS・JS・画像）は版を足した後に 1 つずつ置く。置き終えたら complete にし、complete の版だけを公開できる。
+--     complete の版の資産は差し替えさせない（公開中の JS を監査ログに残さず差し替えさせない。Worker が確かめる）
+--   - 公開・取り下げは監査ログに残す（DB のトリガーだけが書く、0051）。プレビューを出したことも残す（theme_preview_audit）
 
 -- ---------- 権限の項目に design を足す（0024・0061） ----------
 create or replace function banto_shop_perms_all()
@@ -31,6 +33,8 @@ create table if not exists theme_versions (
   manifest jsonb not null default '{}'::jsonb check (jsonb_typeof(manifest) = 'object'),
   -- 運営者が画面で選んだ設定の値（settings_data.json に当たる）
   settings jsonb not null default '{}'::jsonb check (jsonb_typeof(settings) = 'object' and pg_column_size(settings) <= 65536),
+  -- 資産を置き終えたか（theme_version_complete）。complete の版だけを公開できる
+  complete boolean not null default false,
   created_by uuid references auth.users(id) on delete set null default auth.uid(),
   created_at timestamptz not null default now(),
   unique (shop_id, id)
@@ -46,15 +50,16 @@ alter table shops drop constraint if exists shops_theme_version_fk;
 alter table shops add constraint shops_theme_version_fk foreign key (id, theme_version_id) references theme_versions(shop_id, id) on delete set null (theme_version_id);
 
 -- 公開中の版は theme_publish だけが変える（settings の項目で shops を直接書き換えて、design の項目と独自ドメインの検査をすり抜けさせない。
--- 0062 の legal_links_state と同じ形）。新しいショップは版なしで始まる
+-- 取り下げ（null）も同じ。0062 の legal_links_state と同じ形）。外れてよいのは、版の行が消えたとき（外部キーの set null）だけ。
+-- 新しいショップは版なしで始まる
 create or replace function banto_shops_theme_guard()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if tg_op = 'INSERT' then
     new.theme_version_id := null;
   elsif new.theme_version_id is distinct from old.theme_version_id
-        and new.theme_version_id is not null
-        and current_setting('banto.theme_publish', true) is distinct from 'on' then
+        and current_setting('banto.theme_publish', true) is distinct from 'on'
+        and not (new.theme_version_id is null and not exists (select 1 from theme_versions where id = old.theme_version_id)) then
     raise exception 'theme_version_readonly' using errcode = '42501';
   end if;
   return new;
@@ -94,27 +99,59 @@ $$;
 revoke execute on function theme_version_create(uuid, uuid, text, integer, integer, jsonb, jsonb) from public, anon;
 grant execute on function theme_version_create(uuid, uuid, text, integer, integer, jsonb, jsonb) to authenticated;
 
--- 設定の値を変える（公開中の版でもよい）
-create or replace function theme_version_set_settings(p_version_id uuid, p_settings jsonb)
+-- 設定の値を変える（公開中の版でもよい）。版はそのショップのものだけ
+create or replace function theme_version_set_settings(p_shop_id uuid, p_version_id uuid, p_settings jsonb)
 returns void
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_shop uuid;
 begin
-  select shop_id into v_shop from theme_versions where id = p_version_id;
-  if v_shop is null or not banto_shop_perm(v_shop, 'design') then
+  if p_shop_id is null or not banto_shop_perm(p_shop_id, 'design') or not exists (select 1 from theme_versions where id = p_version_id and shop_id = p_shop_id) then
     raise exception 'theme_not_found' using errcode = '42501';
   end if;
-  update theme_versions set settings = coalesce(p_settings, '{}'::jsonb) where id = p_version_id;
+  update theme_versions set settings = coalesce(p_settings, '{}'::jsonb) where id = p_version_id and shop_id = p_shop_id;
 end;
 $$;
-revoke execute on function theme_version_set_settings(uuid, jsonb) from public, anon;
-grant execute on function theme_version_set_settings(uuid, jsonb) to authenticated;
+revoke execute on function theme_version_set_settings(uuid, uuid, jsonb) from public, anon;
+grant execute on function theme_version_set_settings(uuid, uuid, jsonb) to authenticated;
 
--- 版を消す。公開中の版は消せない。戻り値は置き場の接頭辞（Worker がファイルを消す）
-create or replace function theme_version_delete(p_version_id uuid)
+-- 資産を置き終えた（Worker が置いた後に呼ぶ）。これより後は資産を差し替えさせず、公開できるようになる
+create or replace function theme_version_complete(p_shop_id uuid, p_version_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_shop_id is null or not banto_shop_perm(p_shop_id, 'design') or not exists (select 1 from theme_versions where id = p_version_id and shop_id = p_shop_id) then
+    raise exception 'theme_not_found' using errcode = '42501';
+  end if;
+  update theme_versions set complete = true where id = p_version_id and shop_id = p_shop_id;
+end;
+$$;
+revoke execute on function theme_version_complete(uuid, uuid) from public, anon;
+grant execute on function theme_version_complete(uuid, uuid) to authenticated;
+
+-- プレビューを出したことを監査ログに残す（プレビューのリンクは公開していない版をショップのドメインで開けるため。Worker が券を作る前に呼ぶ）
+create or replace function theme_preview_audit(p_shop_id uuid, p_version_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_shop_id is null or not banto_shop_perm(p_shop_id, 'design') or not exists (select 1 from theme_versions where id = p_version_id and shop_id = p_shop_id) then
+    raise exception 'theme_not_found' using errcode = '42501';
+  end if;
+  perform banto_audit(banto_shop_org(p_shop_id), p_shop_id, 'shop.theme_previewed', 'shop', p_shop_id::text, jsonb_build_object('version', p_version_id));
+end;
+$$;
+revoke execute on function theme_preview_audit(uuid, uuid) from public, anon;
+grant execute on function theme_preview_audit(uuid, uuid) to authenticated;
+
+-- 版を消す。公開中の版は消せない。版はそのショップのものだけ。戻り値は置き場の接頭辞（Worker がファイルを消す）
+create or replace function theme_version_delete(p_shop_id uuid, p_version_id uuid)
 returns text
 language plpgsql
 security definer
@@ -122,7 +159,7 @@ set search_path = public
 as $$
 declare v_t theme_versions%rowtype;
 begin
-  select * into v_t from theme_versions where id = p_version_id;
+  select * into v_t from theme_versions where id = p_version_id and shop_id = p_shop_id;
   if not found or not banto_shop_perm(v_t.shop_id, 'design') then
     raise exception 'theme_not_found' using errcode = '42501';
   end if;
@@ -133,8 +170,8 @@ begin
   return 'themes/' || v_t.shop_id || '/' || v_t.id || '/';
 end;
 $$;
-revoke execute on function theme_version_delete(uuid) from public, anon;
-grant execute on function theme_version_delete(uuid) to authenticated;
+revoke execute on function theme_version_delete(uuid, uuid) from public, anon;
+grant execute on function theme_version_delete(uuid, uuid) to authenticated;
 
 -- 公開する（p_version_id が null なら取り下げて TSX の既定のテーマに戻す）。公開は独自ドメインのあるショップだけ
 create or replace function theme_publish(p_shop_id uuid, p_version_id uuid)
@@ -150,6 +187,9 @@ begin
   if p_version_id is not null then
     if not exists (select 1 from theme_versions where id = p_version_id and shop_id = p_shop_id) then
       raise exception 'theme_not_found' using errcode = '42501';
+    end if;
+    if not exists (select 1 from theme_versions where id = p_version_id and complete) then
+      raise exception 'theme_incomplete' using errcode = 'P0001';
     end if;
     if not exists (select 1 from shops where id = p_shop_id and domain is not null) then
       raise exception 'theme_requires_domain' using errcode = 'P0001';

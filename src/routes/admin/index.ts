@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { csrfGuard } from "./context";
+import { design } from "./design";
 import { setup } from "./setup";
 import { login } from "./login";
 import { mfa } from "./mfa";
@@ -53,6 +54,7 @@ admin.route("/shops", hooks);
 admin.route("/shops", plugins);
 admin.route("/shops", lineMessaging);
 admin.route("/shops", tokens);
+admin.route("/shops", design);
 admin.route("/shops", customers);
 admin.route("/shops", exportRoute);
 admin.route("/", stripe);

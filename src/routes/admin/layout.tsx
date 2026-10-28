@@ -249,7 +249,7 @@ export interface ShopTabs {
   access?: { role: string; perms: readonly string[] };
   active?: ShopTab;
 }
-export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
+export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "design" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
 
 const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module?: string }[] = [
   { id: "products", path: "/products", label: "product.list", perm: "catalog" },
@@ -257,6 +257,8 @@ const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module
   { id: "customers", path: "/customers", label: "customers.title", perm: "customers" },
   // お問い合わせ（同梱モジュール inquiries。support の項目だけの人が入れるように、モジュールの一覧とは別にタブを出す）
   { id: "inquiries", path: "/modules/inquiries", label: "mod.inquiries.name", perm: "support", module: "inquiries" },
+  // デザイン（Liquid のテーマ、0071）
+  { id: "design", path: "/design", label: "design.title", perm: "design" },
   { id: "modules", path: "/modules", label: "modules.title", perm: "settings" },
   { id: "plugins", path: "/plugins", label: "plugins.title", perm: "integrations" },
   { id: "hooks", path: "/hooks", label: "tabs.hooks", perm: "integrations" },
