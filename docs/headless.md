@@ -1,6 +1,7 @@
 # ヘッドレス連携（カート API・チェックアウト API・購入リンク）
 
 > API 全体の入口（公開 / AI 用 / hooks の使い分け、共通の決まり、一覧）は [docs/api.md](api.md)。
+> 機械が読める仕様は `GET /api/openapi.json`（OpenAPI 3.1、認証なし・CORS `*`）。openapi-generator などで各言語（PHP・TypeScript・Python…）のクライアントを生成できます。生成したクライアントでも、金額の計算や判定は自分でせず、Banto が返した値を表示してください。応答の項目の意味・画面の出し方（最終確認画面など）はこのページが正です。
 
 WordPress・LP・SNS・独自のフロント（Next.js 等）から Banto で売るための仕様です。
 
