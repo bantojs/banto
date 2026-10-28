@@ -36,7 +36,7 @@ function setup(settings: Record<string, unknown> = {}) {
   const call = async (path: string, body?: unknown, token?: string) => {
     const res = await app.request(`${BASE}${path}`, {
       method: body === undefined ? "GET" : "POST",
-      headers: { origin: "https://wp.example.com", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      headers: { origin: "https://wp.example.com", "cf-connecting-ip": "203.0.113.9", ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     return { status: res.status, headers: res.headers, json: (await res.json()) as Record<string, unknown> };
@@ -92,6 +92,32 @@ describe("ゲストの注文照会・領収書の API", () => {
     const r = await call("/api/shops/my-shop/orders/lookup", { number: 1001, email: "guest@example.com" });
     expect(r.json["receipt_available"]).toBe(false);
     expect(await call("/api/shops/my-shop/orders/receipt", { order_token: r.json["order_token"] })).toMatchObject({ status: 404, json: { error: "receipt_disabled" } });
+  });
+});
+
+describe("注文照会の回数の上限（0067）", () => {
+  it("外れた照会が同じ IP から 20 回を超えると 429。合った照会は数えない。同梱テーマの画面も同じ", async () => {
+    const { call, app, sb } = setup();
+    for (let i = 0; i < 3; i++) expect((await call("/api/shops/my-shop/orders/lookup", { number: 1001, email: "guest@example.com" })).status).toBe(200);
+    for (let i = 0; i < 20; i++) expect((await call("/api/shops/my-shop/orders/lookup", { number: 1001, email: `x${i}@example.com` })).status).toBe(404);
+    expect(sb.orderLookupFailures).toHaveLength(20);
+    expect(sb.orderLookupFailures[0]!.ip).toMatch(/^[0-9a-f]{64}$/);
+    expect(await call("/api/shops/my-shop/orders/lookup", { number: 1001, email: "guest@example.com" })).toMatchObject({ status: 429, json: { error: "too_many_requests" } });
+    const res = await app.request(`${BASE}/my-shop/orders/lookup`, { method: "POST", headers: { origin: BASE, "cf-connecting-ip": "203.0.113.9", "content-type": "application/x-www-form-urlencoded" }, body: "number=1001&email=guest%40example.com" });
+    expect(res.status).toBe(429);
+    expect(await res.text()).toContain("照会の回数が多すぎます");
+  });
+
+  it("0067 が当たる前は今までどおり anon の lookup_order（上限なし）", async () => {
+    const sb = new FakeSupabase({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0067_order_lookup_limits") });
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    sb.tables.orders.push({ id: "o1", shop_id: shop.id, number: 1001, status: "paid", total_jpy: 1000, shipping_jpy: 0, customer_email: "guest@example.com", created_at: "2026-10-20T00:00:00Z" });
+    const app = appWith(sb);
+    const post = (email: string) => app.request(`${BASE}/api/shops/my-shop/orders/lookup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ number: 1001, email }) });
+    for (let i = 0; i < 25; i++) expect((await post(`x${i}@example.com`)).status).toBe(404);
+    expect((await post("guest@example.com")).status).toBe(200);
+    expect(sb.orderLookupFailures).toHaveLength(0);
   });
 });
 
@@ -179,23 +205,29 @@ describe("管理画面の注文照会のページ", () => {
   it("許可リストのサイトの https だけ保存できる。空なら外す", async () => {
     const { app, shop, sb } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain('name="order_page_url"');
+    const page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    expect(page).toContain('name="order_page_url"');
+    expect(page).toContain('name="order_lookup_per_ip_per_hour" min="1" max="9999" value="20"');
     let res = await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://wp.example.com", order_page_url: "https://evil.example.com/x" });
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=order_page_invalid#headless`);
     res = await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://wp.example.com", order_page_url: "https://wp.example.com/order-status/" });
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=headless_saved`);
     const headless = () => (sb.shops[0]!["settings"] as Record<string, Record<string, unknown>>)["headless"]!;
     expect(headless()["order_page_url"]).toBe("https://wp.example.com/order-status/");
+    await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://wp.example.com", order_page_url: "https://wp.example.com/order-status/", order_lookup_per_ip_per_hour: "40" });
+    expect((sb.shops[0]!["settings"] as Record<string, unknown>)["order_lookup"]).toEqual({ per_ip_per_hour: 40 });
     // 許可リストから外したサイトのページは外れる
     await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://shop.example.com", order_page_url: "" });
     expect(headless()["order_page_url"]).toBeUndefined();
   });
 
   it("0066 が当たっていなければ欄を出さない", async () => {
-    const sb = new FakeSupabase({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0066_headless_order_lookup") });
+    const sb = new FakeSupabase({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0066_headless_order_lookup" && v !== "0067_order_lookup_limits") });
     const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
     const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ" });
     const admin = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).not.toContain('name="order_page_url"');
+    const page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    expect(page).not.toContain('name="order_page_url"');
+    expect(page).not.toContain('name="order_lookup_per_ip_per_hour"');
   });
 });

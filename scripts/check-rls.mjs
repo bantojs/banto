@@ -32,7 +32,7 @@ const EXTENSION_FUNCTIONS = new Set([
 const ANON_FUNCTIONS = new Set([
   "banto_org_admin", "banto_org_role", "banto_owner_signup_allowed", "banto_owns_shop", "banto_setup_state", "banto_shop_perm",
   "banto_shop_perms_all", "banto_store_perm", "banto_store_perms_all", "banto_store_visible", "banto_valid_tags",
-  "coupon_claim_info", "heartbeat_age_seconds", "lookup_order", "shop_payment_options", "shop_public_get", "shop_public_list", "shop_store_list",
+  "coupon_claim_info", "heartbeat_age_seconds", "shop_payment_options", "shop_public_get", "shop_public_list", "shop_store_list",
   // 0054: PostgREST がすべてのリクエストの前に、リクエストの役割のまま呼ぶ（中身は JWT を読むだけ。anon には何もしない）
   "banto_mfa_state", "banto_pre_request",
   // 0055: 商品詳細（公開中の商品だけ。attributes は公開の項目だけ）

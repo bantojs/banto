@@ -148,7 +148,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 ### 商取引のルール（v0.1 で追加）
 
 - 注文番号はショップごとの連番（`shops.order_seq`、1001 から）。確定時に `shops` の行ロックで採番する。
-- 購入者向けの注文照会は `lookup_order(shop_id, number, email)`（anon）。住所は返さない。
+- 購入者向けの注文照会は `lookup_order(shop_id, number, email)`。住所は返さない。0067 から anon では呼べず、Worker が service_role の `order_lookup`（外れた照会を IP・注文ごとに数える、`src/routes/order-lookup.ts`）を通す。
 - 同梱メールプラグインは `order_contact`（service_role）で連絡先を読む。hooks のペイロードに個人情報を載せない原則は変えない。
 - 会員の注文は `orders.customer_id` で紐づき、会員は RLS で自分の注文だけ読める。退会は `customers` 行の削除（注文は残る）。
 - **会員のアカウントは店ごとに Banto が持つ**（`0012_member_auth.sql`、docs/knowledge/10-members-identity.md）。Supabase Auth は運営者だけ。会員 = `customers` 行。ログインはパスワードなし: メールの 6 桁のコードかリンク（`src/members/`）。コード・トークン・IP は HMAC にしてから DB へ渡し、照合・回数の制限・失効は DB の関数（`member_login_*`）。会員のデータは service_role の `member_*` RPC で、世代（`session_epoch`）を確かめて読み書きする。リンクは GET では使わない（確認画面のボタンで POST）。

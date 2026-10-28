@@ -8,7 +8,7 @@ import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { migrated } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
-import { ORDER_LOOKUP_MIGRATION, orderPageUrl } from "../../orders/lookup";
+import { ORDER_LOOKUP_LIMITS_MIGRATION, ORDER_LOOKUP_MIGRATION, orderPageUrl } from "../../orders/lookup";
 import { LEGAL_CHECK_HOURS, LEGAL_KINDS, LEGAL_LINKS_MIGRATION, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
@@ -173,7 +173,7 @@ function LegalLinksSection(props: { shop: ShopRow }) {
   );
 }
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean; orderPageReady: boolean }) {
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean; orderPageReady: boolean; orderLimitsReady: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -472,6 +472,12 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
             <input id="max_pending_per_ip" type="number" name="max_pending_per_ip" min={1} max={9999} value={String(shopLimit(shop.settings, "checkout", "max_pending_per_ip", 20))} />
             <label for="login_per_ip_per_hour">{t("headless.login_per_ip_per_hour")}</label>
             <input id="login_per_ip_per_hour" type="number" name="login_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "members_login_limits", "per_ip_per_hour", 30))} />
+            {props.orderLimitsReady ? (
+              <>
+                <label for="order_lookup_per_ip_per_hour">{t("headless.order_lookup_per_ip_per_hour")}</label>
+                <input id="order_lookup_per_ip_per_hour" type="number" name="order_lookup_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "order_lookup", "per_ip_per_hour", 20))} />
+              </>
+            ) : null}
             <p class="muted">{t("headless.limits_hint")}</p>
             <p>
               <button type="submit">{t("shop.save")}</button>
@@ -576,6 +582,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       stripeKeySet={stripeKeySet}
       legalLinksReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, LEGAL_LINKS_MIGRATION))}
       orderPageReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_MIGRATION))}
+      orderLimitsReady={await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_LIMITS_MIGRATION)}
     />,
   );
 });
@@ -807,6 +814,7 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
   const settings: Record<string, unknown> = { ...current, headless };
   if (f.max_pending_per_ip !== undefined) settings.checkout = { ...section(current.checkout), max_pending_per_ip: limit(f.max_pending_per_ip, 20) };
   if (f.login_per_ip_per_hour !== undefined) settings.members_login_limits = { ...section(current.members_login_limits), per_ip_per_hour: limit(f.login_per_ip_per_hour, 30) };
+  if (f.order_lookup_per_ip_per_hour !== undefined) settings.order_lookup = { ...section(current.order_lookup), per_ip_per_hour: limit(f.order_lookup_per_ip_per_hour, 20) };
   try {
     await db.from<ShopRow>("shops").update({ settings }, { id: shopId });
   } catch (e) {

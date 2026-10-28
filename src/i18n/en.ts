@@ -718,6 +718,7 @@ export const en: Record<MessageKey, string> = {
   "store.lookup_intro": "Enter your order number and the email address you used when ordering.",
   "store.lookup_number": "Order number",
   "store.lookup_submit": "Look up",
+  "store.lookup_too_many": "Too many lookups. Please wait a while and try again.",
   "store.lookup_not_found": "No matching order was found. Please check the order number and email address.",
 
   "shipping.title": "Shipping, tax and contact",
@@ -1186,7 +1187,8 @@ export const en: Record<MessageKey, string> = {
   "headless.relay_ips_hint": "If a server (e.g. WordPress) calls Banto on behalf of shoppers, list its IP here and have it send the shopper's IP in the X-Banto-Client-IP header. Otherwise every shopper counts as one IP and the limits below become site-wide limits. Leave empty when browsers call Banto directly (embed snippets). If you do not know your server's IP, call GET /api/v1/relay-check from it with an AI token: it returns the IP Banto saw and whether it is registered. This list is never shown to shoppers.",
   "headless.max_pending_per_ip": "Max pending reservations per IP (default 20)",
   "headless.login_per_ip_per_hour": "Max member login codes per IP per hour (default 30)",
-  "headless.limits_hint": "Both 1 to 9999. If the relay's source IP is not fixed and cannot be declared, raise these instead. Per-person (email) limits stay unchanged.",
+  "headless.order_lookup_per_ip_per_hour": "Failed order lookups allowed from one IP (per hour, default 20)",
+  "headless.limits_hint": "Each 1 to 9999. If the relay's source IP is not fixed and cannot be declared, raise these instead. Per-person (email) limits stay unchanged.",
 
   "member.account": "My account",
   "social.members_off": "Members are not enabled. Turn on \"Enable members\" in the shop settings.",

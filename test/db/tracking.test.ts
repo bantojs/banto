@@ -46,7 +46,7 @@ describe.skipIf(!dbAvailable)("送り状番号・税区分の取り込み・復�
   });
 
   it("注文照会とメールの連絡先にお問い合わせ番号が載る。連絡先には明細の税率と値引き・ショップの税の設定も載る", async () => {
-    const r = await asAnon(async (c) => (await c.query<{ r: Record<string, unknown> }>("select lookup_order($1, 3001, 'b@example.com') as r", [f.shopId])).rows[0]!.r);
+    const r = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select lookup_order($1, 3001, 'b@example.com') as r", [f.shopId])).rows[0]!.r);
     expect(r["tracking"]).toEqual({ carrier: "yamato", number: "123456789012" });
     expect(JSON.stringify(r)).not.toContain("shipping_address");
     const id = (await getPool().query<{ id: string }>("select id from orders where shop_id = $1 and number = 3001", [f.shopId])).rows[0]!.id;
