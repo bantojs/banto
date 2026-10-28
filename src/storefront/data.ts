@@ -33,6 +33,8 @@ export interface PublicShop {
   settings: Record<string, unknown>;
   /** 法務のページの外の URL のうち、最後の確認で生きていたものだけ（0062、src/storefront/legal-links.ts）。当たる前は無い */
   legal_links?: Record<string, string>;
+  /** 公開中の Liquid のテーマの版（0071。独自ドメインのあるショップだけ。docs/themes.md） */
+  theme?: { id: string; storage_key: string; settings: Record<string, unknown> } | null;
 }
 
 /** anon で products を読むときの列（0055 から anon は products.attributes を読めない。商品詳細は product_public_get が公開の項目だけを返す） */
@@ -259,6 +261,15 @@ export class StorefrontData {
   /** このデプロイの Workers のプラン（0060 の banto_site_plan。裏の処理が 1 回に進める量） */
   async sitePlan(): Promise<"free" | "paid"> {
     return (await this.db.rpc<string>("banto_site_plan", {})) === "paid" ? "paid" : "free";
+  }
+
+  /** お店の画面（Liquid のテーマのショップ）で引くときの sitePlan。ショップ行と同じく isolate で短く覚える */
+  async sitePlanCached(): Promise<"free" | "paid"> {
+    const hit = await this.cache.get<{ plan: "free" | "paid" }>("site_plan");
+    if (hit) return hit.plan;
+    const plan = await this.sitePlan();
+    await this.cache.set("site_plan", { plan }, 60);
+    return plan;
   }
 
   /**

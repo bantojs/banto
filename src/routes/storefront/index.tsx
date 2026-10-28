@@ -25,6 +25,7 @@ import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
+import { liquidThemeFor, registerThemeAssets, renderListing, renderNotFound, renderProduct } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -150,6 +151,15 @@ function notFound(c: Ctx, s?: ShopScope) {
   return c.html(theme.NotFound({ ctx: s?.ctx }), 404);
 }
 
+/** 一覧・商品のページの「見つかりません」。Liquid のテーマがあればその 404 で（docs/themes.md） */
+async function notFoundPage(c: Ctx, s: ShopScope) {
+  const lt = await liquidThemeFor(c, s);
+  return (lt && renderNotFound(c, s, lt)) || notFound(c, s);
+}
+
+// テーマの資産（ショップのドメインでだけ。src/routes/storefront/liquid.ts）
+registerThemeAssets(storefront, scope);
+
 // ---------- robots / sitemap ----------
 // 独自ドメインの上ではそのショップだけ。Banto の URL では独自ドメインの無いショップだけ（サイトマップに別のホストを載せない）
 storefront.get("/robots.txt", async (c: Ctx) => {
@@ -243,9 +253,9 @@ storefront.get("/:shop", async (c: Ctx) => {
   // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）。それ以外は並列
   const categories = await s.sf.listCategories(s.shop);
   const category = categorySlug ? categories.find((x) => x.slug === categorySlug) : undefined;
-  if (categorySlug && !category) return notFound(c, s);
+  if (categorySlug && !category) return notFoundPage(c, s);
   const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, categories, { cursor: after }), s.sf.productFacets(s.shop, categories)]);
-  if (!page) return notFound(c, s);
+  if (!page) return notFoundPage(c, s);
   const link = (cursor: string | null) => {
     const q = new URLSearchParams();
     if (tag) q.set("tag", tag);
@@ -254,6 +264,15 @@ storefront.get("/:shop", async (c: Ctx) => {
     const qs = q.toString();
     return `${s.ctx.shopPath || "/"}${qs ? `?${qs}` : ""}`;
   };
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const filter = new URLSearchParams();
+    if (tag) filter.set("tag", tag);
+    if (categorySlug) filter.set("category", categorySlug);
+    const qs = filter.toString();
+    const res = renderListing(c, s, lt, { page, categories, ...(category ? { category } : {}), ...(tag ? { tag } : {}), tags: facets.tags, link, ...(after ? { after } : {}), path: qs ? `?${qs}` : "" });
+    if (res) return res;
+  }
   return c.html(
     s.theme.ShopHome({
       ctx: s.ctx,
@@ -271,7 +290,7 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const [detail, categories] = await Promise.all([s.sf.productBySlug(s.shop, param(c, "product")), s.sf.listCategories(s.shop)]);
-  if (!detail) return notFound(c, s);
+  if (!detail) return notFoundPage(c, s);
   // 品目は SKU の品番（カート・購入手続きと同じ）。商品を見たときは SKU を全部並べる
   const items = detail.skus.map((k) => ({ sku: k.code, name: detail.product.name, ...(k.name ? { variant: k.name } : {}), price: k.price_jpy }));
   const price = items.reduce<number | null>((m, k) => (m === null || k.price < m ? k.price : m), null) ?? 0;
@@ -281,6 +300,11 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
     const added = items.find((k) => k.sku === c.req.query("sku")) ?? items.find((k) => k.price === price);
     const qty = Math.min(999, Math.max(1, Number.parseInt(c.req.query("qty") ?? "1", 10) || 1));
     if (added) track(c, "cart_add", added.price * qty, [{ ...added, quantity: qty }]);
+  }
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = renderProduct(c, s, lt, { detail, categories, categoryNames: categoryPath(categories, detail.product.category_id).map((x) => x.name), selectedSku: c.req.query("sku") ?? null });
+    if (res) return res;
   }
   return c.html(
     s.theme.ProductPage({
@@ -536,8 +560,9 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const f = await formFields(c);
-  const skuId = (f.sku_id ?? "").trim();
-  const qty = Number.parseInt(f.qty ?? "1", 10);
+  // Liquid のテーマの商品フォームは Shopify と同じ名前（id = バリエーション、quantity）で送ってくる（docs/themes.md）
+  const skuId = (f.sku_id ?? f.id ?? "").trim();
+  const qty = Number.parseInt(f.qty ?? f.quantity ?? "1", 10);
   if (!skuId || !Number.isInteger(qty) || qty <= 0) return c.redirect(`${s.ctx.shopPath}/cart`);
   // 公開中の SKU だけ受け付ける
   const found = await s.sf.skusForCart(s.shop, [skuId]);

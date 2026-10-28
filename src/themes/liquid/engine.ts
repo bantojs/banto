@@ -80,6 +80,8 @@ export interface EngineOptions {
   /** フィルター・タグを足す（Shopify の名前。src/themes/liquid/shopify.ts） */
   extend?: (liquid: Liquid) => void;
   limits?: Partial<Record<keyof typeof THEME_LIMITS, number>>;
+  /** date フィルターの時間帯（IANA 名。既定はデプロイの BANTO_TIMEZONE を呼び出し側が渡す） */
+  timezone?: string;
 }
 
 export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): ThemeEngine {
@@ -102,6 +104,7 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     renderLimit: 60_000,
     // Shopify と同じ: 未定義の値は空、空文字・0 は真
     jsTruthy: false,
+    ...(opts.timezone ? { timezoneOffset: opts.timezone } : {}),
   });
 
   // escape / escape_once: エスケープした結果を、もうエスケープしない
@@ -141,8 +144,11 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     return t;
   };
 
+  // セクションの中から入れ子で描く（section タグ）ときは数え直さない。1 ページ全体で 1 つの上限
+  let depth = 0;
   const run = (tpls: Template[], scope: Record<string, unknown>): string => {
-    counter.reset();
+    if (depth === 0) counter.reset();
+    depth++;
     let out: unknown;
     try {
       out = liquid.renderSync(tpls, scope);
@@ -151,6 +157,8 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
       const inner = innerThemeError(e);
       if (inner) throw inner;
       throw new ThemeError(messageOf(e), /limit exceeded/.test(messageOf(e)) ? "limit" : "render");
+    } finally {
+      depth--;
     }
     const html = String(out ?? "");
     if (html.length > limits.outputChars) throw new ThemeError(`theme output limit exceeded (${limits.outputChars})`, "limit");
