@@ -13,6 +13,8 @@ import { AdminLayout, Copyable, PageHead } from "./layout";
 import { authClient, dbClient, formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { adminLoginGuard, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { myOrgs, PERM_TEMPLATES, requireOrgAdmin, SHOP_PERMS, isShopPerm, type OrgRole, type ShopPerm } from "./access";
+import { migrated } from "../../db/migration-state";
+import { THEMES_MIGRATION } from "../../themes/liquid";
 
 /**
  * 組織の画面（0024_organizations、docs/knowledge/11-organizations.md）。組織の owner / admin だけ。
@@ -40,6 +42,7 @@ const PERM_LABEL: Record<ShopPerm, MessageKey> = {
   settings: "perm.settings",
   integrations: "perm.integrations",
   support: "perm.support",
+  design: "perm.design",
 };
 const ROLE_LABEL: Record<OrgRole, MessageKey> = {
   owner: "org.role.owner",
@@ -53,6 +56,7 @@ const TEMPLATE_LABEL: Record<string, MessageKey> = {
   marketing: "org.template.marketing",
   stores: "org.template.stores",
   support: "org.template.support",
+  design: "org.template.design",
 };
 const isRole = (v: unknown): v is OrgRole => v === "owner" || v === "admin" || v === "member";
 
@@ -120,6 +124,7 @@ function readShopPerms(
   body: Record<string, string | File | (string | File)[]>,
   shops: OrgShop[],
   stores: OrgStoreRef[] = [],
+  allowed: readonly ShopPerm[] = SHOP_PERMS,
 ): ({ shop_id: string; perms: ShopPerm[] } | { store_id: string; perms: string[] })[] {
   const out: ({ shop_id: string; perms: ShopPerm[] } | { store_id: string; perms: string[] })[] = [];
   for (const st of stores) {
@@ -131,10 +136,15 @@ function readShopPerms(
     const tpl = body[`tpl.${s.id}`];
     const raw = body[`perm.${s.id}`];
     const picked = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]).filter(isShopPerm);
-    const perms = typeof tpl === "string" && PERM_TEMPLATES[tpl] ? [...PERM_TEMPLATES[tpl]!] : picked;
+    const perms = (typeof tpl === "string" && PERM_TEMPLATES[tpl] ? [...PERM_TEMPLATES[tpl]!] : picked).filter((p) => allowed.includes(p));
     if (perms.length > 0) out.push({ shop_id: s.id, perms: [...new Set(perms)] });
   }
   return out;
+}
+
+/** design（テーマ、0071）は DB に入るまで出さない（入る前の DB は項目を知らず、0024 の検査で断る） */
+async function shopPermsHere(c: AdminContext): Promise<readonly ShopPerm[]> {
+  return (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, THEMES_MIGRATION)) ? SHOP_PERMS : SHOP_PERMS.filter((p) => p !== "design");
 }
 
 function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; current?: { shop_id: string; perms: string[] }[]; currentStores?: { store_id: string; perms: string[] }[]; perms: readonly ShopPerm[] }) {
@@ -365,7 +375,7 @@ org.get("/org", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
         <label for="role">{t("org.role")}</label>
         <RoleSelect value="member" canOwner={o.role === "owner"} />
         <p>{t("org.role_help")}</p>
-        <ShopPermsFields shops={shops} stores={stores} perms={SHOP_PERMS} />
+        <ShopPermsFields shops={shops} stores={stores} perms={await shopPermsHere(c)} />
         <p>
           <button type="submit">{t("org.invite_submit")}</button>
         </p>
@@ -398,7 +408,7 @@ org.post("/org/invite", requireOwner, requireOrgAdmin, async (c: AdminContext) =
       p_org_id: o.org_id,
       p_email: email,
       p_role: role,
-      p_shops: role === "member" ? readShopPerms(body, shops, stores) : [],
+      p_shops: role === "member" ? readShopPerms(body, shops, stores, await shopPermsHere(c)) : [],
       p_token_hash: await hashApiToken(token),
     });
     mailFrom = r.mail_from;
@@ -461,7 +471,7 @@ org.get("/org/members/:userId", requireOwner, requireOrgAdmin, async (c: AdminCo
         <label for="role">{t("org.role")}</label>
         <RoleSelect value={m.role} canOwner={o.role === "owner"} />
         <p>{t("org.role_help")}</p>
-        <ShopPermsFields shops={shops} stores={stores} current={m.shops} currentStores={m.stores} perms={SHOP_PERMS} />
+        <ShopPermsFields shops={shops} stores={stores} current={m.shops} currentStores={m.stores} perms={await shopPermsHere(c)} />
         <p>
           <button type="submit">{t("shop.save")}</button>
         </p>
@@ -496,7 +506,7 @@ org.post("/org/members/:userId", requireOwner, requireOrgAdmin, async (c: AdminC
       p_org_id: o.org_id,
       p_user_id: userId,
       p_role: role,
-      p_shops: role === "member" ? readShopPerms(body, shops, stores) : [],
+      p_shops: role === "member" ? readShopPerms(body, shops, stores, await shopPermsHere(c)) : [],
     });
     return c.redirect(`${back}&flash=saved`);
   } catch (e) {
