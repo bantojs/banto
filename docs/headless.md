@@ -379,7 +379,11 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 | 503 | `unavailable` | ショップのメール（メール通知プラグインの送信元）の設定が済んでいない |
 
 - quote を作ったときと確定のときで会員が違う・トークンを外した場合は、判定し直して 409 `changed` で出し直します（会員限定の値引きは付きません）。
-- `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレスと、このショップでの注文の一覧（番号・状態・金額・日時。住所は返さない）を返します。注文 1 件の中身と領収書は `/members/orders/<番号>`（下の「注文照会・領収書」）。
+- `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレス・名前・既定の住所（`address`）・案内メールの同意（`marketing_consent`。ショップが欄を使うときだけ、`null` は未回答）と、このショップでの注文の一覧（番号・状態・金額・日時。注文の住所は返さない）を返します。
+- **会員本人の操作**（会員ページと同じ。お店の画面を使わないショップでも、会員が自分で直せるように）:
+  - `POST /api/shops/<shop>/members/address` `{ "customer_name", "phone", "postal_code", "state", "city", "line1", "line2" }` で既定の住所を保存します（チェックアウトの欄の初期値になります。都道府県でない `state` は `null`）。
+  - `POST /api/shops/<shop>/members/marketing-consent` `{ "consent": true | false }` で案内メールを受け取る・受け取らないを選びます。会員がログインして自分で選ぶので、受け取る（`true`）も本人の行為として記録します。ショップがこの欄を使っていなければ 404 `consent_disabled`。
+  - `POST /api/shops/<shop>/members/withdraw` `{ "confirm": true }` で退会します（会員の行を消し、注文は残ります。取り消せません）。そのトークンはすぐ使えなくなります。注文 1 件の中身と領収書は `/members/orders/<番号>`（下の「注文照会・領収書」）。
 - `POST /api/shops/<shop>/members/logout`（`Authorization: Bearer <access_token>` か本文の `{ "refresh_token": "..." }`）で、**この端末のログインを取り消します**（refresh はすぐ使えなくなります。access は期限の 15 分までは通るので、連携側でも捨ててください）。
 - `GET /api/shops/<shop>/members/sessions`（トークン必須）→ `{ "sessions": [{ "id", "kind": "web" | "api", "label": "Chrome / macOS" | null, "created_at", "last_seen_at", "current" }] }`。ログイン中の端末（同梱テーマの画面でのログインを含む）。`POST /api/shops/<shop>/members/sessions/<id>/revoke` でその端末のログインを取り消します（`web` は数分以内、`api` は次の refresh で止まります）。
 - `POST /api/shops/<shop>/members/logout-all`（トークン必須）で、その会員のすべての端末のログインを切ります（発行済みのトークンも使えなくなります）。
