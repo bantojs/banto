@@ -379,7 +379,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 | 503 | `unavailable` | ショップのメール（メール通知プラグインの送信元）の設定が済んでいない |
 
 - quote を作ったときと確定のときで会員が違う・トークンを外した場合は、判定し直して 409 `changed` で出し直します（会員限定の値引きは付きません）。
-- `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレスと、このショップでの注文の一覧（番号・状態・金額・日時。住所は返さない）を返します。
+- `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレスと、このショップでの注文の一覧（番号・状態・金額・日時。住所は返さない）を返します。注文 1 件の中身と領収書は `/members/orders/<番号>`（下の「注文照会・領収書」）。
 - `POST /api/shops/<shop>/members/logout`（`Authorization: Bearer <access_token>` か本文の `{ "refresh_token": "..." }`）で、**この端末のログインを取り消します**（refresh はすぐ使えなくなります。access は期限の 15 分までは通るので、連携側でも捨ててください）。
 - `GET /api/shops/<shop>/members/sessions`（トークン必須）→ `{ "sessions": [{ "id", "kind": "web" | "api", "label": "Chrome / macOS" | null, "created_at", "last_seen_at", "current" }] }`。ログイン中の端末（同梱テーマの画面でのログインを含む）。`POST /api/shops/<shop>/members/sessions/<id>/revoke` でその端末のログインを取り消します（`web` は数分以内、`api` は次の refresh で止まります）。
 - `POST /api/shops/<shop>/members/logout-all`（トークン必須）で、その会員のすべての端末のログインを切ります（発行済みのトークンも使えなくなります）。
@@ -408,6 +408,52 @@ POST /api/shops/<shop>/tryon   { "cart": "<カートのトークン>", "store": 
 | 400 | `store_unavailable` | 店舗が無い・試着を受けない |
 | 400 | `invalid_request` | `field` が `date`（来店日が選べる日でない）・`name`・`email`・`phone` |
 | 409 | `empty_cart` / `too_many_items`（`max_items`）/ `stock` | カートが空・点数の上限を超えた・在庫が足りない |
+
+---
+
+## 注文照会・領収書
+
+注文の状況と領収書を、連携サイトの画面で出せます。**Banto が返すのはデータ（JSON）だけ**で、レイアウト・宛名の欄・印刷の体裁は連携サイトが決めます。
+
+```
+POST /api/shops/<shop>/orders/lookup                    { "number": 1001, "email": "..." } → { order, receipt_available, order_token }
+POST /api/shops/<shop>/orders/receipt                   { "order_token": "..." } → { receipt }
+GET  /api/shops/<shop>/members/orders/<番号>            （会員トークン）→ { order, receipt_available }
+GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン）→ { receipt }
+```
+
+- **ゲストの注文**は、注文番号と注文時のメールアドレスで開きます（同梱テーマの注文照会と同じ）。合わなければ `404 not_found`（番号とアドレスのどちらが違ったかは返しません）。`order_token`（24 時間）は領収書と、この注文についてのお問い合わせ（`/inquiries` の `order_token`）にそのまま渡せます。
+- **会員の注文**は会員トークンで開きます（その会員の注文だけ。別の会員の注文・ゲストで買った注文は `404 not_found`）。ゲストで買った注文は会員に結びつけません（番号とメールアドレスで開いてください）。
+- `order` は `number` `status`（`paid` / `shipped` / `cancelled` / `refunded`）`created_at` `shipped_at` `total_jpy` `shipping_jpy` `discount_jpy` `discounts` `tracking`（`carrier` `number`）`items`（`name` `sku` `qty` `unit_price_jpy` `tax_rate`）など。**住所・メールアドレスは返しません。**
+- `receipt`（同梱モジュール receipt が ON で、支払い済み・発送済みの注文だけ。ほかは `409 receipt_not_available`、モジュールが OFF なら `404 receipt_disabled`）は、領収書（適格簡易請求書）の記載事項と計算結果です: `kind`（登録番号があれば `qualified_simplified_invoice`、無ければ `receipt`）`issuer` `invoice_number` `proviso`（但し書き）`issued_at` `number` `order_date` `items`（`line_total_jpy`、軽減税率の対象は `reduced: true`。表示に ※ を付けて凡例を添える）`shipping_jpy` `discounts` `total_jpy` `tax`（税率ごとの `rate` `amount_jpy`（税込の対象額）`tax_jpy`（うち消費税額））。**税の計算は Banto の結果をそのまま表示してください**（連携側で計算し直すと端数が合わなくなります）。宛名は購入者が連携側の画面で入れるものとして、Banto は受け取りません。
+- 応答はキャッシュさせません（`Cache-Control: no-store`）。メールアドレスを URL に載せないため、ゲストの呼び出しは POST です。
+
+### 注文メールのリンクを連携サイトに向ける
+
+管理画面 → ショップ設定 → ヘッドレス連携の「注文照会のページ」に連携サイトのページの URL を入れると（`settings.headless.order_page_url`、0066。上の「決済後の戻り先として許可するサイト」にあるサイトの https の URL だけ）、
+
+- 注文メール（注文確認・発送）の「ご注文の状況」のリンクが `<ページ>?banto_order=<注文番号>` になります。会員の注文なら `&banto_member=1` も付きます。**URL にメールアドレスや秘密は載せません。**
+- Banto の注文照会の画面（`/<shop>/orders/lookup`）は、同じクエリのままそのページへ 302 で移ります。
+- 公開の settings（`GET /api/shops/:shop` が使う `shop_public_get`）の `headless.order_page_url` にも出ます。
+
+連携サイトのページの作り方（おすすめの流れ）:
+
+1. `banto_member=1` が付いていて、会員がログインしていれば `GET /members/orders/<banto_order>` で開いて表示する。
+2. `banto_member=1` が付いていて、ログインしていなければログインの画面を出し、ログインした後にこのページ（同じクエリ）へ戻して 1 へ。**ログインした後に戻すのは連携サイトの仕事**です（Banto のメールのリンク・LINE・Google・パスキーを通るログインでは、`return_to` にこのページの URL を入れておけば、そこへ戻ります）。
+3. `banto_member` が無ければ、注文番号を埋めた欄とメールアドレスの欄を出し、`POST /orders/lookup` で開く。
+4. `receipt_available` が `true` なら領収書のボタンを出し、会員は `/members/orders/<番号>/receipt`、ゲストは `POST /orders/receipt`（`order_token`）でデータを受け取って、連携サイトのレイアウトで表示・印刷する。
+
+入れなければ、リンクは Banto の注文照会の画面（`/<shop>/orders/lookup?banto_order=…`）になります。同梱テーマも同じ動きです（会員の注文はログインしていればそのまま出し、していなければログインしてから戻します。ゲストの注文は番号を埋めてメールアドレスを入れてもらいます）。
+
+注意: 注文照会（`orders/lookup`）には回数の上限がありません（同梱テーマの注文照会の画面と同じ）。番号とメールアドレスの両方が合わなければ何も返しません。
+
+| status | `error` | 意味 |
+| --- | --- | --- |
+| 400 | `invalid_request` | 番号かメールアドレスの形が違う（lookup） |
+| 400 | `invalid_order_token` | 注文トークンの署名・期限が合わない（receipt。lookup からやり直す） |
+| 401 | `invalid_member_token` / `member_token_required` | 会員トークンが確かめられない・付いていない |
+| 404 | `not_found` / `receipt_disabled` | 注文が開けない・領収書のモジュールが OFF |
+| 409 | `receipt_not_available` / `members_disabled` | 支払い済みでない（キャンセル・返金済み）・会員機能が OFF |
 
 ---
 

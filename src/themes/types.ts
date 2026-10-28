@@ -250,7 +250,11 @@ export interface Theme {
   /** 注文照会（番号 + メール） */
   /** receipt: 領収書を出せる（同梱モジュール receipt）。支払い済みなら POST `${shopPath}/orders/receipt`（number・email・name）のフォームを出す */
   /** inquiry: 同梱モジュール inquiries が ON なら、結果の注文について問い合わせるフォーム（POST `${shopPath}/inquiries/new`、hidden の o = inquiry.token） */
-  OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean; inquiry?: { token: string } | null }): Rendered;
+  /**
+   * 注文照会。member: ログイン中の会員の自分の注文（注文メールのリンクから、0066）。そのときは番号とメールアドレスの欄を出さず、
+   * 領収書（receiptUrl、GET）とお問い合わせ（inquiryUrl、GET）はリンクで出す
+   */
+  OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean; inquiry?: { token: string } | null; member?: { receiptUrl: string | null; inquiryUrl: string | null } }): Rendered;
   LegalPage(props: { ctx: ThemeContext; title: string; body: string }): Rendered;
   /**
    * 決済ページから戻ってきた直後。注文確定は Webhook で行うので、status が無ければ「受付済み」の表示に留める。

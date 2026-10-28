@@ -14,6 +14,7 @@ import { commerceApi } from "./commerce";
 import { memberCors, membersApi } from "./members";
 import { tryonApi } from "./tryon";
 import { inquiriesApi } from "./inquiries";
+import { ordersApi } from "./orders";
 import { imageOptionsOf } from "../../products/images";
 import { displayOptionAxes } from "../../products/option-axes";
 import { publicOpenapiDocument } from "./openapi-public";
@@ -36,6 +37,7 @@ api.route("/", commerceApi);
 api.route("/", membersApi);
 api.route("/", tryonApi);
 api.route("/", inquiriesApi);
+api.route("/", ordersApi);
 
 function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   const cfg = c.get("adapters").config;

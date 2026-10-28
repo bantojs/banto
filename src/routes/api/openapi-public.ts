@@ -57,6 +57,43 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
   const tokens = obj({ access_token: { ...str, description: "bm1. で始まる（15 分）。Authorization: Bearer に付ける" }, refresh_token: { ...str, description: "30 日。1 回使うごとに新しいものに置き換わる（使い回すとその端末のセッションが止まる）" }, expires_in: int }, ["access_token", "refresh_token", "expires_in"]);
   const loggedIn = { allOf: [tokens, obj({ member: obj({ id: str, email: str, created: bool }) })] };
   const store = any("実店舗。id・name・住所・hours（曜日ごと）・special_days・today・visit_dates（来店日を選ぶとき）など");
+  const orderView = obj(
+    {
+      number: int,
+      status: { type: "string", enum: ["paid", "shipped", "cancelled", "refunded"] },
+      created_at: str,
+      shipped_at: nStr,
+      total_jpy: int,
+      shipping_jpy: int,
+      discount_jpy: int,
+      shipping_tax_rate: { type: ["number", "string", "null"] },
+      tax_rounding: nStr,
+      payment_provider: nStr,
+      tracking: { type: ["object", "null"], description: "carrier・number（発送のお問い合わせ番号）" },
+      discounts: arr(obj({ code: str, name: str, amount_jpy: int })),
+      items: arr(obj({ name: str, sku: nStr, qty: int, unit_price_jpy: int, tax_rate: { type: ["number", "string", "null"] }, discount_jpy: nInt })),
+    },
+    [],
+    "住所・メールアドレスは返さない",
+  );
+  const receipt = obj(
+    {
+      kind: { type: "string", enum: ["qualified_simplified_invoice", "receipt"], description: "qualified_simplified_invoice = 適格簡易請求書（登録番号あり）" },
+      issuer: str,
+      invoice_number: nStr,
+      proviso: { ...str, description: "但し書き" },
+      issued_at: str,
+      number: int,
+      order_date: str,
+      items: arr(obj({ name: str, sku: nStr, qty: int, unit_price_jpy: int, line_total_jpy: int, reduced: { ...bool, description: "軽減税率の対象（表示に ※ を付ける）" } })),
+      shipping_jpy: int,
+      discounts: arr(obj({ code: str, name: str, amount_jpy: int })),
+      total_jpy: int,
+      tax: arr(obj({ rate: { type: "number", description: "%。0 は非課税・不課税" }, amount_jpy: { ...int, description: "税込の対象額" }, tax_jpy: { ...int, description: "うち消費税額" } })),
+    },
+    [],
+    "記載事項と計算結果だけ。宛名・レイアウト・印刷は連携サイトが決める",
+  );
   const inquiry = obj(
     {
       number: int,
@@ -192,6 +229,17 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           },
         },
       },
+      "/shops/{shop}/orders/lookup": {
+        post: {
+          summary: "ゲストの注文照会（注文番号と注文時のメールアドレス）",
+          parameters: [shopPath],
+          requestBody: body(obj({ number: int, email: str }, ["number", "email"])),
+          responses: { 200: ok(obj({ order: orderView, receipt_available: bool, order_token: { ...str, description: "24 時間。領収書（POST /orders/receipt）とお問い合わせ（order_token）に渡す" } })), 400: err("invalid_request"), ...common, 404: err("not_found（番号かアドレスが違う・ショップが無い）") },
+        },
+      },
+      "/shops/{shop}/orders/receipt": {
+        post: { summary: "ゲストの注文の領収書のデータ（同梱モジュール receipt）", parameters: [shopPath], requestBody: body(obj({ order_token: str }, ["order_token"])), responses: { 200: ok(obj({ receipt })), 400: err("invalid_order_token"), 409: err("receipt_not_available（支払い済みでない）"), ...common, 404: err("not_found・receipt_disabled") } },
+      },
       "/shops/{shop}/checkout/status": {
         get: {
           summary: "戻り先の画面で、確定したか・注文番号を引く（照会トークン）",
@@ -235,6 +283,8 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       "/shops/{shop}/members/passkey": {
         get: { summary: "パスキーのログイン画面へ（ショップの独自ドメインの上。戻ると return_to に引き換え券）", parameters: [shopPath, { name: "return_to", in: "query", required: true, schema: str }], responses: { 302: { description: "ショップのドメインのパスキーの画面へ" }, 400: err("invalid_return_to"), 409: err("passkey_disabled"), 404: common[404] } },
       },
+      "/shops/{shop}/members/orders/{number}": { get: { summary: "会員の注文 1 件（注文照会のページ。lookup_order と同じ形）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ order: orderView, receipt_available: bool })), 401: err("invalid_member_token・member_token_required"), 404: err("not_found（この会員の注文ではない）"), 409: err("members_disabled"), 503: common[503] } } },
+      "/shops/{shop}/members/orders/{number}/receipt": { get: { summary: "会員の注文の領収書のデータ（同梱モジュール receipt）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ receipt })), 401: err("invalid_member_token・member_token_required"), 404: err("not_found・receipt_disabled"), 409: err("receipt_not_available（支払い済みでない）・members_disabled"), 503: common[503] } } },
       "/shops/{shop}/members/tryon": { get: { summary: "会員の試着の申し込みの一覧（同梱モジュール「お店で試着」）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ requests: arr(any("number・status・店舗・来店日・商品・cancellable")) })), 401: err("invalid_member_token"), 404: err("tryon_disabled"), 409: err("members_disabled"), 503: common[503] } } },
       "/shops/{shop}/members/tryon/{number}/cancel": { post: { summary: "試着の申し込みを取り消す", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ ok: bool })), 401: err("invalid_member_token"), 404: err("not_found・tryon_disabled"), 409: err("取り消せない状態"), 503: common[503] } } },
 
@@ -305,6 +355,8 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/checkout/quote": "createCheckoutQuote",
   "post /shops/{shop}/checkout": "placeCheckout",
   "get /shops/{shop}/checkout/status": "getCheckoutStatus",
+  "post /shops/{shop}/orders/lookup": "lookupOrder",
+  "post /shops/{shop}/orders/receipt": "getOrderReceipt",
   "get /shops/{shop}/members/config": "getMemberConfig",
   "post /shops/{shop}/members/login": "startMemberLogin",
   "post /shops/{shop}/members/verify": "verifyMemberLogin",
@@ -318,6 +370,8 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/members/password": "setMemberPassword",
   "get /shops/{shop}/members/oauth/{provider}": "startMemberOAuth",
   "get /shops/{shop}/members/passkey": "startMemberPasskey",
+  "get /shops/{shop}/members/orders/{number}": "getMemberOrder",
+  "get /shops/{shop}/members/orders/{number}/receipt": "getMemberOrderReceipt",
   "get /shops/{shop}/members/tryon": "listMemberTryonRequests",
   "post /shops/{shop}/members/tryon/{number}/cancel": "cancelMemberTryonRequest",
   "get /shops/{shop}/stores": "listStores",

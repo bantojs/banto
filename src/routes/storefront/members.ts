@@ -77,9 +77,19 @@ export function customerCookieName(shopId: string): string {
 }
 const pendingCookieName = (shopId: string) => `${customerCookieName(shopId)}_p`;
 const PENDING_SECONDS = 20 * 60;
+/** ログインした後に開く会員の注文（注文メールのリンクから来た、0066）。中身は注文番号だけ（秘密ではない） */
+const orderAfterLoginCookieName = (shopId: string) => `${customerCookieName(shopId)}_o`;
 
 function cookieHeader(name: string, value: string, path: string, secure: boolean, maxAge: number): string {
   return [`${name}=${value}`, `Path=${path}`, "HttpOnly", "SameSite=Lax", `Max-Age=${maxAge}`, ...(secure ? ["Secure"] : [])].join("; ");
+}
+
+/**
+ * 注文メールのリンク（?banto_order=&banto_member=1）から来た、ログインしていない会員。ログインしたら /account がこの注文へ戻す。
+ * どのログインの方法（コード・リンク・パスワード・LINE・Google・パスキー）も成功したら /account へ戻るので、戻す場所は 1 か所
+ */
+export function rememberOrderAfterLogin(c: Ctx, s: { shop: { id: string }; shopPath: string }, number: number): void {
+  c.header("Set-Cookie", cookieHeader(orderAfterLoginCookieName(s.shop.id), String(number), s.shopPath || "/", isSecureRequest(c), PENDING_SECONDS), { append: true });
 }
 
 /** Cookie はショップのパス（独自ドメインの上ではドメイン全体）に置く */
@@ -241,6 +251,11 @@ members.get("/:shop/account", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
+  const afterLogin = readCookie(c.req.header("cookie"), orderAfterLoginCookieName(s.shop.id));
+  if (afterLogin) {
+    c.header("Set-Cookie", cookieHeader(orderAfterLoginCookieName(s.shop.id), "", s.shopPath || "/", isSecureRequest(c), 0), { append: true });
+    if (/^[0-9]{1,9}$/.test(afterLogin)) return c.redirect(`${s.shopPath}/orders/lookup?banto_order=${afterLogin}&banto_member=1`);
+  }
   const db = privilegedFor(c);
   // マイクーポン（同梱モジュール coupons、0019）。モジュールが OFF なら DB に問い合わせない
   const withCoupons = Boolean(db) && moduleEnabled(s.shop.settings, "coupons");
