@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { storefrontSettings } from "../../storefront/mode";
 import type { AppEnv } from "../../app";
 import { DbError, type DbClient } from "../../db/client";
 import type { CategoryRow, CouponCampaignRow, ProductRow, ShopRow } from "../../db/types";
@@ -280,6 +281,8 @@ function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormCont
           <label>
             <input type="checkbox" name="claimable" checked={row?.claimable === true} /> {t("coupons.claimable")}
           </label>
+          {/* 獲得ページ（/:shop/coupons/:id）は Banto のお店の画面。「使わない」のショップでは外のサイトへ転送されて開けない */}
+          {storefrontSettings(fc.shop.settings).mode === "off" ? <p class="notice">{t("coupons.claim_storefront_off")}</p> : null}
           {row?.claimable && row.id && claimUrl ? (
             <p>
               {t("coupons.claim_url")}: <code>{`${claimUrl}/${row.id}`}</code>
