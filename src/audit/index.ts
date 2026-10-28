@@ -22,6 +22,7 @@ export const AUDIT_ACTIONS = [
   "shop.domain_changed",
   "shop.stripe_account_changed",
   "shop.published_changed",
+  "shop.theme_published",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 

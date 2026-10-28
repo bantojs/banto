@@ -62,6 +62,8 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "banto_image_options_ok", // 0063: product_images.options の CHECK（値の形を見るだけ）
   "banto_option_axes_ok", // 0065: shops / categories / products の option_axes の CHECK（値の形を見るだけ）
   "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
+  // 0071: テーマの版（中で design の項目を確かめる）
+  "theme_publish", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
 ]);
 
@@ -89,6 +91,7 @@ const TABLE_DENIES = [{ role: "authenticated", table: "api_tokens", privilege: "
 const REQUIRED_TRIGGERS = [
   ["orders", "orders_guard"], ["shops", "shops_guard"], ["api_tokens", "api_tokens_guard"],
   ["shops", "shops_plan_limit"], ["products", "products_plan_limit"], ["customers", "customers_plan_limit"], ["org_members", "org_members_plan_limit"],
+  ["shops", "shops_theme_guard"], // 0071: 公開中のテーマは theme_publish だけが変える
 ];
 
 const client = new pg.Client({ connectionString: url });
