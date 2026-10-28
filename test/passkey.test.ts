@@ -163,6 +163,22 @@ describe("パスキー（同梱モジュール passkey、0046）", () => {
     expect((await off.b.get("/account/passkey.js")).status).toBe(404);
   });
 
+  it("お店の画面を使わないショップでも、パスキーのログインの画面と API は残る（会員ページは外のサイトへ）", async () => {
+    const { sb, mail, b, shop } = setup();
+    await memberLogin(b, mail, "", "m@example.com");
+    const cred = await addPasskey(b, sb);
+    (shop["settings"] as Record<string, unknown>)["storefront"] = { mode: "off", site_url: "https://wp.example.com/" };
+    // ショップの行は isolate のキャッシュにあるので、設定を変えた後は新しい app で開く
+    const page = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }), SHOP_URL);
+    expect((await page.get("/account/passkey?return_to=https://wp.example.com/cb")).status).toBe(200);
+    expect((await page.get("/account/passkey.js")).status).toBe(200);
+    const r = await passkeyLogin(page, cred, { returnTo: "https://wp.example.com/cb" });
+    expect(String(r.json["redirect"])).toMatch(/^https:\/\/wp\.example\.com\/cb\?banto_handoff=/);
+    const acc = await page.get("/account/passkeys");
+    expect(acc.status).toBe(302);
+    expect(acc.headers.get("location")).toBe("https://wp.example.com/");
+  });
+
   it("ヘッドレス: ショップのドメインのパスキーの画面へ送り、引き換え券で連携サイトへ戻す", async () => {
     const { sb, mail, app, b } = setup();
     await memberLogin(b, mail, "", "m@example.com");

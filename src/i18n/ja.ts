@@ -1129,6 +1129,7 @@ export const ja = {
   "coupons.auto_grant_after_purchase": "会員の注文が確定したとき（次回使える）",
   "coupons.auto_grant_hint": "配ったクーポンは、会員のマイクーポンに出ます。有効日数を入れておくと、受け取ってからの期限になります。",
   "coupons.claimable": "先着の「クーポンを獲得する」ページを出す（ログイン中の会員が 1 人 1 枚。全体の上限があれば、その枚数まで）",
+  "coupons.claim_storefront_off": "このショップはお店の画面を「使わない」設定なので、獲得ページは開けません（外のサイトへ転送されます）。配るときは、公開のコードか、会員への発行（購入後の自動の発行・CSV・AI 用 API）を使ってください。",
   "coupons.claim_url": "獲得ページ",
   "claim.label_percent": "{n}% オフ",
   "claim.label_fixed": "{amount} オフ",

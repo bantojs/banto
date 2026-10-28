@@ -1122,6 +1122,7 @@ export const en: Record<MessageKey, string> = {
   "coupons.auto_grant_after_purchase": "When a member's order is confirmed (for next time)",
   "coupons.auto_grant_hint": "Given coupons appear in the member's My coupons. Set valid days to make them expire after they are received.",
   "coupons.claimable": "Show a first-come “Get this coupon” page (one per signed-in member; up to the overall limit if set)",
+  "coupons.claim_storefront_off": "This shop does not use Banto's storefront pages, so the claim page cannot be opened (it redirects to your external site). To hand out coupons, use a public code or issue them to members (automatic issue after purchase, CSV, or the AI API).",
   "coupons.claim_url": "Claim page",
   "claim.label_percent": "{n}% off",
   "claim.label_fixed": "{amount} off",

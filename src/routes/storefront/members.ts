@@ -525,22 +525,21 @@ async function withMember(c: Ctx, s: Scope, fn: (db: PrivilegedDb, session: Memb
   return ok;
 }
 
+/** 会員の既定の住所（会員ページとヘッドレスの会員 API で同じ形。都道府県でない値は null） */
+export function memberAddressFrom(f: Record<string, unknown>): { name: string; address: Record<string, unknown> } {
+  const str = (k: string, max: number) => (typeof f[k] === "string" ? (f[k] as string) : "").trim().slice(0, max);
+  const name = str("customer_name", 200);
+  const state = str("state", 20);
+  return {
+    name,
+    address: { name, phone: str("phone", 50), postal_code: str("postal_code", 20), country: "JP", state: isPrefecture(state) ? state : null, city: str("city", 200), line1: str("line1", 200), line2: str("line2", 200) || null },
+  };
+}
+
 members.post("/:shop/account/address", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const f = await formFields(c);
-  const name = (f.customer_name ?? "").trim().slice(0, 200);
-  const state = (f.state ?? "").trim();
-  const address = {
-    name,
-    phone: (f.phone ?? "").trim().slice(0, 50),
-    postal_code: (f.postal_code ?? "").trim().slice(0, 20),
-    country: "JP",
-    state: isPrefecture(state) ? state : null,
-    city: (f.city ?? "").trim().slice(0, 200),
-    line1: (f.line1 ?? "").trim().slice(0, 200),
-    line2: (f.line2 ?? "").trim().slice(0, 200) || null,
-  };
+  const { name, address } = memberAddressFrom(await formFields(c));
   const ok = await withMember(c, s, (db, m) => db.memberSaveAddress(s.shop.id, m.cid, m.ep, name || null, address));
   return c.redirect(ok ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account/login`);
 });

@@ -286,6 +286,15 @@ describe("クーポン: 会員の独自項目の条件（0049）", () => {
     const admin2 = await Browser.loggedIn(plain.app, "owner@example.com", "password-123");
     expect(await (await admin2.get(`/admin/shops/${plain.shop.id}/modules/coupons/new`)).text()).toContain("会員の項目はまだ定義されていません");
   });
+
+  it("お店の画面を使わないショップでは、獲得ページが開けないことを登録画面で知らせる", async () => {
+    for (const [mode, shown] of [["off", true], ["full", false]] as const) {
+      const { app, shop } = setup({ settings: { members_enabled: true, storefront: { mode, site_url: "https://wp.example.com/" } } });
+      const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+      const html = await (await admin.get(`/admin/shops/${shop.id}/modules/coupons/new`)).text();
+      expect(html.includes("獲得ページは開けません")).toBe(shown);
+    }
+  });
 });
 
 describe("クーポン: ヘッドレス API", () => {
