@@ -1,7 +1,9 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { API_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, THEME_SCOPES, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { migrated } from "../../db/migration-state";
+import { THEME_API_MIGRATION } from "../../themes/liquid/versions";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
@@ -42,9 +44,17 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "customers:write": "tokens.scope.customers_write",
   "inquiries:read": "tokens.scope.inquiries_read",
   "inquiries:write": "tokens.scope.inquiries_write",
+  "theme:write": "tokens.scope.theme_write",
+  "theme:publish": "tokens.scope.theme_publish",
 };
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
+
+/** 発行できるスコープ（テーマのスコープは 0072 が当たってから） */
+async function issuableScopes(c: AdminContext): Promise<readonly ApiScope[]> {
+  if (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, THEME_API_MIGRATION)) return API_SCOPES;
+  return API_SCOPES.filter((sc) => !THEME_SCOPES.includes(sc));
+}
 
 tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -54,6 +64,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const shop = sa.shop;
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
+  const scopeList = await issuableScopes(c);
   const rows = await db.from<TokenRow>("api_tokens").select("id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at", { eq: { shop_id: shopId }, order: "created_at.desc" });
   const base = publicBaseUrl(c);
   const flash = c.req.query("flash");
@@ -119,7 +130,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
         <input id="name" type="text" name="name" required maxlength={100} placeholder="Claude デスクトップ" />
         <fieldset style="border:0;padding:0">
           <legend>{t("tokens.scopes")}</legend>
-          {API_SCOPES.map((sc) => (
+          {scopeList.map((sc) => (
             <div>
               <label>
                 <input type="checkbox" name="scopes" value={sc} checked={grantable(sc) && (DEFAULT_SCOPES as readonly string[]).includes(sc)} disabled={!grantable(sc)} /> <code>{sc}</code> — {t(SCOPE_LABEL[sc])}
@@ -157,6 +168,8 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const body = await c.req.parseBody({ all: true });
   const rawScopes = body["scopes"];
   const scopes = (Array.isArray(rawScopes) ? rawScopes : typeof rawScopes === "string" ? [rawScopes] : []).filter((v): v is ApiScope => typeof v === "string" && isApiScope(v));
+  const issuable = await issuableScopes(c);
+  if (scopes.some((sc) => !issuable.includes(sc))) return c.redirect(`/admin/shops/${shopId}/tokens?flash=generic`);
   const f = await formFields(c);
   const name = (f.name ?? "").trim().slice(0, 100);
   const days = Number.parseInt(f.expires_days ?? "", 10);

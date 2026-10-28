@@ -20,6 +20,8 @@ export const API_SCOPES = [
   "customers:write",
   "inquiries:read",
   "inquiries:write",
+  "theme:write",
+  "theme:publish",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -35,7 +37,7 @@ export const DEFAULT_SCOPES: readonly ApiScope[] = ["products:read", "orders:rea
  * スコープに対応する、ショップの権限の項目（0028 の banto_scope_perm と同じ。判定は DB が行い、ここは画面の出し分け用）。
  * 発行者がその項目を持たないスコープは付けられず、項目を外すとそのスコープだけ効かなくなる。shop:read は発行できる人なら誰でも。
  */
-export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support"> = {
+export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support" | "design"> = {
   "products:read": "catalog",
   "products:write": "catalog",
   "orders:read": "orders",
@@ -50,7 +52,12 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "customers:write": "customers",
   "inquiries:read": "support",
   "inquiries:write": "support",
+  "theme:write": "design",
+  "theme:publish": "design",
 };
+
+/** 0072 が当たるまで出さないスコープ（DB の CHECK が知らない） */
+export const THEME_SCOPES: readonly ApiScope[] = ["theme:write", "theme:publish"];
 
 export function isApiScope(s: string): s is ApiScope {
   return (API_SCOPES as readonly string[]).includes(s);

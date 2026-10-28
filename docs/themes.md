@@ -1,6 +1,6 @@
 # テーマ（Liquid）
 
-> 状態: 段階 1。管理画面の「デザイン」でテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・404 のページで、カートから先（住所・最終確認・決済）と法務のページは既定のテーマが描きます。コマンドからの取り込み（`banto theme push`）と、設定の値を画面で変えることは、この後の段階で入ります。
+> 状態: 段階 2。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・404 のページで、カートから先（住所・最終確認・決済）と法務のページは既定のテーマが描きます。設定の値を画面で変えること・カートのページ・検索は、この後の段階で入ります。
 
 Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/default/`）で描きます。これに加えて、**Liquid で書いたテーマ**を取り込んで、Worker を配置し直さずに見た目を変えられるようにします。
 
@@ -36,6 +36,34 @@ Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/de
 2. テーマのフォルダ（`layout`・`templates`・`sections`・`snippets`・`config`・`locales`・`assets`）を zip にして取り込みます。zip はブラウザの中で開き、Banto がすべてのテンプレートを確かめてから版として置きます。知らないフィルター・タグ、壊れた JSON、置けない資産があれば、ファイルの名前と理由を出して断ります。資産を送り終えるまでの版には「取り込み途中」と出て、公開できません（途中で止まったら取り込み直します）。送り終えた版の資産は差し替えられません。翻訳はデプロイの言語のものと `*.default.json` だけを取り込みます。Workers の無料プランでは取り込めません。
 3. 版の「プレビュー」で、ショップのドメインに、まだ公開していない版を開けます（リンクは 30 分。開いた端末でだけ、そのあいだ続きます。ショップを公開する前は開けません）。プレビューの画面では下に帯が出て、テンプレートの誤りはその場所に赤く出ます。検索エンジンには載せません。
 4. 「公開する」で切り替わります（お店の画面は 30 秒ほどで切り替わります）。「取り下げる」と既定のテーマに戻ります。版は 1 つのショップに 20 まで置け、公開中でない版は消せます。
+
+## コマンドから（`cli/banto-theme.mjs`）
+
+テーマのフォルダから直接取り込めます。Shopify CLI の `theme push` / `theme dev` に当たるものです。依存のない 1 ファイルの Node スクリプト（Node 20 以上）なので、テーマのリポジトリに写して使えます。
+
+1. 管理画面 → ショップ → **AI 連携** でトークンを発行します。取り込みとプレビューは `theme:write`、公開まで行うなら `theme:publish` も付けます（付けられるのは「デザイン（テーマ）」の項目を持つ人だけ。0072）。
+2. Banto の URL とトークンを環境変数で渡します（トークンはコマンドの引数に書かない）。
+
+```bash
+export BANTO_URL=https://banto.example.com  # Banto の URL（管理画面を開く URL。AI 用 API はショップの独自ドメインでは開かない）
+export BANTO_TOKEN=banto_...
+node cli/banto-theme.mjs push ./theme              # 新しい版として取り込み、プレビューのリンクを出す
+node cli/banto-theme.mjs push ./theme --publish    # 取り込んで公開する（theme:publish）
+node cli/banto-theme.mjs dev ./theme               # 見張って、変えるたびに取り込み直す（前の dev の版は消す）
+node cli/banto-theme.mjs list                      # 版の一覧（* が公開中）
+node cli/banto-theme.mjs publish <版の id>         # 公開（theme:publish）
+node cli/banto-theme.mjs unpublish                 # 既定のテーマに戻す（theme:publish）
+node cli/banto-theme.mjs prune --keep 5            # 公開していない古い版を消す
+```
+
+- 取り込む中身は管理画面の zip と同じです（`layout`・`templates`・`sections`・`snippets` の `.liquid`、`templates`・`sections`・`config`・`locales` の `.json`、`assets/` の直下）。翻訳はデプロイの言語と `*.default.json` だけ。それ以外のファイル（`README.md` など）と `.` で始まるものは送りません。
+- 検査は Banto がします。誤りはファイルの名前と理由がそのまま出ます。資産を送り終える前に止まった版は、CLI が消します。
+- `dev` はプレビューのリンクを毎回出します（版が変わるので、新しいリンクを開き直します）。手元でテーマを描くことはしません（描くのは Banto。手元にお店のデータを持ち出さないため）。
+- 経路は AI 用 API の REST（`/api/v1/themes`、docs/ai-access.md）です。公開・取り下げ・プレビューを開いたことは監査ログにトークンの名前で残ります。
+
+### GitHub Actions から
+
+プルリクエストでプレビュー、`main` への push で公開する例を `examples/theme-github-actions/` に置いています。プレビュー用（`theme:write`）と公開用（`theme:write` + `theme:publish`）でトークンを分け、公開用は GitHub の Environment の承認の後ろに置くのを勧めます。
 
 ## テーマのファイルの並び
 

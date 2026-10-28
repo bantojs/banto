@@ -5,11 +5,10 @@ import type { ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { migrated } from "../../db/migration-state";
-import { shopOrigin } from "../../storefront/urls";
 import { THEMES_MIGRATION } from "../../themes/liquid";
-import { assetType, checkThemeBundle, THEME_BUNDLE_LIMITS, type ThemeBundle } from "../../themes/liquid/bundle";
-import { extendShopify } from "../../themes/liquid/shopify";
-import { sealThemePreview } from "../storefront/liquid";
+import { THEME_BUNDLE_LIMITS } from "../../themes/liquid/bundle";
+import { themePreviewUrl } from "../../themes/liquid/preview";
+import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, THEME_UPLOAD_MAX_BYTES, THEME_VERSION_ID as UUID } from "../../themes/liquid/versions";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { getLocale } from "../../i18n";
@@ -61,32 +60,6 @@ async function cpuOk(c: AdminContext): Promise<boolean> {
 }
 
 const base = (shop: ShopRow) => `/admin/shops/${shop.id}/design`;
-const keyOf = (shopId: string, versionId: string) => `themes/${shopId}/${versionId}/bundle.json`;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-/** テーマの情報（settings_schema.json の theme_info）。画面に出すだけ */
-function manifestOf(bundle: ThemeBundle): Record<string, string> {
-  try {
-    const schema = JSON.parse((bundle.files["config/settings_schema.json"] ?? "[]").replace(/^﻿?\s*\/\*[\s\S]*?\*\/\s*/, "")) as unknown;
-    const info = Array.isArray(schema) ? schema.find((x) => x && typeof x === "object" && (x as Record<string, unknown>)["name"] === "theme_info") : null;
-    if (!info || typeof info !== "object") return {};
-    const pick = (k: string) => (typeof (info as Record<string, unknown>)[k] === "string" ? String((info as Record<string, unknown>)[k]).slice(0, 100) : undefined);
-    return Object.fromEntries(Object.entries({ theme_name: pick("theme_name"), theme_version: pick("theme_version"), theme_author: pick("theme_author") }).filter(([, v]) => v !== undefined)) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-async function readBundle(c: AdminContext, shopId: string, versionId: string): Promise<ThemeBundle | null> {
-  const obj = await c.get("adapters").storage.get(keyOf(shopId, versionId));
-  if (!obj) return null;
-  try {
-    return JSON.parse(await new Response(obj.body).text()) as ThemeBundle;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * zip をブラウザで展開して、テンプレート・設定・翻訳を 1 つの JSON に束ねて送り、資産を 1 つずつ送る。
  * ライブラリは使わない（zip の目次を読み、DecompressionStream("deflate-raw") で戻す。ZIP64・暗号化は断る）。
@@ -298,7 +271,7 @@ design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) =>
   if (!shop) return c.json({ ok: false, errors: [t("shop.not_found")] }, 404);
   if (!(await cpuOk(c))) return c.json({ ok: false, errors: [t("design.upload_paid_only")] }, 409);
   const length = Number(c.req.header("content-length") ?? "0");
-  if (length > THEME_BUNDLE_LIMITS.bundleChars * 2) return c.json({ ok: false, errors: [t("design.too_large")] }, 413);
+  if (length > THEME_UPLOAD_MAX_BYTES) return c.json({ ok: false, errors: [t("design.too_large")] }, 413);
   let body: { name?: unknown; bundle?: unknown };
   try {
     const raw = (await c.req.json()) as unknown;
@@ -307,26 +280,25 @@ design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) =>
   } catch {
     return c.json({ ok: false, errors: [t("error.generic")] }, 400);
   }
-  const check = checkThemeBundle(body.bundle, { extend: extendShopify });
-  if (!check.ok || !check.bundle) return c.json({ ok: false, errors: check.errors }, 422);
-  const bundle = check.bundle;
+  const prep = prepareThemeVersion(body.bundle);
+  if (!prep.ok) return c.json({ ok: false, errors: prep.errors }, 422);
+  const v = prep.version;
+  const id = v.id;
   const name = (typeof body.name === "string" ? body.name.trim() : "").slice(0, 100) || t("design.untitled");
-  const id = crypto.randomUUID();
-  const text = JSON.stringify(bundle);
   const storage = c.get("adapters").storage;
-  await storage.put(keyOf(shop.id, id), new TextEncoder().encode(text).buffer as ArrayBuffer, "application/json");
+  await storeThemeBundle(storage, shop.id, v);
   try {
     await owner(c).db.rpc("theme_version_create", {
       p_shop_id: shop.id,
       p_id: id,
       p_name: name,
-      p_size_bytes: Math.max(1, text.length),
-      p_file_count: Object.keys(bundle.files).length + bundle.assets.length,
-      p_manifest: manifestOf(bundle),
+      p_size_bytes: v.sizeBytes,
+      p_file_count: v.fileCount,
+      p_manifest: v.manifest,
       p_settings: {},
     });
   } catch (e) {
-    await storage.delete(keyOf(shop.id, id));
+    await removeThemeBundle(storage, shop.id, id);
     if (e instanceof DbError && e.message.includes("theme_versions_full")) return c.json({ ok: false, errors: [t("design.full")] }, 409);
     throw e;
   }
@@ -339,19 +311,14 @@ design.post("/:shopId/design/versions/:versionId/assets/:name", requireOwner, as
   const versionId = param(c, "versionId");
   const name = param(c, "name");
   if (!shop || !UUID.test(versionId)) return c.json({ ok: false }, 404);
-  const type = assetType(name);
-  if (!type) return c.json({ ok: false }, 400);
   // 自分のショップの版か（RLS。design の項目）。置き終えた版の資産は差し替えさせない（公開中の JS を黙って替えさせない）
   const row = await owner(c).db.from<{ id: string; complete: boolean }>("theme_versions").selectOne("id,complete", { eq: { id: versionId, shop_id: shop.id } });
   if (!row) return c.json({ ok: false }, 404);
   if (row.complete) return c.json({ ok: false }, 409);
-  const bundle = await readBundle(c, shop.id, versionId);
-  if (!bundle || !bundle.assets.includes(name)) return c.json({ ok: false }, 404);
   const length = Number(c.req.header("content-length") ?? "0");
   if (length > THEME_BUNDLE_LIMITS.assetBytes) return c.json({ ok: false }, 413);
-  const buf = await c.req.arrayBuffer();
-  if (buf.byteLength > THEME_BUNDLE_LIMITS.assetBytes) return c.json({ ok: false }, 413);
-  await c.get("adapters").storage.put(`themes/${shop.id}/${versionId}/assets/${name}`, buf, type);
+  const r = await putThemeAsset(c.get("adapters").storage, shop.id, versionId, name, await c.req.arrayBuffer());
+  if (!r.ok) return c.json({ ok: false }, r.reason === "type" ? 400 : r.reason === "too_large" ? 413 : 404);
   return c.json({ ok: true });
 });
 
@@ -360,14 +327,9 @@ design.post("/:shopId/design/versions/:versionId/complete", requireOwner, async 
   const shop = await scope(c);
   const versionId = param(c, "versionId");
   if (!shop || !UUID.test(versionId)) return c.json({ ok: false }, 404);
-  const bundle = await readBundle(c, shop.id, versionId);
-  if (!bundle) return c.json({ ok: false }, 404);
-  const storage = c.get("adapters").storage;
-  for (const a of bundle.assets) {
-    const obj = await storage.get(`themes/${shop.id}/${versionId}/assets/${a}`);
-    if (!obj) return c.json({ ok: false, missing: a }, 409);
-    await obj.body.cancel().catch(() => {});
-  }
+  const missing = await missingThemeAsset(c.get("adapters").storage, shop.id, versionId);
+  if (missing === undefined) return c.json({ ok: false }, 404);
+  if (missing !== null) return c.json({ ok: false, missing }, 409);
   await owner(c).db.rpc("theme_version_complete", { p_shop_id: shop.id, p_version_id: versionId });
   return c.json({ ok: true });
 });
@@ -384,8 +346,7 @@ design.get("/:shopId/design/versions/:versionId/preview", requireOwner, async (c
     if (e instanceof DbError && e.message.includes("theme_not_found")) return c.text(t("shop.not_found"), 404);
     throw e;
   }
-  const token = await sealThemePreview(secret, shop.id, versionId);
-  return c.redirect(`${shopOrigin(publicBaseUrl(c), shop)}/?preview_theme=${versionId}&preview_token=${encodeURIComponent(token)}`);
+  return c.redirect(await themePreviewUrl(publicBaseUrl(c), shop, shop.id, versionId, secret));
 });
 
 design.post("/:shopId/design/publish", requireOwner, async (c: AdminContext) => {
@@ -409,7 +370,8 @@ design.post("/:shopId/design/versions/:versionId/delete", requireOwner, async (c
   const shop = await scope(c);
   const versionId = param(c, "versionId");
   if (!shop || !UUID.test(versionId)) return c.text(t("shop.not_found"), 404);
-  const bundle = await readBundle(c, shop.id, versionId);
+  const storage = c.get("adapters").storage;
+  const bundle = await readThemeBundle(storage, shop.id, versionId);
   let prefix: string;
   try {
     prefix = await owner(c).db.rpc<string>("theme_version_delete", { p_shop_id: shop.id, p_version_id: versionId });
@@ -417,8 +379,6 @@ design.post("/:shopId/design/versions/:versionId/delete", requireOwner, async (c
     if (e instanceof DbError && e.message.includes("theme_published")) return c.redirect(`${base(shop)}?flash=published_cannot_delete`);
     throw e;
   }
-  const storage = c.get("adapters").storage;
-  for (const a of bundle?.assets ?? []) if (assetType(a)) await storage.delete(`${prefix}assets/${a}`).catch(() => {});
-  await storage.delete(`${prefix}bundle.json`).catch(() => {});
+  await deleteThemeFiles(storage, prefix, bundle);
   return c.redirect(`${base(shop)}?flash=deleted`);
 });

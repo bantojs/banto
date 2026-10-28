@@ -23,7 +23,8 @@ import { extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { collectionObject, footerMenu, menuFromCategories, productFromDetail, productFromSummary, routesObject, shopObject } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
-import { openJson, readCookie, sealJson } from "../../util/signed";
+import { readCookie } from "../../util/signed";
+import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
 
 export interface LiquidScope {
@@ -37,22 +38,6 @@ export interface LiquidChoice {
   lt: LoadedTheme;
   settings: Record<string, unknown>;
   preview: boolean;
-}
-
-/** プレビューの券（管理画面の「デザイン」が作る。ショップと版を結び、30 分で切れる） */
-export const THEME_PREVIEW_SECONDS = 30 * 60;
-const PREVIEW_COOKIE = "banto_theme_preview";
-/** 券の鍵はプレビュー専用にする（サイトの秘密で署名するほかの値と取り違えさせない） */
-const previewKey = (secret: string): string => `${secret}:theme_preview`;
-
-export function sealThemePreview(secret: string, shopId: string, versionId: string, now = Date.now()): Promise<string> {
-  return sealJson(previewKey(secret), { k: "theme_preview", s: shopId, v: versionId, exp: Math.floor(now / 1000) + THEME_PREVIEW_SECONDS });
-}
-
-async function openThemePreview(secret: string, token: string | undefined, shopId: string): Promise<string | null> {
-  const v = (await openJson(previewKey(secret), token)) as { k?: unknown; s?: unknown; v?: unknown; exp?: unknown } | null;
-  if (!v || v.k !== "theme_preview" || v.s !== shopId || typeof v.v !== "string" || !/^[0-9a-f-]{36}$/.test(v.v) || typeof v.exp !== "number" || v.exp * 1000 < Date.now()) return null;
-  return v.v;
 }
 
 /** プレビューの版（?preview_theme=<版>&preview_token=… で始め、Cookie で続ける。?preview_theme=off で終わる） */

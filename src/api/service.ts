@@ -23,6 +23,16 @@ import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checko
 import { shopHome } from "../storefront/urls";
 import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
+import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, THEME_API_MIGRATION } from "../themes/liquid/versions";
+import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
+import { getLocale } from "../i18n";
+
+/** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
+export interface ThemeApiDeps {
+  secret: string | null;
+  publicBase: string;
+  cpuUnlimited: boolean;
+}
 
 /** お問い合わせの返事のお知らせ（0061）。メールのリンクのトークンを作る秘密・送り手・お店の画面の URL */
 export interface InquiryMailDeps {
@@ -99,6 +109,12 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_extra_categories")) throw new ApiError("invalid", "invalid_extra_categories: an array of up to 20 category slugs", 400);
     if (e.is("category_not_found")) throw new ApiError("invalid", "category_not_found: create it with category_save first", 400);
     if (/category_too_deep|category_cycle/.test(e.dbMessage)) throw new ApiError("invalid", "categories can be at most 3 levels deep and cannot be moved under their own child", 400);
+    // テーマ（0072）
+    if (e.is("theme_versions_full")) throw new ApiError("conflict", "theme_versions_full: a shop can keep up to 20 theme versions; delete unpublished ones first", 409);
+    if (e.is("theme_incomplete")) throw new ApiError("conflict", "theme_incomplete: upload every asset and call /complete before publishing", 409);
+    if (e.is("theme_requires_domain")) throw new ApiError("conflict", "theme_requires_domain: Liquid themes are shown only on the shop's own domain; set the shop domain first", 409);
+    if (e.is("theme_published")) throw new ApiError("conflict", "theme_published: the published version cannot be deleted; publish another version or unpublish first", 409);
+    if (e.is("shop_unpublished")) throw new ApiError("conflict", "shop_unpublished: previews open on the storefront, so the shop must be published", 409);
     // プランの上限（0052）
     const hit = planLimitOf(e);
     if (hit) throw new ApiError("conflict", `plan_limit_exceeded: this Banto's plan allows at most ${hit.limit} ${hit.kind}; delete some or ask the operator to raise the plan`, 409);
@@ -117,6 +133,12 @@ function mapRpcError(e: unknown): never {
 
 const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 /** id の形が違えば、存在しないのと同じ not_found（DB の型エラーを 400 で返して形の違いを言い分けない） */
+/** 版の行から外に返すもの（置き場の鍵・ショップの id は返さない） */
+function publicTheme(row: Record<string, unknown>): Record<string, unknown> {
+  const { storage_key: _k, shop_id: _s, ...rest } = row;
+  return rest;
+}
+
 function uuidOr404(v: string): string {
   if (!isUuid(v)) throw new ApiError("not_found", "not found", 404);
   return v;
@@ -157,14 +179,15 @@ export class ApiService {
     private readonly inquiryMail: InquiryMailDeps | null = null,
     /** お問い合わせの添付の置き場（公開しない。無ければ添付を受け付けない） */
     private readonly privateStorage: StorageAdapter | null = null,
+    private readonly theme: ThemeApiDeps | null = null,
   ) {}
 
   /** migrationState: 新しいマイグレーションを使う項目を、適用されるまで受け付けないため（null なら新しい項目は受け付けない） */
   static async forToken(
     rawToken: string,
-    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined },
+    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined; theme?: ThemeApiDeps | null },
   ): Promise<ApiService> {
-    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null);
+    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null, deps.theme ?? null);
   }
 
   private migratedTo(version: string): Promise<boolean> {
@@ -498,6 +521,91 @@ export class ApiService {
   /** メールアドレスで引いて、あれば渡した鍵だけ更新、無ければ作る（外部のマスタからの同期の窓口。email は変えない） */
   customerUpsert = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_upsert", { p_values: values });
   customerDelete = async (id: string) => this.call<Record<string, unknown>>("api_customer_delete", { p_customer_id: uuidOr404(id) });
+  // ---- テーマ（theme:write / theme:publish、0072。docs/themes.md） ----
+  private async themeReady(): Promise<ThemeApiDeps> {
+    if (!(await this.migratedTo(THEME_API_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `themes need the database update ${THEME_API_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    if (!this.theme) throw new ApiError("upstream", "not configured", 502);
+    return this.theme;
+  }
+
+  /** 版の一覧と、取り込める条件（can_render: Workers の有料プランか Node。locale: 取り込む翻訳の言語） */
+  async themesList(): Promise<Record<string, unknown>> {
+    const deps = await this.themeReady();
+    const r = await this.call<Record<string, unknown>>("api_themes_list", {});
+    return { ...r, can_render: deps.cpuUnlimited || r["site_plan"] === "paid", locale: getLocale() };
+  }
+
+  /** 版を足す: 検査して束ねたファイルを置き、版の行を足す。資産はこのあと assets に 1 つずつ置き、最後に complete */
+  async themeCreate(name: string, bundle: unknown): Promise<Record<string, unknown>> {
+    const list = await this.themesList();
+    if (!list["can_render"]) throw new ApiError("conflict", "theme_requires_paid_plan: Liquid themes need the Workers paid plan (or Node); set the site setting workers_plan", 409);
+    const prep = prepareThemeVersion(bundle);
+    if (!prep.ok) throw new ApiError("invalid", `invalid_theme: ${prep.errors.slice(0, 20).join("; ")}`, 400);
+    const v = prep.version;
+    const shopId = String(list["shop_id"]);
+    await storeThemeBundle(this.storage, shopId, v);
+    try {
+      const row = await this.call<Record<string, unknown>>("api_theme_create", { p_id: v.id, p_name: name.trim().slice(0, 100) || "theme", p_size_bytes: v.sizeBytes, p_file_count: v.fileCount, p_manifest: v.manifest });
+      return { ...publicTheme(row), assets: v.bundle.assets };
+    } catch (e) {
+      await removeThemeBundle(this.storage, shopId, v.id);
+      throw e;
+    }
+  }
+
+  private async themeRow(versionId: string): Promise<Record<string, unknown> & { shop_id: string; complete: boolean }> {
+    await this.themeReady();
+    return this.call("api_theme_get", { p_version_id: uuidOr404(versionId) });
+  }
+
+  /** 資産を 1 つ置く（置き終えた版には置けない） */
+  async themeAssetPut(versionId: string, name: string, body: ArrayBuffer): Promise<{ ok: true }> {
+    const row = await this.themeRow(versionId);
+    if (row.complete) throw new ApiError("conflict", "theme_complete: assets of a completed version cannot be replaced; upload a new version", 409);
+    const r = await putThemeAsset(this.storage, row.shop_id, versionId, name, body);
+    if (!r.ok) {
+      if (r.reason === "type") throw new ApiError("invalid", "invalid_asset: this file type cannot be a theme asset (HTML and SVG are not allowed)", 400);
+      if (r.reason === "too_large") throw new ApiError("invalid", "invalid_asset: an asset can be up to 5MB", 413);
+      throw new ApiError("not_found", "asset not listed in the theme bundle", 404);
+    }
+    return { ok: true };
+  }
+
+  /** 資産を置き終えた（すべての資産が置き場にあるかを確かめてから）。これで公開できる */
+  async themeComplete(versionId: string): Promise<Record<string, unknown>> {
+    const row = await this.themeRow(versionId);
+    const missing = await missingThemeAsset(this.storage, row.shop_id, versionId);
+    if (missing === undefined) throw new ApiError("not_found", "not found", 404);
+    if (missing !== null) throw new ApiError("conflict", `asset_missing: ${missing}`, 409);
+    return this.call<Record<string, unknown>>("api_theme_complete", { p_version_id: versionId });
+  }
+
+  /** ショップのドメインでプレビューを開くリンク（30 分。開いたことは監査ログに残る） */
+  async themePreview(versionId: string): Promise<{ preview_url: string; expires_in: number }> {
+    const deps = await this.themeReady();
+    if (!deps.secret) throw new ApiError("upstream", "SESSION_SECRET is not configured", 502);
+    const shop = await this.call<{ shop_id: string; slug: string; domain: string }>("api_theme_preview", { p_version_id: uuidOr404(versionId) });
+    return { preview_url: await themePreviewUrl(deps.publicBase, shop, shop.shop_id, versionId, deps.secret), expires_in: THEME_PREVIEW_SECONDS };
+  }
+
+  /** 公開していない版を消す（置き場のファイルも） */
+  async themeDelete(versionId: string): Promise<{ ok: true }> {
+    const row = await this.themeRow(versionId);
+    const bundle = await readThemeBundle(this.storage, row.shop_id, versionId);
+    const prefix = await this.call<string>("api_theme_delete", { p_version_id: versionId });
+    await deleteThemeFiles(this.storage, prefix, bundle);
+    return { ok: true };
+  }
+
+  /** 公開する（theme:publish）。versionId が null なら取り下げて既定のテーマに戻す。お店の画面は 30 秒ほどで切り替わる */
+  async themePublish(versionId: string | null): Promise<Record<string, unknown>> {
+    await this.themeReady();
+    return this.call<Record<string, unknown>>("api_theme_publish", { p_version_id: versionId === null ? null : uuidOr404(versionId) });
+  }
+
   // ---- stats ----
   salesSummary = (from: string, to: string, groupBy: "day" | "month" | "product" = "day") =>
     this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy });

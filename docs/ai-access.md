@@ -41,13 +41,16 @@ Banto は、運営者が発行した **AI 用トークン** を使って、Claud
 | `customers:write` | 会員の作成・氏名と住所・独自項目・外部の ID の更新、案内メールの同意の取り下げ、削除（退会）。**メールアドレスは変えられない**（氏名・住所の書き方の注意は §7） |
 | `inquiries:read` | お問い合わせとやり取りの本文の参照（0061。モジュール「お問い合わせ」が ON のショップだけ）。**連絡先（メール・名前）は `orders:pii` もあるときだけ** |
 | `inquiries:write` | お問い合わせへの返事（お客様にはリンクだけのメールが届く）・完了にする / 開き直す・担当者を決める（0068）。削除はできない |
+| `theme:write` | Liquid のテーマの版の一覧・取り込み（束ねたファイルと資産）・プレビューのリンク・公開していない版の削除（0072、docs/themes.md）。**テーマにはお店の画面で動く JS を入れられる**（プレビューを開いた人の画面で動く） |
+| `theme:publish` | テーマの公開・取り下げ（0072）。お店の画面が切り替わる。`theme:write` と分けてあるので、プレビュー用のトークン（CI のプルリクエストなど）には付けない |
 
 - 有効期限（任意）、失効（管理画面でいつでも）、最終利用日時の記録。
-- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
+- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
 - **発行した人の権限が続いている間だけ使える**（0026）: 発行者がそのショップの `integrations` の項目（組織の owner / admin を含む）を失うと、トークンは `unauthorized` になります（メンバーを組織から外した・項目を外したときに、発行済みのトークンが残って使えてしまわないように）。項目を戻せばまた使えます。
 - お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read、連絡先は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。人間の決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
 - クーポンと会員（0036）: 判断の理由は §6。
 - お問い合わせ（0061）: `inquiries_list`・`inquiry_get`・`inquiry_assignees`（inquiries:read）、`inquiry_reply`・`inquiry_set_status`・`inquiry_assign`（inquiries:write）。REST は `/api/v1/inquiries`（`?assignee=none|<user_id>`）・`/api/v1/inquiries/<受付番号>`・`…/reply`・`…/status`・`…/assignee`（PUT）・`/api/v1/inquiries/assignees`。添付（0064、REST だけ）は `…/reply` を multipart（`body` と `files`）で送り、お客様の添付は `GET /api/v1/inquiries/<受付番号>/attachments/<id>`（inquiries:read と orders:pii）で受け取ります。判断の理由は §8。
+- テーマ（0072、REST だけ。MCP には出さない）: `GET /api/v1/themes`・`POST /api/v1/themes`（束ねたファイル）・`PUT /api/v1/themes/<版>/assets/<名前>`（資産を 1 つ）・`POST …/complete`・`POST …/preview`・`DELETE /api/v1/themes/<版>`（theme:write）、`POST /api/v1/themes/publish`（theme:publish）。ふつうは CLI（`cli/banto-theme.mjs`）から使います（docs/themes.md「コマンドから」）。テンプレートの検査・資産の種類は管理画面の取り込みと同じ（`src/themes/liquid/versions.ts`）。
 - **トークンで出来ないこと**: トークンの発行、運営者アカウントの操作、Secret の参照、商品の物理削除（非公開にはできる）、会員のメールアドレスの変更、会員のパスワード（ハッシュ）の参照、決済設定の変更、hooks 送信先の変更、SQL の実行。
 
 ### 権限の検証は SQL で行う

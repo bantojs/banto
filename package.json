@@ -2,6 +2,9 @@
   "name": "banto",
   "version": "0.3.0",
   "private": true,
+  "bin": {
+    "banto-theme": "cli/banto-theme.mjs"
+  },
   "description": "Self-hosted, zero-fee EC platform on Cloudflare Workers + Supabase",
   "license": "MIT",
   "type": "module",

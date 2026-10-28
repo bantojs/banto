@@ -710,6 +710,8 @@ export const ja = {
   "tokens.scope.customers_write": "会員の作成・氏名と住所の更新・削除（メールアドレスは変えられません）",
   "tokens.scope.inquiries_read": "お問い合わせとやり取りの参照（連絡先は「注文の購入者情報」もあるときだけ）",
   "tokens.scope.inquiries_write": "お問い合わせへの返事（お客様にはリンクだけのメール）・完了にする",
+  "tokens.scope.theme_write": "テーマの版の取り込み・プレビューのリンク・公開していない版の削除（お店の画面の JS も取り込めます。公開は theme:publish）",
+  "tokens.scope.theme_publish": "テーマの公開・取り下げ（お店の画面が切り替わります）",
 
 
   "store.subtotal_tax_included": "商品合計（税込）",
