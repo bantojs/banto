@@ -11,7 +11,8 @@ import { getLocale } from "../../i18n";
 import { SafeHtml, ThemeError } from "./engine";
 import { stripJsonComments } from "./bundle";
 import type { LoadedTheme } from "./cache";
-import { readSectionSchemas, renderSectionGroup, settingsWith, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionSchema, type SettingSchema } from "./shopify";
+import { readSectionSchemas, renderSectionGroup, settingsWith, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
+import { globalSettingsOf } from "./editor";
 
 export type ThemeTemplate = "index" | "collection" | "product" | "404";
 
@@ -102,7 +103,7 @@ export function themeHasTemplate(t: LoadedTheme, template: ThemeTemplate, locale
 /** テーマの設定（宣言の既定値 + settings_data.json + 運営者が選んだ値。HTML の種類は SafeHtml） */
 export function themeSettings(t: LoadedTheme, saved: Record<string, unknown> | null | undefined, locale: string = getLocale()): Record<string, unknown> {
   const p = prepare(t, locale);
-  return settingsWith(p.settingsSchema, { ...p.settingsDefaults, ...(saved ?? {}) });
+  return settingsWith(p.settingsSchema, { ...p.settingsDefaults, ...globalSettingsOf(saved) });
 }
 
 /** template（Shopify では文字列のように比べる: template == 'product'、template.name） */
@@ -135,6 +136,8 @@ export interface ThemePageInput {
   mediaBaseUrl: string;
   preview?: boolean;
   locale?: string;
+  /** 運営者が管理画面で変えたセクション・ブロックの値（editor.ts の sectionOverridesOf） */
+  overrides?: SectionOverrides;
 }
 
 const HEAD_MARK = "<!-- banto:head -->";
@@ -155,6 +158,7 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
     locales: p.locales,
     schemas: p.schemas,
     staticSections: p.staticSections,
+    overrides: input.overrides ?? {},
     globals,
     paginate: input.paginate ?? null,
     preview: Boolean(input.preview),
@@ -164,7 +168,7 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
   const html = withRenderEnv(env, () => t.engine.page(() => {
     let content: string;
     if ("json" in tpl) {
-      content = renderSectionGroup(tpl.json);
+      content = renderSectionGroup(tpl.json, `templates/${input.template}`);
       if (tpl.json.layout === false) env.layout = null;
       else if (typeof tpl.json.layout === "string") env.layout = tpl.json.layout;
     } else {

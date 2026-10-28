@@ -21,6 +21,7 @@ import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
+import { sectionOverridesOf } from "../../themes/liquid/editor";
 import { collectionObject, footerMenu, menuFromCategories, productFromDetail, productFromSummary, routesObject, shopObject } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
@@ -127,7 +128,7 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     ...page.values,
   };
   try {
-    const r = renderThemePage(lt, { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview });
+    const r = renderThemePage(lt, { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview, overrides: sectionOverridesOf(choice.settings) });
     if (!r) return null;
     if (r.errors.length > 0) console.error("[banto] theme sections:", r.errors.slice(0, 5).join(" / "));
     if (!choice.preview) return c.html(r.html, page.status ?? 200);
