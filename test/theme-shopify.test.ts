@@ -64,8 +64,8 @@ describe("Shopify の名前のタグ", () => {
     expect(render('x{% schema %}{"name": "a"}{% endschema %}y')).toBe("xy");
   });
 
-  it("知らないタグ・Shopify の未対応のタグ（content_for）は解析で止まり、テーマの取り込みで断る", () => {
-    const files = { "layout/theme.liquid": "{{ content_for_layout }}", "templates/index.liquid": "{% content_for 'blocks' %}" };
+  it("知らないタグ・Shopify の未対応の書き方（content_for 'sections'）は解析で止まり、テーマの取り込みで断る", () => {
+    const files = { "layout/theme.liquid": "{{ content_for_layout }}", "templates/index.liquid": "{% content_for 'sections' %}" };
     const r = checkThemeBundle({ format: 1, files, assets: [] }, { extend: extendShopify });
     expect(r.ok).toBe(false);
     expect(r.errors[0]).toMatch(/^templates\/index\.liquid: /);

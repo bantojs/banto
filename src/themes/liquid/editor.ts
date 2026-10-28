@@ -146,6 +146,7 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
   for (const g of global) for (const s of g.settings) if (s.id) globalValues[s.id] = s.id in (saved ?? {}) ? saved![s.id] : s.id in fileGlobals ? fileGlobals[s.id] : s.default;
 
   const schemas = readSectionSchemas(files);
+  const blockSchemas = readSectionSchemas(files, "blocks");
   const overrides = sectionOverridesOf(saved);
   const sections: EditorSection[] = [];
   const add = (key: string, id: string, d: SectionData) => {
@@ -160,7 +161,7 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
     for (const bid of order) {
       const b = d.blocks?.[bid];
       if (!isObject(b) || typeof b.type !== "string") continue;
-      const bs = (sc.blocks ?? []).find((x) => x.type === b.type) as (Record<string, unknown> & { settings?: unknown }) | undefined;
+      const bs = ((sc.blocks ?? []).find((x) => x.type === b.type) ?? blockSchemas.get(b.type)) as (Record<string, unknown> & { settings?: unknown }) | undefined;
       const bset = editorSettings(bs?.settings, loc);
       if (!bset.some((s) => s.id)) continue;
       const bov = ov?.blocks?.[bid];

@@ -436,6 +436,7 @@ export const ja = {
   "store.all_products": "すべての商品",
   "store.categories": "カテゴリー",
   "store.regular_price": "通常",
+  "store.search": "検索",
   "store.cart": "カート",
   "store.cart_empty": "カートは空です。",
   "store.continue": "買い物を続ける",

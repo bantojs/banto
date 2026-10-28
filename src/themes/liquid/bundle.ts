@@ -28,7 +28,7 @@ export const THEME_BUNDLE_LIMITS = {
   assetBytes: 5 * 1024 * 1024,
 } as const;
 
-const FILE_PATH = /^(?:(layout|templates|sections|snippets)\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\.liquid|(templates|sections|config|locales)\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\.json)$/;
+const FILE_PATH = /^(?:(layout|templates|sections|snippets|blocks)\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\.liquid|(templates|sections|config|locales)\/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,99}\.json)$/;
 /** 資産として受け付ける拡張子と Content-Type。HTML・SVG は受け付けない（ショップのドメインでスクリプトとして開けてしまうため） */
 export const THEME_ASSET_TYPES: Readonly<Record<string, string>> = {
   css: "text/css; charset=utf-8",

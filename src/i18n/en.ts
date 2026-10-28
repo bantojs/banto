@@ -436,6 +436,7 @@ export const en: Record<MessageKey, string> = {
   "store.all_products": "All products",
   "store.categories": "Categories",
   "store.regular_price": "Regular",
+  "store.search": "Search",
   "store.cart": "Cart",
   "store.cart_empty": "Your cart is empty.",
   "store.continue": "Continue shopping",
