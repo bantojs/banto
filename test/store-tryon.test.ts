@@ -313,6 +313,13 @@ describe("お店で試着（お知らせの文）", () => {
     expect(buildTryonMails("tryon.requested", contact, BASE).map((m) => m.to)).toEqual(["a@example.com"]);
     expect(buildTryonMails("tryon.updated", { ...contact, status: "purchased" }, BASE)).toEqual([]);
   });
+  it("メールのお店のリンク: お店の画面を使わないショップは外のサイト、使うショップは Banto のお店のトップ（0069）", () => {
+    const off = buildTryonMails("tryon.updated", { ...contact, shop: { ...contact.shop, storefront: { mode: "off", site_url: "https://wp.example.com/" } } }, BASE)[0]!;
+    expect(off.text).toContain("\nhttps://wp.example.com/\n");
+    expect(off.text).not.toContain(`${BASE}/my-shop`);
+    const full = buildTryonMails("tryon.updated", { ...contact, shop: { ...contact.shop, storefront: { mode: "full", site_url: "https://wp.example.com/" } } }, BASE)[0]!;
+    expect(full.text).toContain(`${BASE}/my-shop`);
+  });
   it("LINE: 受付・取り置き開始・取り消しだけ", () => {
     const r = { number: 7, status: "ready", hold_until: "2026-10-24", store_name: "渋谷店", shop_name: "マイショップ" };
     expect(tryonLineMessage("tryon.updated", r)).toContain("10月24日まで");

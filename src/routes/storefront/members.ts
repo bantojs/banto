@@ -47,7 +47,7 @@ import { privilegedFor } from "../payment-deps";
 import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
-import { shopHome, shopOrigin } from "../../storefront/urls";
+import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
 import type { AddressFormValues } from "../../themes/types";
 import type { PublicShop } from "../../storefront/data";
@@ -818,7 +818,7 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
   }
   // 初めての端末なら本人に知らせる（使い回しのパスワードで入られたときに気づけるように）
   if (r.mail_from && r.email && !(await knownDevice(deps.secret, s.shop.id, r.customer_id, c.req.header("cookie")))) {
-    await afterResponse(c, sendPasswordLoginNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+    await afterResponse(c, sendPasswordLoginNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   }
   if (!(await signIn(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
   return c.redirect(`${s.shopPath}/account`);
@@ -848,7 +848,7 @@ members.post("/:shop/account/password", async (c: Ctx) => {
   }
   // 本人に知らせる（盗まれたセッションから足されても気づけるように。送信元が無ければ送らない）
   const ld = loginDeps(c);
-  if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: `${shopHome(publicBaseUrl(c), s.shop)}/account` }));
+  if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   return c.redirect(`${s.shopPath}/account?flash=password_saved`);
 });
 

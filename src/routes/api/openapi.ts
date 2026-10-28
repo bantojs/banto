@@ -39,7 +39,7 @@ export function openapiDocument(origin: string, version: string): Record<string,
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
     paths: {
       "/shop": {
-        get: { summary: "ショップ設定を取得（shop:read）", security: bearer, responses: { 200: resp("ok"), ...errors } },
+        get: { summary: "ショップ設定を取得（shop:read）。headless（return_origins・relay_ips・order_page_url・account_page_url・legal_links）と storefront（mode・site_url・product_url）は 0069 から。連携側のプラグインが設定の入れ漏れを確かめるのに使う", security: bearer, responses: { 200: resp("ok"), ...errors } },
         patch: { summary: "ショップ設定を更新（shop:write）", security: bearer, requestBody: { content: { "application/json": { schema: obj({ name: str, legal_notice: str, privacy_policy: str, return_policy: str, checkout_terms: { ...obj({ delivery: nullableStr, cancellation: nullableStr, payment_note: nullableStr }), description: "購入前の確認画面の文言。渡した鍵だけ変え、null か空文字で消す（各 2000 文字まで）" }, published: bool, low_stock_threshold: int, max_pending_per_ip: { ...int, description: "同じ IP の未確定の予約の上限（1〜9999）" }, login_per_ip_per_hour: { ...int, description: "同じ IP からの会員ログインのコード発行の 1 時間の上限（1〜9999）" } }) } } }, responses: { 200: resp("ok"), ...errors } },
       },
       "/relay-check": {
