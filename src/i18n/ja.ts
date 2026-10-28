@@ -724,6 +724,7 @@ export const ja = {
   "store.lookup_intro": "注文番号と、ご注文時のメールアドレスを入力してください。",
   "store.lookup_number": "注文番号",
   "store.lookup_submit": "確認する",
+  "store.lookup_too_many": "照会の回数が多すぎます。しばらくしてからもう一度お試しください。",
   "store.lookup_not_found": "該当するご注文が見つかりません。注文番号とメールアドレスをご確認ください。",
 
 
@@ -1193,7 +1194,8 @@ export const ja = {
   "headless.relay_ips_hint": "WordPress などのサーバーが購入者の代わりに Banto を呼ぶ構成では、ここにそのサーバーの IP を入れ、連携側は X-Banto-Client-IP ヘッダーに購入者の IP を入れて送ってください。入れないと、購入者全員が 1 つの IP として数えられ、下の上限がサイト全体の上限になります。ブラウザから直接呼ぶ構成（埋め込みスニペット）では空のままで構いません。自分のサーバーの IP が分からないときは、連携側から AI 用トークンで GET /api/v1/relay-check を呼ぶと、Banto から見えた IP と登録済みかどうかが返ります。この一覧はお客様の画面には出ません。",
   "headless.max_pending_per_ip": "同じ IP の未確定の予約の上限（既定 20）",
   "headless.login_per_ip_per_hour": "同じ IP からの会員ログインのコード発行の上限（1 時間、既定 30）",
-  "headless.limits_hint": "どちらも 1〜9999。中継元を宣言できない（送信元 IP が固定でない）場合は、ここを上げて代わりにします。同じ人（メールアドレス）ごとの上限はそのままです。",
+  "headless.order_lookup_per_ip_per_hour": "同じ IP からの注文照会の外れの上限（1 時間、既定 20）",
+  "headless.limits_hint": "どれも 1〜9999。中継元を宣言できない（送信元 IP が固定でない）場合は、ここを上げて代わりにします。同じ人（メールアドレス）ごとの上限はそのままです。",
 
   "member.account": "マイページ",
   "social.members_off": "会員機能が有効になっていません。ショップ設定の「会員機能を有効にする」をオンにしてください。",

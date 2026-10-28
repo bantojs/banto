@@ -398,7 +398,7 @@ export class StorefrontData {
     return r && typeof r === "object" ? r : null;
   }
 
-  /** 購入者向け注文照会（anon RPC、住所は返らない） */
+  /** 購入者向け注文照会（anon RPC、住所は返らない）。0067 より前の DB だけ（後は src/routes/order-lookup.ts が service_role で） */
   async lookupOrder(shop: PublicShop, number: number, email: string): Promise<Record<string, unknown> | null> {
     const r = await this.db.rpc<Record<string, unknown> | null>("lookup_order", { p_shop_id: shop.id, p_number: number, p_email: email });
     return r && typeof r === "object" ? r : null;

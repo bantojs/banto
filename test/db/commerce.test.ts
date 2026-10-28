@@ -92,13 +92,13 @@ describe.skipIf(!dbAvailable)("商取引（0004_commerce）", () => {
     await asService((c) => c.query("select attach_reservation_customer($1, $2, $3::jsonb)", [r, f.shopId, JSON.stringify({ customer_email: "Look@Example.com", customer_name: "照会", shipping_address: { state: "東京都", line1: "秘密" }, shipping_jpy: 0 })]));
     const o = await confirm(r);
     const number = (await getPool().query("select number from orders where id = $1", [o])).rows[0].number;
-    const found = await asAnon(async (c) => (await c.query<{ r: Record<string, unknown> }>("select lookup_order($1, $2, $3) as r", [f.shopId, number, " look@example.com "])).rows[0]!.r);
+    const found = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select lookup_order($1, $2, $3) as r", [f.shopId, number, " look@example.com "])).rows[0]!.r);
     expect(found).toMatchObject({ number, status: "paid", total_jpy: 3000 });
     expect(JSON.stringify(found)).not.toContain("秘密");
     expect(JSON.stringify(found)).not.toContain("照会");
-    expect(await asAnon(async (c) => (await c.query<{ r: unknown }>("select lookup_order($1, $2, 'wrong@example.com') as r", [f.shopId, number])).rows[0]!.r)).toBeNull();
+    expect(await asService(async (c) => (await c.query<{ r: unknown }>("select lookup_order($1, $2, 'wrong@example.com') as r", [f.shopId, number])).rows[0]!.r)).toBeNull();
     await getPool().query("update shops set published = false where id = $1", [f.shopId]);
-    expect(await asAnon(async (c) => (await c.query<{ r: unknown }>("select lookup_order($1, $2, 'look@example.com') as r", [f.shopId, number])).rows[0]!.r)).toBeNull();
+    expect(await asService(async (c) => (await c.query<{ r: unknown }>("select lookup_order($1, $2, 'look@example.com') as r", [f.shopId, number])).rows[0]!.r)).toBeNull();
     await getPool().query("update shops set published = true where id = $1", [f.shopId]);
   });
 

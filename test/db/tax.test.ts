@@ -27,7 +27,7 @@ describe.skipIf(!dbAvailable)("軽減税率（0017_tax）", () => {
     expect(Number((await pool.query("select tax_rate from order_items where order_id = $1", [o.id])).rows[0].tax_rate)).toBe(8);
 
     // 注文照会（anon）に税率が載る。住所は載らない
-    const r = await asAnon(async (c) => (await c.query<{ r: Record<string, unknown> }>("select lookup_order($1, 2001, 'B@example.com') as r", [f.shopId])).rows[0]!.r);
+    const r = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select lookup_order($1, 2001, 'B@example.com') as r", [f.shopId])).rows[0]!.r);
     expect(r).toMatchObject({ number: 2001, tax_rounding: "round", shipping_tax_rate: 10, items: [{ qty: 2, unit_price_jpy: 1080, tax_rate: 8 }] });
     expect(JSON.stringify(r)).not.toContain("shipping_address");
   });

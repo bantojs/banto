@@ -7,6 +7,7 @@ import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render"
 import { receiptAvailable, receiptData } from "../../modules/receipt/data";
 import { openOrderToken, sealOrderToken } from "../../orders/lookup";
 import { param, type Ctx } from "../common";
+import { guestOrderLookup } from "../order-lookup";
 
 /**
  * ヘッドレスのゲストの注文照会・領収書（認証なし、CORS 許可。docs/headless.md「注文照会・領収書」、0066）。
@@ -17,6 +18,7 @@ import { param, type Ctx } from "../common";
  *        order_token（24 時間）は領収書と、この注文についてのお問い合わせ（/inquiries の order_token）に渡す
  *   POST /api/shops/:shop/orders/receipt  { order_token } → { receipt }（同梱モジュール receipt が ON・支払い済みの注文だけ）
  *
+ * 外れた照会は IP・注文ごとに数え、上限を超えたら 429 too_many_requests（0067。合った照会は数えない）。
  * メールアドレスを URL に載せないため、どちらも POST。応答はキャッシュさせない
  */
 export const ordersApi = new Hono<AppEnv>();
@@ -51,7 +53,9 @@ ordersApi.post("/shops/:shop/orders/lookup", async (c: Ctx) => {
   const number = typeof b["number"] === "number" ? b["number"] : Number.parseInt(String(b["number"] ?? "").trim(), 10);
   const email = typeof b["email"] === "string" ? b["email"].trim() : "";
   if (!Number.isInteger(number) || number <= 0 || !email || email.length > 254) return c.json({ error: "invalid_request" }, 400);
-  const order = await s.sf.lookupOrder(s.shop, number, email);
+  const r = await guestOrderLookup(c, s.sf, s.shop, number, email);
+  if (!r.ok) return c.json({ error: "too_many_requests" }, 429, NO_STORE);
+  const order = r.order;
   // 番号とアドレスのどちらが違ったかは返さない
   if (!order) return c.json({ error: "not_found" }, 404, NO_STORE);
   const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && receiptAvailable(order);
@@ -65,7 +69,9 @@ ordersApi.post("/shops/:shop/orders/receipt", async (c: Ctx) => {
   const b = await body(c);
   const ot = await openOrderToken(s.secret, s.shop.id, typeof b["order_token"] === "string" ? b["order_token"] : undefined);
   if (!ot) return c.json({ error: "invalid_order_token" }, 400);
-  const order = (await s.sf.lookupOrder(s.shop, ot.number, ot.email)) as ReceiptOrder | null;
+  const r = await guestOrderLookup(c, s.sf, s.shop, ot.number, ot.email);
+  if (!r.ok) return c.json({ error: "too_many_requests" }, 429, NO_STORE);
+  const order = r.order as ReceiptOrder | null;
   if (!order) return c.json({ error: "not_found" }, 404, NO_STORE);
   if (!receiptAvailable(order)) return c.json({ error: "receipt_not_available" }, 409, NO_STORE);
   return c.json({ receipt: receiptData(s.shop, order, new Date()) }, 200, NO_STORE);

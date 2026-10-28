@@ -22,6 +22,7 @@ import type { AddressFormValues } from "../../themes/types";
 import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
+import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
@@ -741,7 +742,9 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   const email = (f.email ?? "").trim();
   const values = { number: f.number ?? "", email };
   if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
-  const result = await s.sf.lookupOrder(s.shop, number, email);
+  const r = await guestOrderLookup(c, s.sf, s.shop, number, email);
+  if (!r.ok) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_too_many") }), 429);
+  const result = r.order;
   if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
   // この注文について問い合わせる（同梱モジュール inquiries）: 番号とメールアドレスが合った組を署名して、フォームに POST で渡す
   const secret = c.get("sessionSecret");
@@ -756,7 +759,9 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   const f = await formFields(c);
   const number = Number.parseInt((f.number ?? "").trim(), 10);
   const email = (f.email ?? "").trim();
-  const order = Number.isInteger(number) && email ? ((await s.sf.lookupOrder(s.shop, number, email)) as ReceiptOrder | null) : null;
+  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.sf, s.shop, number, email) : null;
+  if (r && !r.ok) return c.text(t("store.lookup_too_many"), 429);
+  const order = (r?.order ?? null) as ReceiptOrder | null;
   if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
   c.header("Cache-Control", "no-store");
   // no-referrer にすると、宛名のフォームの POST に Origin: null が付いて csrfGuard に拒まれる（src/routes/storefront/members.ts の privatePage）

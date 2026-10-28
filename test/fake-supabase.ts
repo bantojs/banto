@@ -158,6 +158,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** 0067 の order_lookup_failures（外れた照会） */
+  orderLookupFailures: { shop_id: unknown; number: number; ip: string | null; at: number }[] = [];
   /** legal_links_record に渡った結果（0062） */
   legalLinkRecords: { shop_id: string; results: unknown }[] = [];
   /** 0060 の banto_site_plan（0038 の workers_plan） */
@@ -2777,6 +2779,22 @@ export class FakeSupabase {
       res["discounts"] = d.applied ?? [];
       res["items"] = items.map((it) => ({ ...it, discount_jpy: Math.min(Number(it["qty"]) * Number(it["unit_price_jpy"]), Number(d.lines?.find((l) => l.sku_id === it["sku_id"])?.discount_jpy ?? 0)) }));
       return json({ discount_jpy: res["discount_jpy"] });
+    }
+    if (fn === "order_lookup") {
+      // 0067: 外れた照会を IP・注文ごとに数える（合った照会は数えない）
+      const shopId = args["p_shop_id"];
+      const since = Date.now() - 3600_000;
+      const recent = this.orderLookupFailures.filter((f) => f.shop_id === shopId && f.at > since);
+      const v = String(((this.tables.shops.find((x) => x["id"] === shopId)?.["settings"] as Row | undefined)?.["order_lookup"] as Row | undefined)?.["per_ip_per_hour"] ?? "");
+      const ip = typeof args["p_ip_hash"] === "string" ? args["p_ip_hash"] : null;
+      if (ip && recent.filter((f) => f.ip === ip).length >= (/^[0-9]{1,4}$/.test(v) ? Number(v) : 20)) return json({ code: "P0001", message: "too_many_requests" }, 400);
+      if (recent.filter((f) => f.number === Number(args["p_number"])).length >= 50) return json({ code: "P0001", message: "too_many_requests" }, 400);
+      const o = this.tables.orders.find((x) => x["shop_id"] === shopId && x["number"] === Number(args["p_number"]) && String(x["customer_email"] ?? "").toLowerCase() === String(args["p_email"]).trim().toLowerCase() && this.shopPublished(x["shop_id"]));
+      if (!o) {
+        this.orderLookupFailures.push({ shop_id: shopId, number: Number(args["p_number"]), ip, at: Date.now() });
+        return json(null);
+      }
+      return json(this.orderJson(o));
     }
     if (fn === "order_payment_info") {
       const o = this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["shop_id"] === args["p_shop_id"]);

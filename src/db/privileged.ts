@@ -291,6 +291,8 @@ export interface PrivilegedDb {
   memberClaimCoupon(shopId: string, customerId: string, epoch: number, campaignId: string): Promise<{ ok: true; code: string | null } | { ok: false; reason: "session" | "unavailable" | "already" | "exhausted" }>;
   /** 会員のマイクーポン（0019、使えるものだけ）。世代が合わなければ null */
   memberCoupons(shopId: string, customerId: string, epoch: number): Promise<MemberCoupon[] | null>;
+  /** ゲストの注文照会（0067。lookup_order と同じ形、外れた照会を IP・注文ごとに数える）。合わなければ null、上限を超えたら too_many_requests */
+  orderLookup(shopId: string, number: number, email: string, ipHash: string | null): Promise<Record<string, unknown> | null>;
   /** 会員の注文 1 件（0017、領収書。lookup_order と同じ形）。世代が合わない・無ければ null */
   memberOrder(shopId: string, customerId: string, epoch: number, number: number): Promise<Record<string, unknown> | null>;
   memberSaveAddress(shopId: string, customerId: string, epoch: number, name: string | null, address: Record<string, unknown>): Promise<boolean>;
@@ -502,6 +504,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     legalLinksRecord: (shopId, results) => rpc("legal_links_record", { p_shop_id: shopId, p_results: results }),
     memberClaimCoupon: (shopId, customerId, epoch, campaignId) => rpc("member_claim_coupon", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_campaign_id: campaignId }),
     memberCoupons: (shopId, customerId, epoch) => rpc("member_coupons", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
+    orderLookup: (shopId, number, email, ipHash) => rpc("order_lookup", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash }),
     memberOrder: (shopId, customerId, epoch, number) => rpc("member_order", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),
     memberSetMarketingConsent: (shopId, customerId, epoch, consent) => rpc<boolean>("member_set_marketing_consent", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_consent: consent }),
     memberSaveAddress: (shopId, customerId, epoch, name, address) =>

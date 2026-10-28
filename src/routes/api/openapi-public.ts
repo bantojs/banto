@@ -234,11 +234,11 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           summary: "ゲストの注文照会（注文番号と注文時のメールアドレス）",
           parameters: [shopPath],
           requestBody: body(obj({ number: int, email: str }, ["number", "email"])),
-          responses: { 200: ok(obj({ order: orderView, receipt_available: bool, order_token: { ...str, description: "24 時間。領収書（POST /orders/receipt）とお問い合わせ（order_token）に渡す" } })), 400: err("invalid_request"), ...common, 404: err("not_found（番号かアドレスが違う・ショップが無い）") },
+          responses: { 200: ok(obj({ order: orderView, receipt_available: bool, order_token: { ...str, description: "24 時間。領収書（POST /orders/receipt）とお問い合わせ（order_token）に渡す" } })), 400: err("invalid_request"), 429: err("too_many_requests（外れた照会が多すぎる。0067）"), ...common, 404: err("not_found（番号かアドレスが違う・ショップが無い）") },
         },
       },
       "/shops/{shop}/orders/receipt": {
-        post: { summary: "ゲストの注文の領収書のデータ（同梱モジュール receipt）", parameters: [shopPath], requestBody: body(obj({ order_token: str }, ["order_token"])), responses: { 200: ok(obj({ receipt })), 400: err("invalid_order_token"), 409: err("receipt_not_available（支払い済みでない）"), ...common, 404: err("not_found・receipt_disabled") } },
+        post: { summary: "ゲストの注文の領収書のデータ（同梱モジュール receipt）", parameters: [shopPath], requestBody: body(obj({ order_token: str }, ["order_token"])), responses: { 200: ok(obj({ receipt })), 400: err("invalid_order_token"), 409: err("receipt_not_available（支払い済みでない）"), 429: err("too_many_requests"), ...common, 404: err("not_found・receipt_disabled") } },
       },
       "/shops/{shop}/checkout/status": {
         get: {

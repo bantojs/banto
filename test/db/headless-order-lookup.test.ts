@@ -43,11 +43,11 @@ describe.skipIf(!dbAvailable)("ヘッドレスの注文照会（0066）", () => 
   });
 
   it("ゲストの注文照会（lookup_order）: 形は今までどおり。会員の注文と同じ中身で、アドレスが違えば null", async () => {
-    const guest = await asAnon(async (c) => (await c.query<{ r: J | null }>("select lookup_order($1, 1002, ' GUEST@example.com ') as r", [a.shopId])).rows[0]!.r);
+    const guest = await asService(async (c) => (await c.query<{ r: J | null }>("select lookup_order($1, 1002, ' GUEST@example.com ') as r", [a.shopId])).rows[0]!.r);
     expect(guest).toMatchObject({ number: 1002, status: "paid", total_jpy: 3000, discounts: [], tracking: null });
     expect(Object.keys(guest!).sort()).toEqual(["created_at", "discount_jpy", "discounts", "items", "number", "payment_provider", "shipped_at", "shipping_jpy", "shipping_tax_rate", "status", "tax_rounding", "total_jpy", "tracking"]);
     expect(JSON.stringify(guest)).not.toContain("大阪府");
-    expect(await asAnon(async (c) => (await c.query("select lookup_order($1, 1002, 'x@example.com') as r", [a.shopId])).rows[0].r)).toBeNull();
+    expect(await asService(async (c) => (await c.query("select lookup_order($1, 1002, 'x@example.com') as r", [a.shopId])).rows[0].r)).toBeNull();
     const member = await memberGet(memberId, 0, 1001);
     expect(Object.keys(member!).sort()).toEqual(Object.keys(guest!).sort());
   });

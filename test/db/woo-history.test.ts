@@ -69,7 +69,7 @@ describe.skipIf(!dbAvailable)("WooCommerce からの移行の続き（0023_woo_h
   });
 
   it("取り込んだ注文は注文照会・会員の注文で取り込んだ時点の品名で見える", async () => {
-    const r = await asAnon(async (c) => (await c.query<{ r: { items: { name: string; sku: string }[] } }>("select lookup_order($1, 5001, 'm@example.com') as r", [f.shopId])).rows[0]!.r);
+    const r = await asService(async (c) => (await c.query<{ r: { items: { name: string; sku: string }[] } }>("select lookup_order($1, 5001, 'm@example.com') as r", [f.shopId])).rows[0]!.r);
     expect(r.items.map((i) => i.name).sort()).toEqual(["お茶（旧名）", "販売終了の品"]);
     expect(r.items.find((i) => i.name === "販売終了の品")!.sku).toBe("赤");
     const m = await asService(async (c) => (await c.query<{ r: { number: number } }>("select member_order($1, $2, 0, 5001) as r", [f.shopId, member])).rows[0]!.r);
