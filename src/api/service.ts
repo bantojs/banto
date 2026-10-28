@@ -12,7 +12,7 @@ import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
-import { API_INQUIRIES_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
+import { API_INQUIRIES_MIGRATION, API_INQUIRY_ASSIGNEE_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
 import { SKU_IMAGES_MIGRATION } from "../products/images";
 import { SKU_OPTION_AXES_MIGRATION } from "../products/option-axes";
@@ -21,7 +21,7 @@ import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
 import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checkout";
 import { shopHome } from "../storefront/urls";
-import { sendReplyNotice } from "../modules/inquiries";
+import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
 
 /** お問い合わせの返事のお知らせ（0061）。メールのリンクのトークンを作る秘密・送り手・お店の画面の URL */
@@ -82,6 +82,7 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_attachment")) throw new ApiError("invalid", "invalid_attachment", 400);
     if (e.is("inquiry_masked")) throw new ApiError("conflict", "inquiry_masked: the contact details and messages of this inquiry were erased", 409);
     if (e.is("invalid_body")) throw new ApiError("invalid", "invalid_body: body must be 1 to 5000 characters", 400);
+    if (e.is("invalid_assignee")) throw new ApiError("invalid", "invalid_assignee: the assignee must be a user_id from inquiry_assignees (someone with the Inquiries permission for this shop), or null / \"none\"", 400);
     if (e.is("coupon_in_use")) throw new ApiError("conflict", "coupon_in_use: a coupon that has been used cannot be deleted; set active to false instead", 409);
     if (e.is("usage_limit_below_used")) throw new ApiError("conflict", "usage_limit_below_used: usage_limit cannot be lower than the uses so far", 409);
     if (e.is("email_taken")) throw new ApiError("conflict", "email_taken: a member with this email address already exists", 409);
@@ -365,12 +366,36 @@ export class ApiService {
     }
     return this.call<T>(fn, args);
   }
-  inquiriesList = (q: { status?: string; limit?: number; offset?: number } = {}) =>
-    this.call0061<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("inquiries:read", "api_inquiries_list", {
+  /** assignee: "none"（未割り当て）か担当者の user_id（0068 が要る） */
+  inquiriesList = async (q: { status?: string; limit?: number; offset?: number; assignee?: string } = {}) => {
+    if (q.assignee !== undefined) await this.requireAssignee();
+    return this.call0061<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("inquiries:read", "api_inquiries_list", {
       p_status: q.status ?? null,
       p_limit: q.limit ?? 50,
       p_offset: q.offset ?? 0,
+      ...(q.assignee !== undefined ? { p_assignee: q.assignee } : {}),
     });
+  };
+  /** 担当者（0068）の関数があるか。無ければ有効なトークンであることだけ確かめて 409 */
+  private async requireAssignee(): Promise<void> {
+    if (await this.migratedTo(API_INQUIRY_ASSIGNEE_MIGRATION)) return;
+    await this.call("api_token_shop", {});
+    throw new ApiError("migration_required", `assignees need the database update ${API_INQUIRY_ASSIGNEE_MIGRATION}; apply it from /admin/update`, 409);
+  }
+  /** 担当者にできる人（そのショップの「お問い合わせ」の項目を持つ運営側の人。user_id と運営者のメールアドレス） */
+  inquiryAssignees = async () => {
+    await this.requireAssignee();
+    return this.call<{ user_id: string; email: string }[]>("api_inquiry_assignees", {});
+  };
+  /** 担当者を決める・外す（userId = null で外す）。担当になった人にはリンクだけのメール（宛先は AI に返さない） */
+  inquiryAssign = async (number: number, userId: string | null): Promise<Record<string, unknown>> => {
+    await this.requireAssignee();
+    if (userId !== null && !isUuid(userId)) throw new ApiError("invalid", "invalid_assignee: user_id must be a user_id from inquiry_assignees, or null to unassign", 400);
+    const r = await this.call<{ inquiry: Record<string, unknown>; mail: { inquiry_id: string; number: number; send: boolean; to: string | null; mail_from: string | null; shop: InquiryMailShop } }>("api_inquiry_assign", { p_number: number, p_user: userId });
+    const deps = this.inquiryMail;
+    const sent = deps && r.mail.to ? await sendAssignNotice({ mailer: deps.mailer, adminBase: deps.publicBase }, r.mail.shop, r.mail) : false;
+    return { ...r.inquiry, mail_sent: sent };
+  };
   inquiryGet = (number: number) => this.call0061<Record<string, unknown>>("inquiries:read", "api_inquiry_get", { p_number: number });
   /**
    * 返事を書く。お客様にはリンクだけのメール（本文は載せない）。リンクの行き先は管理画面の返事と同じ
