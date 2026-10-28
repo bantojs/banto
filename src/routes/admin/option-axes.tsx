@@ -35,7 +35,7 @@ export function AxesEditor(props: { name: string; axes: unknown; modes: ("inheri
                 <input type="text" name={`axis.${i}.key`} value={a?.key ?? ""} maxlength={40} aria-label={`${props.name} ${t("axes.key")} ${i + 1}`} style="width:10rem" />
               </td>
               <td>
-                <input type="text" name={`axis.${i}.values`} value={(a?.values ?? []).join("、")} aria-label={`${props.name} ${t("axes.values")} ${i + 1}`} />
+                <ChipsInput name={`axis.${i}.values`} values={a?.values ?? []} label={`${props.name} ${t("axes.values")} ${i + 1}`} />
               </td>
             </tr>
           ))}
@@ -44,6 +44,56 @@ export function AxesEditor(props: { name: string; axes: unknown; modes: ("inheri
     </div>
   );
 }
+
+/**
+ * 値をチップで入れる欄。正体は「1 行に 1 つ」の textarea（スクリプトが無ければそのまま使う）。
+ * CHIPS_SCRIPT が textarea を隠してチップと入力欄を出し、チップの並びを textarea に 1 行に 1 つで書き戻す。
+ * 区切りは改行だけなので、値にカンマや読点を入れられる（貼り付けたときだけ改行・タブ・カンマ・読点で分けてチップにする）
+ */
+export function ChipsInput(props: { name: string; values: readonly string[]; label: string; id?: string }) {
+  return (
+    <textarea id={props.id} name={props.name} rows={3} aria-label={props.label} data-chips="" data-chip-remove={t("axes.chip_remove")} data-chip-placeholder={t("axes.chip_placeholder")}>
+      {props.values.join("\n")}
+    </textarea>
+  );
+}
+
+/** チップの入力のスクリプト（ページに 1 回）。固定の文字列（利用者の入力を含まない。文言は textarea の data 属性から） */
+export function ChipsScript() {
+  return <script dangerouslySetInnerHTML={{ __html: CHIPS_SCRIPT }} />;
+}
+
+export const CHIPS_SCRIPT = `(function(){
+  function setup(ta){
+    if(ta.getAttribute("data-chips-ready"))return;ta.setAttribute("data-chips-ready","1");
+    var box=document.createElement("div"),input=document.createElement("input");
+    box.className="chips";box.style.cssText="display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.3rem;padding:.3rem";
+    input.type="text";input.maxLength=60;input.placeholder=ta.getAttribute("data-chip-placeholder")||"";input.setAttribute("aria-label",ta.getAttribute("aria-label")||"");input.style.cssText="flex:1;min-width:8rem;border:0;margin:0";
+    function values(){return ta.value.split(/\\r?\\n/).map(function(v){return v.trim();}).filter(Boolean);}
+    function write(list){var out=[];list.forEach(function(v){v=v.trim().slice(0,60);if(v&&out.indexOf(v)<0&&out.length<100)out.push(v);});ta.value=out.join("\\n");render();}
+    function render(){
+      [].slice.call(box.querySelectorAll(".chip")).forEach(function(c){c.remove();});
+      values().forEach(function(v,i){
+        var chip=document.createElement("span"),x=document.createElement("button");
+        chip.className="chip";chip.style.cssText="display:inline-flex;align-items:center;gap:.2rem;padding:.1rem .45rem;border-radius:1rem;background:color-mix(in srgb,CanvasText 10%,transparent)";
+        chip.appendChild(document.createTextNode(v));
+        x.type="button";x.textContent="×";x.setAttribute("aria-label",(ta.getAttribute("data-chip-remove")||"")+" "+v);x.style.cssText="border:0;background:none;padding:0 .1rem;cursor:pointer;color:inherit";
+        x.addEventListener("click",function(){var l=values();l.splice(i,1);write(l);input.focus();});
+        chip.appendChild(x);box.insertBefore(chip,input);
+      });
+    }
+    function add(text){if(!text.trim())return;write(values().concat([text]));input.value="";}
+    input.addEventListener("keydown",function(e){
+      if(e.key==="Enter"&&!e.isComposing){e.preventDefault();add(input.value);}
+      else if(e.key==="Backspace"&&!input.value){var l=values();l.pop();write(l);}
+    });
+    input.addEventListener("blur",function(){add(input.value);});
+    input.addEventListener("paste",function(e){var t=(e.clipboardData||window.clipboardData).getData("text");if(!/[\\n\\t,、]/.test(t))return;e.preventDefault();write(values().concat(t.split(/[\\r\\n\\t,、]+/)));});
+    ta.form&&ta.form.addEventListener("submit",function(){add(input.value);});
+    box.appendChild(input);ta.style.display="none";ta.parentNode.insertBefore(box,ta);render();
+  }
+  [].slice.call(document.querySelectorAll("textarea[data-chips]")).forEach(setup);
+})();`;
 
 /** 軸の短い表示（「カラー × サイズ」・「品番だけ」・「決めていない」） */
 export const axesText = (v: unknown) => axesLabel(v === null || v === undefined ? null : optionAxesOf(v), t("axes.label_only_code"), t("axes.label_none"));

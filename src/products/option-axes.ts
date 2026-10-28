@@ -81,10 +81,13 @@ export function resolveOptionAxes(categories: readonly CategoryRow[], categoryId
   return shop ? { axes: shop, from: { kind: "shop" } } : { axes: null, from: null };
 }
 
-/** 値の候補の入力（「、」「,」・改行で区切る）→ 配列（重なり・空を外す） */
+/**
+ * 値の候補の入力（1 行に 1 つ）→ 配列（重なり・空を外す）。区切りは改行だけ（値にカンマや読点を入れられるように）。
+ * 管理画面のチップの入力（src/routes/admin/option-axes.tsx の CHIPS_SCRIPT）も、同じ欄に 1 行に 1 つで書く
+ */
 export function parseAxisValues(text: string): string[] {
   const out: string[] = [];
-  for (const raw of text.split(/[,、\n]/)) {
+  for (const raw of text.split(/\r?\n/)) {
     const v = raw.trim().slice(0, 60);
     if (v && !out.includes(v) && out.length < MAX_AXIS_VALUES) out.push(v);
   }
