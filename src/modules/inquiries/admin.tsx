@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
-import { migrated } from "../../db/migration-state";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, type Crumb, type ShopTabs, PageHead } from "../../routes/admin/layout";
@@ -18,7 +17,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { yen } from "../../routes/common";
 import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } from "./attachments";
-import { BODY_MAX, INQUIRIES_MODULE, INQUIRY_ASSIGNEE_MIGRATION, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
+import { BODY_MAX, INQUIRIES_MODULE, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -90,9 +89,8 @@ interface Assignee {
   email: string;
 }
 
-/** 担当者にできる人（0068 が当たっていなければ null = 担当者の欄を出さない） */
+/** 担当者にできる人 */
 async function assigneesFor(c: AdminContext, shop: ShopRow): Promise<Assignee[] | null> {
-  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, INQUIRY_ASSIGNEE_MIGRATION))) return null;
   return (await owner(c).db.rpc<Assignee[] | null>("inquiry_assignees", { p_shop_id: shop.id })) ?? [];
 }
 

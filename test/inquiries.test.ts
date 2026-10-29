@@ -500,16 +500,6 @@ describe("お問い合わせの担当者（0068）", () => {
     expect((await admin.post(`${page}/inq-1/assign`, { assignee: "00000000-0000-4000-8000-000000000099" })).headers.get("location")).toContain("flash=generic");
   });
 
-  it("0068 が当たる前は担当の欄も絞り込みも出さない", async () => {
-    const { app, shop, sb, b } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0068_mod_inquiries_assignee");
-    await b.post("/my-shop/inquiries/submit", { category: "other", body: "質問", email: "q@example.com" });
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const page = `/admin/shops/${shop.id}/modules/inquiries`;
-    expect(await (await admin.get(page)).text()).not.toContain('name="assignee"');
-    expect((await admin.post(`${page}/inq-1/assign`, { assignee: STAFF })).status).toBe(404);
-  });
-
   it("AI 用 API: 担当にできる人・担当を決める（本人にメール、宛先は応答に出さない）・一覧の絞り込み", async () => {
     const { app, mail, tickets } = setup();
     await app.request(`${BASE}/api/shops/my-shop/inquiries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "other", body: "質問", email: "ai-guest@example.com" }) });

@@ -3,7 +3,6 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith, memberLogin, memberMail } from "./helpers";
 import { buildOrderEmail } from "../src/plugins/email_resend";
 import { openOrderToken } from "../src/orders/lookup";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * 注文照会・領収書をヘッドレスで（0066、docs/headless.md「注文照会・領収書」）。
@@ -107,18 +106,6 @@ describe("注文照会の回数の上限（0067）", () => {
     expect(res.status).toBe(429);
     expect(await res.text()).toContain("照会の回数が多すぎます");
   });
-
-  it("0067 が当たる前は今までどおり anon の lookup_order（上限なし）", async () => {
-    const sb = new FakeSupabase({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0067_order_lookup_limits") });
-    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
-    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
-    sb.tables.orders.push({ id: "o1", shop_id: shop.id, number: 1001, status: "paid", total_jpy: 1000, shipping_jpy: 0, customer_email: "guest@example.com", created_at: "2026-10-20T00:00:00Z" });
-    const app = appWith(sb);
-    const post = (email: string) => app.request(`${BASE}/api/shops/my-shop/orders/lookup`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ number: 1001, email }) });
-    for (let i = 0; i < 25; i++) expect((await post(`x${i}@example.com`)).status).toBe(404);
-    expect((await post("guest@example.com")).status).toBe(200);
-    expect(sb.orderLookupFailures).toHaveLength(0);
-  });
 });
 
 describe("会員の注文の API", () => {
@@ -219,15 +206,5 @@ describe("管理画面の注文照会のページ", () => {
     // 許可リストから外したサイトのページは外れる
     await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://shop.example.com", order_page_url: "" });
     expect(headless()["order_page_url"]).toBeUndefined();
-  });
-
-  it("0066 が当たっていなければ欄を出さない", async () => {
-    const sb = new FakeSupabase({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0066_headless_order_lookup" && v !== "0067_order_lookup_limits") });
-    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
-    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ" });
-    const admin = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    const page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
-    expect(page).not.toContain('name="order_page_url"');
-    expect(page).not.toContain('name="order_lookup_per_ip_per_hour"');
   });
 });

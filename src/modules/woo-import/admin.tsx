@@ -22,8 +22,7 @@ import { productFields, MAX_FIELDS, type ProductField } from "../../products/fie
 import { moduleEnabled } from "../registry";
 import { wcImageKey, wcImageTag } from "./keys";
 import { wooImporter } from "./client";
-import { migrated } from "../../db/migration-state";
-import { SKU_IMAGES_MIGRATION, imageOptionsOf } from "../../products/images";
+import { imageOptionsOf } from "../../products/images";
 
 /**
  * 同梱モジュール「WooCommerce から取り込み」（woo_import、既定 OFF）。docs/knowledge/08-woo-migration.md
@@ -249,7 +248,6 @@ wooImport.post("/batch", requireOwner, async (c: AdminContext) => {
 wooImport.post("/image-hints", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION))) return c.json({ error: "migration_required" }, 409);
   const body = await jsonBody(c);
   const list = Array.isArray(body?.["items"]) ? (body!["items"] as unknown[]).slice(0, 500) : [];
   const items = list

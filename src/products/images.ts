@@ -7,8 +7,6 @@
  * お店の画面のスクリプト（SKU_IMAGE_SCRIPT）も同じ規則で並べ替える。
  */
 
-export const SKU_IMAGES_MIGRATION = "0063_sku_images";
-
 export type ImageOptions = Record<string, string>;
 
 /** 画像の options（壊れた値は {} = 商品全体として扱う） */

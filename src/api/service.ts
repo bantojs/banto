@@ -12,10 +12,7 @@ import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
-import { API_INQUIRY_ASSIGNEE_MIGRATION, API_INQUIRY_ATTACHMENTS_MIGRATION } from "./tokens";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
-import { SKU_IMAGES_MIGRATION } from "../products/images";
-import { SKU_OPTION_AXES_MIGRATION } from "../products/option-axes";
 import type { Mailer } from "../mail/send";
 import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
@@ -236,7 +233,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "image_url must be an absolute http(s) URL", 400);
     }
-    const optionsArg = await this.imageOptionsArg(options);
+    const optionsArg = this.imageOptionsArg(options);
     // 所有確認を先に（取得前に他ショップの product_id を弾く）
     await this.productGet({ id: productId });
     let image: Awaited<ReturnType<typeof fetchImage>>;
@@ -301,7 +298,7 @@ export class ApiService {
     if (thumbnail && thumbnail.byteLength > MAX_THUMB_BYTES) throw new ApiError("invalid", "thumbnail is larger than 1MB", 400);
     // ストレージに書く前に、書き込みのスコープを確かめる（他のショップの商品は api_image_add_file が not_found にして、置いたものを消す）
     if (!(await this.call<boolean>("api_has_scope", { p_scope: "products:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
-    const optionsArg = await this.imageOptionsArg(options);
+    const optionsArg = this.imageOptionsArg(options);
     const shop = await this.shopGetIdOnly();
     const key = productImageKey(shop, productId, main.ext);
     const tkey = thumbnail && thumb ? thumbKey(key, thumb.ext) : null;
@@ -323,35 +320,23 @@ export class ApiService {
   }
 
   /**
-   * 登録と同時に SKU に結ぶときの引数（0063）。空なら引数を渡さない（0063 より前の DB でも今までどおり登録できる）。
+   * 登録と同時に SKU に結ぶときの引数（0063）。空なら引数を渡さない。
    * 形の検査は SQL（banto_image_options_ok）
    */
-  private async imageOptionsArg(options: Record<string, unknown> | undefined): Promise<{ p_options?: Record<string, unknown> }> {
+  private imageOptionsArg(options: Record<string, unknown> | undefined): { p_options?: Record<string, unknown> } {
     if (!options || Object.keys(options).length === 0) return {};
-    if (!(await this.migratedTo(SKU_IMAGES_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `image options need the database update ${SKU_IMAGES_MIGRATION}; apply it from /admin/update`, 409);
-    }
     return { p_options: options };
   }
 
   /** 商品の SKU を分ける軸を決める（0065。[] で品番だけ、null で決めない）。返すのは商品 */
   async productSetOptionAxes(productId: string, axes: unknown): Promise<Record<string, unknown>> {
     uuidOr404(productId);
-    if (!(await this.migratedTo(SKU_OPTION_AXES_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `option axes need the database update ${SKU_OPTION_AXES_MIGRATION}; apply it from /admin/update`, 409);
-    }
     return this.call<Record<string, unknown>>("api_product_set_option_axes", { p_product_id: productId, p_axes: axes });
   }
 
   /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */
   async imageSetOptions(imageId: string, options: Record<string, unknown>): Promise<Record<string, unknown>> {
     uuidOr404(imageId);
-    if (!(await this.migratedTo(SKU_IMAGES_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `image options need the database update ${SKU_IMAGES_MIGRATION}; apply it from /admin/update`, 409);
-    }
     return this.call<Record<string, unknown>>("api_image_set_options", { p_image_id: imageId, p_options: options });
   }
 
@@ -385,9 +370,8 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
 
   // ---- お問い合わせ（0061。inquiries:read / inquiries:write、モジュール inquiries が ON のショップだけ）----
-  /** assignee: "none"（未割り当て）か担当者の user_id（0068 が要る） */
+  /** assignee: "none"（未割り当て）か担当者の user_id */
   inquiriesList = async (q: { status?: string; limit?: number; offset?: number; assignee?: string } = {}) => {
-    if (q.assignee !== undefined) await this.requireAssignee();
     return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("api_inquiries_list", {
       p_status: q.status ?? null,
       p_limit: q.limit ?? 50,
@@ -395,20 +379,12 @@ export class ApiService {
       ...(q.assignee !== undefined ? { p_assignee: q.assignee } : {}),
     });
   };
-  /** 担当者（0068）の関数があるか。無ければ有効なトークンであることだけ確かめて 409 */
-  private async requireAssignee(): Promise<void> {
-    if (await this.migratedTo(API_INQUIRY_ASSIGNEE_MIGRATION)) return;
-    await this.call("api_token_shop", {});
-    throw new ApiError("migration_required", `assignees need the database update ${API_INQUIRY_ASSIGNEE_MIGRATION}; apply it from /admin/update`, 409);
-  }
   /** 担当者にできる人（そのショップの「お問い合わせ」の項目を持つ運営側の人。user_id と運営者のメールアドレス） */
   inquiryAssignees = async () => {
-    await this.requireAssignee();
     return this.call<{ user_id: string; email: string }[]>("api_inquiry_assignees", {});
   };
   /** 担当者を決める・外す（userId = null で外す）。担当になった人にはリンクだけのメール（宛先は AI に返さない） */
   inquiryAssign = async (number: number, userId: string | null): Promise<Record<string, unknown>> => {
-    await this.requireAssignee();
     if (userId !== null && !isUuid(userId)) throw new ApiError("invalid", "invalid_assignee: user_id must be a user_id from inquiry_assignees, or null to unassign", 400);
     const r = await this.call<{ inquiry: Record<string, unknown>; mail: { inquiry_id: string; number: number; send: boolean; to: string | null; mail_from: string | null; shop: InquiryMailShop } }>("api_inquiry_assign", { p_number: number, p_user: userId });
     const deps = this.inquiryMail;
@@ -428,7 +404,7 @@ export class ApiService {
     // 添付（0064）: 先に公開しない置き場へ置き、返事の関数に鍵を渡す（数・種類・大きさは DB も確かめる）。断られたら置いた実体を消す
     let stored: string[] = [];
     if (files.length > 0) {
-      const storage = await this.attachmentStorage();
+      const storage = this.attachmentStorage();
       const shopId = (await this.call<{ shop_id: string }>("api_token_shop", {})).shop_id;
       const r = await storeAttachments(storage, shopId, files);
       if (!r.ok) {
@@ -451,19 +427,15 @@ export class ApiService {
     const sent = await sendReplyNotice({ mailer: deps.mailer }, shop, { ...r.mail, number }, link);
     return { ...r.inquiry, mail_sent: sent };
   };
-  /** 添付を扱える置き場（0064 の適用と、公開しない置き場の設定が要る） */
-  private async attachmentStorage(): Promise<StorageAdapter> {
-    if (!(await this.migratedTo(API_INQUIRY_ATTACHMENTS_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `attachments need the database update ${API_INQUIRY_ATTACHMENTS_MIGRATION}; apply it from /admin/update`, 409);
-    }
+  /** 添付を扱える置き場（公開しない置き場の設定が要る） */
+  private attachmentStorage(): StorageAdapter {
     if (!this.privateStorage) throw new ApiError("conflict", "attachments_unavailable: the private bucket (PRIVATE) is not configured", 409);
     return this.privateStorage;
   }
   /** お客様の添付を受け取る（0064。inquiries:read と orders:pii）。中身の種類は DB の値で、nosniff を付けて渡す */
   async inquiryAttachment(number: number, attachmentId: string): Promise<Response> {
     uuidOr404(attachmentId);
-    const storage = await this.attachmentStorage();
+    const storage = this.attachmentStorage();
     const meta = await this.call<{ storage_key: string; content_type: string; filename: string }>("api_inquiry_attachment_get", { p_number: number, p_attachment_id: attachmentId });
     const res = await attachmentResponse(storage, meta);
     if (!res) throw new ApiError("not_found", "not found", 404);

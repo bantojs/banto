@@ -11,8 +11,6 @@ import { t, tf } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 
 export const PASSKEY_MODULE = "passkey";
-/** ヘッドレスの会員がパスキーを追加する券（0070） */
-export const PASSKEY_ADD_MIGRATION = "0070_mod_passkey_headless_add";
 
 /**
  * ブラウザのスクリプト（`${shopPath}/account/passkey.js`）。テーマは次の印を付けた要素を置く（src/themes/types.ts）:

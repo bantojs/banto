@@ -2,8 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
-import { SKU_IMAGES_MIGRATION, imageOptionsFromForm, orderImagesForSku, skuOptionChoices } from "../src/products/images";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
+import { imageOptionsFromForm, orderImagesForSku, skuOptionChoices } from "../src/products/images";
 
 /**
  * SKU ごとの画像（0063）の Worker 側。列の形・対応表のトリガー・権限は test/db/sku-images.test.ts（実 PostgreSQL）。
@@ -132,16 +131,6 @@ describe("SKU ごとの画像: 管理画面・AI 用 API・復元", () => {
     expect(sb.tables.product_images.find((i) => i["id"] === IMG.all)!["options"]).toEqual({});
   });
 
-  it("0063 が未適用なら、管理画面に欄を出さず、API は migration_required", async () => {
-    const { shop, tee, app, issue } = setup({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== SKU_IMAGES_MIGRATION) });
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get(`/admin/shops/${shop.id}/products/${tee.id}`)).text();
-    expect(html).not.toContain('name="options.color"');
-    const tok = await issue(["products:read", "products:write"]);
-    const res = await app.request(`${BASE}/api/v1/images/${IMG.all}`, { method: "PATCH", headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: JSON.stringify({ options: { color: "レッド" } }) });
-    expect(res.status).toBe(409);
-  });
-
   it("REST の PATCH /images/:id と MCP の product_image_set_options", async () => {
     const { sb, app, issue } = setup();
     const tok = await issue(["products:read", "products:write"]);
@@ -228,16 +217,5 @@ describe("SKU ごとの画像: 登録と同時に結ぶ（AI 用 API）", () => 
     expect(sb.tables.product_images.find((i) => i["id"] === id)!["options"]).toEqual({ color: "ブルー" });
 
     expect((await upload("?options=not-json", png, "image/png")).status).toBe(400);
-  });
-
-  it("0063 が未適用なら、options を付けた登録は 409（付けなければ今までどおり登録できる）", async () => {
-    const { sb, tee, app, issue } = setup({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== SKU_IMAGES_MIGRATION) });
-    const tok = await issue(["products:write"]);
-    const png = tinyPng(16, 16);
-    const upload = (qs: string) => app.request(`${BASE}/api/v1/products/${tee.id}/images/upload${qs}`, { method: "POST", headers: { authorization: `Bearer ${tok}`, "content-type": "image/png", "content-length": String(png.byteLength) }, body: png });
-    const n = sb.tables.product_images.length;
-    expect((await upload(`?options=${encodeURIComponent('{"color":"レッド"}')}`)).status).toBe(409);
-    expect(sb.tables.product_images.length).toBe(n);
-    expect((await upload("")).status).toBe(201);
   });
 });

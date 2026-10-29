@@ -7,9 +7,6 @@ import { BANTO_VERSION } from "../../version";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
-import { migrated } from "../../db/migration-state";
-import { SKU_IMAGES_MIGRATION } from "../../products/images";
-import { SKU_OPTION_AXES_MIGRATION } from "../../products/option-axes";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -115,8 +112,7 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
   try {
     const privileged = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
     // SKU を分ける軸（0065）: 戻す間はショップの既定を外す（商品を戻したときに既定が写り、SKU が合わずに止まらないように）。最後に戻す
-    const axesOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION);
-    if (axesOn && shop.option_axes !== null && shop.option_axes !== undefined) await privileged.restoreOptionAxes(shopId, { shop: null });
+    if (shop.option_axes !== null && shop.option_axes !== undefined) await privileged.restoreOptionAxes(shopId, { shop: null });
     const counts = await privileged.restoreShopData(shopId, tables);
     // 0006 が知らない列（タグ・カテゴリー・ブランド・カスタム項目・SKU の拡張）を戻す（0008）
     Object.assign(counts, await privileged.restoreCatalog(shopId, { categories: tables["categories"] ?? [], products: tables["products"] ?? [], skus: tables["skus"] ?? [] }));
@@ -141,10 +137,10 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     const imageOptions = pick("product_images")
       .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && !!(r as Record<string, unknown>)["options"] && Object.keys((r as Record<string, unknown>)["options"] as object).length > 0)
       .map((r) => ({ storage_key: r["storage_key"], options: r["options"] }));
-    if (imageOptions.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION))) {
+    if (imageOptions.length > 0) {
       Object.assign(counts, await privileged.restoreProductImageOptions(shopId, imageOptions));
     }
-    if (axesOn) {
+    {
       const backupShop = (parsed as { shop?: { option_axes?: unknown } }).shop;
       const shopAxes = backupShop && "option_axes" in backupShop ? backupShop.option_axes : (shop.option_axes ?? null);
       const rows = (name: string) => pick(name).filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && Array.isArray((r as Record<string, unknown>)["option_axes"]));

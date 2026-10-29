@@ -10,10 +10,6 @@
  */
 import { openJson, sealJson } from "../util/signed";
 
-export const ORDER_LOOKUP_MIGRATION = "0066_headless_order_lookup";
-/** ゲストの注文照会の回数の上限（0067。lookup_order を anon から外し、service_role の order_lookup を通す） */
-export const ORDER_LOOKUP_LIMITS_MIGRATION = "0067_order_lookup_limits";
-
 /** 注文トークンの期限（注文照会の結果・会員の注文から開いたフォームに使う） */
 export const ORDER_TOKEN_SECONDS = 24 * 60 * 60;
 
