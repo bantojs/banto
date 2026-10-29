@@ -33,9 +33,6 @@ export function normalizeDomain(input: string): string | null | "invalid" {
   return v;
 }
 
-/** 会員ページの URL の設定（0069） */
-export const ACCOUNT_PAGE_MIGRATION = "0069_headless_account_page";
-
 /** 設定された会員ページ（https の文字列だけ。許可リストは保存のときに確かめている）。無ければ null */
 export function memberAccountPage(settings: Record<string, unknown> | null | undefined): string | null {
   const h = (settings ?? {})["headless"];

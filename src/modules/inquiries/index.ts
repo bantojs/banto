@@ -21,8 +21,6 @@ import type { PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes/types";
 
 export const INQUIRIES_MODULE = "inquiries";
-/** 担当者（0068） */
-export const INQUIRY_ASSIGNEE_MIGRATION = "0068_mod_inquiries_assignee";
 
 export const INQUIRY_CATEGORIES = ["product", "order", "account", "other"] as const;
 export type InquiryCategory = (typeof INQUIRY_CATEGORIES)[number];

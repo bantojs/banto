@@ -7,8 +7,6 @@
  */
 import { classifyHost } from "../media/address";
 
-export const LEGAL_LINKS_MIGRATION = "0062_legal_links";
-
 export const LEGAL_KINDS = ["legal", "privacy", "returns"] as const;
 export type LegalKind = (typeof LEGAL_KINDS)[number];
 

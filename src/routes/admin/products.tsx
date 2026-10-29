@@ -16,9 +16,8 @@ import { normalizeTags } from "../../products/tags";
 import { cleanAttributes, productFields, type ProductField } from "../../products/fields";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
-import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices, SKU_IMAGES_MIGRATION } from "../../products/images";
-import { migrated } from "../../db/migration-state";
-import { MAX_COMBINATIONS, SKU_OPTION_AXES_MIGRATION, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
+import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices } from "../../products/images";
+import { MAX_COMBINATIONS, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
 import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./option-axes";
 
 export const products = new Hono<AppEnv>();
@@ -372,11 +371,10 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const mediaBase = mediaBaseUrl(c);
   const catalog = await catalogContext(c, shop);
   // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
-  const optionChoices = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_IMAGES_MIGRATION)) ? skuOptionChoices(skus) : [];
+  const optionChoices = skuOptionChoices(skus);
   // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
-  const axesOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION);
-  const axes = axesOn ? optionAxesOf(product.option_axes) : null;
-  const upper = axesOn ? resolveOptionAxes(catalog.categories, product.category_id, shop.option_axes) : null;
+  const axes = optionAxesOf(product.option_axes);
+  const upper = resolveOptionAxes(catalog.categories, product.category_id, shop.option_axes);
   const matrixMsg = matrixFlash((k) => c.req.query(k));
 
   return c.html(
@@ -401,7 +399,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
       {product.published && !shop.published ? <p class="notice">{t("product.unpublished_shop")}</p> : null}
       <ProductForm action={base} product={product} catalog={catalog} />
 
-      {axesOn && upper ? (
+      {upper ? (
         <section class="card" id="option-axes">
           <h2>{t("axes.title")}</h2>
           <p>
@@ -514,7 +512,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         </p>
       </form>
       {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} /> : null}
-      {axesOn ? <ChipsScript /> : null}
+      <ChipsScript />
 
       <h2 id="images">{t("image.list")}</h2>
       {images.length === 0 ? (
@@ -773,10 +771,9 @@ function skuOptionsFromForm(f: Record<string, string>, axes: OptionAxes | null):
   return parseOptions(f.options ?? "");
 }
 
-/** 商品の軸（SKU を書くときの欄の読み方に使う。0065 の前なら null） */
+/** 商品の軸（SKU を書くときの欄の読み方に使う） */
 async function productAxes(c: AdminContext, shopId: string, productId: string): Promise<OptionAxes | null> {
   const { db } = owner(c);
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION))) return null;
   const p = await db.from<ProductRow>("products").selectOne("option_axes", { eq: { id: productId, shop_id: shopId } });
   return p ? optionAxesOf(p.option_axes) : null;
 }

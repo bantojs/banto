@@ -135,10 +135,9 @@ describe("法務のページの外の URL（0062）", () => {
     expect((await b.post(`/admin/shops/${shop.id}/legal-links`, { url_legal: `${WP}/legal`, check_hours: "24" })).status).toBe(404);
   });
 
-  it("Cron: 期限の来たショップを 1 回に 1 つ確かめて結果を書く。0062 が当たる前は何もしない", async () => {
-    const run = async (applied?: string[]) => {
+  it("Cron: 期限の来たショップを 1 回に 1 つ確かめて結果を書く", async () => {
+    const run = async () => {
       const { sb } = setup({ legal: `${WP}/legal`, check_hours: 24 });
-      if (applied) sb.appliedMigrations = applied;
       const vars = { SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, SESSION_SECRET: "s", PUBLIC_BASE_URL: "https://b.example" };
       const jobs = new Map<string, ScheduledJob>();
       const adapters = { ...memoryAdapters(vars), scheduler: { register: (name: string, job: ScheduledJob) => void jobs.set(name, job), runAll: async () => undefined } };
@@ -150,7 +149,5 @@ describe("法務のページの外の URL（0062）", () => {
     const sb = await run();
     expect(sb.legalLinkRecords).toHaveLength(1);
     expect((sb.tables.shops[0]!["legal_links_state"] as Record<string, { ok: boolean }>)["legal"]!.ok).toBe(true);
-    const old = await run(sb.appliedMigrations.filter((v) => v !== "0062_legal_links"));
-    expect(old.legalLinkRecords).toHaveLength(0);
   });
 });

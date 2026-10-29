@@ -6,11 +6,10 @@ import type { DomainAttachResult, DomainState } from "../../adapters/types";
 import type { ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { migrated } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
-import { ORDER_LOOKUP_LIMITS_MIGRATION, ORDER_LOOKUP_MIGRATION, orderPageUrl } from "../../orders/lookup";
-import { ACCOUNT_PAGE_MIGRATION, memberAccountPage } from "../../storefront/urls";
-import { LEGAL_CHECK_HOURS, LEGAL_KINDS, LEGAL_LINKS_MIGRATION, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
+import { orderPageUrl } from "../../orders/lookup";
+import { memberAccountPage } from "../../storefront/urls";
+import { LEGAL_CHECK_HOURS, LEGAL_KINDS, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
@@ -175,7 +174,7 @@ function LegalLinksSection(props: { shop: ShopRow }) {
   );
 }
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; legalLinksReady: boolean; orderPageReady: boolean; orderLimitsReady: boolean; accountPageReady: boolean }) {
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; integrations: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -458,14 +457,14 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
               {returnOrigins(shop.settings).join("\n")}
             </textarea>
             <p class="muted">{t("headless.return_origins_hint")}</p>
-            {props.orderPageReady ? (
+            {props.integrations ? (
               <>
                 <label for="order_page_url">{t("headless.order_page_url")}</label>
                 <input id="order_page_url" type="url" name="order_page_url" value={orderPageUrl(shop.settings) ?? ""} placeholder="https://example.com/order-status/" style="width:100%;max-width:40rem" />
                 <p class="muted">{t("headless.order_page_url_hint")}</p>
               </>
             ) : null}
-            {props.accountPageReady ? (
+            {props.integrations ? (
               <>
                 <label for="account_page_url">{t("headless.account_page_url")}</label>
                 <input id="account_page_url" type="url" name="account_page_url" value={memberAccountPage(shop.settings) ?? ""} placeholder="https://example.com/my-account/" style="width:100%;max-width:40rem" />
@@ -481,12 +480,8 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
             <input id="max_pending_per_ip" type="number" name="max_pending_per_ip" min={1} max={9999} value={String(shopLimit(shop.settings, "checkout", "max_pending_per_ip", 20))} />
             <label for="login_per_ip_per_hour">{t("headless.login_per_ip_per_hour")}</label>
             <input id="login_per_ip_per_hour" type="number" name="login_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "members_login_limits", "per_ip_per_hour", 30))} />
-            {props.orderLimitsReady ? (
-              <>
-                <label for="order_lookup_per_ip_per_hour">{t("headless.order_lookup_per_ip_per_hour")}</label>
-                <input id="order_lookup_per_ip_per_hour" type="number" name="order_lookup_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "order_lookup", "per_ip_per_hour", 20))} />
-              </>
-            ) : null}
+            <label for="order_lookup_per_ip_per_hour">{t("headless.order_lookup_per_ip_per_hour")}</label>
+            <input id="order_lookup_per_ip_per_hour" type="number" name="order_lookup_per_ip_per_hour" min={1} max={9999} value={String(shopLimit(shop.settings, "order_lookup", "per_ip_per_hour", 20))} />
             <p class="muted">{t("headless.limits_hint")}</p>
             <p>
               <button type="submit">{t("shop.save")}</button>
@@ -494,7 +489,7 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
           </form>
         </section>
 
-        {props.legalLinksReady ? <LegalLinksSection shop={shop} /> : null}
+        {props.integrations ? <LegalLinksSection shop={shop} /> : null}
 
         <section class="card" id="stripe">
           <h2>{t("stripe.title")}</h2>
@@ -589,10 +584,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))}
       stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet}
       stripeKeySet={stripeKeySet}
-      legalLinksReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, LEGAL_LINKS_MIGRATION))}
-      orderPageReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_MIGRATION))}
-      orderLimitsReady={await migrated({ db, cache: c.get("adapters").cache }, ORDER_LOOKUP_LIMITS_MIGRATION)}
-      accountPageReady={can(c.get("shopAccess"), "integrations") && (await migrated({ db, cache: c.get("adapters").cache }, ACCOUNT_PAGE_MIGRATION))}
+      integrations={can(c.get("shopAccess"), "integrations")}
     />,
   );
 });

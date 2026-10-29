@@ -8,15 +8,14 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, migrationStateFor, param, publicBaseUrl, type Ctx } from "../common";
-import { migrated } from "../../db/migration-state";
+import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
 import type { PrivilegedDb } from "../../db/privileged";
-import { PASSKEY_ADD_MIGRATION, PASSKEY_MODULE } from "../../modules/passkey";
+import { PASSKEY_MODULE } from "../../modules/passkey";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
 import { receiptAvailable, receiptData } from "../../modules/receipt/data";
 
@@ -426,8 +425,6 @@ membersApi.post("/shops/:shop/members/passkey/add", async (c: Ctx) => {
   const s = await bearerMember(c);
   if (s instanceof Response) return s;
   if (!passkeyOffered(s.shop)) return c.json({ error: "passkey_disabled" }, 409);
-  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
-  if (!state || !(await migrated(state, PASSKEY_ADD_MIGRATION))) return c.json({ error: "migration_required" }, 409);
   const returnTo = safeReturnUrl(str((await body(c))["return_to"]), returnOrigins(s.shop.settings), "");
   if (!returnTo) return c.json({ error: "invalid_return_to" }, 400);
   // 0045 より前に発行したトークン（セッションの行が無い）は、ログインし直してから

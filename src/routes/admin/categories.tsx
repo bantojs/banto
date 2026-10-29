@@ -8,8 +8,7 @@ import { SLUG_RE, formFields, owner, param, type AdminContext } from "./context"
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { categoryTree, type CategoryNode } from "../../products/categories";
-import { migrated } from "../../db/migration-state";
-import { SKU_OPTION_AXES_MIGRATION, optionAxesFromForm } from "../../products/option-axes";
+import { optionAxesFromForm } from "../../products/option-axes";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
 
@@ -66,8 +65,7 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
   const f = flash(c.req.query("flash"));
   const applied = appliedText((k) => c.req.query(k));
   const base = `/admin/shops/${shop.id}/categories`;
-  // SKU を分ける軸（0065）。適用するまでは出さない
-  const axesOn = await migrated({ db, cache: c.get("adapters").cache }, SKU_OPTION_AXES_MIGRATION);
+  // SKU を分ける軸（0065）
   const axesBase = `/admin/shops/${shop.id}/option-axes`;
   const applyButton = (categoryId: string | null, label: string) => (
     <form method="post" action={`${axesBase}/apply`} style="display:inline">
@@ -104,22 +102,20 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
               </button>
             </form>
           </td>
-          {axesOn ? (
-            <td>
-              <details>
-                <summary>
-                  {t("axes.title")}: {row.option_axes === null || row.option_axes === undefined ? t("axes.mode_inherit") : axesText(row.option_axes)}
-                </summary>
-                <form method="post" action={`${axesBase}/categories/${n.id}`}>
-                  <AxesEditor name={row.name} axes={row.option_axes ?? null} modes={["inherit", "only_code", "axes"]} />
-                  <button type="submit" class="secondary small">
-                    {t("shop.save")}
-                  </button>
-                </form>
-                {applyButton(n.id, t("axes.apply"))}
-              </details>
-            </td>
-          ) : null}
+          <td>
+            <details>
+              <summary>
+                {t("axes.title")}: {row.option_axes === null || row.option_axes === undefined ? t("axes.mode_inherit") : axesText(row.option_axes)}
+              </summary>
+              <form method="post" action={`${axesBase}/categories/${n.id}`}>
+                <AxesEditor name={row.name} axes={row.option_axes ?? null} modes={["inherit", "only_code", "axes"]} />
+                <button type="submit" class="secondary small">
+                  {t("shop.save")}
+                </button>
+              </form>
+              {applyButton(n.id, t("axes.apply"))}
+            </details>
+          </td>
           <td>
             <form method="post" action={`${base}/${n.id}/delete`}>
               <button type="submit" class="small">
@@ -140,26 +136,24 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
       </PageHead>
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       {applied ? <p class="notice">{applied}</p> : null}
-      {axesOn ? (
-        <section class="card" id="option-axes">
-          <h2>{t("axes.title")}</h2>
-          <p class="muted">{t("axes.intro")}</p>
-          <p class="muted">{t("axes.apply_hint")}</p>
-          <h3>
-            {t("axes.shop")}: {axesText(shop.option_axes ?? null)}
-          </h3>
-          {can(c.get("shopAccess"), "settings") ? (
-            <form method="post" action={`${axesBase}/shop`}>
-              <p class="muted">{t("axes.shop_hint")}</p>
-              <AxesEditor name={t("axes.shop")} axes={shop.option_axes ?? null} modes={["none", "only_code", "axes"]} />
-              <button type="submit" class="secondary">
-                {t("shop.save")}
-              </button>
-            </form>
-          ) : null}
-          <p>{applyButton(null, t("axes.apply_shop"))}</p>
-        </section>
-      ) : null}
+      <section class="card" id="option-axes">
+        <h2>{t("axes.title")}</h2>
+        <p class="muted">{t("axes.intro")}</p>
+        <p class="muted">{t("axes.apply_hint")}</p>
+        <h3>
+          {t("axes.shop")}: {axesText(shop.option_axes ?? null)}
+        </h3>
+        {can(c.get("shopAccess"), "settings") ? (
+          <form method="post" action={`${axesBase}/shop`}>
+            <p class="muted">{t("axes.shop_hint")}</p>
+            <AxesEditor name={t("axes.shop")} axes={shop.option_axes ?? null} modes={["none", "only_code", "axes"]} />
+            <button type="submit" class="secondary">
+              {t("shop.save")}
+            </button>
+          </form>
+        ) : null}
+        <p>{applyButton(null, t("axes.apply_shop"))}</p>
+      </section>
         <div>
           {rows.length === 0 ? (
             <div class="empty">
@@ -188,7 +182,7 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
           </section>
         </div>
       {/* チップの入力（値の候補）。ページのすべての入力欄ができてから動かす */}
-      {axesOn ? <ChipsScript /> : null}
+      <ChipsScript />
     </AdminLayout>,
   );
 });

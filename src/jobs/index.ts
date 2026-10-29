@@ -17,10 +17,8 @@ import { setTimeZone } from "../i18n/time";
 import { registerFeedJob } from "../modules/product-feed/job";
 import { registerImageImportJob } from "../modules/woo-import/job";
 import { todayHere } from "../modules/store-tryon";
-import { createDbClient } from "../db/client";
-import { migrated } from "../db/migration-state";
 import { auditKeepDays } from "../audit";
-import { LEGAL_LINKS_MIGRATION, checkLegalLinks } from "../storefront/legal-links";
+import { checkLegalLinks } from "../storefront/legal-links";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -90,8 +88,6 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   // 法務のページの外の URL が生きているか（0062）。期限の来たショップを 1 回に 1 つだけ（外への通信は 3 種類 × リダイレクト 3 回で最大 12 回。
   // Workers の 1 回あたりの通信の上限をほかの処理と分け合う。5 分ごとなら 1 日に 288 ショップ）
   adapters.scheduler.register("legal_links", async () => {
-    const anonKey = cfg.get("SUPABASE_ANON_KEY");
-    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, LEGAL_LINKS_MIGRATION))) return;
     const outbound = adapters.publicFetch ?? doFetch;
     for (const due of await db.legalLinksDue(1)) {
       await db.legalLinksRecord(due.shop_id, await checkLegalLinks(due.urls, outbound));

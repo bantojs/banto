@@ -6,7 +6,6 @@
  */
 import type { CategoryRow } from "../db/types";
 
-export const SKU_OPTION_AXES_MIGRATION = "0065_sku_option_axes";
 export const MAX_AXES = 3;
 export const MAX_AXIS_VALUES = 100;
 /** 組み合わせの一括作成で 1 回に作る SKU の上限 */
