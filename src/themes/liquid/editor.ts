@@ -8,11 +8,13 @@
  *     値はテーマのファイルの値と違うものだけを置く
  */
 import { stripJsonComments, type ThemeBundle } from "./bundle";
-import { readSectionSchemas, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
+import { layoutGroup, readSectionSchemas, SECTION_LIMITS, type SectionData, type SectionLayout, type SectionLayouts, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 
-export type { SectionOverrides };
+export type { SectionOverrides, SectionLayouts };
 
 export const SECTION_OVERRIDES_KEY = "__sections";
+/** セクションの並び（置き場 → { order, added }）を置く鍵。テーマ全体の設定の鍵と混ざらないように __ で始める */
+export const SECTION_LAYOUT_KEY = "__layout";
 
 
 /** 画面で入力できる種類（ほかの種類はテーマのファイルの値のまま） */
@@ -55,10 +57,22 @@ export interface EditorSection {
   blocks: EditorBlock[];
 }
 
+/** 置き場ごとのセクションの並び（JSON のテンプレートとセクションのまとまり）。画面で並べ替え・外す・足す */
+export interface EditorLayout {
+  key: string;
+  /** 今の並び（外したものも含める。shown が false なら外している） */
+  items: { id: string; type: string; name: string; shown: boolean; added: boolean }[];
+  /** 足せるセクション（ひな形 presets のあるもの） */
+  available: { type: string; name: string }[];
+  /** テーマのファイルの並び（並びを置くかどうかの比べに使う） */
+  fileOrder: string[];
+}
+
 export interface EditorModel {
   global: { name: string; settings: EditorSetting[] }[];
   globalValues: Record<string, unknown>;
   sections: EditorSection[];
+  layouts: EditorLayout[];
   /** 画像の設定に選べるテーマの資産（画像だけ） */
   imageAssets: string[];
 }
@@ -97,7 +111,7 @@ function labelOf(v: unknown, schemaLocales: Record<string, unknown>, fallback: s
 /** オブジェクトの鍵に使うと Object.prototype に届く名前（テーマのファイルから来る id は鍵に使う前に断る） */
 const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 export const safeKey = (k: string): boolean => !RESERVED_KEYS.has(k);
-const idOk = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(id) && id !== SECTION_OVERRIDES_KEY && safeKey(id);
+const idOk = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(id) && !id.startsWith("__") && safeKey(id);
 /** 鍵をテーマのファイルや送られたフォームから作る入れ物（プロトタイプを持たない） */
 const bag = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
 
@@ -189,14 +203,28 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
     if (!settings.some((s) => s.id) && blocks.length === 0) return;
     sections.push({ key, id, type: d.type, name: labelOf((sc as Record<string, unknown>)["name"], loc, d.type), settings, values, blocks });
   };
+  const layouts: EditorLayout[] = [];
+  const savedLayouts = sectionLayoutsOf(saved);
+  // 足せるセクション: ひな形（presets）のあるもの
+  const available = [...schemas.entries()].filter(([, sc]) => Array.isArray(sc.presets) && sc.presets.length > 0).map(([type, sc]) => ({ type, name: labelOf(sc.presets![0]!.name ?? sc.name, loc, type) })).sort((a, b) => a.name.localeCompare(b.name));
   for (const [path, src] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
     const m = /^(templates|templates\/customers|sections)\/([A-Za-z0-9_.-]+)\.json$/.exec(path);
     if (!m) continue;
     const g = readJson(src);
     if (!isObject(g) || !isObject(g["sections"])) continue;
-    const secs = g["sections"] as Record<string, SectionData>;
-    const order = Array.isArray(g["order"]) ? (g["order"] as unknown[]).filter((x): x is string => typeof x === "string") : Object.keys(secs);
-    for (const id of [...new Set(order)].slice(0, 25)) if (secs[id]) add(`${m[1]}/${m[2]}`, id, secs[id]!);
+    const key = `${m[1]}/${m[2]}`;
+    const group = g as { sections?: Record<string, SectionData>; order?: string[] };
+    const file = layoutGroup(group, undefined, schemas);
+    const now = layoutGroup(group, savedLayouts[key], schemas);
+    for (const id of now.order) if (now.sections[id]) add(key, id, now.sections[id]!);
+    // 並び: 今の並びに、外したもの（テーマのファイルにあって今の並びに無いもの）を後ろに
+    const added = savedLayouts[key]?.added ?? {};
+    const item = (id: string, shown: boolean) => {
+      const d = now.sections[id]!;
+      return { id, type: d.type, name: labelOf(schemas.get(d.type)?.name, loc, d.type), shown, added: Object.hasOwn(added, id) };
+    };
+    const items = [...now.order.map((id) => item(id, true)), ...file.order.filter((id) => !now.order.includes(id) && now.sections[id]).map((id) => item(id, false))];
+    layouts.push({ key, items, available, fileOrder: file.order });
   }
   // {% section 'x' %} で置いたもの: 値は settings_data.json の current.sections.x、無ければスキーマの default
   const staticTypes = new Set<string>();
@@ -215,7 +243,7 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
     }
   }
   const imageAssets = bundle.assets.filter((a) => /\.(png|jpe?g|gif|webp|avif)$/i.test(a)).sort();
-  return { global, globalValues, sections, imageAssets };
+  return { global, globalValues, sections, layouts, imageAssets };
 }
 
 /** 保存した値のうち、セクションの上書き */
@@ -224,10 +252,78 @@ export function sectionOverridesOf(saved: Record<string, unknown> | null | undef
   return isObject(v) ? (v as SectionOverrides) : {};
 }
 
-/** 保存した値のうち、テーマ全体の設定（セクションの上書きを除く） */
+/** 保存した値のうち、セクションの並び（置き場 → { order, added }）。形の合わないものは捨てる */
+export function sectionLayoutsOf(saved: Record<string, unknown> | null | undefined): SectionLayouts {
+  const v = saved?.[SECTION_LAYOUT_KEY];
+  const out: SectionLayouts = Object.create(null) as SectionLayouts;
+  if (!isObject(v)) return out;
+  for (const [key, l] of Object.entries(v)) {
+    if (!safeKey(key) || !isObject(l) || !Array.isArray(l["order"])) continue;
+    const order = (l["order"] as unknown[]).filter(idOk).slice(0, SECTION_LIMITS.sections);
+    const added: Record<string, { type: string }> = Object.create(null) as Record<string, { type: string }>;
+    if (isObject(l["added"])) for (const [id, a] of Object.entries(l["added"] as Record<string, unknown>)) if (idOk(id) && isObject(a) && typeof a["type"] === "string" && idOk(a["type"])) added[id] = { type: a["type"] };
+    out[key] = { order, ...(Object.keys(added).length ? { added } : {}) };
+  }
+  return out;
+}
+
+/** 保存した値のうち、テーマ全体の設定（セクションの上書き・並びを除く） */
 export function globalSettingsOf(saved: Record<string, unknown> | null | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(saved ?? {})) if (k !== SECTION_OVERRIDES_KEY) out[k] = v;
+  for (const [k, v] of Object.entries(saved ?? {})) if (k !== SECTION_OVERRIDES_KEY && k !== SECTION_LAYOUT_KEY) out[k] = v;
+  return out;
+}
+
+/** 保存した値のうち、並びだけ（テーマのファイルの値と比べる元。足したセクションの値もひな形で比べるため） */
+export function layoutOnly(saved: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const l = saved?.[SECTION_LAYOUT_KEY];
+  return l === undefined ? {} : { [SECTION_LAYOUT_KEY]: l };
+}
+
+/** 画面のフォームの名前（並び）: 並びの欄を出した印 lk|置き場、位置 lo|置き場|id、表示 lh|置き場|id、足す la|置き場 */
+export const layoutFieldName = {
+  present: (key: string) => `lk|${key}`,
+  position: (key: string, id: string) => `lo|${key}|${id}`,
+  shown: (key: string, id: string) => `lh|${key}|${id}`,
+  add: (key: string) => `la|${key}`,
+};
+
+/**
+ * 送られたフォームから並びを作る。位置の小さい順、表示しないものは外す（足したものは消す）、足すときはひな形のある種類だけ。
+ * テーマのファイルの並びと同じで、足したものも無ければ置かない。newId は足すセクションの id（テストで差し替える）
+ */
+export function layoutsFromForm(model: EditorModel, form: Record<string, string | undefined>, newId: (type: string) => string = (type) => `${type}-${crypto.randomUUID().slice(0, 8)}`): SectionLayouts {
+  const out: SectionLayouts = Object.create(null) as SectionLayouts;
+  for (const l of model.layouts) {
+    // 並びの欄を出していない置き場（ほかの画面・古いフォーム）は今の並びのまま（チェックの無い欄は送られないので、印で見分ける）
+    if (form[layoutFieldName.present(l.key)] !== "1") {
+      const now = l.items.filter((it) => it.shown).map((it) => it.id);
+      const kept: Record<string, { type: string }> = Object.create(null) as Record<string, { type: string }>;
+      for (const it of l.items) if (it.added && it.shown) kept[it.id] = { type: it.type };
+      const same = now.length === l.fileOrder.length && now.every((id, i) => id === l.fileOrder[i]);
+      if (!same || Object.keys(kept).length) out[l.key] = { order: now, ...(Object.keys(kept).length ? { added: kept } : {}) };
+      continue;
+    }
+    const rows = l.items
+      .map((it, i) => ({ it, i, pos: Number(form[layoutFieldName.position(l.key, it.id)]), shown: form[layoutFieldName.shown(l.key, it.id)] === "on" }))
+      .filter((r) => r.shown)
+      .sort((a, b) => (Number.isFinite(a.pos) ? a.pos : 1e9) - (Number.isFinite(b.pos) ? b.pos : 1e9) || a.i - b.i);
+    const order = rows.map((r) => r.it.id);
+    const added: Record<string, { type: string }> = Object.create(null) as Record<string, { type: string }>;
+    for (const r of rows) if (r.it.added) added[r.it.id] = { type: r.it.type };
+    const want = form[layoutFieldName.add(l.key)];
+    if (want && l.available.some((a) => a.type === want) && order.length < SECTION_LIMITS.sections) {
+      const id = newId(want);
+      if (idOk(id) && !order.includes(id)) {
+        order.push(id);
+        added[id] = { type: want };
+      }
+    }
+    const same = order.length === l.fileOrder.length && order.every((id, i) => id === l.fileOrder[i]);
+    if (same && Object.keys(added).length === 0) continue;
+    const layout: SectionLayout = { order, ...(Object.keys(added).length ? { added } : {}) };
+    out[l.key] = layout;
+  }
   return out;
 }
 

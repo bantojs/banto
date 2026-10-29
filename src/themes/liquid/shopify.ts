@@ -18,6 +18,8 @@ export interface SectionSchema {
   max_blocks?: number;
   /** {% section %} で置いたセクション（JSON のテンプレートの外）の既定の設定とブロック */
   default?: { settings?: Record<string, unknown>; blocks?: { type: string; settings?: Record<string, unknown> }[] };
+  /** 管理画面で足せるセクションのひな形（Shopify と同じく、presets のあるセクションだけを足せる） */
+  presets?: { name?: unknown; settings?: Record<string, unknown>; blocks?: { type: string; settings?: Record<string, unknown> }[] }[];
 }
 export interface SettingSchema {
   id?: string;
@@ -48,6 +50,16 @@ export function settingsWith(schema: SettingSchema[] | undefined, values: Record
 }
 
 /** 運営者が管理画面で変えたセクション・ブロックの値（置き場 → セクションの id → 値。src/themes/liquid/editor.ts） */
+/**
+ * 運営者が管理画面で変えたセクションの並び（置き場 → 並び）。order は表示する id の順（無い id は外した）、
+ * added は足したセクション（id → 種類。中身はひな形 presets の最初のもの）。src/themes/liquid/editor.ts
+ */
+export interface SectionLayout {
+  order: string[];
+  added?: Record<string, { type: string }>;
+}
+export type SectionLayouts = Record<string, SectionLayout>;
+
 export type SectionOverrides = Record<string, Record<string, { settings?: Record<string, unknown>; blocks?: Record<string, Record<string, unknown>> }>>;
 
 /** JSON のテンプレート・セクションのまとまりの 1 つ */
@@ -102,6 +114,8 @@ export interface RenderEnv {
   staticSections: Record<string, SectionData>;
   /** 運営者が管理画面で変えたセクション・ブロックの値（置き場 → セクションの id、src/themes/liquid/editor.ts） */
   overrides: SectionOverrides;
+  /** 運営者が管理画面で変えたセクションの並び（置き場 → 並び） */
+  layouts?: SectionLayouts;
   /** セクションの外から渡す値（product・collection など。セクションも同じものを読む） */
   globals: Record<string, unknown>;
   paginate: Paginate | null;
@@ -391,12 +405,41 @@ function renderThemeBlock(id: string, b: BlockData): string {
   }
 }
 
-/** JSON のセクションのまとまり（templates/*.json・sections/*.json）を順に描く。同じ id は 1 回、数は 25 まで */
+/** ひな形（presets の最初のもの）から作るセクション。足したセクションの中身 */
+export function presetSection(type: string, schema: SectionSchema | undefined): SectionData {
+  const preset = Array.isArray(schema?.presets) ? schema!.presets[0] : undefined;
+  const blocks: Record<string, BlockData> = {};
+  (Array.isArray(preset?.blocks) ? preset!.blocks : []).slice(0, SECTION_LIMITS.blocks).forEach((b, i) => {
+    if (isObject(b) && typeof b.type === "string") blocks[`${b.type}-${i + 1}`] = { type: b.type, ...(isObject(b.settings) ? { settings: b.settings } : {}) };
+  });
+  return { type, ...(isObject(preset?.settings) ? { settings: preset!.settings } : {}), blocks, block_order: Object.keys(blocks) };
+}
+
+/**
+ * まとまりに管理画面の並びを当てる: 並びがあればその順（無い id は外した）、足したセクションはひな形から。
+ * 並びが無ければテーマのファイルのまま。同じ id は 1 回、数は 25 まで
+ */
+export function layoutGroup(group: { sections?: Record<string, SectionData>; order?: string[] }, layout: SectionLayout | undefined, schemas: ReadonlyMap<string, SectionSchema>): { sections: Record<string, SectionData>; order: string[] } {
+  const base: Record<string, SectionData> = Object.create(null) as Record<string, SectionData>;
+  if (isObject(group.sections)) for (const [id, d] of Object.entries(group.sections)) if (isObject(d)) base[id] = d;
+  const fileOrder = Array.isArray(group.order) ? group.order.filter((x): x is string => typeof x === "string") : Object.keys(base);
+  if (!layout || !Array.isArray(layout.order)) return { sections: base, order: [...new Set(fileOrder)].slice(0, SECTION_LIMITS.sections) };
+  if (isObject(layout.added)) {
+    for (const [id, a] of Object.entries(layout.added)) {
+      if (id in base || !isObject(a) || typeof a.type !== "string" || !schemas.has(a.type)) continue;
+      base[id] = presetSection(a.type, schemas.get(a.type));
+    }
+  }
+  const order = [...new Set(layout.order.filter((x): x is string => typeof x === "string" && x in base))].slice(0, SECTION_LIMITS.sections);
+  return { sections: base, order };
+}
+
+/** JSON のセクションのまとまり（templates/*.json・sections/*.json）を順に描く。管理画面の並びがあれば当てる */
 export function renderSectionGroup(group: { sections?: Record<string, SectionData>; order?: string[] }, key: string): string {
-  const sections = isObject(group.sections) ? group.sections : {};
-  const order = [...new Set(Array.isArray(group.order) ? group.order.filter((x): x is string => typeof x === "string") : Object.keys(sections))].slice(0, SECTION_LIMITS.sections);
-  const ov = env().overrides[key];
-  return order.map((id, i) => (isObject(sections[id]) ? renderSection(id, withOverride(sections[id]!, ov?.[id]), i + 1) : "")).join("");
+  const e = env();
+  const { sections, order } = layoutGroup(group, e.layouts?.[key], e.schemas);
+  const ov = e.overrides[key];
+  return order.map((id, i) => renderSection(id, withOverride(sections[id]!, ov?.[id]), i + 1)).join("");
 }
 
 /** {% section 'x' %} で置いたセクション: settings_data.json の current.sections.x、無ければスキーマの default */

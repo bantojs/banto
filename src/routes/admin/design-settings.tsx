@@ -3,7 +3,7 @@ import type { AppEnv } from "../../app";
 import type { ShopRow } from "../../db/types";
 import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { DbError } from "../../db/client";
-import { editorModel, EDITABLE_SETTING_TYPES, fieldName, settingsFromForm, shownValue, type EditorModel, type EditorSetting } from "../../themes/liquid/editor";
+import { editorModel, EDITABLE_SETTING_TYPES, fieldName, layoutFieldName, layoutOnly, layoutsFromForm, SECTION_LAYOUT_KEY, settingsFromForm, shownValue, type EditorLayout, type EditorModel, type EditorSetting } from "../../themes/liquid/editor";
 import { readThemeBundle, THEME_VERSION_ID } from "../../themes/liquid/versions";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
@@ -95,6 +95,49 @@ function Field(p: { s: EditorSetting; name: string; value: unknown; form?: Recor
   );
 }
 
+/** セクションの並び（置き場ごと）: 位置・表示・足す */
+function LayoutFields(p: { l: EditorLayout }) {
+  const { l } = p;
+  return (
+    <fieldset>
+      <legend>{t("design.layout_title")}</legend>
+      <p class="muted small">{t("design.layout_note")}</p>
+      <input type="hidden" name={layoutFieldName.present(l.key)} value="1" />
+      <table>
+        <tbody>
+          {l.items.map((it, i) => (
+            <tr>
+              <td>
+                <input type="number" name={layoutFieldName.position(l.key, it.id)} value={String(i + 1)} min="1" max="99" style="width:4rem" aria-label={t("design.layout_position")} />
+              </td>
+              <td>
+                <label>
+                  <input type="checkbox" name={layoutFieldName.shown(l.key, it.id)} value="on" checked={it.shown} /> {it.name}
+                </label>{" "}
+                <span class="muted small">
+                  <code>{it.id}</code>
+                  {it.added ? ` · ${t("design.layout_added")}` : ""}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {l.available.length ? (
+        <div class="field">
+          <label for={`la-${l.key.replace(/[^A-Za-z0-9_-]/g, "_")}`}>{t("design.layout_add")}</label>
+          <select id={`la-${l.key.replace(/[^A-Za-z0-9_-]/g, "_")}`} name={layoutFieldName.add(l.key)}>
+            <option value="">{t("design.layout_add_none")}</option>
+            {l.available.map((a) => (
+              <option value={a.type}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
 interface LoadedVersion {
   shop: ShopRow;
   id: string;
@@ -117,7 +160,7 @@ async function load(c: AdminContext): Promise<LoadedVersion | null> {
   if (!bundle) return null;
   const cur = await db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } });
   const saved = row.settings ?? {};
-  return { shop, id: row.id, name: row.name, complete: row.complete, published: cur?.theme_version_id === row.id, saved, model: editorModel(bundle, saved, getLocale()), fileModel: editorModel(bundle, null, getLocale()) };
+  return { shop, id: row.id, name: row.name, complete: row.complete, published: cur?.theme_version_id === row.id, saved, model: editorModel(bundle, saved, getLocale()), fileModel: editorModel(bundle, layoutOnly(saved), getLocale()) };
 }
 
 function page(c: AdminContext, v: LoadedVersion, opts: { form?: Record<string, string>; errors?: Map<string, string>; flash?: "saved" | "invalid" | "too_large" } = {}) {
@@ -125,10 +168,12 @@ function page(c: AdminContext, v: LoadedVersion, opts: { form?: Record<string, s
   const tabs = { shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "design" as const };
   const crumbs = [{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("design.title"), href: base(shop) }, { label: v.name }];
   const err = (n: string) => opts.errors?.get(n);
-  const empty = model.global.length === 0 && model.sections.length === 0;
+  const empty = model.global.length === 0 && model.sections.length === 0 && model.layouts.length === 0;
   // セクションは置き場ごとにまとめる
   const byKey = new Map<string, typeof model.sections>();
+  for (const l of model.layouts) byKey.set(l.key, []);
   for (const s of model.sections) byKey.set(s.key, [...(byKey.get(s.key) ?? []), s]);
+  const layoutOf = new Map(model.layouts.map((l) => [l.key, l]));
   return (
     <AdminLayout title={`${shop.name} · ${t("design.settings")}`} nav crumbs={crumbs} shopTabs={tabs}>
       <PageHead title={`${t("design.settings")}: ${v.name}`} sub={v.published ? t("design.settings_live_note") : t("design.settings_preview_note")} />
@@ -157,6 +202,7 @@ function page(c: AdminContext, v: LoadedVersion, opts: { form?: Record<string, s
               <h2>
                 {t("design.settings_place")}: <code>{key}</code>
               </h2>
+              {layoutOf.get(key) ? <LayoutFields l={layoutOf.get(key)!} /> : null}
               {secs.map((sec) => (
                 <fieldset>
                   <legend>{sec.name}</legend>
@@ -198,6 +244,11 @@ designSettings.post("/:shopId/design/versions/:versionId/settings", requireOwner
   if (!v) return c.text(t("shop.not_found"), 404);
   const form = await formFields(c);
   const r = settingsFromForm(v.model, form, { global: v.fileModel.globalValues, sections: v.fileModel.sections });
+  if (r.ok) {
+    // セクションの並び（並べ替え・外す・足す）。テーマのファイルのままなら置かない
+    const layouts = layoutsFromForm(v.model, form);
+    if (Object.keys(layouts).length) r.settings[SECTION_LAYOUT_KEY] = layouts;
+  }
   if (!r.ok) {
     const errors = new Map(r.errors.map((e) => [e.field, reasonText(e.reason)]));
     return c.html(page(c, v, { form, errors, flash: "invalid" }), 400);

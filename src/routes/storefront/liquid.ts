@@ -26,7 +26,7 @@ import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
-import { sectionOverridesOf } from "../../themes/liquid/editor";
+import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
@@ -185,7 +185,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
     canonical_url: canonical,
     ...page.values,
   };
-  return { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview, overrides: sectionOverridesOf(choice.settings) };
+  return { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview, overrides: sectionOverridesOf(choice.settings), layouts: sectionLayoutsOf(choice.settings) };
 }
 
 /** ?sections=a,b（JSON）か ?section_id=a（HTML）で、セクションだけを返す（Shopify の Section Rendering API） */
