@@ -422,6 +422,9 @@ const FORM_ACTIONS: Readonly<Record<string, string>> = {
   recover_customer_password: "/account/login",
 };
 
+/** {% banto_confirmation %} を描いた印（描いた結果にこれが無ければ、既定のテーマの最終確認画面にする） */
+export const CONFIRMATION_MARK = "<!-- banto:confirmation -->";
+
 export function registerShopifyTags(liquid: Liquid): void {
   liquid.registerTag(
     "schema",
@@ -502,6 +505,16 @@ export function registerShopifyTags(liquid: Liquid): void {
       }
     },
   );
+  // 最終確認画面の中身（特商法の表示と注文を確定するボタン）。Banto が描いたものをそのまま置く。templates/checkout_confirm には必須
+  liquid.registerTag(
+    "banto_confirmation",
+    class extends Tag {
+      *render(_ctx: Context, emitter: Emitter) {
+        const v = env().globals["__banto_confirmation"];
+        if (v instanceof SafeHtml) emitter.write(`${CONFIRMATION_MARK}${v.html}`);
+      }
+    },
+  );
   // テーマのブロック: {% content_for 'blocks' %}（今のセクション・ブロックの中のブロックを順に）、
   // {% content_for 'block', type: 'x', id: 'y' %}（決まった場所に置くブロック。値は中のブロックの id から、無ければ宣言の既定値）
   liquid.registerTag(
@@ -569,7 +582,9 @@ export function registerShopifyTags(liquid: Liquid): void {
       *render(ctx: Context, emitter: Emitter) {
         const e = env();
         const h = (yield this.hash.render(ctx)) as Record<string, unknown>;
-        const action = FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
+        // 配送先のフォーム: 送り先は選んだ決済手段の確認（Banto が渡す checkout.provider）
+        const provider = this.formType === "checkout_address" && isObject(e.globals["checkout"]) ? String((e.globals["checkout"] as Record<string, unknown>)["provider"] ?? "") : "";
+        const action = /^(stripe|komoju)$/.test(provider) ? `${e.shopPath}/checkout/${provider}` : FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
         if (!action) e.errors.push(`form '${this.formType}' is not supported yet`);
         const extra = Object.entries(h)
           .filter(([k, v]) => /^[a-z][a-z0-9_-]*$/.test(k) && v !== undefined && k !== "return_to")

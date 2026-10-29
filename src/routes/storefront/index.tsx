@@ -21,13 +21,13 @@ import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
-import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { liquidThemeFor, registerThemeAssets, renderCart, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -796,7 +796,28 @@ async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): P
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
   const edited = addressValues(f);
   const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
-  return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: total, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop) }));
+  return addressPage(c, s, { provider, values, subtotal: total, lines });
+}
+
+/** 配送先の画面（Liquid のテーマの templates/checkout、無ければ既定のテーマ） */
+async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400 }): Promise<Response> {
+  const props = { provider: p.provider, values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), ...(p.error ? { error: p.error } : {}) };
+  const lt = await liquidThemeFor(c, s, { cartLines: p.lines });
+  if (lt) {
+    const res = renderCheckoutAddress(c, s, lt, { ...props, categories: await s.sf.listCategories(s.shop), ...(p.status ? { status: p.status } : {}) });
+    if (res) return res;
+  }
+  return c.html(s.theme.AddressPage({ ctx: s.ctx, ...props }), p.status ?? 200);
+}
+
+/** 最終確認画面（Liquid のテーマの templates/checkout_confirm。{% banto_confirmation %} が無ければ既定のテーマ） */
+async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation; quote: string; error?: string; status?: 200 | 409 }): Promise<Response> {
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = await renderCheckoutConfirm(c, s, lt, { ...p, categories: await s.sf.listCategories(s.shop) });
+    if (res) return res;
+  }
+  return c.html(s.theme.ConfirmPage({ ctx: s.ctx, confirmation: p.confirmation, quote: p.quote, ...(p.error ? { error: p.error } : {}) }), p.status ?? 200);
 }
 
 /**
@@ -822,14 +843,14 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   if (f.quote === undefined) {
     const r = await createQuote(qctx, s.cart, provider, f);
     if (!r.ok && r.error === "invalid_address") {
-      const { total: subtotal } = await cartLines(s);
+      const { total: subtotal, lines } = await cartLines(s);
       const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
-      return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values: addressValues(f), prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), delivery: deliveryOptions(s.shop.settings), consent: qctx.consent }), 400);
+      return addressPage(c, s, { provider, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
     }
     if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : "stock"}`);
     const conf = r.confirmation;
     track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
-    return c.html(s.theme.ConfirmPage({ ctx: s.ctx, confirmation: conf, quote: r.token }));
+    return confirmPage(c, s, { confirmation: conf, quote: r.token });
   }
 
   // 2. 確認済みの quote → 確定
@@ -837,7 +858,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   if (!quote || quote.provider !== provider) return c.redirect(`${cartUrl}?error=expired`);
   const check = await recheckQuote(qctx, quote);
   if (!check.ok) {
-    if (check.error === "changed" && check.fresh.ok) return c.html(s.theme.ConfirmPage({ ctx: s.ctx, confirmation: check.fresh.confirmation, quote: check.fresh.token, error: t("confirm.changed") }), 409);
+    if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, error: t("confirm.changed"), status: 409 });
     return c.redirect(`${cartUrl}?error=stock`);
   }
   const deps = placeOrderDeps(c, setup);

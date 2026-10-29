@@ -14,7 +14,7 @@ import type { LoadedTheme } from "./cache";
 import { readSectionSchemas, renderSectionGroup, settingsWith, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 import { globalSettingsOf } from "./editor";
 
-export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search";
+export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm";
 
 interface Prepared {
   schemas: Map<string, SectionSchema>;

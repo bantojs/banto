@@ -1,6 +1,6 @@
 # テーマ（Liquid）
 
-> 状態: 段階 3 の途中。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・404 のページで、カートから先（住所・最終確認・決済）と法務のページは既定のテーマが描きます。設定の値は画面で変えられます。カートのページ・検索・レジは、この後に入ります。
+> 状態: 段階 3 の途中。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・カート・検索・レジ（配送先・最終確認）・404 のページです。決済はいつも Stripe・KOMOJU のページで、法務のページは既定のテーマが描きます。
 
 Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/default/`）で描きます。これに加えて、**Liquid で書いたテーマ**を取り込んで、Worker を配置し直さずに見た目を変えられるようにします。
 
@@ -103,6 +103,8 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | 商品 | `product` | `product`・`current_variant` |
 | 見つからない | `404` | — |
 | カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
+| レジ: 配送先 | `checkout` | `checkout`（`values`（入れた値）・`error`・`prefectures`（`name`・`shipping_price`）・`delivery`（お届け日時を選べるショップ）・`marketing_consent`（案内メールの欄を出すか）・`subtotal_price`・`shipping_summary`）。フォームは `{% form 'checkout_address' %}`（下の「レジ」） |
+| レジ: 最終確認 | `checkout_confirm` | `checkout.confirmation`（要約に使う値）。中身は **`{% banto_confirmation %}` が必須**（下の「レジ」） |
 | 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上（2 文字以下は探さず 0 件） |
 
 **どのページでも**: `shop`・`settings`・`routes`・`request`・`cart`（`item_count`・`items`・`total_price` など。どのページでも読めるので、ヘッダーのカートの一覧に使えます）・`customer`（ログイン中の会員のメールアドレスだけ）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前と URL だけ）・`page_title`・`page_description`・`canonical_url`・`template`。
@@ -116,6 +118,15 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 **タグ**（標準の Liquid のタグに加えて）: `section`・`sections`・`schema`・`form`（`'product'`: カートに入れる（`id` = バリエーション、`quantity`）、`'cart'`: カートの数を変える・購入手続きへ、`'contact'`: お問い合わせ（同梱モジュール「お問い合わせ」が ON のショップ。`contact[email]`・`contact[name]`・`contact[body]` を Banto のお問い合わせの画面に写して続けます）、`'customer_login'` / `'create_customer'`: 会員のログイン（Banto はメールのコードでログインするので、`customer[email]` だけを使います））・`content_for`（`'blocks'` と `'block'`。テーマのブロックは 8 段まで入れ子にできます）・`paginate`（1 ページの数は Banto が決めます（48）。Banto は位置で次のページへ進むので、`paginate.parts` は今のページと前後だけ、2 ページ目より先の `current_page` は 2 です。`paginate.pages`・`items` は全体の数から出します。`paginate.next.url` / `previous.url`）・`style`・`stylesheet`・`javascript`・`layout`。
 
 知らないフィルター・タグは、テーマを取り込むときに断ります。
+
+### レジ（配送先・最終確認）
+
+Shopify では Plus のプランに限られる「チェックアウトの途中の画面」を、Banto ではテーマで作れます（人間の決定 2026-10-28）。カード番号を入れる画面はいつも Stripe・KOMOJU のページで、金額・在庫・送料は確定の直前に Banto が引き直す（確認画面と 1 円でも違えば確定しない）ので、画面をどう作っても値段は変わりません。
+
+- **配送先**（`templates/checkout`）: `{% form 'checkout_address' %}` の中に、Banto の欄の名前（`customer_name`・`customer_email`・`phone`・`postal_code`・`state`・`city`・`line1`・`line2`、お届け日時の `delivery_date`・`delivery_slot`、案内メールの `marketing_consent`）で置きます。送り先は選んだ決済手段の確認の画面です。誤りがあれば同じテンプレートを `checkout.error` つきで描き直します。
+- **最終確認**（`templates/checkout_confirm`）: 特定商取引法の最終確認画面です。表示しなければならない項目（品目・数・金額・送料・値引き・支払いの方法と時期・引渡しの時期・申込みの撤回の条件・お届け先・法務のページへのリンク）と「注文を確定する」ボタンは、**`{% banto_confirmation %}` が Banto の部品として描きます**（同梱テーマと同じもの）。テーマはその外側（見出し・注文の要約・案内）を作ります。`{% banto_confirmation %}` の無いテーマは取り込めません。描いた結果に無ければ（条件の中に置いて描かなかったなど）、その画面は既定のテーマで描きます。
+- レジの画面には **CSP** を付けます（`script-src 'self'`）。動くスクリプトは、ショップのドメインから配るテーマの資産だけです。インラインのスクリプトと外のスクリプト（分析のタグ・チャットなど）は、レジの画面では動きません。住所と連絡先が載る画面だからです。
+- テーマにレジのテンプレートが無ければ、既定のテーマで描きます。決済の後の完了画面は、今は既定のテーマです。
 
 ### カート
 
