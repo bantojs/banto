@@ -35,9 +35,18 @@ export function settingsWith(schema: SettingSchema[] | undefined, values: Record
   const out: Record<string, unknown> = {};
   for (const st of schema ?? []) if (st.id && st.default !== undefined) out[st.id] = st.default;
   Object.assign(out, values ?? {});
-  for (const st of schema ?? []) if (st.id && st.type && HTML_SETTING_TYPES.has(st.type) && typeof out[st.id] === "string") out[st.id] = new SafeHtml(out[st.id] as string);
+  for (const st of schema ?? []) {
+    if (!st.id || !st.type) continue;
+    const v = out[st.id];
+    if (HTML_SETTING_TYPES.has(st.type) && typeof v === "string") out[st.id] = new SafeHtml(v);
+    // 管理画面で選んだテーマの資産（"asset:<名前>"）。image_url が版の資産の URL にする
+    else if (st.type === "image_picker" && typeof v === "string" && v.startsWith("asset:")) out[st.id] = { asset: v.slice(6), alt: "" };
+  }
   return out;
 }
+
+/** 運営者が管理画面で変えたセクション・ブロックの値（置き場 → セクションの id → 値。src/themes/liquid/editor.ts） */
+export type SectionOverrides = Record<string, Record<string, { settings?: Record<string, unknown>; blocks?: Record<string, Record<string, unknown>> }>>;
 
 /** JSON のテンプレート・セクションのまとまりの 1 つ */
 export interface SectionData {
@@ -71,6 +80,8 @@ export interface RenderEnv {
   schemas: Map<string, SectionSchema>;
   /** config/settings_data.json の current.sections（{% section %} で置いたセクションの値） */
   staticSections: Record<string, SectionData>;
+  /** 運営者が管理画面で変えたセクション・ブロックの値（置き場 → セクションの id、src/themes/liquid/editor.ts） */
+  overrides: SectionOverrides;
   /** セクションの外から渡す値（product・collection など。セクションも同じものを読む） */
   globals: Record<string, unknown>;
   paginate: Paginate | null;
@@ -135,6 +146,13 @@ interface ImageLike {
   height?: number | null;
   alt?: string | null;
   src?: string;
+  /** テーマの資産の名前（設定の image_picker で選んだもの） */
+  asset?: string;
+}
+
+function themeAssetUrl(name: string): string {
+  const e = env();
+  return `${e.shopOrigin}/_theme/${e.versionId}/assets/${encodeURIComponent(name)}`;
 }
 
 function mediaUrl(key: string): string {
@@ -146,6 +164,7 @@ function imageUrlOf(input: unknown, width?: number, height?: number): ImageUrl |
   let img: ImageLike | null = null;
   if (isObject(input)) img = (isObject(input["preview_image"]) ? input["preview_image"] : isObject(input["featured_image"]) ? input["featured_image"] : input) as ImageLike;
   if (!img) return typeof input === "string" ? input : "";
+  if (typeof img.asset === "string") return new ImageUrl(themeAssetUrl(img.asset), null, null, String(img.alt ?? ""));
   if (!img.key) return typeof img.src === "string" ? img.src : "";
   const key = width && width <= 400 && img.thumb_key ? img.thumb_key : img.key;
   const w = img.width ?? null;
@@ -211,10 +230,7 @@ export function registerShopifyFilters(liquid: Liquid): void {
       .join("");
     return new SafeHtml(`<img src="${escapeHtml(src)}"${attr("alt", alt) || ' alt=""'}${attr("width", width)}${attr("height", height)}${attr("loading", kw["loading"] ?? "lazy")}${extra}>`);
   });
-  liquid.registerFilter("asset_url", (name: unknown) => {
-    const e = env();
-    return `${e.shopOrigin}/_theme/${e.versionId}/assets/${encodeURIComponent(String(name ?? ""))}`;
-  });
+  liquid.registerFilter("asset_url", (name: unknown) => themeAssetUrl(String(name ?? "")));
   liquid.registerFilter("asset_img_url", (name: unknown) => {
     const e = env();
     return `${e.shopOrigin}/_theme/${e.versionId}/assets/${encodeURIComponent(String(name ?? ""))}`;
@@ -318,10 +334,11 @@ export function renderSection(id: string, data: SectionData, index = 1): string 
 }
 
 /** JSON のセクションのまとまり（templates/*.json・sections/*.json）を順に描く。同じ id は 1 回、数は 25 まで */
-export function renderSectionGroup(group: { sections?: Record<string, SectionData>; order?: string[] }): string {
+export function renderSectionGroup(group: { sections?: Record<string, SectionData>; order?: string[] }, key: string): string {
   const sections = isObject(group.sections) ? group.sections : {};
   const order = [...new Set(Array.isArray(group.order) ? group.order.filter((x): x is string => typeof x === "string") : Object.keys(sections))].slice(0, SECTION_LIMITS.sections);
-  return order.map((id, i) => (isObject(sections[id]) ? renderSection(id, sections[id]!, i + 1) : "")).join("");
+  const ov = env().overrides[key];
+  return order.map((id, i) => (isObject(sections[id]) ? renderSection(id, withOverride(sections[id]!, ov?.[id]), i + 1) : "")).join("");
 }
 
 /** {% section 'x' %} で置いたセクション: settings_data.json の current.sections.x、無ければスキーマの default */
@@ -413,7 +430,7 @@ export function registerShopifyTags(liquid: Liquid): void {
         this.type = m[1]!;
       }
       *render(_ctx: Context, emitter: Emitter) {
-        emitter.write(renderSection(this.type, staticSection(this.type)));
+        emitter.write(renderSection(this.type, withOverride(staticSection(this.type), env().overrides[`static/${this.type}`]?.[this.type])));
       }
     },
   );
@@ -429,7 +446,7 @@ export function registerShopifyTags(liquid: Liquid): void {
       }
       *render(_ctx: Context, emitter: Emitter) {
         const g = groupOf(this.group);
-        emitter.write(g ? renderSectionGroup(g) : "");
+        emitter.write(g ? renderSectionGroup(g, `sections/${this.group}`) : "");
       }
     },
   );
@@ -512,4 +529,17 @@ export function readSectionSchemas(files: Readonly<Record<string, string>>): Map
 export function extendShopify(liquid: Liquid): void {
   registerShopifyFilters(liquid);
   registerShopifyTags(liquid);
+}
+
+/** セクションの値に上書きを重ねる（描くときに。テーマのファイルの値は変えない） */
+export function withOverride(data: SectionData, ov: SectionOverrides[string][string] | undefined): SectionData {
+  if (!ov) return data;
+  const blocks = data.blocks ? { ...data.blocks } : undefined;
+  if (blocks && isObject(ov.blocks)) {
+    for (const [bid, vals] of Object.entries(ov.blocks)) {
+      const b = blocks[bid];
+      if (b && isObject(vals)) blocks[bid] = { ...b, settings: { ...(b.settings ?? {}), ...vals } };
+    }
+  }
+  return { ...data, ...(isObject(ov.settings) ? { settings: { ...(data.settings ?? {}), ...ov.settings } } : {}), ...(blocks ? { blocks } : {}) };
 }

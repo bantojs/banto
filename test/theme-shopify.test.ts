@@ -6,7 +6,7 @@ import { extendShopify, withRenderEnv, type RenderEnv } from "../src/themes/liqu
 /** Shopify と同じ名前のフィルター・タグ（docs/themes.md）。中身は Banto のデータで作る */
 function render(src: string, scope: Record<string, unknown> = {}, locales: Record<string, unknown> = {}) {
   const engine = createThemeEngine({}, { extend: extendShopify, timezone: "Asia/Tokyo" });
-  const env: RenderEnv = { engine, versionId: "v1", shopOrigin: "https://shop.example.jp", shopPath: "", mediaBaseUrl: "https://m.example", locales, schemas: new Map(), staticSections: {}, globals: {}, paginate: null, preview: false, errors: [] };
+  const env: RenderEnv = { engine, versionId: "v1", shopOrigin: "https://shop.example.jp", shopPath: "", mediaBaseUrl: "https://m.example", locales, schemas: new Map(), staticSections: {}, overrides: {}, globals: {}, paginate: null, preview: false, errors: [] };
   return withRenderEnv(env, () => engine.renderString(src, scope));
 }
 

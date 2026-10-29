@@ -53,7 +53,9 @@ describe("banto-theme（CLI）", () => {
     expect(Object.keys(r.bundle.files).sort()).toEqual(["layout/theme.liquid", "locales/en.default.json", "locales/ja.json", "sections/hero.liquid", "templates/index.json"]);
     expect(r.bundle.assets.sort()).toEqual(["app.js", "theme.css"]);
     expect(r.skipped).toEqual(["README.md"]);
-    expect(wantedLocale("locales/en.default.schema.json", "ja")).toBe(false);
+    expect(wantedLocale("locales/en.default.schema.json", "ja")).toBe(true);
+    expect(wantedLocale("locales/ja.schema.json", "ja")).toBe(true);
+    expect(wantedLocale("locales/fr.schema.json", "ja")).toBe(false);
     await expect(buildBundle(join(dir, "nope"), "ja")).rejects.toThrow(/フォルダがありません/);
   });
 

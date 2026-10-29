@@ -70,9 +70,9 @@ const UPLOAD_SCRIPT = `(function(){
   var input=document.getElementById("theme-file"), status=document.getElementById("theme-status"), btn=form.querySelector("button[type=submit]");
   var MSG=JSON.parse(form.getAttribute("data-msg")||"{}");
   var TEXT=/^(layout|templates|sections|snippets)\\/[^\\/]+\\.liquid$|^(templates|sections|config|locales)\\/[^\\/]+\\.json$/;
-  // 翻訳は既定の言語とデプロイの言語だけを送る（ほかの言語と *.schema.json は使わない。束ねたファイルの大きさを抑える）
+  // 翻訳は既定の言語とデプロイの言語だけを送る（設定の画面の文言の *.schema.json も同じ。束ねたファイルの大きさを抑える）
   var LOCALE=form.getAttribute("data-locale")||"ja";
-  function wanted(n){ var m=/^locales\\/(.+)\\.json$/.exec(n); if(!m) return true; return /\\.default$/.test(m[1])&&!/\\.schema/.test(m[1])||m[1]===LOCALE; }
+  function wanted(n){ var m=/^locales\\/(.+)\\.json$/.exec(n); if(!m) return true; return /\\.default(\\.schema)?$/.test(m[1])||m[1]===LOCALE||m[1]===LOCALE+".schema"; }
   function readJson(res){ return res.text().then(function(t){ try{ return JSON.parse(t); }catch(e){ throw new Error(MSG.failed+" ("+res.status+")"); } }); }
   function say(s){ status.textContent=s; }
   function readZip(buf){
@@ -202,6 +202,9 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
                   <td>{formatDateTime(v.created_at)}</td>
                   <td>{tf("design.size", { kb: Math.ceil(v.size_bytes / 1024), files: v.file_count })}</td>
                   <td class="actions">
+                    <a class="btn secondary" href={`${base(shop)}/versions/${v.id}/settings`}>
+                      {t("design.settings")}
+                    </a>
                     {shop.domain && canRender && shop.published ? (
                       <a class="btn secondary" href={`${base(shop)}/versions/${v.id}/preview`} target="_blank" rel="noopener">
                         {t("design.preview")}

@@ -32,11 +32,11 @@ const TEXT = /^(layout|templates|sections|snippets)\/[^/]+\.liquid$|^(templates|
 
 export class CliError extends Error {}
 
-/** 翻訳は既定（*.default.json）とデプロイの言語だけ（管理画面と同じ。束ねたファイルの大きさを抑える） */
+/** 翻訳は既定（*.default.json）とデプロイの言語だけ。設定の画面の文言（*.schema.json）も同じ（管理画面と同じ。束ねたファイルの大きさを抑える） */
 export function wantedLocale(path, locale) {
   const m = /^locales\/(.+)\.json$/.exec(path);
   if (!m) return true;
-  return (/\.default$/.test(m[1]) && !/\.schema/.test(m[1])) || m[1] === locale;
+  return /\.default(\.schema)?$/.test(m[1]) || m[1] === locale || m[1] === `${locale}.schema`;
 }
 
 async function walk(dir, root = dir, out = []) {
