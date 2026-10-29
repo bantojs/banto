@@ -84,6 +84,8 @@ GitHub でフォークを開き、**Sync fork → Update branch** を押しま�
 
 **コマンドで導入した場合**
 
+`npm run deploy` は `scripts/deploy.mjs` を通して `wrangler deploy` します（ビルドの変数 `BANTO_PLACEMENT` があれば、Worker を DB の近くで動かす設定を足す。docs/setup.md §8）。
+
 ```bash
 git pull
 npm install

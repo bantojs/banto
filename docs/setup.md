@@ -18,6 +18,7 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 | 4 | セットアップ画面の指示に従う（データベースの準備、運営者登録、ショップ名） | 10 分 |
 | 5 | 決済（Stripe）をつなぐ | 10 分 |
 | 7（任意） | 画像を R2 から直接配信する | 5 分 |
+| 8（任意） | Worker をデータベースの近くで動かして、ページを速くする | 5 分 |
 
 ## 0. アカウントを作る
 
@@ -151,6 +152,23 @@ R2 のバケットに自分のドメインを付けると、画像は Cloudflare
 
 画像はアップロード時に管理画面（ブラウザ）が長辺 1600px の WebP に縮小し、一覧用の 400px サムネイルも作ります。
 スマホの写真をそのまま選んで大丈夫です。縮小は端末側で行うので、Workers の CPU 時間も使いません。
+
+## 8. ページを速くする（Worker を DB の近くで動かす）
+
+Banto の Worker は、ふだんは買い手の近くの Cloudflare の拠点で動き、ページを描くたびにデータベース（Supabase）へ何回か問い合わせます。
+買い手とデータベースが離れていると、その往復のたびに時間がかかります。Worker をデータベースの近くで動かすと（Cloudflare の **Placement**）、商品の一覧や詳細のように DB に問い合わせるページが速くなります。
+
+1. Supabase の画面 → **Project Settings → General** で、プロジェクトの **Region** を見ます（例: Northeast Asia (Tokyo) なら `ap-northeast-1`）
+2. Cloudflare の画面 → **Workers & Pages → banto → 設定（Settings）→ ビルド（Builds）**
+   - **ビルドの変数（Build variables and secrets）** に `BANTO_PLACEMENT` = `aws:ap-northeast-1`（`aws:` + 1 のリージョン）を追加
+   - **Deploy command** を `npm run deploy` に変える（`npx wrangler deploy` のままだと、この変数は使われません）
+3. **Deployments** から再デプロイします。ビルドのログに `deploy: placement {"mode":"targeted","region":"aws:ap-northeast-1"}` と出ていれば設定できています
+
+- 確かめ方: ブラウザの開発者ツールでお店のページの応答ヘッダーを見ると、`cf-placement: remote-NRT`（東京へ移した）のように出ます（Cloudflare の仕様が変わると出なくなることがあります）。
+- リージョンが分からない、Supabase 以外のデータベースを使っている（[docs/self-hosted-db.md](self-hosted-db.md)）ときは `BANTO_PLACEMENT` = `smart` にすると、Cloudflare が通信を見て決めます。ただしアクセスが少ないうちは移らないことがあります。
+- DB に問い合わせない応答（`/robots.txt` など）は、遠くへ回るぶん少し遅くなることがあります。画像は §7 の R2 の独自ドメインから配れば Worker を通らないので影響しません。
+- Cloudflare の画面の「配置（Placement）」で直接変えた設定は、次のデプロイで変わることがあります。ずっと使うなら `BANTO_PLACEMENT` で決めてください。
+- Node で動かす（[docs/run-on-node.md](run-on-node.md)）ときは関係ありません。サーバーをデータベースの近くに置いてください。
 
 ## うまくいかないとき
 
