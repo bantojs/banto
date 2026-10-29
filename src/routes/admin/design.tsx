@@ -351,7 +351,7 @@ design.get("/:shopId/design/versions/:versionId/preview", requireOwner, async (c
     if (e instanceof DbError && e.message.includes("theme_not_found")) return c.text(t("shop.not_found"), 404);
     throw e;
   }
-  return c.redirect(await themePreviewUrl(publicBaseUrl(c), shop, shop.id, versionId, secret));
+  return c.redirect(await themePreviewUrl(publicBaseUrl(c), shop, shop.id, versionId, secret, "admin"));
 });
 
 design.post("/:shopId/design/publish", requireOwner, async (c: AdminContext) => {

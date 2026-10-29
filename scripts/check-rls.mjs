@@ -41,6 +41,8 @@ const ANON_FUNCTIONS = new Set([
   "product_public_list", "product_public_facets", "banto_product_search_text",
   // 0060: サイトマップ（公開中の商品の数と slug）・商品フィードの 1 ページ・Workers のプラン（free / paid、裏の処理の量）
   "product_public_count", "product_public_slugs", "product_feed_page", "banto_site_plan",
+  // 0074: お店の画面が Liquid のテーマを描いてよいか（Workers のプランと plan_limits.theme_versions が 0 でないか。秘密ではない）
+  "banto_site_liquid",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */

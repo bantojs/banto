@@ -588,7 +588,7 @@ export class ApiService {
     const deps = await this.themeReady();
     if (!deps.secret) throw new ApiError("upstream", "SESSION_SECRET is not configured", 502);
     const shop = await this.call<{ shop_id: string; slug: string; domain: string }>("api_theme_preview", { p_version_id: uuidOr404(versionId) });
-    return { preview_url: await themePreviewUrl(deps.publicBase, shop, shop.shop_id, versionId, deps.secret), expires_in: THEME_PREVIEW_SECONDS };
+    return { preview_url: await themePreviewUrl(deps.publicBase, shop, shop.shop_id, versionId, deps.secret, "api"), expires_in: THEME_PREVIEW_SECONDS };
   }
 
   /** 公開していない版を消す（置き場のファイルも） */

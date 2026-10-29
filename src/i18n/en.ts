@@ -1771,6 +1771,7 @@ export const en: Record<MessageKey, string> = {
   "design.settings_save": "Save",
   "design.settings_back": "Back to Design",
   "design.settings_no_image": "(none)",
+  "design.settings_file_image": "Value from the theme files ({value})",
   "design.settings_reason_too_long": "Up to {n} characters.",
   "design.settings_reason_number": "Enter a number.",
   "design.settings_reason_min": "Must be at least {n}.",

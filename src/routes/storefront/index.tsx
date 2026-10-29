@@ -8,7 +8,7 @@ import { type StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
 import { addCoupon, addItem, cartCookieHeader, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
-import { addsFrom, changeFrom, updatesFrom } from "../../cart/shopify-form";
+import { addsFrom, changeFrom, updatesFrom, usesLinePosition } from "../../cart/shopify-form";
 import { cartObject } from "../../themes/liquid/objects";
 import { openJson, readCookie } from "../../util/signed";
 import { categoryPath, categoryTree } from "../../products/categories";
@@ -567,6 +567,8 @@ storefront.post("/:shop/cart/coupon", async (c: Ctx) => {
 });
 
 storefront.post("/:shop/cart/add", async (c: Ctx) => {
+  // Shopify のテーマの JS（Dawn など）は routes.cart_add_url（.js の付かない URL）に fetch で送り、JSON を受け取る
+  if (wantsCartJson(c)) return cartAddJs(c);
   const s = await scope(c);
   if (!s) return notFound(c);
   const f = await formFields(c);
@@ -588,14 +590,18 @@ storefront.post("/:shop/cart/update", async (c: Ctx) => {
   if (!s) return notFound(c);
   const body = await cartInput(c);
   const skuId = typeof body["sku_id"] === "string" ? body["sku_id"].trim() : "";
+  let cart = s.cart;
   if (skuId) {
     const qty = Number.parseInt(String(body["qty"] ?? "0"), 10);
-    await writeCart(c, s, setQty(s.cart, skuId, Number.isInteger(qty) ? qty : 0));
+    cart = setQty(s.cart, skuId, Number.isInteger(qty) ? qty : 0);
+    await writeCart(c, s, cart);
   } else {
     // Liquid のテーマの書き方（updates[<SKU>] / updates[]）
-    await writeCart(c, s, updatesFrom(body, s.cart.items.map((i) => i.sku_id)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart));
+    cart = updatesFrom(body, await lineOrder(s, body)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+    await writeCart(c, s, cart);
   }
-  if ("checkout" in body) return startCheckout(c, s, stringFields(body));
+  // 購入手続きへ進むときは、変えた後のカートで
+  if ("checkout" in body) return startCheckout(c, { ...s, cart }, stringFields(body));
   return c.redirect(`${s.ctx.shopPath}/cart`);
 });
 
@@ -620,6 +626,21 @@ async function readJsonLimited(c: Ctx, max: number): Promise<unknown> {
   }
 }
 
+/** テーマの JS が JSON を待っているか（Accept か本文が JSON。Dawn は Accept: application/javascript で送る） */
+function wantsCartJson(c: Ctx): boolean {
+  const accept = c.req.header("accept") ?? "";
+  return /application\/(json|javascript)/.test(accept) || (c.req.header("content-type") ?? "").includes("application/json");
+}
+
+/**
+ * 行の位置（updates[]・line）を数える並び。位置は画面と /cart.js に出ている行（公開中の SKU、priceCart の結果）で数える。
+ * Cookie の行には公開をやめた SKU が残っていることがあり、そのまま数えると見えていない行を変えてしまう。位置を使わない書き方では DB に問い合わせない
+ */
+async function lineOrder(s: ShopScope, body: Record<string, unknown>): Promise<string[]> {
+  if (!usesLinePosition(body) || s.cart.items.length === 0) return s.cart.items.map((i) => i.sku_id);
+  return (await priceCart(s.sf, s.shop, s.cart)).lines.map((l) => l.sku.id);
+}
+
 const stringFields = (body: Record<string, unknown>): Record<string, string> => Object.fromEntries(Object.entries(body).filter((e): e is [string, string] => typeof e[1] === "string"));
 
 /** /cart.js などの応答（Shopify の cart と同じ形） */
@@ -633,7 +654,7 @@ storefront.post("/:shop/cart", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const body = await cartInput(c);
-  const cart = updatesFrom(body, s.cart.items.map((i) => i.sku_id)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+  const cart = updatesFrom(body, await lineOrder(s, body)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
   if (cart !== s.cart) await writeCart(c, s, cart);
   if ("checkout" in body) return startCheckout(c, { ...s, cart }, stringFields(body));
   return c.redirect(`${s.ctx.shopPath}/cart`);
@@ -641,9 +662,12 @@ storefront.post("/:shop/cart", async (c: Ctx) => {
 
 /** 1 行を変える（url_to_remove は GET。カートの中身だけなので Banto の購入リンク（/buy）と同じ扱い） */
 const cartChange = async (c: Ctx) => {
+  // Dawn などは routes.cart_change_url（.js の付かない URL）に JSON を送り、JSON を受け取る
+  if (c.req.method === "POST" && wantsCartJson(c)) return cartChangeJs(c, "change");
   const s = await scope(c);
   if (!s) return notFound(c);
-  const ch = changeFrom(await cartInput(c), s.cart.items.map((i) => i.sku_id));
+  const body = await cartInput(c);
+  const ch = changeFrom(body, await lineOrder(s, body));
   if (ch) await writeCart(c, s, changeQty(s.cart, ch.skuId, ch.qty));
   return c.redirect(`${s.ctx.shopPath}/cart`);
 };
@@ -656,7 +680,8 @@ storefront.get("/:shop/cart.js", async (c: Ctx) => {
   if (!s) return c.json({ status: 404, message: "not found" }, 404);
   return c.json(await cartJson(c, s, s.cart), 200, { "cache-control": "no-store" });
 });
-storefront.post("/:shop/cart/add.js", async (c: Ctx) => {
+storefront.post("/:shop/cart/add.js", (c: Ctx) => cartAddJs(c));
+async function cartAddJs(c: Ctx): Promise<Response> {
   const s = await scope(c);
   if (!s) return c.json({ status: 404, message: "not found" }, 404);
   const body = await cartInput(c);
@@ -669,12 +694,12 @@ storefront.post("/:shop/cart/add.js", async (c: Ctx) => {
   const json = await cartJson(c, s, cart);
   const items = json.items.filter((x) => adds.some((a) => a.skuId === x.id));
   return c.json(Array.isArray(body["items"]) ? { items } : (items[0] ?? {}), 200, { "cache-control": "no-store" });
-});
-const cartChangeJs = async (c: Ctx, kind: "change" | "update" | "clear") => {
+}
+async function cartChangeJs(c: Ctx, kind: "change" | "update" | "clear"): Promise<Response> {
   const s = await scope(c);
   if (!s) return c.json({ status: 404, message: "not found" }, 404);
   const body = kind === "clear" ? {} : await cartInput(c);
-  const order = s.cart.items.map((i) => i.sku_id);
+  const order = kind === "clear" ? [] : await lineOrder(s, body);
   let cart = s.cart;
   if (kind === "clear") cart = { items: [], ...(s.cart.coupons ? { coupons: s.cart.coupons } : {}) };
   else if (kind === "update") cart = updatesFrom(body, order).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
@@ -685,7 +710,7 @@ const cartChangeJs = async (c: Ctx, kind: "change" | "update" | "clear") => {
   }
   await writeCart(c, s, cart);
   return c.json(await cartJson(c, s, cart), 200, { "cache-control": "no-store" });
-};
+}
 storefront.post("/:shop/cart/change.js", (c: Ctx) => cartChangeJs(c, "change"));
 storefront.post("/:shop/cart/update.js", (c: Ctx) => cartChangeJs(c, "update"));
 storefront.post("/:shop/cart/clear.js", (c: Ctx) => cartChangeJs(c, "clear"));

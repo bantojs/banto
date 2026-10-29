@@ -127,7 +127,7 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     }
   });
 
-  it("Liquid のテーマ（0071）: 初回はプランの確認が 1 回増えるだけ（テーマは置き場から読み、DB は引かない）。2 回目からは TSX と同じ", async () => {
+  it("Liquid のテーマ（0071）: 初回はプランの確認（と 0074 の版の確認）が増えるだけ（テーマは置き場から読み、DB は引かない）。2 回目からは TSX と同じ", async () => {
     forgetThemes();
     const sb = new FakeSupabase();
     sb.sitePlan = "paid";
@@ -144,8 +144,10 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     await storage.put(`themes/${shop.id}/${v}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
     const b = new Browser(appWith(sb, {}, storage), "https://shop.example.jp");
     const cold = await calls(sb, () => b.get("/"));
-    expect(cold.filter((x) => x.includes("banto_site_plan"))).toHaveLength(1);
-    expect(cold).toHaveLength(BUDGET.cold["/my-shop"] + 1);
+    expect(cold.filter((x) => x.includes("banto_site_liquid"))).toHaveLength(1);
+    // 0074 が当たっているかの確認（適用済みの版の一覧、isolate で覚える）と banto_site_liquid
+    expect(cold.filter((x) => x.includes("banto_setup_state"))).toHaveLength(1);
+    expect(cold).toHaveLength(BUDGET.cold["/my-shop"] + 2);
     for (const path of ["/", "/p/tee"]) await b.get(path);
     expect(await calls(sb, () => b.get("/"))).toHaveLength(BUDGET.warm["/my-shop"]);
     expect(await calls(sb, () => b.get("/p/tee"))).toHaveLength(BUDGET.warm["/my-shop/p/tee"]);

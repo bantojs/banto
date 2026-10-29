@@ -1778,6 +1778,7 @@ export const ja = {
   "design.settings_save": "保存する",
   "design.settings_back": "デザインに戻る",
   "design.settings_no_image": "（なし）",
+  "design.settings_file_image": "テーマのファイルの値（{value}）",
   "design.settings_reason_too_long": "{n} 文字までです。",
   "design.settings_reason_number": "数を入れてください。",
   "design.settings_reason_min": "{n} 以上にしてください。",
