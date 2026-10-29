@@ -1710,6 +1710,8 @@ export const en: Record<MessageKey, string> = {
   "plan.limit_products": "This Banto has reached the number of products its plan allows. Delete products you no longer need, or ask the operator about changing the plan.",
   "plan.limit_members": "The invitation could not be accepted because this Banto has reached the number of organization members its plan allows. Please contact the person who invited you.",
   "member.login_limit": "New member registrations are not being accepted at the moment. Please contact the shop.",
+  "plan.kind.theme_versions": "Theme versions (Liquid)",
+  "plan.limit_theme_versions": "This Banto plan's limit on theme versions has been reached (plans with 0 cannot use Liquid themes). Delete unused versions or ask the operator about the plan.",
   "plan.kind.mail_per_day": "Emails today (login codes and invitations, per UTC day)",
   "plan.limit_mail": "The invitation could not be sent because this Banto has reached the number of emails (login codes and invitations) its plan allows per day. Try again tomorrow, or ask the operator about changing the plan.",
   "member.mail_limit": "We cannot send the login email right now. Please try again later.",

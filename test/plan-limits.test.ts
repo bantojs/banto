@@ -19,6 +19,7 @@ function setup(limits: Record<string, number>) {
 describe("プランの上限（0052、Worker）", () => {
   it("planLimitHit / planLimitOf: DB の印を種類と上限に直す。関係ない文字列は null", () => {
     expect(planLimitHit("plan_limit_exceeded:products:1000")).toEqual({ kind: "products", limit: 1000 });
+    expect(planLimitHit("plan_limit_exceeded:theme_versions:0")).toEqual({ kind: "theme_versions", limit: 0 });
     expect(planLimitHit("P0001: plan_limit_exceeded:members:5 (context)")).toEqual({ kind: "members", limit: 5 });
     expect(planLimitHit("plan_limit_exceeded:orders:1")).toBeNull();
     expect(planLimitHit("duplicate key")).toBeNull();

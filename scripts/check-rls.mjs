@@ -92,6 +92,7 @@ const REQUIRED_TRIGGERS = [
   ["orders", "orders_guard"], ["shops", "shops_guard"], ["api_tokens", "api_tokens_guard"],
   ["shops", "shops_plan_limit"], ["products", "products_plan_limit"], ["customers", "customers_plan_limit"], ["org_members", "org_members_plan_limit"],
   ["shops", "shops_theme_guard"], // 0071: 公開中のテーマは theme_publish だけが変える
+  ["theme_versions", "theme_versions_plan_limit"], // 0073: テーマの版の数のプランの上限
 ];
 
 const client = new pg.Client({ connectionString: url });
