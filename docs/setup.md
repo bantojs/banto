@@ -170,6 +170,18 @@ Banto の Worker は、ふだんは買い手の近くの Cloudflare の拠点で
 - Cloudflare の画面の「配置（Placement）」で直接変えた設定は、次のデプロイで変わることがあります。ずっと使うなら `BANTO_PLACEMENT` で決めてください。
 - Node で動かす（[docs/run-on-node.md](run-on-node.md)）ときは関係ありません。サーバーをデータベースの近くに置いてください。
 
+## 9. ログ（Observability）
+
+Banto は、決済ページを作れなかった・Webhook の金額が合わなかった・テーマを描けなかった、といった失敗を Worker のログに書きます（`[banto] ...`）。
+`wrangler.jsonc` で Cloudflare のログ（**Workers Logs**）を ON にしてあるので、Cloudflare の画面 → **Workers & Pages → banto → ログ（Logs）** で見られます。
+
+- **Issues**（同じ画面の「Issues」）も ON にしてあります。例外・5xx・`[banto]` のエラーのログを、同じ原因ごとにまとめて見せます。
+- **Traces** は切ってあります。外への問い合わせ（Supabase・決済など）を 1 つずつ記録するもので、遅い原因を探すときだけ使うものです。使うときは `wrangler.jsonc` の `observability` に `"traces": { "enabled": true }` を足します（アップデートで競合するので、調べ終わったら戻します）。
+- ログは **運営者自身の Cloudflare アカウント** に数日だけ残ります。開発チームには何も届きません（テレメトリではありません）。
+- 無料プランでも使えます。入る数・残る日数・料金は Cloudflare のプランで決まります（[公式の説明](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)）。
+- リクエストのログには、開いたページの URL などが入ります。要らなければ、§8 と同じ **ビルドの変数** に `BANTO_OBSERVABILITY` = `off` を追加し、Deploy command を `npm run deploy` にします。
+- Cloudflare の画面で直接 ON / OFF を変えても、次のデプロイで `wrangler.jsonc`（と `BANTO_OBSERVABILITY`）のとおりに戻ります。
+
 ## うまくいかないとき
 
 | 症状 | 確認すること |
@@ -187,6 +199,7 @@ Banto の Worker は、ふだんは買い手の近くの Cloudflare の拠点で
 | 購入手続きボタンが出ない | プラグインの Stripe 決済が無効、または `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` が未設定 |
 | 「決済ページを開けませんでした」（ログに `Please include the Stripe-Context header … Organization API key`） | Stripe の「組織」で作ったキーを使っています。**そのアカウント（サンドボックス）の中で** 開発者 → API キー から作り直したキーを `STRIPE_SECRET_KEY` に貼るのがいちばん簡単です。組織キーのまま使うなら、変数 `STRIPE_CONTEXT` に対象アカウントの ID（`acct_…`）を入れます |
 | 「決済ページを開けませんでした」 | Stripe が決済ページの作成を拒否しています。Stripe の画面 → **開発者 → ログ** に失敗した `POST /v1/checkout/sessions` が出るので、そのエラーメッセージを見る（キーが `pk_` の公開キーになっている、テストと本番のキーが混在、など）。Cloudflare の banto → **ログ** にも `[banto] checkout:` で理由が出ます |
+| 外部プラグイン（hooks の送信先）が同じ Cloudflare アカウントの Worker で、テスト送信が届かない（送信先のログに何も出ない） | Cloudflare は、同じアカウントの Worker から Worker への fetch を error 1042 で断ります。Banto は `wrangler.jsonc` の `compatibility_flags` に `global_fetch_strictly_public` を入れて避けています。古い `wrangler.jsonc` のままなら最新に更新してください。プラグインの側から Banto の API を呼ぶときも同じなので、プラグインの設定にも同じフラグが要ります |
 | ショップが 404 | ショップ設定で「ショップを公開する」がオフ、または法務3項目が未入力 |
 
 ## 開発者向け（コマンドで導入する）
