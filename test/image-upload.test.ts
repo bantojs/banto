@@ -183,3 +183,68 @@ describe("POST /api/v1/products/{id}/images/upload", () => {
     expect(storage.objects.size).toBe(0);
   });
 });
+
+describe("PUT /api/v1/images/{id}/file（0077）", () => {
+  const multipart = async (parts: Record<string, Blob>) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(parts)) form.append(k, v, k);
+    const req = new Request("http://x", { method: "POST", body: form });
+    const body = new Uint8Array(await req.arrayBuffer());
+    return { body, headers: { "content-type": req.headers.get("content-type")!, "content-length": String(body.byteLength) } };
+  };
+  const replace = async (app: ReturnType<typeof appWith>, token: string, imageId: string, body: BodyInit, headers: Record<string, string>) => {
+    const res = await app.request(`${BASE}/api/v1/images/${imageId}/file`, { method: "PUT", headers: { authorization: `Bearer ${token}`, ...headers }, body });
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> & { error?: { code: string } } };
+  };
+
+  it("行・並び順・SKU への結び付けはそのままで、本画像とサムネイルを差し替え、前のファイルを消す", async () => {
+    const { app, issue, mug, storage, sb } = await setup();
+    const tok = await issue(["products:write"]);
+    const png = tinyPng(1600, 1200);
+    const first = await upload(app, tok, mug.id, png, { "content-type": "image/png", "content-length": String(png.byteLength) });
+    const second = await upload(app, tok, mug.id, png, { "content-type": "image/png", "content-length": String(png.byteLength) });
+    const id = String(first.json["image_id"]);
+    const row = sb.tables.product_images.find((i) => i["id"] === id)!;
+    row["options"] = { color: "レッド" };
+    const oldKey = String(row["storage_key"]);
+    const m = await multipart({ image: new Blob([WEBP]), thumbnail: new Blob([WEBP]) });
+    const r = await replace(app, tok, id, m.body, m.headers);
+    expect(r.status).toBe(200);
+    expect(r.json["image_id"]).toBe(id);
+    expect(String(row["storage_key"])).toMatch(/\.webp$/);
+    expect(String(row["thumb_key"])).toBe(String(row["storage_key"]).replace(/\.webp$/, ".thumb.webp"));
+    expect(row).toMatchObject({ sort_order: 0, options: { color: "レッド" }, width: 640, height: 480 });
+    expect(storage.objects.has(oldKey)).toBe(false);
+    // 本画像 2 枚目（そのまま）+ 差し替えた本画像とサムネイル
+    expect(storage.objects.size).toBe(3);
+    expect(sb.tables.product_images.find((i) => i["id"] === second.json["image_id"])!["sort_order"]).toBe(1);
+  });
+
+  it("断るもの: 他のショップ・読むだけのトークン（何も置かない）、options、SVG", async () => {
+    const { app, issue, mug, storage, sb, otherProduct } = await setup();
+    const tok = await issue(["products:write"]);
+    const ro = await issue(["products:read"]);
+    sb.tables.product_images.push({ id: crypto.randomUUID(), shop_id: otherProduct["shop_id"], product_id: otherProduct.id, storage_key: "x", thumb_key: null, sort_order: 0, options: {} });
+    const otherImage = String(sb.tables.product_images.at(-1)!["id"]);
+    const h = { "content-type": "image/webp", "content-length": String(WEBP.byteLength) };
+    expect((await replace(app, tok, otherImage, WEBP, h)).status).toBe(404);
+    const png = tinyPng(10, 10);
+    const up = await upload(app, tok, mug.id, png, { "content-type": "image/png", "content-length": String(png.byteLength) });
+    const before = storage.objects.size;
+    expect((await replace(app, ro, String(up.json["image_id"]), WEBP, h)).status).toBe(401);
+    expect((await app.request(`${BASE}/api/v1/images/${up.json["image_id"]}/file?options=${encodeURIComponent('{"color":"x"}')}`, { method: "PUT", headers: { authorization: `Bearer ${tok}`, ...h }, body: WEBP })).status).toBe(400);
+    expect((await replace(app, tok, String(up.json["image_id"]), SVG, { "content-type": "image/svg+xml", "content-length": String(SVG.byteLength) })).status).toBe(400);
+    expect(storage.objects.size).toBe(before);
+  });
+
+  it("0077 が当たる前は 409 migration_required", async () => {
+    const { app, issue, mug, sb } = await setup();
+    const tok = await issue(["products:write"]);
+    const png = tinyPng(10, 10);
+    const up = await upload(app, tok, mug.id, png, { "content-type": "image/png", "content-length": String(png.byteLength) });
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0077_api_image_replace");
+    const r = await replace(app, tok, String(up.json["image_id"]), WEBP, { "content-type": "image/webp", "content-length": String(WEBP.byteLength) });
+    expect(r.status).toBe(409);
+    expect(r.json.error?.code).toBe("migration_required");
+  });
+});

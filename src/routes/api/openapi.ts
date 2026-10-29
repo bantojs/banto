@@ -88,6 +88,21 @@ export function openapiDocument(origin: string, version: string): Record<string,
           responses: { 200: resp("product", product), ...errors },
         },
       },
+      "/images/{id}/file": {
+        put: {
+          summary: "画像のファイルだけを差し替える（products:write、0077）。並び順・SKU への結び付け・id はそのまま（WebP にするプラグインなど）。本文の形と上限は /products/{id}/images/upload と同じ（options は受けない）。前のファイルは消す",
+          security: bearer,
+          parameters: [{ name: "id", in: "path", required: true, schema: str }],
+          requestBody: {
+            required: true,
+            content: {
+              "image/*": { schema: { type: "string", format: "binary" } },
+              "multipart/form-data": { schema: obj({ image: { type: "string", format: "binary" }, thumbnail: { type: "string", format: "binary", description: "長辺 400px 程度（任意）" } }, ["image"]) },
+            },
+          },
+          responses: { 200: resp("replaced", obj({ image_id: str, product })), ...errors, 409: resp("データベースの更新（0077）が要る"), 411: resp("Content-Length がない"), 413: resp("大きすぎる"), 415: resp("本文の形が違う") },
+        },
+      },
       "/images/{id}": {
         delete: { summary: "画像を削除（products:write）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], responses: { 204: resp("deleted"), ...errors } },
         patch: {

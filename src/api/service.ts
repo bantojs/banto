@@ -27,6 +27,8 @@ import { getTimeZone } from "../i18n/time";
 
 /** 売上集計の区切りの時間帯（p_time_zone）を受け付ける版 */
 export const SALES_TIMEZONE_MIGRATION = "0076_sales_timezone";
+/** 画像のファイルだけを差し替える（api_image_replace_file）版 */
+export const IMAGE_REPLACE_MIGRATION = "0077_api_image_replace";
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
 export interface ThemeApiDeps {
@@ -312,6 +314,41 @@ export class ApiService {
       await Promise.all([key, tkey].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
       throw e;
     }
+  }
+
+  /**
+   * 画像のファイルだけを差し替える（0077）。行・並び順・SKU への結び付けはそのまま。WebP にする外部プラグインなどが使う。
+   * 検査は imageUpload と同じ。新しいファイルを置いてから行を差し替え、前のファイルを消す（差し替えに失敗したら新しいほうを消す）
+   */
+  async imageReplaceFile(imageId: string, image: Uint8Array, thumbnail: Uint8Array | null): Promise<Record<string, unknown>> {
+    uuidOr404(imageId);
+    if (!(await this.migratedTo(IMAGE_REPLACE_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `replacing image files needs the database update ${IMAGE_REPLACE_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    const main = sniffImage(image.subarray(0, 256));
+    if (!main) throw new ApiError("invalid", "image must be JPEG, PNG, WebP, GIF or AVIF", 400);
+    if (image.byteLength > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 400);
+    const thumb = thumbnail ? sniffImage(thumbnail.subarray(0, 256)) : null;
+    if (thumbnail && !thumb) throw new ApiError("invalid", "thumbnail must be JPEG, PNG, WebP, GIF or AVIF", 400);
+    if (thumbnail && thumbnail.byteLength > MAX_THUMB_BYTES) throw new ApiError("invalid", "thumbnail is larger than 1MB", 400);
+    // 置く場所（その画像の商品の下）を決める。スコープとショップもここで確かめる（ストレージに書く前に）
+    const target = await this.call<{ shop_id: string; product_id: string }>("api_image_target", { p_image_id: imageId });
+    const key = productImageKey(target.shop_id, target.product_id, main.ext);
+    const tkey = thumbnail && thumb ? thumbKey(key, thumb.ext) : null;
+    const size = imageSize(image, main.contentType);
+    const copy = (b: Uint8Array) => b.slice().buffer;
+    await this.storage.put(key, copy(image), main.contentType);
+    let r: { image_id: string; previous: { storage_key: string; thumb_key: string | null }; product: Record<string, unknown> };
+    try {
+      if (tkey && thumbnail && thumb) await this.storage.put(tkey, copy(thumbnail), thumb.contentType);
+      r = await this.call("api_image_replace_file", { p_image_id: imageId, p_storage_key: key, p_thumb_key: tkey, p_width: size?.width ?? null, p_height: size?.height ?? null });
+    } catch (e) {
+      await Promise.all([key, tkey].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+      throw e;
+    }
+    await Promise.all([r.previous.storage_key, r.previous.thumb_key].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+    return { image_id: r.image_id, product: r.product };
   }
 
   async imageDelete(imageId: string): Promise<void> {
