@@ -8,6 +8,10 @@
   "workers_dev": true,
   "upload_source_maps": true,
 
+  // ログ（Workers Logs）。運営者自身の Cloudflare アカウントに数日だけ残り、開発チームには届かない（テレメトリではない）。
+  // ここに書かないと、ダッシュボードで ON にしてもデプロイのたびに OFF に戻る。切るならビルドの変数 BANTO_OBSERVABILITY=off（docs/setup.md §9）
+  "observability": { "enabled": true },
+
   // 設定値はここに書かず、Cloudflare の「変数とシークレット」（または Deploy ボタンの画面）で入れる（docs/env.md）。
   // keep_vars が無いと、ビルドのたびに wrangler が画面で入れた変数を消してしまう。
   "keep_vars": true,

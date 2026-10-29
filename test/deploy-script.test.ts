@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { placementFor, withPlacement } from "../scripts/deploy.mjs";
+import { observabilityOff, placementFor, withoutObservability, withPlacement } from "../scripts/deploy.mjs";
 
-/** デプロイの Placement（scripts/deploy.mjs、BANTO_PLACEMENT） */
+/** デプロイの設定（scripts/deploy.mjs、BANTO_PLACEMENT・BANTO_OBSERVABILITY） */
 describe("scripts/deploy.mjs", () => {
   it("BANTO_PLACEMENT の値: リージョン・smart・未設定。形が違えば止める", () => {
     expect(placementFor("aws:ap-northeast-1")).toEqual({ mode: "targeted", region: "aws:ap-northeast-1" });
@@ -20,5 +20,18 @@ describe("scripts/deploy.mjs", () => {
     expect(out).toContain('"name": "banto"');
     expect(out.replace(/\n {2}\/\/ scripts\/deploy\.mjs[^\n]*\n {2}"placement"[^\n]*/, "")).toBe(text);
     expect(() => withPlacement(out, { mode: "smart" })).toThrow(/もう placement/);
+  });
+
+  it("ログは wrangler.jsonc で既定 ON。BANTO_OBSERVABILITY=off の写しだけ切る", () => {
+    expect(observabilityOff(undefined)).toBe(false);
+    expect(observabilityOff("on")).toBe(false);
+    expect(observabilityOff(" OFF ")).toBe(true);
+    expect(() => observabilityOff("no")).toThrow(/BANTO_OBSERVABILITY/);
+    const text = readFileSync("wrangler.jsonc", "utf8");
+    expect(text).toMatch(/^ {2}"observability": \{ "enabled": true \},$/m);
+    const out = withoutObservability(withPlacement(text, { mode: "smart" }));
+    expect(out).toContain('"observability": { "enabled": false },');
+    expect(out).toContain('"placement": {"mode":"smart"},');
+    expect(() => withoutObservability(out)).toThrow(/observability/);
   });
 });

@@ -170,6 +170,16 @@ Banto の Worker は、ふだんは買い手の近くの Cloudflare の拠点で
 - Cloudflare の画面の「配置（Placement）」で直接変えた設定は、次のデプロイで変わることがあります。ずっと使うなら `BANTO_PLACEMENT` で決めてください。
 - Node で動かす（[docs/run-on-node.md](run-on-node.md)）ときは関係ありません。サーバーをデータベースの近くに置いてください。
 
+## 9. ログ（Observability）
+
+Banto は、決済ページを作れなかった・Webhook の金額が合わなかった・テーマを描けなかった、といった失敗を Worker のログに書きます（`[banto] ...`）。
+`wrangler.jsonc` で Cloudflare のログ（**Workers Logs**）を ON にしてあるので、Cloudflare の画面 → **Workers & Pages → banto → ログ（Logs）** で見られます。
+
+- ログは **運営者自身の Cloudflare アカウント** に数日だけ残ります。開発チームには何も届きません（テレメトリではありません）。
+- 無料プランでも使えます。入る数・残る日数・料金は Cloudflare のプランで決まります（[公式の説明](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)）。
+- リクエストのログには、開いたページの URL などが入ります。要らなければ、§8 と同じ **ビルドの変数** に `BANTO_OBSERVABILITY` = `off` を追加し、Deploy command を `npm run deploy` にします。
+- Cloudflare の画面で直接 ON / OFF を変えても、次のデプロイで `wrangler.jsonc`（と `BANTO_OBSERVABILITY`）のとおりに戻ります。
+
 ## うまくいかないとき
 
 | 症状 | 確認すること |
