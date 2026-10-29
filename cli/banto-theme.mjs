@@ -23,7 +23,7 @@ const USAGE = `使い方: banto-theme <コマンド> [引数]
   publish <版の id>                           公開する（theme:publish）
   unpublish                                   取り下げて既定のテーマに戻す（theme:publish）
   delete <版の id>                            公開していない版を消す
-  prune [--keep 5]                            公開していない版を、新しいものから keep 個だけ残して消す
+  prune [--keep 5]                            公開していない版を、新しいものから keep 個だけ残して消す（取り込みの途中の新しい版は残す）
 
 環境変数: BANTO_URL（Banto の URL。管理画面を開く URL で、ショップの独自ドメインではない）、BANTO_TOKEN（AI 用トークン）`;
 
@@ -78,6 +78,8 @@ function client(env, fetchImpl) {
   const base = (env.BANTO_URL ?? "").replace(/\/+$/, "");
   const token = env.BANTO_TOKEN ?? "";
   if (!/^https?:\/\//.test(base)) throw new CliError("BANTO_URL を設定してください（Banto の URL。管理画面を開く URL。例: https://banto.example.com）");
+  // トークンを平文で送らない（手元で動かす Banto の localhost だけ http を許す）
+  if (/^http:\/\//.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(base)) throw new CliError("BANTO_URL は https:// にしてください（http はトークンが平文で流れます。手元の localhost だけ使えます）");
   if (!/^banto_/.test(token)) throw new CliError("BANTO_TOKEN を設定してください（管理画面の「AI 連携」で発行した banto_... のトークン）");
   return async function call(method, path, body, raw) {
     const headers = { authorization: `Bearer ${token}` };
@@ -90,16 +92,18 @@ function client(env, fetchImpl) {
       payload = JSON.stringify(body);
       headers["content-type"] = "application/json";
     }
+    // POST（版を作る・置き終える・公開する）は、届いたか分からないときにやり直さない（版が二重にできるため）。429 は受け付けていないのでやり直す
+    const idempotent = method !== "POST";
     for (let attempt = 0; ; attempt++) {
       let res;
       try {
         res = await fetchImpl(`${base}/api/v1${path}`, { method, headers, body: payload });
       } catch (e) {
-        if (attempt < 2) continue;
+        if (idempotent && attempt < 2) continue;
         throw new CliError(`${base} に繋がりません: ${e instanceof Error ? e.message : String(e)}`);
       }
       // 混んでいる・一時的な失敗は待ってやり直す（2 回まで）
-      if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+      if ((res.status === 429 || (idempotent && res.status >= 500)) && attempt < 2) {
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
@@ -263,7 +267,9 @@ export async function main(argv, io = {}) {
         const keep = flags.keep === undefined ? 5 : Number(flags.keep);
         if (!Number.isInteger(keep) || keep < 0) throw new CliError("--keep は 0 以上の整数です");
         const list = await call("GET", "/themes");
-        const old = list.items.filter((v) => !v.published).slice(keep);
+        // 置き終えていない版のうち新しいもの（1 時間以内）は、ほかの push が取り込みの途中かもしれないので消さない
+        const busy = (v) => !v.complete && Date.now() - Date.parse(v.created_at ?? "") < 60 * 60 * 1000;
+        const old = list.items.filter((v) => !v.published && !busy(v)).slice(keep);
         for (const v of old) {
           await call("DELETE", `/themes/${v.id}`);
           log(`消しました: ${v.id}  ${v.name}`);

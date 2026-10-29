@@ -23,7 +23,7 @@ import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checko
 import { shopHome } from "../storefront/urls";
 import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
-import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, THEME_API_MIGRATION } from "../themes/liquid/versions";
+import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, THEME_API_MIGRATION, unsealThemeAssets } from "../themes/liquid/versions";
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
 
@@ -567,6 +567,7 @@ export class ApiService {
     if (row.complete) throw new ApiError("conflict", "theme_complete: assets of a completed version cannot be replaced; upload a new version", 409);
     const r = await putThemeAsset(this.storage, row.shop_id, versionId, name, body);
     if (!r.ok) {
+      if (r.reason === "sealed") throw new ApiError("conflict", "theme_complete: assets of a completed version cannot be replaced; upload a new version", 409);
       if (r.reason === "type") throw new ApiError("invalid", "invalid_asset: this file type cannot be a theme asset (HTML and SVG are not allowed)", 400);
       if (r.reason === "too_large") throw new ApiError("invalid", "invalid_asset: an asset can be up to 5MB", 413);
       throw new ApiError("not_found", "asset not listed in the theme bundle", 404);
@@ -577,10 +578,18 @@ export class ApiService {
   /** 資産を置き終えた（すべての資産が置き場にあるかを確かめてから）。これで公開できる */
   async themeComplete(versionId: string): Promise<Record<string, unknown>> {
     const row = await this.themeRow(versionId);
-    const missing = await missingThemeAsset(this.storage, row.shop_id, versionId);
-    if (missing === undefined) throw new ApiError("not_found", "not found", 404);
-    if (missing !== null) throw new ApiError("conflict", `asset_missing: ${missing}`, 409);
-    return this.call<Record<string, unknown>>("api_theme_complete", { p_version_id: versionId });
+    if (row.complete) return this.call<Record<string, unknown>>("api_theme_complete", { p_version_id: versionId });
+    // 先に資産の受け付けを締めてから揃っているかを見る（確かめた後に資産を差し替えさせない）
+    await sealThemeAssets(this.storage, row.shop_id, versionId);
+    try {
+      const missing = await missingThemeAsset(this.storage, row.shop_id, versionId);
+      if (missing === undefined) throw new ApiError("not_found", "not found", 404);
+      if (missing !== null) throw new ApiError("conflict", `asset_missing: ${missing}`, 409);
+      return await this.call<Record<string, unknown>>("api_theme_complete", { p_version_id: versionId });
+    } catch (e) {
+      await unsealThemeAssets(this.storage, row.shop_id, versionId);
+      throw e;
+    }
   }
 
   /** ショップのドメインでプレビューを開くリンク（30 分。開いたことは監査ログに残る） */
