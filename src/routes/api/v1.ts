@@ -109,41 +109,54 @@ v1.post("/products/:id/images", async (c) =>
     .then((r) => c.json(r, 201))
     .catch((e) => errorJson(c, e)),
 );
-// 画像のファイルを送る（0037、products:write）。本文が画像そのもの（Content-Type: image/* か application/octet-stream）か、
-// multipart/form-data の image（必須）と thumbnail（任意、長辺 400px 程度）。Content-Length が要る（大きさを読む前に断るため）
+/**
+ * 画像のファイルの本文を読む（0037）。本文が画像そのもの（Content-Type: image/* か application/octet-stream）か、
+ * multipart/form-data の image（必須）と thumbnail（任意、長辺 400px 程度）。Content-Length が要る（大きさを読む前に断るため）。
+ * options（SKU に結ぶ、0063）は multipart なら options の欄、本文が画像そのものなら ?options=（どちらも JSON）
+ */
+async function readImageBody(c: Ctx): Promise<{ image: Uint8Array; thumbnail: Uint8Array | null; options: Record<string, unknown> | undefined }> {
+  const length = Number(c.req.header("content-length") ?? NaN);
+  if (!Number.isFinite(length)) throw new ApiError("invalid", "Content-Length is required", 411);
+  const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  let options = c.req.query("options") !== undefined ? imageOptionsInput(parseOptionsText(c.req.query("options"))) : undefined;
+  if (type === "multipart/form-data") {
+    if (length > MAX_IMAGE_BYTES + MAX_THUMB_BYTES + 64 * 1024) throw new ApiError("invalid", "image is larger than 5MB or thumbnail is larger than 1MB", 413);
+    let form: Record<string, unknown>;
+    try {
+      form = await c.req.parseBody();
+    } catch {
+      throw new ApiError("invalid", "could not read the multipart body", 400);
+    }
+    if (form["options"] !== undefined) options = imageOptionsInput(parseOptionsText(form["options"]));
+    const file = form["image"];
+    const thumb = form["thumbnail"];
+    if (!(file instanceof Blob)) throw new ApiError("invalid", "the image field (a file) is required", 400);
+    if (thumb !== undefined && !(thumb instanceof Blob)) throw new ApiError("invalid", "thumbnail must be a file", 400);
+    return { image: new Uint8Array(await file.arrayBuffer()), thumbnail: thumb instanceof Blob ? new Uint8Array(await thumb.arrayBuffer()) : null, options };
+  }
+  if (type.startsWith("image/") || type === "application/octet-stream") {
+    if (length > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 413);
+    const read = await readBodyLimited(c.req.raw, MAX_IMAGE_BYTES);
+    if (!read) throw new ApiError("invalid", "image is larger than 5MB", 413);
+    return { image: read, thumbnail: null, options };
+  }
+  throw new ApiError("invalid", "send the image as the body (Content-Type: image/...) or as multipart/form-data (image, thumbnail)", 415);
+}
+// 画像のファイルを送る（0037、products:write）
 v1.post("/products/:id/images/upload", async (c) => {
   try {
-    const length = Number(c.req.header("content-length") ?? NaN);
-    if (!Number.isFinite(length)) throw new ApiError("invalid", "Content-Length is required", 411);
-    const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-    let image: Uint8Array;
-    let thumbnail: Uint8Array | null = null;
-    // SKU に結ぶ（0063）: multipart なら options の欄、本文が画像そのものなら ?options=（どちらも JSON）
-    let options = c.req.query("options") !== undefined ? imageOptionsInput(parseOptionsText(c.req.query("options"))) : undefined;
-    if (type === "multipart/form-data") {
-      if (length > MAX_IMAGE_BYTES + MAX_THUMB_BYTES + 64 * 1024) throw new ApiError("invalid", "image is larger than 5MB or thumbnail is larger than 1MB", 413);
-      let form: Record<string, unknown>;
-      try {
-        form = await c.req.parseBody();
-      } catch {
-        throw new ApiError("invalid", "could not read the multipart body", 400);
-      }
-      if (form["options"] !== undefined) options = imageOptionsInput(parseOptionsText(form["options"]));
-      const file = form["image"];
-      const thumb = form["thumbnail"];
-      if (!(file instanceof Blob)) throw new ApiError("invalid", "the image field (a file) is required", 400);
-      if (thumb !== undefined && !(thumb instanceof Blob)) throw new ApiError("invalid", "thumbnail must be a file", 400);
-      image = new Uint8Array(await file.arrayBuffer());
-      thumbnail = thumb instanceof Blob ? new Uint8Array(await thumb.arrayBuffer()) : null;
-    } else if (type.startsWith("image/") || type === "application/octet-stream") {
-      if (length > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 413);
-      const read = await readBodyLimited(c.req.raw, MAX_IMAGE_BYTES);
-      if (!read) throw new ApiError("invalid", "image is larger than 5MB", 413);
-      image = read;
-    } else {
-      throw new ApiError("invalid", "send the image as the body (Content-Type: image/...) or as multipart/form-data (image, thumbnail)", 415);
-    }
+    const { image, thumbnail, options } = await readImageBody(c);
     return c.json(await api(c).imageUpload(c.req.param("id"), image, thumbnail, options), 201);
+  } catch (e) {
+    return errorJson(c, e);
+  }
+});
+// 画像のファイルだけを差し替える（0077、products:write）。行・並び順・SKU への結び付けはそのまま（WebP にするプラグインなど）
+v1.put("/images/:id/file", async (c) => {
+  try {
+    const { image, thumbnail, options } = await readImageBody(c);
+    if (options !== undefined) throw new ApiError("invalid", "options cannot be changed here; use PATCH /images/{id}", 400);
+    return c.json(await api(c).imageReplaceFile(c.req.param("id"), image, thumbnail));
   } catch (e) {
     return errorJson(c, e);
   }

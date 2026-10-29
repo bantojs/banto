@@ -126,6 +126,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `POST /products/{id}/images/upload` | products:write | 画像のファイルそのもの。下の「画像のファイルを送る」。SKU に結ぶなら multipart の `options` の欄か `?options=`（JSON） |
 | `PUT /products/{id}/option-axes` | products:write | `option_axes`（`[{ "key": "カラー", "values": ["レッド"] }, { "key": "サイズ" }]`、3 つまで。`[]` は品番だけ、`null` は決めない）。今の SKU の options の鍵が軸とちょうど同じでないと 400 `option_axes_mismatch`。軸を決めた商品の SKU は、options の鍵を軸に合わせて作る（合わなければ 400、同じ組み合わせは 409 `option_combination_exists`）。商品の JSON の `option_axes` で読める。0065 |
 | `PATCH /images/{id}` | products:write | `options`（SKU の `options` の一部。`{ "color": "レッド" }` でそのカラーの全 SKU、`{ "color": "レッド", "size": "M" }` でその SKU だけ、`{}` で商品全体。鍵 5 つまで・値は 60 文字までの文字列）。返すのは商品。0063 |
+| `PUT /images/{id}/file` | products:write | 画像のファイルだけを差し替える（0077）。並び順・SKU への結び付け・id はそのまま。本文の形は `images/upload` と同じ（`options` は受けない）。前のファイルは消す |
 | `DELETE /images/{id}` | products:write | |
 | `GET /categories` | products:read | |
 | `POST /categories` | products:write | `slug` `name` `parent`（親の slug） `sort_order`。slug が同じなら更新 |
@@ -165,6 +166,14 @@ Banto は画像を縮小しないので（Worker の CPU の制限）、**長辺
 応答は `{ "image_id", "product" }`。
 登録と同時に SKU に結ぶときは（0063）、multipart なら `options` の欄に、本文が画像そのものなら `?options=` に、`{"color":"レッド"}` のような JSON を入れます（形は `PATCH /images/{id}` と同じ。省略は商品全体）。登録と結びつけは 1 回の処理なので、結べずに画像だけ残ることはありません。DB が 0063 より前なら、`options` を付けた登録は 409 `migration_required` です（付けなければ今までどおり）。
 公開 URL のある画像なら、今までどおり `POST /products/{id}/images`（`image_url`）でも取り込めます（こちらはサムネイルなし）。
+
+**画像のファイルを差し替える**（`PUT /images/{id}/file`、0077）: 本文の形・種類・大きさの決まりは上と同じです（`options` は受けません。SKU への結び付けは `PATCH /images/{id}`）。
+並び順・SKU への結び付け・画像の id はそのままで、本画像とサムネイル（送らなければ無しになります）と寸法だけを入れ替え、前のファイルを消します。応答は `{ "image_id", "product" }`。
+画像を WebP にする外部プラグインのように、取り込んだ画像を外で作り直して戻すときに使います。差し替えると `product.updated` が届くので（0075）、受けて差し替える側は、もう直した画像を飛ばしてください。使う例は [bantojs/banto-plugin-webp](https://github.com/bantojs/banto-plugin-webp)（画像を WebP にしてサムネイルを作る外部プラグイン）。DB が 0077 より前なら 409 `migration_required` です。
+
+```bash
+curl -X PUT -H "Authorization: Bearer banto_..." -F image=@main.webp -F thumbnail=@thumb.webp https://<ショップの URL>/api/v1/images/<画像の id>/file
+```
 
 ```bash
 curl -X POST -H "Authorization: Bearer banto_..." -H "Content-Type: image/webp" --data-binary @main.webp https://<ショップの URL>/api/v1/products/<id>/images/upload

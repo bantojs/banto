@@ -2192,7 +2192,7 @@ export class FakeSupabase {
         const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
         if (!p) return notFound();
         if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/products/${p["id"]}/`)) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
-        const id = `img-${++this.seq}`;
+        const id = crypto.randomUUID();
         this.tables.product_images.push({ id, shop_id: shopId, product_id: p["id"], storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null, sort_order: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).length, created_at: this.now(), options: args["p_options"] ?? {} });
         return json({ image_id: id, product: product(p) });
       }
@@ -2218,6 +2218,22 @@ export class FakeSupabase {
         if (!i) return notFound();
         i["options"] = o;
         return json(product(this.tables.products.find((x) => x["id"] === i["product_id"])!));
+      }
+      case "api_image_target": {
+        // 0077: 本物の SQL は test/db/api-image-replace.test.ts
+        if (!need("products:write")) return unauthorized();
+        const i = mine(this.tables.product_images.find((x) => x["id"] === args["p_image_id"]));
+        if (!i) return notFound();
+        return json({ shop_id: shopId, product_id: i["product_id"] });
+      }
+      case "api_image_replace_file": {
+        if (!need("products:write")) return unauthorized();
+        const i = mine(this.tables.product_images.find((x) => x["id"] === args["p_image_id"]));
+        if (!i) return notFound();
+        if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/products/${i["product_id"]}/`) || args["p_storage_key"] === i["storage_key"]) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
+        const previous = { storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null };
+        Object.assign(i, { storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null });
+        return json({ image_id: i["id"], previous, product: product(this.tables.products.find((x) => x["id"] === i["product_id"])!) });
       }
       case "api_image_delete": {
         if (!need("products:write")) return unauthorized();
