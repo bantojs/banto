@@ -69,7 +69,7 @@ const UPLOAD_SCRIPT = `(function(){
   var form=document.getElementById("theme-form"); if(!form) return;
   var input=document.getElementById("theme-file"), status=document.getElementById("theme-status"), btn=form.querySelector("button[type=submit]");
   var MSG=JSON.parse(form.getAttribute("data-msg")||"{}");
-  var TEXT=/^(layout|templates|sections|snippets)\\/[^\\/]+\\.liquid$|^(templates|sections|config|locales)\\/[^\\/]+\\.json$/;
+  var TEXT=/^(layout|templates|sections|snippets|blocks)\\/[^\\/]+\\.liquid$|^(templates|sections|config|locales)\\/[^\\/]+\\.json$/;
   // 翻訳は既定の言語とデプロイの言語だけを送る（設定の画面の文言の *.schema.json も同じ。束ねたファイルの大きさを抑える）
   var LOCALE=form.getAttribute("data-locale")||"ja";
   function wanted(n){ var m=/^locales\\/(.+)\\.json$/.exec(n); if(!m) return true; return /\\.default(\\.schema)?$/.test(m[1])||m[1]===LOCALE||m[1]===LOCALE+".schema"; }

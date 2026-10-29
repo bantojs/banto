@@ -68,7 +68,7 @@ const unescapeHtml = (s: string) => s.replace(/&(?:amp|lt|gt|quot|#39|#34);/g, (
 
 /** ファイルの置き場 → liquidjs のテンプレートの名前。snippets は `render 'name'` で引けるように名前だけにする */
 function templateName(path: string): string | null {
-  const m = /^(layout|templates|sections|snippets)\/([A-Za-z0-9_.-]+)\.liquid$/.exec(path);
+  const m = /^(layout|templates|sections|snippets|blocks)\/([A-Za-z0-9_.-]+)\.liquid$/.exec(path);
   if (!m) return null;
   return m[1] === "snippets" ? m[2]! : `${m[1]}/${m[2]}`;
 }

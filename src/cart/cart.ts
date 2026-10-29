@@ -63,6 +63,13 @@ export function setQty(cart: Cart, skuId: string, qty: number): Cart {
   return normalizeCart({ items, coupons: cart.coupons });
 }
 
+/** カートにある行の数だけを変える（並びはそのまま。qty <= 0 で外す）。カートに無い SKU は何もしない（Shopify の change と同じ） */
+export function changeQty(cart: Cart, skuId: string, qty: number): Cart {
+  if (!cart.items.some((x) => x.sku_id === skuId)) return cart;
+  const items = cart.items.flatMap((x) => (x.sku_id !== skuId ? [x] : Number.isInteger(qty) && qty > 0 ? [{ sku_id: skuId, qty: Math.min(CART_MAX_QTY, qty) }] : []));
+  return normalizeCart({ items, coupons: cart.coupons });
+}
+
 /** クーポンのコードを足す（形が違えば何もしない。使えるかどうかはカートの表示のたびに判定する） */
 export function addCoupon(cart: Cart, code: string): Cart {
   return normalizeCart({ items: cart.items, coupons: [...(cart.coupons ?? []), code] });

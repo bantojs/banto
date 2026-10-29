@@ -7,14 +7,16 @@ import type { AppEnv } from "../../app";
 import { type StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
-import { addCoupon, addItem, cartCookieHeader, cartCookieName, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
+import { addCoupon, addItem, cartCookieHeader, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
+import { addsFrom, changeFrom, updatesFrom } from "../../cart/shopify-form";
+import { cartObject } from "../../themes/liquid/objects";
 import { openJson, readCookie } from "../../util/signed";
 import { categoryPath, categoryTree } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
-import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
+import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, type Ctx } from "../common";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
@@ -25,7 +27,7 @@ import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { liquidThemeFor, registerThemeAssets, renderListing, renderNotFound, renderProduct } from "./liquid";
+import { liquidThemeFor, registerThemeAssets, renderCart, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -399,6 +401,12 @@ storefront.get("/:shop/cart", async (c: Ctx) => {
   const errorKey = CART_ERRORS[c.req.query("error") ?? ""];
   const tryon = moduleEnabled(s.shop.settings, TRYON_MODULE) && !!s.theme.TryonPage;
   if (lines.length > 0) track(c, "cart_view", total, cartItems(lines));
+  // Liquid のテーマの templates/cart（無ければ既定のテーマ）
+  const lt = await liquidThemeFor(c, s, { cartLines: lines });
+  if (lt) {
+    const res = renderCart(c, s, lt, { lines, discounts: coupons ? { applied: coupons.applied, discount: coupons.discount } : null, ...(errorKey ? { error: t(errorKey) } : {}), categories: await s.sf.listCategories(s.shop) });
+    if (res) return res;
+  }
   return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping: shippingSummary(s.shop), coupons, error: errorKey ? t(errorKey) : undefined, tryon }));
 });
 
@@ -578,11 +586,147 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
 storefront.post("/:shop/cart/update", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const f = await formFields(c);
-  const skuId = (f.sku_id ?? "").trim();
-  const qty = Number.parseInt(f.qty ?? "0", 10);
-  if (skuId) await writeCart(c, s, setQty(s.cart, skuId, Number.isInteger(qty) ? qty : 0));
+  const body = await cartInput(c);
+  const skuId = typeof body["sku_id"] === "string" ? body["sku_id"].trim() : "";
+  if (skuId) {
+    const qty = Number.parseInt(String(body["qty"] ?? "0"), 10);
+    await writeCart(c, s, setQty(s.cart, skuId, Number.isInteger(qty) ? qty : 0));
+  } else {
+    // Liquid のテーマの書き方（updates[<SKU>] / updates[]）
+    await writeCart(c, s, updatesFrom(body, s.cart.items.map((i) => i.sku_id)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart));
+  }
+  if ("checkout" in body) return startCheckout(c, s, stringFields(body));
   return c.redirect(`${s.ctx.shopPath}/cart`);
+});
+
+// ---------- Liquid のテーマのカート（Shopify と同じ書き方。docs/themes.md「カート」） ----------
+/** フォームか JSON の本文（AJAX）。updates[] のような同じ名前の欄はすべて受け取る */
+async function cartInput(c: Ctx): Promise<Record<string, unknown>> {
+  if ((c.req.header("content-type") ?? "").includes("application/json")) {
+    const raw = await readJsonLimited(c, 64 * 1024);
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  }
+  if (c.req.method !== "POST") return Object.fromEntries(new URL(c.req.url).searchParams.entries());
+  return (await c.req.parseBody({ all: true })) as Record<string, unknown>;
+}
+
+async function readJsonLimited(c: Ctx, max: number): Promise<unknown> {
+  const raw = await readBodyLimited(c.req.raw, max);
+  if (!raw) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(raw));
+  } catch {
+    return null;
+  }
+}
+
+const stringFields = (body: Record<string, unknown>): Record<string, string> => Object.fromEntries(Object.entries(body).filter((e): e is [string, string] => typeof e[1] === "string"));
+
+/** /cart.js などの応答（Shopify の cart と同じ形） */
+async function cartJson(c: Ctx, s: ShopScope, cart: Cart) {
+  const { lines } = await priceCart(s.sf, s.shop, cart);
+  return cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines);
+}
+
+/** {% form 'cart' %} の送り先: 数を変え、checkout を押したら購入手続きへ */
+storefront.post("/:shop/cart", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const body = await cartInput(c);
+  const cart = updatesFrom(body, s.cart.items.map((i) => i.sku_id)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+  if (cart !== s.cart) await writeCart(c, s, cart);
+  if ("checkout" in body) return startCheckout(c, { ...s, cart }, stringFields(body));
+  return c.redirect(`${s.ctx.shopPath}/cart`);
+});
+
+/** 1 行を変える（url_to_remove は GET。カートの中身だけなので Banto の購入リンク（/buy）と同じ扱い） */
+const cartChange = async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const ch = changeFrom(await cartInput(c), s.cart.items.map((i) => i.sku_id));
+  if (ch) await writeCart(c, s, changeQty(s.cart, ch.skuId, ch.qty));
+  return c.redirect(`${s.ctx.shopPath}/cart`);
+};
+storefront.get("/:shop/cart/change", cartChange);
+storefront.post("/:shop/cart/change", cartChange);
+
+// AJAX（テーマの JS が fetch で呼ぶ。応答は JSON。Shopify の /cart.js と同じ形）
+storefront.get("/:shop/cart.js", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return c.json({ status: 404, message: "not found" }, 404);
+  return c.json(await cartJson(c, s, s.cart), 200, { "cache-control": "no-store" });
+});
+storefront.post("/:shop/cart/add.js", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return c.json({ status: 404, message: "not found" }, 404);
+  const body = await cartInput(c);
+  const adds = addsFrom(body);
+  if (adds.length === 0) return c.json({ status: 422, message: "invalid", description: "id and quantity are required" }, 422);
+  const found = await s.sf.skusForCart(s.shop, adds.map((a) => a.skuId));
+  if (adds.some((a) => !found.has(a.skuId))) return c.json({ status: 404, message: "not found", description: "this variant is not available" }, 404);
+  const cart = adds.reduce((cart, a) => addItem(cart, a.skuId, a.qty), s.cart);
+  await writeCart(c, s, cart);
+  const json = await cartJson(c, s, cart);
+  const items = json.items.filter((x) => adds.some((a) => a.skuId === x.id));
+  return c.json(Array.isArray(body["items"]) ? { items } : (items[0] ?? {}), 200, { "cache-control": "no-store" });
+});
+const cartChangeJs = async (c: Ctx, kind: "change" | "update" | "clear") => {
+  const s = await scope(c);
+  if (!s) return c.json({ status: 404, message: "not found" }, 404);
+  const body = kind === "clear" ? {} : await cartInput(c);
+  const order = s.cart.items.map((i) => i.sku_id);
+  let cart = s.cart;
+  if (kind === "clear") cart = { items: [], ...(s.cart.coupons ? { coupons: s.cart.coupons } : {}) };
+  else if (kind === "update") cart = updatesFrom(body, order).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+  else {
+    const ch = changeFrom(body, order);
+    if (!ch) return c.json({ status: 400, message: "invalid", description: "id or line, and quantity are required" }, 400);
+    cart = changeQty(s.cart, ch.skuId, ch.qty);
+  }
+  await writeCart(c, s, cart);
+  return c.json(await cartJson(c, s, cart), 200, { "cache-control": "no-store" });
+};
+storefront.post("/:shop/cart/change.js", (c: Ctx) => cartChangeJs(c, "change"));
+storefront.post("/:shop/cart/update.js", (c: Ctx) => cartChangeJs(c, "update"));
+storefront.post("/:shop/cart/clear.js", (c: Ctx) => cartChangeJs(c, "clear"));
+storefront.post("/:shop/cart/clear", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  await writeCart(c, s, { items: [], ...(s.cart.coupons ? { coupons: s.cart.coupons } : {}) });
+  return c.redirect(`${s.ctx.shopPath}/cart`);
+});
+
+/** 検索（?q=）。Liquid のテーマは templates/search、既定のテーマは一覧に結果を並べる */
+storefront.get("/:shop/search", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
+  const after = c.req.query("after") || undefined;
+  const categories = await s.sf.listCategories(s.shop);
+  const lt = await liquidThemeFor(c, s);
+  // 2 文字以下の語は探さない（インデックスが効かず全件を見るため。0058 の q_too_short）
+  const searchable = [...q].length >= 3;
+  const page = searchable ? await s.sf.productPage(s.shop, { q, limit: STORE_PAGE_SIZE }, categories, { cursor: after, ...(lt ? { count: true } : {}) }) : null;
+  const link = (cursor: string | null) => {
+    const p = new URLSearchParams({ q });
+    if (cursor) p.set("after", cursor);
+    return `${s.ctx.shopPath}/search?${p.toString()}`;
+  };
+  if (lt) {
+    const res = renderSearch(c, s, lt, { q, page, categories, link, ...(after ? { after } : {}) });
+    if (res) return res;
+  }
+  if (!q) return c.redirect(s.ctx.shopPath || "/");
+  const facets = await s.sf.productFacets(s.shop, categories);
+  return c.html(
+    s.theme.ShopHome({
+      ctx: s.ctx,
+      products: page?.items ?? [],
+      tags: facets.tags,
+      categories: categoryTree(categories),
+      pagination: { ...(page?.nextCursor ? { next: link(page.nextCursor) } : {}), ...(after ? { first: link(null) } : {}) },
+    }),
+  );
 });
 
 /**
@@ -639,17 +783,21 @@ function addressValues(f: Record<string, string>): AddressFormValues {
 storefront.post("/:shop/checkout", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
+  return startCheckout(c, s, await formFields(c));
+});
+
+/** 配送先の画面を出す。決済手段は provider（無ければ使える最初のもの。Liquid のテーマのカートは選ばずに送ってくる） */
+async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): Promise<Response> {
   const cartUrl = `${s.ctx.shopPath}/cart`;
-  const f = await formFields(c);
-  const provider = f.provider ?? "stripe";
   const setup = await paymentOptions(c, s);
+  const provider = f.provider ?? (["stripe", "komoju"] as const).find((p) => providerAvailable(setup, p)) ?? "stripe";
   if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
   const { lines, total } = await cartLines(s);
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
   const edited = addressValues(f);
   const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
   return c.html(s.theme.AddressPage({ ctx: s.ctx, provider, values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: total, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop) }));
-});
+}
 
 /**
  * 2 段階:

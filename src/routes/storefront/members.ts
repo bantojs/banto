@@ -395,7 +395,8 @@ members.post("/:shop/account/login", async (c: Ctx) => {
   const deps = loginDeps(c);
   if (!deps) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
   const fields = await formFields(c);
-  const email = fields.email ?? "";
+  // Liquid のテーマの {% form 'customer_login' %} / 'create_customer' は customer[email] で送ってくる（パスワードの欄は使わない）
+  const email = fields.email ?? fields["customer[email]"] ?? "";
   const base = `${shopHome(publicBaseUrl(c), s.shop)}/account/verify`;
   const r = await startLogin(deps, s.shop, email, { ip: await clientIpFor(c, s.shop), returnTo: null, link: (id, token) => `${base}?c=${id}&t=${token}` });
   if (!r.ok) {

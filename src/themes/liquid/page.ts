@@ -14,10 +14,11 @@ import type { LoadedTheme } from "./cache";
 import { readSectionSchemas, renderSectionGroup, settingsWith, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 import { globalSettingsOf } from "./editor";
 
-export type ThemeTemplate = "index" | "collection" | "product" | "404";
+export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search";
 
 interface Prepared {
   schemas: Map<string, SectionSchema>;
+  blockSchemas: Map<string, SectionSchema>;
   locales: Record<string, unknown>;
   groups: Record<string, unknown>;
   templates: Map<string, { json: Group & { layout?: string | false } } | { liquid: true }>;
@@ -90,7 +91,7 @@ function prepare(t: LoadedTheme, locale: string): Prepared {
     for (const [k, v] of Object.entries(current)) if (k !== "sections" && k !== "content_for_index" && k !== "blocks") settingsDefaults[k] = v;
     if (isObject(current["sections"])) staticSections = current["sections"] as Record<string, SectionData>;
   }
-  const p: Prepared = { schemas: readSectionSchemas(files), locales, groups, templates, settingsDefaults, settingsSchema, staticSections };
+  const p: Prepared = { schemas: readSectionSchemas(files), blockSchemas: readSectionSchemas(files, "blocks"), locales, groups, templates, settingsDefaults, settingsSchema, staticSections };
   prepared.set(t, p);
   return p;
 }
@@ -157,6 +158,8 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
     mediaBaseUrl: input.mediaBaseUrl,
     locales: p.locales,
     schemas: p.schemas,
+    blockSchemas: p.blockSchemas,
+    blockStack: [],
     staticSections: p.staticSections,
     overrides: input.overrides ?? {},
     globals,

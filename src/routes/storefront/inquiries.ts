@@ -160,7 +160,10 @@ inquiries.get("/:shop/inquiries/new", async (c: Ctx) => {
 inquiries.post("/:shop/inquiries/new", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  return formPage(c, s, await formFields(c));
+  const f = await formFields(c);
+  // Liquid のテーマの {% form 'contact' %}（Shopify の書き方 contact[email] など）。入れた値を Banto のお問い合わせの画面に写して続ける
+  for (const k of ["email", "name", "body"] as const) if (f[k] === undefined && f[`contact[${k}]`] !== undefined) f[k] = f[`contact[${k}]`]!;
+  return formPage(c, s, f);
 });
 
 inquiries.post("/:shop/inquiries/confirm", async (c: Ctx) => {

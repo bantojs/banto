@@ -7,6 +7,7 @@
  */
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
+import type { CartLine } from "../types";
 import type { CategoryNode } from "../../products/categories";
 import { orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
@@ -203,15 +204,83 @@ export function routesObject(shopPath: string) {
     root_url: root,
     cart_url: `${shopPath}/cart`,
     cart_add_url: `${shopPath}/cart/add`,
-    cart_change_url: `${shopPath}/cart/update`,
+    cart_change_url: `${shopPath}/cart/change`,
     cart_update_url: `${shopPath}/cart/update`,
     collections_url: root,
     all_products_collection_url: root,
-    search_url: root,
+    search_url: `${shopPath}/search`,
+    predictive_search_url: `${shopPath}/search`,
     account_url: `${shopPath}/account`,
     account_login_url: `${shopPath}/account/login`,
     account_logout_url: `${shopPath}/account/logout`,
     account_register_url: `${shopPath}/account/login`,
+  };
+}
+
+/** カートのクーポン（同梱モジュール coupons が ON のとき）。amount は円 */
+export interface CartDiscounts {
+  applied: { code: string; name: string; amount_jpy: number; free_shipping: boolean }[];
+  discount: number;
+}
+
+/**
+ * カート（Shopify の cart。カートのページ・ヘッダーのカート・/cart.js が同じ形を使う）。
+ * 行の鍵（key・id）は SKU の id（Banto のカートは SKU ごとに 1 行）。金額は 100 倍の整数、値引きは商品の値引きだけ（送料は配送先が決まってから）
+ */
+export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscounts | null = null) {
+  const items = lines.map((l, i) => {
+    const opts = Object.entries(l.sku.options ?? {}).map(([name, value]) => ({ name, value: String(value) }));
+    const variantTitle = l.sku.name || opts.map((o) => o.value).join(" / ") || null;
+    const price = money(l.sku.price_jpy)!;
+    const url = `${u.shopPath}/p/${encodeURIComponent(l.product.slug)}?sku=${encodeURIComponent(l.sku.code)}`;
+    return {
+      id: l.sku.id,
+      key: l.sku.id,
+      variant_id: l.sku.id,
+      product_id: l.product.id,
+      index: i + 1,
+      title: variantTitle ? `${l.product.name} - ${variantTitle}` : l.product.name,
+      product_title: l.product.name,
+      variant_title: variantTitle,
+      sku: l.sku.code,
+      vendor: l.product.brand ?? "",
+      quantity: l.qty,
+      price,
+      original_price: price,
+      final_price: price,
+      line_price: price * l.qty,
+      original_line_price: price * l.qty,
+      final_line_price: price * l.qty,
+      line_level_total_discount: 0,
+      discounts: [],
+      url,
+      url_to_remove: `${u.shopPath}/cart/change?id=${encodeURIComponent(l.sku.id)}&quantity=0`,
+      image: null,
+      featured_image: null,
+      options_with_values: opts,
+      variant: { id: l.sku.id, title: variantTitle ?? l.sku.code, sku: l.sku.code, price, available: l.sku.available > 0, options: opts.map((o) => o.value) },
+      product: { id: l.product.id, handle: l.product.slug, title: l.product.name, url: `${u.shopPath}/p/${encodeURIComponent(l.product.slug)}`, vendor: l.product.brand ?? "", tags: l.product.tags ?? [] },
+      requires_shipping: true,
+      // 在庫が足りない行（Banto の判定。確認画面へは進めない）
+      available: !l.short,
+    };
+  });
+  const subtotal = items.reduce((n, x) => n + x.line_price, 0);
+  const discount = money(discounts?.discount ?? 0)!;
+  return {
+    item_count: items.reduce((n, x) => n + x.quantity, 0),
+    items,
+    items_subtotal_price: subtotal,
+    original_total_price: subtotal,
+    total_discount: discount,
+    total_price: Math.max(0, subtotal - discount),
+    cart_level_discount_applications: (discounts?.applied ?? []).map((a) => ({ title: a.name, code: a.code, total_allocated_amount: money(a.amount_jpy), type: "discount_code", value_type: a.free_shipping ? "shipping" : "fixed_amount" })),
+    discount_codes: (discounts?.applied ?? []).map((a) => ({ code: a.code, applicable: true })),
+    requires_shipping: items.length > 0,
+    currency: { iso_code: "JPY" },
+    note: null,
+    attributes: {},
+    empty: items.length === 0,
   };
 }
 

@@ -15,14 +15,16 @@ import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import type { ProductDetail, ProductListPage, PublicShop, StorefrontData } from "../../storefront/data";
 import { shopHome, shopOrigin } from "../../storefront/urls";
-import type { ThemeContext } from "../../themes/types";
+import type { CartLine, ThemeContext } from "../../themes/types";
+import type { Cart } from "../../cart/cart";
+import { priceCart } from "../../commerce/checkout";
 import { escapeHtml, ThemeError } from "../../themes/liquid/engine";
 import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { sectionOverridesOf } from "../../themes/liquid/editor";
-import { collectionObject, footerMenu, menuFromCategories, productFromDetail, productFromSummary, routesObject, shopObject } from "../../themes/liquid/objects";
+import { cartObject, collectionObject, footerMenu, menuFromCategories, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS } from "../../themes/liquid/preview";
@@ -32,6 +34,8 @@ export interface LiquidScope {
   shop: PublicShop;
   sf: StorefrontData;
   ctx: ThemeContext;
+  /** このブラウザのカート（あれば、どのページでも cart.items を渡す。ヘッダーのカートの一覧に使われる） */
+  cart?: Cart;
 }
 
 /** 描くテーマ。preview は管理画面から開いたプレビュー（公開していない版。誤りをその場所に出し、検索エンジンに載せない） */
@@ -39,6 +43,8 @@ export interface LiquidChoice {
   lt: LoadedTheme;
   settings: Record<string, unknown>;
   preview: boolean;
+  /** カートの行（カートが空なら []。DB に問い合わせない） */
+  cartLines: CartLine[];
 }
 
 /** プレビューの版（?preview_theme=<版>&preview_token=… で始め、Cookie で続ける。?preview_theme=off で終わる） */
@@ -61,7 +67,7 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<string | null> {
 }
 
 /** 描くテーマ（公開中の版か、プレビューの版）。描けないなら null */
-export async function liquidThemeFor(c: Ctx, s: LiquidScope): Promise<LiquidChoice | null> {
+export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
   if (!onShopDomain(c, s.shop)) return null;
   const preview = await previewVersion(c, s);
   const theme = preview ? { id: preview, storage_key: `themes/${s.shop.id}/${preview}/bundle.json`, settings: {} } : s.shop.theme;
@@ -70,7 +76,10 @@ export async function liquidThemeFor(c: Ctx, s: LiquidScope): Promise<LiquidChoi
   try {
     if (!adapters.cpuUnlimited && (await s.sf.sitePlanCached()) !== "paid") return null;
     const lt = await loadTheme(adapters.storage, theme, { extend: extendShopify, timezone: adapters.config.get("BANTO_TIMEZONE") ?? "Asia/Tokyo" });
-    return lt ? { lt, settings: theme.settings ?? {}, preview: Boolean(preview) } : null;
+    if (!lt) return null;
+    // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
+    const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
+    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines };
   } catch (e) {
     console.error("[banto] theme load:", e instanceof Error ? e.message : e);
     return null;
@@ -90,7 +99,7 @@ interface PageParts {
   categories: CategoryRow[];
   currentCategory?: string;
   paginate?: Paginate | null;
-  status?: 200 | 404;
+  status?: 200 | 400 | 404;
 }
 
 /** Liquid のテーマで 1 ページを描いた Response。描けなければ null */
@@ -115,7 +124,7 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     settings: themeSettings(lt, choice.settings),
     routes: routesObject(shopPath),
     request: { host: new URL(origin).host, path, page_type: page.template, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
-    cart: { item_count: s.ctx.cartCount, items: [], total_price: 0, items_subtotal_price: 0, currency: { iso_code: "JPY" } },
+    cart: cartObject(u, choice.cartLines),
     customer: s.ctx.member ? { email: s.ctx.member.email } : null,
     linklists: {
       "main-menu": menuFromCategories(u, tree, page.currentCategory),
@@ -144,6 +153,25 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
   }
 }
 
+/**
+ * ページ送り。Banto のページ送りは位置（cursor）で進むので、今が何ページ目かは分からない。前は「最初のページ」、次は「次の 1 ページ」。
+ * 全体の数が分かれば pages を出す（テーマの {% if paginate.pages > 1 %} が効くように）
+ */
+function paginateOf(page: ProductListPage, after: string | undefined, link: (cursor: string | null) => string): Paginate {
+  const previous = after ? { title: "«", url: link(null), is_link: true as const } : null;
+  const next = page.nextCursor ? { title: "»", url: link(page.nextCursor), is_link: true as const } : null;
+  const pages = page.total !== null ? Math.max(1, Math.ceil(page.total / page.limit)) : previous || next ? 2 : 1;
+  return {
+    current_page: after ? 2 : 1,
+    page_size: page.limit,
+    items: page.total,
+    pages,
+    previous,
+    next,
+    parts: [...(previous ? [{ title: "1", url: previous.url, is_link: true }] : []), { title: after ? "…" : "1", url: "", is_link: false }, ...(next ? [{ title: "»", url: next.url, is_link: true }] : [])],
+  };
+}
+
 /** 一覧（トップ・カテゴリー・タグ）。トップは templates/index、絞り込みは templates/collection */
 export function renderListing(
   c: Ctx,
@@ -162,20 +190,7 @@ export function renderListing(
     allTags: p.tags.map((x) => x.tag),
     ...(p.tag ? { currentTags: [p.tag] } : {}),
   });
-  // Banto のページ送りは位置（cursor）で進むので、今が何ページ目かは分からない。前は「最初のページ」、次は「次の 1 ページ」。
-  // 全体の数が分かれば pages を出す（テーマの {% if paginate.pages > 1 %} が効くように）
-  const previous = p.after ? { title: "«", url: p.link(null), is_link: true as const } : null;
-  const next = p.page.nextCursor ? { title: "»", url: p.link(p.page.nextCursor), is_link: true as const } : null;
-  const pages = p.page.total !== null ? Math.max(1, Math.ceil(p.page.total / p.page.limit)) : previous || next ? 2 : 1;
-  const paginate: Paginate = {
-    current_page: p.after ? 2 : 1,
-    page_size: p.page.limit,
-    items: p.page.total,
-    pages,
-    previous,
-    next,
-    parts: [...(previous ? [{ title: "1", url: previous.url, is_link: true }] : []), { title: p.after ? "…" : "1", url: "", is_link: false }, ...(next ? [{ title: "»", url: next.url, is_link: true }] : [])],
-  };
+  const paginate = paginateOf(p.page, p.after, p.link);
   const template: ThemeTemplate = filtered || !themeHasTemplate(choice.lt, "index") ? "collection" : "index";
   return render(c, s, choice, {
     template,
@@ -209,6 +224,28 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
     path,
     jsonLd,
     categories: p.categories,
+  });
+}
+
+/** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く） */
+export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; error?: string; categories: CategoryRow[] }): Response | null {
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  return render(c, s, choice, { template: "cart", values: { cart: cartObject(u, p.lines, p.discounts), cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
+}
+
+/** 検索（templates/search）。search.results は商品だけ */
+export function renderSearch(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { q: string; page: ProductListPage | null; categories: CategoryRow[]; link: (cursor: string | null) => string; after?: string }): Response | null {
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const results = (p.page?.items ?? []).map((x) => ({ ...productFromSummary(u, x), object_type: "product" }));
+  const search = { performed: p.q !== "", terms: p.q, results, results_count: p.page?.total ?? results.length, types: ["product"], filters: [], sort_by: null, sort_options: [] };
+  return render(c, s, choice, {
+    template: "search",
+    values: { search },
+    title: p.q ? `${t("store.search")}: ${p.q}` : t("store.search"),
+    path: "/search",
+    noindex: true,
+    categories: p.categories,
+    paginate: p.page ? paginateOf(p.page, p.after, p.link) : null,
   });
 }
 

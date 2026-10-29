@@ -85,6 +85,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | `sections/*.liquid` | セクション。`{% schema %}` に設定の宣言（既定値が使われます） |
 | `sections/*.json` | セクションのまとまり（`{% sections 'header-group' %}`） |
 | `snippets/*.liquid` | 部品（`{% render 'card', product: product %}`） |
+| `blocks/*.liquid` | テーマのブロック（`{% content_for 'blocks' %}`・`{% content_for 'block', type: 'x', id: 'y' %}`）。`{% schema %}` に設定の宣言 |
 | `config/settings_schema.json`・`settings_data.json` | テーマの設定の宣言と既定の値（`settings.*`） |
 | `locales/ja.json`（・`*.default.json`） | 翻訳（`{{ 'products.add_to_cart' \| t }}`） |
 | `assets/*` | CSS・JS・画像・フォント（`{{ 'theme.css' \| asset_url \| stylesheet_tag }}`）。HTML と SVG は置けません |
@@ -101,8 +102,10 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | カテゴリー・タグで絞った一覧 | `collection` | `collection`・`products`・`current_tags` |
 | 商品 | `product` | `product`・`current_variant` |
 | 見つからない | `404` | — |
+| カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
+| 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上（2 文字以下は探さず 0 件） |
 
-**どのページでも**: `shop`・`settings`・`routes`・`request`・`cart`（`item_count` だけ）・`customer`（ログイン中の会員のメールアドレスだけ）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前と URL だけ）・`page_title`・`page_description`・`canonical_url`・`template`。
+**どのページでも**: `shop`・`settings`・`routes`・`request`・`cart`（`item_count`・`items`・`total_price` など。どのページでも読めるので、ヘッダーのカートの一覧に使えます）・`customer`（ログイン中の会員のメールアドレスだけ）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前と URL だけ）・`page_title`・`page_description`・`canonical_url`・`template`。
 
 **商品**（`product`）: `id`・`handle`（スラッグ）・`title`・`url`・`description`（改行を `<br>` にした HTML）・`price` / `price_min` / `price_max` / `price_varies`・`compare_at_price`・`available`・`vendor`（ブランド）・`tags`・`featured_image`・`images`・`variants`（SKU。`id`・`title`・`sku`・`price`・`available`・`options`・`option1`〜`3`）・`options`・`options_with_values`・`selected_or_first_available_variant`。在庫は「あるか」だけで、数は渡しません。一覧（`collection.products`）の `available` は「値段のついた SKU があるか」で、在庫の有無は商品のページでだけ分かります（一覧で在庫を引かないため）。
 
@@ -110,6 +113,22 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 
 **フィルター**（標準の Liquid のフィルターに加えて）: `money`・`money_with_currency`・`money_without_currency`・`money_without_trailing_zeros`・`image_url`（`width:`。Banto の画像は本画像と長辺 400px の 2 つなので、幅 400 以下ならサムネイル）・`img_url`・`image_tag`・`asset_url`・`asset_img_url`・`stylesheet_tag`・`script_tag`・`preload_tag`・`t`・`json`・`handleize`・`pluralize`・`link_to`・`within`・`default_pagination`・`placeholder_svg_tag`・`time_tag`。整数どうしの `divided_by` は切り捨てです。
 
-**タグ**（標準の Liquid のタグに加えて）: `section`・`sections`・`schema`・`form`（いまは `'product'` だけ。カートに入れるフォームで、Shopify と同じく `id`（バリエーション）と `quantity` を送ります）・`paginate`（1 ページの数は Banto が決めます（48）。Banto は位置で次のページへ進むので、`paginate.parts` は今のページと前後だけ、2 ページ目より先の `current_page` は 2 です。`paginate.pages`・`items` は全体の数から出します。`paginate.next.url` / `previous.url`）・`style`・`stylesheet`・`javascript`・`layout`。
+**タグ**（標準の Liquid のタグに加えて）: `section`・`sections`・`schema`・`form`（`'product'`: カートに入れる（`id` = バリエーション、`quantity`）、`'cart'`: カートの数を変える・購入手続きへ、`'contact'`: お問い合わせ（同梱モジュール「お問い合わせ」が ON のショップ。`contact[email]`・`contact[name]`・`contact[body]` を Banto のお問い合わせの画面に写して続けます）、`'customer_login'` / `'create_customer'`: 会員のログイン（Banto はメールのコードでログインするので、`customer[email]` だけを使います））・`content_for`（`'blocks'` と `'block'`。テーマのブロックは 8 段まで入れ子にできます）・`paginate`（1 ページの数は Banto が決めます（48）。Banto は位置で次のページへ進むので、`paginate.parts` は今のページと前後だけ、2 ページ目より先の `current_page` は 2 です。`paginate.pages`・`items` は全体の数から出します。`paginate.next.url` / `previous.url`）・`style`・`stylesheet`・`javascript`・`layout`。
 
-知らないフィルター・タグ（`content_for` など、まだ用意していないもの）は、テーマを取り込むときに断ります。
+知らないフィルター・タグは、テーマを取り込むときに断ります。
+
+### カート
+
+`cart` は Shopify と同じ形です（`items`・`item_count`・`items_subtotal_price`・`total_discount`・`total_price`・`cart_level_discount_applications`・`empty`）。行（`item`）は `key` と `id` が SKU の id で、`title`・`product_title`・`variant_title`・`sku`・`quantity`・`price`・`final_line_price`・`url`・`url_to_remove`・`options_with_values`・`variant`・`product`・`available`（在庫が足りなければ false）を持ちます。金額は 100 倍の整数で、値引きは商品の値引きだけです（送料と送料無料のクーポンは、配送先が決まってから最終確認の画面で）。行の画像はまだ渡しません（`item.image` は空）。
+
+カートを変える書き方も Shopify と同じです。どれも同じオリジンからだけ受け付けます（ほかのサイトからの書き込みは断ります）。
+
+| 書き方 | 中身 |
+| --- | --- |
+| `{% form 'cart', cart %}`（`/cart` に POST） | `updates[]`（行の順）か `updates[<key>]` で数を変える。`name="checkout"` のボタンで購入手続き（配送先 → 最終確認 → 決済）へ。決済手段は使える最初のもの（`provider` の欄を置けば選べます） |
+| `item.url_to_remove`・`/cart/change`（`id` か `line` と `quantity`） | 1 行の数を変える・外す |
+| `/cart.js`（GET） | カートの JSON |
+| `/cart/add.js`（POST、`id`・`quantity` か `items: [...]`） | カートに入れる。応答は入れた行（`items` で送れば `{ items }`）。公開していない SKU は 404 |
+| `/cart/change.js`・`/cart/update.js`・`/cart/clear.js`（POST） | 数を変える・まとめて変える・空にする。応答はカートの JSON |
+
+セクションを描き直して返す Shopify の `sections` の引数には対応していません（応答の JSON から画面を作り直してください）。

@@ -49,13 +49,27 @@ export function settingsWith(schema: SettingSchema[] | undefined, values: Record
 export type SectionOverrides = Record<string, Record<string, { settings?: Record<string, unknown>; blocks?: Record<string, Record<string, unknown>> }>>;
 
 /** JSON のテンプレート・セクションのまとまりの 1 つ */
+export interface BlockData {
+  type: string;
+  settings?: Record<string, unknown>;
+  disabled?: boolean;
+  /** {% content_for 'block' %} で置いたブロック（順の外） */
+  static?: boolean;
+  /** テーマのブロックの中のブロック（{% content_for 'blocks' %}） */
+  blocks?: Record<string, BlockData>;
+  block_order?: string[];
+}
+
 export interface SectionData {
   type: string;
   settings?: Record<string, unknown>;
-  blocks?: Record<string, { type: string; settings?: Record<string, unknown>; disabled?: boolean }>;
+  blocks?: Record<string, BlockData>;
   block_order?: string[];
   disabled?: boolean;
 }
+
+/** テーマのブロックの入れ子の深さ（Shopify は 8 段まで） */
+export const BLOCK_DEPTH_MAX = 8;
 
 export interface Paginate {
   current_page: number;
@@ -78,6 +92,10 @@ export interface RenderEnv {
   /** 翻訳（locales/ja.json など。既定の言語にない鍵は既定のファイルから） */
   locales: Record<string, unknown>;
   schemas: Map<string, SectionSchema>;
+  /** テーマのブロック（blocks/*.liquid）の {% schema %} */
+  blockSchemas?: Map<string, SectionSchema>;
+  /** 今描いているセクション・ブロックの入れ子（{% content_for 'blocks' %} が読む） */
+  blockStack?: { section: Record<string, unknown>; blocks: Record<string, BlockData>; order: string[] }[];
   /** config/settings_data.json の current.sections（{% section %} で置いたセクションの値） */
   staticSections: Record<string, SectionData>;
   /** 運営者が管理画面で変えたセクション・ブロックの値（置き場 → セクションの id、src/themes/liquid/editor.ts） */
@@ -316,11 +334,12 @@ export function renderSection(id: string, data: SectionData, index = 1): string 
     .map((bid) => {
       const b = data.blocks?.[bid];
       if (!b || b.disabled) return null;
-      const bs = (schema.blocks ?? []).find((x) => x.type === b.type);
-      return { id: bid, type: b.type, settings: settingsWith(bs?.settings, b.settings), shopify_attributes: "" };
+      return blockObject(bid, b, schema);
     })
     .filter(Boolean);
   const section = { id, type: data.type, settings: settingsWith(schema.settings, data.settings), blocks, index, location: "template" };
+  const stack = (e.blockStack ??= []);
+  stack.push({ section, blocks: data.blocks ?? {}, order });
   try {
     const html = e.engine.render(`sections/${data.type}`, { ...e.globals, section });
     return `<div id="section-${escapeHtml(id)}" class="theme-section">${html}</div>`;
@@ -330,6 +349,42 @@ export function renderSection(id: string, data: SectionData, index = 1): string 
     const msg = err instanceof Error ? err.message : String(err);
     e.errors.push(`sections/${data.type}: ${msg}`);
     return e.preview ? `<div class="theme-error" style="border:2px solid #c00;padding:8px;color:#c00">${escapeHtml(`sections/${data.type}: ${msg}`)}</div>` : "";
+  } finally {
+    stack.pop();
+  }
+}
+
+/** section.blocks・block の 1 つ（設定の宣言はセクションの schema、無ければテーマのブロックの schema） */
+function blockObject(id: string, b: BlockData, parent: SectionSchema) {
+  const e = env();
+  const bs = (parent.blocks ?? []).find((x) => x.type === b.type) ?? e.blockSchemas?.get(b.type);
+  return { id, type: b.type, settings: settingsWith(bs?.settings, b.settings), shopify_attributes: new SafeHtml(`data-block-id="${escapeHtml(id)}"`) };
+}
+
+/** テーマのブロック（blocks/<種類>.liquid）を 1 つ描く。中のブロックも同じ仕組みで描けるように入れ子に積む */
+function renderThemeBlock(id: string, b: BlockData): string {
+  const e = env();
+  const stack = (e.blockStack ??= []);
+  const top = stack[stack.length - 1];
+  if (!top || b.disabled || typeof b.type !== "string") return "";
+  if (stack.length > BLOCK_DEPTH_MAX) throw new ThemeError(`blocks nested deeper than ${BLOCK_DEPTH_MAX}`, "limit");
+  const name = `blocks/${b.type}`;
+  if (!e.engine.has(name)) {
+    e.errors.push(`${name}: missing`);
+    return "";
+  }
+  const block = blockObject(id, b, e.blockSchemas?.get(b.type) ?? {});
+  const order = [...new Set(b.block_order ?? Object.keys(b.blocks ?? {}))].slice(0, SECTION_LIMITS.blocks);
+  stack.push({ section: top.section, blocks: b.blocks ?? {}, order });
+  try {
+    return e.engine.render(name, { ...e.globals, section: top.section, block });
+  } catch (err) {
+    if (err instanceof ThemeError && err.kind === "limit") throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    e.errors.push(`${name}: ${msg}`);
+    return e.preview ? `<div class="theme-error" style="border:2px solid #c00;padding:8px;color:#c00">${escapeHtml(`${name}: ${msg}`)}</div>` : "";
+  } finally {
+    stack.pop();
   }
 }
 
@@ -353,6 +408,19 @@ function staticSection(type: string): SectionData {
   });
   return { type, ...(isObject(def?.settings) ? { settings: def!.settings } : {}), blocks, block_order: Object.keys(blocks) };
 }
+
+/**
+ * {% form %} の送り先（Shopify の名前 → Banto の画面）。contact はお問い合わせ（同梱モジュール inquiries。OFF なら送り先は 404）、
+ * customer_login / create_customer は会員のログイン（Banto はメールのコードでログインするので、どちらも同じ）
+ */
+const FORM_ACTIONS: Readonly<Record<string, string>> = {
+  product: "/cart/add",
+  cart: "/cart",
+  contact: "/inquiries/new",
+  customer_login: "/account/login",
+  create_customer: "/account/login",
+  recover_customer_password: "/account/login",
+};
 
 export function registerShopifyTags(liquid: Liquid): void {
   liquid.registerTag(
@@ -434,6 +502,40 @@ export function registerShopifyTags(liquid: Liquid): void {
       }
     },
   );
+  // テーマのブロック: {% content_for 'blocks' %}（今のセクション・ブロックの中のブロックを順に）、
+  // {% content_for 'block', type: 'x', id: 'y' %}（決まった場所に置くブロック。値は中のブロックの id から、無ければ宣言の既定値）
+  liquid.registerTag(
+    "content_for",
+    class extends Tag {
+      kind: "blocks" | "block";
+      hash: Hash;
+      constructor(token: TagToken, rest: TopLevelToken[], l: Liquid) {
+        super(token, rest, l);
+        const m = /^\s*['"](blocks|block)['"]\s*(.*)$/s.exec(token.args);
+        if (!m) throw new Error(`illegal tag: ${token.getText()}`);
+        this.kind = m[1] as "blocks" | "block";
+        this.hash = new Hash(m[2]!.replace(/^\s*,/, ""), l.options.keyValueSeparator);
+      }
+      *render(ctx: Context, emitter: Emitter) {
+        const e = env();
+        const top = e.blockStack?.[e.blockStack.length - 1];
+        if (!top) return;
+        if (this.kind === "blocks") {
+          for (const bid of top.order) {
+            const b = top.blocks[bid];
+            if (b && !b.static) emitter.write(renderThemeBlock(bid, b));
+          }
+          return;
+        }
+        const h = (yield this.hash.render(ctx)) as Record<string, unknown>;
+        const type = typeof h["type"] === "string" ? h["type"] : "";
+        const id = typeof h["id"] === "string" ? h["id"] : "";
+        if (!/^[A-Za-z0-9_.-]{1,100}$/.test(type) || !/^[A-Za-z0-9_-]{1,100}$/.test(id)) return;
+        const saved = top.blocks[id];
+        emitter.write(renderThemeBlock(id, saved && saved.type === type ? saved : { type, static: true }));
+      }
+    },
+  );
   liquid.registerTag(
     "sections",
     class extends Tag {
@@ -467,7 +569,7 @@ export function registerShopifyTags(liquid: Liquid): void {
       *render(ctx: Context, emitter: Emitter) {
         const e = env();
         const h = (yield this.hash.render(ctx)) as Record<string, unknown>;
-        const action = this.formType === "product" ? `${e.shopPath}/cart/add` : null;
+        const action = FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
         if (!action) e.errors.push(`form '${this.formType}' is not supported yet`);
         const extra = Object.entries(h)
           .filter(([k, v]) => /^[a-z][a-z0-9_-]*$/.test(k) && v !== undefined && k !== "return_to")
@@ -508,10 +610,11 @@ function groupOf(name: string): { sections?: Record<string, SectionData>; order?
 }
 
 /** テーマの中の {% schema %} の JSON（セクションごと）。読み込むときに一度だけ */
-export function readSectionSchemas(files: Readonly<Record<string, string>>): Map<string, SectionSchema> {
+export function readSectionSchemas(files: Readonly<Record<string, string>>, dir: "sections" | "blocks" = "sections"): Map<string, SectionSchema> {
   const out = new Map<string, SectionSchema>();
+  const re = new RegExp(`^${dir}\\/([A-Za-z0-9_.-]+)\\.liquid$`);
   for (const [path, src] of Object.entries(files)) {
-    const m = /^sections\/([A-Za-z0-9_.-]+)\.liquid$/.exec(path);
+    const m = re.exec(path);
     if (!m) continue;
     const body = /\{%-?\s*schema\s*-?%\}([\s\S]*?)\{%-?\s*endschema\s*-?%\}/.exec(src)?.[1];
     if (!body) continue;
