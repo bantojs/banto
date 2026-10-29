@@ -88,6 +88,15 @@ export function openapiDocument(origin: string, version: string): Record<string,
           responses: { 200: resp("product", product), ...errors },
         },
       },
+      "/products/{id}/images/order": {
+        put: {
+          summary: "商品の画像の並び順を決める（products:write、0078）。その商品の画像の id をすべて、並べたい順に（1 枚目がメインの画像）。足りない・余計・重なりは 400 image_ids_mismatch で何も変えない。SKU への結び付けはそのまま",
+          security: bearer,
+          parameters: [{ name: "id", in: "path", required: true, schema: str }],
+          requestBody: { required: true, content: { "application/json": { schema: obj({ image_ids: { type: "array", items: str, maxItems: 200 } }, ["image_ids"]) } } },
+          responses: { 200: resp("product", product), ...errors, 409: resp("データベースの更新（0078）が要る") },
+        },
+      },
       "/images/{id}/file": {
         put: {
           summary: "画像のファイルだけを差し替える（products:write、0077）。並び順・SKU への結び付け・id はそのまま（WebP にするプラグインなど）。本文の形と上限は /products/{id}/images/upload と同じ（options は受けない）。前のファイルは消す",

@@ -93,6 +93,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `sku_create` / `sku_update` / `sku_delete`【書き込み】 | products:write | `POST /products/{id}/skus`、`PATCH /skus/{id}`、`DELETE /skus/{id}` |
 | `product_image_add` / `product_image_delete`【書き込み】 | products:write | `POST /products/{id}/images`（URL から取り込み。http(s)・公開アドレス・5MB・画像のみ。`options` で SKU に結んで登録、0063）、`DELETE /images/{id}` |
 | `product_image_set_options`【書き込み】 | products:write | `PATCH /images/{id}`（画像を SKU の選択肢に結ぶ。0063） |
+| `product_images_reorder`【書き込み】 | products:write | `PUT /products/{id}/images/order`（画像の並び順。0078） |
 | `product_set_option_axes`【書き込み】 | products:write | `PUT /products/{id}/option-axes`（SKU を分ける軸。0065） |
 | `orders_list` / `order_get` | orders:read（個人情報は orders:pii） | `GET /orders`、`GET /orders/{id}` |
 | `order_update_status`【書き込み】 | orders:write（キャンセルは発行者の orders_cancel も） | `POST /orders/{id}/status` |
@@ -124,6 +125,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `DELETE /skus/{id}` | products:write | 注文履歴がある SKU は削除できない（非公開にする） |
 | `POST /products/{id}/images` | products:write | `image_url`（Banto がその URL から取ってくる）、`options`（任意。登録と同時に SKU に結ぶ。形は `PATCH /images/{id}` と同じ、0063） |
 | `POST /products/{id}/images/upload` | products:write | 画像のファイルそのもの。下の「画像のファイルを送る」。SKU に結ぶなら multipart の `options` の欄か `?options=`（JSON） |
+| `PUT /products/{id}/images/order` | products:write | `image_ids`（その商品の画像の id を **すべて**、並べたい順に。1 枚目がメインの画像）。足りない・余計・重なりは 400 `image_ids_mismatch` で何も変えない。SKU への結び付けはそのまま。返すのは商品。0078 |
 | `PUT /products/{id}/option-axes` | products:write | `option_axes`（`[{ "key": "カラー", "values": ["レッド"] }, { "key": "サイズ" }]`、3 つまで。`[]` は品番だけ、`null` は決めない）。今の SKU の options の鍵が軸とちょうど同じでないと 400 `option_axes_mismatch`。軸を決めた商品の SKU は、options の鍵を軸に合わせて作る（合わなければ 400、同じ組み合わせは 409 `option_combination_exists`）。商品の JSON の `option_axes` で読める。0065 |
 | `PATCH /images/{id}` | products:write | `options`（SKU の `options` の一部。`{ "color": "レッド" }` でそのカラーの全 SKU、`{ "color": "レッド", "size": "M" }` でその SKU だけ、`{}` で商品全体。鍵 5 つまで・値は 60 文字までの文字列）。返すのは商品。0063 |
 | `PUT /images/{id}/file` | products:write | 画像のファイルだけを差し替える（0077）。並び順・SKU への結び付け・id はそのまま。本文の形は `images/upload` と同じ（`options` は受けない）。前のファイルは消す |
@@ -173,6 +175,13 @@ Banto は画像を縮小しないので（Worker の CPU の制限）、**長辺
 
 ```bash
 curl -X PUT -H "Authorization: Bearer banto_..." -F image=@main.webp -F thumbnail=@thumb.webp https://<ショップの URL>/api/v1/images/<画像の id>/file
+```
+
+**画像の並び順**（`PUT /products/{id}/images/order`、0078）: `GET /products/{id}` の `images` に今の順と id が入っています。その id を **1 つ残らず** 並べたい順に送ります（1 枚目がメインの画像になり、一覧・商品フィード・OG に使われます）。
+一部だけ送る・知らない id や重なりがあると 400 `image_ids_mismatch` で、何も変わりません（ほかの人が同時に画像を足し引きしていたら、読み直して送り直してください）。SKU への結び付け（`options`）は変わりません。並べ替えると `product.updated` が届きます（0075）。DB が 0078 より前なら 409 `migration_required` です。
+
+```bash
+curl -X PUT -H "Authorization: Bearer banto_..." -H "Content-Type: application/json" -d '{"image_ids":["<3 枚目の id>","<1 枚目の id>","<2 枚目の id>"]}' https://<ショップの URL>/api/v1/products/<id>/images/order
 ```
 
 ```bash

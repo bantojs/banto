@@ -151,6 +151,16 @@ v1.post("/products/:id/images/upload", async (c) => {
     return errorJson(c, e);
   }
 });
+// 商品の画像の並び順（0078、products:write）。{ image_ids: [...] } にその商品の画像の id をすべて、並べたい順に
+v1.put("/products/:id/images/order", async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+    if (!body || typeof body !== "object") throw new ApiError("invalid", "send JSON: { \"image_ids\": [...] }", 400);
+    return c.json(await api(c).imagesReorder(c.req.param("id"), body["image_ids"]));
+  } catch (e) {
+    return errorJson(c, e);
+  }
+});
 // 画像のファイルだけを差し替える（0077、products:write）。行・並び順・SKU への結び付けはそのまま（WebP にするプラグインなど）
 v1.put("/images/:id/file", async (c) => {
   try {

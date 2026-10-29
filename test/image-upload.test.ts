@@ -248,3 +248,56 @@ describe("PUT /api/v1/images/{id}/file（0077）", () => {
     expect(r.json.error?.code).toBe("migration_required");
   });
 });
+
+describe("PUT /api/v1/products/{id}/images/order（0078）", () => {
+  const reorder = async (app: ReturnType<typeof appWith>, token: string, productId: string, body: unknown) => {
+    const res = await app.request(`${BASE}/api/v1/products/${productId}/images/order`, { method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> & { error?: { code: string; message: string } } };
+  };
+  const addThree = async (app: ReturnType<typeof appWith>, tok: string, productId: string) => {
+    const png = tinyPng(10, 10);
+    const ids: string[] = [];
+    for (let n = 0; n < 3; n++) ids.push(String((await upload(app, tok, productId, png, { "content-type": "image/png", "content-length": String(png.byteLength) })).json["image_id"]));
+    return ids as [string, string, string];
+  };
+
+  it("渡した順に並べ直して商品を返す。MCP の product_images_reorder も同じ", async () => {
+    const { app, issue, mug } = await setup();
+    const tok = await issue(["products:write"]);
+    const [a, b, c] = await addThree(app, tok, mug.id);
+    const r = await reorder(app, tok, mug.id, { image_ids: [c, a, b] });
+    expect(r.status).toBe(200);
+    expect((r.json["images"] as { id: string }[]).map((i) => i.id)).toEqual([c, a, b]);
+    const mcp = await app.request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tok}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "product_images_reorder", arguments: { product_id: mug.id, image_ids: [b, c, a] } } }),
+    });
+    const text = JSON.stringify(await mcp.json());
+    expect(text.indexOf(b)).toBeLessThan(text.indexOf(c));
+    expect(text.indexOf(c)).toBeLessThan(text.indexOf(a));
+  });
+
+  it("断るもの: 足りない・重なり（400 image_ids_mismatch）、形の違い（400）、読むだけのトークン（401）", async () => {
+    const { app, issue, mug } = await setup();
+    const tok = await issue(["products:write"]);
+    const ro = await issue(["products:read"]);
+    const [a, b, c] = await addThree(app, tok, mug.id);
+    const missing = await reorder(app, tok, mug.id, { image_ids: [a, b] });
+    expect(missing.status).toBe(400);
+    expect(missing.json.error?.message).toMatch(/^image_ids_mismatch/);
+    expect((await reorder(app, tok, mug.id, { image_ids: [a, a, b] })).status).toBe(400);
+    expect((await reorder(app, tok, mug.id, { image_ids: "x" })).status).toBe(400);
+    expect((await reorder(app, tok, mug.id, { image_ids: [a, b, "nope"] })).status).toBe(400);
+    expect((await reorder(app, ro, mug.id, { image_ids: [c, b, a] })).status).toBe(401);
+  });
+
+  it("0078 が当たる前は 409 migration_required", async () => {
+    const { app, issue, mug, sb } = await setup();
+    const tok = await issue(["products:write"]);
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0078_api_image_order");
+    const old = await reorder(app, tok, mug.id, { image_ids: [] });
+    expect(old.status).toBe(409);
+    expect(old.json.error?.code).toBe("migration_required");
+  });
+});
