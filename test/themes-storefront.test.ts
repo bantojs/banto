@@ -57,7 +57,7 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     const { status, html } = await get(`${DOMAIN}/`);
     expect(status).toBe(200);
     expect(html).toContain("<title>テストのお店 | テストのお店</title>");
-    expect(html).toContain('<div id="section-main" class="theme-section"><h2>おすすめ</h2>');
+    expect(html).toContain('<div id="shopify-section-main" class="shopify-section"><h2>おすすめ</h2>');
     expect(html).toContain("<span>Tシャツ &lt;b&gt;</span> <b>¥1,200</b>");
     expect(html).toContain(`<img src="${BASE}/media/img/tee.t.webp" alt="Tシャツ &lt;b&gt;" width="400" height="300" loading="lazy">`);
     expect(html).toContain('href="/p/tee"');
@@ -76,7 +76,7 @@ describe("お店の画面を Liquid のテーマで描く", () => {
   it("カテゴリーは templates/collection（{% section %} はスキーマの既定値）", async () => {
     const { html } = await setup().get(`${DOMAIN}/?category=tops`);
     expect(html).toContain("<h1>トップス</h1>");
-    expect(html).toContain('<div id="section-main-collection" class="theme-section"><h2>商品</h2>');
+    expect(html).toContain('<div id="shopify-section-main-collection" class="shopify-section"><h2>商品</h2>');
     expect(html).toContain(`<link rel="canonical" href="${DOMAIN}?category=tops">`);
   });
 
@@ -168,13 +168,13 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     expect(onBanto.status).toBe(302);
     const free = await setup({ plan: "free" }).get(`${DOMAIN}/`);
     expect(free.status).toBe(200);
-    expect(free.html).not.toContain("theme-section");
+    expect(free.html).not.toContain("shopify-section");
   });
 
   it("テーマが壊れている・上限を超えた・その種類のテンプレートが無いときは既定のテーマで描く（お店を止めない）", async () => {
     const broken = await setup({ bundle: "{not json" }).get(`${DOMAIN}/`);
     expect(broken.status).toBe(200);
-    expect(broken.html).not.toContain("theme-section");
+    expect(broken.html).not.toContain("shopify-section");
     const loop = theme({ "templates/index.liquid": "{% for a in (1..5000) %}{% for b in (1..5000) %}.{% endfor %}{% endfor %}" });
     delete (loop.files as Record<string, string>)["templates/index.json"];
     const heavy = await setup({ bundle: loop }).get(`${DOMAIN}/`);
@@ -184,7 +184,7 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     delete (noProduct.files as Record<string, string>)["templates/product.liquid"];
     const fallback = await setup({ bundle: noProduct }).get(`${DOMAIN}/p/tee`);
     expect(fallback.status).toBe(200);
-    expect(fallback.html).not.toContain("theme-section");
+    expect(fallback.html).not.toContain("shopify-section");
     expect(fallback.html).toContain("Tシャツ");
   });
 

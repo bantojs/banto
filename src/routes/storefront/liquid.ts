@@ -9,7 +9,7 @@
  */
 import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import type { CategoryRow } from "../../db/types";
+import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
@@ -24,9 +24,9 @@ import { ConfirmationBlock } from "../../themes/default/confirmation";
 import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
-import { renderThemePage, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
+import { renderThemePage, renderThemeSections, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { sectionOverridesOf } from "../../themes/liquid/editor";
-import { cartObject, collectionObject, footerMenu, menuFromCategories, money, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
+import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
@@ -49,6 +49,8 @@ export interface LiquidChoice {
   cartLines: CartLine[];
   /** お店のオリジンから切り離して描く（AI 用 API の券のプレビュー、SANDBOXED_PREVIEW_CSP）。レジはテーマで描かない */
   sandboxed: boolean;
+  /** カートの行の商品の画像（商品の id → 並び順の画像。カートが空なら空。item.image に使う） */
+  cartImages: CartImages;
 }
 
 /** プレビューの版（?preview_theme=<版>&preview_token=… で始め、Cookie で続ける。?preview_theme=off で終わる） */
@@ -87,11 +89,21 @@ export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines
     if (!lt) return null;
     // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
     const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
-    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed) };
+    const cartImages = await cartImagesFor(s.sf, s.shop, cartLines);
+    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed), cartImages };
   } catch (e) {
     console.error("[banto] theme load:", e instanceof Error ? e.message : e);
     return null;
   }
+}
+
+/** カートの行の商品の画像（行が無ければ DB に問い合わせない。お店の画面の一覧と同じく短く覚える） */
+export async function cartImagesFor(sf: StorefrontData, shop: PublicShop, lines: CartLine[]): Promise<CartImages> {
+  if (lines.length === 0) return new Map();
+  const rows = await sf.cartImages(shop, lines.map((l) => l.product.id));
+  const out = new Map<string, ProductImageRow[]>();
+  for (const r of rows) out.set(r.product_id, [...(out.get(r.product_id) ?? []), r]);
+  return out;
 }
 
 async function previewSettings(c: Ctx, s: LiquidScope, versionId: string): Promise<Record<string, unknown> | null> {
@@ -133,12 +145,9 @@ export const CHECKOUT_CSP = "script-src 'self'; connect-src 'self'; object-src '
  */
 export const SANDBOXED_PREVIEW_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals";
 
-/** Liquid のテーマで 1 ページを描いた Response。描けなければ null */
-function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): Response | null {
+/** ページの値（テーマに渡す shop・settings・cart・routes …）と、描く場所の情報 */
+function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts) {
   const { lt } = choice;
-  if (!themeHasTemplate(lt, page.template)) return null;
-  // 切り離したプレビューでは、レジ（住所・特商法の表示）をテーマで描かない
-  if (choice.sandboxed && page.checkout) return null;
   const home = shopHome(publicBaseUrl(c), s.shop);
   const origin = shopOrigin(publicBaseUrl(c), s.shop);
   const shopPath = s.ctx.shopPath;
@@ -157,7 +166,7 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     settings: themeSettings(lt, choice.settings),
     routes: routesObject(shopPath),
     request: { host: new URL(origin).host, path, page_type: page.template, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
-    cart: cartObject(u, choice.cartLines),
+    cart: cartObject(u, choice.cartLines, null, choice.cartImages),
     customer: s.ctx.member ? { email: s.ctx.member.email } : null,
     linklists: {
       "main-menu": menuFromCategories(u, tree, page.currentCategory),
@@ -169,8 +178,64 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     canonical_url: canonical,
     ...page.values,
   };
+  return { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview, overrides: sectionOverridesOf(choice.settings) };
+}
+
+/** ?sections=a,b（JSON）か ?section_id=a（HTML）で、セクションだけを返す（Shopify の Section Rendering API） */
+function sectionsRequested(c: Ctx): { ids: string[]; single: boolean } | null {
+  const one = c.req.query("section_id");
+  if (one) return { ids: [one], single: true };
+  const many = c.req.query("sections");
+  return many ? { ids: many.split(",").map((x) => x.trim()).filter(Boolean), single: false } : null;
+}
+
+function sectionsResponse(c: Ctx, choice: LiquidChoice, input: ReturnType<typeof pageInput>, want: { ids: string[]; single: boolean }): Response | null {
   try {
-    const r = renderThemePage(lt, { template: page.template, globals, head, paginate: page.paginate ?? null, shopOrigin: origin, shopPath, mediaBaseUrl: u.mediaBaseUrl, preview: choice.preview, overrides: sectionOverridesOf(choice.settings) });
+    const out = renderThemeSections(choice.lt, input, want.ids);
+    c.header("Cache-Control", "private, no-store");
+    if (choice.preview) c.header("X-Robots-Tag", "noindex");
+    if (choice.sandboxed) c.header("Content-Security-Policy", SANDBOXED_PREVIEW_CSP);
+    if (want.single) {
+      const html = out[want.ids[0]!];
+      return typeof html === "string" ? c.html(html) : c.text("not found", 404);
+    }
+    return c.json(out);
+  } catch (e) {
+    console.error("[banto] theme sections:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
+ * AJAX のカート（/cart/add.js など）に sections があれば、変えた後のカートで描いたセクションを返す（Shopify と同じ。Dawn のカートの引き出しが使う）。
+ * 描けない（Liquid のテーマで描いていない）ときは null（応答に sections を付けない）
+ */
+export async function cartSections(c: Ctx, s: LiquidScope, raw: unknown, lines: CartLine[], discounts: CartDiscounts | null): Promise<Record<string, string | null> | null> {
+  const ids = (typeof raw === "string" ? raw.split(",") : Array.isArray(raw) ? raw : []).filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean);
+  if (ids.length === 0) return null;
+  const choice = await liquidThemeFor(c, s, { cartLines: lines });
+  if (!choice) return null;
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const input = pageInput(c, s, choice, { template: "cart", values: { cart: cartObject(u, lines, discounts, choice.cartImages) }, title: t("store.cart"), path: "/cart", noindex: true, categories: await s.sf.listCategories(s.shop) });
+  try {
+    return renderThemeSections(choice.lt, input, ids);
+  } catch (e) {
+    console.error("[banto] theme sections:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/** Liquid のテーマで 1 ページを描いた Response。描けなければ null */
+function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): Response | null {
+  const { lt } = choice;
+  // 切り離したプレビューでは、レジ（住所・特商法の表示）をテーマで描かない
+  if (choice.sandboxed && page.checkout) return null;
+  const want = !page.checkout && c.req.method === "GET" ? sectionsRequested(c) : null;
+  if (want) return sectionsResponse(c, choice, pageInput(c, s, choice, page), want);
+  if (!themeHasTemplate(lt, page.template)) return null;
+  const input = pageInput(c, s, choice, page);
+  try {
+    const r = renderThemePage(lt, input);
     if (!r) return null;
     if (r.errors.length > 0) console.error("[banto] theme sections:", r.errors.slice(0, 5).join(" / "));
     // 最終確認画面に Banto の表示（特商法）が無ければ描かない（既定のテーマで描く）
@@ -270,7 +335,7 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
 /** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く） */
 export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; error?: string; categories: CategoryRow[] }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
-  return render(c, s, choice, { template: "cart", values: { cart: cartObject(u, p.lines, p.discounts), cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
+  return render(c, s, choice, { template: "cart", values: { cart: cartObject(u, p.lines, p.discounts, choice.cartImages), cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
 }
 
 /** 検索（templates/search）。search.results は商品だけ */

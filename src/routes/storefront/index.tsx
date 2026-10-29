@@ -27,7 +27,7 @@ import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -655,12 +655,18 @@ async function lineOrder(s: ShopScope, body: Record<string, unknown>): Promise<s
 
 const stringFields = (body: Record<string, unknown>): Record<string, string> => Object.fromEntries(Object.entries(body).filter((e): e is [string, string] => typeof e[1] === "string"));
 
-/** /cart.js などの応答（Shopify の cart と同じ形） */
-async function cartJson(c: Ctx, s: ShopScope, cart: Cart) {
+/**
+ * /cart.js などの応答（Shopify の cart と同じ形）。sections（本文の sections か ?sections=）があれば、変えた後のカートで描いたセクションも付ける
+ * （Liquid のテーマのショップのドメインだけ。Dawn のカートの引き出しが使う）
+ */
+async function cartJson(c: Ctx, s: ShopScope, cart: Cart, sectionsRaw?: unknown) {
   const { lines, subtotal } = await priceCart(s.sf, s.shop, cart);
   // 値引きはカートのページ（cart.total_price）と同じ。コードが無ければ DB に問い合わせない
   const coupons = cart.coupons?.length ? await cartCoupons(c, { ...s, cart }, lines, subtotal) : null;
-  return cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines, coupons ? { applied: coupons.applied, discount: coupons.discount } : null);
+  const discounts = coupons ? { applied: coupons.applied, discount: coupons.discount } : null;
+  const json = cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines, discounts, await cartImagesFor(s.sf, s.shop, lines));
+  const sections = sectionsRaw === undefined ? null : await cartSections(c, { ...s, cart }, sectionsRaw, lines, discounts);
+  return sections ? { ...json, sections } : json;
 }
 
 /** {% form 'cart' %} の送り先: 数を変え、checkout を押したら購入手続きへ */
@@ -692,7 +698,7 @@ storefront.post("/:shop/cart/change", cartChange);
 storefront.get("/:shop/cart.js", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return c.json({ status: 404, message: "not found" }, 404);
-  return c.json(await cartJson(c, s, s.cart), 200, { "cache-control": "no-store" });
+  return c.json(await cartJson(c, s, s.cart, c.req.query("sections")), 200, { "cache-control": "no-store" });
 });
 storefront.post("/:shop/cart/add.js", (c: Ctx) => cartAddJs(c));
 async function cartAddJs(c: Ctx): Promise<Response> {
@@ -709,9 +715,10 @@ async function cartAddJs(c: Ctx): Promise<Response> {
   const short = lines.find((l) => l.short && adds.some((a) => a.skuId === l.sku.id));
   if (short) return c.json({ status: 422, message: "Cart Error", description: tf("store.cart_add_short", { name: short.product.name }) }, 422);
   await writeCart(c, s, cart);
-  const json = await cartJson(c, s, cart);
+  const json = await cartJson(c, s, cart, body["sections"]);
   const items = json.items.filter((x) => adds.some((a) => a.skuId === x.id));
-  return c.json(Array.isArray(body["items"]) ? { items } : (items[0] ?? {}), 200, { "cache-control": "no-store" });
+  const sections = "sections" in json ? { sections: json.sections } : {};
+  return c.json(Array.isArray(body["items"]) ? { items, ...sections } : { ...(items[0] ?? {}), ...sections }, 200, { "cache-control": "no-store" });
 }
 async function cartChangeJs(c: Ctx, kind: "change" | "update" | "clear"): Promise<Response> {
   const s = await scope(c);
@@ -729,7 +736,7 @@ async function cartChangeJs(c: Ctx, kind: "change" | "update" | "clear"): Promis
     cart = changeQty(s.cart, ch.skuId, ch.qty);
   }
   await writeCart(c, s, cart);
-  return c.json(await cartJson(c, s, cart), 200, { "cache-control": "no-store" });
+  return c.json(await cartJson(c, s, cart, body["sections"]), 200, { "cache-control": "no-store" });
 }
 storefront.post("/:shop/cart/change.js", (c: Ctx) => cartChangeJs(c, "change"));
 storefront.post("/:shop/cart/update.js", (c: Ctx) => cartChangeJs(c, "update"));

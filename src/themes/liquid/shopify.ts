@@ -27,6 +27,8 @@ export interface SettingSchema {
 
 /** 1 つのテンプレート・まとまりに置けるセクションの数と、1 つのセクションのブロックの数（Shopify と同じ） */
 export const SECTION_LIMITS = { sections: 25, blocks: 50 } as const;
+/** Section Rendering API（?sections=・AJAX のカートの sections）で 1 回に描くセクションの数（Shopify と同じ 5） */
+export const SECTIONS_PER_REQUEST = 5;
 /** HTML として出す設定の種類（テーマを書く人と design の項目を持つ人だけが決める値。テンプレートの中の HTML と同じ扱い） */
 const HTML_SETTING_TYPES = new Set(["richtext", "inline_richtext", "html"]);
 
@@ -342,7 +344,8 @@ export function renderSection(id: string, data: SectionData, index = 1): string 
   stack.push({ section, blocks: data.blocks ?? {}, order });
   try {
     const html = e.engine.render(`sections/${data.type}`, { ...e.globals, section });
-    return `<div id="section-${escapeHtml(id)}" class="theme-section">${html}</div>`;
+    // 包みは Shopify と同じ（テーマの JS が shopify-section-<id>・.shopify-section で探して入れ替える）
+    return `<div id="shopify-section-${escapeHtml(id)}" class="shopify-section">${html}</div>`;
   } catch (err) {
     // 上限を超えたらページ全体を止める（セクションを空にして続けると、1 ページで何度も上限まで回せてしまう）
     if (err instanceof ThemeError && err.kind === "limit") throw err;
@@ -397,7 +400,7 @@ export function renderSectionGroup(group: { sections?: Record<string, SectionDat
 }
 
 /** {% section 'x' %} で置いたセクション: settings_data.json の current.sections.x、無ければスキーマの default */
-function staticSection(type: string): SectionData {
+export function staticSection(type: string): SectionData {
   const e = env();
   const saved = e.staticSections[type];
   if (isObject(saved)) return { ...saved, type };
