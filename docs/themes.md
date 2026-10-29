@@ -56,6 +56,12 @@ Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/de
 
 テーマのフォルダから直接取り込めます。Shopify CLI の `theme push` / `theme dev` に当たるものです。依存のない 1 ファイルの Node スクリプト（Node 20 以上）なので、テーマのリポジトリに写して使えます。
 
+npm のパッケージにはしていません（人間の決定 2026-10-29）。使っている Banto と同じ版のファイルを、リリースのタグから取ってテーマのリポジトリに置きます（API の形が Banto の版と合うように。版を上げたら取り直します）。
+
+```bash
+curl -fsSLo banto-theme.mjs https://raw.githubusercontent.com/bantojs/banto/<使っている版のタグ>/cli/banto-theme.mjs
+```
+
 1. 管理画面 → ショップ → **AI 連携** でトークンを発行します。取り込みとプレビューは `theme:write`、公開まで行うなら `theme:publish` も付けます（付けられるのは「デザイン（テーマ）」の項目を持つ人だけ。0072）。
 2. Banto の URL とトークンを環境変数で渡します（トークンはコマンドの引数に書かない）。
 
