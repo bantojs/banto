@@ -12,6 +12,7 @@ Banto（番頭）は、個人・中小事業者向けの **セルフホスト型
 ## 1. 絶対に守る制約（違反はレビューで差し戻し）
 
 1. **Cloudflare 固有機能を直接使わない。** R2 / Secret / Cron / Cache はすべて `src/adapters/` のインターフェース経由で使う。
+   デプロイの設定の Placement（Worker を DB の近くで動かす）は使ってよい（コードは変わらない。人間の決定 2026-10-29）。`wrangler.jsonc` には書かず、ビルドの変数 `BANTO_PLACEMENT` から `scripts/deploy.mjs` が足す（docs/setup.md §8）。
 2. **Workers KV・Durable Objects・Hyperdrive・D1 は使わない。** 便利でも使わない。可搬性を優先する。
 3. **`service_role` キーは `src/db/privileged.ts` でのみ使う。** 通常の CRUD から呼べる構造にしない。AI 用トークン経由の操作は `apiRpc()` から `api_*` RPC だけを呼び、トークン・スコープ・ショップ所有の検証は SQL 側（`0003_api.sql` の `api_require`）で行う（docs/ai-access.md）。
 4. **RLS のないテーブルを作らない。** 全テーブルに `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` と最低1つのポリシーを付ける。CI で検査する。
