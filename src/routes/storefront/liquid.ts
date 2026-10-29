@@ -277,7 +277,8 @@ export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { li
 export function renderSearch(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { q: string; page: ProductListPage | null; categories: CategoryRow[]; link: (cursor: string | null) => string; after?: string }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
   const results = (p.page?.items ?? []).map((x) => ({ ...productFromSummary(u, x), object_type: "product" }));
-  const search = { performed: p.q !== "", terms: p.q, results, results_count: p.page?.total ?? results.length, types: ["product"], filters: [], sort_by: null, sort_options: [] };
+  // 短すぎる語（3 文字未満）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
+  const search = { performed: p.page !== null, terms: p.q, too_short: p.q !== "" && p.page === null, results, results_count: p.page?.total ?? results.length, types: ["product"], filters: [], sort_by: null, sort_options: [] };
   return render(c, s, choice, {
     template: "search",
     values: { search },

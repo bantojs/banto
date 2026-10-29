@@ -597,7 +597,7 @@ storefront.post("/:shop/cart/update", async (c: Ctx) => {
     await writeCart(c, s, cart);
   } else {
     // Liquid のテーマの書き方（updates[<SKU>] / updates[]）
-    cart = updatesFrom(body, await lineOrder(s, body)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+    cart = await applyUpdates(s, body);
     await writeCart(c, s, cart);
   }
   // 購入手続きへ進むときは、変えた後のカートで
@@ -633,6 +633,18 @@ function wantsCartJson(c: Ctx): boolean {
 }
 
 /**
+ * updates を当てる。カートにある行は数を変え（0 で外す）、カートに無い SKU に 1 以上を書けば足す（Shopify の update と同じ）。
+ * 足すのは公開中の SKU だけで、カートに無い SKU があるときだけ DB に問い合わせる
+ */
+async function applyUpdates(s: ShopScope, body: Record<string, unknown>): Promise<Cart> {
+  const changes = updatesFrom(body, await lineOrder(s, body));
+  const inCart = new Set(s.cart.items.map((i) => i.sku_id));
+  const fresh = changes.filter((u) => !inCart.has(u.skuId) && u.qty > 0);
+  const found = fresh.length > 0 ? await s.sf.skusForCart(s.shop, fresh.map((u) => u.skuId)) : new Map<string, unknown>();
+  return changes.reduce((cart, u) => (inCart.has(u.skuId) ? changeQty(cart, u.skuId, u.qty) : u.qty > 0 && found.has(u.skuId) ? addItem(cart, u.skuId, u.qty) : cart), s.cart);
+}
+
+/**
  * 行の位置（updates[]・line）を数える並び。位置は画面と /cart.js に出ている行（公開中の SKU、priceCart の結果）で数える。
  * Cookie の行には公開をやめた SKU が残っていることがあり、そのまま数えると見えていない行を変えてしまう。位置を使わない書き方では DB に問い合わせない
  */
@@ -645,8 +657,10 @@ const stringFields = (body: Record<string, unknown>): Record<string, string> => 
 
 /** /cart.js などの応答（Shopify の cart と同じ形） */
 async function cartJson(c: Ctx, s: ShopScope, cart: Cart) {
-  const { lines } = await priceCart(s.sf, s.shop, cart);
-  return cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines);
+  const { lines, subtotal } = await priceCart(s.sf, s.shop, cart);
+  // 値引きはカートのページ（cart.total_price）と同じ。コードが無ければ DB に問い合わせない
+  const coupons = cart.coupons?.length ? await cartCoupons(c, { ...s, cart }, lines, subtotal) : null;
+  return cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines, coupons ? { applied: coupons.applied, discount: coupons.discount } : null);
 }
 
 /** {% form 'cart' %} の送り先: 数を変え、checkout を押したら購入手続きへ */
@@ -654,7 +668,7 @@ storefront.post("/:shop/cart", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const body = await cartInput(c);
-  const cart = updatesFrom(body, await lineOrder(s, body)).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+  const cart = await applyUpdates(s, body);
   if (cart !== s.cart) await writeCart(c, s, cart);
   if ("checkout" in body) return startCheckout(c, { ...s, cart }, stringFields(body));
   return c.redirect(`${s.ctx.shopPath}/cart`);
@@ -690,6 +704,10 @@ async function cartAddJs(c: Ctx): Promise<Response> {
   const found = await s.sf.skusForCart(s.shop, adds.map((a) => a.skuId));
   if (adds.some((a) => !found.has(a.skuId))) return c.json({ status: 404, message: "not found", description: "this variant is not available" }, 404);
   const cart = adds.reduce((cart, a) => addItem(cart, a.skuId, a.qty), s.cart);
+  // 在庫を超えるなら入れない（Shopify と同じく 422）
+  const { lines } = await priceCart(s.sf, s.shop, cart);
+  const short = lines.find((l) => l.short && adds.some((a) => a.skuId === l.sku.id));
+  if (short) return c.json({ status: 422, message: "Cart Error", description: tf("store.cart_add_short", { name: short.product.name }) }, 422);
   await writeCart(c, s, cart);
   const json = await cartJson(c, s, cart);
   const items = json.items.filter((x) => adds.some((a) => a.skuId === x.id));
@@ -699,13 +717,15 @@ async function cartChangeJs(c: Ctx, kind: "change" | "update" | "clear"): Promis
   const s = await scope(c);
   if (!s) return c.json({ status: 404, message: "not found" }, 404);
   const body = kind === "clear" ? {} : await cartInput(c);
-  const order = kind === "clear" ? [] : await lineOrder(s, body);
+  const order = kind === "change" ? await lineOrder(s, body) : [];
   let cart = s.cart;
   if (kind === "clear") cart = { items: [], ...(s.cart.coupons ? { coupons: s.cart.coupons } : {}) };
-  else if (kind === "update") cart = updatesFrom(body, order).reduce((cart, u) => changeQty(cart, u.skuId, u.qty), s.cart);
+  else if (kind === "update") cart = await applyUpdates(s, body);
   else {
     const ch = changeFrom(body, order);
     if (!ch) return c.json({ status: 400, message: "invalid", description: "id or line, and quantity are required" }, 400);
+    // カートに無い品は変えられない（Shopify と同じく 400。足すのは add.js）
+    if (!s.cart.items.some((i) => i.sku_id === ch.skuId)) return c.json({ status: 400, message: "invalid", description: "this item is not in the cart" }, 400);
     cart = changeQty(s.cart, ch.skuId, ch.qty);
   }
   await writeCart(c, s, cart);
@@ -725,7 +745,8 @@ storefront.post("/:shop/cart/clear", async (c: Ctx) => {
 storefront.get("/:shop/search", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
+  // 100 文字まで（文字で数える。UTF-16 の単位で切ると絵文字の途中で切れる）
+  const q = [...(c.req.query("q") ?? "").trim()].slice(0, 100).join("");
   const after = c.req.query("after") || undefined;
   const categories = await s.sf.listCategories(s.shop);
   const lt = await liquidThemeFor(c, s);
@@ -750,6 +771,7 @@ storefront.get("/:shop/search", async (c: Ctx) => {
       tags: facets.tags,
       categories: categoryTree(categories),
       pagination: { ...(page?.nextCursor ? { next: link(page.nextCursor) } : {}), ...(after ? { first: link(null) } : {}) },
+      ...(!searchable ? { notice: t("store.search_too_short") } : page && page.items.length === 0 ? { notice: tf("store.search_none", { q }) } : {}),
     }),
   );
 });
@@ -836,10 +858,11 @@ async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; values: 
 }
 
 /** 最終確認画面（Liquid のテーマの templates/checkout_confirm。{% banto_confirmation %} が無ければ既定のテーマ） */
-async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation; quote: string; error?: string; status?: 200 | 409 }): Promise<Response> {
-  const lt = await liquidThemeFor(c, s);
+async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation; quote: string; lines: CartLine[]; error?: string; status?: 200 | 409 }): Promise<Response> {
+  // カートの行は見積もりで引いたものを使う（priceCart をもう一度引かない）
+  const lt = await liquidThemeFor(c, s, { cartLines: p.lines });
   if (lt) {
-    const res = await renderCheckoutConfirm(c, s, lt, { ...p, categories: await s.sf.listCategories(s.shop) });
+    const res = await renderCheckoutConfirm(c, s, lt, { confirmation: p.confirmation, quote: p.quote, ...(p.error ? { error: p.error } : {}), ...(p.status ? { status: p.status } : {}), categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
   return c.html(s.theme.ConfirmPage({ ctx: s.ctx, confirmation: p.confirmation, quote: p.quote, ...(p.error ? { error: p.error } : {}) }), p.status ?? 200);
@@ -875,7 +898,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
     if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : "stock"}`);
     const conf = r.confirmation;
     track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
-    return confirmPage(c, s, { confirmation: conf, quote: r.token });
+    return confirmPage(c, s, { confirmation: conf, quote: r.token, lines: r.lines });
   }
 
   // 2. 確認済みの quote → 確定
@@ -883,7 +906,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   if (!quote || quote.provider !== provider) return c.redirect(`${cartUrl}?error=expired`);
   const check = await recheckQuote(qctx, quote);
   if (!check.ok) {
-    if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, error: t("confirm.changed"), status: 409 });
+    if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, lines: check.fresh.lines, error: t("confirm.changed"), status: 409 });
     return c.redirect(`${cartUrl}?error=stock`);
   }
   const deps = placeOrderDeps(c, setup);

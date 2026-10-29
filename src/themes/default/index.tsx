@@ -219,7 +219,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category, pagination }) {
+  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
     const heading = category ? category.name : tag;
@@ -265,7 +265,7 @@ export const defaultTheme: Theme = {
             ))}
           </p>
         ) : null}
-        {products.length === 0 ? <p>{t("store.no_products")}</p> : null}
+        {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
         <div class="grid">
           {products.map(({ product, image, minPrice, compareAt }) => (
             <div class="card">

@@ -67,11 +67,13 @@ node cli/banto-theme.mjs dev ./theme               # 見張って、変えるた
 node cli/banto-theme.mjs list                      # 版の一覧（* が公開中）
 node cli/banto-theme.mjs publish <版の id>         # 公開（theme:publish）
 node cli/banto-theme.mjs unpublish                 # 既定のテーマに戻す（theme:publish）
-node cli/banto-theme.mjs prune --keep 5            # 公開していない古い版を消す
+node cli/banto-theme.mjs prune --keep 5            # 公開していない古い版を消す（取り込みの途中の新しい版は残す）
 ```
 
 - 取り込む中身は管理画面の zip と同じです（`layout`・`templates`・`sections`・`snippets` の `.liquid`、`templates`・`sections`・`config`・`locales` の `.json`、`assets/` の直下）。翻訳はデプロイの言語と `*.default.json`（設定の画面の文言の `*.schema.json` も同じ）だけ。それ以外のファイル（`README.md` など）と `.` で始まるものは送りません。
 - 検査は Banto がします。誤りはファイルの名前と理由がそのまま出ます。資産を送り終える前に止まった版は、CLI が消します。
+- `BANTO_URL` は `https://`（手元の `localhost` だけ `http://` も使えます。トークンを平文で送らないため）。混んでいるとき（429）と、読む・置く・消す要求の一時的な失敗はやり直しますが、版を作る・置き終える・公開する要求（POST）は、届いたか分からないときにやり直しません（版が二重にできないように）。
+- 置き終えた版の資産は差し替えられません。置き終える処理は、先に資産の受け付けを締めてから揃っているかを確かめます（締めた後に届いた資産は捨てます）。
 - `dev` はプレビューのリンクを毎回出します（版が変わるので、新しいリンクを開き直します）。手元でテーマを描くことはしません（描くのは Banto。手元にお店のデータを持ち出さないため）。
 - 経路は AI 用 API の REST（`/api/v1/themes`、docs/ai-access.md）です。公開・取り下げ・プレビューを開いたことは監査ログにトークンの名前で残ります。
 - **API で出したプレビューのリンクは、お店のオリジンから切り離して描きます**（CSP の `sandbox`）。リンクは開いた人に結ばれない（渡せばだれでも開ける）ので、`theme:write` だけで、まだ公開していない版の JS をお店のオリジンで買い物客に動かさせないためです。テーマの JS は動きますが、お店の Cookie を使った問い合わせ（`/cart.js` など）やフォームの送信はカートに届かず、`type="module"` のスクリプトは読み込めません。レジの画面はテーマで描きません。カート・レジまで確かめるときは、管理画面の「デザイン」からプレビューを開きます（そちらは切り離しません）。
@@ -109,7 +111,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
 | レジ: 配送先 | `checkout` | `checkout`（`values`（入れた値）・`error`・`prefectures`（`name`・`shipping_price`）・`delivery`（お届け日時を選べるショップ）・`marketing_consent`（案内メールの欄を出すか）・`subtotal_price`・`shipping_summary`）。フォームは `{% form 'checkout_address' %}`（下の「レジ」） |
 | レジ: 最終確認 | `checkout_confirm` | `checkout.confirmation`（要約に使う値）。中身は **`{% banto_confirmation %}` が必須**（下の「レジ」） |
-| 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上（2 文字以下は探さず 0 件） |
+| 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上で、2 文字以下は探さず `performed` が false、`too_short`（Banto の名前）が true になります（「3 文字以上で」の案内に使えます） |
 
 **どのページでも**: `shop`・`settings`・`routes`・`request`・`cart`（`item_count`・`items`・`total_price` など。どのページでも読めるので、ヘッダーのカートの一覧に使えます）・`customer`（ログイン中の会員のメールアドレスだけ）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前と URL だけ）・`page_title`・`page_description`・`canonical_url`・`template`。
 
@@ -142,10 +144,10 @@ Shopify では Plus のプランに限られる「チェックアウトの途中
 | 書き方 | 中身 |
 | --- | --- |
 | `{% form 'cart', cart %}`（`/cart` に POST） | `updates[]`（画面に出ている行の順。公開をやめた品の行は数えません）か `updates[<key>]` で数を変える。`name="checkout"` のボタンで購入手続き（配送先 → 最終確認 → 決済）へ。決済手段は使える最初のもの（`provider` の欄を置けば選べます） |
-| `item.url_to_remove`・`/cart/change`（`id` か `line` と `quantity`） | 1 行の数を変える・外す |
+| `item.url_to_remove`・`/cart/change`（`id` か `line` と `quantity`） | 1 行の数を変える・外す。`url_to_remove` は Shopify と同じく GET のリンクなので、ほかのサイトのリンクからも開けます（変わるのはカートにある行の数だけで、値段は確定の前に引き直します） |
 | `/cart.js`（GET） | カートの JSON |
-| `/cart/add.js`（POST、`id`・`quantity` か `items: [...]`） | カートに入れる。応答は入れた行（`items` で送れば `{ items }`）。公開していない SKU は 404 |
-| `/cart/change.js`・`/cart/update.js`・`/cart/clear.js`（POST） | 数を変える・まとめて変える・空にする。応答はカートの JSON |
+| `/cart/add.js`（POST、`id`・`quantity` か `items: [...]`） | カートに入れる。応答は入れた行（`items` で送れば `{ items }`）。公開していない SKU は 404、在庫を超えるなら 422（入れません） |
+| `/cart/change.js`・`/cart/update.js`・`/cart/clear.js`（POST） | 数を変える・まとめて変える・空にする。応答はカートの JSON（合計にはクーポンの値引きが入ります）。`change.js` でカートに無い `id` は 400、`update.js` でカートに無い SKU に 1 以上を書けば足します（公開中の SKU だけ） |
 | `/cart/add`・`/cart/change` に JSON を求めて送る（`Accept: application/json` か `application/javascript`、または本文が JSON） | `.js` と同じ応答（Dawn などは `routes.cart_add_url`・`routes.cart_change_url` に fetch で送るため） |
 
 セクションを描き直して返す Shopify の `sections` の引数には対応していません（応答の JSON から画面を作り直してください）。

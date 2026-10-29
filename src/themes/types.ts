@@ -85,6 +85,8 @@ export interface Theme {
     category?: { slug: string; name: string };
     /** ページ送りの URL（0058）。next は次のページ、first は 2 ページ目以降のときの最初のページ。2 ページ目以降は検索エンジンに載せない */
     pagination?: { next?: string; first?: string };
+    /** 検索（/:shop/search）の案内（語が短すぎる・見つからない）。あれば商品が無いときの文言の代わりに出す */
+    notice?: string;
   }): Rendered;
   /** categoryPath は最上位から主カテゴリーまで（パンくず）、attributes は公開するカスタム項目 */
   ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[] }): Rendered;

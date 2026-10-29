@@ -71,7 +71,28 @@ export async function readThemeBundle(storage: StorageAdapter, shopId: string, v
   }
 }
 
-export type AssetPutResult = { ok: true } | { ok: false; reason: "type" | "not_listed" | "too_large" };
+export type AssetPutResult = { ok: true } | { ok: false; reason: "type" | "not_listed" | "too_large" | "sealed" };
+
+/**
+ * 資産の受け付けを締めた印（置き場の sealed）。置き終えた（complete）と DB に書く前に置き、資産の PUT はこれを見て断る。
+ * PUT の確認と書き込みのあいだに締められたときは、書いた資産を消す（置き終えた版の中身を後から変えさせない。消えた資産は 404 で、別の中身にはならない）
+ */
+const sealKey = (shopId: string, versionId: string) => `themes/${shopId}/${versionId}/sealed`;
+
+async function exists(storage: StorageAdapter, key: string): Promise<boolean> {
+  const obj = await storage.get(key);
+  if (!obj) return false;
+  await obj.body.cancel().catch(() => {});
+  return true;
+}
+
+export async function sealThemeAssets(storage: StorageAdapter, shopId: string, versionId: string): Promise<void> {
+  await storage.put(sealKey(shopId, versionId), new TextEncoder().encode("1").buffer as ArrayBuffer, "text/plain");
+}
+
+export async function unsealThemeAssets(storage: StorageAdapter, shopId: string, versionId: string): Promise<void> {
+  await storage.delete(sealKey(shopId, versionId)).catch(() => {});
+}
 
 /**
  * 資産を 1 つ置く。束ねたファイルに名前があり、決まった種類で、上限の大きさまで。
@@ -83,7 +104,12 @@ export async function putThemeAsset(storage: StorageAdapter, shopId: string, ver
   if (body.byteLength > THEME_BUNDLE_LIMITS.assetBytes) return { ok: false, reason: "too_large" };
   const bundle = await readThemeBundle(storage, shopId, versionId);
   if (!bundle || !bundle.assets.includes(name)) return { ok: false, reason: "not_listed" };
+  if (await exists(storage, sealKey(shopId, versionId))) return { ok: false, reason: "sealed" };
   await storage.put(themeAssetKey(shopId, versionId, name), body, type);
+  if (await exists(storage, sealKey(shopId, versionId))) {
+    await storage.delete(themeAssetKey(shopId, versionId, name)).catch(() => {});
+    return { ok: false, reason: "sealed" };
+  }
   return { ok: true };
 }
 
@@ -103,4 +129,5 @@ export async function missingThemeAsset(storage: StorageAdapter, shopId: string,
 export async function deleteThemeFiles(storage: StorageAdapter, prefix: string, bundle: ThemeBundle | null): Promise<void> {
   for (const a of bundle?.assets ?? []) if (assetType(a)) await storage.delete(`${prefix}assets/${a}`).catch(() => {});
   await storage.delete(`${prefix}bundle.json`).catch(() => {});
+  await storage.delete(`${prefix}sealed`).catch(() => {});
 }
