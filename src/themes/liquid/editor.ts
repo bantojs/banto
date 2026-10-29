@@ -190,7 +190,7 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
     sections.push({ key, id, type: d.type, name: labelOf((sc as Record<string, unknown>)["name"], loc, d.type), settings, values, blocks });
   };
   for (const [path, src] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
-    const m = /^(templates|sections)\/([A-Za-z0-9_.-]+)\.json$/.exec(path);
+    const m = /^(templates|templates\/customers|sections)\/([A-Za-z0-9_.-]+)\.json$/.exec(path);
     if (!m) continue;
     const g = readJson(src);
     if (!isObject(g) || !isObject(g["sections"])) continue;

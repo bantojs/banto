@@ -27,7 +27,7 @@ import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -348,6 +348,12 @@ storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {
   const external = liveLegalUrl(s.shop.legal_links, kind);
   if (external) return c.redirect(external, 302);
   const page = legalPages[kind]!;
+  // Liquid のテーマの templates/page（文面は Banto が作る）。無ければ既定のテーマ
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = renderLegalPage(c, s, lt, { handle: kind, title: page.title(), body: page.pick(s.shop) ?? "", categories: await s.sf.listCategories(s.shop) });
+    if (res) return res;
+  }
   return c.html(s.theme.LegalPage({ ctx: s.ctx, title: page.title(), body: page.pick(s.shop) ?? "" }));
 });
 
@@ -1030,7 +1036,7 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
   const secret = c.get("sessionSecret");
   const token = secret ? await openStatusToken(secret, c.req.query("s"), s.shop.id) : null;
   const db = token ? privilegedFor(c) : null;
-  if (!token || !db) return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free }));
+  if (!token || !db) return doneView(c, s, { free });
   try {
     const r = await db.checkoutStatus(s.shop.id, token.quoteId);
     const refresh = r.status === "pending" && Date.now() / 1000 - token.issuedAt < DONE_REFRESH_WINDOW_SECONDS;
@@ -1038,9 +1044,22 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     if (r.status === "confirmed" && r.order) track(c, "purchase", r.order.total_jpy, [], r.order.number);
     // この注文について問い合わせる（同梱モジュール inquiries）: 同じ状態トークンをフォームに渡す（返事は注文時のアドレスへ）
     const inquiryUrl = r.status === "confirmed" && s.ctx.inquiries && inquiriesReady(s.shop, s.theme) ? `${s.ctx.shopPath}/inquiries/new?s=${encodeURIComponent(c.req.query("s") ?? "")}` : null;
-    return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free, status: r.status, orderNumber: r.order?.number ?? null, refresh, inquiryUrl }), 200, { "cache-control": "no-store" });
+    c.header("cache-control", "no-store");
+    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, inquiryUrl });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);
-    return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free }));
+    return doneView(c, s, { free });
   }
 });
+
+/** 完了画面（Liquid のテーマの templates/checkout_done、無ければ既定のテーマ）。文言は既定のテーマと同じ */
+async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; inquiryUrl?: string | null }): Promise<Response> {
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const message =
+      p.status === "confirmed" && p.orderNumber != null ? tf("store.thanks_confirmed", { n: p.orderNumber }) : p.status === "released" ? t("store.thanks_released") : p.status === "pending" && p.refresh ? t("store.thanks_pending") : p.free ? t("store.thanks_free") : t("store.thanks_body");
+    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), free: p.free, inquiryUrl: p.inquiryUrl ?? null, categories: await s.sf.listCategories(s.shop) });
+    if (res) return res;
+  }
+  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}) }));
+}

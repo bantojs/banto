@@ -28,7 +28,7 @@ const USAGE = `使い方: banto-theme <コマンド> [引数]
 環境変数: BANTO_URL（Banto の URL。管理画面を開く URL で、ショップの独自ドメインではない）、BANTO_TOKEN（AI 用トークン）`;
 
 /** 束ねるファイル（管理画面の取り込みと同じ）。資産は assets/ の直下 */
-const TEXT = /^(layout|templates|sections|snippets|blocks)\/[^/]+\.liquid$|^(templates|sections|config|locales)\/[^/]+\.json$/;
+const TEXT = /^(layout|templates|templates\/customers|sections|snippets|blocks)\/[^/]+\.liquid$|^(templates|templates\/customers|sections|config|locales)\/[^/]+\.json$/;
 
 export class CliError extends Error {}
 

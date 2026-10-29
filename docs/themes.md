@@ -1,6 +1,6 @@
 # テーマ（Liquid）
 
-> 状態: 段階 3 まで（2026-10-29）。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・カート・検索・レジ（配送先・最終確認）・404 のページです。決済はいつも Stripe・KOMOJU のページで、法務のページは既定のテーマが描きます。
+> 状態: 段階 3 まで（2026-10-29）。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・カート・検索・レジ（配送先・最終確認）・購入の完了・法務・会員ページ・404 です。決済はいつも Stripe・KOMOJU のページです。会員のログイン・注文照会・お問い合わせ・送料のページは既定のテーマが描きます。
 
 Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/default/`）で描きます。これに加えて、**Liquid で書いたテーマ**を取り込んで、Worker を配置し直さずに見た目を変えられるようにします。
 
@@ -76,7 +76,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 - 置き終えた版の資産は差し替えられません。置き終える処理は、先に資産の受け付けを締めてから揃っているかを確かめます（締めた後に届いた資産は捨てます）。
 - `dev` はプレビューのリンクを毎回出します（版が変わるので、新しいリンクを開き直します）。手元でテーマを描くことはしません（描くのは Banto。手元にお店のデータを持ち出さないため）。
 - 経路は AI 用 API の REST（`/api/v1/themes`、docs/ai-access.md）です。公開・取り下げ・プレビューを開いたことは監査ログにトークンの名前で残ります。
-- **API で出したプレビューのリンクは、お店のオリジンから切り離して描きます**（CSP の `sandbox`）。リンクは開いた人に結ばれない（渡せばだれでも開ける）ので、`theme:write` だけで、まだ公開していない版の JS をお店のオリジンで買い物客に動かさせないためです。テーマの JS は動きますが、お店の Cookie を使った問い合わせ（`/cart.js` など）やフォームの送信はカートに届かず、`type="module"` のスクリプトは読み込めません。レジの画面はテーマで描きません。カート・レジまで確かめるときは、管理画面の「デザイン」からプレビューを開きます（そちらは切り離しません）。
+- **API で出したプレビューのリンクは、お店のオリジンから切り離して描きます**（CSP の `sandbox`）。リンクは開いた人に結ばれない（渡せばだれでも開ける）ので、`theme:write` だけで、まだ公開していない版の JS をお店のオリジンで買い物客に動かさせないためです。テーマの JS は動きますが、お店の Cookie を使った問い合わせ（`/cart.js` など）やフォームの送信はカートに届かず、`type="module"` のスクリプトは読み込めません。レジと会員ページはテーマで描きません。カート・レジまで確かめるときは、管理画面の「デザイン」からプレビューを開きます（そちらは切り離しません）。
 
 ### GitHub Actions から
 
@@ -112,6 +112,9 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | レジ: 配送先 | `checkout` | `checkout`（`values`（入れた値）・`error`・`prefectures`（`name`・`shipping_price`）・`delivery`（お届け日時を選べるショップ）・`marketing_consent`（案内メールの欄を出すか）・`subtotal_price`・`shipping_summary`）。フォームは `{% form 'checkout_address' %}`（下の「レジ」） |
 | レジ: 最終確認 | `checkout_confirm` | `checkout.confirmation`（要約に使う値）。中身は **`{% banto_confirmation %}` が必須**（下の「レジ」） |
 | 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上で、2 文字以下は探さず `performed` が false、`too_short`（Banto の名前）が true になります（「3 文字以上で」の案内に使えます） |
+| 法務（`/legal`・`/privacy`・`/returns`） | `page` | `page`（`title`・`handle`（`legal` / `privacy` / `returns`）・`url`・`content`）。`content` は Banto が文面から作ります（改行を `<br>` にしてエスケープ）。連携サイトのページに向けていればそちらへ転送します（テーマでは描きません） |
+| 購入の完了（`/checkout/done`） | `checkout_done` | `checkout`（`status`（`confirmed`・`pending`・`released`・`not_found`・`unknown`）・`order_number`（確定していれば）・`message`（既定のテーマと同じ文言）・`free`・`inquiry_url`・`continue_url`）。確定を待つあいだは数秒ごとに読み込み直します |
+| 会員ページ（`/account`） | `customers/account`（`templates/customers/account.liquid`） | `customer`（`email`・`name`・`default_address`・`accepts_marketing`・`orders`（`name`（`#1001`）・`order_number`・`created_at`・`status`・`status_label`・`total_price`・`url`（注文照会））・`orders_count`）。住所の保存・ログインの方法・クーポン・ログアウト・退会などは **`{% banto_account %}`** が Banto の部品として描きます。住所が載るので、レジと同じ CSP を付けます |
 
 **どのページでも**: `shop`・`settings`・`routes`・`request`・`cart`（`item_count`・`items`・`total_price` など。どのページでも読めるので、ヘッダーのカートの一覧に使えます）・`customer`（ログイン中の会員のメールアドレスだけ）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前と URL だけ）・`page_title`・`page_description`・`canonical_url`・`template`。
 

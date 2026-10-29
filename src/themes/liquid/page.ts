@@ -14,7 +14,7 @@ import type { LoadedTheme } from "./cache";
 import { readSectionSchemas, renderSection, renderSectionGroup, settingsWith, staticSection, withOverride, withRenderEnv, SECTIONS_PER_REQUEST, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 import { globalSettingsOf } from "./editor";
 
-export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm";
+export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm" | "checkout_done" | "page" | "customers/account";
 
 interface Prepared {
   schemas: Map<string, SectionSchema>;
@@ -71,12 +71,12 @@ function prepare(t: LoadedTheme, locale: string): Prepared {
       const v = readJson(src);
       if (isObject(v)) groups[g[1]!] = v;
     }
-    const tj = /^templates\/([A-Za-z0-9_.-]+)\.json$/.exec(path);
+    const tj = /^templates\/((?:customers\/)?[A-Za-z0-9_.-]+)\.json$/.exec(path);
     if (tj) {
       const v = readJson(src);
       if (isObject(v)) templates.set(tj[1]!, { json: v as Group & { layout?: string | false } });
     }
-    const tl = /^templates\/([A-Za-z0-9_.-]+)\.liquid$/.exec(path);
+    const tl = /^templates\/((?:customers\/)?[A-Za-z0-9_.-]+)\.liquid$/.exec(path);
     if (tl && !templates.has(tl[1]!)) templates.set(tl[1]!, { liquid: true });
   }
   // 設定の既定値: config/settings_schema.json の default、その上に config/settings_data.json の current

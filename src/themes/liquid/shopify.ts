@@ -518,6 +518,16 @@ export function registerShopifyTags(liquid: Liquid): void {
       }
     },
   );
+  // 会員ページの中身（住所・ログインの方法・クーポン・ログアウト・退会など）。Banto が描いたものをそのまま置く（templates/customers/account）
+  liquid.registerTag(
+    "banto_account",
+    class extends Tag {
+      *render(_ctx: Context, emitter: Emitter) {
+        const v = env().globals["__banto_account"];
+        if (v instanceof SafeHtml) emitter.write(v.html);
+      }
+    },
+  );
   // テーマのブロック: {% content_for 'blocks' %}（今のセクション・ブロックの中のブロックを順に）、
   // {% content_for 'block', type: 'x', id: 'y' %}（決まった場所に置くブロック。値は中のブロックの id から、無ければ宣言の既定値）
   liquid.registerTag(
