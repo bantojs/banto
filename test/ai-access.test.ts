@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
+import { SALES_TIMEZONE_MIGRATION } from "../src/api/service";
+import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 afterEach(() => externalHosts.clear());
 
-async function setup() {
-  const sb = new FakeSupabase();
+async function setup(env: Record<string, string> = {}, opts: { appliedMigrations?: string[] } = {}) {
+  const sb = new FakeSupabase(opts);
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
   const tee = sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
@@ -17,7 +19,7 @@ async function setup() {
   sb.tables.orders.push({ id: "order-1", shop_id: shop.id, reservation_id: null, status: "paid", total_jpy: 6000, customer_email: "buyer@example.com", customer_name: "山田", shipping_address: { state: "東京都", line1: "秘密の住所" }, payment_provider: "stripe", payment_ref: "pi_1", shipped_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
   sb.tables.order_items.push({ id: "oi-1", shop_id: shop.id, order_id: "order-1", sku_id: sku.id, qty: 2, unit_price_jpy: 3000 });
   const storage = new MemoryStorage(`${BASE}/media`);
-  const app = appWith(sb, {}, storage);
+  const app = appWith(sb, env, storage);
   const issue = async (scopes: string[], extra: Record<string, unknown> = {}) => {
     const raw = generateApiToken();
     sb.tables.api_tokens.push({ id: `tok-${sb.tables.api_tokens.length + 1}`, shop_id: shop.id, owner_id: owner.id, name: "t", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes, expires_at: null, revoked_at: null, last_used_at: null, created_at: "", ...extra });
@@ -251,6 +253,18 @@ describe("MCP /mcp", () => {
     const tooBig = await rpc(app, tok, { jsonrpc: "2.0", id: 10, method: "ping", params: { pad: "x".repeat(1024 * 1024) } });
     expect(tooBig.status).toBe(413);
     expect(((await tooBig.json()) as { error: { code: number } }).error.code).toBe(-32600);
+  });
+
+  it("集計の日別・月別の区切りはデプロイの時間帯（BANTO_TIMEZONE）。0076 の前は渡さない（SQL の既定の Asia/Tokyo）", async () => {
+    const from = new Date(Date.now() - 86400_000).toISOString();
+    const to = new Date(Date.now() + 86400_000).toISOString();
+    const q = `/stats/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&group_by=day`;
+    const la = await setup({ BANTO_TIMEZONE: "America/Los_Angeles" });
+    const r = (await (await rest(la.app, await la.issue(["stats:read"]), "GET", q)).json()) as { timezone: string };
+    expect(r.timezone).toBe("America/Los_Angeles");
+    const old = await setup({ BANTO_TIMEZONE: "America/Los_Angeles" }, { appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== SALES_TIMEZONE_MIGRATION) });
+    const before = (await (await rest(old.app, await old.issue(["stats:read"]), "GET", q)).json()) as { timezone: string };
+    expect(before.timezone).toBe("Asia/Tokyo");
   });
 
   it("集計ツールは group_by を検証する", async () => {

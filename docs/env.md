@@ -9,7 +9,7 @@
 | `PUBLIC_BASE_URL` | 変数 | 任意 | 独自ドメインを使うとき `https://shop.example.com`。未設定ならアクセスされた URL から自動 |
 | `MEDIA_BASE_URL` | 変数 | 任意 | R2 のカスタムドメインから画像を配信するとき `https://media.example.com`（docs/setup.md §7） |
 | `BANTO_LOCALE` | 変数 | 任意 | `en` で英語 UI。既定は日本語 |
-| `BANTO_TIMEZONE` | 変数 | 任意 | 管理画面・CSV・メールの日時表示の時間帯（IANA 名、例 `Asia/Tokyo`、`America/Los_Angeles`）。既定 `Asia/Tokyo` |
+| `BANTO_TIMEZONE` | 変数 | 任意 | 管理画面・CSV・メールの日時表示と、売上集計の日別・月別の区切りの時間帯（IANA 名、例 `Asia/Tokyo`、`America/Los_Angeles`）。既定 `Asia/Tokyo` |
 | `MASK_ORDERS_AFTER_DAYS` | 変数 | 任意 | 発送から何日で個人情報をマスクするか。既定 180 |
 | `AUDIT_LOG_KEEP_DAYS` | 変数 | 任意 | 監査ログ（0051、管理画面「組織とメンバー」→「監査ログ」）を何日残すか。既定 365、30 より短くはならない |
 | `STRIPE_SECRET_KEY` | Secret | Stripe を使うなら | Stripe → 開発者 → API キー → シークレットキー |
