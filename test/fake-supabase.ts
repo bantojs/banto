@@ -1774,7 +1774,7 @@ export class FakeSupabase {
       extra_categories: ((p["extra_category_ids"] ?? []) as string[]).flatMap((id) => this.tables.categories.filter((c) => c["id"] === id).map((c) => ({ id: c["id"], slug: c["slug"], name: c["name"], parent_id: c["parent_id"] ?? null, sort_order: c["sort_order"] ?? 0 }))),
       option_axes: p["option_axes"] ?? null,
       published: p["published"], created_at: p["created_at"], updated_at: p["updated_at"],
-      images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"], options: i["options"] ?? {} })),
+      images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"], options: i["options"] ?? {} })),
       skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ id: k["id"], code: k["code"], name: k["name"] ?? null, price_jpy: k["price_jpy"], compare_at_price_jpy: k["compare_at_price_jpy"] ?? null, options: k["options"] ?? {}, gtin: k["gtin"] ?? null, available: this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0 })),
     });
     const order = (o: Row, pii: boolean): Row => ({
@@ -2234,6 +2234,17 @@ export class FakeSupabase {
         const previous = { storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null };
         Object.assign(i, { storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null });
         return json({ image_id: i["id"], previous, product: product(this.tables.products.find((x) => x["id"] === i["product_id"])!) });
+      }
+      case "api_images_reorder": {
+        // 0078: 本物の SQL は test/db/api-image-order.test.ts
+        if (!need("products:write")) return unauthorized();
+        const p = mine(this.tables.products.find((x) => x["id"] === args["p_product_id"]));
+        if (!p) return notFound();
+        const want = args["p_image_ids"] as string[];
+        const imgs = this.tables.product_images.filter((i) => i["product_id"] === p["id"]);
+        if (want.length !== imgs.length || new Set(want).size !== want.length || !want.every((id) => imgs.some((i) => i["id"] === id))) return json({ code: "P0001", message: "image_ids_mismatch" }, 400);
+        want.forEach((id, n) => (imgs.find((i) => i["id"] === id)!["sort_order"] = n));
+        return json(product(p));
       }
       case "api_image_delete": {
         if (!need("products:write")) return unauthorized();

@@ -221,6 +221,14 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "product_images_reorder",
+    description:
+      "【書き込み】商品の画像の並び順を決める。image_ids にその商品の画像の id をすべて、並べたい順に渡す（1 枚目がメインの画像。product_get の images で今の順と id が分かる）。足りない・余計・重なりがあれば何も変えない。スコープ products:write。",
+    inputSchema: obj({ product_id: s("string"), image_ids: { type: "array", items: s("string") } }, ["product_id", "image_ids"]),
+    readOnly: false,
+    run: (api, a) => api.imagesReorder(str(a, "product_id", true)!, a["image_ids"]),
+  },
+  {
     name: "product_image_delete",
     description: "【書き込み】商品画像を削除する。スコープ products:write。",
     inputSchema: obj({ image_id: s("string") }, ["image_id"]),

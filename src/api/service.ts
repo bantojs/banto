@@ -29,6 +29,8 @@ import { getTimeZone } from "../i18n/time";
 export const SALES_TIMEZONE_MIGRATION = "0076_sales_timezone";
 /** 画像のファイルだけを差し替える（api_image_replace_file）版 */
 export const IMAGE_REPLACE_MIGRATION = "0077_api_image_replace";
+/** 商品の画像の並び順（0078、PUT /products/{id}/images/order） */
+export const IMAGE_ORDER_MIGRATION = "0078_api_image_order";
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
 export interface ThemeApiDeps {
@@ -103,6 +105,7 @@ function mapRpcError(e: unknown): never {
     if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another member already has this external_ref (provider + id)", 409);
     if (e.is("consent_requires_person")) throw new ApiError("invalid", "consent_requires_person: marketing_consent can only be set to true by the customer (checkout / account page); the API may only withdraw it (false)", 400);
     if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
+    if (e.is("image_ids_mismatch")) throw new ApiError("invalid", "image_ids_mismatch: send every image id of the product exactly once, in the new order (GET /products/{id} lists them)", 400);
     if (e.is("email_change_not_allowed")) throw new ApiError("invalid", "email_change_not_allowed: email addresses can only be changed from the admin screen", 400);
     if (/invalid_transition|hold_until_required|not_restockable/.test(e.dbMessage)) throw new ApiError("conflict", e.dbMessage.replace(/^.*?(invalid_transition|hold_until_required|not_restockable).*$/s, "$1"), 409);
     if (e.is("invalid_option_axes")) throw new ApiError("invalid", "invalid_option_axes: an array of up to 3 { key, values? } (keys up to 40 characters, no duplicates; values up to 100 strings of 60 characters), [] for SKU code only, or null to leave it unset", 400);
@@ -372,6 +375,19 @@ export class ApiService {
   }
 
   /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */
+  /** 商品の画像の並び順を決める（0078）。その商品の画像の id をすべて、並べたい順に。1 枚目がメインの画像 */
+  async imagesReorder(productId: string, imageIds: unknown): Promise<Record<string, unknown>> {
+    uuidOr404(productId);
+    if (!Array.isArray(imageIds) || imageIds.length > 200 || imageIds.some((v) => typeof v !== "string" || !isUuid(v))) {
+      throw new ApiError("invalid", "image_ids must be an array of the product's image ids", 400);
+    }
+    if (!(await this.migratedTo(IMAGE_ORDER_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `reordering images needs the database update ${IMAGE_ORDER_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    return this.call<Record<string, unknown>>("api_images_reorder", { p_product_id: productId, p_image_ids: imageIds });
+  }
+
   async imageSetOptions(imageId: string, options: Record<string, unknown>): Promise<Record<string, unknown>> {
     uuidOr404(imageId);
     return this.call<Record<string, unknown>>("api_image_set_options", { p_image_id: imageId, p_options: options });
