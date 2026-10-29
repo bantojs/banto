@@ -370,7 +370,7 @@ CLAUDE.md に書いてある規約の「なぜ」と、規約には書ききれ�
 - **Checkout の `expires_at` は 35 分、在庫予約の TTL はその 5 分後**。Stripe の下限はちょうど 30 分で、通信の遅れで弾かれる。
 - **Cron の経路で `fetch` は必ずラッパー関数にして渡す**。Workers では素の `fetch` をオブジェクトのプロパティ経由で呼ぶと `Illegal invocation`。
 - **決済プラグイン（Stripe / KOMOJU）は hooks のイベントを購読しない**。受信処理が無いので、購読すると配信が失敗し続ける。設定画面からイベント欄を消し、既に積まれた配信は 204 で完了扱い。
-- **ロケールと時間帯はデプロイ単位**（`BANTO_LOCALE` / `BANTO_TIMEZONE`）。リクエストごとの切り替えは isolate 内で競合するので持たない。売上集計の日別区切りだけは SQL 側で Asia/Tokyo 固定（海外運用が要るなら引数化する）。
+- **ロケールと時間帯はデプロイ単位**（`BANTO_LOCALE` / `BANTO_TIMEZONE`）。リクエストごとの切り替えは isolate 内で競合するので持たない。売上集計の日別・月別の区切りも `BANTO_TIMEZONE`（0076 で SQL に `p_time_zone` を足し、Worker が渡す。省略は Asia/Tokyo）。
 - **Secret の形を管理画面で検査する**（`secretFormats`）。`sk_` と `whsec_` の取り違えが実際に起きた。
 - **組織（Organization）の Stripe キーは `STRIPE_CONTEXT`（acct_…）で対応**。推奨はアカウント内で発行したキー。
 

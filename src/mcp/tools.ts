@@ -489,7 +489,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "sales_summary",
-    description: "期間の売上集計（注文数・売上・点数・客単価）と、日別/月別/商品別の内訳。キャンセル・返金は除く。時刻は Asia/Tokyo。スコープ stats:read。",
+    description: "期間の売上集計（注文数・売上・点数・客単価）と、日別/月別/商品別の内訳。キャンセル・返金は除く。日別・月別の区切りはデプロイの時間帯（応答の timezone、既定 Asia/Tokyo）。スコープ stats:read。",
     inputSchema: obj({ from: s("string", "開始（ISO 8601、含む）"), to: s("string", "終了（ISO 8601、含まない）"), group_by: s("string", "day | month | product", { enum: ["day", "month", "product"] }) }, ["from", "to"]),
     readOnly: true,
     run: (api, a) => {

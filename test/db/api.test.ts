@@ -244,6 +244,23 @@ describe.skipIf(!dbAvailable)("AI 用トークンと api_* RPC（0003_api）", (
       expect(await expectDbError(() => asAnon((c) => c.query("select sales_summary($1, $2, $3, 'day')", [a.shopId, from, to])))).toMatch(/permission denied/);
     });
 
+    it("売上集計の日別の区切りは p_time_zone（0076）。省略は Asia/Tokyo、知らない名前は invalid_time_zone", async () => {
+      // 2026-10-01 05:00 UTC = 東京は 10/01 14:00、ロサンゼルスは 9/30 22:00
+      const id = await paidOrder(a, 1, "tz@example.com");
+      await getPool().query("update orders set created_at = '2026-10-01T05:00:00Z' where id = $1", [id]);
+      const from = "2026-09-29T00:00:00Z", to = "2026-10-03T00:00:00Z";
+      const period = (r: { rows: { period: string }[] } | null) => r!.rows.map((x) => x.period);
+      const tokyo = await rpc<{ timezone: string; rows: { period: string }[] }>("api_sales_summary", [full.hash, from, to, "day"]);
+      expect(tokyo!.timezone).toBe("Asia/Tokyo");
+      expect(period(tokyo)).toEqual(["2026-10-01"]);
+      const la = await rpc<{ timezone: string; rows: { period: string }[] }>("api_sales_summary", [full.hash, from, to, "day", "America/Los_Angeles"]);
+      expect(la!.timezone).toBe("America/Los_Angeles");
+      expect(period(la)).toEqual(["2026-09-30"]);
+      const month = await asUser(a.ownerId, async (c) => (await c.query<{ r: { rows: { period: string }[] } }>("select sales_summary($1, $2, $3, 'month', 'America/Los_Angeles') as r", [a.shopId, from, to])).rows[0]!.r);
+      expect(period(month)).toEqual(["2026-09"]);
+      expect(await expectDbError(() => rpc("api_sales_summary", [full.hash, from, to, "day", "Mars/Olympus"]))).toMatch(/invalid_time_zone/);
+    });
+
     it("注文履歴のある SKU は削除できない（外部キー）", async () => {
       expect(await expectDbError(() => rpc("api_sku_delete", [full.hash, a.skuId]))).toMatch(/foreign key/);
     });
