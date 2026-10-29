@@ -95,6 +95,8 @@ const REQUIRED_TRIGGERS = [
   ["shops", "shops_plan_limit"], ["products", "products_plan_limit"], ["customers", "customers_plan_limit"], ["org_members", "org_members_plan_limit"],
   ["shops", "shops_theme_guard"], // 0071: 公開中のテーマは theme_publish だけが変える
   ["theme_versions", "theme_versions_plan_limit"], // 0073: テーマの版の数のプランの上限
+  // 0075: SKU・商品の画像・在庫を変えたときの product.updated（連携サイトのキャッシュの入れ替え）
+  ["skus", "skus_product_updated"], ["product_images", "product_images_product_updated"], ["inventory", "inventory_product_updated"],
 ];
 
 const client = new pg.Client({ connectionString: url });
