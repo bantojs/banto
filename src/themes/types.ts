@@ -333,3 +333,6 @@ export interface InquiryThreadView {
   /** 返事のフォームに hidden で入れる値（会員は受付番号 n） */
   replyHidden: Record<string, string>;
 }
+
+/** 会員ページの値（既定のテーマの AccountPage と、Liquid のテーマの {% banto_account %} が受け取る） */
+export type AccountPageProps = Parameters<Theme["AccountPage"]>[0];

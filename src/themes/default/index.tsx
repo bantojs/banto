@@ -1,6 +1,6 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
-import type { StoreView, Theme, ThemeContext } from "../types";
+import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
@@ -199,6 +199,228 @@ function StoreCard({ store, children }: { store: StoreView; children?: Child }) 
       {store.note ? <p class="muted">{store.note}</p> : null}
       {children}
     </section>
+  );
+}
+
+/**
+ * 会員ページの中身（注文の一覧・住所・ログインの方法・クーポン・試着・ログアウト・退会）。既定のテーマの AccountPage と、
+ * Liquid のテーマの会員ページ（{% banto_account %}、src/routes/storefront/liquid.ts）が同じものを使う。strict はインラインのスクリプトを使わない形
+ */
+export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
+  const a = (customer?.default_address ?? {}) as Record<string, unknown>;
+  const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
+  const field = (name: string, label: string, value: string, type = "text", required = true) => (
+    <div>
+      <label for={name}>{label}</label>
+      <input id={name} type={type} name={name} value={value} required={required} style="width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box" />
+    </div>
+  );
+  return (
+    <>
+      <h1>{t("member.account")}</h1>
+      <p class="muted">{ctx.member?.email}</p>
+      {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
+      {flash === "logged_out_all" ? <p class="notice">{t("member.logged_out_all")}</p> : null}
+      {flash === "password_saved" ? <p class="notice">{t("member.password_saved")}</p> : null}
+      {flash === "oauth_linked" ? <p class="notice">{t("member.oauth_linked_done")}</p> : null}
+      {flash === "oauth_unlinked" ? <p class="notice">{t("member.oauth_unlinked_done")}</p> : null}
+      {flash === "coupon_claimed" ? <p class="notice">{t("claim.done")}</p> : null}
+      {flash === "tryon_cancelled" ? <p class="notice">{t("member.tryon_cancelled")}</p> : null}
+      {error ? <p class="error">{error}</p> : null}
+      {coupons ? (
+        <section>
+          <h2>{t("member.coupons")}</h2>
+          {coupons.length === 0 ? <p>{t("member.coupons_none")}</p> : null}
+          {coupons.map((cp) => (
+            <form method="post" action={`${ctx.shopPath}/cart/coupon`} style="margin:.5rem 0">
+              <input type="hidden" name="code" value={cp.code} />
+              <strong>{cp.name}</strong> <span class="muted">{cp.kind === "percent" ? `${cp.value}%` : cp.kind === "fixed" ? yen(cp.value) : t("store.coupon_free_shipping")}</span>{" "}
+              {cp.expires_at ? <span class="muted">{tf("member.coupon_expires", { date: formatDateTime(cp.expires_at, { dateOnly: true }) })}</span> : null} <code>{cp.code}</code>{" "}
+              <button type="submit">{t("member.coupon_use")}</button>
+            </form>
+          ))}
+        </section>
+      ) : null}
+      {tryon && tryon.length > 0 ? (
+        <section>
+          <h2>{t("member.tryon")}</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>{t("tryon.number")}</th>
+                <th>{t("tryon.store")}</th>
+                <th>{t("tryon.items")}</th>
+                <th>{t("tryon.status")}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {tryon.map((r) => (
+                <tr>
+                  <td>{r.number}</td>
+                  <td>{r.store_name}</td>
+                  <td>{r.items.map((i) => `${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}`).join("、")}</td>
+                  <td>
+                    {t(`tryon.status_${r.status}` as MessageKey)}
+                    {r.status === "ready" && r.hold_label ? (
+                      <>
+                        <br />
+                        <span class="muted">{tf("tryon.hold_until_short", { date: r.hold_label })}</span>
+                      </>
+                    ) : r.visit_label && (r.status === "requested" || r.status === "sent") ? (
+                      <>
+                        <br />
+                        <span class="muted">{tf("tryon.visit_short", { date: r.visit_label })}</span>
+                      </>
+                    ) : null}
+                  </td>
+                  <td>
+                    {r.cancellable ? (
+                      <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/cancel`}>
+                        <button type="submit">{t("member.tryon_cancel")}</button>
+                      </form>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+      <h2>{t("member.orders")}</h2>
+      {ctx.inquiries ? (
+        <p>
+          <a href={`${ctx.shopPath}/inquiries`}>{t("inq.my_inquiries")}</a>
+        </p>
+      ) : null}
+      {orders.length === 0 ? <p>{t("member.no_orders")}</p> : null}
+      {orders.length > 0 ? (
+        <table>
+          <thead>
+            <tr>
+              <th>{t("store.lookup_number")}</th>
+              <th>{t("order.date")}</th>
+              <th>{t("store.total")}</th>
+              <th>{t("order.status")}</th>
+              {receipt ? <th></th> : null}
+              {ctx.inquiries ? <th></th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => (
+              <tr>
+                <td>{String(o["number"])}</td>
+                <td>{formatDateTime(String(o["created_at"]), { dateOnly: true })}</td>
+                <td>{yen(Number(o["total_jpy"]))}</td>
+                <td>{t(`order.status.${String(o["status"])}` as MessageKey)}</td>
+                {receipt ? (
+                  <td>
+                    {o["status"] === "paid" || o["status"] === "shipped" ? (
+                      <a href={`${ctx.shopPath}/account/orders/${String(o["number"])}/receipt`} target="_blank" rel="noopener">
+                        {t("receipt.link")}
+                      </a>
+                    ) : null}
+                  </td>
+                ) : null}
+                {ctx.inquiries ? (
+                  <td>
+                    <a href={`${ctx.shopPath}/inquiries/new?order=${String(o["number"])}`}>{t("inq.about_order")}</a>
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      <h2>{t("member.address")}</h2>
+      <form method="post" action={`${ctx.shopPath}/account/address`}>
+        {field("customer_name", t("store.address_name"), customer?.name ?? v("name"))}
+        {field("phone", t("store.address_phone"), v("phone"), "tel")}
+        {field("postal_code", t("store.address_postal"), v("postal_code"))}
+        <div>
+          <label for="state">{t("store.address_state")}</label>
+          <select id="state" name="state" required>
+            <option value="">---</option>
+            {prefectures.map((p) => (
+              <option value={p} selected={v("state") === p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </div>
+        {field("city", t("store.address_city"), v("city"))}
+        {field("line1", t("store.address_line1"), v("line1"))}
+        {field("line2", t("store.address_line2"), v("line2"), "text", false)}
+        <p>
+          <button type="submit">{t("shop.save")}</button>
+        </p>
+      </form>
+      {consent ? (
+        <form method="post" action={`${ctx.shopPath}/account/consent`}>
+          <h2>{t("consent.title")}</h2>
+          <label>
+            <input type="checkbox" name="marketing_consent" value="1" checked={customer?.marketing_consent === true} /> {t("consent.checkbox")}
+          </label>
+          <p>
+            <button type="submit">{t("shop.save")}</button>
+          </p>
+        </form>
+      ) : null}
+      {security && (security.password || security.providers.length > 0) ? (
+        <div>
+          <h2>{t("member.login_methods")}</h2>
+          {security.password ? (
+            <form method="post" action={`${ctx.shopPath}/account/password`}>
+              <label for="new-password">{t("member.password_new")}</label>
+              <input id="new-password" type="password" name="password" required minlength={8} maxlength={200} autocomplete="new-password" style="width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box" />
+              <p>
+                <button type="submit">{t(security.hasPassword ? "member.password_change" : "member.password_set")}</button>
+              </p>
+            </form>
+          ) : null}
+          {security.providers.map((p) =>
+            p.linked ? (
+              <form method="post" action={`${ctx.shopPath}/account/oauth/${p.id}/unlink`}>
+                {tf("member.oauth_linked", { name: PROVIDER_LABELS[p.id] })} <button type="submit">{t("member.oauth_unlink")}</button>
+              </form>
+            ) : (
+              <form method="post" action={`${ctx.shopPath}/account/oauth/${p.id}/link`}>
+                <button type="submit">{tf("member.oauth_link", { name: PROVIDER_LABELS[p.id] })}</button>
+              </form>
+            ),
+          )}
+        </div>
+      ) : null}
+      {sessions ? (
+        <p>
+          <a href={`${ctx.shopPath}/account/sessions`}>{t("member.sessions")}</a>
+        </p>
+      ) : null}
+      {passkeys ? (
+        <p>
+          <a href={`${ctx.shopPath}/account/passkeys`}>{t("passkey.title")}</a>
+        </p>
+      ) : null}
+      <form method="post" action={`${ctx.shopPath}/account/logout`} style="display:inline">
+        <button type="submit">{t("nav.logout")}</button>
+      </form>{" "}
+      <form method="post" action={`${ctx.shopPath}/account/logout-all`} style="display:inline">
+        <button type="submit">{t("member.logout_all")}</button>
+      </form>{" "}
+      {strict ? (
+        // インラインのスクリプトを止めた画面（Liquid のテーマの会員ページ、CSP）では、確かめの欄を付ける
+        <form method="post" action={`${ctx.shopPath}/account/delete`} style="display:inline">
+          <label>
+            <input type="checkbox" name="confirm" value="1" required /> {t("member.delete_confirm")}
+          </label>{" "}
+          <button type="submit">{t("member.delete")}</button>
+        </form>
+      ) : (
+        <form method="post" action={`${ctx.shopPath}/account/delete`} style="display:inline" onsubmit={`return confirm(${JSON.stringify(t("member.delete_confirm"))})`}>
+          <button type="submit">{t("member.delete")}</button>
+        </form>
+      )}
+    </>
   );
 }
 
@@ -809,210 +1031,10 @@ export const defaultTheme: Theme = {
     );
   },
 
-  AccountPage({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, sessions, passkeys, consent }) {
-    const a = (customer?.default_address ?? {}) as Record<string, unknown>;
-    const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
-    const field = (name: string, label: string, value: string, type = "text", required = true) => (
-      <div>
-        <label for={name}>{label}</label>
-        <input id={name} type={type} name={name} value={value} required={required} style="width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box" />
-      </div>
-    );
+  AccountPage(props) {
     return (
-      <Layout title={t("member.account")} ctx={ctx} seo={{ noindex: true }}>
-        <h1>{t("member.account")}</h1>
-        <p class="muted">{ctx.member?.email}</p>
-        {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
-        {flash === "logged_out_all" ? <p class="notice">{t("member.logged_out_all")}</p> : null}
-        {flash === "password_saved" ? <p class="notice">{t("member.password_saved")}</p> : null}
-        {flash === "oauth_linked" ? <p class="notice">{t("member.oauth_linked_done")}</p> : null}
-        {flash === "oauth_unlinked" ? <p class="notice">{t("member.oauth_unlinked_done")}</p> : null}
-        {flash === "coupon_claimed" ? <p class="notice">{t("claim.done")}</p> : null}
-        {flash === "tryon_cancelled" ? <p class="notice">{t("member.tryon_cancelled")}</p> : null}
-        {error ? <p class="error">{error}</p> : null}
-        {coupons ? (
-          <section>
-            <h2>{t("member.coupons")}</h2>
-            {coupons.length === 0 ? <p>{t("member.coupons_none")}</p> : null}
-            {coupons.map((cp) => (
-              <form method="post" action={`${ctx.shopPath}/cart/coupon`} style="margin:.5rem 0">
-                <input type="hidden" name="code" value={cp.code} />
-                <strong>{cp.name}</strong> <span class="muted">{cp.kind === "percent" ? `${cp.value}%` : cp.kind === "fixed" ? yen(cp.value) : t("store.coupon_free_shipping")}</span>{" "}
-                {cp.expires_at ? <span class="muted">{tf("member.coupon_expires", { date: formatDateTime(cp.expires_at, { dateOnly: true }) })}</span> : null} <code>{cp.code}</code>{" "}
-                <button type="submit">{t("member.coupon_use")}</button>
-              </form>
-            ))}
-          </section>
-        ) : null}
-        {tryon && tryon.length > 0 ? (
-          <section>
-            <h2>{t("member.tryon")}</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("tryon.number")}</th>
-                  <th>{t("tryon.store")}</th>
-                  <th>{t("tryon.items")}</th>
-                  <th>{t("tryon.status")}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {tryon.map((r) => (
-                  <tr>
-                    <td>{r.number}</td>
-                    <td>{r.store_name}</td>
-                    <td>{r.items.map((i) => `${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}`).join("、")}</td>
-                    <td>
-                      {t(`tryon.status_${r.status}` as MessageKey)}
-                      {r.status === "ready" && r.hold_label ? (
-                        <>
-                          <br />
-                          <span class="muted">{tf("tryon.hold_until_short", { date: r.hold_label })}</span>
-                        </>
-                      ) : r.visit_label && (r.status === "requested" || r.status === "sent") ? (
-                        <>
-                          <br />
-                          <span class="muted">{tf("tryon.visit_short", { date: r.visit_label })}</span>
-                        </>
-                      ) : null}
-                    </td>
-                    <td>
-                      {r.cancellable ? (
-                        <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/cancel`}>
-                          <button type="submit">{t("member.tryon_cancel")}</button>
-                        </form>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        ) : null}
-        <h2>{t("member.orders")}</h2>
-        {ctx.inquiries ? (
-          <p>
-            <a href={`${ctx.shopPath}/inquiries`}>{t("inq.my_inquiries")}</a>
-          </p>
-        ) : null}
-        {orders.length === 0 ? <p>{t("member.no_orders")}</p> : null}
-        {orders.length > 0 ? (
-          <table>
-            <thead>
-              <tr>
-                <th>{t("store.lookup_number")}</th>
-                <th>{t("order.date")}</th>
-                <th>{t("store.total")}</th>
-                <th>{t("order.status")}</th>
-                {receipt ? <th></th> : null}
-                {ctx.inquiries ? <th></th> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((o) => (
-                <tr>
-                  <td>{String(o["number"])}</td>
-                  <td>{formatDateTime(String(o["created_at"]), { dateOnly: true })}</td>
-                  <td>{yen(Number(o["total_jpy"]))}</td>
-                  <td>{t(`order.status.${String(o["status"])}` as MessageKey)}</td>
-                  {receipt ? (
-                    <td>
-                      {o["status"] === "paid" || o["status"] === "shipped" ? (
-                        <a href={`${ctx.shopPath}/account/orders/${String(o["number"])}/receipt`} target="_blank" rel="noopener">
-                          {t("receipt.link")}
-                        </a>
-                      ) : null}
-                    </td>
-                  ) : null}
-                  {ctx.inquiries ? (
-                    <td>
-                      <a href={`${ctx.shopPath}/inquiries/new?order=${String(o["number"])}`}>{t("inq.about_order")}</a>
-                    </td>
-                  ) : null}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : null}
-        <h2>{t("member.address")}</h2>
-        <form method="post" action={`${ctx.shopPath}/account/address`}>
-          {field("customer_name", t("store.address_name"), customer?.name ?? v("name"))}
-          {field("phone", t("store.address_phone"), v("phone"), "tel")}
-          {field("postal_code", t("store.address_postal"), v("postal_code"))}
-          <div>
-            <label for="state">{t("store.address_state")}</label>
-            <select id="state" name="state" required>
-              <option value="">---</option>
-              {prefectures.map((p) => (
-                <option value={p} selected={v("state") === p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </div>
-          {field("city", t("store.address_city"), v("city"))}
-          {field("line1", t("store.address_line1"), v("line1"))}
-          {field("line2", t("store.address_line2"), v("line2"), "text", false)}
-          <p>
-            <button type="submit">{t("shop.save")}</button>
-          </p>
-        </form>
-        {consent ? (
-          <form method="post" action={`${ctx.shopPath}/account/consent`}>
-            <h2>{t("consent.title")}</h2>
-            <label>
-              <input type="checkbox" name="marketing_consent" value="1" checked={customer?.marketing_consent === true} /> {t("consent.checkbox")}
-            </label>
-            <p>
-              <button type="submit">{t("shop.save")}</button>
-            </p>
-          </form>
-        ) : null}
-        {security && (security.password || security.providers.length > 0) ? (
-          <div>
-            <h2>{t("member.login_methods")}</h2>
-            {security.password ? (
-              <form method="post" action={`${ctx.shopPath}/account/password`}>
-                <label for="new-password">{t("member.password_new")}</label>
-                <input id="new-password" type="password" name="password" required minlength={8} maxlength={200} autocomplete="new-password" style="width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box" />
-                <p>
-                  <button type="submit">{t(security.hasPassword ? "member.password_change" : "member.password_set")}</button>
-                </p>
-              </form>
-            ) : null}
-            {security.providers.map((p) =>
-              p.linked ? (
-                <form method="post" action={`${ctx.shopPath}/account/oauth/${p.id}/unlink`}>
-                  {tf("member.oauth_linked", { name: PROVIDER_LABELS[p.id] })} <button type="submit">{t("member.oauth_unlink")}</button>
-                </form>
-              ) : (
-                <form method="post" action={`${ctx.shopPath}/account/oauth/${p.id}/link`}>
-                  <button type="submit">{tf("member.oauth_link", { name: PROVIDER_LABELS[p.id] })}</button>
-                </form>
-              ),
-            )}
-          </div>
-        ) : null}
-        {sessions ? (
-          <p>
-            <a href={`${ctx.shopPath}/account/sessions`}>{t("member.sessions")}</a>
-          </p>
-        ) : null}
-        {passkeys ? (
-          <p>
-            <a href={`${ctx.shopPath}/account/passkeys`}>{t("passkey.title")}</a>
-          </p>
-        ) : null}
-        <form method="post" action={`${ctx.shopPath}/account/logout`} style="display:inline">
-          <button type="submit">{t("nav.logout")}</button>
-        </form>{" "}
-        <form method="post" action={`${ctx.shopPath}/account/logout-all`} style="display:inline">
-          <button type="submit">{t("member.logout_all")}</button>
-        </form>{" "}
-        <form method="post" action={`${ctx.shopPath}/account/delete`} style="display:inline" onsubmit={`return confirm(${JSON.stringify(t("member.delete_confirm"))})`}>
-          <button type="submit">{t("member.delete")}</button>
-        </form>
+      <Layout title={t("member.account")} ctx={props.ctx} seo={{ noindex: true }}>
+        <AccountBody {...props} />
       </Layout>
     );
   },

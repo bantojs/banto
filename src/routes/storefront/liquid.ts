@@ -10,17 +10,18 @@
 import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
-import { getLocale, t } from "../../i18n";
+import { getLocale, t, type MessageKey } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { THEME_PREVIEW_MIGRATION, type ProductDetail, type ProductListPage, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { shopHome, shopOrigin } from "../../storefront/urls";
-import type { AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
+import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
 import { ADDRESS_FIELDS, priceCart, type Confirmation } from "../../commerce/checkout";
 import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
 import { ConfirmationBlock } from "../../themes/default/confirmation";
+import { AccountBody } from "../../themes/default";
 import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
@@ -128,8 +129,13 @@ interface PageParts {
   currentCategory?: string;
   paginate?: Paginate | null;
   status?: 200 | 400 | 404 | 409;
-  /** レジの画面（配送先・最終確認）: 外のスクリプトを止め（CSP）、覚えさせない。confirm は {% banto_confirmation %} を描いたときだけ */
-  checkout?: "address" | "confirm";
+  /**
+   * 住所・連絡先が載る画面（レジの配送先・最終確認、会員ページ）: 外のスクリプトを止め（CSP）、覚えさせず、切り離したプレビューではテーマで描かない。
+   * confirm は {% banto_confirmation %} を描いたときだけ
+   */
+  checkout?: "address" | "confirm" | "account";
+  /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
+  headExtra?: string;
 }
 
 /**
@@ -157,6 +163,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
   const head = [
     `<link rel="canonical" href="${escapeHtml(canonical)}">`,
     page.noindex || choice.preview ? '<meta name="robots" content="noindex">' : "",
+    page.headExtra ?? "",
     page.jsonLd ? `<script type="application/ld+json">${jsonLdText(page.jsonLd)}</script>` : "",
   ].join("");
   const intro = typeof s.ctx.themeSettings?.["description"] === "string" ? (s.ctx.themeSettings["description"] as string) : undefined;
@@ -410,6 +417,42 @@ export async function renderCheckoutConfirm(c: Ctx, s: LiquidScope, choice: Liqu
     checkout: "confirm",
     ...(p.status ? { status: p.status } : {}),
   });
+}
+
+/** 法務のページ（templates/page。特定商取引法に基づく表記・プライバシーポリシー・返品）。page.content は Banto が文面から作る（改行を残してエスケープ） */
+export function renderLegalPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { handle: string; title: string; body: string; categories: CategoryRow[] }): Response | null {
+  const content = new SafeHtml(`<div class="banto-legal">${escapeHtml(p.body).replace(/\r?\n/g, "<br>")}</div>`);
+  const page = { id: p.handle, handle: p.handle, title: p.title, content, url: `${s.ctx.shopPath}/${p.handle}`, template_suffix: null };
+  return render(c, s, choice, { template: "page", values: { page }, title: p.title, path: `/${p.handle}`, categories: p.categories });
+}
+
+/** 購入の完了画面（templates/checkout_done）。checkout.status は confirmed / pending / released / not_found / unknown（照会できないとき）、確定していれば order_number */
+export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; free: boolean; inquiryUrl: string | null; categories: CategoryRow[] }): Response | null {
+  const checkout = { status: p.status, order_number: p.orderNumber, message: p.message, free: p.free, inquiry_url: p.inquiryUrl, continue_url: s.ctx.shopPath || "/" };
+  return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: '<meta http-equiv="refresh" content="4">' } : {}) });
+}
+
+/**
+ * 会員ページ（templates/customers/account）。customer は Shopify に近い形（email・name・orders・default_address）。
+ * 住所の保存・ログインの方法・クーポン・ログアウト・退会などは {% banto_account %} が Banto の部品として描く（既定のテーマと同じもの）
+ */
+export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice, props: AccountPageProps): Promise<Response | null> {
+  const block = await Promise.resolve(AccountBody({ ...props, strict: true }).toString());
+  const orders = props.orders.map((o) => ({
+    id: o["number"],
+    name: `#${String(o["number"])}`,
+    order_number: o["number"],
+    created_at: o["created_at"],
+    financial_status: o["status"],
+    status: o["status"],
+    status_label: t(`order.status.${String(o["status"])}` as MessageKey),
+    total_price: money(Number(o["total_jpy"] ?? 0)),
+    url: `${s.ctx.shopPath}/orders/lookup?banto_order=${encodeURIComponent(String(o["number"]))}&banto_member=1`,
+  }));
+  const customer = props.customer
+    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true }
+    : null;
+  return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

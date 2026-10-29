@@ -49,7 +49,8 @@ import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice,
 import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
-import type { AddressFormValues } from "../../themes/types";
+import type { AccountPageProps, AddressFormValues } from "../../themes/types";
+import { liquidThemeFor, renderAccount } from "./liquid";
 import type { PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
 import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
@@ -280,8 +281,7 @@ members.get("/:shop/account", async (c: Ctx) => {
   const linked = rec.customer.providers ?? [];
   const security = { password: opts.password, hasPassword: rec.customer.has_password === true, providers: opts.providers.map((id) => ({ id, linked: linked.includes(id) })) };
   const errorKey = ACCOUNT_ERRORS[c.req.query("error") ?? ""];
-  return c.html(
-    s.theme.AccountPage({
+  const props: AccountPageProps = {
       ctx: ctxOf(s, { email: rec.customer.email ?? s.session.email }),
       customer: rec.customer,
       orders: rec.orders,
@@ -306,8 +306,16 @@ members.get("/:shop/account", async (c: Ctx) => {
             cancellable: MEMBER_CANCELLABLE.includes(r.status),
           }))
         : null,
-    }),
-  );
+  };
+  // Liquid のテーマの会員ページ（templates/customers/account）。無ければ・描けなければ既定のテーマ
+  const sf = storefrontData(c);
+  const ls = sf ? { shop: s.shop, sf, ctx: props.ctx } : null;
+  const lt = ls ? await liquidThemeFor(c, ls) : null;
+  if (ls && lt) {
+    const res = await renderAccount(c, ls, lt, props);
+    if (res) return res;
+  }
+  return c.html(s.theme.AccountPage(props));
 });
 
 /** お店で試着の申し込みを取り消す（会員本人。取り置きが終わる前だけ、0026） */
