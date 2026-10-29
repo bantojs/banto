@@ -197,6 +197,7 @@ Banto は、決済ページを作れなかった・Webhook の金額が合わな
 | 購入手続きボタンが出ない | プラグインの Stripe 決済が無効、または `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` が未設定 |
 | 「決済ページを開けませんでした」（ログに `Please include the Stripe-Context header … Organization API key`） | Stripe の「組織」で作ったキーを使っています。**そのアカウント（サンドボックス）の中で** 開発者 → API キー から作り直したキーを `STRIPE_SECRET_KEY` に貼るのがいちばん簡単です。組織キーのまま使うなら、変数 `STRIPE_CONTEXT` に対象アカウントの ID（`acct_…`）を入れます |
 | 「決済ページを開けませんでした」 | Stripe が決済ページの作成を拒否しています。Stripe の画面 → **開発者 → ログ** に失敗した `POST /v1/checkout/sessions` が出るので、そのエラーメッセージを見る（キーが `pk_` の公開キーになっている、テストと本番のキーが混在、など）。Cloudflare の banto → **ログ** にも `[banto] checkout:` で理由が出ます |
+| 外部プラグイン（hooks の送信先）が同じ Cloudflare アカウントの Worker で、テスト送信が届かない（送信先のログに何も出ない） | Cloudflare は、同じアカウントの Worker から Worker への fetch を error 1042 で断ります。Banto は `wrangler.jsonc` の `compatibility_flags` に `global_fetch_strictly_public` を入れて避けています。古い `wrangler.jsonc` のままなら最新に更新してください。プラグインの側から Banto の API を呼ぶときも同じなので、プラグインの設定にも同じフラグが要ります |
 | ショップが 404 | ショップ設定で「ショップを公開する」がオフ、または法務3項目が未入力 |
 
 ## 開発者向け（コマンドで導入する）

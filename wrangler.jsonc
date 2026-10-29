@@ -3,7 +3,9 @@
   "name": "banto",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: fetch を公開のインターネットと同じ道で出す。無いと、同じ Cloudflare アカウントの
+  // 別の Worker（hooks の送信先にした外部プラグインなど）への fetch が error 1042 で届かない（docs/setup.md「うまくいかないとき」）
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   // ショップの URL を https://banto.<account>.workers.dev で公開する（独自ドメインは後から追加。docs/custom-domain.md）
   "workers_dev": true,
   "upload_source_maps": true,
