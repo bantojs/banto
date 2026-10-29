@@ -137,7 +137,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `GET /tryon-requests/{number}` | orders:read | 受付番号 |
 | `POST /tryon-requests/{number}/status` | orders:write | `status`: `sent` / `ready`（`hold_until` YYYY-MM-DD 必須）/ `purchased` / `not_purchased` / `cancelled`。在庫は戻らない |
 | `POST /tryon-requests/{number}/restock` | orders:write | 終わった申し込みの在庫を EC に戻す。1 回だけ |
-| `GET /stats/sales` | stats:read | `?from=&to=`（ISO 8601、必須）`&group_by=day\|month\|product` |
+| `GET /stats/sales` | stats:read | `?from=&to=`（ISO 8601、必須）`&group_by=day\|month\|product`。日別・月別の区切りはデプロイの時間帯（`BANTO_TIMEZONE`、既定 Asia/Tokyo。応答の `timezone`） |
 | `GET /stats/inventory-low` | stats:read | `?threshold=` |
 | `GET /coupons` | coupons:read | `?q=`（名前・コードの部分一致）`&active=&limit=&offset=` |
 | `POST /coupons` | coupons:write | `name` `code` `kind`（`percent` / `fixed` / `free_shipping`）`value` `starts_at` `ends_at` `usage_limit` `per_customer_limit` `combinable` `audience`（`public` / `members`）`active` `grant_valid_days` `auto_grant` `claimable` `external_ref` `conditions` |

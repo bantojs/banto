@@ -1745,14 +1745,14 @@ export class FakeSupabase {
     return s ? this.shopPublicJson(s) : null;
   }
 
-  salesSummary(shopId: string, from: string, to: string, groupBy: string): Row {
+  salesSummary(shopId: string, from: string, to: string, groupBy: string, timeZone: string | null = null): Row {
     const orders = this.tables.orders.filter((o) => o["shop_id"] === shopId && ["paid", "shipped"].includes(String(o["status"])) && String(o["created_at"]) >= from && String(o["created_at"]) < to);
     const items = this.tables.order_items.filter((i) => orders.some((o) => o["id"] === i["order_id"]));
     const revenue = orders.reduce((n, o) => n + Number(o["total_jpy"]), 0);
     const rows: Row[] = groupBy === "product"
       ? [...new Set(items.map((i) => String(i["sku_id"])))].map((sku) => ({ sku_code: this.tables.skus.find((k) => k["id"] === sku)?.["code"] ?? null, qty: items.filter((i) => i["sku_id"] === sku).reduce((n, i) => n + Number(i["qty"]), 0), revenue_jpy: items.filter((i) => i["sku_id"] === sku).reduce((n, i) => n + Number(i["qty"]) * Number(i["unit_price_jpy"]), 0) }))
       : orders.length ? [{ period: String(orders[0]!["created_at"]).slice(0, groupBy === "day" ? 10 : 7), orders: orders.length, revenue_jpy: revenue }] : [];
-    return { from, to, group_by: groupBy, timezone: "Asia/Tokyo", total: { orders: orders.length, revenue_jpy: revenue, items: items.reduce((n, i) => n + Number(i["qty"]), 0), avg_order_jpy: orders.length ? Math.round(revenue / orders.length) : 0 }, rows };
+    return { from, to, group_by: groupBy, timezone: timeZone || "Asia/Tokyo", total: { orders: orders.length, revenue_jpy: revenue, items: items.reduce((n, i) => n + Number(i["qty"]), 0), avg_order_jpy: orders.length ? Math.round(revenue / orders.length) : 0 }, rows };
   }
 
   /** api_*: トークン検証 → shop 限定。本物の SQL は test/db/api.test.ts で検証 */
@@ -2262,7 +2262,9 @@ export class FakeSupabase {
       case "api_sales_summary": {
         if (!need("stats:read")) return unauthorized();
         if (!["day", "month", "product"].includes(String(args["p_group_by"]))) return json({ code: "P0001", message: "invalid_group_by" }, 400);
-        return json(this.salesSummary(shopId, String(args["p_from"]), String(args["p_to"]), String(args["p_group_by"])));
+        // p_time_zone は 0076 から。古い DB に知らない引数を送ると PostgREST は関数を見つけられない
+        if ("p_time_zone" in args && !this.appliedMigrations.includes("0076_sales_timezone")) return json({ code: "PGRST202", message: "Could not find the function public.api_sales_summary" }, 404);
+        return json(this.salesSummary(shopId, String(args["p_from"]), String(args["p_to"]), String(args["p_group_by"]), (args["p_time_zone"] as string | null | undefined) ?? null));
       }
       case "api_inventory_low": {
         if (!need("stats:read")) return unauthorized();

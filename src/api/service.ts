@@ -26,6 +26,10 @@ import type { InquiryMailShop } from "../modules/inquiries/mail";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, THEME_API_MIGRATION, unsealThemeAssets } from "../themes/liquid/versions";
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
+import { getTimeZone } from "../i18n/time";
+
+/** 売上集計の区切りの時間帯（p_time_zone）を受け付ける版 */
+export const SALES_TIMEZONE_MIGRATION = "0076_sales_timezone";
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
 export interface ThemeApiDeps {
@@ -616,7 +620,10 @@ export class ApiService {
   }
 
   // ---- stats ----
-  salesSummary = (from: string, to: string, groupBy: "day" | "month" | "product" = "day") =>
-    this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy });
+  /** 日別・月別の区切りはデプロイの時間帯（BANTO_TIMEZONE）。0076 が当たるまでは SQL の既定（Asia/Tokyo） */
+  async salesSummary(from: string, to: string, groupBy: "day" | "month" | "product" = "day"): Promise<Record<string, unknown>> {
+    const tz = (await this.migratedTo(SALES_TIMEZONE_MIGRATION)) ? { p_time_zone: getTimeZone() } : {};
+    return this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy, ...tz });
+  }
   inventoryLow = (threshold?: number) => this.call<Record<string, unknown>[]>("api_inventory_low", { p_threshold: threshold ?? null });
 }
