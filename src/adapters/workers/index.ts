@@ -64,8 +64,13 @@ class EnvConfig implements ConfigAdapter {
   }
 }
 
-/** isolate 内メモリ（行数の上限つき、src/adapters/memory-cache.ts）。KV は使わない（CLAUDE.md §1-2） */
+/**
+ * isolate 内メモリ（行数の上限つき、src/adapters/memory-cache.ts）。KV は使わない（CLAUDE.md §1-2）。
+ * アダプタはリクエストごとに作り直す（env を受け取るため）が、キャッシュは isolate に 1 つだけ置いて使い回す。
+ * リクエストごとに作るとキャッシュが 1 回で捨てられ、毎回 DB に取りに行く
+ */
 class WorkersCache extends MemoryCache {}
+const isolateCache = new WorkersCache();
 
 class CronScheduler implements SchedulerAdapter {
   private jobs = new Map<string, ScheduledJob>();
@@ -82,7 +87,7 @@ export function createWorkersAdapters(env: WorkersEnv): Adapters {
     storage: new R2Storage(env.MEDIA, env.MEDIA_BASE_URL),
     ...(env.PRIVATE ? { privateStorage: new R2Storage(env.PRIVATE, "") } : {}),
     config: new EnvConfig(env),
-    cache: new WorkersCache(),
+    cache: isolateCache,
     scheduler: new CronScheduler(),
     socket: workersSockets,
   };
