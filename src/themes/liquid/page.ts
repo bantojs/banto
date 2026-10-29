@@ -11,7 +11,7 @@ import { getLocale } from "../../i18n";
 import { SafeHtml, ThemeError } from "./engine";
 import { stripJsonComments } from "./bundle";
 import type { LoadedTheme } from "./cache";
-import { readSectionSchemas, renderSectionGroup, settingsWith, withRenderEnv, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
+import { readSectionSchemas, renderSection, renderSectionGroup, settingsWith, staticSection, withOverride, withRenderEnv, SECTIONS_PER_REQUEST, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 import { globalSettingsOf } from "./editor";
 
 export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm";
@@ -143,14 +143,8 @@ export interface ThemePageInput {
 
 const HEAD_MARK = "<!-- banto:head -->";
 
-/** 1 ページを描く。テンプレートが無ければ null。上限・テンプレートの誤りは ThemeError（呼び出し側は既定のテーマで描く） */
-export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: string; errors: string[] } | null {
-  const p = prepare(t, input.locale ?? getLocale());
-  const tpl = p.templates.get(input.template);
-  if (!tpl) return null;
-  const head = `${HEAD_MARK}${input.head}`;
-  const globals = { ...input.globals, template: new TemplateDrop(input.template), __groups: p.groups };
-  const env: RenderEnv = {
+function renderEnvOf(t: LoadedTheme, p: Prepared, input: Omit<ThemePageInput, "head">, globals: Record<string, unknown>): RenderEnv {
+  return {
     engine: t.engine,
     versionId: t.id,
     shopOrigin: input.shopOrigin,
@@ -167,6 +161,16 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
     preview: Boolean(input.preview),
     errors: [],
   };
+}
+
+/** 1 ページを描く。テンプレートが無ければ null。上限・テンプレートの誤りは ThemeError（呼び出し側は既定のテーマで描く） */
+export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: string; errors: string[] } | null {
+  const p = prepare(t, input.locale ?? getLocale());
+  const tpl = p.templates.get(input.template);
+  if (!tpl) return null;
+  const head = `${HEAD_MARK}${input.head}`;
+  const globals = { ...input.globals, template: new TemplateDrop(input.template), __groups: p.groups };
+  const env = renderEnvOf(t, p, input, globals);
   // 1 ページの手数・出力の上限は、テンプレート・セクション・レイアウトで分け合う
   const html = withRenderEnv(env, () => t.engine.page(() => {
     let content: string;
@@ -186,4 +190,34 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
   // テーマが content_for_header を書かなかった: </head> の前（無ければ先頭）に入れる
   const i = html.search(/<\/head>/i);
   return { html: i < 0 ? head + html : html.slice(0, i) + head + html.slice(i), errors: env.errors };
+}
+
+/**
+ * セクションだけを描く（Shopify の Section Rendering API: ?sections=a,b・?section_id=a、AJAX のカートの sections）。
+ * id はそのページのテンプレート（JSON）・セクションのまとまりの中の id か、セクションのファイルの名前（{% section %} と同じく置いたものとして描く）。
+ * 1 回に SECTIONS_PER_REQUEST 個まで。見つからない id は null（Shopify と同じ）。描くのはページと同じ値（globals）で、手数の上限も 1 ページ分
+ */
+export function renderThemeSections(t: LoadedTheme, input: Omit<ThemePageInput, "head">, ids: readonly string[]): Record<string, string | null> {
+  const p = prepare(t, input.locale ?? getLocale());
+  const globals = { ...input.globals, template: new TemplateDrop(input.template), __groups: p.groups };
+  const env = renderEnvOf(t, p, input, globals);
+  const tpl = p.templates.get(input.template);
+  // 探す順: そのページのテンプレート → セクションのまとまり → セクションのファイル
+  const places: { key: string; group: Group }[] = [];
+  if (tpl && "json" in tpl) places.push({ key: `templates/${input.template}`, group: tpl.json });
+  for (const [name, g] of Object.entries(p.groups)) if (isObject(g)) places.push({ key: `sections/${name}`, group: g as Group });
+  const out: Record<string, string | null> = Object.create(null) as Record<string, string | null>;
+  withRenderEnv(env, () =>
+    t.engine.page(() => {
+      for (const id of [...new Set(ids)].slice(0, SECTIONS_PER_REQUEST)) {
+        if (!/^[A-Za-z0-9_-]{1,100}$/.test(id) || id === "__proto__") continue;
+        const hit = places.find((x) => isObject(x.group.sections) && Object.hasOwn(x.group.sections, id) && isObject(x.group.sections[id]));
+        if (hit) out[id] = renderSection(id, withOverride(hit.group.sections![id]!, env.overrides[hit.key]?.[id]));
+        else if (t.engine.has(`sections/${id}`)) out[id] = renderSection(id, withOverride(staticSection(id), env.overrides[`static/${id}`]?.[id]));
+        else out[id] = null;
+      }
+      return "";
+    }),
+  );
+  return out;
 }

@@ -1,6 +1,6 @@
 # テーマ（Liquid）
 
-> 状態: 段階 3 の途中。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・カート・検索・レジ（配送先・最終確認）・404 のページです。決済はいつも Stripe・KOMOJU のページで、法務のページは既定のテーマが描きます。
+> 状態: 段階 3 まで（2026-10-29）。管理画面の「デザイン」か、コマンド（`cli/banto-theme.mjs`）・GitHub Actions からテーマを取り込み、プレビューで確かめて公開できます。Liquid のテーマで描くのは一覧・商品・カート・検索・レジ（配送先・最終確認）・404 のページです。決済はいつも Stripe・KOMOJU のページで、法務のページは既定のテーマが描きます。
 
 Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/default/`）で描きます。これに加えて、**Liquid で書いたテーマ**を取り込んで、Worker を配置し直さずに見た目を変えられるようにします。
 
@@ -137,7 +137,7 @@ Shopify では Plus のプランに限られる「チェックアウトの途中
 
 ### カート
 
-`cart` は Shopify と同じ形です（`items`・`item_count`・`items_subtotal_price`・`total_discount`・`total_price`・`cart_level_discount_applications`・`empty`）。行（`item`）は `key` と `id` が SKU の id で、`title`・`product_title`・`variant_title`・`sku`・`quantity`・`price`・`final_line_price`・`url`・`url_to_remove`・`options_with_values`・`variant`・`product`・`available`（在庫が足りなければ false）を持ちます。金額は 100 倍の整数で、値引きは商品の値引きだけです（送料と送料無料のクーポンは、配送先が決まってから最終確認の画面で）。行の画像はまだ渡しません（`item.image` は空）。
+`cart` は Shopify と同じ形です（`items`・`item_count`・`items_subtotal_price`・`total_discount`・`total_price`・`cart_level_discount_applications`・`empty`）。行（`item`）は `key` と `id` が SKU の id で、`title`・`product_title`・`variant_title`・`sku`・`quantity`・`price`・`final_line_price`・`url`・`url_to_remove`・`options_with_values`・`variant`・`product`・`available`（在庫が足りなければ false）を持ちます。金額は 100 倍の整数で、値引きは商品の値引きだけです（送料と送料無料のクーポンは、配送先が決まってから最終確認の画面で）。行の画像（`item.image`・`featured_image`）は、その SKU に合う商品の画像の最初の 1 枚です（SKU ごとの画像の当てはめは商品のページと同じ）。
 
 カートを変える書き方も Shopify と同じです。どれも同じオリジンからだけ受け付けます（ほかのサイトからの書き込みは断ります）。
 
@@ -150,4 +150,12 @@ Shopify では Plus のプランに限られる「チェックアウトの途中
 | `/cart/change.js`・`/cart/update.js`・`/cart/clear.js`（POST） | 数を変える・まとめて変える・空にする。応答はカートの JSON（合計にはクーポンの値引きが入ります）。`change.js` でカートに無い `id` は 400、`update.js` でカートに無い SKU に 1 以上を書けば足します（公開中の SKU だけ） |
 | `/cart/add`・`/cart/change` に JSON を求めて送る（`Accept: application/json` か `application/javascript`、または本文が JSON） | `.js` と同じ応答（Dawn などは `routes.cart_add_url`・`routes.cart_change_url` に fetch で送るため） |
 
-セクションを描き直して返す Shopify の `sections` の引数には対応していません（応答の JSON から画面を作り直してください）。
+### セクションだけを描く（Section Rendering API）
+
+Shopify と同じく、セクションだけを描いて返せます（Dawn などのカートの引き出し・絞り込みの JS が使います）。
+
+- テーマで描くページに `?sections=a,b`（JSON で `{ "a": "<div …>", "b": null }`）か `?section_id=a`（HTML）を付けます。1 回に 5 個まで。
+- id は、そのページのテンプレート（JSON）・セクションのまとまり（`sections/*.json`）の中の id か、セクションのファイルの名前（`{% section %}` と同じく、置いたものとして描きます）です。見つからない id は `null`（`section_id` なら 404）です。
+- AJAX のカート（`/cart/add.js`・`/cart/change.js`・`/cart/update.js`、`/cart.js` は `?sections=`）に `sections`（`"a,b"` か `["a", "b"]`）を付けると、変えた後のカートで描いたセクションを応答の `sections` に入れます。`sections_url` は見ません（カートのページとして描きます）。
+- セクションの包みは Shopify と同じ `<div id="shopify-section-<id>" class="shopify-section">` です。
+- レジ（配送先・最終確認）の画面では使えません。

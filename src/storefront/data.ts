@@ -266,6 +266,18 @@ export class StorefrontData {
     return (await this.db.rpc<string>("banto_site_plan", {})) === "paid" ? "paid" : "free";
   }
 
+  /** カートの行の商品の画像（item.image）。公開中の商品のもの（RLS）。商品の組ごとに短時間覚える */
+  async cartImages(shop: PublicShop, productIds: readonly string[]): Promise<ProductImageRow[]> {
+    const ids = [...new Set(productIds)].sort();
+    if (ids.length === 0) return [];
+    const key = `cart_images:${shop.id}:${ids.join(",")}`;
+    const hit = await this.cache.get<ProductImageRow[]>(key);
+    if (hit) return hit;
+    const rows = (await selectIn<ProductImageRow>(this.db, "product_images", "*", shop.id, "product_id", ids)).sort((a, b) => a.sort_order - b.sort_order);
+    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    return rows;
+  }
+
   /** マイグレーションが当たっているか（migration-state の一覧。isolate で覚える） */
   async migrationApplied(version: string): Promise<boolean> {
     return version <= BASELINE_MIGRATION || (await appliedMigrations({ db: this.db, cache: this.cache })).has(version);

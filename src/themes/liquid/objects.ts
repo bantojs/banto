@@ -9,7 +9,7 @@ import type { CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
 import type { CartLine } from "../types";
 import type { CategoryNode } from "../../products/categories";
-import { orderImagesForSku } from "../../products/images";
+import { firstImageForSku, orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
 import { escapeHtml, SafeHtml } from "./engine";
 
@@ -227,8 +227,13 @@ export interface CartDiscounts {
  * カート（Shopify の cart。カートのページ・ヘッダーのカート・/cart.js が同じ形を使う）。
  * 行の鍵（key・id）は SKU の id（Banto のカートは SKU ごとに 1 行）。金額は 100 倍の整数、値引きは商品の値引きだけ（送料は配送先が決まってから）
  */
-export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscounts | null = null) {
+/** カートの行の画像の材料（商品の id → 並び順の画像。SKU に合う画像を選ぶのは src/products/images.ts） */
+export type CartImages = ReadonlyMap<string, readonly ProductImageRow[]>;
+
+export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscounts | null = null, images: CartImages = new Map()) {
   const items = lines.map((l, i) => {
+    const imgRow = firstImageForSku(images.get(l.product.id) ?? [], l.sku.options ?? null);
+    const image = imgRow ? imageObject(u, imgRow, l.product.name) : null;
     const opts = Object.entries(l.sku.options ?? {}).map(([name, value]) => ({ name, value: String(value) }));
     const variantTitle = l.sku.name || opts.map((o) => o.value).join(" / ") || null;
     const price = money(l.sku.price_jpy)!;
@@ -255,8 +260,8 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
       discounts: [],
       url,
       url_to_remove: `${u.shopPath}/cart/change?id=${encodeURIComponent(l.sku.id)}&quantity=0`,
-      image: null,
-      featured_image: null,
+      image,
+      featured_image: image,
       options_with_values: opts,
       variant: { id: l.sku.id, title: variantTitle ?? l.sku.code, sku: l.sku.code, price, available: l.sku.available > 0, options: opts.map((o) => o.value) },
       product: { id: l.product.id, handle: l.product.slug, title: l.product.name, url: `${u.shopPath}/p/${encodeURIComponent(l.product.slug)}`, vendor: l.product.brand ?? "", tags: l.product.tags ?? [] },
