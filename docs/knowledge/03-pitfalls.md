@@ -13,6 +13,7 @@
 | 接続文字列で `Connection terminated unexpectedly` | Workers → Supabase pooler の TLS が切られる（workerd #2712） | Management API 経由に変更（対応済み） |
 | 初回のマイグレーションが途中で切れる（もう一度押すと続きから当たる） | Management API は 1 ファイル = 1 リクエスト。60 本を 1 回で送ると、Workers 無料プランのサブリクエスト 50 とブラウザとの接続の持ち時間を超える | 1 回の送信は 40 回・20 秒まで。残りは画面のスクリプトが同じフォームを送り直す（`src/routes/admin/migrate.tsx`。トークンは入力欄から毎回送るだけで残さない）。スクリプトが動かなくても、押し直せば続きから（対応済み） |
 | 初回のデプロイ直後にログインすると 500 | マイグレーション前の DB には `banto_setup_state` が無い | ログインの前に確かめ、使えなければセットアップの画面へ（`adminDbReady`、対応済み） |
+| Workers でだけ、30 秒のつもりのキャッシュが効かず毎回 DB に行く（テストと Node では効く） | `createApp` はリクエストごとに `resolveAdapters(env)` を呼ぶ。Workers の入口でキャッシュを毎回 `new` していた。テストと Node はアダプタを 1 回だけ作るので気づかない | 状態を持つもの（キャッシュ）はモジュールに 1 つ置いて使い回す（`src/adapters/workers/index.ts`、`test/workers-adapters.test.ts`、対応済み） |
 | ビルドログは「View build history」 | Deployments タブの一番下 | ログに `Deployed banto triggers` と URL が出ていれば成功 |
 
 ## Supabase
