@@ -169,7 +169,7 @@ Banto は画像を縮小しないので（Worker の CPU の制限）、**長辺
 
 **画像のファイルを差し替える**（`PUT /images/{id}/file`、0077）: 本文の形・種類・大きさの決まりは上と同じです（`options` は受けません。SKU への結び付けは `PATCH /images/{id}`）。
 並び順・SKU への結び付け・画像の id はそのままで、本画像とサムネイル（送らなければ無しになります）と寸法だけを入れ替え、前のファイルを消します。応答は `{ "image_id", "product" }`。
-画像を WebP にする外部プラグインのように、取り込んだ画像を外で作り直して戻すときに使います。差し替えると `product.updated` が届くので（0075）、受けて差し替える側は、もう直した画像を飛ばしてください。DB が 0077 より前なら 409 `migration_required` です。
+画像を WebP にする外部プラグインのように、取り込んだ画像を外で作り直して戻すときに使います。差し替えると `product.updated` が届くので（0075）、受けて差し替える側は、もう直した画像を飛ばしてください。実例は [examples/plugin-webp](../examples/plugin-webp/)（画像を WebP にしてサムネイルを作る外部プラグイン）。DB が 0077 より前なら 409 `migration_required` です。
 
 ```bash
 curl -X PUT -H "Authorization: Bearer banto_..." -F image=@main.webp -F thumbnail=@thumb.webp https://<ショップの URL>/api/v1/images/<画像の id>/file
