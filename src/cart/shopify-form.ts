@@ -21,6 +21,13 @@ const toInt = (v: unknown): number | null => {
 const one = (v: unknown): unknown => (Array.isArray(v) ? v[0] : v);
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
+/** 行の位置（updates[]・updates の配列・line）で書いているか。位置は画面に出ている行で数えるので、呼び出し側が並びを引く */
+export function usesLinePosition(input: Record<string, unknown>): boolean {
+  if (Array.isArray(input["updates"]) || input["updates[]"] !== undefined) return true;
+  const id = one(input["id"]);
+  return !(typeof id === "string" && id.trim()) && input["line"] !== undefined;
+}
+
 /** 数を変える（updates）。order は今のカートの行の SKU の id（updates[] の位置に使う） */
 export function updatesFrom(input: Record<string, unknown>, order: readonly string[]): CartChange[] {
   const out: CartChange[] = [];

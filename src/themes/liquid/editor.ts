@@ -94,7 +94,18 @@ function labelOf(v: unknown, schemaLocales: Record<string, unknown>, fallback: s
   return v;
 }
 
-const idOk = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(id) && id !== SECTION_OVERRIDES_KEY;
+/** オブジェクトの鍵に使うと Object.prototype に届く名前（テーマのファイルから来る id は鍵に使う前に断る） */
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+export const safeKey = (k: string): boolean => !RESERVED_KEYS.has(k);
+const idOk = (id: unknown): id is string => typeof id === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(id) && id !== SECTION_OVERRIDES_KEY && safeKey(id);
+/** 鍵をテーマのファイルや送られたフォームから作る入れ物（プロトタイプを持たない） */
+const bag = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+
+function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...a };
+  for (const [k, v] of Object.entries(b)) if (safeKey(k)) out[k] = isObject(v) && isObject(out[k]) ? deepMerge(out[k] as Record<string, unknown>, v) : v;
+  return out;
+}
 
 function editorSettings(list: unknown, loc: Record<string, unknown>): EditorSetting[] {
   if (!Array.isArray(list)) return [];
@@ -125,9 +136,14 @@ function editorSettings(list: unknown, loc: Record<string, unknown>): EditorSett
 export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> | null | undefined, locale: string): EditorModel {
   const files = bundle.files;
   let loc: Record<string, unknown> = {};
-  for (const name of Object.keys(files)) if (/^locales\/[A-Za-z-]+\.default\.schema\.json$/.test(name)) loc = { ...loc, ...(isObject(readJson(files[name])) ? (readJson(files[name]) as Record<string, unknown>) : {}) };
+  for (const name of Object.keys(files)) {
+    if (!/^locales\/[A-Za-z-]+\.default\.schema\.json$/.test(name)) continue;
+    const v = readJson(files[name]);
+    if (isObject(v)) loc = deepMerge(loc, v);
+  }
+  // 一部だけ訳したファイルでも、訳していない鍵は既定の文言のまま（描く側の page.ts と同じ重ね方）
   const own = readJson(files[`locales/${locale}.schema.json`]);
-  if (isObject(own)) loc = { ...loc, ...own };
+  if (isObject(own)) loc = deepMerge(loc, own);
 
   const global: EditorModel["global"] = [];
   const schema = readJson(files["config/settings_schema.json"]);
@@ -150,7 +166,7 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
   const overrides = sectionOverridesOf(saved);
   const sections: EditorSection[] = [];
   const add = (key: string, id: string, d: SectionData) => {
-    if (!isObject(d) || typeof d.type !== "string" || sections.length >= 200) return;
+    if (!isObject(d) || typeof d.type !== "string" || !idOk(id) || sections.length >= 200) return;
     const sc: SectionSchema = schemas.get(d.type) ?? {};
     const ov = overrides[key]?.[id];
     const settings = editorSettings(sc.settings, loc);
@@ -159,7 +175,8 @@ export function editorModel(bundle: ThemeBundle, saved: Record<string, unknown> 
     const blocks: EditorBlock[] = [];
     const order = [...new Set(d.block_order ?? Object.keys(d.blocks ?? {}))].slice(0, 50);
     for (const bid of order) {
-      const b = d.blocks?.[bid];
+      if (!idOk(bid) || !d.blocks || !Object.hasOwn(d.blocks, bid)) continue;
+      const b = d.blocks[bid];
       if (!isObject(b) || typeof b.type !== "string") continue;
       const bs = ((sc.blocks ?? []).find((x) => x.type === b.type) ?? blockSchemas.get(b.type)) as (Record<string, unknown> & { settings?: unknown }) | undefined;
       const bset = editorSettings(bs?.settings, loc);
@@ -255,6 +272,23 @@ export function parseSettingValue(s: EditorSetting, raw: string | undefined, ima
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
+/**
+ * 入力欄に出す値（保存した値かテーマのファイルの値）。画像は資産の名前、資産でない値（shopify://... など）はそのまま出す。
+ * 送られた値がこれと同じなら「触っていない」とみなし、検査せずに元の値のままにする（画面で直せない値を壊さない）
+ */
+export function shownValue(v: unknown, type: string): string {
+  if (v === null || v === undefined) return "";
+  if (type === "image_picker" && typeof v === "string") return v.startsWith("asset:") ? v.slice(6) : v;
+  if (typeof v === "object") return "";
+  return String(v);
+}
+
+/** 1 つの欄: 触っていなければ元の値、変えていれば検査した値 */
+function fieldValue(s: EditorSetting, raw: string | undefined, current: unknown, imageAssets: readonly string[]): ReturnType<typeof parseSettingValue> {
+  if (s.type !== "checkbox" && (raw ?? "").replace(/\r\n/g, "\n") === shownValue(current, s.type ?? "")) return { ok: true, value: current };
+  return parseSettingValue(s, raw, imageAssets);
+}
+
 /** 画面に出したフォームの名前（テーマ全体 g|id、セクション s|置き場|セクション|id、ブロック b|置き場|セクション|ブロック|id） */
 export const fieldName = {
   global: (id: string) => `g|${id}`,
@@ -269,37 +303,37 @@ export const fieldName = {
  */
 export function settingsFromForm(model: EditorModel, form: Record<string, string | undefined>, fileValues: { global: Record<string, unknown>; sections: EditorModel["sections"] }): { ok: true; settings: Record<string, unknown> } | { ok: false; errors: { field: string; label: string; reason: string }[] } {
   const errors: { field: string; label: string; reason: string }[] = [];
-  const out: Record<string, unknown> = {};
+  const out = bag<unknown>();
   for (const g of model.global) {
     for (const s of g.settings) {
       if (!s.id || !s.type || !EDITABLE_SETTING_TYPES.has(s.type)) continue;
-      const r = parseSettingValue(s, form[fieldName.global(s.id)], model.imageAssets);
+      const r = fieldValue(s, form[fieldName.global(s.id)], model.globalValues[s.id], model.imageAssets);
       if (!r.ok) errors.push({ field: fieldName.global(s.id), label: s.label ?? s.id, reason: r.reason });
       else if (!same(r.value, fileValues.global[s.id])) out[s.id] = r.value;
     }
   }
-  const ov: SectionOverrides = {};
+  const ov = bag<Record<string, { settings?: Record<string, unknown>; blocks?: Record<string, Record<string, unknown>> }>>() as SectionOverrides;
   for (const sec of model.sections) {
     const base = fileValues.sections.find((x) => x.key === sec.key && x.id === sec.id);
     const entry: { settings?: Record<string, unknown>; blocks?: Record<string, Record<string, unknown>> } = {};
     for (const s of sec.settings) {
       if (!s.id || !s.type || !EDITABLE_SETTING_TYPES.has(s.type)) continue;
       const name = fieldName.section(sec.key, sec.id, s.id);
-      const r = parseSettingValue(s, form[name], model.imageAssets);
+      const r = fieldValue(s, form[name], sec.values[s.id], model.imageAssets);
       if (!r.ok) errors.push({ field: name, label: `${sec.name} / ${s.label ?? s.id}`, reason: r.reason });
-      else if (!same(r.value, base?.values[s.id])) (entry.settings ??= {})[s.id] = r.value;
+      else if (!same(r.value, base?.values[s.id])) (entry.settings ??= bag())[s.id] = r.value;
     }
     for (const b of sec.blocks) {
       const bbase = base?.blocks.find((x) => x.id === b.id);
       for (const s of b.settings) {
         if (!s.id || !s.type || !EDITABLE_SETTING_TYPES.has(s.type)) continue;
         const name = fieldName.block(sec.key, sec.id, b.id, s.id);
-        const r = parseSettingValue(s, form[name], model.imageAssets);
+        const r = fieldValue(s, form[name], b.values[s.id], model.imageAssets);
         if (!r.ok) errors.push({ field: name, label: `${sec.name} / ${b.name} / ${s.label ?? s.id}`, reason: r.reason });
-        else if (!same(r.value, bbase?.values[s.id])) ((entry.blocks ??= {})[b.id] ??= {})[s.id] = r.value;
+        else if (!same(r.value, bbase?.values[s.id])) ((entry.blocks ??= bag())[b.id] ??= bag())[s.id] = r.value;
       }
     }
-    if (entry.settings || entry.blocks) (ov[sec.key] ??= {})[sec.id] = entry;
+    if (entry.settings || entry.blocks) (ov[sec.key] ??= bag())[sec.id] = entry;
   }
   if (errors.length) return { ok: false, errors };
   if (Object.keys(ov).length) out[SECTION_OVERRIDES_KEY] = ov;

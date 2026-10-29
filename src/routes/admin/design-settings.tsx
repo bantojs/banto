@@ -3,7 +3,7 @@ import type { AppEnv } from "../../app";
 import type { ShopRow } from "../../db/types";
 import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { DbError } from "../../db/client";
-import { editorModel, EDITABLE_SETTING_TYPES, fieldName, settingsFromForm, type EditorModel, type EditorSetting } from "../../themes/liquid/editor";
+import { editorModel, EDITABLE_SETTING_TYPES, fieldName, settingsFromForm, shownValue, type EditorModel, type EditorSetting } from "../../themes/liquid/editor";
 import { readThemeBundle, THEME_VERSION_ID } from "../../themes/liquid/versions";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
@@ -37,21 +37,13 @@ function reasonText(reason: string): string {
   return key ? t(key) : reason;
 }
 
-/** 入力欄の値（保存した値、または送り直されたフォームの値） */
-function shown(v: unknown, type: string): string {
-  if (v === null || v === undefined) return "";
-  if (type === "image_picker" && typeof v === "string") return v.startsWith("asset:") ? v.slice(6) : "";
-  if (typeof v === "object") return "";
-  return String(v);
-}
-
 function Field(p: { s: EditorSetting; name: string; value: unknown; form?: Record<string, string> | undefined; imageAssets: string[]; error?: string | undefined }) {
   const { s, name } = p;
   const type = s.type ?? "";
   if (type === "header") return <h4>{s.content || s.label}</h4>;
   if (type === "paragraph") return <p class="muted">{s.content || s.label}</p>;
   if (!s.id || !EDITABLE_SETTING_TYPES.has(type)) return null;
-  const val = p.form ? (p.form[name] ?? "") : shown(p.value, type);
+  const val = p.form ? (p.form[name] ?? "") : shownValue(p.value, type);
   const id = `f-${name.replace(/[^A-Za-z0-9_-]/g, "_")}`;
   let input;
   if (type === "checkbox") {
@@ -75,6 +67,11 @@ function Field(p: { s: EditorSetting; name: string; value: unknown; form?: Recor
     input = (
       <select id={id} name={name}>
         <option value="">{t("design.settings_no_image")}</option>
+        {val && !p.imageAssets.includes(val) ? (
+          <option value={val} selected>
+            {tf("design.settings_file_image", { value: val })}
+          </option>
+        ) : null}
         {p.imageAssets.map((a) => (
           <option value={a} selected={a === val}>
             {a}

@@ -105,11 +105,18 @@ export function checkThemeBundle(raw: unknown, engineOpts: EngineOptions = {}): 
 
   for (const [path, src] of Object.entries(files)) {
     if (!path.endsWith(".json")) continue;
+    let proto = false;
     try {
-      JSON.parse(stripJsonComments(src));
+      // 鍵 "__proto__" は JSON.parse では自分の鍵になるが、写すと Object.prototype に届くので取り込まない
+      JSON.parse(stripJsonComments(src), (k, v: unknown) => {
+        if (k === "__proto__") proto = true;
+        return v;
+      });
     } catch {
       errors.push(`${path}: invalid JSON`);
+      continue;
     }
+    if (proto) errors.push(`${path}: the key "__proto__" is not allowed`);
   }
   // 最終確認画面（特商法）を描くテーマは、Banto の表示の部品を置く（無ければ取り込まない。docs/themes.md「レジ」）
   if ((files["templates/checkout_confirm.liquid"] !== undefined || files["templates/checkout_confirm.json"] !== undefined) && !Object.entries(files).some(([p, src]) => p.endsWith(".liquid") && /\{%-?\s*banto_confirmation\s*-?%\}/.test(src))) {

@@ -74,7 +74,7 @@ describe("設定の入力の形（editor.ts）", () => {
       __sections: "x",
     };
     const r = settingsFromForm(m, form, { global: m.globalValues, sections: m.sections });
-    expect(r).toEqual({ ok: true, settings: { layout: "list", note: "", __sections: { "templates/index": { hero: { settings: { columns: 2 }, blocks: { b2: { label: "に" } } } } } } });
+    expect(r).toEqual({ ok: true, settings: { layout: "list", __sections: { "templates/index": { hero: { settings: { columns: 2 }, blocks: { b2: { label: "に" } } } } } } });
   });
 });
 

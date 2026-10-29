@@ -1220,6 +1220,11 @@ export class FakeSupabase {
       });
     }
     if (fn === "banto_site_plan") return json(this.sitePlan);
+    if (fn === "banto_site_liquid") {
+      const limit = ((this.siteSettings["plan_limits"] ?? {}) as Record<string, number | undefined>)["theme_versions"];
+      return json({ plan: this.sitePlan, themes: limit === undefined || limit > 0 });
+    }
+    if (fn === "theme_preview_settings") return json({ code: "42501", message: "permission denied" }, 403); // 0074: service_role だけ（serviceRpc）
     if (fn === "product_public_facets") return json(this.productPublicFacets(String(args["p_shop_id"]), Number(args["p_tag_limit"] ?? 200)));
     if (fn === "set_stock") {
       const sku = this.tables.skus.find((k) => k["id"] === args["p_sku_id"]);
@@ -2767,6 +2772,10 @@ export class FakeSupabase {
   }
 
   private serviceRpc(fn: string, args: Record<string, unknown>): Response {
+    if (fn === "theme_preview_settings") {
+      const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"] && x["shop_id"] === args["p_shop_id"]);
+      return json(v ? (v["settings"] ?? {}) : null);
+    }
     if (fn === "site_settings_set" && args["p_key"] === "plan_limits") {
       // 0052: service_role は plan_limits を書ける（値の検査の本物は test/db/plan-limits.test.ts）
       this.siteSettings = { ...this.siteSettings, plan_limits: args["p_value"] };

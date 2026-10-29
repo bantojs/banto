@@ -13,7 +13,8 @@ import type { CategoryRow } from "../../db/types";
 import { getLocale, t } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
-import type { ProductDetail, ProductListPage, PublicShop, StorefrontData } from "../../storefront/data";
+import { THEME_PREVIEW_MIGRATION, type ProductDetail, type ProductListPage, type PublicShop, type StorefrontData } from "../../storefront/data";
+import { privilegedFor } from "../payment-deps";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import type { AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
@@ -28,7 +29,7 @@ import { sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, collectionObject, footerMenu, menuFromCategories, money, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
-import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS } from "../../themes/liquid/preview";
+import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
 
 export interface LiquidScope {
@@ -46,10 +47,12 @@ export interface LiquidChoice {
   preview: boolean;
   /** カートの行（カートが空なら []。DB に問い合わせない） */
   cartLines: CartLine[];
+  /** お店のオリジンから切り離して描く（AI 用 API の券のプレビュー、SANDBOXED_PREVIEW_CSP）。レジはテーマで描かない */
+  sandboxed: boolean;
 }
 
 /** プレビューの版（?preview_theme=<版>&preview_token=… で始め、Cookie で続ける。?preview_theme=off で終わる） */
-async function previewVersion(c: Ctx, s: LiquidScope): Promise<string | null> {
+async function previewVersion(c: Ctx, s: LiquidScope): Promise<ThemePreview | null> {
   const secret = c.get("sessionSecret");
   if (!secret) return null;
   const q = c.req.query("preview_theme");
@@ -60,7 +63,7 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<string | null> {
     return null;
   }
   const fromQuery = q ? await openThemePreview(secret, c.req.query("preview_token"), s.shop.id) : null;
-  if (fromQuery && fromQuery === q) {
+  if (fromQuery && fromQuery.version === q) {
     cookie(c.req.query("preview_token")!, THEME_PREVIEW_SECONDS);
     return fromQuery;
   }
@@ -71,20 +74,32 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<string | null> {
 export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
   if (!onShopDomain(c, s.shop)) return null;
   const preview = await previewVersion(c, s);
-  const theme = preview ? { id: preview, storage_key: `themes/${s.shop.id}/${preview}/bundle.json`, settings: {} } : s.shop.theme;
-  if (!theme) return null;
+  if (!preview && !s.shop.theme) return null;
   const adapters = c.get("adapters");
   try {
-    if (!adapters.cpuUnlimited && (await s.sf.sitePlanCached()) !== "paid") return null;
+    const site = await s.sf.siteLiquidCached();
+    if (!site.themes || (!adapters.cpuUnlimited && site.plan !== "paid")) return null;
+    // プレビューの版にも、管理画面で保存した設定の値を効かせる（0074。券を確かめた後で、その版の settings だけを引く）
+    const theme = preview
+      ? { id: preview.version, storage_key: `themes/${s.shop.id}/${preview.version}/bundle.json`, settings: (await previewSettings(c, s, preview.version)) ?? {} }
+      : s.shop.theme!;
     const lt = await loadTheme(adapters.storage, theme, { extend: extendShopify, timezone: adapters.config.get("BANTO_TIMEZONE") ?? "Asia/Tokyo" });
     if (!lt) return null;
     // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
     const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
-    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines };
+    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed) };
   } catch (e) {
     console.error("[banto] theme load:", e instanceof Error ? e.message : e);
     return null;
   }
+}
+
+async function previewSettings(c: Ctx, s: LiquidScope, versionId: string): Promise<Record<string, unknown> | null> {
+  if (!(await s.sf.migrationApplied(THEME_PREVIEW_MIGRATION))) return null;
+  const db = privilegedFor(c);
+  if (!db) return null;
+  const v = await db.themePreviewSettings(s.shop.id, versionId);
+  return v && typeof v === "object" && !Array.isArray(v) ? v : null;
 }
 
 interface PageParts {
@@ -109,12 +124,21 @@ interface PageParts {
  * レジの画面の CSP（人間の決定 2026-10-28、docs/themes.md「レジ」）。住所・連絡先が載る画面なので、スクリプトはショップのドメインのもの
  * （テーマの資産）だけ。インラインのスクリプトと外のスクリプト（分析のタグなど）は動かない。フォームの送り先は決済ページへの転送があるので縛らない
  */
-export const CHECKOUT_CSP = "script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
+export const CHECKOUT_CSP = "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";
+
+/**
+ * AI 用 API の券で開いたプレビューの CSP。sandbox（allow-same-origin なし）で、ページはお店のオリジンとは別の、名前の無いオリジンになる。
+ * テーマの JS は動くが、お店の Cookie（会員・カート）を使った問い合わせや、お店のページの中身の読み取りはできない。
+ * 券は開いた人に結ばれないので、リンクを買い物客に渡されてもお店のオリジンで知らない JS を動かさないため
+ */
+export const SANDBOXED_PREVIEW_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals";
 
 /** Liquid のテーマで 1 ページを描いた Response。描けなければ null */
 function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): Response | null {
   const { lt } = choice;
   if (!themeHasTemplate(lt, page.template)) return null;
+  // 切り離したプレビューでは、レジ（住所・特商法の表示）をテーマで描かない
+  if (choice.sandboxed && page.checkout) return null;
   const home = shopHome(publicBaseUrl(c), s.shop);
   const origin = shopOrigin(publicBaseUrl(c), s.shop);
   const shopPath = s.ctx.shopPath;
@@ -161,6 +185,7 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
     const i = r.html.search(/<\/body>/i);
     c.header("Cache-Control", "private, no-store");
     c.header("X-Robots-Tag", "noindex");
+    if (choice.sandboxed) c.header("Content-Security-Policy", SANDBOXED_PREVIEW_CSP);
     return c.html(i < 0 ? r.html + bar : r.html.slice(0, i) + bar + r.html.slice(i), page.status ?? 200);
   } catch (e) {
     console.error("[banto] theme render:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
@@ -335,7 +360,8 @@ function relativePath(c: Ctx, s: LiquidScope): string {
 
 /**
  * テーマの資産（CSS・JS・画像・フォント）。ショップのドメインでだけ配る（Banto の URL では 404）。
- * 版ごとに置き場が違い中身は変わらないので、長く覚えてよい
+ * 公開中の版は置き場が版ごとに違い中身は変わらないので、長く覚えてよい。公開していない版（プレビュー・取り込みの途中）は
+ * 中身を置き換えられるので覚えさせない
  */
 export function registerThemeAssets(app: Hono<AppEnv>, scopeOf: (c: Ctx) => Promise<LiquidScope | null>): void {
   app.get("/:shop/_theme/:version/assets/:name", async (c) => {
@@ -346,12 +372,14 @@ export function registerThemeAssets(app: Hono<AppEnv>, scopeOf: (c: Ctx) => Prom
     if (!s || !type || !onShopDomain(c, s.shop) || !/^[0-9a-f-]{36}$/.test(version)) return c.notFound();
     const obj = await c.get("adapters").storage.get(`themes/${s.shop.id}/${version}/assets/${name}`);
     if (!obj) return c.notFound();
+    const live = s.shop.theme?.id === version;
     return new Response(obj.body, {
       headers: {
         "Content-Type": type,
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": live ? "public, max-age=31536000, immutable" : "private, no-store",
         "X-Content-Type-Options": "nosniff",
-        "Cross-Origin-Resource-Policy": "same-site",
+        // 切り離したプレビュー（SANDBOXED_PREVIEW_CSP）のページは名前の無いオリジンなので、公開していない版の資産は same-site にしない（中身はテーマのファイルで秘密ではない）
+        "Cross-Origin-Resource-Policy": live ? "same-site" : "cross-origin",
       },
     });
   });

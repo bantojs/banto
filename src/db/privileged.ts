@@ -226,6 +226,8 @@ export interface InquiryCreated {
 }
 
 export interface PrivilegedDb {
+  /** プレビューの版に保存した設定の値（0074）。券を確かめてから呼ぶ。版が無ければ null */
+  themePreviewSettings(shopId: string, versionId: string): Promise<Record<string, unknown> | null>;
   /** 在庫を原子的に減算して予約を作る。在庫不足なら insufficient_stock */
   reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null): Promise<string>;
   /** 予約を注文に変換（冪等）。戻り値は order id */
@@ -463,6 +465,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
   }
 
   return {
+    themePreviewSettings: (shopId, versionId) => rpc<Record<string, unknown> | null>("theme_preview_settings", { p_shop_id: shopId, p_version_id: versionId }),
     reserveStock: (shopId, items, ttlSeconds, limits) =>
       rpc<string>("reserve_stock", {
         p_shop_id: shopId, p_items: items, p_ttl_seconds: ttlSeconds,

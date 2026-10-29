@@ -11,6 +11,9 @@ import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/curs
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 
+/** テーマのプレビューの設定・描く条件（0074） */
+export const THEME_PREVIEW_MIGRATION = "0074_theme_preview";
+
 export const STOREFRONT_CACHE_TTL = 30;
 
 
@@ -263,13 +266,27 @@ export class StorefrontData {
     return (await this.db.rpc<string>("banto_site_plan", {})) === "paid" ? "paid" : "free";
   }
 
-  /** お店の画面（Liquid のテーマのショップ）で引くときの sitePlan。ショップ行と同じく isolate で短く覚える */
-  async sitePlanCached(): Promise<"free" | "paid"> {
-    const hit = await this.cache.get<{ plan: "free" | "paid" }>("site_plan");
-    if (hit) return hit.plan;
-    const plan = await this.sitePlan();
-    await this.cache.set("site_plan", { plan }, 60);
-    return plan;
+  /** マイグレーションが当たっているか（migration-state の一覧。isolate で覚える） */
+  async migrationApplied(version: string): Promise<boolean> {
+    return version <= BASELINE_MIGRATION || (await appliedMigrations({ db: this.db, cache: this.cache })).has(version);
+  }
+
+  /**
+   * お店の画面が Liquid のテーマを描いてよいか: Workers のプランと、plan_limits.theme_versions が 0（使わせない）でないか（0074 の banto_site_liquid）。
+   * ショップ行と同じく isolate で短く覚える。0074 の前の DB はプランだけ
+   */
+  async siteLiquidCached(): Promise<{ plan: "free" | "paid"; themes: boolean }> {
+    const hit = await this.cache.get<{ plan: "free" | "paid"; themes: boolean }>("site_liquid");
+    if (hit) return hit;
+    let v: { plan: "free" | "paid"; themes: boolean };
+    if (await this.migrationApplied(THEME_PREVIEW_MIGRATION)) {
+      const r = await this.db.rpc<{ plan?: unknown; themes?: unknown } | null>("banto_site_liquid", {});
+      v = { plan: r?.plan === "paid" ? "paid" : "free", themes: r?.themes !== false };
+    } else {
+      v = { plan: await this.sitePlan(), themes: true };
+    }
+    await this.cache.set("site_liquid", v, 60);
+    return v;
   }
 
   /**
