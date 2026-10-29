@@ -13,8 +13,8 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 | `order.paid` | 同上 | 同上 |
 | `order.shipped` | 管理画面で「発送済み」にしたとき | `order_id` `shop_id` `total_jpy` `status` `shipped_at` |
 | `order.cancelled` | 管理画面で「キャンセル」にしたとき | `order_id` `shop_id` `total_jpy` `status` `refunded` `restocked`（在庫を戻したか。取り込んだ注文は false、0031） |
-| `product.updated` | 管理画面で商品を保存したとき | `product_id` `shop_id` `slug` `name` `published` |
-| `inventory.low` | 注文確定後に在庫が閾値以下になったとき（閾値は `shops.settings.low_stock_threshold`、既定 3） | `shop_id` `sku_id` `available` `threshold` |
+| `product.updated` | 商品を保存したとき。SKU（価格・名前・品番など）・商品の画像を足す・変える・消したときと、在庫を人が変えたとき（管理画面・AI 用トークン）と、在庫が「ゼロ ⇄ あり」に切り替わったとき（購入で売り切れた・期限切れの予約が戻って再入荷した）も（0075）。購入で数が減っただけでは送らない（少なくなったことは `inventory.low`）。まだ送っていない同じ商品の知らせがあれば重ねない（まとめて変えても 1 商品 1 通） | `product_id` `shop_id` `slug` `name` `published` |
+| `inventory.low` | 注文確定後に在庫が閾値以下になったとき（閾値は `shops.settings.low_stock_threshold`、既定 3。ゼロ = 売り切れも含む。`available` が 0 かで見分ける） | `shop_id` `sku_id` `product_id`（0075 から） `available` `threshold` |
 | `tryon.requested` | お店で試着の申し込み（同梱モジュール store_tryon、0025） | `request_id` `number` `shop_id` `store_id` `status` `visit_date` `customer_id` |
 | `tryon.updated` | お店で試着の状態が変わった（`sent` 店舗へ発送 / `ready` 取り置き開始 / `purchased` / `not_purchased` / `expired` / `cancelled`） | `request_id` `number` `shop_id` `store_id` `status` `hold_until` `customer_id` |
 | `inquiry.created` | お問い合わせが確定したとき（ゲストはメールのリンクでアドレスが確かめられたとき、会員・注文からは送ったとき。同梱モジュール inquiries、0061） | `inquiry_id` `number` `shop_id` `category` `status` `customer_id` `order_id` |
