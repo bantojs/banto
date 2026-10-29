@@ -11,7 +11,7 @@ import { getLocale } from "../../i18n";
 import { SafeHtml, ThemeError } from "./engine";
 import { stripJsonComments } from "./bundle";
 import type { LoadedTheme } from "./cache";
-import { readSectionSchemas, renderSection, renderSectionGroup, settingsWith, staticSection, withOverride, withRenderEnv, SECTIONS_PER_REQUEST, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
+import { layoutGroup, readSectionSchemas, renderSection, renderSectionGroup, settingsWith, staticSection, withOverride, withRenderEnv, SECTIONS_PER_REQUEST, type SectionLayouts, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 import { globalSettingsOf } from "./editor";
 
 export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm" | "checkout_done" | "page" | "customers/account";
@@ -139,6 +139,8 @@ export interface ThemePageInput {
   locale?: string;
   /** 運営者が管理画面で変えたセクション・ブロックの値（editor.ts の sectionOverridesOf） */
   overrides?: SectionOverrides;
+  /** 運営者が管理画面で変えたセクションの並び（editor.ts の sectionLayoutsOf） */
+  layouts?: SectionLayouts;
 }
 
 const HEAD_MARK = "<!-- banto:head -->";
@@ -156,6 +158,7 @@ function renderEnvOf(t: LoadedTheme, p: Prepared, input: Omit<ThemePageInput, "h
     blockStack: [],
     staticSections: p.staticSections,
     overrides: input.overrides ?? {},
+    layouts: input.layouts ?? {},
     globals,
     paginate: input.paginate ?? null,
     preview: Boolean(input.preview),
@@ -203,9 +206,16 @@ export function renderThemeSections(t: LoadedTheme, input: Omit<ThemePageInput, 
   const env = renderEnvOf(t, p, input, globals);
   const tpl = p.templates.get(input.template);
   // 探す順: そのページのテンプレート → セクションのまとまり → セクションのファイル
+  // 管理画面の並びを当てた後のもの（外したセクションは探さない・足したセクションは探す）
   const places: { key: string; group: Group }[] = [];
-  if (tpl && "json" in tpl) places.push({ key: `templates/${input.template}`, group: tpl.json });
-  for (const [name, g] of Object.entries(p.groups)) if (isObject(g)) places.push({ key: `sections/${name}`, group: g as Group });
+  const laid = (key: string, g: Group) => {
+    const r = layoutGroup(g, env.layouts?.[key], p.schemas);
+    const sections: Record<string, SectionData> = Object.create(null) as Record<string, SectionData>;
+    for (const id of r.order) sections[id] = r.sections[id]!;
+    return { key, group: { sections, order: r.order } };
+  };
+  if (tpl && "json" in tpl) places.push(laid(`templates/${input.template}`, tpl.json));
+  for (const [name, g] of Object.entries(p.groups)) if (isObject(g)) places.push(laid(`sections/${name}`, g as Group));
   const out: Record<string, string | null> = Object.create(null) as Record<string, string | null>;
   withRenderEnv(env, () =>
     t.engine.page(() => {
