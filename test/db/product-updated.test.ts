@@ -41,12 +41,24 @@ describe.skipIf(!dbAvailable)("SKU・画像・在庫の product.updated（0075�
     expect(await pending()).toHaveLength(1);
   });
 
-  it("在庫は人が変えたとき（set_stock）だけ。購入の予約（service_role）では積まない", async () => {
-    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 9)", [f.skuId]));
+  it("在庫: 人が変えたとき（set_stock）は積む。購入の予約で減っただけなら積まず、売り切れ・再入荷（ゼロ ⇄ あり）では積む", async () => {
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 2)", [f.skuId]));
     expect(await pending()).toHaveLength(1);
     await getPool().query("delete from hook_deliveries");
-    await asService((c) => c.query("select reserve_stock($1, $2::jsonb, 900)", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty: 1 }])]));
+    const reserve = (qty: number) => asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb, 900) as id", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty }])])).rows[0]!.id);
+    await reserve(1); // 2 → 1
     expect(await pending()).toHaveLength(0);
+    const last = await reserve(1); // 1 → 0: 売り切れ
+    expect(await pending()).toHaveLength(1);
+    await getPool().query("delete from hook_deliveries");
+    await asService((c) => c.query("select release_reservation($1, $2)", [last, f.shopId])); // 0 → 1: 再入荷
+    expect(await pending()).toHaveLength(1);
+  });
+
+  it("inventory.low のペイロードに product_id を足す（今までの項目はそのまま）", async () => {
+    await asService((c) => c.query("select enqueue_hook($1, 'inventory.low', jsonb_build_object('shop_id', $2::text, 'sku_id', $3::text, 'available', 0, 'threshold', 3))", [f.shopId, f.shopId, f.skuId]));
+    const r = (await getPool().query<{ payload: Record<string, unknown> }>("select payload from hook_deliveries where event = 'inventory.low'")).rows;
+    expect(r[0]!.payload).toEqual({ shop_id: f.shopId, sku_id: f.skuId, available: 0, threshold: 3, product_id: f.productId });
   });
 
   it("管理画面の商品の保存（enqueue_hook）と SKU の変更が重なっても 1 通", async () => {

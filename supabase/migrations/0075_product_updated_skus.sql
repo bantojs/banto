@@ -2,8 +2,9 @@
 -- これまで product.updated は商品を保存したとき（管理画面・AI 用 API の商品の作成と更新・一括取り込み）だけだった。
 -- 連携サイト（WordPress など）が商品をキャッシュしていると、SKU の価格・在庫・画像だけを変えても知らせが届かず、表示が古いまま残る。
 --   - skus・product_images の追加・変更・削除: トリガーで product.updated を積む（だれが変えても。管理画面・AI 用 API・取り込み・復元）
---   - 在庫（inventory.available）: 人が変えたときだけ（運営者の JWT か AI 用トークン）。購入・予約・解放（service_role）では積まない
---     （注文のたびに積むと多すぎる。売り切れが近いことは今までどおり inventory.low で知らせる）
+--   - 在庫（inventory.available）: 人が変えたとき（運営者の JWT か AI 用トークン）と、「ゼロ ⇄ あり」が切り替わったとき
+--     （購入で売り切れた・期限切れの予約が戻って再入荷した）。購入で数が減っただけでは積まない（注文のたびに積むと多すぎる）
+--   - inventory.low のペイロードに product_id を足す（今までの項目はそのまま。連携サイトが SKU から商品を引き直さなくてよいように）
 --   - まだ送っていない同じ商品の product.updated が送信先にあれば、新しく積まない（まとめて変えても 1 商品 1 通。enqueue_hook も同じ）
 --   - ペイロードは今までと同じ形（product_id・shop_id・slug・name・published）。商品が消えていれば積まない
 
@@ -44,7 +45,7 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_count integer; v_perm text;
+declare v_count integer; v_perm text; v_product uuid;
 begin
   if p_event is null or p_event !~ '^[a-z_]+\.[a-z_]+$' then
     raise exception 'invalid_event';
@@ -57,6 +58,11 @@ begin
     if not banto_shop_perm(p_shop_id, v_perm) then
       raise exception 'shop_not_found' using errcode = '42501';
     end if;
+  end if;
+  -- inventory.low に商品の id を足す（SKU から引く。足せなければそのまま）
+  if p_event = 'inventory.low' and coalesce(p_payload, '{}'::jsonb) ? 'sku_id' and not (p_payload ? 'product_id') then
+    select k.product_id into v_product from skus k where k.shop_id = p_shop_id and k.id::text = p_payload->>'sku_id';
+    if v_product is not null then p_payload := p_payload || jsonb_build_object('product_id', v_product); end if;
   end if;
   insert into hook_deliveries (shop_id, endpoint_id, event, payload)
   select e.shop_id, e.id, p_event, coalesce(p_payload, '{}'::jsonb)
@@ -100,7 +106,7 @@ drop trigger if exists product_images_product_updated on product_images;
 create trigger product_images_product_updated after insert or update or delete on product_images
   for each row execute function banto_product_child_changed();
 
--- 在庫: 人が変えたときだけ（運営者・スタッフの JWT、AI 用トークン）。購入・予約・解放（service_role）は積まない
+-- 在庫: 人が変えたとき（運営者・スタッフの JWT、AI 用トークン）と、ゼロ ⇄ あり が切り替わったとき（だれが変えても）
 create or replace function banto_inventory_changed()
 returns trigger
 language plpgsql
@@ -110,7 +116,8 @@ as $$
 declare v_k skus%rowtype;
 begin
   if new.available is not distinct from old.available then return null; end if;
-  if auth.role() is distinct from 'authenticated' and coalesce(current_setting('banto.actor', true), '') not like 'api_token:%' then
+  if auth.role() is distinct from 'authenticated' and coalesce(current_setting('banto.actor', true), '') not like 'api_token:%'
+     and (coalesce(old.available, 0) > 0) = (coalesce(new.available, 0) > 0) then
     return null;
   end if;
   select * into v_k from skus where id = new.sku_id;
