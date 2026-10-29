@@ -44,11 +44,11 @@ export function withPlacement(text, placement) {
   return `${text.slice(0, at + 1)}\n  // scripts/deploy.mjs が BANTO_PLACEMENT から足した\n  "placement": ${JSON.stringify(placement)},${text.slice(at + 1)}`;
 }
 
-/** wrangler.jsonc の observability を切る（1 行で書かれた "observability": { "enabled": true } だけを相手にする。無ければ例外） */
+/** wrangler.jsonc の observability（ログ・issues）を切る。1 行で書かれた "observability": { "enabled": true, ... } だけを相手にする。無ければ例外 */
 export function withoutObservability(text) {
-  const re = /^(\s*"observability"\s*:\s*\{\s*"enabled"\s*:\s*)true(\s*\})/m;
-  if (!re.test(text)) throw new Error('wrangler.jsonc に "observability": { "enabled": true } がありません');
-  return text.replace(re, "$1false$2");
+  const re = /^(\s*)"observability"\s*:\s*\{\s*"enabled"\s*:\s*true\b.*?(,?)$/m;
+  if (!re.test(text)) throw new Error('wrangler.jsonc に "observability": { "enabled": true, ... } がありません');
+  return text.replace(re, '$1"observability": { "enabled": false }$2');
 }
 
 function main() {

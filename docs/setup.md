@@ -175,6 +175,8 @@ Banto の Worker は、ふだんは買い手の近くの Cloudflare の拠点で
 Banto は、決済ページを作れなかった・Webhook の金額が合わなかった・テーマを描けなかった、といった失敗を Worker のログに書きます（`[banto] ...`）。
 `wrangler.jsonc` で Cloudflare のログ（**Workers Logs**）を ON にしてあるので、Cloudflare の画面 → **Workers & Pages → banto → ログ（Logs）** で見られます。
 
+- **Issues**（同じ画面の「Issues」）も ON にしてあります。例外・5xx・`[banto]` のエラーのログを、同じ原因ごとにまとめて見せます。
+- **Traces** は切ってあります。外への問い合わせ（Supabase・決済など）を 1 つずつ記録するもので、遅い原因を探すときだけ使うものです。使うときは `wrangler.jsonc` の `observability` に `"traces": { "enabled": true }` を足します（アップデートで競合するので、調べ終わったら戻します）。
 - ログは **運営者自身の Cloudflare アカウント** に数日だけ残ります。開発チームには何も届きません（テレメトリではありません）。
 - 無料プランでも使えます。入る数・残る日数・料金は Cloudflare のプランで決まります（[公式の説明](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)）。
 - リクエストのログには、開いたページの URL などが入ります。要らなければ、§8 と同じ **ビルドの変数** に `BANTO_OBSERVABILITY` = `off` を追加し、Deploy command を `npm run deploy` にします。

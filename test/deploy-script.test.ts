@@ -28,7 +28,7 @@ describe("scripts/deploy.mjs", () => {
     expect(observabilityOff(" OFF ")).toBe(true);
     expect(() => observabilityOff("no")).toThrow(/BANTO_OBSERVABILITY/);
     const text = readFileSync("wrangler.jsonc", "utf8");
-    expect(text).toMatch(/^ {2}"observability": \{ "enabled": true \},$/m);
+    expect(text).toMatch(/^ {2}"observability": \{ "enabled": true, "issues": \{ "enabled": true \} \},$/m);
     const out = withoutObservability(withPlacement(text, { mode: "smart" }));
     expect(out).toContain('"observability": { "enabled": false },');
     expect(out).toContain('"placement": {"mode":"smart"},');
