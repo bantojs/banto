@@ -66,6 +66,18 @@ export class SafeHtml extends Drop {
 const UNESC: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&#34;": '"' };
 const unescapeHtml = (s: string) => s.replace(/&(?:amp|lt|gt|quot|#39|#34);/g, (m) => UNESC[m]!);
 
+/**
+ * どのページでも渡す値（docs/themes.md「どのページでも」）。liquidjs の globals にも入れて、`{% render %}` で描く snippet の中でも
+ * 見えるようにする（Shopify と同じ。render の中は新しい変数の箱になり、ページの変数・親の assign は見えないが、これらは見える）
+ */
+export const THEME_GLOBALS = ["shop", "settings", "routes", "request", "cart", "customer", "linklists", "collections", "page_title", "page_description", "canonical_url", "template"] as const;
+
+function globalsOf(scope: Record<string, unknown>): Record<string, unknown> {
+  const g: Record<string, unknown> = {};
+  for (const k of THEME_GLOBALS) if (Object.prototype.hasOwnProperty.call(scope, k)) g[k] = scope[k];
+  return g;
+}
+
 /** ファイルの置き場 → liquidjs のテンプレートの名前。snippets は `render 'name'` で引けるように名前だけにする */
 function templateName(path: string): string | null {
   const m = /^(layout|templates|templates\/customers|sections|snippets|blocks)\/([A-Za-z0-9_.-]+)\.liquid$/.exec(path);
@@ -185,7 +197,7 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     depth++;
     let out: unknown;
     try {
-      out = liquid.renderSync(tpls, scope);
+      out = liquid.renderSync(tpls, scope, { globals: globalsOf(scope) });
     } catch (e) {
       if (e instanceof ThemeError) throw e;
       const inner = innerThemeError(e);

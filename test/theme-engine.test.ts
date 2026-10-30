@@ -32,6 +32,18 @@ describe("Liquid のテーマの描画の仕組み", () => {
     expect(outcome(() => e.render("templates/product", {}))).toBe("ThemeError:missing");
   });
 
+  it("render で描く snippet から、どのページでも渡す値（shop・settings・routes など）が見える。ページの変数・親の assign・引数でない値は見えない（Shopify と同じ）", () => {
+    const e = createThemeEngine({
+      "templates/product.liquid": "{% assign secret = 'x' %}{% render 'hello' %}|{% render 'hello', product: product %}",
+      "snippets/hello.liquid": "{{ shop.name }}/{{ settings.color }}/{{ routes.cart_url }}/{{ cart.item_count }}/{{ template }}/[{{ secret }}][{{ product.title }}]",
+    });
+    const scope = { shop: { name: "S" }, settings: { color: "red" }, routes: { cart_url: "/s/cart" }, cart: { item_count: 2 }, template: "product", product: { title: "T" } };
+    expect(e.render("templates/product", scope)).toBe("S/red//s/cart/2/product/[][]|S/red//s/cart/2/product/[][T]");
+    // snippet の中の render（入れ子）でも見える。引数で同じ名前を渡せば、そちらが勝つ
+    const n = createThemeEngine({ "templates/index.liquid": "{% render 'a' %}", "snippets/a.liquid": "{% render 'b' %}|{% render 'b', shop: other %}", "snippets/b.liquid": "{{ shop.name }}" });
+    expect(n.render("templates/index", { shop: { name: "S" }, other: { name: "O" } })).toBe("S|");
+  });
+
   it("既定でエスケープする。escape / escape_once は二重にしない。生で出すのは raw", () => {
     const e = createThemeEngine({});
     const x = { x: `<b>"A&B"</b>` };
