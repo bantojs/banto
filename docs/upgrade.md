@@ -112,6 +112,8 @@ npm run deploy
 
 ### 変更ごとの注意
 
+**v0.4.3** にはデータベースの変更がありません。Liquid のテーマで、`{% render %}` で描く snippet の中から `shop`・`settings`・`routes` などが見えるようになり、カートにクーポンの欄（`routes.cart_coupon_url`）と決済手段の選択（`cart.banto_payment_methods`）を置けるようになります（docs/themes.md）。既定のテーマ（TSX）と、Liquid のテーマを使っていないショップは何も変わりません。
+
 **v0.4.2** に含まれるのは 0078 です（下の 0078）。v0.4.1 のデータベースのまま v0.4.2 のコードにしても動きます（当てるまで、画像の並び順を決める API が 409 になるだけです）。新しいバケットや Secret はありません。Worker のログ（Observability・Issues）が既定で ON になり、同じ Cloudflare アカウントの Worker への fetch が届くようになります（`wrangler.jsonc`。切るなら `BANTO_OBSERVABILITY=off`、docs/setup.md §9）。Deploy ボタンで導入した人は「Banto に追いつく」で `wrangler.jsonc` も新しくなります。
 
 **v0.4.1** に含まれるのは 0077 です（下の 0077）。v0.4.0 のデータベースのまま v0.4.1 のコードにしても動きます（当てるまで、画像のファイルを差し替える API が 409 になるだけです）。新しいバケットや Secret はありません。
