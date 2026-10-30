@@ -27,7 +27,7 @@ import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
-import { fillProductBlocks, type ProductBlock } from "../../pages/blocks";
+import { fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
@@ -488,7 +488,7 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
 }
 
 /** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
-export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[] }): Response | null {
+export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[] } & ArticleBlocks): Response | null {
   const pg = p.page;
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
@@ -503,7 +503,31 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     categories: p.categories,
     currentPage: pg.handle,
   });
-  return render(c, s, choice, parts(withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards)));
+  return render(c, s, choice, parts(withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p)));
+}
+
+type ArticleBlocks = { ablocks?: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards?: string[] };
+
+/**
+ * 本文の「記事を並べる」の場所に中身を入れる: テーマに snippets/page-articles があればそれで描き（articles・block・blog を渡す）、
+ * 無ければ既定のカード（acards）
+ */
+function withArticleBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, p: ArticleBlocks): string {
+  if (!p.ablocks?.length || !themeHasSnippet(choice.lt, "page-articles")) return fillArticleBlocks(html, p.acards ?? []);
+  let rendered = p.acards ?? [];
+  try {
+    const input = pageInput(c, s, choice, parts(html));
+    const sp = s.ctx.shopPath;
+    rendered = (p.acards ?? []).map((card, i) => {
+      const b = p.ablocks?.[i];
+      if (!b) return card;
+      const out = renderThemeSnippet(choice.lt, input, "page-articles", { articles: b.items.map((a) => articleObject(sp, b.blog, a, "")), blog: blogObject(sp, b.blog), block: { ...b.block, index: i } });
+      return out ?? card;
+    });
+  } catch (e) {
+    console.error("[banto] theme page-articles:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
+  }
+  return fillArticleBlocks(html, rendered);
 }
 
 type BodyBlocks = { block: ProductBlock; items: ProductSummary[] }[];
@@ -594,7 +618,7 @@ export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: 
 }
 
 /** ブログの記事（/blogs/<ブログ>/<handle>）。templates/article.<suffix> か templates/article */
-export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[] }): Response | null {
+export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[] } & ArticleBlocks): Response | null {
   const a = p.article;
   const sp = s.ctx.shopPath;
   const parts = (html: string): PageParts => {
@@ -608,7 +632,7 @@ export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
       categories: p.categories,
     };
   };
-  return render(c, s, choice, parts(withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards)));
+  return render(c, s, choice, parts(withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p)));
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

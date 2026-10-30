@@ -137,11 +137,33 @@ export function pageEditorClient() {
     parts.push(`layout=${attr(n, "data-layout") === "scroll" ? "scroll" : "grid"}`);
     const sort = attr(n, "data-sort");
     parts.push(`sort=${/^(new|updated|price_asc|price_desc|name)$/.test(sort) ? sort : "new"}`);
+    const st = styleName(attr(n, "data-style"));
+    if (st) parts.push(`style=${st}`);
+    return parts.join(" ");
+  }
+
+  /** テーマのスタイルの名前（英小文字・数字・ハイフン、30 字まで） */
+  function styleName(v: string): string {
+    return /^[a-z0-9][a-z0-9-]{0,29}$/.test(v) ? v : "";
+  }
+
+  /** 記事を並べるブロックの箱 → 「::: articles …」の 1 行（blocks.ts の parseArticlesLine が受ける形だけ） */
+  function articlesLine(n: MdNode): string {
+    const blog = attr(n, "data-blog");
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(blog)) return "";
+    const parts = ["::: articles", `blog=${blog}`];
+    const tag = attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
+    if (tag) parts.push(/\s/.test(tag) ? `tag="${tag}"` : `tag=${tag}`);
+    const limit = Number(attr(n, "data-limit"));
+    parts.push(`limit=${Number.isInteger(limit) && limit >= 1 && limit <= 12 ? limit : 3}`);
+    parts.push(`layout=${attr(n, "data-layout") === "list" ? "list" : "grid"}`);
+    const st = styleName(attr(n, "data-style"));
+    if (st) parts.push(`style=${st}`);
     return parts.join(" ");
   }
 
   /** 囲みの値に使える文字（選択肢は英小文字・数字・ハイフン。説明・題は " と改行を外す） */
-  const word = (v: string) => (/^[a-z0-9-]{1,20}$/.test(v) ? v : "");
+  const word = (v: string) => (/^[a-z0-9-]{1,30}$/.test(v) ? v : "");
   const quoted = (v: string) => v.replace(/["\n\r]/g, "").replace(/\s+/g, " ").trim().slice(0, 200);
   const LAYOUT = /^(group|columns|column|cover|media|gallery|accordion)$/;
   /** 囲みの中身を持つ要素（カバー・画像と文・アコーディオンは中の欄、ほかは自分） */
@@ -157,7 +179,7 @@ export function pageEditorClient() {
   function layout(c: MdNode, kind: string, out: string[], heights: number[]): void {
     const parts = [kind];
     // 選択肢の値（どの囲みにどの鍵があるかは変換が決める。ここは data-* にあるものをそのまま書く）
-    for (const k of ["bg", "pad", "ratio", "valign", "height", "overlay", "align", "focus", "side", "cols", "icon", "open"]) {
+    for (const k of ["bg", "pad", "ratio", "valign", "height", "overlay", "align", "focus", "side", "cols", "icon", "open", "style"]) {
       const v = word(attr(c, `data-${k}`));
       if (v) parts.push(`${k}=${v}`);
     }
@@ -219,6 +241,11 @@ export function pageEditorClient() {
         continue;
       }
       // 商品を並べる・ボタンのブロック（src/pages/blocks.ts と同じ 1 行の形に戻す）
+      if (tag === "DIV" && attr(c, "data-banto-block") === "articles") {
+        const line = articlesLine(c);
+        if (line) out.push(line);
+        continue;
+      }
       if (tag === "DIV" && attr(c, "data-banto-block") === "products") {
         const line = productsLine(c);
         if (line) out.push(line);
@@ -228,7 +255,8 @@ export function pageEditorClient() {
         const a = Array.from(c.childNodes).find((x) => x.nodeType === 1 && x.nodeName.toUpperCase() === "A");
         const href = a ? attr(a, "href").trim() : "";
         const text = (a?.textContent ?? "").replace(/[\s ]+/g, " ").replace(/[[\]]/g, "").trim().slice(0, 100);
-        if (text && href && !/[\s()<>]/.test(href)) out.push(`::: button [${text}](${href})`);
+        const bst = styleName(attr(c, "data-style"));
+        if (text && href && !/[\s()<>]/.test(href)) out.push(`::: button ${bst ? `style=${bst} ` : ""}[${text}](${href})`);
         else if (text) out.push(paragraph(escapeText(text, false)));
         continue;
       }

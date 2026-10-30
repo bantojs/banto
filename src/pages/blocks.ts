@@ -23,7 +23,13 @@ export interface ProductBlock {
   limit: number;
   layout: ProductsLayout;
   sort: ProductSort;
+  /** テーマのスタイル（config/banto_block_styles.json の名前。class banto-style-<名前>）。null なら既定 */
+  style?: string | null;
 }
+
+/** テーマのスタイルの名前（英小文字・数字・ハイフン、30 字まで）。合わなければ null */
+export const STYLE_NAME = /^[a-z0-9][a-z0-9-]{0,29}$/;
+export const styleOf = (v: string | undefined | null): string | null => (v && STYLE_NAME.test(v) ? v : null);
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ESC[ch]!);
@@ -34,7 +40,7 @@ export const PRODUCT_BLOCK_LIMIT_MAX = 24;
 export const PRODUCT_BLOCK_LIMIT_DEFAULT = 8;
 
 const LINE = /^\s{0,3}:::\s*products(?:\s+(.*))?$/;
-const BUTTON = /^\s{0,3}:::\s*button\s+\[([^\]\n]{1,100})\]\(([^)\s]{1,2000})\)\s*$/;
+const BUTTON = /^\s{0,3}:::\s*button(?:\s+style=([a-z0-9][a-z0-9-]{0,29}))?\s+\[([^\]\n]{1,100})\]\(([^)\s]{1,2000})\)\s*$/;
 /** ::: で始まる行（段落を区切る） */
 export const BLOCK_LINE = /^\s{0,3}:::/;
 
@@ -63,7 +69,7 @@ export function parseProductsLine(line: string): ProductBlock | null {
   if (layout !== "grid" && layout !== "scroll") return null;
   const sort = (a.get("sort") ?? "new") as ProductSort;
   if (!PRODUCT_SORTS.includes(sort)) return null;
-  return { category, tag, limit, layout, sort };
+  return { category, tag, limit, layout, sort, style: styleOf(a.get("style")) };
 }
 
 /** ブロック → 1 行（見たままの編集が書き戻す形と同じ） */
@@ -72,6 +78,7 @@ export function productsLine(b: ProductBlock): string {
   if (b.category) parts.push(`category=${b.category}`);
   if (b.tag) parts.push(/^[^\s"]+$/.test(b.tag) ? `tag=${b.tag}` : `tag="${b.tag.replace(/"/g, "")}"`);
   parts.push(`limit=${b.limit}`, `layout=${b.layout}`, `sort=${b.sort}`);
+  if (b.style) parts.push(`style=${b.style}`);
   return parts.join(" ");
 }
 
@@ -87,9 +94,79 @@ export function productBlocksOf(body: string): ProductBlock[] {
   return out;
 }
 
-export function parseButtonLine(line: string): { text: string; url: string } | null {
+export function parseButtonLine(line: string): { text: string; url: string; style: string | null } | null {
   const m = BUTTON.exec(line);
-  return m ? { text: m[1]!.trim(), url: m[2]! } : null;
+  return m ? { text: m[2]!.trim(), url: m[3]!, style: m[1] ?? null } : null;
+}
+
+// ---------- 記事を並べる（同梱モジュール blog の記事。1 行のブロック） ----------
+//   ::: articles blog=news tag=お知らせ limit=3 layout=grid style=card
+export type ArticlesLayout = "grid" | "list";
+export interface ArticlesBlock {
+  /** ブログの URL の名前 */
+  blog: string;
+  tag: string | null;
+  limit: number;
+  layout: ArticlesLayout;
+  style: string | null;
+}
+/** 1 ページに置ける記事のブロック（これより後のものは描かない） */
+export const ARTICLE_BLOCKS_MAX = 2;
+export const ARTICLE_BLOCK_LIMIT_MAX = 12;
+export const ARTICLE_BLOCK_LIMIT_DEFAULT = 3;
+const ARTICLES_LINE = /^\s{0,3}:::\s*articles(?:\s+(.*))?$/;
+
+export function parseArticlesLine(line: string): ArticlesBlock | null {
+  const m = ARTICLES_LINE.exec(line);
+  if (!m) return null;
+  const a = attrs(m[1] ?? "");
+  const blog = a.get("blog") ?? "";
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(blog)) return null;
+  const tag = a.get("tag")?.trim() || null;
+  if (tag !== null && tag.length > 50) return null;
+  const limitRaw = a.get("limit");
+  const limit = limitRaw === undefined ? ARTICLE_BLOCK_LIMIT_DEFAULT : Number(limitRaw);
+  if (!Number.isInteger(limit) || limit < 1 || limit > ARTICLE_BLOCK_LIMIT_MAX) return null;
+  const layout = a.get("layout") ?? "grid";
+  if (layout !== "grid" && layout !== "list") return null;
+  return { blog, tag, limit, layout, style: styleOf(a.get("style")) };
+}
+
+export function articlesLine(b: ArticlesBlock): string {
+  const parts = ["::: articles", `blog=${b.blog}`];
+  if (b.tag) parts.push(/^[^\s"]+$/.test(b.tag) ? `tag=${b.tag}` : `tag="${b.tag.replace(/"/g, "")}"`);
+  parts.push(`limit=${b.limit}`, `layout=${b.layout}`);
+  if (b.style) parts.push(`style=${b.style}`);
+  return parts.join(" ");
+}
+
+/** 本文の中の記事のブロック（先頭から ARTICLE_BLOCKS_MAX 個。変換が印を付けるのと同じ順） */
+export function articleBlocksOf(body: string): ArticlesBlock[] {
+  const out: ArticlesBlock[] = [];
+  for (const line of body.replace(/\r\n?/g, "\n").split("\n")) {
+    if (!BLOCK_LINE.test(line)) continue;
+    const b = parseArticlesLine(line);
+    if (b) out.push(b);
+    if (out.length >= ARTICLE_BLOCKS_MAX) break;
+  }
+  return out;
+}
+
+export const articlesMarker = (i: number) => `<!--banto:articles:${i}-->`;
+
+export function fillArticleBlocks(html: string, rendered: readonly string[]): string {
+  return html.replace(/<!--banto:articles:(\d)-->/g, (_, i: string) => rendered[Number(i)] ?? "");
+}
+
+/** 既定の記事のカード（既定のテーマと、snippets/page-articles.liquid の無い Liquid のテーマ） */
+export function defaultArticlesHtml(items: readonly { title: string; url: string; image: string | null; date: string; summary: string }[], b: ArticlesBlock): string {
+  if (items.length === 0) return "";
+  const listStyle = b.layout === "list" ? "display:grid;gap:1.25rem;padding:0;margin:0;list-style:none" : "display:grid;grid-template-columns:repeat(auto-fill,minmax(14rem,1fr));gap:1.25rem;padding:0;margin:0;list-style:none";
+  const cards = items.map((a) => {
+    const img = a.image ? `<div class="thumb" style="aspect-ratio:16/10;overflow:hidden;margin-bottom:.5rem"><img src="${escapeHtml(a.image)}" alt="" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover"></div>` : "";
+    return `<li class="card banto-articles__item"><a href="${escapeHtml(a.url)}" style="display:block;color:inherit;text-decoration:none">${img}<div class="body"><div class="muted" style="font-size:.85em">${escapeHtml(a.date)}</div><div style="font-weight:600">${escapeHtml(a.title)}</div>${a.summary ? `<div class="muted" style="font-size:.9em">${escapeHtml(a.summary)}</div>` : ""}</div></a></li>`;
+  });
+  return `<ul class="banto-articles__list" style="${listStyle}">${cards.join("")}</ul>`;
 }
 
 /** 商品を入れる場所の印（変換が置き、描くときに中身と入れ替える） */

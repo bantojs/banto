@@ -5,6 +5,7 @@
  * 資産（CSS・JS・画像・フォント）は同じ場所の assets/ に別に置き、ショップのドメインから配る（管理画面と同じオリジンで配らない）。
  */
 import { createThemeEngine, ThemeError, type EngineOptions, type ThemeFiles } from "./engine";
+import { checkThemeEditorFiles } from "../../content/theme-blocks";
 
 export const THEME_BUNDLE_FORMAT = 1;
 
@@ -119,6 +120,8 @@ export function checkThemeBundle(raw: unknown, engineOpts: EngineOptions = {}): 
     }
     if (proto) errors.push(`${path}: the key "__proto__" is not allowed`);
   }
+  // 編集の画面のパターンとブロックのスタイル（config/banto_patterns.json・config/banto_block_styles.json）
+  errors.push(...checkThemeEditorFiles(files));
   // 最終確認画面（特商法）を描くテーマは、Banto の表示の部品を置く（無ければ取り込まない。docs/themes.md「レジ」）
   if ((files["templates/checkout_confirm.liquid"] !== undefined || files["templates/checkout_confirm.json"] !== undefined) && !Object.entries(files).some(([p, src]) => p.endsWith(".liquid") && /\{%-?\s*banto_confirmation\s*-?%\}/.test(src))) {
     errors.push("templates/checkout_confirm: {% banto_confirmation %} is required");

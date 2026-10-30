@@ -496,6 +496,7 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
         visual={editorHtml(c, v.body)}
         categories={catalog.categories}
         tags={catalog.tags}
+        extras={catalog}
         {...(opts.articleId ? { pageId: opts.articleId } : {})}
         viewUrl={viewUrl}
         error={opts.error ?? null}
