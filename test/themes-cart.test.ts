@@ -154,3 +154,40 @@ describe("Liquid のテーマのカート・検索・ブロック", () => {
     expect(bad.errors.join()).toMatch(/blocks\/x\.liquid/);
   });
 });
+
+describe("カートのクーポンの欄と決済手段の選択（routes.cart_coupon_url・discount_codes・cart.banto_payment_methods）", () => {
+  const cartTpl = `{% if routes.cart_coupon_url %}<form class="coupon" method="post" action="{{ routes.cart_coupon_url }}"><input name="code"></form>{% endif %}{% for d in cart.discount_codes %}<p class="code" data-ok="{{ d.applicable }}">{{ d.code }} {{ d.banto_message }}</p>{% endfor %}{% form 'cart', cart %}{% for m in cart.banto_payment_methods %}<label class="pm"><input type="radio" name="provider" value="{{ m.id }}">{{ m.name }}</label>{% endfor %}<button name="checkout">購入</button>{% endform %}`;
+
+  function couponSetup(modules: Record<string, boolean>) {
+    const t = setup();
+    const row = t.sb.tables.shops.find((x) => x["id"] === t.shop.id)!;
+    row["settings"] = { ...(row["settings"] as Record<string, unknown>), modules };
+    const bundle = { format: 1, files: { ...files, "templates/cart.liquid": cartTpl }, assets: [] };
+    return { ...t, bundle };
+  }
+
+  it("クーポンのモジュールが ON なら欄の URL を渡し、使えないコードは applicable: false と理由。決済手段は使えるものだけ", async () => {
+    const t = couponSetup({ coupons: true });
+    const storage = new MemoryStorage(`${BASE}/media`);
+    await storage.put(`themes/${t.shop.id}/${VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify(t.bundle)).buffer as ArrayBuffer, "application/json");
+    const b = new Browser(appWith(t.sb, {}, storage, new FakeStripe()), DOMAIN);
+    await b.post("/cart/add", { id: t.s1.id, quantity: "1" });
+    await b.post("/cart/coupon", { code: "NOPE" });
+    const html = await (await b.get("/cart")).text();
+    expect(html).toContain('<form class="coupon" method="post" action="/cart/coupon">');
+    expect(html).toMatch(/<p class="code" data-ok="false">NOPE \S/);
+    expect(html.match(/class="pm"/g)).toHaveLength(1);
+    expect(html).toContain('value="stripe"');
+  });
+
+  it("クーポンのモジュールが OFF なら欄の URL を渡さない", async () => {
+    const t = couponSetup({});
+    const storage = new MemoryStorage(`${BASE}/media`);
+    await storage.put(`themes/${t.shop.id}/${VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify(t.bundle)).buffer as ArrayBuffer, "application/json");
+    const b = new Browser(appWith(t.sb, {}, storage, new FakeStripe()), DOMAIN);
+    await b.post("/cart/add", { id: t.s1.id, quantity: "1" });
+    const html = await (await b.get("/cart")).text();
+    expect(html).not.toContain('class="coupon"');
+  });
+});
+

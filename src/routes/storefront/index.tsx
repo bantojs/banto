@@ -410,7 +410,7 @@ storefront.get("/:shop/cart", async (c: Ctx) => {
   // Liquid のテーマの templates/cart（無ければ既定のテーマ）
   const lt = await liquidThemeFor(c, s, { cartLines: lines });
   if (lt) {
-    const res = renderCart(c, s, lt, { lines, discounts: coupons ? { applied: coupons.applied, discount: coupons.discount } : null, ...(errorKey ? { error: t(errorKey) } : {}), categories: await s.sf.listCategories(s.shop) });
+    const res = renderCart(c, s, lt, { lines, discounts: coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null, payments: options, ...(errorKey ? { error: t(errorKey) } : {}), categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
   return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping: shippingSummary(s.shop), coupons, error: errorKey ? t(errorKey) : undefined, tryon }));
@@ -669,7 +669,7 @@ async function cartJson(c: Ctx, s: ShopScope, cart: Cart, sectionsRaw?: unknown)
   const { lines, subtotal } = await priceCart(s.sf, s.shop, cart);
   // 値引きはカートのページ（cart.total_price）と同じ。コードが無ければ DB に問い合わせない
   const coupons = cart.coupons?.length ? await cartCoupons(c, { ...s, cart }, lines, subtotal) : null;
-  const discounts = coupons ? { applied: coupons.applied, discount: coupons.discount } : null;
+  const discounts = coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null;
   const json = cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines, discounts, await cartImagesFor(s.sf, s.shop, lines));
   const sections = sectionsRaw === undefined ? null : await cartSections(c, { ...s, cart }, sectionsRaw, lines, discounts);
   return sections ? { ...json, sections } : json;

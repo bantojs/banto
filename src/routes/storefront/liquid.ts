@@ -14,11 +14,11 @@ import { getLocale, t, type MessageKey } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { THEME_PREVIEW_MIGRATION, type ProductDetail, type ProductListPage, type PublicShop, type StorefrontData } from "../../storefront/data";
-import { privilegedFor } from "../payment-deps";
+import { couponSource, privilegedFor } from "../payment-deps";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
-import { ADDRESS_FIELDS, priceCart, type Confirmation } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
 import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
 import { ConfirmationBlock } from "../../themes/default/confirmation";
 import { AccountBody } from "../../themes/default";
@@ -27,7 +27,7 @@ import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
-import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
+import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
@@ -171,7 +171,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
   const globals: Record<string, unknown> = {
     shop: shopObject(s.shop, home, intro),
     settings: themeSettings(lt, choice.settings),
-    routes: routesObject(shopPath),
+    routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null }),
     request: { host: new URL(origin).host, path, page_type: page.template, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
     cart: cartObject(u, choice.cartLines, null, choice.cartImages),
     customer: s.ctx.member ? { email: s.ctx.member.email } : null,
@@ -223,7 +223,9 @@ export async function cartSections(c: Ctx, s: LiquidScope, raw: unknown, lines: 
   const choice = await liquidThemeFor(c, s, { cartLines: lines });
   if (!choice) return null;
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
-  const input = pageInput(c, s, choice, { template: "cart", values: { cart: cartObject(u, lines, discounts, choice.cartImages) }, title: t("store.cart"), path: "/cart", noindex: true, categories: await s.sf.listCategories(s.shop) });
+  const [categories, setup] = await Promise.all([s.sf.listCategories(s.shop), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
+  const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel) };
+  const input = pageInput(c, s, choice, { template: "cart", values: { cart }, title: t("store.cart"), path: "/cart", noindex: true, categories });
   try {
     return renderThemeSections(choice.lt, input, ids);
   } catch (e) {
@@ -339,10 +341,14 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
   });
 }
 
-/** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く） */
-export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; error?: string; categories: CategoryRow[] }): Response | null {
+/** 決済手段の表示名（既定のテーマのカートのボタンと同じ文言） */
+const paymentLabel = (p: "stripe" | "komoju"): string => t(p === "stripe" ? "store.pay_with_stripe" : "store.pay_with_komoju");
+
+/** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く）。payments は使える決済手段（cart.banto_payment_methods） */
+export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean }; error?: string; categories: CategoryRow[] }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
-  return render(c, s, choice, { template: "cart", values: { cart: cartObject(u, p.lines, p.discounts, choice.cartImages), cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
+  const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel) };
+  return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
 }
 
 /** 検索（templates/search）。search.results は商品だけ */
