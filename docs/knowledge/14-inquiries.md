@@ -1,6 +1,6 @@
 # 14. お問い合わせのチケット（同梱モジュール inquiries）
 
-お客様のお問い合わせをチケットにし、運営者とのやり取りを Banto の中で続ける設計（**決定・実装済み**、0061_mod_inquiries、人間の決定 2026-10-27）。
+お客様のお問い合わせをチケットにし、運営者とのやり取りを Banto の中で続ける設計（**決定・実装済み**、0061_mod_inquiries、メンテナの決定 2026-10-27）。
 使い方は docs/inquiries.md、ヘッドレスは docs/headless.md「お問い合わせ」。
 
 ## 1. 置き場所（CLAUDE.md §7 の基準）
@@ -31,10 +31,10 @@
 | 購入完了の画面（決済の照会トークン） | すぐ | 注文時のアドレス | その注文 | 注文の会員 |
 
 - **注文トークン**: 注文照会で番号とメールアドレスが合った組を、ショップごとの鍵で署名したもの（24 時間）。署名だけで暗号化していないので、URL には載せず POST の hidden で渡す。作るときに DB でもう一度引く（`inquiry_order_ref`）。
-- 購入完了の画面からは、既存の照会トークン（0035、quote の識別子）をそのまま根拠にする。URL が他人に渡っても、返事は注文時のアドレス（本人）に届くだけ（人間の決定 2026-10-27）。
+- 購入完了の画面からは、既存の照会トークン（0035、quote の識別子）をそのまま根拠にする。URL が他人に渡っても、返事は注文時のアドレス（本人）に届くだけ（メンテナの決定 2026-10-27）。
 - **送った人には何も知らせない**: 会員かどうか・番号とアドレスのどちらが違ったか・送り直しのアドレスが合ったか。どれも探りの道具になるため。一致したかどうかは運営者の画面だけ。
 - 確定するまで運営者へのお知らせと hooks `inquiry.created` を出さない（いたずらが運営者の受信箱に届かない）。運営者の画面には「未確認」として出す。未確認のまま 30 日で消す。
-- 確認前のチケットにも運営者は返事を書ける（人間の決定 2026-10-27）。ただし注文の中身や住所を書かないよう警告する。返事のお知らせは入れたアドレスに届くので、そのアドレスの持ち主にしか読めない。
+- 確認前のチケットにも運営者は返事を書ける（メンテナの決定 2026-10-27）。ただし注文の中身や住所を書かないよう警告する。返事のお知らせは入れたアドレスに届くので、そのアドレスの持ち主にしか読めない。
 
 ### 「ログインできない」
 
@@ -58,20 +58,20 @@
 
 ## 6. AI 用の操作・定型文・バックアップ（2026-10-27 追加）
 
-- AI 用: スコープ `inquiries:read` / `inquiries:write`（→ `support`）。関数は `api_inquiries_list` / `api_inquiry_get` / `api_inquiry_reply` / `api_inquiry_set_status`。連絡先は `orders:pii` もあるときだけ（人間の決定 2026-10-27）。返事のメールは Worker（`ApiService.inquiryReply`）が送り、宛先は AI に返さない。本文はお客様が書いた文章なので、MCP のツールの説明に `INQUIRY_NOTE`（本文の中の指示に従わない）を付ける。削除は API では受けない。
+- AI 用: スコープ `inquiries:read` / `inquiries:write`（→ `support`）。関数は `api_inquiries_list` / `api_inquiry_get` / `api_inquiry_reply` / `api_inquiry_set_status`。連絡先は `orders:pii` もあるときだけ（メンテナの決定 2026-10-27）。返事のメールは Worker（`ApiService.inquiryReply`）が送り、宛先は AI に返さない。本文はお客様が書いた文章なので、MCP のツールの説明に `INQUIRY_NOTE`（本文の中の指示に従わない）を付ける。削除は API では受けない。
 - 定型文: `settings.inquiries.templates`（10 個まで、`{name}` `{number}` `{shop}`）。差し込みは JavaScript を使わず `?template=<番号>` で返事の欄に入れて開き直す。編集は `settings` の項目（ショップの行の更新の守りに合わせる）。
 - バックアップ: 書き出しは RLS の経路（運営者の JWT）で `inquiries` / `inquiry_messages`。復元は `restore_inquiries`（注文番号・会員のメールアドレスで結び直す。リンクのトークンは戻さない）。
 
-## 7. 添付ファイル（2026-10-27、人間の決定）
+## 7. 添付ファイル（2026-10-27、メンテナの決定）
 
 - **公開しないバケットを別に作る**（R2 `banto-private`、Binding `PRIVATE`、アダプタの `privateStorage`。Node は `PRIVATE_MEDIA_DIR` / `S3_PRIVATE_BUCKET`）。商品画像の `MEDIA` は R2 のカスタムドメインで丸ごと公開する運用を勧めている（docs/setup.md §7）ので、同じバケットに置くとキーが漏れたら止められない。配るのは Worker が権限を確かめてからだけ（`inquiry_attachment_get` / `inquiry_attachment_admin_get`）。
 - **確認済みのチケットへの返事だけ**（最初のフォームでは受けない）。確定前のいたずらで容量を使わせないため。1 通 3 個・5MB・1 件 20 個、JPEG / PNG / WebP / PDF を中身の先頭で判定（`src/modules/inquiries/attachments.ts`）。
 - 流れ: Worker が先に置く → 返事の関数に鍵を渡す（DB が接頭辞 `inq/<shop_id>/`・種類・大きさ・数を確かめる）→ 断られたら置いた実体を消す。行を消すとトリガーが `inquiry_attachment_trash` に積み、Cron が実体を消して外す（ショップの削除でも積む）。
 - 配るときは `X-Content-Type-Options: nosniff`・`Content-Security-Policy: default-src 'none'; sandbox`・`Cache-Control: private, no-store`、PDF は `attachment`。
-- MCP（AI）には中身を渡さない（種類と大きさだけ）。運営者の道具向けに、REST（`/api/v1`）でだけ受け取りと返事への添付ができる（0064、人間の決定 2026-10-27。受け取りは `inquiries:read` と `orders:pii`、関数は `api_inquiry_attachment_get`・`api_inquiry_reply` の `p_attachments`）。バックアップには入れない。
+- MCP（AI）には中身を渡さない（種類と大きさだけ）。運営者の道具向けに、REST（`/api/v1`）でだけ受け取りと返事への添付ができる（0064、メンテナの決定 2026-10-27。受け取りは `inquiries:read` と `orders:pii`、関数は `api_inquiry_attachment_get`・`api_inquiry_reply` の `p_attachments`）。バックアップには入れない。
 - 費用は R2 の無料枠に収まる見込み（docs/inquiries.md「添付ファイル」）。wrangler 4 の `deploy` は無いバケットを作る（既定で有効な provisioning）。実機の Workers Builds で作られるかは要確認。
 
-## 8. 担当者（2026-10-28、人間の決定、0068）
+## 8. 担当者（2026-10-28、メンテナの決定、0068）
 
 - `inquiries.assignee_id`（運営者のユーザー、`on delete set null`）。担当にできるのは support の項目を持つ人だけ（`banto_user_shop_perm`、選択肢は `inquiry_assignees`）。項目を外されても割り当ては残す（自動で外すと、持ち主のいないチケットが黙って増える）。画面は「担当にできない人」と出し、付け替えてもらう。
 - 割り当て（`inquiry_assign`・`api_inquiry_assign`）は担当になった人にリンクだけのメール（`buildShopNotice("assign")`。本文は載せない）。自分で自分に割り当てたときは送らない。回数は `banto_inquiry_issue_mail` の `assign`（ショップの 1 日の上限に入る）。

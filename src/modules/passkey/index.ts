@@ -1,7 +1,7 @@
 /**
  * パスキーでログイン（同梱モジュール passkey、既定 OFF。0046_mod_passkey、docs/members.md「パスキー」、
  * 設計は docs/knowledge/10-members-identity.md §18）。
- * 使えるのは独自ドメインのショップの、そのドメインの上だけ（RP ID = ショップのドメイン。人間の決定 2026-10-23）。
+ * 使えるのは独自ドメインのショップの、そのドメインの上だけ（RP ID = ショップのドメイン。メンテナの決定 2026-10-23）。
  * 署名の検証は src/members/webauthn.ts、ルートは src/routes/storefront/members.ts の「パスキー」の節。
  * ここはモジュールの名前と、ブラウザで動く小さなスクリプト（テーマが <script src> で読む）だけを持つ。
  */

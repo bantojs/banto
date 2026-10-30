@@ -105,7 +105,7 @@ service\_role を使う処理は専用モジュールに閉じ込め、通常の
 | 決済（KOMOJU） | 現時点ではAPIキー方式。Workers Secret に保存し、DBには置かない | 同上。OAuth相当の仕組みが提供されれば移行 |
 | クレジットカード情報 | Stripe Checkout / KOMOJU ホスト型決済ページへリダイレクト | カード番号は一切通過させない（PCI DSS SAQ A 相当） |
 | CRM / MA | HubSpot、Klaviyo、LINE 等へ注文・顧客イベントをWebhookで送信。APIキーは Workers Secret | 変更なし。送信先の増減はプラグイン形式で |
-| メール送信 | 運営者の Resend / SendGrid / Amazon SES、または運営者自身の SMTP サーバー（`MAIL_TRANSPORT` で 1 つ選ぶ。docs/email.md）。注文確認メールを CRM 側に委ねる選択肢も残す | 当初は「コアに SMTP 実装を持たない」としていたが、レンタルサーバー・VPS の利用者が自分のメールサーバーを使えるように、ライブラリなしの小さな SMTP クライアントを入れた（人間の決定 2026-10-23）。接続は SocketAdapter の背後 |
+| メール送信 | 運営者の Resend / SendGrid / Amazon SES、または運営者自身の SMTP サーバー（`MAIL_TRANSPORT` で 1 つ選ぶ。docs/email.md）。注文確認メールを CRM 側に委ねる選択肢も残す | 当初は「コアに SMTP 実装を持たない」としていたが、レンタルサーバー・VPS の利用者が自分のメールサーバーを使えるように、ライブラリなしの小さな SMTP クライアントを入れた（メンテナの決定 2026-10-23）。接続は SocketAdapter の背後 |
 | ストアフロント | ヘッドレスAPI（公開読み取り + 署名付きカートAPI） | 変更なし。Next.js 等の外部フロントを接続可能 |
 
 **Webhookの受信**

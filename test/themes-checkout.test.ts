@@ -7,7 +7,7 @@ import { checkThemeBundle } from "../src/themes/liquid/bundle";
 import { extendShopify } from "../src/themes/liquid/shopify";
 import { CHECKOUT_CSP } from "../src/routes/storefront/liquid";
 
-/** レジ（配送先・最終確認）を Liquid のテーマで描く（テーマの段階 3 の C、人間の決定 2026-10-28、docs/themes.md「レジ」） */
+/** レジ（配送先・最終確認）を Liquid のテーマで描く（テーマの段階 3 の C、メンテナの決定 2026-10-28、docs/themes.md「レジ」） */
 const DOMAIN = "https://shop.example.jp";
 const VERSION = "11111111-2222-4333-8444-555555555555";
 

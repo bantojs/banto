@@ -3,7 +3,7 @@ import type pg from "pg";
 import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, getPool, resetDatabase, type Fixture } from "./harness";
 
 /**
- * 10 万件の性能（人間の決定 2026-10-26: データは 10 万件で必達、100 万件を目標。docs/knowledge/02-decisions.md）。
+ * 10 万件の性能（メンテナの決定 2026-10-26: データは 10 万件で必達、100 万件を目標。docs/knowledge/02-decisions.md）。
  * 実 PostgreSQL だけで回す。商品 10 万件（SKU・画像・在庫つき）とクーポン 10 万枚を作り、お店の画面・公開 API・管理画面・
  * サイトマップ・商品フィード・クーポンの判定の問い合わせが、件数に比例しない時間で返ること（インデックスを使うこと）を確かめる。
  * 時間の上限は CI の遅い機械でも通るよう緩め（普段は数 ms〜数十 ms）。本当に見たいのは実行計画（seq scan にならない）。

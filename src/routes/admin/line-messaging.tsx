@@ -15,7 +15,7 @@ import { loadShop } from "./shops";
  *   GET  /admin/shops/:shopId/line-messaging          設定済みかどうか（トークンは二度と出さない）
  *   POST /admin/shops/:shopId/line-messaging          保存（サイトの秘密から作った鍵で暗号化してから送る）
  *   POST /admin/shops/:shopId/line-messaging/delete   消す
- * 同梱プラグイン「LINE 通知」「LINE で購入者に知らせる」が使う。CLAUDE.md §1-5 の例外（人間の決定 2026-10-17）。
+ * 同梱プラグイン「LINE 通知」「LINE で購入者に知らせる」が使う。CLAUDE.md §1-5 の例外（メンテナの決定 2026-10-17）。
  */
 export const lineMessaging = new Hono<AppEnv>();
 
