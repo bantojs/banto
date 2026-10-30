@@ -226,6 +226,11 @@ describe("ショップのページの管理画面", () => {
     expect((await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: "https://evil.example/x.png" })).status).toBe(400);
     await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
     expect(page).toMatchObject({ published_at: null, image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
+    // 別の入口（MEDIA_BASE_URL を付ける前・独自ドメインの前の管理画面）の /media/ のアイキャッチも、保存し直せる
+    const before = `https://banto.example.workers.dev/media/pages/${shop.id}/old.webp`;
+    expect((await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: before, title: "新しいタイトル" })).status).toBe(302);
+    expect(page["image_url"]).toBe(before);
+    await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
     // お客様の画面はページを短い時間覚えるので、別のアプリ（別の isolate に当たる）で見る
     const live = await (await new Browser(appWith(sb, {}, new MemoryStorage(`${BASE}/media`)), BASE).get("/my-shop/pages/about")).text();
     expect(live).toContain(`<meta property="og:image" content="${BASE}/media/pages/${shop.id}/a.webp"`);

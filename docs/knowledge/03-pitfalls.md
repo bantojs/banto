@@ -52,7 +52,7 @@
 | --- | --- | --- |
 | 会員のログイン・コード入力・マイページのフォームを送ると 403（CSRF） | `Referrer-Policy: no-referrer` のページからのフォームの POST に、ブラウザは `Origin: null` を付ける（Fetch の仕様）。0031 で csrfGuard が `null` を拒むようにした | 会員の画面と領収書の画面は `same-origin` に（対応済み）。テストの Browser は no-referrer のページからの POST を `Origin: null` にして再現する。CSRF を守る画面に no-referrer を付けない |
 | WebAuthn を試したいが、テスト用の証明書だと動かない | Chrome は証明書のエラーがあるページでは WebAuthn を使わせない | Playwright で `--host-resolver-rules=MAP shop.example.jp:443 127.0.0.1:<port>` と `--ignore-certificate-errors-spki-list=<自己署名の証明書の SPKI>` を付け、CDP の `WebAuthn.addVirtualAuthenticator` で仮想の認証器を足す。エージェントのプロキシを通らないよう `--no-proxy-server` |
-| 独自ドメインのお店で、ページ・記事の本文の画像（カバーを含む）が消える（編集の画面では見える） | `MEDIA_BASE_URL` が無いと画像の置き場の URL は入口のオリジン（管理画面は workers.dev、お店は独自ドメイン）から作る。本文には管理画面で置いた `https://<workers.dev>/media/…` が入り、お店では自分の置き場と違うので外の画像として落としていた | 本文の画像は、ほかのホストの `/media/…` をホストを外した `/media/…` にして描く（`src/pages/markdown.ts` の `safeImage`。指す先はいつもこの Banto の置き場）。本文に URL を書く機能を足すときは同じ関数を通す |
+| 独自ドメインのお店で、ページ・記事の本文の画像（カバーを含む）が消える（編集の画面では見える） | `MEDIA_BASE_URL` が無いと画像の置き場の URL は入口のオリジン（管理画面は workers.dev、お店は独自ドメイン）から作る。本文には管理画面で置いた `https://<workers.dev>/media/…` が入り、お店では自分の置き場と違うので外の画像として落としていた | 本文の画像は、ほかのホストの `/media/…` をホストを外した `/media/…` にして描く（`src/pages/markdown.ts` の `safeImage`。指す先はいつもこの Banto の置き場）。アイキャッチの検査（`imageUrlOk`）も同じ規則（`shopImageUrl`）で、`MEDIA_BASE_URL` を後から付けても前の画像のページを保存し直せる。本文に URL を書く機能を足すときは同じ関数を通す |
 
 ## SQL の差し替え
 
