@@ -16,7 +16,7 @@ import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../media/image
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_PUBLISHING_MIGRATION, RESERVED_HANDLES, type PageNav } from "../pages";
 import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
-import { markdownToHtml } from "../pages/markdown";
+import { markdownToHtml, shopImageUrl } from "../pages/markdown";
 import { ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
 import { PRODUCT_SORTS, toPublicShop, type ProductSort } from "../storefront/data";
 import { storefrontData } from "../routes/storefront/domain";
@@ -69,9 +69,7 @@ export function contentState(p: { published: boolean; published_at?: string | nu
 
 /** アイキャッチ画像に使える URL（ショップの画像の置き場のものだけ。本文の画像と同じ規則） */
 export function imageUrlOk(url: string, mediaBase: string): boolean {
-  if (url.length > 2000 || /[\s<>"'`\\]/.test(url) || url.includes("..")) return false;
-  const b = mediaBase.replace(/\/+$/, "");
-  return url.startsWith(`${b}/`) || url.startsWith("/media/");
+  return shopImageUrl(url, mediaBase) !== null;
 }
 
 /** 見たままの編集での商品のブロックの説明（例: 商品を並べる — カテゴリー: tops・8 件・グリッド・新しい順） */

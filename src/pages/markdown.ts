@@ -48,12 +48,24 @@ function safeLink(url: string): string | null {
   return null;
 }
 
+/**
+ * 本文とアイキャッチに使える画像の URL（ショップの画像の置き場のものだけ）。描くときの URL を返し、使えなければ null。
+ * 管理画面と別の入口（独自ドメインのお店）や、MEDIA_BASE_URL を後から付けた前の画像の URL も、/media/ からとして受ける
+ */
+export function shopImageUrl(url: string, mediaBase: string | undefined): string | null {
+  return safeImage(url, { mediaBase });
+}
+
 function safeImage(url: string, opts: MarkdownOptions): string | null {
   const u = url.trim();
   if (u.length === 0 || u.length > 2000 || /[\s<>"'`\\]/.test(u) || u.includes("..")) return null;
   const base = opts.mediaBase?.replace(/\/+$/, "");
   if (base && u.startsWith(`${base}/`)) return u;
   if (u.startsWith("/media/")) return u;
+  // 別の入口（管理画面の workers.dev と独自ドメインのお店など）の画像の置き場の URL は、ホストを外して /media/ からにする。
+  // 指す先はいつもこの Banto の画像の置き場なので、外の画像にはならない
+  const other = /^https?:\/\/[^/?#]+(\/media\/[^?#]+)$/i.exec(u);
+  if (other) return other[1]!;
   return null;
 }
 
