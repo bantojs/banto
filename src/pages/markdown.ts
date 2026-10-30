@@ -54,6 +54,10 @@ function safeImage(url: string, opts: MarkdownOptions): string | null {
   const base = opts.mediaBase?.replace(/\/+$/, "");
   if (base && u.startsWith(`${base}/`)) return u;
   if (u.startsWith("/media/")) return u;
+  // 別の入口（管理画面の workers.dev と独自ドメインのお店など）の画像の置き場の URL は、ホストを外して /media/ からにする。
+  // 指す先はいつもこの Banto の画像の置き場なので、外の画像にはならない
+  const other = /^https?:\/\/[^/?#]+(\/media\/[^?#]+)$/i.exec(u);
+  if (other) return other[1]!;
   return null;
 }
 
