@@ -149,11 +149,28 @@ Shopify では Plus のプランに限られる「チェックアウトの途中
 
 `cart` は Shopify と同じ形です（`items`・`item_count`・`items_subtotal_price`・`total_discount`・`total_price`・`cart_level_discount_applications`・`empty`）。行（`item`）は `key` と `id` が SKU の id で、`title`・`product_title`・`variant_title`・`sku`・`quantity`・`price`・`final_line_price`・`url`・`url_to_remove`・`options_with_values`・`variant`・`product`・`available`（在庫が足りなければ false）を持ちます。金額は 100 倍の整数で、値引きは商品の値引きだけです（送料と送料無料のクーポンは、配送先が決まってから最終確認の画面で）。行の画像（`item.image`・`featured_image`）は、その SKU に合う商品の画像の最初の 1 枚です（SKU ごとの画像の当てはめは商品のページと同じ）。
 
+**クーポンと決済手段**（Banto の名前。Shopify には無いもの）:
+
+- `routes.cart_coupon_url`: 同梱モジュール「クーポン」が ON のショップだけにあります（OFF なら空）。そこへ `code`（入れる）か `remove`（外すコード）を POST します（カートのページに戻ります）。入っているコードは `cart.discount_codes`（Shopify と同じ `code`・`applicable`）。使えないコードは `applicable` が false で、`banto_message` に理由（「このクーポンは見つかりません」など）が入ります。値引きの額は `cart.cart_level_discount_applications` です。
+- `cart.banto_payment_methods`: カートのページ（と `?sections=` で描くカート）で、使える決済手段の一覧（`id` は `stripe` か `komoju`、`name` は表示名）。`{% form 'cart' %}` の中に `provider` の欄（ラジオボタンなど）で置けば、選んだ決済手段で購入手続きに進みます。置かなければ、使える最初の決済手段です。KOMOJU の中の支払い方法（コンビニ・銀行振込など）は、KOMOJU のページで選びます。
+
+```liquid
+{% if routes.cart_coupon_url %}
+  <form method="post" action="{{ routes.cart_coupon_url }}"><input name="code"><button>使う</button></form>
+{% endif %}
+{% form 'cart', cart %}
+  {% if cart.banto_payment_methods.size > 1 %}
+    {% for m in cart.banto_payment_methods %}<label><input type="radio" name="provider" value="{{ m.id }}" {% if forloop.first %}checked{% endif %}> {{ m.name }}</label>{% endfor %}
+  {% endif %}
+  <button name="checkout">購入手続きへ</button>
+{% endform %}
+```
+
 カートを変える書き方も Shopify と同じです。どれも同じオリジンからだけ受け付けます（ほかのサイトからの書き込みは断ります）。
 
 | 書き方 | 中身 |
 | --- | --- |
-| `{% form 'cart', cart %}`（`/cart` に POST） | `updates[]`（画面に出ている行の順。公開をやめた品の行は数えません）か `updates[<key>]` で数を変える。`name="checkout"` のボタンで購入手続き（配送先 → 最終確認 → 決済）へ。決済手段は使える最初のもの（`provider` の欄を置けば選べます） |
+| `{% form 'cart', cart %}`（`/cart` に POST） | `updates[]`（画面に出ている行の順。公開をやめた品の行は数えません）か `updates[<key>]` で数を変える。`name="checkout"` のボタンで購入手続き（配送先 → 最終確認 → 決済）へ。決済手段は使える最初のもの（`provider` の欄を置けば選べます。選択肢は `cart.banto_payment_methods`） |
 | `item.url_to_remove`・`/cart/change`（`id` か `line` と `quantity`） | 1 行の数を変える・外す。`url_to_remove` は Shopify と同じく GET のリンクなので、ほかのサイトのリンクからも開けます（変わるのはカートにある行の数だけで、値段は確定の前に引き直します） |
 | `/cart.js`（GET） | カートの JSON |
 | `/cart/add.js`（POST、`id`・`quantity` か `items: [...]`） | カートに入れる。応答は入れた行（`items` で送れば `{ items }`）。公開していない SKU は 404、在庫を超えるなら 422（入れません） |

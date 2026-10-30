@@ -198,9 +198,11 @@ export function shopObject(shop: PublicShop, home: string, intro: string | undef
   };
 }
 
-export function routesObject(shopPath: string) {
+/** coupons: 同梱モジュール coupons が ON か（ON のときだけ cart_coupon_url を渡す。Banto の名前で、Shopify には無い） */
+export function routesObject(shopPath: string, opts: { coupons?: boolean } = {}) {
   const root = shopPath || "/";
   return {
+    ...(opts.coupons ? { cart_coupon_url: `${shopPath}/cart/coupon` } : {}),
     root_url: root,
     cart_url: `${shopPath}/cart`,
     cart_add_url: `${shopPath}/cart/add`,
@@ -220,7 +222,14 @@ export function routesObject(shopPath: string) {
 /** カートのクーポン（同梱モジュール coupons が ON のとき）。amount は円 */
 export interface CartDiscounts {
   applied: { code: string; name: string; amount_jpy: number; free_shipping: boolean }[];
+  /** 入っているが使えないコード（discount_codes の applicable: false。理由の文は banto_message） */
+  rejected?: { code: string; message: string }[];
   discount: number;
+}
+
+/** カートの決済手段の選択肢（cart.banto_payment_methods。{% form 'cart' %} の provider の欄に入れる id） */
+export function paymentMethodsObject(options: { stripe: boolean; komoju: boolean }, label: (provider: "stripe" | "komoju") => string): { id: string; name: string }[] {
+  return (["stripe", "komoju"] as const).filter((p) => options[p]).map((p) => ({ id: p, name: label(p) }));
 }
 
 /**
@@ -280,7 +289,7 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
     total_discount: discount,
     total_price: Math.max(0, subtotal - discount),
     cart_level_discount_applications: (discounts?.applied ?? []).map((a) => ({ title: a.name, code: a.code, total_allocated_amount: money(a.amount_jpy), type: "discount_code", value_type: a.free_shipping ? "shipping" : "fixed_amount" })),
-    discount_codes: (discounts?.applied ?? []).map((a) => ({ code: a.code, applicable: true })),
+    discount_codes: [...(discounts?.applied ?? []).map((a) => ({ code: a.code, applicable: true })), ...(discounts?.rejected ?? []).map((r) => ({ code: r.code, applicable: false, banto_message: r.message }))],
     requires_shipping: items.length > 0,
     currency: { iso_code: "JPY" },
     note: null,
