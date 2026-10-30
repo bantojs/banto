@@ -42,7 +42,7 @@ function layoutConfig(): string {
     }
   }
   for (const k of ["image", "alt"]) L[`field.${k}`] = t(`layout.field_${k}` as MessageKey);
-  for (const k of ["group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
+  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
   return JSON.stringify({ schema, depth: LAYOUT_DEPTH_MAX, t: L });
 }
 
@@ -157,6 +157,12 @@ export const EDITOR_CSS = `
 #body-visual .is-ph-title::before{content:attr(data-ph);position:absolute;color:var(--fg-muted);font-weight:400;pointer-events:none}
 .pe-blockset h2{display:flex;align-items:center;gap:.4rem}
 .pe-blockset select,.pe-blockset input[type=text]{width:100%;max-width:none}
+.pe-focus{display:grid;grid-template-columns:repeat(3,1fr);aspect-ratio:16/10;border:1px solid var(--border-strong);border-radius:6px;overflow:hidden;background:var(--bg-subtle) center/100% 100% no-repeat;margin:.25rem 0}
+.pe-focus label{position:relative;margin:0;border:1px dashed rgba(255,255,255,.55);cursor:pointer}
+.pe-focus label:hover{background:rgba(31,111,235,.18)}
+.pe-focus input{position:absolute;opacity:0;width:1px;height:1px}
+.pe-focus label:has(input:checked){background:rgba(31,111,235,.35);box-shadow:inset 0 0 0 2px var(--link)}
+.pe-focus label:has(input:checked)::after{content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px;border-radius:50%;background:#fff;box-shadow:0 0 0 2px var(--link)}
 .pe-icons{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
 .pe-icons label{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;margin:0;padding:.55rem .2rem;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:.68rem;line-height:1.2;text-align:center}
 .pe-icons input{position:absolute;opacity:0;width:1px;height:1px}
@@ -247,6 +253,7 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .ol-row.is-pick .ol-txt small{color:inherit;opacity:.8}
 .ol-row.ol-child{padding-left:1.9rem;font-size:.8rem;color:var(--fg-muted);cursor:default}
 .ol-drop{position:absolute;left:.4rem;right:.4rem;height:2px;background:var(--link);pointer-events:none}
+.ol-drop.ol-into{background:transparent;border:2px solid var(--link);border-radius:4px}
 .ol-picked{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;padding:.5rem;margin-top:.5rem;background:var(--bg);border-top:1px solid var(--border);font-size:.8rem}
 #pe-msgs .notice,#pe-msgs .error{margin:0 auto 1rem}
 @media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}

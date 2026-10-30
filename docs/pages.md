@@ -139,7 +139,7 @@ WordPress のよく使うブロックを、決まった書式のまま入れ子�
 | `group`（グループ） | `bg`=**none**/subtle/accent/dark、`pad`=none/s/**m**/l | ブロック |
 | `columns`（カラム） | `ratio`=**1-1**/1-2/2-1/1-1-1/1-2-1/1-1-1-1（列の数と幅）、`valign`=**top**/center/bottom | `column` だけ（スマホでは縦に並ぶ） |
 | `column`（列） | なし | ブロック |
-| `cover`（カバー・ヒーロー） | `image`=URL、`height`=s/**m**/l/full、`overlay`=none/light/**dark**、`align`=left/**center**/right | ブロック（見出し・文・ボタン…） |
+| `cover`（カバー・ヒーロー） | `image`=URL、`height`=s/**m**/l/full、`overlay`=none/light/**dark**、`align`=left/**center**/right（左右）、`valign`=top/**center**/bottom（上下）、`focus`=top-left/top/top-right/left/**center**/right/bottom-left/bottom/bottom-right（画像のどこを残して見せるか。狭い画面で切り取られるとき） | ブロック（見出し・文・ボタン…） |
 | `media`（画像と文） | `image`=URL、`alt="説明"`、`side`=**left**/right、`valign`=top/**center**/bottom | ブロック（文の側） |
 | `gallery`（ギャラリー） | `cols`=2/**3**/4 | 画像の行だけ（`![説明](URL)`。60 枚まで） |
 | `accordion`（アコーディオン・FAQ） | `title="質問"`、`icon`=**chevron**/plus/arrow/caret/none、`open`=**0**/1 | ブロック（答え）。`<details>` で、JS なしで開け閉め |

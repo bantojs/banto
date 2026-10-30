@@ -141,7 +141,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function cls(d){
     var k=d.getAttribute("data-banto-block"), g=function(x){ return d.getAttribute("data-"+x)||""; }, keep=d.classList.contains("is-sel");
     var c={group:"banto-group banto-bg-"+g("bg")+" banto-pad-"+g("pad"),columns:"banto-columns banto-cols-"+g("ratio")+" banto-valign-"+g("valign"),column:"banto-column",
-      cover:"banto-cover banto-cover--h-"+g("height")+" banto-cover--overlay-"+g("overlay")+" banto-align-"+g("align"),media:"banto-media banto-media--"+g("side")+" banto-valign-"+g("valign"),
+      cover:"banto-cover banto-cover--h-"+g("height")+" banto-cover--overlay-"+g("overlay")+" banto-align-"+g("align")+" banto-valign-"+g("valign")+" banto-cover--focus-"+g("focus"),media:"banto-media banto-media--"+g("side")+" banto-valign-"+g("valign"),
       gallery:"banto-gallery banto-gallery--"+g("cols"),accordion:"banto-accordion banto-accordion--"+g("icon"),spacer:"banto-spacer banto-spacer--"+g("size")}[k];
     if(c) d.className=c+(keep?" is-sel":"");
   }
@@ -386,12 +386,19 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(!(mode==="replace"&&isBlock(ref)&&isEmpty(ref))){ blk=emptyP(); if(isBlock(ref)) slot.insertBefore(blk,mode==="before"?ref:ref.nextSibling); else ed.appendChild(blk); }
     apply(k,blk);
   }
+  // スロット（囲みの中）の終わりに入れる。空でも入る（最後の行が空の段落ならそこに）
+  function insertInto(k,slot){
+    var ll=slot.lastElementChild;
+    if(ll) { insertAt(k,ll,isEmpty(ll)?"replace":"after"); return; }
+    if(CONT[k]&&tooDeep(slot,k==="columns"?2:1)){ window.alert(LT("depth_max")); return; }
+    var p=emptyP(); slot.appendChild(p); apply(k,p);
+  }
   // カーソルの位置に入れる（空の行ならそこ、文字のある行なら後ろ、どこも選んでいなければ終わり）
   function insertAtCursor(k){
     var s0=isBlock(sel)?sel:null, last=ed.lastElementChild;
     // 中にブロックを持つ囲み（カバー・グループ・列・画像と文・アコーディオン）を選んでいるなら、その中の終わりに
     var sk=s0?kindOf(s0):"";
-    if(s0&&CONT[sk]&&sk!=="columns"&&sk!=="gallery"){ var sl=slotsOf(s0)[0]; if(sl){ var ll=sl.lastElementChild; insertAt(k,ll,ll&&isEmpty(ll)?"replace":"after"); return; } }
+    if(s0&&CONT[sk]&&sk!=="columns"&&sk!=="gallery"){ var sl=slotsOf(s0)[0]; if(sl){ insertInto(k,sl); return; } }
     if(s0) insertAt(k,s0,isEmpty(s0)?"replace":"after"); else insertAt(k,last,last&&isEmpty(last)?"replace":"after");
   }
   insQ.addEventListener("input",function(){ insSel=0; drawIns(); });
@@ -499,6 +506,8 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     else if(e.key==="Escape"){ e.preventDefault(); closeMenu(); }
   });
   ed.addEventListener("input",function(){
+    // 中身を消し切った囲み（カバー・グループなど）にも書き始める段落を残す（無いと中へ何も入れられなくなる）
+    Array.prototype.forEach.call(ed.querySelectorAll("[data-slot]"),function(x){ if(!isCols(x)&&!x.children.length){ var p0=emptyP(); x.appendChild(p0); var s0=window.getSelection(); if(s0.rangeCount&&x.contains(s0.anchorNode)) caretIn(p0); } });
     var blk=current(); var txt=blk?(blk.textContent||""):"";
     if(blk&&blk.nodeName==="P"&&/^\/[^\s/]{0,12}$/.test(txt)){ if(menuFor!==blk) menuSel=0; openMenu(blk,txt.slice(1)); }
     else if(!menu.hidden) closeMenu();
@@ -712,6 +721,13 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       var cur=b.getAttribute("data-"+key)||sc[key].def, id="ls-"+key;
       if(key==="open"){ var lab=el("label",""); var cb=document.createElement("input"); cb.type="checkbox"; cb.checked=cur==="1"; cb.addEventListener("change",function(){ setAttr(b,"open",cb.checked?"1":"0"); }); lab.appendChild(cb); lab.appendChild(document.createTextNode(" "+LT("field.open"))); setCard.appendChild(lab); return; }
       var l=el("label",""); l.textContent=LT("field."+key); setCard.appendChild(l);
+      // 画像の見せる位置: 3×3 のマス目（押した所を残して見せる）
+      if(key==="focus"){
+        var fg=el("div","pe-focus"); fg.setAttribute("role","radiogroup"); fg.setAttribute("aria-label",LT("field.focus"));
+        var url0=b.getAttribute("data-image"); if(url0&&/^(https?:\/\/|\/)[^"'()\\\s]+$/.test(url0)){ fg.style.backgroundImage="url(\""+url0+"\")"; var pic=new Image(); pic.onload=function(){ var ar=pic.naturalWidth/pic.naturalHeight; if(ar>0) fg.style.aspectRatio=String(Math.max(.75,Math.min(2.4,ar))); }; pic.src=url0; }
+        sc[key].values.forEach(function(v){ var lb=el("label",""); lb.title=LT("opt.focus."+v); var r=document.createElement("input"); r.type="radio"; r.name="ls-focus"; r.value=v; r.checked=v===cur; r.setAttribute("aria-label",LT("opt.focus."+v)); r.addEventListener("change",function(){ setAttr(b,"focus",v); }); lb.appendChild(r); fg.appendChild(lb); });
+        setCard.appendChild(fg); var fh=el("p","muted"); fh.style.fontSize=".8rem"; fh.textContent=LT("focus_help"); setCard.appendChild(fh); return;
+      }
       if(key==="icon"){
         var grid=el("div","pe-icons"); grid.setAttribute("role","radiogroup"); grid.setAttribute("aria-label",LT("field.icon"));
         sc[key].values.forEach(function(v){ var lb=el("label","banto-accordion--"+v); var r=document.createElement("input"); r.type="radio"; r.name="ls-icon"; r.value=v; r.checked=v===cur; r.addEventListener("change",function(){ setAttr(b,"icon",v); }); lb.appendChild(r); lb.appendChild(el("span","banto-accordion__icon")); var tx=el("span",""); tx.textContent=LT("opt.icon."+v); lb.appendChild(tx); grid.appendChild(lb); });
@@ -740,6 +756,8 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(k==="group"||k==="cover"){ var nt=el("p","muted"); nt.style.fontSize=".8rem"; nt.textContent=LT("colors_note"); setCard.appendChild(nt); }
   }
   drawSettings(true);
+  // 開いたとき: 前に空のまま保存した囲みにも書き始める段落を入れる
+  tidy();
   // 開いたとき: 空の画像の欄とギャラリーに案内の文字
   Array.prototype.forEach.call(ed.querySelectorAll(".banto-media__fig"),function(f){ f.setAttribute("data-ph",LT("media_empty")); });
   Array.prototype.forEach.call(ed.querySelectorAll("[data-banto-block=gallery]"),function(g){ g.setAttribute("data-ph",LT("gallery_empty")); });
@@ -879,14 +897,19 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
         // 行の真ん中より上ならその前、下なら後ろ（同じスロットに入る）。動かすものの中・列の決まり・入れ子の上限に合わない所は落とせない
         for(var r=0;r<rowsInfo.length;r++){
           var info=rowsInfo[r], rr=info.row.getBoundingClientRect(); if(ev.clientY<rr.top||ev.clientY>=rr.bottom) continue;
-          var tb0=info.b, slot=tb0.parentNode, before=ev.clientY<rr.top+rr.height/2, ok=true;
+          var tb0=info.b, slot=tb0.parentNode, before=ev.clientY<rr.top+rr.height/2, ok=true, into=null;
+          // 中にブロックを持つ囲みの行の真ん中に落とすと、その中の終わりへ（空の囲みにも入れられる）
+          var tk=kindOf(tb0);
+          if(CONT[tk]&&tk!=="columns"&&tk!=="gallery"&&ev.clientY>rr.top+rr.height*.25&&ev.clientY<rr.bottom-rr.height*.25){ into=slotsOf(tb0)[0]||null; if(into){ slot=into; before=false; } }
           moving.forEach(function(m){ if(m===tb0||m.contains(tb0)) ok=false; var mc=kindOf(m)==="column"; if(mc!==isCols(slot)) ok=false; if(mc&&m.parentNode!==slot) ok=false; if(CONT[kindOf(m)]&&!mc&&tooDeep(slot,heightOf(m))) ok=false; });
-          if(ok) drop={slot:slot,ref:before?tb0:tb0.nextSibling,row:info.row,before:before,level:info.level};
+          if(ok) drop={slot:slot,ref:into?null:(before?tb0:tb0.nextSibling),row:info.row,before:before,level:info.level,into:!!into};
           break;
         }
         if(!drop){ if(line) line.hidden=true; return; }
         if(!line){ line=el("div","ol-drop"); olBody.appendChild(line); }
-        line.hidden=false; line.style.top=(drop.row.offsetTop+(drop.before?0:drop.row.offsetHeight)-1)+"px"; line.style.left=(.4+drop.level*1.1)+"rem";
+        line.hidden=false; line.classList.toggle("ol-into",drop.into);
+        if(drop.into){ line.style.top=drop.row.offsetTop+"px"; line.style.height=drop.row.offsetHeight+"px"; line.style.left=(.4+drop.level*1.1)+"rem"; }
+        else { line.style.height=""; line.style.top=(drop.row.offsetTop+(drop.before?0:drop.row.offsetHeight)-1)+"px"; line.style.left=(.4+drop.level*1.1)+"rem"; }
       };
       var up=function(){
         document.removeEventListener("pointermove",mv); document.removeEventListener("pointerup",up); document.body.style.cursor="";

@@ -232,7 +232,7 @@ function layoutBlock(o: LayoutOpen, inner: string[], depth: number, st: RenderSt
       return `<div class="banto-column" ${data()}${slot}>${body()}</div>`;
     case "cover": {
       const image = o.image ? safeImage(o.image, st.opts) : null;
-      return `<div class="banto-cover banto-cover--h-${a["height"]} banto-cover--overlay-${a["overlay"]} banto-align-${a["align"]}" ${data(image ? ` data-image="${esc(image)}"` : "")}>${img("banto-cover__img", "")}<div class="banto-cover__inner"${slot}>${body()}</div></div>`;
+      return `<div class="banto-cover banto-cover--h-${a["height"]} banto-cover--overlay-${a["overlay"]} banto-align-${a["align"]} banto-valign-${a["valign"]} banto-cover--focus-${a["focus"]}" ${data(image ? ` data-image="${esc(image)}"` : "")}>${img("banto-cover__img", "")}<div class="banto-cover__inner"${slot}>${body()}</div></div>`;
     }
     case "media": {
       const image = o.image ? safeImage(o.image, st.opts) : null;

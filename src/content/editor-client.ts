@@ -157,7 +157,7 @@ export function pageEditorClient() {
   function layout(c: MdNode, kind: string, out: string[], heights: number[]): void {
     const parts = [kind];
     // 選択肢の値（どの囲みにどの鍵があるかは変換が決める。ここは data-* にあるものをそのまま書く）
-    for (const k of ["bg", "pad", "ratio", "valign", "height", "overlay", "align", "side", "cols", "icon", "open"]) {
+    for (const k of ["bg", "pad", "ratio", "valign", "height", "overlay", "align", "focus", "side", "cols", "icon", "open"]) {
       const v = word(attr(c, `data-${k}`));
       if (v) parts.push(`${k}=${v}`);
     }
