@@ -614,7 +614,7 @@ members.post("/:shop/account/sessions/:id{[0-9a-f-]{36}}/revoke", async (c: Ctx)
 
 /**
  * パスキーが使えるか: 会員機能とモジュールが ON・ショップに独自ドメインがあり、そのドメインの上で開いている。
- * RP ID はショップのドメイン（人間の決定 2026-10-23）。Banto の URL にパスで同居するショップには出さない
+ * RP ID はショップのドメイン（メンテナの決定 2026-10-23）。Banto の URL にパスで同居するショップには出さない
  */
 export function passkeyReady(c: Ctx, shop: PublicShop): boolean {
   return membersEnabled(shop) && moduleEnabled(shop.settings, PASSKEY_MODULE) && Boolean(shop.domain) && onShopDomain(c, shop);

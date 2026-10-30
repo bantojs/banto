@@ -1,5 +1,5 @@
 /**
- * Liquid のテーマの描画の仕組み（人間の決定 2026-10-28、docs/themes.md）。
+ * Liquid のテーマの描画の仕組み（メンテナの決定 2026-10-28、docs/themes.md）。
  *
  * - liquidjs のブラウザ向けの版を使う（Workers と Node で同じ。eval / new Function を使わない）
  * - **描画は同期だけ**。非同期の描画は同じテンプレートで 7 倍ほど遅い（generator と Promise の重さ）。テーマのファイルは先にメモリへ読み、

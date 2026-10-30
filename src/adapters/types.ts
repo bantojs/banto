@@ -63,7 +63,7 @@ export interface SocketAdapter {
 }
 
 /**
- * 独自ドメインの提供元（Cloudflare for SaaS のカスタムホスト名など。人間の決定 2026-10-23、docs/knowledge/02-decisions.md）。
+ * 独自ドメインの提供元（Cloudflare for SaaS のカスタムホスト名など。メンテナの決定 2026-10-23、docs/knowledge/02-decisions.md）。
  * 無ければ Banto は「運営者が Cloudflare で Worker にドメインを付けてから保存する」案内だけを出す（docs/custom-domain.md §6）。
  * 所有の確認・証明書・DNS の指示は提供元の仕事で、Banto は結果を受け取って画面に出すだけ。Banto をホスティングして提供する側の実装が入る継ぎ目。
  */

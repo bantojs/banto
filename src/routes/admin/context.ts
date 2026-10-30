@@ -12,7 +12,7 @@ export type AdminContext = Context<AppEnv>;
 /** 環境変数・Secret の名前（ウィザードの環境チェックで使う）。値は絶対に画面に出さない */
 export const REQUIRED_PUBLIC_VARS = ["SUPABASE_URL", "SUPABASE_ANON_KEY"] as const;
 /**
- * 新しい導入では SESSION_SECRET も必須（人間の決定 2026-10-18、docs/knowledge/02-decisions.md）。
+ * 新しい導入では SESSION_SECRET も必須（メンテナの決定 2026-10-18、docs/knowledge/02-decisions.md）。
  * 既存の導入で未設定なら service_role キーから導出して動き続ける（src/auth/session.ts）。ダッシュボードが設定を促す。
  */
 export const REQUIRED_SECRETS = ["SUPABASE_SERVICE_ROLE_KEY", "SESSION_SECRET"] as const;

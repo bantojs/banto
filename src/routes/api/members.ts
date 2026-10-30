@@ -285,7 +285,7 @@ membersApi.post("/shops/:shop/members/address", async (c: Ctx) => {
 
 /**
  * 「お得な情報やセールの案内を受け取る」（0050）。会員本人がログインして選ぶので、受け取る（true）も受け取らない（false）も本人の行為
- * （人間の決定 2026-10-28）。ショップがこの欄を使っていなければ 404
+ * （メンテナの決定 2026-10-28）。ショップがこの欄を使っていなければ 404
  */
 membersApi.post("/shops/:shop/members/marketing-consent", async (c: Ctx) => {
   const s = await bearerMember(c);

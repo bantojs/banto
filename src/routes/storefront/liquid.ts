@@ -139,7 +139,7 @@ interface PageParts {
 }
 
 /**
- * レジの画面の CSP（人間の決定 2026-10-28、docs/themes.md「レジ」）。住所・連絡先が載る画面なので、スクリプトはショップのドメインのもの
+ * レジの画面の CSP（メンテナの決定 2026-10-28、docs/themes.md「レジ」）。住所・連絡先が載る画面なので、スクリプトはショップのドメインのもの
  * （テーマの資産）だけ。インラインのスクリプトと外のスクリプト（分析のタグなど）は動かない。フォームの送り先は決済ページへの転送があるので縛らない
  */
 export const CHECKOUT_CSP = "script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'";

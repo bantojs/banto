@@ -1,6 +1,6 @@
 /**
  * ショップごとの外部サービスの秘密（LINE のチャネルシークレット・Google のクライアントシークレット）の暗号化。
- * CLAUDE.md §1-5 の例外（人間の決定、2026-10-16。docs/knowledge/10-members-identity.md §14）:
+ * CLAUDE.md §1-5 の例外（メンテナの決定、2026-10-16。docs/knowledge/10-members-identity.md §14）:
  * DB には暗号文だけを置き、鍵はサイトの秘密（SESSION_SECRET、無ければ service_role キーからの導出値）から作る。鍵は DB に無い。
  *
  * - AES-GCM（256 ビット、IV 12 バイト）。WebCrypto だけを使い、ランタイムに依存しない。

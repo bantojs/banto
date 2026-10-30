@@ -212,7 +212,7 @@ RLS は有効にして、ポリシーは「誰にも見せない」1 つ（`usin
 ## 14. LINE・Google でのログイン（人間と合意、2026-10-16 に実装。`0014_member_oauth`・同梱モジュール `line_login` / `google_login`）
 
 - **置き場所**: ログインの判定と会員の結びつけはコア（`member_oauth_login`）、提供元の仕様に依存する部分は同梱モジュール（既定 OFF、基準 (4)）。`src/modules/social-login/`（`providers.ts` に LINE と Google、`admin.tsx` にショップごとの設定画面）。
-- **秘密はショップごと（人間の決定）**: 最初はデプロイに 1 組（Workers Secret）で作ったが、「ショップごとに分けないのは矛盾する。Google では複数ショップを運営するとき同意画面をショップ名にできない」との指摘で、ショップごとにした（CLAUDE.md §1-5 の例外）。
+- **秘密はショップごと（メンテナの決定）**: 最初はデプロイに 1 組（Workers Secret）で作ったが、「ショップごとに分けないのは矛盾する。Google では複数ショップを運営するとき同意画面をショップ名にできない」との指摘で、ショップごとにした（CLAUDE.md §1-5 の例外）。
   - client_id は公開してよい値なので `shops.settings.oauth.<provider>.client_id` に写す（ボタンの表示と認可の URL に使う。キャッシュ済みのショップ行だけで判定でき、DB に問い合わせない）。
   - シークレットは Worker がサイトの秘密から作った鍵（HMAC で用途を分けた 256 ビット）で AES-GCM で暗号化し、暗号文だけを `shop_oauth_clients.secret_box` に置く（`src/members/secret-box.ts`）。追加認証データにショップ ID と提供元を入れるので、暗号文を別の行に移しても開けない。
   - 運営者は `shop_oauth_client_save` / `_delete`（owner の JWT）で書き、暗号文の列は列の権限で読めない。読むのは service_role の `shop_oauth_client` だけ（戻ってきたときに 1 回）。
@@ -257,7 +257,7 @@ RLS は有効にして、ポリシーは「誰にも見せない」1 つ（`usin
 - **画面と API**: お店の画面の「ログイン中の端末」（`/account/sessions`、テーマの任意の部品 `MemberSessionsPage`）、ヘッドレスの `/members/sessions`・`/members/sessions/:id/revoke`・`/members/logout`。
 - **片付け**: Cron の `member_login_cleanup` が、期限切れ・取り消してから 1 日・古い世代の行を消す（0045 を当てた後だけ）。退会で行も消える（外部キー）。
 
-## 18. パスキー（人間の決定、2026-10-23 に実装。`0046_mod_passkey`・同梱モジュール `passkey`）
+## 18. パスキー（メンテナの決定、2026-10-23 に実装。`0046_mod_passkey`・同梱モジュール `passkey`）
 
 - **いつ出すか**: 2026-10-17 の「v0.1 の後」を、人間が 2026-10-23 に「実装したい」と変えた。前提の M9（端末ごとのセッション、§17）を先に入れた。
 - **RP ID = ショップのドメイン**（人間と合意）。親ドメインにすると、その下のどのサブドメインのページ（同じドメインのブログの XSS 等）からでも呼べてしまう。独自ドメイン（`shops.domain`）の無いショップには出さない（Banto の URL にパスで同居するショップ同士で RP ID を共有しないため）。ショップごとのサブドメインで預かる形なら、RP ID はそのサブドメインにし、共通の親ドメインそのものは使わない。

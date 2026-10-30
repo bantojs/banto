@@ -10,7 +10,7 @@ import { classifyHost } from "../media/address";
 export const LEGAL_KINDS = ["legal", "privacy", "returns"] as const;
 export type LegalKind = (typeof LEGAL_KINDS)[number];
 
-/** 確かめる間隔（時間）。既定は 1 日（人間の決定 2026-10-27） */
+/** 確かめる間隔（時間）。既定は 1 日（メンテナの決定 2026-10-27） */
 export const LEGAL_CHECK_HOURS = [1, 6, 24, 168] as const;
 export const DEFAULT_LEGAL_CHECK_HOURS = 24;
 

@@ -1,6 +1,6 @@
 # 13. 顧客マスタの外部連携（HubSpot・独自マスタ）— 設計案（2026-10-23、未決）
 
-**状態: 段階 1 を実装済み（2026-10-23、`0047_customer_master`。人間の決定「マーケティングの属性は CRM が持つのが自然で、Banto は読むだけ。実装を進めてほしい」）、段階 1b（Banto 自身を顧客マスタに。`0048`）も実装済み。段階 2 の同梱モジュール `hubspot` は要望が出た時点で（トークンの置き場を決めてから）。`customer_directory` は落とした。**
+**状態: 段階 1 を実装済み（2026-10-23、`0047_customer_master`。メンテナの決定「マーケティングの属性は CRM が持つのが自然で、Banto は読むだけ。実装を進めてほしい」）、段階 1b（Banto 自身を顧客マスタに。`0048`）も実装済み。段階 2 の同梱モジュール `hubspot` は要望が出た時点で（トークンの置き場を決めてから）。`customer_directory` は落とした。**
 人間の要望（2026-10-23）「顧客マスタを外部サービス（HubSpot やカスタムマスタ = 独自顧客マスタ等）で使えるようにしたい」。
 2026-10-16 の決定「CRM を顧客マスタにして Banto から個人情報を抜く構成は採らない」は「既定では採らない。身元・氏名・住所は Banto が正、マーケティングの属性だけ外部が正にできる」に変えた（02-decisions.md 2026-10-23）。
 運営者向けの手順は docs/ai-access.md §7、hooks は docs/hooks.md、実例は `examples/plugin-hubspot`。
@@ -46,14 +46,14 @@ C が不可の理由:
 
 これで「HubSpot」も「独自マスタ」も **外部プラグインとして** つながる（外部 → Banto は `customers:write`、Banto → 外部は hooks + `customers:read`）。Banto 本体は外部の秘密も仕様も持たない。
 
-### 段階 2: Banto 側から同期する同梱モジュール（人間の決定が要る）
+### 段階 2: Banto 側から同期する同梱モジュール（メンテナの決定が要る）
 
 目的: ターゲット利用者（コードを書かない。CLAUDE.md §13）が、プラグインを自分で置かずに HubSpot を使う。
 
 - **拡張点** `CustomerDirectory`（`src/customers/directory.ts`）: `pull(shop, since)`（外部の変化を取る）/ `push(customer)`（Banto の変化を送る）。**Cron の `sync_customers` からだけ呼ぶ。** ログイン・確認画面・会員ページでは呼ばない（§1 の C と同じ理由）。1 回の量は `workers_plan`（0038）で決める。
 - （段階 1 の `examples/plugin-hubspot` は Banto → HubSpot の方向だけ。HubSpot → Banto の属性は、HubSpot のワークフローの Webhook か中継サーバーから `POST /customers/upsert` を呼ぶ）
-- **同梱モジュール `hubspot`**（既定 OFF、基準 (4)）: Contacts ↔ `customers`（email で結び、`external_ref.provider = 'hubspot'`）。項目の対応は設定画面で宣言（独自項目 ↔ Contact のプロパティ）。トークンは Workers Secret `HUBSPOT_ACCESS_TOKEN`（CLAUDE.md §1-5 の既定）。ショップごとに分けるなら `shop_secret_boxes`（LINE と同じ例外。人間の決定）。
-- ~~同梱モジュール `customer_directory`（独自マスタ。Banto が Cron で取りに行く）~~ → **落とした（人間の決定 2026-10-23）**。独自の顧客マスタを持つ人には開発者がいて、既存の API（`POST /customers/upsert` と hooks）で足りる。コードを書かない人は独自マスタを持たない。誰のためのものでもなかった。
+- **同梱モジュール `hubspot`**（既定 OFF、基準 (4)）: Contacts ↔ `customers`（email で結び、`external_ref.provider = 'hubspot'`）。項目の対応は設定画面で宣言（独自項目 ↔ Contact のプロパティ）。トークンは Workers Secret `HUBSPOT_ACCESS_TOKEN`（CLAUDE.md §1-5 の既定）。ショップごとに分けるなら `shop_secret_boxes`（LINE と同じ例外。メンテナの決定）。
+- ~~同梱モジュール `customer_directory`（独自マスタ。Banto が Cron で取りに行く）~~ → **落とした（メンテナの決定 2026-10-23）**。独自の顧客マスタを持つ人には開発者がいて、既存の API（`POST /customers/upsert` と hooks）で足りる。コードを書かない人は独自マスタを持たない。誰のためのものでもなかった。
 - **正の決め方（2026-10-23 に人間と話して固めた方針）**: 同じ項目を両側で直す「双方向」は持たない。**項目ごとに向きを 1 つ**に決める。
 
   | 項目 | 正 | 向き |
@@ -71,7 +71,7 @@ C が不可の理由:
   - `attributes` が入れば、クーポンの条件（宣言型 JSON）に属性の条件（例: ランク）を足せる。判定はコアの一本道のまま。→ **実装済み（2026-10-23、0049 `conditions.attributes`）**。docs/coupons.md「会員の項目の条件」。
 - 外部の独自項目をどこに出すか（会員ページ・確認画面・クーポンの条件）は、同期が動いてから別に決める。
 
-### 段階 1b: Banto 自身を顧客マスタとして使う人向け（人間の決定 2026-10-23、**実装済み**、`0048_customer_attributes_admin`）
+### 段階 1b: Banto 自身を顧客マスタとして使う人向け（メンテナの決定 2026-10-23、**実装済み**、`0048_customer_attributes_admin`）
 
 コードを書かない運営者の多数派は CRM を契約しない。その人には Banto がそのまま顧客マスタになる（メール・氏名・住所・注文の履歴・クーポンの発行は既にあり、0047 で運営者が定義する項目が入った）。足したのは次の 3 つだけで、どれも Banto が既に持っているデータの画面:
 
@@ -81,7 +81,7 @@ C が不可の理由:
 
 **線引き**: ARCHITECTURE.md「CRM など法的リスクのある領域は自前で持たず、利用者の外部アカウントに連携する」はそのまま。メール配信・営業の進捗・メモの蓄積のような CRM の機能はコアに入れない。「Banto の CRM」とは呼ばない。
 
-### 段階 1c: 「お得な情報やセールの案内を受け取る」の同意（人間の決定 2026-10-23、**実装済み**、`0050_marketing_consent`）
+### 段階 1c: 「お得な情報やセールの案内を受け取る」の同意（メンテナの決定 2026-10-23、**実装済み**、`0050_marketing_consent`）
 
 MA（Klaviyo・Mailchimp・HubSpot の配信など）は Resend の代わりではなく、お知らせメールを出す別の仕事。Banto は「メール配信はコアに入れない」ままで、会員・注文・同意を渡す側。そのために同意だけはコアが規定の列で持つ（`attributes` には置かない）:
 

@@ -12,7 +12,7 @@ Banto は LINE の **Messaging API** で 2 種類の通知を送れます（ど�
 1. LINE Developers で、ショップの LINE 公式アカウントの **Messaging API チャネル** を開きます（無ければ LINE Official Account Manager で公式アカウントを作り、Messaging API を有効にします）。
 2. 「Messaging API 設定」の **チャネルアクセストークン（長期）** を発行します。
 3. 管理画面 → ショップ → プラグイン →「LINE 公式アカウント」に貼って保存します。
-   - サイトの秘密（`SESSION_SECRET`）から作った鍵で **暗号化して** 保存し、画面には二度と出しません（CLAUDE.md §1-5 の例外、人間の決定 2026-10-17）。`SESSION_SECRET` を変えたら入れ直してください。
+   - サイトの秘密（`SESSION_SECRET`）から作った鍵で **暗号化して** 保存し、画面には二度と出しません（CLAUDE.md §1-5 の例外、メンテナの決定 2026-10-17）。`SESSION_SECRET` を変えたら入れ直してください。
    - 入れなければ、変数とシークレットの `LINE_CHANNEL_ACCESS_TOKEN` を使います（ショップが 1 つだけの運営なら、こちらでも構いません）。
 
 データベースの更新 `0021_line_messaging` が要ります。
