@@ -247,6 +247,7 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .ol-row.is-pick .ol-txt small{color:inherit;opacity:.8}
 .ol-row.ol-child{padding-left:1.9rem;font-size:.8rem;color:var(--fg-muted);cursor:default}
 .ol-drop{position:absolute;left:.4rem;right:.4rem;height:2px;background:var(--link);pointer-events:none}
+.ol-drop.ol-into{background:transparent;border:2px solid var(--link);border-radius:4px}
 .ol-picked{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;padding:.5rem;margin-top:.5rem;background:var(--bg);border-top:1px solid var(--border);font-size:.8rem}
 #pe-msgs .notice,#pe-msgs .error{margin:0 auto 1rem}
 @media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}

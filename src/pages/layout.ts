@@ -45,14 +45,14 @@ export const LAYOUT_ATTRS: Record<LayoutContainer | "spacer", Record<string, rea
   group: { bg: BG, pad: PAD },
   columns: { ratio: RATIOS, valign: VALIGN },
   column: {},
-  cover: { height: COVER_HEIGHT, overlay: OVERLAY, align: ALIGN },
+  cover: { height: COVER_HEIGHT, overlay: OVERLAY, align: ALIGN, valign: VALIGN },
   media: { side: SIDE, valign: VALIGN },
   gallery: { cols: GALLERY_COLS },
   accordion: { icon: ACCORDION_ICONS, open: ["0", "1"] },
   spacer: { size: SPACER },
 };
 /** 既定を変えたいもの（先頭以外を既定にする） */
-const DEFAULTS: Partial<Record<string, string>> = { "group.pad": "m", "cover.height": "m", "cover.overlay": "dark", "cover.align": "center", "columns.valign": "top", "media.valign": "center", "gallery.cols": "3", "spacer.size": "m", "accordion.icon": "chevron" };
+const DEFAULTS: Partial<Record<string, string>> = { "group.pad": "m", "cover.height": "m", "cover.overlay": "dark", "cover.align": "center", "cover.valign": "center", "columns.valign": "top", "media.valign": "center", "gallery.cols": "3", "spacer.size": "m", "accordion.icon": "chevron" };
 
 export interface LayoutOpen {
   kind: LayoutContainer;
@@ -163,6 +163,7 @@ export const LAYOUT_CSS = [
   ".banto-cover--overlay-dark::after{background:rgba(0,0,0,.45)}.banto-cover--overlay-light::after{background:rgba(255,255,255,.55)}.banto-cover--overlay-light{color:#111}",
   ".banto-cover__inner{position:relative;z-index:1;width:100%;max-width:48rem;margin:auto;padding:var(--banto-pad-m,2rem);box-sizing:border-box}",
   ".banto-cover.banto-align-left .banto-cover__inner{margin-left:0;text-align:left}.banto-cover.banto-align-center .banto-cover__inner{text-align:center}.banto-cover.banto-align-right .banto-cover__inner{margin-right:0;text-align:right}",
+  ".banto-cover.banto-valign-top .banto-cover__inner{margin-top:0}.banto-cover.banto-valign-bottom .banto-cover__inner{margin-bottom:0}",
   ".banto-cover a{color:inherit}",
   ".banto-media{display:grid;grid-template-columns:1fr 1fr;gap:var(--banto-gap,1.5rem)}",
   ".banto-media--right .banto-media__fig{order:2}",
