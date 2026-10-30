@@ -28,7 +28,7 @@ BANTO_TEST_DB_URL=... npm run check:rls    # 全テーブルの RLS・関数の�
 npm run check:size           # Worker の圧縮後サイズ（上限 1 MiB）
 ```
 
-マイグレーションを足したら `node scripts/gen-migrations.mjs`（`src/db/migrations.generated.ts` を更新。lint が差分を検査する）。
+マイグレーションを足したら `node scripts/gen-migrations.mjs`（`src/db/migrations.generated.ts` を更新。lint が差分を検査する）。埋め込むのは `--` の注釈と字下げを外した SQL（`scripts/sql-strip.mjs`、Worker の大きさのため）で、DB のテストもこの SQL を当てる。`/* */` の注釈は使わない（生成が止まる）。
 マイグレーションは前方専用です（ロールバック用は書かない）。
 
 ## 実 PostgreSQL でテストする
