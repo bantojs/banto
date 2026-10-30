@@ -5,12 +5,14 @@ import { markdownToHtml } from "../src/pages/markdown";
 const md = (s: string) => markdownToHtml(s, { mediaBase: "https://media.example.jp" });
 
 describe("ページの本文の書式", () => {
-  it("見出し（# は h2）・段落と改行・太字・斜体・コード・区切り線", () => {
+  it("見出し（# と ## は h2）・段落と改行・太字・斜体・コード・区切り線", () => {
     expect(md("# お店について\n\n1 行目\n2 行目\n\n---\n\n**太字** と *斜体* と _斜体_ と `code`")).toBe(
       "<h2>お店について</h2>\n<p>1 行目<br>2 行目</p>\n<hr>\n<p><strong>太字</strong> と <em>斜体</em> と <em>斜体</em> と <code>code</code></p>",
     );
-    expect(md("### 小見出し ###")).toBe("<h4>小見出し</h4>");
-    expect(md("## C#")).toBe("<h3>C#</h3>");
+    expect(md("## 見出し")).toBe("<h2>見出し</h2>");
+    expect(md("### 小見出し ###")).toBe("<h3>小見出し</h3>");
+    expect(md("##### 小さい")).toBe("<h4>小さい</h4>");
+    expect(md("## C#")).toBe("<h2>C#</h2>");
     expect(md("snake_case_name")).toBe("<p>snake_case_name</p>");
   });
 

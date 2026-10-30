@@ -75,4 +75,20 @@ if (box.out !== '[{"number":"1001","carrier":"yamato","tracking":"1234-5678-9012
   console.error("check-client-scripts: shippingLabelsClient の送り状番号の読み取りが想定と違います", box.out);
   process.exit(1);
 }
-console.log(`check-client-scripts: ok（wooImporter ${(fn.length / 1024).toFixed(1)} KiB、shippingLabelsClient ${(labelsFn.length / 1024).toFixed(1)} KiB${/__name\(/.test(fn + labelsFn) ? "、__name を前置きで補完" : ""}）`);
+// ページの見たままの編集（同梱モジュール pages）: 編集の領域の節 → 決まった書式（DOM の代わりに同じ形の偽物を渡す）
+const editorFn = extractFunction(bundle, "pageEditorClient");
+const pbox = { out: null };
+vm.createContext(pbox);
+vm.runInContext(
+  `${prelude}const E = (${editorFn})();
+   const t = (s) => ({ nodeType: 3, nodeName: "#text", childNodes: [], textContent: s });
+   const el = (n, kids, attrs) => ({ nodeType: 1, nodeName: n, childNodes: kids, textContent: kids.map((k) => k.textContent).join(""), getAttribute: (k) => (attrs || {})[k] ?? null });
+   out = E.toMarkdown(el("DIV", [el("H2", [t("見出し")]), el("P", [el("B", [t("太")]), t(" と "), el("A", [t("送料")], { href: "/shipping" })]), el("UL", [el("LI", [t("一")]), el("LI", [t("二")])])]));`,
+  pbox,
+  { timeout: 5000 },
+);
+if (pbox.out !== "## 見出し\n\n**太** と [送料](/shipping)\n\n- 一\n- 二") {
+  console.error("check-client-scripts: pageEditorClient の書式への変換が想定と違います", JSON.stringify(pbox.out));
+  process.exit(1);
+}
+console.log(`check-client-scripts: ok（wooImporter ${(fn.length / 1024).toFixed(1)} KiB、shippingLabelsClient ${(labelsFn.length / 1024).toFixed(1)} KiB、pageEditorClient ${(editorFn.length / 1024).toFixed(1)} KiB${/__name\(/.test(fn + labelsFn + editorFn) ? "、__name を前置きで補完" : ""}）`);

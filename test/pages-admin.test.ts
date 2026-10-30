@@ -44,7 +44,7 @@ describe("ショップのページの管理画面", () => {
     const preview = await writer.post(base, { ...form, action: "preview" });
     expect(preview.status).toBe(200);
     const html = await preview.text();
-    expect(html).toContain("<h3>店のこと</h3>");
+    expect(html).toContain("<h2>店のこと</h2>");
     expect(html).toContain("<strong>手しごと</strong>の店です。&lt;b&gt;x&lt;/b&gt;");
     expect(sb.tables.pages).toHaveLength(0);
     const created = await writer.post(base, form);

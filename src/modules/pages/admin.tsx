@@ -16,6 +16,8 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, pageHandleOk, type PageNav, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
+import { CLIENT_PRELUDE } from "../woo-import/admin";
+import { pageEditorClient } from "./editor-client";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
@@ -148,13 +150,16 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
 const PAGE_EDITOR_SCRIPT = `
 (function(){
   var ta=document.getElementById("body"); if(!ta) return;
+  // 見たままの編集のあいだは、ボタンと画像は見たままの側（pageEditorClient）が受け持つ
   function wrap(before,after,ph){ var s=ta.selectionStart,e=ta.selectionEnd,v=ta.value,sel=v.slice(s,e)||ph; ta.value=v.slice(0,s)+before+sel+after+v.slice(e); ta.focus(); ta.selectionStart=s+before.length; ta.selectionEnd=s+before.length+sel.length; }
   function line(prefix){ var s=ta.selectionStart,v=ta.value,ls=v.lastIndexOf("\\n",s-1)+1; ta.value=v.slice(0,ls)+prefix+v.slice(ls); ta.focus(); ta.selectionStart=ta.selectionEnd=s+prefix.length; }
   function insert(text){ var s=ta.selectionStart,v=ta.value; ta.value=v.slice(0,s)+text+v.slice(ta.selectionEnd); ta.focus(); ta.selectionStart=ta.selectionEnd=s+text.length; }
   Array.prototype.forEach.call(document.querySelectorAll("[data-md]"),function(b){ b.addEventListener("click",function(){
+    if(ta.hidden) return;
     var k=b.getAttribute("data-md"), ph=b.getAttribute("data-ph")||"";
     if(k==="h2") line("## "); else if(k==="h3") line("### "); else if(k==="b") wrap("**","**",ph); else if(k==="i") wrap("*","*",ph);
-    else if(k==="ul") line("- "); else if(k==="ol") line("1. "); else if(k==="q") line("> "); else if(k==="hr") insert("\\n---\\n");
+    else if(k==="ul") line("- "); else if(k==="ol") line("1. "); else if(k==="q") line("> "); else if(k==="hr") insert("\\n---\\n"); else if(k==="p") line("");
+    else if(k==="table"){ var c=b.getAttribute("data-ph")||" "; insert("\\n| "+c+" | "+c+" |\\n| --- | --- |\\n| "+c+" | "+c+" |\\n"); }
     else if(k==="link"){ var u=window.prompt(b.getAttribute("data-ask")||"URL","https://"); if(u) wrap("[","]("+u.replace(/[\\s()]/g,"")+")",ph); }
   }); });
   var form=document.getElementById("page-image-form"), input=document.getElementById("page-image"), st=document.getElementById("page-image-status");
@@ -166,13 +171,20 @@ const PAGE_EDITOR_SCRIPT = `
     ev.preventDefault(); st.textContent=form.getAttribute("data-busy")||"";
     var send=function(blob,name){ var fd=new FormData(); fd.append("file",new File([blob],name,{type:blob.type})); return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json().then(function(j){ if(!r.ok||!j.url) throw new Error(j.error||"upload"); return j; }); }); };
     var go=/^image\\/(jpeg|png|webp|avif)$/.test(file.type)?load(file).then(function(im){ return draw(im,1600,0.82); }).then(function(b){ return send(b,"image.webp"); }):send(file,file.name);
-    go.then(function(j){ insert("\\n![]("+j.url+")\\n"); st.textContent=""; input.value=""; }).catch(function(e){ st.textContent=(form.getAttribute("data-failed")||"")+" "+(e&&e.message||""); });
+    go.then(function(j){ if(!(window.bantoPageImage&&window.bantoPageImage(j.url))) insert("\\n![]("+j.url+")\\n"); st.textContent=""; input.value=""; }).catch(function(e){ st.textContent=(form.getAttribute("data-failed")||"")+" "+(e&&e.message||""); });
   });
 })();`;
 
-function PageForm(props: { shop: ShopRow; action: string; values: PageValues; error?: MessageKey | null; preview?: string | null; image?: string | null }) {
+/** 見たままの編集のスクリプト（関数の toString() と設定。</script> を閉じさせないよう < を逃がす） */
+function visualEditorScript(shopId: string): string {
+  const cfg = { render: `${base(shopId)}/render`, t: { cell: t("pages.tool_table_cell") } };
+  return `${CLIENT_PRELUDE}(${pageEditorClient.toString()})().mount(${JSON.stringify(cfg).replace(/</g, "\\u003c")});`;
+}
+
+function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; error?: MessageKey | null; preview?: string | null; image?: string | null }) {
   const v = props.values;
   const tools: [string, MessageKey, MessageKey?][] = [
+    ["p", "pages.tool_p"],
     ["h2", "pages.tool_h2"],
     ["h3", "pages.tool_h3"],
     ["b", "pages.tool_bold", "pages.tool_bold"],
@@ -182,6 +194,7 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; er
     ["ol", "pages.tool_ol"],
     ["q", "pages.tool_quote"],
     ["hr", "pages.tool_hr"],
+    ["table", "pages.tool_table", "pages.tool_table_cell"],
   ];
   return (
     <>
@@ -198,19 +211,32 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; er
           <div class="page-preview">{raw(props.preview)}</div>
         </section>
       ) : null}
-      <form method="post" action={props.action} class="card">
+      <form method="post" action={props.action} class="card" id="page-form">
         <label for="title">{t("pages.title")}</label>
         <input id="title" name="title" value={v.title} required maxlength={PAGE_LIMITS.title} />
         <label for="handle">{t("pages.handle")}</label>
         <input id="handle" name="handle" value={v.handle} required maxlength={64} pattern="[a-z0-9]([a-z0-9\-]{0,62}[a-z0-9])?" />
         <p class="muted">{t("pages.handle_help")}</p>
         <label for="body">{t("pages.body")}</label>
+        {/* JS があるときだけ出す（見たまま / Markdown の切り替え。pageEditorClient） */}
+        <div id="body-tabs" role="tablist" hidden style="margin:.25rem 0">
+          <button type="button" class="secondary small" role="tab" data-mode="visual" aria-selected="false">
+            {t("pages.mode_visual")}
+          </button>{" "}
+          <button type="button" class="secondary small" role="tab" data-mode="markdown" aria-selected="true">
+            {t("pages.mode_markdown")}
+          </button>
+        </div>
         <div class="toolbar" role="toolbar" aria-label={t("pages.tools")}>
           {tools.map(([k, label, ph]) => (
             <button type="button" class="secondary small" data-md={k} data-ph={ph ? t(ph) : undefined} data-ask={k === "link" ? t("pages.tool_link_ask") : undefined}>
               {t(label)}
             </button>
           ))}
+        </div>
+        {/* 見たままの編集の領域。中身はお店の画面と同じ変換で作った HTML（決まった形のタグだけ）。保存のときは Markdown に直して送る */}
+        <div id="body-visual" class="page-preview" contenteditable={true} role="textbox" aria-multiline="true" aria-label={t("pages.body")} hidden data-ready="1" style="min-height:20rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.3rem;padding:.75rem 1rem;overflow:auto">
+          {raw(props.visual)}
         </div>
         <textarea id="body" name="body" rows={20} maxlength={PAGE_LIMITS.body} style="width:100%;font-family:ui-monospace,monospace">
           {v.body}
@@ -266,6 +292,7 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; er
         </p>
       </form>
       <script dangerouslySetInnerHTML={{ __html: PAGE_EDITOR_SCRIPT }} />
+      <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.shop.id) }} />
     </>
   );
 }
@@ -283,7 +310,7 @@ function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; value
     <>
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
-      <PageForm shop={shop} action={action} values={opts.values} error={opts.error ?? null} preview={opts.preview ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      <PageForm shop={shop} action={action} values={opts.values} visual={markdownToHtml(opts.values.body, { mediaBase: mediaBaseUrl(c) })} error={opts.error ?? null} preview={opts.preview ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
       {opts.pageId ? (
         <section class="card danger-zone">
           <h2>{t("pages.delete")}</h2>
@@ -348,6 +375,15 @@ pagesAdmin.post("/images", requireOwner, async (c: AdminContext) => {
   const url = imageUrl(mediaBaseUrl(c), key);
   if (wantsJson) return c.json({ url });
   return c.redirect(`${back.endsWith("/pages") ? `${back}/new` : back}?image=${encodeURIComponent(url)}`);
+});
+
+/** 本文（決まった書式）を HTML にして返す。見たままの編集に切り替えるとき（お店の画面と同じ変換） */
+pagesAdmin.post("/render", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop) return c.notFound();
+  const f = await formFields(c);
+  const body = (f.body ?? "").slice(0, PAGE_LIMITS.body);
+  return c.json({ html: markdownToHtml(body, { mediaBase: mediaBaseUrl(c) }) });
 });
 
 pagesAdmin.get("/:pageId", requireOwner, async (c: AdminContext) => {

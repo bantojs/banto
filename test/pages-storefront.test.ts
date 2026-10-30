@@ -45,7 +45,7 @@ describe("ショップのページ（既定のテーマ）", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<h1>私たちについて</h1>");
-    expect(html).toContain("<h3>店のこと</h3>");
+    expect(html).toContain("<h2>店のこと</h2>");
     expect(html).toContain("<strong>手しごと</strong>の店です。&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain('<a href="/shipping">送料</a>');
     expect(html).not.toContain("<script>alert(1)");
@@ -94,7 +94,7 @@ describe("ショップのページ（Liquid のテーマ）", () => {
   it("templates/page で描き、template_suffix があれば templates/page.<suffix>。メニューに足す（今のページは active）", async () => {
     const { b } = setup({ liquid: files });
     const about = await (await b.get("/pages/about")).text();
-    expect(about).toContain('<article class="pg" data-t="page" data-n="page"><h1>私たちについて</h1><h3>店のこと</h3>');
+    expect(about).toContain('<article class="pg" data-t="page" data-n="page"><h1>私たちについて</h1><h2>店のこと</h2>');
     expect(about).toContain('<a class="m on" href="/pages/about">私たちについて</a>');
     expect(about).toContain('<footer><a class="f" href="/pages/faq">よくある質問</a><a class="f" href="/legal">');
     const faq = await (await b.get("/pages/faq")).text();
