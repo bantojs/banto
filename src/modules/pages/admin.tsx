@@ -237,7 +237,7 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
-      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} publishing={pub} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} publishing={pub} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} extras={catalog} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
   );

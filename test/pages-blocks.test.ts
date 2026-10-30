@@ -13,11 +13,11 @@ afterEach(forgetThemes);
 
 describe("ブロックの書式", () => {
   it("「::: products」を読み、形が違えば文字のまま", () => {
-    expect(parseProductsLine("::: products category=tops tag=\"冬 物\" limit=12 layout=scroll sort=price_asc")).toEqual({ category: "tops", tag: "冬 物", limit: 12, layout: "scroll", sort: "price_asc" });
-    expect(parseProductsLine("::: products")).toEqual({ category: null, tag: null, limit: 8, layout: "grid", sort: "new" });
+    expect(parseProductsLine("::: products category=tops tag=\"冬 物\" limit=12 layout=scroll sort=price_asc")).toEqual({ category: "tops", tag: "冬 物", limit: 12, layout: "scroll", sort: "price_asc", style: null });
+    expect(parseProductsLine("::: products")).toEqual({ category: null, tag: null, limit: 8, layout: "grid", sort: "new", style: null });
     for (const bad of ["::: products limit=25", "::: products limit=0", "::: products layout=list", "::: products sort=random", "::: products category=Tops", "::: product"]) expect(parseProductsLine(bad), bad).toBeNull();
     expect(productsLine({ category: "tops", tag: "冬 物", limit: 12, layout: "scroll", sort: "price_asc" })).toBe('::: products category=tops tag="冬 物" limit=12 layout=scroll sort=price_asc');
-    expect(parseButtonLine("::: button [詳しく見る](/p/coat)")).toEqual({ text: "詳しく見る", url: "/p/coat" });
+    expect(parseButtonLine("::: button [詳しく見る](/p/coat)")).toEqual({ text: "詳しく見る", url: "/p/coat", style: null });
   });
 
   it("変換は商品の場所に印（3 つまで）、ボタンは決まった形。危ない URL のボタンと形の違う行は文字", () => {

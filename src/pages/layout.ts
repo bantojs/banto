@@ -63,6 +63,8 @@ export interface LayoutOpen {
   image: string | null;
   alt: string;
   title: string;
+  /** テーマのスタイル（class banto-style-<名前>）。null なら既定 */
+  style: string | null;
 }
 
 const OPEN = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion)(?:\s+(.*?))?\s*$/;
@@ -98,7 +100,8 @@ export function parseLayoutOpen(line: string): LayoutOpen | null {
   if (!m) return null;
   const kind = m[2] as LayoutContainer;
   const a = readAttrs(m[3] ?? "");
-  return { kind, attrs: pick(kind, a), image: a.get("image") ?? null, alt: (a.get("alt") ?? "").trim().slice(0, 200), title: (a.get("title") ?? "").trim().slice(0, 200) };
+  const style = a.get("style") ?? "";
+  return { kind, attrs: pick(kind, a), image: a.get("image") ?? null, alt: (a.get("alt") ?? "").trim().slice(0, 200), title: (a.get("title") ?? "").trim().slice(0, 200), style: /^[a-z0-9][a-z0-9-]{0,29}$/.test(style) ? style : null };
 }
 
 export const isLayoutClose = (line: string) => CLOSE.test(line);
@@ -124,12 +127,13 @@ export function layoutEnd(rows: readonly string[], from: number): number {
 }
 
 /** 書き戻すときの始まりの行（見たままの編集・テストが使う。値は既定と同じなら省く） */
-export function layoutOpenLine(o: Pick<LayoutOpen, "kind" | "attrs"> & Partial<Pick<LayoutOpen, "image" | "alt" | "title">>, colons = 3): string {
+export function layoutOpenLine(o: Pick<LayoutOpen, "kind" | "attrs"> & Partial<Pick<LayoutOpen, "image" | "alt" | "title" | "style">>, colons = 3): string {
   const parts = [`${":".repeat(Math.max(3, colons))} ${o.kind}`];
   for (const [k, vs] of Object.entries(LAYOUT_ATTRS[o.kind])) {
     const v = o.attrs[k];
     if (v && vs.includes(v) && v !== (DEFAULTS[`${o.kind}.${k}`] ?? vs[0])) parts.push(`${k}=${v}`);
   }
+  if (o.style && /^[a-z0-9][a-z0-9-]{0,29}$/.test(o.style)) parts.push(`style=${o.style}`);
   if (o.image && !/[\s"]/.test(o.image)) parts.push(`image=${o.image}`);
   const q = (s: string) => s.replace(/["\n\r]/g, "").trim().slice(0, 200);
   if (o.alt && q(o.alt)) parts.push(`alt="${q(o.alt)}"`);
