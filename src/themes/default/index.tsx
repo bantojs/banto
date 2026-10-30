@@ -28,6 +28,7 @@ import { yen } from "../../routes/common";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
 import { ConfirmationBlock } from "./confirmation";
 import { pagePath, pagesNav } from "../../pages";
+import { articlePath, blogPath, blogsNav } from "../../blog";
 
 const css = `
 :root{color-scheme:light dark;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Sans","Noto Sans JP",sans-serif}
@@ -54,6 +55,7 @@ table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:.5rem;bo
 .notice{padding:.75rem 1rem;border-left:4px solid #f9a825;background:color-mix(in srgb,#f9a825 12%,transparent);margin:1rem 0}
 .error{color:#c62828}.muted{opacity:.7}
 pre.legal{white-space:pre-wrap;font:inherit}
+.blog-list{list-style:none;padding:0;margin:0;max-width:44rem}.blog-list li{padding:1.25rem 0;border-bottom:1px solid color-mix(in srgb,CanvasText 12%,transparent)}.blog-list h2{margin:.25rem 0}.blog-list a{text-decoration:none;color:inherit}.blog-list img{width:100%;max-height:16rem;object-fit:cover;border-radius:.5rem}.blog-meta{font-size:.85rem;color:color-mix(in srgb,CanvasText 60%,transparent)}.blog-tags a{margin-right:.5rem}
 .page-body{max-width:44rem;line-height:1.8}.page-body img{max-width:100%;height:auto}.page-body blockquote{margin:1rem 0;padding-left:1rem;border-left:3px solid color-mix(in srgb,CanvasText 20%,transparent)}.banto-table{overflow-x:auto}
 a{color:var(--accent,#1f6feb)}header a,.card a{color:inherit}
 button{background:var(--accent,#1f6feb);color:#fff;border:0;border-radius:.3rem}button[disabled]{opacity:.5;cursor:not-allowed}
@@ -137,6 +139,11 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
                   {pg.title}
                 </a>
               ))}
+              {blogsNav(ctx.shop, "header").map((b) => (
+                <a href={blogPath(ctx.shopPath, b.handle)} style="margin-right:1rem">
+                  {b.title}
+                </a>
+              ))}
               {ctx.membersEnabled ? (
                 <a href={`${ctx.shopPath}/account`} style="margin-right:1rem">
                   {ctx.member ? t("member.account") : t("member.login")}
@@ -155,6 +162,9 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
             <p>
               {pagesNav(ctx.shop, "footer").map((pg) => (
                 <a href={pagePath(ctx.shopPath, pg.handle)}>{pg.title}</a>
+              ))}
+              {blogsNav(ctx.shop, "footer").map((b) => (
+                <a href={blogPath(ctx.shopPath, b.handle)}>{b.title}</a>
               ))}
               <a href={`${ctx.shopPath}/legal`}>{t("shop.legal_notice")}</a>
               <a href={`${ctx.shopPath}/privacy`}>{t("shop.privacy_policy")}</a>
@@ -810,6 +820,78 @@ export const defaultTheme: Theme = {
           <h1>{page.title}</h1>
           {page.image_url ? <img class="page-image" src={page.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
+        </article>
+      </Layout>
+    );
+  },
+
+  BlogPage({ ctx, blog, articles, tag, tags, newer, older, feedUrl }) {
+    const title = tag ? tf("blog.tagged", { tag }) : blog.title;
+    return (
+      <Layout title={tag ? `${title} | ${blog.title}` : blog.seo_title || blog.title} ctx={ctx} seo={{ path: blogPath(ctx.shopPath, blog.handle), ...(blog.seo_description || blog.description ? { description: blog.seo_description || blog.description || "" } : {}), ...(tag ? { noindex: true } : {}) }}>
+        <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+        <h1>{title}</h1>
+        {blog.description && !tag ? <p style="max-width:44rem">{blog.description}</p> : null}
+        {tags.length > 0 ? (
+          <p class="blog-tags">
+            {tag ? <a href={blogPath(ctx.shopPath, blog.handle)}>{t("blog.all_articles")}</a> : null}
+            {tags.map((x) => (
+              <a href={`${blogPath(ctx.shopPath, blog.handle)}?tag=${encodeURIComponent(x)}`} aria-current={x === tag ? "page" : undefined}>
+                #{x}
+              </a>
+            ))}
+          </p>
+        ) : null}
+        {articles.length === 0 ? <p>{t("blog.no_published")}</p> : null}
+        <ul class="blog-list">
+          {articles.map(({ article, summary }) => (
+            <li>
+              <a href={articlePath(ctx.shopPath, blog.handle, article.handle)}>
+                {article.image_url ? <img src={article.image_url} alt="" loading="lazy" decoding="async" /> : null}
+                <div class="blog-meta">{article.published_at ? formatDateTime(article.published_at, { dateOnly: true }) : null}</div>
+                <h2>{article.title}</h2>
+                {summary ? <p>{summary}</p> : null}
+              </a>
+            </li>
+          ))}
+        </ul>
+        {newer || older ? (
+          <nav class="pager" aria-label={t("store.pagination")}>
+            {newer ? <a href={newer}>{t("blog.newer")}</a> : <span />}
+            {older ? (
+              <a href={older} rel="next">
+                {t("blog.older")}
+              </a>
+            ) : null}
+          </nav>
+        ) : null}
+        <p class="blog-meta">
+          <a href={feedUrl}>{t("blog.feed")}</a>
+        </p>
+      </Layout>
+    );
+  },
+
+  ArticlePage({ ctx, blog, article, html, feedUrl }) {
+    return (
+      <Layout title={article.seo_title || article.title} ctx={ctx} seo={{ path: articlePath(ctx.shopPath, blog.handle, article.handle), ...(article.seo_description || article.excerpt ? { description: article.seo_description || article.excerpt || "" } : {}), ...(article.image_url ? { image: article.image_url } : {}) }}>
+        <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+        <article class="page">
+          <p class="blog-meta">
+            <a href={blogPath(ctx.shopPath, blog.handle)}>{blog.title}</a>
+            {article.published_at ? <> · {formatDateTime(article.published_at, { dateOnly: true })}</> : null}
+            {article.author ? <> · {article.author}</> : null}
+          </p>
+          <h1>{article.title}</h1>
+          {article.image_url ? <img class="page-image" src={article.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          <div class="page-body">{raw(html)}</div>
+          {article.tags.length > 0 ? (
+            <p class="blog-tags">
+              {article.tags.map((x) => (
+                <a href={`${blogPath(ctx.shopPath, blog.handle)}?tag=${encodeURIComponent(x)}`}>#{x}</a>
+              ))}
+            </p>
+          ) : null}
         </article>
       </Layout>
     );

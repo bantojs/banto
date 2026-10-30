@@ -10,7 +10,7 @@
 import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
-import { getLocale, t, type MessageKey } from "../../i18n";
+import { getLocale, t, tf, type MessageKey } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { THEME_PREVIEW_MIGRATION, type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
@@ -28,6 +28,7 @@ import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/li
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
 import { fillProductBlocks, type ProductBlock } from "../../pages/blocks";
+import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
@@ -148,8 +149,9 @@ interface PageParts {
  */
 function withPageLinks(lists: { "main-menu": ReturnType<typeof menuFromCategories>; footer: ReturnType<typeof footerMenu> }, shop: PublicShop, shopPath: string, current?: string) {
   const link = (p: { handle: string; title: string }) => ({ title: p.title, url: pagePath(shopPath, p.handle), handle: p.handle, active: p.handle === current, child_active: false, links: [], levels: 0, type: "page_link" });
-  const header = pagesNav(shop, "header").map(link);
-  const footer = pagesNav(shop, "footer").map(link);
+  const blogLink = (b: { handle: string; title: string }) => ({ title: b.title, url: blogPath(shopPath, b.handle), handle: b.handle, active: false, child_active: false, links: [], levels: 0, type: "blog_link" });
+  const header = [...pagesNav(shop, "header").map(link), ...blogsNav(shop, "header").map(blogLink)];
+  const footer = [...pagesNav(shop, "footer").map(link), ...blogsNav(shop, "footer").map(blogLink)];
   if (header.length === 0 && footer.length === 0) return lists;
   return {
     "main-menu": { ...lists["main-menu"], links: [...lists["main-menu"].links, ...header] },
@@ -501,25 +503,112 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     categories: p.categories,
     currentPage: pg.handle,
   });
-  // 商品を並べるブロック: テーマに snippets/page-products があればそれで描き（products・block を渡す）、無ければ既定のカード
-  let html = p.html;
-  if (p.blocks?.length) {
-    const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
-    let rendered = p.cards ?? [];
-    if (themeHasSnippet(choice.lt, "page-products")) {
-      try {
-        const input = pageInput(c, s, choice, parts(p.html));
-        rendered = p.blocks.map((b, i) => {
-          const out = renderThemeSnippet(choice.lt, input, "page-products", { products: b.items.map((x) => productFromSummary(u, x)), block: { ...b.block, index: i } });
-          return out ?? p.cards?.[i] ?? "";
-        });
-      } catch (e) {
-        console.error("[banto] theme page-products:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
-      }
+  return render(c, s, choice, parts(withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards)));
+}
+
+type BodyBlocks = { block: ProductBlock; items: ProductSummary[] }[];
+
+/**
+ * 本文の「商品を並べる」の場所に中身を入れる（ページと記事で共通）: テーマに snippets/page-products があればそれで描き
+ * （products・block を渡す）、無ければ既定のカード（cards）
+ */
+function withProductBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, blocks?: BodyBlocks, cards?: string[]): string {
+  if (!blocks?.length) return fillProductBlocks(html, []);
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  let rendered = cards ?? [];
+  if (themeHasSnippet(choice.lt, "page-products")) {
+    try {
+      const input = pageInput(c, s, choice, parts(html));
+      rendered = blocks.map((b, i) => {
+        const out = renderThemeSnippet(choice.lt, input, "page-products", { products: b.items.map((x) => productFromSummary(u, x)), block: { ...b.block, index: i } });
+        return out ?? cards?.[i] ?? "";
+      });
+    } catch (e) {
+      console.error("[banto] theme page-products:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
     }
-    html = fillProductBlocks(html, rendered);
-  } else html = fillProductBlocks(html, []);
-  return render(c, s, choice, parts(html));
+  }
+  return fillProductBlocks(html, rendered);
+}
+
+/** templates/<種類>.<suffix> があればそれ、無ければ templates/<種類> */
+function suffixedTemplate(lt: LoadedTheme, kind: "blog" | "article", suffix: string | null): ThemeTemplate {
+  const t2 = suffix ? (`${kind}.${suffix}` as const) : null;
+  return t2 && themeHasTemplate(lt, t2) ? t2 : kind;
+}
+
+/** ブログ（Liquid の blog。記事の一覧は blog.articles） */
+function blogObject(shopPath: string, b: BlogRow, extra: Record<string, unknown> = {}) {
+  return { id: b.id, handle: b.handle, title: b.title, url: blogPath(shopPath, b.handle), description: b.description ?? "", template_suffix: b.template_suffix, comments_enabled: false, moderated: false, ...extra };
+}
+
+/** 記事（Liquid の article）。content は本文の HTML（一覧では空）、excerpt は抜粋か本文の頭の文字 */
+function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: string) {
+  const image = a.image_url ? { src: a.image_url, url: a.image_url, alt: a.title } : null;
+  const excerpt = articleSummary(a);
+  return {
+    id: a.id,
+    handle: a.handle,
+    title: a.title,
+    url: articlePath(shopPath, blog.handle, a.handle),
+    content: new SafeHtml(content),
+    excerpt,
+    excerpt_or_content: content ? new SafeHtml(content) : excerpt,
+    image,
+    tags: a.tags,
+    author: a.author ?? "",
+    published_at: a.published_at ?? a.updated_at,
+    created_at: a.published_at ?? a.updated_at,
+    updated_at: a.updated_at,
+    template_suffix: a.template_suffix,
+    blog_handle: blog.handle,
+    comments: [],
+    comments_count: 0,
+  };
+}
+
+/** ブログの記事の一覧（同梱モジュール blog、0081、/blogs/<handle>）。templates/blog.<suffix> か templates/blog */
+export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; pageNo: number; newer: string | null; older: string | null; categories: CategoryRow[] }): Response | null {
+  const sp = s.ctx.shopPath;
+  const articles = p.articles.map(({ article }) => articleObject(sp, p.blog, article, ""));
+  const paginate: Paginate = {
+    current_page: p.pageNo,
+    page_size: articles.length,
+    items: null,
+    pages: p.older ? p.pageNo + 1 : p.pageNo,
+    previous: p.newer ? { title: "«", url: p.newer, is_link: true } : null,
+    next: p.older ? { title: "»", url: p.older, is_link: true } : null,
+    parts: [],
+  };
+  const blog = blogObject(sp, p.blog, { articles, articles_count: articles.length, all_tags: p.tags, tags: p.tags });
+  return render(c, s, choice, {
+    template: suffixedTemplate(choice.lt, "blog", p.blog.template_suffix),
+    // paginate は {% paginate blog.articles by … %} の中と外のどちらでも読める（Banto が 1 ページの数を決める）
+    values: { blog, current_tags: p.tag ? [p.tag] : [], paginate },
+    title: p.tag ? `${tf("blog.tagged", { tag: p.tag })} | ${p.blog.title}` : p.blog.seo_title || p.blog.title,
+    ...(p.blog.seo_description || p.blog.description ? { description: p.blog.seo_description || p.blog.description || "" } : {}),
+    path: `/blogs/${encodeURIComponent(p.blog.handle)}`,
+    noindex: Boolean(p.tag),
+    categories: p.categories,
+    paginate,
+  });
+}
+
+/** ブログの記事（/blogs/<ブログ>/<handle>）。templates/article.<suffix> か templates/article */
+export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[] }): Response | null {
+  const a = p.article;
+  const sp = s.ctx.shopPath;
+  const parts = (html: string): PageParts => {
+    const article = articleObject(sp, p.blog, a, html);
+    return {
+      template: suffixedTemplate(choice.lt, "article", a.template_suffix),
+      values: { article, blog: blogObject(sp, p.blog), ...(article.image ? { page_image: article.image } : {}) },
+      title: a.seo_title || a.title,
+      ...(a.seo_description || a.excerpt ? { description: a.seo_description || a.excerpt || "" } : {}),
+      path: `/blogs/${encodeURIComponent(p.blog.handle)}/${encodeURIComponent(a.handle)}`,
+      categories: p.categories,
+    };
+  };
+  return render(c, s, choice, parts(withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards)));
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

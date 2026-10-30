@@ -21,6 +21,7 @@ import { labelsAdmin } from "../../modules/shipping-labels/admin";
 import { tryonAdmin } from "../../modules/store-tryon/admin";
 import { inquiriesAdmin } from "../../modules/inquiries/admin";
 import { pagesAdmin } from "../../modules/pages/admin";
+import { blogAdmin } from "../../modules/blog/admin";
 
 /**
  * 同梱モジュールの ON/OFF（shops.settings.modules）。/admin/shops/:shopId/modules
@@ -111,3 +112,4 @@ modules.route("/:shopId/modules/store-tryon", tryonAdmin);
 modules.route("/:shopId/modules/ga4", ga4Admin);
 modules.route("/:shopId/modules/inquiries", inquiriesAdmin);
 modules.route("/:shopId/modules/pages", pagesAdmin);
+modules.route("/:shopId/modules/blog", blogAdmin);

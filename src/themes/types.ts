@@ -7,6 +7,7 @@ import type { ProductRow } from "../db/types";
 import type { Confirmation } from "../commerce/checkout";
 import type { CategoryNode } from "../products/categories";
 import type { PageRow } from "../pages";
+import type { ArticleRow, BlogRow } from "../blog";
 
 /**
  * テーマ = SSR テンプレートの集合。src/themes/<name>/ に置き、storefront ルートが呼ぶ。
@@ -269,6 +270,13 @@ export interface Theme {
    * （決まった形のタグだけで、そのまま出してよい）。無いテーマではページを出さない
    */
   ContentPage?(props: { ctx: ThemeContext; page: PageRow; html: string }): Rendered;
+  /**
+   * ブログの記事の一覧（同梱モジュール blog、0081、/blogs/<handle>）。articles は公開した日時の新しい順の 1 ページ分、
+   * summary は記事ごとの短い紹介（抜粋か本文の頭の文字）。tag で絞っていればその名前。newer / older はページ送りの URL
+   */
+  BlogPage?(props: { ctx: ThemeContext; blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; newer: string | null; older: string | null; feedUrl: string }): Rendered;
+  /** ブログの記事（/blogs/<ブログ>/<handle>）。html は本文を HTML にしたもの（ページと同じ。そのまま出してよい） */
+  ArticlePage?(props: { ctx: ThemeContext; blog: BlogRow; article: ArticleRow; html: string; feedUrl: string }): Rendered;
   /**
    * 決済ページから戻ってきた直後。注文確定は Webhook で行うので、status が無ければ「受付済み」の表示に留める。
    * status（0035、照会トークン付きで開いたとき）: confirmed なら orderNumber を出す、pending なら「確認中」（refresh が true なら数秒後に自動で再読み込み）、

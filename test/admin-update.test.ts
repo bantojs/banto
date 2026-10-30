@@ -70,13 +70,20 @@ describe("マイグレーション適用フォーム", () => {
     expect(res.headers.get("location")).toBe(`/admin/setup?migrated=${encodeURIComponent(BUNDLED_MIGRATIONS.slice(2, 41).join(","))}`);
     expect(await (await b.get(res.headers.get("location")!)).text()).toContain("残りがあります");
 
-    // スクリプトから: 続きを当てて JSON で返す。残りが無くなれば next を開く
-    queries = [];
-    res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" }, { headers: { "X-Banto-Migrate": "step" } });
-    expect(res.status).toBe(200);
-    expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ ok: true, applied: BUNDLED_MIGRATIONS.slice(41), remaining: [], next: "/admin/setup?migrated=" });
-    expect(queries).toHaveLength(1 + BUNDLED_MIGRATIONS.length - 41);
+    // スクリプトから: 続きを当てて JSON で返す（1 回 40 回まで。画面のスクリプトと同じく、残りが無くなるまで送り直す）。残りが無くなれば next を開く
+    let step: { ok: boolean; applied: string[]; remaining: string[]; next?: string } = { ok: true, applied: [], remaining: ["x"] };
+    const appliedBySteps: string[] = [];
+    for (let i = 0; i < 5 && step.remaining.length > 0; i++) {
+      queries = [];
+      res = await b.post("/admin/setup/migrate", { access_token: "sbp_0123456789abcdef0123456789abcdef01234567" }, { headers: { "X-Banto-Migrate": "step" } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      step = (await res.json()) as typeof step;
+      expect(queries.length).toBeLessThanOrEqual(40);
+      appliedBySteps.push(...step.applied);
+    }
+    expect(step).toMatchObject({ ok: true, remaining: [], next: "/admin/setup?migrated=" });
+    expect(appliedBySteps).toEqual(BUNDLED_MIGRATIONS.slice(41));
     expect(sb.appliedMigrations).toEqual([...BUNDLED_MIGRATIONS]);
     // 当て終わった画面から次の手順へ進める（運営者がまだいなければ登録の欄へ）
     const doneHtml = await (await b.get(`/admin/setup?migrated=${BUNDLED_MIGRATIONS.slice(41).join(",")}`)).text();

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
 import { PAGES_MIGRATION, PAGES_PUBLISHING_MIGRATION, handleFromTitle } from "../src/pages";
-import { PAGE_BLOCKS_SCRIPT } from "../src/modules/pages/blocks-script";
+import { PAGE_BLOCKS_SCRIPT } from "../src/content/blocks-script";
 
 /** ショップのページの管理画面（同梱モジュール pages、0079）。扱えるのは content の項目を持つ人。本文は決まった書式でプレビューできる */
 function setup(opts: { enabled?: boolean } = {}) {
