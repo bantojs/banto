@@ -6,6 +6,10 @@ import { markdownToHtml } from "./markdown";
 
 export const PAGES_MODULE = "pages";
 export const PAGES_MIGRATION = "0079_mod_pages";
+/** 予約公開・ゴミ箱・リビジョン・アイキャッチ・メディアライブラリ（0080） */
+export const PAGES_PUBLISHING_MIGRATION = "0080_mod_pages_publishing";
+/** ゴミ箱に置いておく日数（過ぎたら Cron が消す） */
+export const PAGES_TRASH_DAYS = 30;
 
 export type PageNav = "none" | "header" | "footer";
 export const PAGE_NAVS: readonly PageNav[] = ["none", "header", "footer"];
@@ -24,10 +28,22 @@ export interface PageRow {
   published: boolean;
   created_at: string;
   updated_at: string;
+  /** 公開する日時（null はすぐ）。0080 から */
+  published_at?: string | null;
+  /** ゴミ箱に入れた日時。0080 から */
+  deleted_at?: string | null;
+  /** アイキャッチ画像（ショップの画像の置き場の URL）。0080 から */
+  image_url?: string | null;
 }
 
-/** お客様の画面で読む列（下書きは RLS で見えない） */
-export const PUBLIC_PAGE_COLUMNS = "id,shop_id,handle,title,body,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at";
+/**
+ * お客様の画面で読む列（下書き・予約・ゴミ箱は RLS で見えない）。0080 の列（image_url・published_at）は当たっていれば入る形にする:
+ * anon はページの全部の列を読める（秘密の列は無い）ので * にし、版のずれでも表・列の無いエラーにならない
+ */
+export const PUBLIC_PAGE_COLUMNS = "*";
+
+/** ページを公開した日時（予約していればその日時、無ければ作った日時） */
+export const pagePublishedAt = (p: Pick<PageRow, "published_at" | "created_at">) => p.published_at ?? p.created_at;
 
 /** shop_public_get の pages_nav の 1 件（メニューに出す公開中のページ） */
 export interface PageNavItem {

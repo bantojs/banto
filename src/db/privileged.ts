@@ -371,6 +371,8 @@ export interface PrivilegedDb {
   maskShippedOrders(days?: number): Promise<number>;
   /** 監査ログの保持（0051）。既定 365 日より古い行を消す（30 日より短くはならない）。戻り値: 消した行数 */
   pruneAuditLog(days?: number): Promise<number>;
+  /** ショップのページのゴミ箱で days 日を過ぎたものを消す（0080） */
+  purgePagesTrash(days?: number): Promise<number>;
   /** hooks: 配信待ちを取り出す（リース付き） */
   claimHookDeliveries(limit: number): Promise<HookDeliveryRow[]>;
   /** hooks: 配信結果を記録（失敗は DB 側でバックオフ） */
@@ -594,6 +596,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     recordWebhookEvent: (provider, eventId) => rpc<boolean>("record_webhook_event", { p_provider: provider, p_event_id: eventId }),
     maskShippedOrders: (days = 180) => rpc<number>("mask_shipped_orders", { p_days: days }),
     pruneAuditLog: (days = 365) => rpc<number>("prune_audit_log", { p_days: days }),
+    purgePagesTrash: (days = 30) => rpc<number>("pages_purge_trash", { p_days: days }),
     claimHookDeliveries: (limit) => rpc<HookDeliveryRow[]>("claim_hook_deliveries", { p_limit: limit }),
     finishHookDelivery: (id, success, status, error) =>
       rpc<void>("finish_hook_delivery", { p_id: id, p_success: success, p_status: status, p_error: error }),

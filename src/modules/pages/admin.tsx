@@ -14,14 +14,16 @@ import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../../media/im
 import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
-import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
+import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, PAGES_PUBLISHING_MIGRATION, PAGES_TRASH_DAYS, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
+import { migrated } from "../../db/migration-state";
+import { formatDateTime, isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { markdownToHtml } from "../../pages/markdown";
 import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../../pages/blocks";
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
 import { pageEditorClient } from "./editor-client";
-import { PAGE_BLOCKS_SCRIPT } from "./blocks-script";
+import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
@@ -40,16 +42,41 @@ async function scope(c: AdminContext): Promise<ShopRow | null> {
   return shop && moduleEnabled(shop.settings, PAGES_MODULE) ? shop : null;
 }
 
-type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published">;
+/** 予約公開・ゴミ箱・リビジョン・アイキャッチ・メディアライブラリ（0080）が DB に入っているか。入るまでは今までの画面のまま */
+const publishing = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGES_PUBLISHING_MIGRATION);
 
-const EMPTY: PageValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: false };
+type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url">;
+
+const EMPTY: PageValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: false, published_at: null, image_url: null };
+
+/** リビジョンの一覧に出す列（0080） */
+interface RevisionRow {
+  id: string;
+  title: string;
+  created_at: string;
+}
+
+/** ページの状態（一覧のタブ・編集の画面の上のバー） */
+type PageState = "published" | "scheduled" | "draft" | "trash";
+function pageState(p: Pick<PageRow, "published" | "published_at" | "deleted_at">, now = Date.now()): PageState {
+  if (p.deleted_at) return "trash";
+  if (!p.published) return "draft";
+  return p.published_at && Date.parse(p.published_at) > now ? "scheduled" : "published";
+}
+
+/** アイキャッチ画像に使える URL（ショップの画像の置き場のものだけ。本文の画像と同じ規則） */
+function imageUrlOk(url: string, mediaBase: string): boolean {
+  if (url.length > 2000 || /[\s<>"'`\\]/.test(url) || url.includes("..")) return false;
+  const b = mediaBase.replace(/\/+$/, "");
+  return url.startsWith(`${b}/`) || url.startsWith("/media/");
+}
 
 /**
  * フォームの値 → 行。誤りは文言の鍵（DB の CHECK が正。画面で先に止めて、入れた値を残したまま知らせる）。
  * 公開するかは押したボタン（action: draft → 下書き、publish → 公開、それ以外は published の欄のまま）。
  * URL の名前が空ならタイトルから作り、作れなければ page-xxxxxx（autoHandle。重なったら作り直す）
  */
-function pageValues(f: Record<string, string>): { values: PageValues; error: MessageKey | null; autoHandle: boolean } {
+function pageValues(f: Record<string, string>, opts: { publishing: boolean; mediaBase: string }): { values: PageValues; error: MessageKey | null; autoHandle: boolean } {
   const opt = (v: string | undefined, max: number) => {
     const s = (v ?? "").trim();
     return s ? s.slice(0, max) : null;
@@ -69,7 +96,12 @@ function pageValues(f: Record<string, string>): { values: PageValues; error: Mes
     nav,
     sort_order: Number.isInteger(sort) ? Math.max(-1000, Math.min(1000, sort)) : 0,
     published: f.action === "publish" ? true : f.action === "draft" ? false : f.published === "on",
+    // 公開する日時（ショップの時間帯の「日付と時刻」。空ならすぐ）とアイキャッチ（0080 から）
+    published_at: opts.publishing && f.published_at ? zonedInputToIso(f.published_at) : null,
+    image_url: opts.publishing ? (f.image_url ?? "").trim() || null : null,
   };
+  if (opts.publishing && f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
+  if (values.image_url && !imageUrlOk(values.image_url, opts.mediaBase)) return { values, error: "pages.error_image", autoHandle };
   if (!values.title || values.title.length > PAGE_LIMITS.title) return { values, error: "pages.error_title", autoHandle };
   if (!pageHandleOk(values.handle)) return { values, error: "pages.error_handle", autoHandle };
   if (values.body.length > PAGE_LIMITS.body) return { values, error: "pages.error_body", autoHandle };
@@ -115,9 +147,20 @@ function layout(c: AdminContext, shop: ShopRow, title: string, crumbs: { label: 
 pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const rows = await owner(c).db.from<PageRow>("pages").select("id,handle,title,nav,sort_order,published,updated_at", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" });
+  const pub = await publishing(c);
+  const cols = pub ? "id,handle,title,nav,sort_order,published,published_at,deleted_at,updated_at" : "id,handle,title,nav,sort_order,published,updated_at";
+  const all = await owner(c).db.from<PageRow>("pages").select(cols, { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" });
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
+  // タブ（すべて = ゴミ箱の外）と検索（タイトルと URL の名前。ページは 1 つのショップに 100 までなので、絞り込みはここで）
+  const tabs = ["all", "published", "scheduled", "draft", ...(pub ? ["trash"] : [])] as const;
+  const tabParam = c.req.query("status") ?? "all";
+  const tab = (tabs as readonly string[]).includes(tabParam) ? tabParam : "all";
+  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
+  const states = all.map((p) => ({ p, state: pageState(p) }));
+  const count = (k: string) => states.filter((x) => (k === "all" ? x.state !== "trash" : x.state === k)).length;
+  const rows = states.filter((x) => (tab === "all" ? x.state !== "trash" : x.state === tab) && (!q || x.p.title.toLowerCase().includes(q.toLowerCase()) || x.p.handle.includes(q.toLowerCase())));
+  const link = (k: string) => `${base(shop.id)}${k === "all" ? "" : `?status=${k}`}`;
   return layout(
     c,
     shop,
@@ -126,13 +169,31 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
     <>
       <PageHead title={t("mod.pages.name")} sub={t("pages.intro")} />
       {flash === "deleted" ? <p class="notice">{t("pages.deleted")}</p> : null}
+      {flash === "trashed" ? <p class="notice">{tf("pages.trashed", { n: PAGES_TRASH_DAYS })}</p> : null}
+      {flash === "restored" ? <p class="notice">{t("pages.restored")}</p> : null}
+      {flash === "restore_conflict" ? <p class="error">{t("pages.restore_conflict")}</p> : null}
       <p>
         <a class="btn" href={`${base(shop.id)}/new`}>
           {t("pages.new")}
         </a>
       </p>
+      <form method="get" action={base(shop.id)} class="toolbar" role="search">
+        <nav aria-label={t("pages.state")} style="display:flex;gap:.75rem;flex-wrap:wrap">
+          {tabs.map((k) => (
+            <a href={link(k)} aria-current={tab === k ? "page" : undefined} style={tab === k ? "font-weight:600;color:var(--fg)" : "color:var(--fg-muted)"}>
+              {t(`pages.tab_${k}` as MessageKey)} ({count(k)})
+            </a>
+          ))}
+        </nav>
+        {tab !== "all" ? <input type="hidden" name="status" value={tab} /> : null}
+        <input type="search" name="q" value={q} placeholder={t("pages.search")} aria-label={t("pages.search")} />
+        <button type="submit" class="secondary small">
+          {t("pages.search_go")}
+        </button>
+      </form>
+      {tab === "trash" ? <p class="muted">{tf("pages.trash_help", { n: PAGES_TRASH_DAYS })}</p> : null}
       {rows.length === 0 ? (
-        <p class="muted">{t("pages.empty")}</p>
+        <p class="muted">{all.length === 0 ? t("pages.empty") : t("pages.none_here")}</p>
       ) : (
         <table>
           <thead>
@@ -141,16 +202,15 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
               <th>URL</th>
               <th>{t("pages.nav")}</th>
               <th>{t("pages.state")}</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((p) => (
+            {rows.map(({ p, state }) => (
               <tr>
+                <td>{state === "trash" ? p.title : <a href={`${base(shop.id)}/${p.id}`}>{p.title}</a>}</td>
                 <td>
-                  <a href={`${base(shop.id)}/${p.id}`}>{p.title}</a>
-                </td>
-                <td>
-                  {p.published && shop.published ? (
+                  {state === "published" && shop.published ? (
                     <a href={`${home}/pages/${p.handle}`} target="_blank" rel="noopener">
                       /pages/{p.handle}
                     </a>
@@ -159,7 +219,32 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
                   )}
                 </td>
                 <td>{t(`pages.nav_${p.nav}` as MessageKey)}</td>
-                <td>{p.published ? t("pages.published") : t("pages.draft")}</td>
+                <td>
+                  {t(`pages.state_${state}` as MessageKey)}
+                  {state === "scheduled" && p.published_at ? <span class="muted"> {formatDateTime(p.published_at)}</span> : null}
+                </td>
+                <td style="white-space:nowrap">
+                  {state === "trash" ? (
+                    <>
+                      <form method="post" action={`${base(shop.id)}/${p.id}/restore`} style="display:inline">
+                        <button type="submit" class="secondary small">
+                          {t("pages.restore")}
+                        </button>
+                      </form>{" "}
+                      <form method="post" action={`${base(shop.id)}/${p.id}/delete`} style="display:inline" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`}>
+                        <button type="submit" class="secondary small">
+                          {t("pages.delete_forever")}
+                        </button>
+                      </form>
+                    </>
+                  ) : pub ? (
+                    <form method="post" action={`${base(shop.id)}/${p.id}/trash`} style="display:inline">
+                      <button type="submit" class="secondary small">
+                        {t("pages.trash")}
+                      </button>
+                    </form>
+                  ) : null}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -236,8 +321,9 @@ const EDITOR_CSS = `
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 `;
 
-function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null }) {
+function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; publishing: boolean; revisions: RevisionRow[] }) {
   const v = props.values;
+  const state = pageState({ published: v.published, published_at: v.published_at ?? null, deleted_at: null });
   const tools: [string, MessageKey, MessageKey?][] = [
     ["p", "pages.tool_p"],
     ["h2", "pages.tool_h2"],
@@ -288,7 +374,10 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
       <form method="post" action={props.action} id="page-form" data-reserved={RESERVED_HANDLES.join(",")} {...blockText}>
         {/* 上のバー: 状態と、下書き保存・プレビュー（新しいタブ）・公開 / 更新。Ctrl+S は data-save のボタン */}
         <div class="pe-bar">
-          <span class={`status ${v.published ? "" : "off"}`}>{v.published ? t("pages.published") : t("pages.draft")}</span>
+          <span class={`status ${state === "published" ? "" : state === "scheduled" ? "info" : "off"}`}>
+            {t(`pages.state_${state}` as MessageKey)}
+            {state === "scheduled" && v.published_at ? ` ${formatDateTime(v.published_at)}` : ""}
+          </span>
           <span class="pe-grow" />
           {v.published ? (
             <button type="submit" name="action" value="draft" class="secondary small">
@@ -307,7 +396,7 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
               {t("pages.update")}
             </button>
           ) : (
-            <button type="submit" name="action" value="publish">
+            <button type="submit" name="action" value="publish" id="pe-publish" data-now={t("pages.publish")} data-later={t("pages.schedule")}>
               {t("pages.publish")}
             </button>
           )}
@@ -354,6 +443,30 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
             </details>
           </div>
           <aside>
+            {props.publishing ? (
+              <section class="card">
+                <h2>{t("pages.publish_card")}</h2>
+                <label for="published_at">{t("pages.published_at")}</label>
+                <input id="published_at" name="published_at" type="datetime-local" value={isoToZonedInput(v.published_at)} />
+                <p class="muted">{t("pages.published_at_help")}</p>
+              </section>
+            ) : null}
+            {props.publishing ? (
+              <section class="card">
+                <h2>{t("pages.featured")}</h2>
+                <input type="hidden" id="image_url" name="image_url" value={v.image_url ?? ""} />
+                <img id="featured-preview" src={v.image_url ?? ""} alt="" hidden={!v.image_url} style="width:100%;height:auto;border-radius:6px;border:1px solid var(--border)" />
+                <p class="muted">{t("pages.featured_help")}</p>
+                <p>
+                  <button type="button" class="secondary small" data-media="featured" hidden>
+                    {t("pages.featured_choose")}
+                  </button>{" "}
+                  <button type="button" class="secondary small" id="featured-clear" hidden={!v.image_url}>
+                    {t("pages.featured_clear")}
+                  </button>
+                </p>
+              </section>
+            ) : null}
             <section class="card">
               <h2>{t("pages.settings")}</h2>
               <label for="handle">{t("pages.handle")}</label>
@@ -386,6 +499,13 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
               <input id="page-image" type="file" name="file" accept="image/*" required form="page-image-form" />
               <p class="muted">{t("pages.image_help")}</p>
               <p>
+                {props.publishing ? (
+                  <>
+                    <button type="button" class="secondary small" data-media="body" hidden>
+                      {t("pages.media_library")}
+                    </button>{" "}
+                  </>
+                ) : null}
                 <button type="submit" class="secondary small" form="page-image-form">
                   {t("pages.image_upload")}
                 </button>{" "}
@@ -406,10 +526,29 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
                 <p class="muted">{t("pages.template_help")}</p>
               </details>
             </section>
+            {props.pageId && props.revisions.length > 0 ? (
+              <section class="card">
+                <details>
+                  <summary>{tf("pages.revisions", { n: props.revisions.length })}</summary>
+                  <p class="muted">{t("pages.revisions_help")}</p>
+                  <ul style="list-style:none;padding:0;margin:0">
+                    {props.revisions.map((r) => (
+                      <li style="padding:.4rem 0;border-top:1px solid var(--border)">
+                        <div>{formatDateTime(r.created_at)}</div>
+                        <div class="muted" style="font-size:.85rem">{r.title}</div>
+                        <button type="submit" class="secondary small" form="page-revert" name="revision" value={r.id} formaction={`${props.action}/revisions/${r.id}/restore`}>
+                          {t("pages.revision_restore")}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </section>
+            ) : null}
             {props.pageId ? (
               <section class="card danger-zone">
                 <button type="submit" class="secondary small" form="page-delete">
-                  {t("pages.delete")}
+                  {props.publishing ? t("pages.trash") : t("pages.delete")}
                 </button>
               </section>
             ) : null}
@@ -419,7 +558,30 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
       <form method="post" action={`${base(props.shop.id)}/images`} enctype="multipart/form-data" id="page-image-form" data-busy={t("pages.image_busy")} data-failed={t("pages.image_failed")}>
         <input type="hidden" name="back" value={props.action} />
       </form>
-      {props.pageId ? <form method="post" action={`${props.action}/delete`} id="page-delete" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`} /> : null}
+      {props.pageId ? (
+        props.publishing ? (
+          <form method="post" action={`${props.action}/trash`} id="page-delete" />
+        ) : (
+          <form method="post" action={`${props.action}/delete`} id="page-delete" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`} />
+        )
+      ) : null}
+      {props.pageId && props.revisions.length > 0 ? <form method="post" action={`${props.action}/revisions`} id="page-revert" onsubmit={`return confirm(${JSON.stringify(t("pages.revision_confirm"))})`} /> : null}
+      {props.publishing ? (
+        <dialog id="media-lib" aria-labelledby="media-lib-title" data-list={`${base(props.shop.id)}/media`} data-empty={t("pages.media_empty")}>
+          <h2 id="media-lib-title" style="margin-top:0">
+            {t("pages.media_library")}
+          </h2>
+          <p>
+            <button type="button" class="secondary small" id="media-upload">
+              {t("pages.image_upload")}
+            </button>{" "}
+            <button type="button" class="secondary small" id="media-close">
+              {t("pages.cancel")}
+            </button>
+          </p>
+          <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(7rem,1fr));gap:.5rem;max-height:60vh;overflow:auto"></div>
+        </dialog>
+      ) : null}
       {/* 商品を並べるブロックの設定（PAGE_BLOCKS_SCRIPT が開く。JS が無ければ書式の「::: products …」を直接書く） */}
       <dialog id="blk-products" aria-labelledby="blk-products-title">
         <form method="dialog">
@@ -462,21 +624,23 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
       <script dangerouslySetInnerHTML={{ __html: PAGE_EDITOR_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.shop.id) }} />
       <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
+      {props.publishing ? <script dangerouslySetInnerHTML={{ __html: PAGE_MEDIA_SCRIPT }} /> : null}
     </>
   );
 }
 
 async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
   // 商品を並べるブロックで選ぶカテゴリー（RLS で自分のショップのものだけ）
-  const categories = await owner(c)
-    .db.from<CategoryRow>("categories")
-    .select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" })
-    .catch(() => [] as CategoryRow[]);
+  const db = owner(c).db;
+  const [categories, pub] = await Promise.all([db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]), publishing(c)]);
+  // リビジョン（0080。新しい順に 20 まで）
+  const revisions = pub && opts.pageId ? await db.from<RevisionRow>("page_revisions").select("id,title,created_at", { eq: { page_id: opts.pageId, shop_id: shop.id }, order: "created_at.desc", limit: 20 }) : [];
   const title = opts.pageId ? opts.values.title || t("pages.edit") : t("pages.new");
   const action = opts.pageId ? `${base(shop.id)}/${opts.pageId}` : base(shop.id);
   const flash = c.req.query("flash");
   const image = c.req.query("image");
-  const viewUrl = opts.pageId && opts.values.published && shop.published ? `${shopHome(publicBaseUrl(c), shop)}/pages/${opts.values.handle}` : null;
+  const live = pageState({ published: opts.values.published, published_at: opts.values.published_at ?? null, deleted_at: null }) === "published";
+  const viewUrl = opts.pageId && live && shop.published ? `${shopHome(publicBaseUrl(c), shop)}/pages/${opts.values.handle}` : null;
   return layout(
     c,
     shop,
@@ -485,7 +649,8 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
     <>
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
-      <PageForm shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={categories} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
+      <PageForm publishing={pub} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={categories} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
   );
@@ -520,14 +685,18 @@ async function save(c: AdminContext, pageId: string | null) {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const f = await formFields(c);
-  const { values, error, autoHandle } = pageValues(f);
+  const pub = await publishing(c);
+  const { values, error, autoHandle } = pageValues(f, { publishing: pub, mediaBase: mediaBaseUrl(c) });
   const page = pageId ? { pageId } : {};
   if (f.action === "preview") return previewPage(c, shop, values, error);
   // 公開のボタンで誤りがあったら、画面の状態は押す前のまま（下書きなら下書き）に見せる
   const shown = (v: PageValues) => ({ ...v, published: f.published === "on" });
   if (error) return editPage(c, shop, { ...page, values: shown(values), error, status: 400 });
   const db = owner(c).db;
-  const write = async (v: PageValues) => {
+  const write = async (all: PageValues) => {
+    // 0080 の列は DB に入ってから書く
+    const { published_at, image_url, ...rest } = all;
+    const v = pub ? { ...rest, published_at, image_url } : rest;
     if (pageId) {
       const rows = await db.from<PageRow>("pages").update(v, { id: pageId, shop_id: shop.id });
       return rows.length === 0 ? null : pageId;
@@ -572,8 +741,19 @@ pagesAdmin.post("/images", requireOwner, async (c: AdminContext) => {
   const key = `pages/${shop.id}/${randomKey()}.${kind.ext}`;
   await c.get("adapters").storage.put(key, bytes.buffer as ArrayBuffer, kind.contentType);
   const url = imageUrl(mediaBaseUrl(c), key);
+  // メディアライブラリに記録する（0080。記録できなくても画像は使える）
+  if (await publishing(c)) await owner(c).db.from("page_media").insert({ shop_id: shop.id, storage_key: key, url }).catch((e: unknown) => console.error("[banto] page_media:", e));
   if (wantsJson) return c.json({ url });
   return c.redirect(`${back.endsWith("/pages") ? `${back}/new` : back}?image=${encodeURIComponent(url)}`);
+});
+
+/** メディアライブラリ（0080）: 置いた画像の新しい順に 100 まで */
+pagesAdmin.get("/media", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await publishing(c))) return c.notFound();
+  const items = await owner(c).db.from<{ id: string; url: string; created_at: string }>("page_media").select("id,url,created_at", { eq: { shop_id: shop.id }, order: "created_at.desc", limit: 100 });
+  c.header("Cache-Control", "private, no-store");
+  return c.json({ items });
 });
 
 /** 本文（決まった書式）を HTML にして返す。見たままの編集に切り替えるとき（お店の画面と同じ変換） */
@@ -597,20 +777,68 @@ pagesAdmin.get("/:pageId", requireOwner, async (c: AdminContext) => {
     throw e;
   }
   if (!row) return c.notFound();
+  // ゴミ箱の中のページは直さない（戻してから）
+  if (row.deleted_at) return c.redirect(`${base(shop.id)}?status=trash`);
   const error = c.req.query("flash") === "image_error" ? ("image.invalid_type" as const) : null;
   return editPage(c, shop, { pageId, values: row, error });
 });
 
 pagesAdmin.post("/:pageId", requireOwner, (c: AdminContext) => save(c, param(c, "pageId")));
 
+/** ゴミ箱へ（0080）。お客様からは見えなくなり、30 日後に Cron が消す */
+pagesAdmin.post("/:pageId/trash", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await publishing(c))) return c.notFound();
+  await owner(c).db.from("pages").update({ deleted_at: new Date().toISOString() }, { id: param(c, "pageId"), shop_id: shop.id });
+  return c.redirect(`${base(shop.id)}?flash=trashed`);
+});
+
+/** ゴミ箱から戻す（同じ URL の名前のページが今あれば戻せない） */
+pagesAdmin.post("/:pageId/restore", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await publishing(c))) return c.notFound();
+  try {
+    await owner(c).db.from("pages").update({ deleted_at: null }, { id: param(c, "pageId"), shop_id: shop.id });
+  } catch (e) {
+    if (e instanceof DbError && e.code === "23505") return c.redirect(`${base(shop.id)}?status=trash&flash=restore_conflict`);
+    throw e;
+  }
+  return c.redirect(`${base(shop.id)}?flash=restored`);
+});
+
+/** リビジョンの版に戻す（今の版はリビジョンに残る。トリガー） */
+pagesAdmin.post("/:pageId/revisions/:revisionId/restore", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await publishing(c))) return c.notFound();
+  const pageId = param(c, "pageId");
+  const db = owner(c).db;
+  let rev: { title: string; body: string } | null = null;
+  try {
+    rev = await db.from<{ title: string; body: string }>("page_revisions").selectOne("title,body", { eq: { id: param(c, "revisionId"), page_id: pageId, shop_id: shop.id } });
+  } catch (e) {
+    if (e instanceof DbError && e.code === "22P02") return c.notFound();
+    throw e;
+  }
+  if (!rev) return c.notFound();
+  await db.from("pages").update({ title: rev.title, body: rev.body }, { id: pageId, shop_id: shop.id });
+  return c.redirect(`${base(shop.id)}/${pageId}?flash=reverted`);
+});
+
+/** 消す（0080 からはゴミ箱の中のものだけ。ゴミ箱の無い DB では今までどおりすぐ消す） */
 pagesAdmin.post("/:pageId/delete", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
+  const pageId = param(c, "pageId");
+  const pub = await publishing(c);
   try {
-    await owner(c).db.from("pages").delete({ id: param(c, "pageId"), shop_id: shop.id });
+    if (pub) {
+      const row = await owner(c).db.from<PageRow>("pages").selectOne("id,deleted_at", { eq: { id: pageId, shop_id: shop.id } });
+      if (!row?.deleted_at) return c.redirect(base(shop.id));
+    }
+    await owner(c).db.from("pages").delete({ id: pageId, shop_id: shop.id });
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`${base(shop.id)}?flash=generic`);
     throw e;
   }
-  return c.redirect(`${base(shop.id)}?flash=deleted`);
+  return c.redirect(pub ? `${base(shop.id)}?status=trash&flash=deleted` : `${base(shop.id)}?flash=deleted`);
 });
