@@ -1960,6 +1960,7 @@ export const en: Record<MessageKey, string> = {
   "layout.media_empty": "Choose an image",
   "layout.acc_title": "Type a question or heading",
   "layout.colors_note": "The actual colors and sizes come from your shop’s theme.",
+  "pages.media_more": "Load more",
   "pattern.hero.title": "Hero (image, heading and button)",
   "pattern.hero.desc": "A large image with a headline and a button to your products",
   "pattern.hero.heading": "Seasonal picks",

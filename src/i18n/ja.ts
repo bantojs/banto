@@ -1967,6 +1967,7 @@ export const ja = {
   "layout.media_empty": "画像を選んでください",
   "layout.acc_title": "質問や見出しを入力",
   "layout.colors_note": "色と大きさの実際の値はお店のテーマが決めます。",
+  "pages.media_more": "さらに読み込む",
   "pattern.hero.title": "ヒーロー（画像と見出しとボタン）",
   "pattern.hero.desc": "ページの最初に大きな画像と一言、商品へのボタン",
   "pattern.hero.heading": "季節のおすすめ",

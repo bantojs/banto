@@ -10,6 +10,7 @@ import type { CategoryRow, ShopRow } from "../db/types";
 import { getLocale, t, tf, type MessageKey } from "../i18n";
 import { formFields, owner, type AdminContext } from "../routes/admin/context";
 import { requireOwner } from "../routes/admin/auth";
+import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
 import { mediaBaseUrl } from "../routes/common";
 import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../media/images";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_PUBLISHING_MIGRATION, RESERVED_HANDLES, type PageNav } from "../pages";
@@ -166,6 +167,9 @@ export function visualEditorScript(base: string): string {
   const cfg = { render: `${base}/render`, t: { cell: t("pages.tool_table_cell") } };
   return `${CLIENT_PRELUDE}(${pageEditorClient.toString()})().mount(${JSON.stringify(cfg).replace(/</g, "\\u003c")});`;
 }
+
+/** メディアライブラリの 1 回に読む枚数 */
+export const MEDIA_PAGE = 40;
 
 /** 編集の画面の見た目（WordPress の編集に寄せた 2 列。管理画面の共通の CSS の上に足す） */
 export const EDITOR_CSS = `
@@ -660,6 +664,11 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
           </p>
           <p id="media-status" class="muted" aria-live="polite"></p>
           <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(7rem,1fr));gap:.5rem;max-height:60vh;overflow:auto"></div>
+          <p id="media-more-row" style="text-align:center;margin:.5rem 0 0" hidden>
+            <button type="button" class="secondary small" id="media-more">
+              {t("pages.media_more")}
+            </button>
+          </p>
         </dialog>
       ) : null}
       {/* 商品を並べるブロックの設定（PAGE_BLOCKS_SCRIPT が開く。JS が無ければ書式の「::: products …」を直接書く） */}
@@ -820,13 +829,19 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   return c.redirect(`${back}?image=${encodeURIComponent(url)}`);
 });
 
-/** メディアライブラリ（0080）: 置いた画像の新しい順に 100 まで */
+/**
+ * メディアライブラリ（0080）: 置いた画像を新しい順に MEDIA_PAGE 枚ずつ。続きは next を after に渡す
+ * （キーセットのページ送り。画像が何千枚あっても 1 回に読むのは MEDIA_PAGE 枚だけ）
+ */
   app.get("/media", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop || !(await publishing(c))) return c.notFound();
-  const items = await owner(c).db.from<{ id: string; url: string; created_at: string }>("page_media").select("id,url,created_at", { eq: { shop_id: shop.id }, order: "created_at.desc", limit: 100 });
+  const after = readAfter(c.req.query("after"));
+  if (after === null) return c.json({ error: "bad_cursor" }, 400);
+  const rows = await owner(c).db.from<{ id: string; url: string; created_at: string }>("page_media").select("id,url,created_at", { eq: { shop_id: shop.id }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: MEDIA_PAGE + 1 });
+  const page = splitPage(rows, (r) => r.created_at, MEDIA_PAGE);
   c.header("Cache-Control", "private, no-store");
-  return c.json({ items });
+  return c.json({ items: page.rows, next: page.next });
 });
 
 /**
