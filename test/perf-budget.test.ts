@@ -37,6 +37,9 @@ const BUDGET = {
   pages: { cold: 3, warm: 0 },
   // 本文に「商品を並べる」が 3 つ（4 つ目は描かない）: ブロックごとに一覧の問い合わせ 1 回（並列、一覧と同じキャッシュ）
   pagesWithProducts: { cold: 6, warm: 0 },
+  // ブログ（同梱モジュール blog、0081）: ショップ行 1 + ブログ 1 + カテゴリー 1（並列）+ 記事の一覧（か記事）1。2 回目からは 0
+  blog: { cold: 4, warm: 0 },
+  article: { cold: 4, warm: 0 },
 } as const;
 
 function setup(opts: { coupons?: boolean; campaigns?: number } = {}) {
@@ -118,6 +121,19 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     sb.addPage(String(shop["id"]), { handle: "picks", title: "Picks", body: ["::: products tag=a", "::: products tag=b", "::: products tag=c", "::: products tag=d"].join("\n") });
     expect(await calls(sb, () => b.get("/my-shop/pages/picks"))).toHaveLength(BUDGET.pagesWithProducts.cold);
     expect(await calls(sb, () => b.get("/my-shop/pages/picks"))).toHaveLength(BUDGET.pagesWithProducts.warm);
+  });
+
+  it("ブログの一覧と記事は往復 4 回で、2 回目からは 0", async () => {
+    const { sb, b } = setup();
+    const shop = sb.tables.shops[0]!;
+    shop["settings"] = { modules: { blog: true } };
+    const blog = sb.addBlog(String(shop["id"]), { handle: "news" });
+    for (let i = 0; i < 20; i++) sb.addArticle(String(shop["id"]), blog.id, { handle: `a-${i}`, body: "本文" });
+    expect(await calls(sb, () => b.get("/my-shop/blogs/news"))).toHaveLength(BUDGET.blog.cold);
+    expect(await calls(sb, () => b.get("/my-shop/blogs/news"))).toHaveLength(BUDGET.blog.warm);
+    // ショップ行・ブログ・カテゴリーは一覧で覚えたので、記事は 1 回だけ
+    expect(await calls(sb, () => b.get("/my-shop/blogs/news/a-3"))).toHaveLength(BUDGET.article.cold - 3);
+    expect(await calls(sb, () => b.get("/my-shop/blogs/news/a-3"))).toHaveLength(BUDGET.article.warm);
   });
 
   it("商品のページの在庫は、その商品の SKU だけを引く（ショップ全体の在庫を読まない）", async () => {

@@ -11,6 +11,7 @@ import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/curs
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 import { PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
+import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
 
 /** テーマのプレビューの設定・描く条件（0074） */
 export const THEME_PREVIEW_MIGRATION = "0074_theme_preview";
@@ -41,6 +42,8 @@ export interface PublicShop {
   theme?: { id: string; storage_key: string; settings: Record<string, unknown> } | null;
   /** メニューに出すページ（0079、同梱モジュール pages が ON のときだけ。src/pages/index.ts の pagesNav）。当たる前は無い */
   pages_nav?: PageNavItem[];
+  /** メニューに出すブログ（0081、同梱モジュール blog が ON のときだけ。src/blog/index.ts の blogsNav）。当たる前は無い */
+  blogs_nav?: BlogNavItem[];
 }
 
 /** anon で products を読むときの列（0055 から anon は products.attributes を読めない。商品詳細は product_public_get が公開の項目だけを返す） */
@@ -342,6 +345,58 @@ export class StorefrontData {
   /** サイトマップに載せるページ（公開中のものの handle と更新日時） */
   async pageHandles(shop: PublicShop): Promise<{ handle: string; updated_at: string }[]> {
     return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc", limit: 1000 });
+  }
+
+  /** ブログ（同梱モジュール blog、0081）。公開中のショップのものだけ（RLS）。短時間キャッシュ */
+  async blogByHandle(shop: PublicShop, handle: string): Promise<BlogRow | null> {
+    const key = `blog:${shop.id}:${handle}`;
+    const hit = await this.cache.get<{ blog: BlogRow | null }>(key);
+    if (hit) return hit.blog;
+    const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id, handle }, limit: 1 });
+    const blog = rows[0] ?? null;
+    await this.cache.set(key, { blog }, STOREFRONT_CACHE_TTL);
+    return blog;
+  }
+
+  /**
+   * ブログの記事の一覧（公開中・日時を過ぎた・ゴミ箱の外は RLS）。公開した日時の新しい順、tag で絞る。
+   * 1 つ多く読んで次のページがあるかを決める。キャッシュはページごと（深さは ARTICLES_OFFSET_MAX まで）
+   */
+  async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
+    const offset = Math.max(0, Math.min(ARTICLES_OFFSET_MAX, Math.floor(opts.offset)));
+    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}`;
+    const hit = await this.cache.get<{ items: ArticleRow[]; hasNext: boolean }>(key);
+    if (hit) return hit;
+    const rows = await this.db.from<ArticleRow>("articles").select(ARTICLE_LIST_COLUMNS, {
+      eq: { shop_id: shop.id, blog_id: blogId, published: true },
+      ...(opts.tag ? { arrayContains: { tags: [opts.tag] } } : {}),
+      order: "published_at.desc,id.desc",
+      limit: opts.limit + 1,
+      offset,
+    });
+    const out = { items: rows.slice(0, opts.limit), hasNext: rows.length > opts.limit };
+    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    return out;
+  }
+
+  /** 記事 1 つ（公開中のものだけ、RLS） */
+  async articleByHandle(shop: PublicShop, blogId: string, handle: string): Promise<ArticleRow | null> {
+    const key = `article:${blogId}:${handle}`;
+    const hit = await this.cache.get<{ article: ArticleRow | null }>(key);
+    if (hit) return hit.article;
+    const rows = await this.db.from<ArticleRow>("articles").select("*", { eq: { shop_id: shop.id, blog_id: blogId, handle, published: true }, limit: 1 });
+    const article = rows[0] ?? null;
+    await this.cache.set(key, { article }, STOREFRONT_CACHE_TTL);
+    return article;
+  }
+
+  /** サイトマップに載せるブログと記事（公開中のもの。記事は新しい 5,000 まで） */
+  async blogSitemap(shop: PublicShop): Promise<{ blogs: { id: string; handle: string }[]; articles: { blog_id: string; handle: string; updated_at: string }[] }> {
+    const [blogs, articles] = await Promise.all([
+      this.db.from<{ id: string; handle: string }>("blogs").select("id,handle", { eq: { shop_id: shop.id }, order: "sort_order.asc", limit: 100 }),
+      this.db.from<{ blog_id: string; handle: string; updated_at: string }>("articles").select("blog_id,handle,updated_at", { eq: { shop_id: shop.id, published: true }, order: "published_at.desc", limit: 5000 }),
+    ]);
+    return { blogs, articles };
   }
 
   async productBySlug(shop: PublicShop, slug: string): Promise<ProductDetail | null> {

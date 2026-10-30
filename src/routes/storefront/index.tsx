@@ -5,6 +5,7 @@ import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import type { AppEnv } from "../../app";
 import { type StorefrontData, type PublicShop } from "../../storefront/data";
+import type { CategoryRow } from "../../db/types";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
 import { addCoupon, addItem, cartCookieHeader, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
@@ -18,6 +19,7 @@ import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
 import { defaultProductsHtml, fillProductBlocks, productBlocksOf } from "../../pages/blocks";
+import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSummary, atomFeed, blogHandleOk, blogPath } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
@@ -29,7 +31,7 @@ import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk } from "../../pages";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -46,6 +48,7 @@ import { PrivilegedRpcError } from "../../db/privileged";
  *   /:shop/cart             カート（署名付き Cookie）。/:shop/buy は購入リンク、/:shop/cart/load は API のカートを読み込む
  *   /:shop/legal|privacy|returns  法務ページ
  *   /:shop/pages/:handle  ショップのページ（同梱モジュール pages）
+ *   /:shop/blogs/:blog    ブログの記事の一覧・/:shop/blogs/:blog/:article 記事・/:shop/blogs/:blog/feed.atom（同梱モジュール blog）
  *   /:shop/checkout         決済手段を選ぶ → 配送先入力 → /:shop/checkout/:provider で最終確認 → 在庫予約と決済ページへ転送
  *   /:shop/shipping, /:shop/orders/lookup  送料案内、注文照会
  */
@@ -229,6 +232,17 @@ storefront.get("/sitemap-pages.xml", async (c: Ctx) => {
     if (storefrontSettings(shop.settings).mode !== "full" || !moduleEnabled(shop.settings, PAGES_MODULE)) continue;
     for (const pg of await sf.pageHandles(shop)) urls.push(`${home}/pages/${encodeURIComponent(pg.handle)}`);
   }
+  // ブログと記事（同梱モジュール blog、0081）
+  for (const { shop, home } of entries) {
+    if (storefrontSettings(shop.settings).mode !== "full" || !moduleEnabled(shop.settings, BLOG_MODULE)) continue;
+    const { blogs, articles } = await sf.blogSitemap(shop);
+    const handleOf = new Map(blogs.map((b) => [b.id, b.handle]));
+    for (const b of blogs) urls.push(`${home}/blogs/${encodeURIComponent(b.handle)}`);
+    for (const a of articles) {
+      const bh = handleOf.get(a.blog_id);
+      if (bh) urls.push(`${home}/blogs/${encodeURIComponent(bh)}/${encodeURIComponent(a.handle)}`);
+    }
+  }
   return xmlResponse(c, urlset(urls.map((u) => `  <url><loc>${xmlEsc(u)}</loc></url>`)));
 });
 
@@ -351,18 +365,13 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
 });
 
 // ---------- ショップのページ（同梱モジュール pages、0079、docs/pages.md） ----------
-storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
-  const s = await scope(c);
-  if (!s) return notFound(c);
-  // モジュールの ON/OFF はキャッシュ済みのショップ行で判定する（OFF なら DB に問い合わせない）
-  const handle = param(c, "handle");
-  if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
-  const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
-  if (!page) return notFoundPage(c, s);
-  const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
-  // 本文の中の「商品を並べる」（1 ページに 3 つまで、ブロックごとに一覧と同じ問い合わせ 1 回・キャッシュ）。取れなければそのブロックは空
+/**
+ * 本文の中の「商品を並べる」（1 ページに 3 つまで、ブロックごとに一覧と同じ問い合わせ 1 回・キャッシュ）。取れなければそのブロックは空。
+ * cards は既定のカード（既定のテーマと、snippets/page-products の無い Liquid のテーマ）。ページと記事で共通
+ */
+async function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {
   const blocks = await Promise.all(
-    productBlocksOf(page.body).map(async (block) => {
+    productBlocksOf(body).map(async (block) => {
       try {
         const r = await s.sf.productPage(s.shop, { ...(block.category ? { category: block.category } : {}), ...(block.tag ? { tag: block.tag } : {}), sort: block.sort, limit: block.limit }, categories);
         return { block, items: r?.items ?? [] };
@@ -373,6 +382,19 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
     }),
   );
   const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl, taxNote: t("store.tax_included"), yen }));
+  return { blocks, cards };
+}
+
+storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  // モジュールの ON/OFF はキャッシュ済みのショップ行で判定する（OFF なら DB に問い合わせない）
+  const handle = param(c, "handle");
+  if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
+  const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
+  if (!page) return notFoundPage(c, s);
+  const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
+  const { blocks, cards } = await bodyProducts(s, page.body, categories);
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards });
@@ -380,6 +402,79 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
   return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillProductBlocks(html, cards) }));
+});
+
+// ---------- ブログ（同梱モジュール blog、0081、docs/blog.md） ----------
+/** ブログの記事の一覧（公開した日時の新しい順、?tag= で絞る、?page= でページ送り） */
+storefront.get("/:shop/blogs/:blog", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const handle = param(c, "blog");
+  if (!moduleEnabled(s.shop.settings, BLOG_MODULE) || !blogHandleOk(handle)) return notFoundPage(c, s);
+  const tagRaw = (c.req.query("tag") ?? "").trim();
+  const tag = tagRaw && tagRaw.length <= 50 ? tagRaw : null;
+  const pageNo = Math.max(1, Math.min(Math.floor(ARTICLES_OFFSET_MAX / ARTICLES_PER_PAGE) + 1, Number.parseInt(c.req.query("page") ?? "1", 10) || 1));
+  const [blog, categories] = await Promise.all([s.sf.blogByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
+  if (!blog) return notFoundPage(c, s);
+  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag });
+  const path = blogPath(s.ctx.shopPath, blog.handle);
+  const link = (n: number) => `${path}?${new URLSearchParams({ ...(tag ? { tag } : {}), ...(n > 1 ? { page: String(n) } : {}) }).toString()}`.replace(/\?$/, "");
+  const newer = pageNo > 1 ? link(pageNo - 1) : null;
+  const older = hasNext && pageNo * ARTICLES_PER_PAGE <= ARTICLES_OFFSET_MAX ? link(pageNo + 1) : null;
+  const articles = items.map((article) => ({ article, summary: articleSummary(article) }));
+  const tags = [...new Set(items.flatMap((a) => a.tags))].slice(0, 30);
+  const feedUrl = `${path}/feed.atom`;
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = renderBlogPage(c, s, lt, { blog, articles, tag, tags, pageNo, newer, older, categories });
+    if (res) return res;
+  }
+  if (!s.theme.BlogPage) return notFoundPage(c, s);
+  return c.html(s.theme.BlogPage({ ctx: s.ctx, blog, articles, tag, tags, newer, older, feedUrl }));
+});
+
+/** Atom のフィード（新しい記事 20 本の紹介と URL） */
+storefront.get("/:shop/blogs/:blog/feed.atom", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const handle = param(c, "blog");
+  if (!moduleEnabled(s.shop.settings, BLOG_MODULE) || !blogHandleOk(handle)) return notFoundPage(c, s);
+  const blog = await s.sf.blogByHandle(s.shop, handle);
+  if (!blog) return notFoundPage(c, s);
+  const { items } = await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: FEED_ARTICLES });
+  const home = shopHome(publicBaseUrl(c), s.shop);
+  const blogUrl = `${home}/blogs/${encodeURIComponent(blog.handle)}`;
+  const body = atomFeed({
+    blogTitle: blog.title,
+    blogUrl,
+    feedUrl: `${blogUrl}/feed.atom`,
+    shopName: s.shop.name,
+    articles: items.map((a) => ({ title: a.title, url: `${blogUrl}/${encodeURIComponent(a.handle)}`, summary: articleSummary(a, 300), published: a.published_at ?? a.updated_at, updated: a.updated_at, author: a.author })),
+  });
+  return c.body(body, 200, { "Content-Type": "application/atom+xml; charset=utf-8", "Cache-Control": "public, max-age=600" });
+});
+
+/** ブログの記事 */
+storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const handle = param(c, "blog");
+  const ah = param(c, "article");
+  if (!moduleEnabled(s.shop.settings, BLOG_MODULE) || !blogHandleOk(handle) || !articleHandleOk(ah)) return notFoundPage(c, s);
+  const [blog, categories] = await Promise.all([s.sf.blogByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
+  if (!blog) return notFoundPage(c, s);
+  const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
+  if (!article) return notFoundPage(c, s);
+  const html = pageBodyHtml(article, s.ctx.mediaBaseUrl);
+  const { blocks, cards } = await bodyProducts(s, article.body, categories);
+  const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards });
+    if (res) return res;
+  }
+  if (!s.theme.ArticlePage) return notFoundPage(c, s);
+  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillProductBlocks(html, cards), feedUrl }));
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

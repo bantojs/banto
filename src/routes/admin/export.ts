@@ -6,6 +6,7 @@ import { t } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
 import { migrated } from "../../db/migration-state";
 import { PAGES_MIGRATION } from "../../pages";
+import { BLOG_MIGRATION } from "../../blog";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
@@ -46,6 +47,8 @@ const INQUIRY_TABLES: typeof TABLES = [
 
 /** ショップのページ（同梱モジュール pages、0079）。当たっているときだけ書き出す（復元は今までどおり商品・注文・会員まで） */
 const PAGE_TABLES: typeof TABLES = [{ name: "pages", order: "created_at.asc" }];
+/** ブログと記事（同梱モジュール blog、0081）。当たっているときだけ */
+const BLOG_TABLES: typeof TABLES = [{ name: "blogs", order: "created_at.asc" }, { name: "articles", order: "created_at.asc" }];
 
 /** PostgREST の 1 回あたりの上限（既定 1,000 行）を offset で回して全件読む */
 export async function readAll(db: DbClient, table: string, shopId: string, order: string, eq: Record<string, string> = {}, columns = "*"): Promise<Row[]> {
@@ -64,8 +67,11 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  const pages = (await migrated({ db, cache: c.get("adapters").cache }, PAGES_MIGRATION)) ? PAGE_TABLES : [];
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...pages]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  const deps = { db, cache: c.get("adapters").cache };
+  const [hasPages, hasBlog] = await Promise.all([migrated(deps, PAGES_MIGRATION), migrated(deps, BLOG_MIGRATION)]);
+  const pages = hasPages ? PAGE_TABLES : [];
+  const blog = hasBlog ? BLOG_TABLES : [];
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...pages, ...blog]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,

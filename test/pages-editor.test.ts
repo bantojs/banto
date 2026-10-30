@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { markdownToHtml } from "../src/pages/markdown";
-import { pageEditorClient } from "../src/modules/pages/editor-client";
+import { pageEditorClient } from "../src/content/editor-client";
 
 /**
  * ページの見たままの編集（0079、docs/pages.md）: 編集の領域（contenteditable）→ 決まった書式。

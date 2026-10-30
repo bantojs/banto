@@ -43,6 +43,8 @@ export interface SelectOptions {
   eq?: Record<string, Scalar>;
   /** 列の値がどれかに一致（PostgREST の in.(…)）。空の配列は 0 件になる */
   in?: Record<string, readonly string[]>;
+  /** 配列の列がこれらの値をすべて含む（PostgREST の cs.{…}。記事のタグで絞る） */
+  arrayContains?: Record<string, readonly string[]>;
   /** 条件の木（すべてを満たす行だけ。PostgREST の and=(…)）。管理画面の検索とキーセットのページ送りに使う */
   where?: readonly Filter[];
   /** 例: "created_at.desc" */
@@ -107,6 +109,9 @@ function buildQuery(columns: string | undefined, opts: SelectOptions | undefined
   // 値は二重引用符で囲む（カンマや括弧を含んでも 1 つの値として扱われるように）
   for (const [k, vs] of Object.entries(opts?.in ?? {})) {
     q.set(k, `in.(${vs.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")})`);
+  }
+  for (const [k, vs] of Object.entries(opts?.arrayContains ?? {})) {
+    q.set(k, `cs.{${vs.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`);
   }
   if (opts?.where && opts.where.length > 0) q.set("and", `(${opts.where.map(filterExpr).join(",")})`);
   if (opts?.order) q.set("order", opts.order);

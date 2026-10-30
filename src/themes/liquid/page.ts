@@ -15,7 +15,7 @@ import { layoutGroup, readSectionSchemas, renderSection, renderSectionGroup, set
 import { globalSettingsOf } from "./editor";
 
 /** page.<suffix> はショップのページ（同梱モジュール pages、0079）が選んだテンプレート（templates/page.<suffix>.json） */
-export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm" | "checkout_done" | "page" | `page.${string}` | "customers/account";
+export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm" | "checkout_done" | "page" | `page.${string}` | "blog" | `blog.${string}` | "article" | `article.${string}` | "customers/account";
 
 interface Prepared {
   schemas: Map<string, SectionSchema>;

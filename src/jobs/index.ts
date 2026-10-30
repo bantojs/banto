@@ -22,6 +22,7 @@ import { checkLegalLinks } from "../storefront/legal-links";
 import { createDbClient } from "../db/client";
 import { migrated } from "../db/migration-state";
 import { PAGES_PUBLISHING_MIGRATION, PAGES_TRASH_DAYS } from "../pages";
+import { BLOG_MIGRATION } from "../blog";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -54,11 +55,13 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     await db.pruneAuditLog(auditKeepDays(cfg.get("AUDIT_LOG_KEEP_DAYS")));
   });
 
-  // ショップのページのゴミ箱（0080）: 30 日を過ぎたものを消す。0080 を当てるまでは何もしない
+  // ショップのページ（0080）とブログの記事（0081）のゴミ箱: 30 日を過ぎたものを消す。当てるまでは何もしない
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   adapters.scheduler.register("pages_trash", async () => {
-    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, PAGES_PUBLISHING_MIGRATION))) return;
-    await db.purgePagesTrash(PAGES_TRASH_DAYS);
+    if (!anonKey) return;
+    const deps = { db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache };
+    if (await migrated(deps, PAGES_PUBLISHING_MIGRATION)) await db.purgePagesTrash(PAGES_TRASH_DAYS);
+    if (await migrated(deps, BLOG_MIGRATION)) await db.purgeArticlesTrash(PAGES_TRASH_DAYS);
   });
 
   // hooks の配信。1 回に取り出す数は DB が Workers のプランで決める（claim_hook_deliveries、0056）

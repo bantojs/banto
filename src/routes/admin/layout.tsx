@@ -249,7 +249,7 @@ export interface ShopTabs {
   access?: { role: string; perms: readonly string[] };
   active?: ShopTab;
 }
-export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages" | "design" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
+export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages" | "blog" | "design" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
 
 const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module?: string }[] = [
   { id: "products", path: "/products", label: "product.list", perm: "catalog" },
@@ -259,6 +259,8 @@ const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module
   { id: "inquiries", path: "/modules/inquiries", label: "mod.inquiries.name", perm: "support", module: "inquiries" },
   // ショップのページ（同梱モジュール pages、0079。content の項目だけの人も入れるように）
   { id: "pages", path: "/modules/pages", label: "mod.pages.name", perm: "content", module: "pages" },
+  // ブログ（同梱モジュール blog、0081。ページと同じ content の項目）
+  { id: "blog", path: "/modules/blog", label: "mod.blog.name", perm: "content", module: "blog" },
   // デザイン（Liquid のテーマ、0071）
   { id: "design", path: "/design", label: "design.title", perm: "design" },
   { id: "modules", path: "/modules", label: "modules.title", perm: "settings" },

@@ -37,7 +37,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -47,6 +47,8 @@ const UNIQUE: Partial<Record<TableName, string[][]>> = {
   skus: [["shop_id", "code"]],
   coupon_campaigns: [["shop_id", "code"]],
   pages: [["shop_id", "handle"]],
+  blogs: [["shop_id", "handle"]],
+  articles: [["blog_id", "handle"]],
 };
 
 /** 0024: 表ごとの項目（ポリシーの banto_shop_perm 相当） */
@@ -77,6 +79,9 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   pages: "content",
   page_revisions: "content",
   page_media: "content",
+  blogs: "content",
+  articles: "content",
+  article_revisions: "content",
 };
 
 const moduleOn = (shop: Row, id: string) => ((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.[id] === true;
@@ -148,6 +153,9 @@ export class FakeSupabase {
     pages: [],
     page_revisions: [],
     page_media: [],
+    blogs: [],
+    articles: [],
+    article_revisions: [],
   };
   readonly calls: string[] = [];
   /** テスト用: 次の N リクエストを 503 で落とす（障害の再現） */
@@ -360,6 +368,26 @@ export class FakeSupabase {
   addPage(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
     const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "about", title: "About", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: true, created_at: this.now(), updated_at: this.now(), ...fields };
     this.tables.pages.push(row);
+    return row;
+  }
+
+  /** 0081: 記事の形（タグを整え、公開したら published_at を入れる） */
+  private articleShape(a: Row): void {
+    a["tags"] = [...new Set(((a["tags"] as string[] | undefined) ?? []).map((x) => String(x).trim()).filter(Boolean))].sort();
+    if (a["published"] === true && !a["published_at"]) a["published_at"] = this.now();
+  }
+
+  /** ブログ（0081） */
+  addBlog(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "news", title: "お知らせ", description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, created_at: this.now(), updated_at: this.now(), ...fields };
+    this.tables.blogs.push(row);
+    return row;
+  }
+
+  /** 記事（0081）。既定は公開中 */
+  addArticle(shopId: string, blogId: string, fields: Partial<Row> = {}): Row & { id: string } {
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, blog_id: blogId, handle: "hello", title: "Hello", body: "", excerpt: null, tags: [] as string[], image_url: null, author: null, seo_title: null, seo_description: null, template_suffix: null, published: true, published_at: this.now(), deleted_at: null, created_at: this.now(), updated_at: this.now(), ...fields };
+    this.tables.articles.push(row);
     return row;
   }
 
@@ -587,6 +615,8 @@ export class FakeSupabase {
     if (table === "products") return row["published"] === true && this.shopPublished(row["shop_id"]);
     if (table === "categories") return this.shopPublished(row["shop_id"]);
     if (table === "pages") return this.pageLive(row) && this.shopPublished(row["shop_id"]);
+    if (table === "blogs") return this.shopPublished(row["shop_id"]);
+    if (table === "articles") return this.pageLive(row) && Boolean(row["published_at"]) && this.shopPublished(row["shop_id"]);
     if (table === "stores") return this.storeVisible(uid, row);
     if (table === "tryon_requests") return this.storePerm(uid, row["store_id"], "tryon");
     if (table === "tryon_items") return this.tables.tryon_requests.some((r) => r["id"] === row["request_id"] && this.storePerm(uid, r["store_id"], "tryon"));
@@ -603,7 +633,7 @@ export class FakeSupabase {
     if (!uid) return false;
     if (table === "audit_log") return false; // 書くのは DB のトリガーだけ（0051）
     if (table === "theme_versions") return false; // 書くのは theme_* の関数だけ（0071）
-    if (table === "page_revisions") return false; // 書くのはトリガーだけ（0080）
+    if (table === "page_revisions" || table === "article_revisions") return false; // 書くのはトリガーだけ（0080・0081）
     if (table === "shops") {
       if (op === "insert") return this.orgMembers.some((m) => m.user_id === uid && m.role !== "member");
       return this.ownedShopIds(uid).has(row["id"] as string) || (op === "update" && this.hasPerm(table, row, uid));
@@ -633,8 +663,8 @@ export class FakeSupabase {
       // PostgreSQL と同じく null 同士は重複にしない（shops.domain 等）
       if (cols.some((c) => row[c] === null || row[c] === undefined)) continue;
       // 0080: ページの URL の名前の一意はゴミ箱の外だけ
-      if (table === "pages" && row["deleted_at"]) continue;
-      if (this.tables[table].some((r) => !(table === "pages" && r["deleted_at"]) && r["id"] !== excludeId && cols.every((c) => r[c] === row[c]))) return true;
+      if ((table === "pages" || table === "articles") && row["deleted_at"]) continue;
+      if (this.tables[table].some((r) => !((table === "pages" || table === "articles") && r["deleted_at"]) && r["id"] !== excludeId && cols.every((c) => r[c] === row[c]))) return true;
     }
     return false;
   }
@@ -655,17 +685,19 @@ export class FakeSupabase {
     }
     const filters: [string, string][] = [];
     const inFilters: [string, Set<string>][] = [];
+    const containsFilters: [string, string[]][] = [];
     for (const [k, v] of u.searchParams) {
       if (["select", "order", "limit", "offset"].includes(k)) continue;
       if (v.startsWith("eq.")) filters.push([k, v.slice(3)]);
       else if (v === "is.null") filters.push([k, "\u0000null"]);
       else if (v.startsWith("in.(") && v.endsWith(")")) inFilters.push([k, new Set(parseInList(v.slice(4, -1)))]);
+      else if (v.startsWith("cs.{") && v.endsWith("}")) containsFilters.push([k, parseInList(v.slice(4, -1))]);
     }
     // 条件の木（DbClient の where → and=(…)）
     const tree = u.searchParams.get("and");
     const logic = tree ? parseLogic(`and${tree}`) : null;
     const matches = (row: Row) =>
-      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && (!logic || evalLogic(logic, row));
+      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && containsFilters.every(([k, vs]) => vs.every((x) => ((row[k] as unknown[] | undefined) ?? []).includes(x))) && (!logic || evalLogic(logic, row));
 
     if (path.startsWith("rpc/")) {
       const fn = path.slice(4);
@@ -769,6 +801,13 @@ export class FakeSupabase {
           if (!pageHandleOk(String(row["handle"]))) return json({ code: "23514", message: 'new row for relation "pages" violates check constraint "pages_handle_check"' }, 400);
           if (this.tables.pages.filter((x) => x["shop_id"] === row["shop_id"]).length >= 100) return json({ code: "P0001", message: "pages_full" }, 400);
         }
+        if (table === "articles") {
+          // 0081 の既定値と形（本物は test/db/blog.test.ts）
+          Object.assign(row, { body: "", excerpt: null, tags: [], image_url: null, author: null, seo_title: null, seo_description: null, template_suffix: null, published: false, published_at: null, deleted_at: null, ...r });
+          if (!this.tables.blogs.some((b) => b["id"] === row["blog_id"] && b["shop_id"] === row["shop_id"])) return json({ code: "23514", message: "article_blog_mismatch" }, 400);
+          this.articleShape(row);
+        }
+        if (table === "blogs") Object.assign(row, { description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...r });
         if (table === "product_images" && !Object.keys((row["options"] as Row | undefined) ?? {}).length) {
           row["options"] = this.imageHints.find((h) => h.product_id === row["product_id"] && String(row["storage_key"]).includes(h.tag))?.options ?? {};
         }
@@ -798,6 +837,10 @@ export class FakeSupabase {
           if (bad) return json({ code: "P0001", message: bad }, 400);
         }
         // 0080: タイトルか本文が変わったら前の版を残す（20 まで）
+        if (table === "articles") this.articleShape(next);
+        if (table === "articles" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
+          this.tables.article_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], article_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
+        }
         if (table === "pages" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
           this.tables.page_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], page_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
           const mine = this.tables.page_revisions.filter((x) => x["page_id"] === r["id"]);
@@ -866,6 +909,7 @@ export class FakeSupabase {
       remove("product_images", (r) => r["product_id"] === id);
     }
     if (table === "skus") remove("inventory", (r) => r["sku_id"] === id);
+    if (table === "blogs") remove("articles", (r) => r["blog_id"] === id);
   }
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
@@ -1744,6 +1788,13 @@ export class FakeSupabase {
             .filter((p) => p["shop_id"] === s["id"] && this.pageLive(p) && p["nav"] !== "none" && p["nav"] !== undefined)
             .sort((a, b) => Number(a["sort_order"] ?? 0) - Number(b["sort_order"] ?? 0))
             .map((p) => ({ handle: p["handle"], title: p["title"], nav: p["nav"] }))
+        : [],
+      // 0081: メニューに出すブログ（モジュール blog が ON のショップの、nav のあるもの）
+      blogs_nav: moduleOn(s, "blog")
+        ? this.tables.blogs
+            .filter((b) => b["shop_id"] === s["id"] && b["nav"] !== "none" && b["nav"] !== undefined)
+            .sort((a, b) => Number(a["sort_order"] ?? 0) - Number(b["sort_order"] ?? 0))
+            .map((b) => ({ handle: b["handle"], title: b["title"], nav: b["nav"] }))
         : [],
     };
   }
@@ -3293,7 +3344,7 @@ export class FakeSupabase {
     }
     // 監査ログの保持（0051。Cron の mask_shipped_orders と同じ回）。監査ログの行はここでは持たない
     if (fn === "prune_audit_log") return json(0);
-    if (fn === "pages_purge_trash") return json(0);
+    if (fn === "pages_purge_trash" || fn === "articles_purge_trash") return json(0);
     if (fn === "mask_shipped_orders") {
       const days = Number(args["p_days"] ?? 180);
       let n = 0;
