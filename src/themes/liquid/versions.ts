@@ -2,7 +2,9 @@
  * テーマの版の置き場の読み書き（docs/themes.md）。管理画面の「デザイン」（src/routes/admin/design.tsx）と
  * AI 用 API（theme:write、src/api/service.ts）の両方がここを通る。だれがしてよいか・版の状態は DB の関数（0071・0072）が決める。
  *
- * 置き場: themes/<ショップ>/<版>/bundle.json（テンプレート・設定・翻訳を束ねたもの）と themes/<ショップ>/<版>/assets/<名前>
+ * 置き場: themes/<ショップ>/<版>/bundle.json（テンプレート・設定・翻訳を束ねたもの）と themes/<ショップ>/<版>/assets/<名前>。
+ * 置くのは公開しない置き場（privateStorage）。テーマの資産はショップのドメインの /_theme/ から Worker が配るので、
+ * 公開の置き場（R2 のカスタムドメイン）から直接読ませる必要が無い。読み書きは themeStorage() を通す
  */
 import type { StorageAdapter } from "../../adapters/types";
 import { assetType, checkThemeBundle, stripJsonComments, THEME_BUNDLE_LIMITS, type ThemeBundle } from "./bundle";
@@ -10,6 +12,24 @@ import { extendShopify } from "./shopify";
 
 /** AI 用 API でテーマを扱う（theme:write / theme:publish、0072） */
 export const THEME_API_MIGRATION = "0072_theme_api";
+
+/**
+ * テーマの置き場。公開しない置き場（privateStorage）があればそこに置き、読むときはそこから、無ければ公開の置き場から
+ * （公開しない置き場ができる前に取り込んだ版を読み続けるため）。消すときは両方から。
+ * 公開しない置き場が無い構成では、今までどおり公開の置き場だけを使う
+ */
+export function themeStorage(a: { storage: StorageAdapter; privateStorage?: StorageAdapter | null | undefined }): StorageAdapter {
+  const priv = a.privateStorage;
+  if (!priv) return a.storage;
+  return {
+    put: (key, body, type) => priv.put(key, body, type),
+    get: async (key) => (await priv.get(key)) ?? (await a.storage.get(key)),
+    delete: async (key) => {
+      await priv.delete(key);
+      await a.storage.delete(key).catch(() => {});
+    },
+  };
+}
 
 export const themeBundleKey = (shopId: string, versionId: string): string => `themes/${shopId}/${versionId}/bundle.json`;
 export const themeAssetKey = (shopId: string, versionId: string, name: string): string => `themes/${shopId}/${versionId}/assets/${name}`;

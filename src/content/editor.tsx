@@ -24,7 +24,7 @@ import { tagCounts } from "../products/tags";
 import { responsiveImage } from "../media/images";
 import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
 import { PATTERNS_FILE, STYLES_FILE, bantoPatterns, parseBlockStyles, parsePatterns, type BlockStyles, type EditorPattern, type PatternBody } from "./theme-blocks";
-import { readThemeBundle } from "../themes/liquid/versions";
+import { readThemeBundle, themeStorage } from "../themes/liquid/versions";
 import type { CacheAdapter, StorageAdapter } from "../adapters/types";
 import { THEMES_MIGRATION } from "../themes/liquid";
 import { BLOG_MIGRATION } from "../blog";
@@ -116,7 +116,7 @@ async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: 
   try {
     if (!(await migrated({ db, cache: adapters.cache }, THEMES_MIGRATION))) return { patterns: [], styles: {} };
     const row = await db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } });
-    return await themeEditorFiles({ storage: adapters.storage, cache: adapters.cache }, shop.id, row?.theme_version_id ?? null, getLocale());
+    return await themeEditorFiles({ storage: themeStorage(adapters), cache: adapters.cache }, shop.id, row?.theme_version_id ?? null, getLocale());
   } catch (e) {
     console.error("[banto] editor theme:", e instanceof Error ? e.message : e);
     return { patterns: [], styles: {} };

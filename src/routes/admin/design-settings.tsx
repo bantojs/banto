@@ -4,7 +4,7 @@ import type { ShopRow } from "../../db/types";
 import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { DbError } from "../../db/client";
 import { editorModel, EDITABLE_SETTING_TYPES, fieldName, layoutFieldName, layoutOnly, layoutsFromForm, SECTION_LAYOUT_KEY, settingsFromForm, shownValue, type EditorLayout, type EditorModel, type EditorSetting } from "../../themes/liquid/editor";
-import { readThemeBundle, THEME_VERSION_ID } from "../../themes/liquid/versions";
+import { readThemeBundle, themeStorage, THEME_VERSION_ID } from "../../themes/liquid/versions";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
@@ -156,7 +156,7 @@ async function load(c: AdminContext): Promise<LoadedVersion | null> {
   const db = owner(c).db;
   const row = await db.from<{ id: string; name: string; complete: boolean; settings: Record<string, unknown> }>("theme_versions").selectOne("id,name,complete,settings", { eq: { id: versionId, shop_id: shop.id } });
   if (!row) return null;
-  const bundle = await readThemeBundle(c.get("adapters").storage, shop.id, versionId);
+  const bundle = await readThemeBundle(themeStorage(c.get("adapters")), shop.id, versionId);
   if (!bundle) return null;
   const cur = await db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } });
   const saved = row.settings ?? {};

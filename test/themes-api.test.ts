@@ -20,7 +20,7 @@ const bundle = {
   },
 };
 
-function setup(opts: { plan?: "free" | "paid"; domain?: boolean } = {}) {
+function setup(opts: { plan?: "free" | "paid"; domain?: boolean; priv?: boolean } = {}) {
   forgetThemes();
   const sb = new FakeSupabase();
   sb.sitePlan = opts.plan ?? "paid";
@@ -29,7 +29,8 @@ function setup(opts: { plan?: "free" | "paid"; domain?: boolean } = {}) {
   const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
   if (opts.domain !== false) row["domain"] = "shop.example.jp";
   const storage = new MemoryStorage(`${BASE}/media`);
-  const app = appWith(sb, {}, storage);
+  const priv = opts.priv ? new MemoryStorage(`${BASE}/private`) : undefined;
+  const app = appWith(sb, {}, storage, undefined, priv);
   const issue = async (scopes: string[]) => {
     const raw = generateApiToken();
     sb.tables.api_tokens.push({ id: `tok-${sb.tables.api_tokens.length + 1}`, shop_id: shop.id, owner_id: owner.id, name: "ci", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes, expires_at: null, revoked_at: null, last_used_at: null, created_at: "" });
@@ -49,7 +50,7 @@ function setup(opts: { plan?: "free" | "paid"; domain?: boolean } = {}) {
     const res = await app.request(`${BASE}/api/v1${path}`, { method, headers, body: payload });
     return { status: res.status, json: (await res.json()) as Record<string, unknown> & { error?: { code: string; message: string } } };
   };
-  return { sb, shop, row, storage, app, issue, call };
+  return { sb, shop, row, storage, priv, app, issue, call };
 }
 
 describe("REST /api/v1/themes", () => {
@@ -99,6 +100,38 @@ describe("REST /api/v1/themes", () => {
     expect((await call(tok, "POST", "/themes/publish", { version_id: null })).json).toEqual({ published_id: null });
     expect((await call(tok, "DELETE", `/themes/${id}`)).json).toEqual({ ok: true });
     expect([...storage.objects.keys()].filter((k) => k.startsWith(`themes/${shop.id}/`))).toEqual([]);
+  });
+
+  it("公開しない置き場（PRIVATE）があればテーマはそこに置き、公開の置き場（R2 のカスタムドメイン）には置かない。前からある版は公開の置き場から読み続ける", async () => {
+    const { sb, shop, storage, priv, app, issue, call } = setup({ priv: true });
+    const tok = await issue(["theme:write", "theme:publish"]);
+    const id = (await call(tok, "POST", "/themes", { name: "v", bundle })).json["id"] as string;
+    expect((await call(tok, "PUT", `/themes/${id}/assets/theme.css`, undefined, { data: "body{color:red}" })).status).toBe(200);
+    expect((await call(tok, "POST", `/themes/${id}/complete`)).json).toMatchObject({ complete: true });
+    const ours = (m: MemoryStorage) => [...m.objects.keys()].filter((k) => k.startsWith(`themes/${shop.id}/`)).sort();
+    expect(ours(priv!)).toEqual([`themes/${shop.id}/${id}/assets/theme.css`, `themes/${shop.id}/${id}/bundle.json`, `themes/${shop.id}/${id}/sealed`]);
+    expect(ours(storage)).toEqual([]);
+    expect((await call(tok, "POST", "/themes/publish", { version_id: id })).json).toEqual({ published_id: id });
+    expect(await (await app.request(`${DOMAIN}/`)).text()).toContain('class="api-theme"');
+    const css = await app.request(`${DOMAIN}/_theme/${id}/assets/theme.css`);
+    expect(css.status).toBe(200);
+    expect(await css.text()).toBe("body{color:red}");
+
+    // 公開しない置き場ができる前の版（公開の置き場にある）も描け、消すと公開の置き場からも消える
+    const old = "11111111-2222-4333-8444-555555555555";
+    const oldBundle = { ...bundle, files: { ...bundle.files, "templates/index.liquid": '<h1 class="old-theme">old</h1>' } };
+    await storage.put(`themes/${shop.id}/${old}/bundle.json`, new TextEncoder().encode(JSON.stringify(oldBundle)).buffer as ArrayBuffer, "application/json");
+    await storage.put(`themes/${shop.id}/${old}/assets/theme.css`, new TextEncoder().encode("body{}").buffer as ArrayBuffer, "text/css");
+    sb.tables.theme_versions.push({ id: old, shop_id: shop.id, name: "old", storage_key: `themes/${shop.id}/${old}/bundle.json`, size_bytes: 10, file_count: 4, manifest: {}, settings: {}, complete: true, created_at: "2026-10-01T00:00:00Z" });
+    expect((await call(tok, "POST", "/themes/publish", { version_id: old })).json).toEqual({ published_id: old });
+    forgetThemes();
+    expect(await (await appWith(sb, {}, storage, undefined, priv).request(`${DOMAIN}/`)).text()).toContain('class="old-theme"');
+    expect((await app.request(`${DOMAIN}/_theme/${old}/assets/theme.css`)).status).toBe(200);
+    expect((await call(tok, "POST", "/themes/publish", { version_id: null })).json).toEqual({ published_id: null });
+    expect((await call(tok, "DELETE", `/themes/${old}`)).json).toEqual({ ok: true });
+    expect((await call(tok, "DELETE", `/themes/${id}`)).json).toEqual({ ok: true });
+    expect(ours(storage)).toEqual([]);
+    expect(ours(priv!)).toEqual([]);
   });
 
   it("theme:write だけでは公開できない。theme:publish だけでは取り込めない。ほかのスコープでは何もできない", async () => {

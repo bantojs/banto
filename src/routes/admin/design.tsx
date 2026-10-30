@@ -8,7 +8,7 @@ import { migrated } from "../../db/migration-state";
 import { THEMES_MIGRATION } from "../../themes/liquid";
 import { THEME_BUNDLE_LIMITS } from "../../themes/liquid/bundle";
 import { themePreviewUrl } from "../../themes/liquid/preview";
-import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, THEME_UPLOAD_MAX_BYTES, THEME_VERSION_ID as UUID } from "../../themes/liquid/versions";
+import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, themeStorage, THEME_UPLOAD_MAX_BYTES, THEME_VERSION_ID as UUID } from "../../themes/liquid/versions";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { getLocale } from "../../i18n";
@@ -289,7 +289,7 @@ design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) =>
   const v = prep.version;
   const id = v.id;
   const name = (typeof body.name === "string" ? body.name.trim() : "").slice(0, 100) || t("design.untitled");
-  const storage = c.get("adapters").storage;
+  const storage = themeStorage(c.get("adapters"));
   await storeThemeBundle(storage, shop.id, v);
   try {
     await owner(c).db.rpc("theme_version_create", {
@@ -322,7 +322,7 @@ design.post("/:shopId/design/versions/:versionId/assets/:name", requireOwner, as
   if (row.complete) return c.json({ ok: false }, 409);
   const length = Number(c.req.header("content-length") ?? "0");
   if (length > THEME_BUNDLE_LIMITS.assetBytes) return c.json({ ok: false }, 413);
-  const r = await putThemeAsset(c.get("adapters").storage, shop.id, versionId, name, await c.req.arrayBuffer());
+  const r = await putThemeAsset(themeStorage(c.get("adapters")), shop.id, versionId, name, await c.req.arrayBuffer());
   if (!r.ok) return c.json({ ok: false }, r.reason === "type" ? 400 : r.reason === "too_large" ? 413 : 404);
   return c.json({ ok: true });
 });
@@ -332,7 +332,7 @@ design.post("/:shopId/design/versions/:versionId/complete", requireOwner, async 
   const shop = await scope(c);
   const versionId = param(c, "versionId");
   if (!shop || !UUID.test(versionId)) return c.json({ ok: false }, 404);
-  const missing = await missingThemeAsset(c.get("adapters").storage, shop.id, versionId);
+  const missing = await missingThemeAsset(themeStorage(c.get("adapters")), shop.id, versionId);
   if (missing === undefined) return c.json({ ok: false }, 404);
   if (missing !== null) return c.json({ ok: false, missing }, 409);
   await owner(c).db.rpc("theme_version_complete", { p_shop_id: shop.id, p_version_id: versionId });
@@ -375,7 +375,7 @@ design.post("/:shopId/design/versions/:versionId/delete", requireOwner, async (c
   const shop = await scope(c);
   const versionId = param(c, "versionId");
   if (!shop || !UUID.test(versionId)) return c.text(t("shop.not_found"), 404);
-  const storage = c.get("adapters").storage;
+  const storage = themeStorage(c.get("adapters"));
   const bundle = await readThemeBundle(storage, shop.id, versionId);
   let prefix: string;
   try {

@@ -20,7 +20,7 @@ import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checko
 import { shopHome } from "../storefront/urls";
 import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
-import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, THEME_API_MIGRATION, unsealThemeAssets } from "../themes/liquid/versions";
+import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, THEME_API_MIGRATION, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
 import { getTimeZone } from "../i18n/time";
@@ -194,6 +194,11 @@ export class ApiService {
     deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined; theme?: ThemeApiDeps | null },
   ): Promise<ApiService> {
     return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null, deps.theme ?? null);
+  }
+
+  /** テーマの置き場（公開しない置き場があればそこ。versions.ts の themeStorage） */
+  private get themeFiles(): StorageAdapter {
+    return themeStorage({ storage: this.storage, privateStorage: this.privateStorage });
   }
 
   private migratedTo(version: string): Promise<boolean> {
@@ -575,12 +580,12 @@ export class ApiService {
     if (!prep.ok) throw new ApiError("invalid", `invalid_theme: ${prep.errors.slice(0, 20).join("; ")}`, 400);
     const v = prep.version;
     const shopId = String(list["shop_id"]);
-    await storeThemeBundle(this.storage, shopId, v);
+    await storeThemeBundle(this.themeFiles, shopId, v);
     try {
       const row = await this.call<Record<string, unknown>>("api_theme_create", { p_id: v.id, p_name: name.trim().slice(0, 100) || "theme", p_size_bytes: v.sizeBytes, p_file_count: v.fileCount, p_manifest: v.manifest });
       return { ...publicTheme(row), assets: v.bundle.assets };
     } catch (e) {
-      await removeThemeBundle(this.storage, shopId, v.id);
+      await removeThemeBundle(this.themeFiles, shopId, v.id);
       throw e;
     }
   }
@@ -594,7 +599,7 @@ export class ApiService {
   async themeAssetPut(versionId: string, name: string, body: ArrayBuffer): Promise<{ ok: true }> {
     const row = await this.themeRow(versionId);
     if (row.complete) throw new ApiError("conflict", "theme_complete: assets of a completed version cannot be replaced; upload a new version", 409);
-    const r = await putThemeAsset(this.storage, row.shop_id, versionId, name, body);
+    const r = await putThemeAsset(this.themeFiles, row.shop_id, versionId, name, body);
     if (!r.ok) {
       if (r.reason === "sealed") throw new ApiError("conflict", "theme_complete: assets of a completed version cannot be replaced; upload a new version", 409);
       if (r.reason === "type") throw new ApiError("invalid", "invalid_asset: this file type cannot be a theme asset (HTML and SVG are not allowed)", 400);
@@ -609,14 +614,14 @@ export class ApiService {
     const row = await this.themeRow(versionId);
     if (row.complete) return this.call<Record<string, unknown>>("api_theme_complete", { p_version_id: versionId });
     // 先に資産の受け付けを締めてから揃っているかを見る（確かめた後に資産を差し替えさせない）
-    await sealThemeAssets(this.storage, row.shop_id, versionId);
+    await sealThemeAssets(this.themeFiles, row.shop_id, versionId);
     try {
-      const missing = await missingThemeAsset(this.storage, row.shop_id, versionId);
+      const missing = await missingThemeAsset(this.themeFiles, row.shop_id, versionId);
       if (missing === undefined) throw new ApiError("not_found", "not found", 404);
       if (missing !== null) throw new ApiError("conflict", `asset_missing: ${missing}`, 409);
       return await this.call<Record<string, unknown>>("api_theme_complete", { p_version_id: versionId });
     } catch (e) {
-      await unsealThemeAssets(this.storage, row.shop_id, versionId);
+      await unsealThemeAssets(this.themeFiles, row.shop_id, versionId);
       throw e;
     }
   }
@@ -632,9 +637,9 @@ export class ApiService {
   /** 公開していない版を消す（置き場のファイルも） */
   async themeDelete(versionId: string): Promise<{ ok: true }> {
     const row = await this.themeRow(versionId);
-    const bundle = await readThemeBundle(this.storage, row.shop_id, versionId);
+    const bundle = await readThemeBundle(this.themeFiles, row.shop_id, versionId);
     const prefix = await this.call<string>("api_theme_delete", { p_version_id: versionId });
-    await deleteThemeFiles(this.storage, prefix, bundle);
+    await deleteThemeFiles(this.themeFiles, prefix, bundle);
     return { ok: true };
   }
 
