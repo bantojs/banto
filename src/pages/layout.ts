@@ -35,6 +35,8 @@ export const COVER_HEIGHT = ["s", "m", "l", "full"] as const;
 export const OVERLAY = ["none", "light", "dark"] as const;
 export const ALIGN = ["left", "center", "right"] as const;
 export const SIDE = ["left", "right"] as const;
+/** カバーの画像のどこを残して見せるか（狭い画面で切り取られるとき。object-position） */
+export const FOCUS = ["top-left", "top", "top-right", "left", "center", "right", "bottom-left", "bottom", "bottom-right"] as const;
 export const GALLERY_COLS = ["2", "3", "4"] as const;
 /** アコーディオンの開け閉めの印（CSS で描く） */
 export const ACCORDION_ICONS = ["chevron", "plus", "arrow", "caret", "none"] as const;
@@ -45,14 +47,14 @@ export const LAYOUT_ATTRS: Record<LayoutContainer | "spacer", Record<string, rea
   group: { bg: BG, pad: PAD },
   columns: { ratio: RATIOS, valign: VALIGN },
   column: {},
-  cover: { height: COVER_HEIGHT, overlay: OVERLAY, align: ALIGN, valign: VALIGN },
+  cover: { height: COVER_HEIGHT, overlay: OVERLAY, align: ALIGN, valign: VALIGN, focus: FOCUS },
   media: { side: SIDE, valign: VALIGN },
   gallery: { cols: GALLERY_COLS },
   accordion: { icon: ACCORDION_ICONS, open: ["0", "1"] },
   spacer: { size: SPACER },
 };
 /** 既定を変えたいもの（先頭以外を既定にする） */
-const DEFAULTS: Partial<Record<string, string>> = { "group.pad": "m", "cover.height": "m", "cover.overlay": "dark", "cover.align": "center", "cover.valign": "center", "columns.valign": "top", "media.valign": "center", "gallery.cols": "3", "spacer.size": "m", "accordion.icon": "chevron" };
+const DEFAULTS: Partial<Record<string, string>> = { "group.pad": "m", "cover.height": "m", "cover.overlay": "dark", "cover.align": "center", "cover.valign": "center", "cover.focus": "center", "columns.valign": "top", "media.valign": "center", "gallery.cols": "3", "spacer.size": "m", "accordion.icon": "chevron" };
 
 export interface LayoutOpen {
   kind: LayoutContainer;
@@ -163,6 +165,9 @@ export const LAYOUT_CSS = [
   ".banto-cover--overlay-dark::after{background:rgba(0,0,0,.45)}.banto-cover--overlay-light::after{background:rgba(255,255,255,.55)}.banto-cover--overlay-light{color:#111}",
   ".banto-cover__inner{position:relative;z-index:1;width:100%;max-width:48rem;margin:auto;padding:var(--banto-pad-m,2rem);box-sizing:border-box}",
   ".banto-cover.banto-align-left .banto-cover__inner{margin-left:0;text-align:left}.banto-cover.banto-align-center .banto-cover__inner{text-align:center}.banto-cover.banto-align-right .banto-cover__inner{margin-right:0;text-align:right}",
+  ".banto-cover--focus-top-left .banto-cover__img{object-position:left top}.banto-cover--focus-top .banto-cover__img{object-position:center top}.banto-cover--focus-top-right .banto-cover__img{object-position:right top}",
+  ".banto-cover--focus-left .banto-cover__img{object-position:left center}.banto-cover--focus-right .banto-cover__img{object-position:right center}",
+  ".banto-cover--focus-bottom-left .banto-cover__img{object-position:left bottom}.banto-cover--focus-bottom .banto-cover__img{object-position:center bottom}.banto-cover--focus-bottom-right .banto-cover__img{object-position:right bottom}",
   ".banto-cover.banto-valign-top .banto-cover__inner{margin-top:0}.banto-cover.banto-valign-bottom .banto-cover__inner{margin-bottom:0}",
   ".banto-cover a{color:inherit}",
   ".banto-media{display:grid;grid-template-columns:1fr 1fr;gap:var(--banto-gap,1.5rem)}",

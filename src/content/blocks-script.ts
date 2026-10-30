@@ -141,7 +141,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function cls(d){
     var k=d.getAttribute("data-banto-block"), g=function(x){ return d.getAttribute("data-"+x)||""; }, keep=d.classList.contains("is-sel");
     var c={group:"banto-group banto-bg-"+g("bg")+" banto-pad-"+g("pad"),columns:"banto-columns banto-cols-"+g("ratio")+" banto-valign-"+g("valign"),column:"banto-column",
-      cover:"banto-cover banto-cover--h-"+g("height")+" banto-cover--overlay-"+g("overlay")+" banto-align-"+g("align")+" banto-valign-"+g("valign"),media:"banto-media banto-media--"+g("side")+" banto-valign-"+g("valign"),
+      cover:"banto-cover banto-cover--h-"+g("height")+" banto-cover--overlay-"+g("overlay")+" banto-align-"+g("align")+" banto-valign-"+g("valign")+" banto-cover--focus-"+g("focus"),media:"banto-media banto-media--"+g("side")+" banto-valign-"+g("valign"),
       gallery:"banto-gallery banto-gallery--"+g("cols"),accordion:"banto-accordion banto-accordion--"+g("icon"),spacer:"banto-spacer banto-spacer--"+g("size")}[k];
     if(c) d.className=c+(keep?" is-sel":"");
   }
@@ -721,6 +721,13 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       var cur=b.getAttribute("data-"+key)||sc[key].def, id="ls-"+key;
       if(key==="open"){ var lab=el("label",""); var cb=document.createElement("input"); cb.type="checkbox"; cb.checked=cur==="1"; cb.addEventListener("change",function(){ setAttr(b,"open",cb.checked?"1":"0"); }); lab.appendChild(cb); lab.appendChild(document.createTextNode(" "+LT("field.open"))); setCard.appendChild(lab); return; }
       var l=el("label",""); l.textContent=LT("field."+key); setCard.appendChild(l);
+      // 画像の見せる位置: 3×3 のマス目（押した所を残して見せる）
+      if(key==="focus"){
+        var fg=el("div","pe-focus"); fg.setAttribute("role","radiogroup"); fg.setAttribute("aria-label",LT("field.focus"));
+        var url0=b.getAttribute("data-image"); if(url0&&/^(https?:\/\/|\/)[^"'()\\\s]+$/.test(url0)){ fg.style.backgroundImage="url(\""+url0+"\")"; var pic=new Image(); pic.onload=function(){ var ar=pic.naturalWidth/pic.naturalHeight; if(ar>0) fg.style.aspectRatio=String(Math.max(.75,Math.min(2.4,ar))); }; pic.src=url0; }
+        sc[key].values.forEach(function(v){ var lb=el("label",""); lb.title=LT("opt.focus."+v); var r=document.createElement("input"); r.type="radio"; r.name="ls-focus"; r.value=v; r.checked=v===cur; r.setAttribute("aria-label",LT("opt.focus."+v)); r.addEventListener("change",function(){ setAttr(b,"focus",v); }); lb.appendChild(r); fg.appendChild(lb); });
+        setCard.appendChild(fg); var fh=el("p","muted"); fh.style.fontSize=".8rem"; fh.textContent=LT("focus_help"); setCard.appendChild(fh); return;
+      }
       if(key==="icon"){
         var grid=el("div","pe-icons"); grid.setAttribute("role","radiogroup"); grid.setAttribute("aria-label",LT("field.icon"));
         sc[key].values.forEach(function(v){ var lb=el("label","banto-accordion--"+v); var r=document.createElement("input"); r.type="radio"; r.name="ls-icon"; r.value=v; r.checked=v===cur; r.addEventListener("change",function(){ setAttr(b,"icon",v); }); lb.appendChild(r); lb.appendChild(el("span","banto-accordion__icon")); var tx=el("span",""); tx.textContent=LT("opt.icon."+v); lb.appendChild(tx); grid.appendChild(lb); });

@@ -121,7 +121,7 @@ describe("見たままの編集 → 決まった書式", () => {
       "::::",
       ":::::",
       "",
-      ":::: cover image=https://media.example.jp/pages/s/a.webp height=l overlay=light align=left valign=bottom",
+      ":::: cover image=https://media.example.jp/pages/s/a.webp height=l overlay=light align=left valign=bottom focus=top-left",
       "## ようこそ",
       "",
       "::: accordion icon=plus open=1 title=\"送料は？\"",
@@ -143,7 +143,7 @@ describe("見たままの編集 → 決まった書式", () => {
     const store = html(md);
     const editor = markdownToHtml(md, { mediaBase: "https://media.example.jp", editor: true, productsLabel: () => "商品" });
     expect(editor).not.toContain("<details");
-    expect(store).toContain("banto-align-left banto-valign-bottom");
+    expect(store).toContain("banto-align-left banto-valign-bottom banto-cover--focus-top-left");
     expect(editor).toContain('data-slot="cols"');
     const again = back(editor);
     expect(html(again)).toBe(store);
