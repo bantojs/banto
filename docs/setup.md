@@ -43,7 +43,7 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 
 ## 2. Cloudflare に置く
 
-やり方は 2 つあります。どちらでも結果は同じです（Worker「banto」と R2 バケット「banto-media」「banto-private」ができます。banto-private はお問い合わせの添付を置く公開しないバケットで、カスタムドメインを付けません）。
+やり方は 2 つあります。どちらでも結果は同じです（Worker「banto」と R2 バケット「banto-media」「banto-private」ができます。banto-private はお問い合わせの添付と Liquid のテーマを置く公開しないバケットで、カスタムドメインを付けません）。
 
 ### A. Deploy ボタン（公開リポジトリから。いちばん簡単）
 

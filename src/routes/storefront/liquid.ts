@@ -35,6 +35,7 @@ import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../commo
 import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
+import { themeStorage } from "../../themes/liquid/versions";
 
 export interface LiquidScope {
   shop: PublicShop;
@@ -89,7 +90,7 @@ export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines
     const theme = preview
       ? { id: preview.version, storage_key: `themes/${s.shop.id}/${preview.version}/bundle.json`, settings: (await previewSettings(c, s, preview.version)) ?? {} }
       : s.shop.theme!;
-    const lt = await loadTheme(adapters.storage, theme, { extend: extendShopify, timezone: adapters.config.get("BANTO_TIMEZONE") ?? "Asia/Tokyo" });
+    const lt = await loadTheme(themeStorage(adapters), theme, { extend: extendShopify, timezone: adapters.config.get("BANTO_TIMEZONE") ?? "Asia/Tokyo" });
     if (!lt) return null;
     // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
     const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
@@ -659,7 +660,7 @@ export function registerThemeAssets(app: Hono<AppEnv>, scopeOf: (c: Ctx) => Prom
     const name = c.req.param("name");
     const type = assetType(name);
     if (!s || !type || !onShopDomain(c, s.shop) || !/^[0-9a-f-]{36}$/.test(version)) return c.notFound();
-    const obj = await c.get("adapters").storage.get(`themes/${s.shop.id}/${version}/assets/${name}`);
+    const obj = await themeStorage(c.get("adapters")).get(`themes/${s.shop.id}/${version}/assets/${name}`);
     if (!obj) return c.notFound();
     const live = s.shop.theme?.id === version;
     return new Response(obj.body, {

@@ -31,8 +31,8 @@ Workers の `[vars]` と Secret に相当するものを、すべて環境変数
 | `MAIL_TRANSPORT` と送り手の値（`RESEND_API_KEY` / `SMTP_HOST` ほか / `SENDGRID_API_KEY` / `SES_*`） | メールを送るなら | docs/email.md §1。Node でも SMTP は `node:net` / `node:tls` で直接つなぐ（25 番は多くのホスティングが塞いでいるので 587 か 465） |
 | `MEDIA_DIR` | - | 画像をローカルに保存するディレクトリ（既定 `./data/media`）。S3 を使わない場合 |
 | `S3_ENDPOINT` `S3_REGION` `S3_BUCKET` `S3_ACCESS_KEY_ID` `S3_SECRET_ACCESS_KEY` `S3_PATH_STYLE` | - | S3 互換ストレージ（後述）。`S3_ENDPOINT` があれば `MEDIA_DIR` より優先 |
-| `PRIVATE_MEDIA_DIR` | - | お問い合わせの添付を置く、公開しないディレクトリ（既定 `./data/private`。`/media` からは読めない）。S3 を使わない場合 |
-| `S3_PRIVATE_BUCKET` | - | S3 互換ストレージで、お問い合わせの添付を置く公開しないバケット（`S3_BUCKET` とは別に作る）。無ければ添付の欄を出さない |
+| `PRIVATE_MEDIA_DIR` | - | お問い合わせの添付と Liquid のテーマを置く、公開しないディレクトリ（既定 `./data/private`。`/media` からは読めない）。S3 を使わない場合 |
+| `S3_PRIVATE_BUCKET` | - | S3 互換ストレージで、お問い合わせの添付と Liquid のテーマを置く公開しないバケット（`S3_BUCKET` とは別に作る）。無ければ添付の欄を出さない |
 | `CRON_INTERVAL_SECONDS` | - | 定期処理（予約解放・hooks 配信・個人情報マスク）の間隔。既定 300。`0` で無効 |
 | `MASK_ORDERS_AFTER_DAYS` | - | 既定 180 |
 | `AUDIT_LOG_KEEP_DAYS` | - | 監査ログの保持日数。既定 365 |
