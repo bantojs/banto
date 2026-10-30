@@ -6,7 +6,8 @@
 
 /** mail_per_day（0053）: 会員のログインのコードと組織への招待の 1 日（UTC）の数。送り手を共有する構成で評判を守るふた */
 /** theme_versions（0073）: Liquid のテーマの版の数（この Banto 全体。0 なら Liquid のテーマを取り込めない） */
-export const PLAN_LIMIT_KINDS = ["shops", "products", "customers", "members", "mail_per_day", "theme_versions"] as const;
+/** pages（0079）: ショップのページ（同梱モジュール pages）の数（この Banto 全体） */
+export const PLAN_LIMIT_KINDS = ["shops", "products", "customers", "members", "mail_per_day", "theme_versions", "pages"] as const;
 export type PlanLimitKind = (typeof PLAN_LIMIT_KINDS)[number];
 
 export interface PlanLimitHit {
@@ -19,7 +20,7 @@ export interface PlanUsage {
   usage: Record<PlanLimitKind, number>;
 }
 
-const RE = /plan_limit_exceeded:(shops|products|customers|members|mail_per_day|theme_versions):(\d+)/;
+const RE = /plan_limit_exceeded:(shops|products|customers|members|mail_per_day|theme_versions|pages):(\d+)/;
 
 /** DB のエラーメッセージから「どの上限に当たったか」。当たっていなければ null */
 export function planLimitHit(message: string | undefined | null): PlanLimitHit | null {

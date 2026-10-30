@@ -26,6 +26,7 @@ import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
+import { pagePath, pagesNav, type PageRow } from "../../pages";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
@@ -136,6 +137,23 @@ interface PageParts {
   checkout?: "address" | "confirm" | "account";
   /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
   headExtra?: string;
+  /** 今のショップのページの handle（メニューの active。同梱モジュール pages） */
+  currentPage?: string;
+}
+
+/**
+ * メニューにショップのページ（同梱モジュール pages、0079）を足す: header はメインメニューの後ろ、footer はフッターの前。
+ * 一覧はショップ行（shop_public_get の pages_nav）にあるので、DB に問い合わせない
+ */
+function withPageLinks(lists: { "main-menu": ReturnType<typeof menuFromCategories>; footer: ReturnType<typeof footerMenu> }, shop: PublicShop, shopPath: string, current?: string) {
+  const link = (p: { handle: string; title: string }) => ({ title: p.title, url: pagePath(shopPath, p.handle), handle: p.handle, active: p.handle === current, child_active: false, links: [], levels: 0, type: "page_link" });
+  const header = pagesNav(shop, "header").map(link);
+  const footer = pagesNav(shop, "footer").map(link);
+  if (header.length === 0 && footer.length === 0) return lists;
+  return {
+    "main-menu": { ...lists["main-menu"], links: [...lists["main-menu"].links, ...header] },
+    footer: { ...lists.footer, links: [...footer, ...lists.footer.links] },
+  };
 }
 
 /**
@@ -172,13 +190,18 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
     shop: shopObject(s.shop, home, intro),
     settings: themeSettings(lt, choice.settings),
     routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null }),
-    request: { host: new URL(origin).host, path, page_type: page.template, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
+    request: { host: new URL(origin).host, path, page_type: page.template.split(".")[0]!, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
     cart: cartObject(u, choice.cartLines, null, choice.cartImages),
     customer: s.ctx.member ? { email: s.ctx.member.email } : null,
-    linklists: {
-      "main-menu": menuFromCategories(u, tree, page.currentCategory),
-      footer: footerMenu(shopPath, { legal: t("shop.legal_notice"), privacy: t("shop.privacy_policy"), returns: t("shop.return_policy"), shipping: t("shipping.title") }),
-    },
+    linklists: withPageLinks(
+      {
+        "main-menu": menuFromCategories(u, tree, page.currentCategory),
+        footer: footerMenu(shopPath, { legal: t("shop.legal_notice"), privacy: t("shop.privacy_policy"), returns: t("shop.return_policy"), shipping: t("shipping.title") }),
+      },
+      s.shop,
+      shopPath,
+      page.currentPage,
+    ),
     collections: Object.fromEntries([["all", collectionObject(u, { handle: "all", title: s.shop.name, products: [], count: null, allTags: [] })], ...page.categories.map((cat) => [cat.slug, collectionObject(u, { handle: cat.slug, title: cat.name, products: [], count: null, allTags: [] })])]),
     page_title: page.title,
     page_description: page.description ?? intro ?? "",
@@ -459,6 +482,23 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
     ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
+}
+
+/** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
+export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[] }): Response | null {
+  const pg = p.page;
+  const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
+  const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
+  const page = { id: pg.id, handle: pg.handle, title: pg.title, content: new SafeHtml(p.html), url: pagePath(s.ctx.shopPath, pg.handle), template_suffix: pg.template_suffix, published_at: pg.created_at, updated_at: pg.updated_at };
+  return render(c, s, choice, {
+    template,
+    values: { page },
+    title: pg.seo_title || pg.title,
+    ...(pg.seo_description ? { description: pg.seo_description } : {}),
+    path: `/pages/${encodeURIComponent(pg.handle)}`,
+    categories: p.categories,
+    currentPage: pg.handle,
+  });
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

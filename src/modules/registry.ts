@@ -11,6 +11,8 @@ export interface ModuleDef {
   description: MessageKey;
   /** ON のとき管理画面のショップ設定に出すリンク（/admin/shops/:id/modules/<adminPath>） */
   adminPath?: string;
+  /** 要るマイグレーション（土台より新しいもの）。当たるまでは一覧に出さず、ON にできない（CLAUDE.md §11「コードと DB の版のずれ」） */
+  migration?: string;
 }
 
 export const MODULES: readonly ModuleDef[] = [
@@ -35,6 +37,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "ga4", name: "mod.ga4.name", description: "mod.ga4.description", adminPath: "ga4" },
   // お問い合わせ（チケット。メールはリンクだけで、やり取りは Banto の画面。0061_mod_inquiries、docs/inquiries.md）
   { id: "inquiries", name: "mod.inquiries.name", description: "mod.inquiries.description", adminPath: "inquiries" },
+  // ショップのページ（「私たちについて」など。/pages/<handle>。本文は決まった書式、0079_mod_pages、docs/pages.md）
+  { id: "pages", name: "mod.pages.name", description: "mod.pages.description", adminPath: "pages", migration: "0079_mod_pages" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

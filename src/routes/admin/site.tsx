@@ -20,7 +20,7 @@ site.get("/site", requireOwner, requireOrgAdmin, async (c: AdminContext) => {
   const plan = row?.settings["workers_plan"] === "paid" ? "paid" : "free";
   // プランの上限（0052）。読み取り専用（書けるのは service_role か直接の SQL だけ）
   const usage = await db.rpc<PlanUsage | null>("banto_plan_usage", {});
-  const KIND_LABEL = { shops: "plan.kind.shops", products: "plan.kind.products", customers: "plan.kind.customers", members: "plan.kind.members", mail_per_day: "plan.kind.mail_per_day", theme_versions: "plan.kind.theme_versions" } as const;
+  const KIND_LABEL = { shops: "plan.kind.shops", products: "plan.kind.products", customers: "plan.kind.customers", members: "plan.kind.members", mail_per_day: "plan.kind.mail_per_day", theme_versions: "plan.kind.theme_versions", pages: "plan.kind.pages" } as const;
   return c.html(
     <AdminLayout title={t("site.title")} nav crumbs={[{ label: t("site.title") }]}>
       <PageHead title={t("site.title")} />

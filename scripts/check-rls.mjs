@@ -66,6 +66,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
   // 0071: テーマの版（中で design の項目を確かめる）
   "theme_preview_audit", "theme_publish", "theme_version_complete", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
+  "banto_page_handle_ok", // 0079: pages.handle の CHECK（値の形を見るだけ）
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
 ]);
 
@@ -95,6 +96,7 @@ const REQUIRED_TRIGGERS = [
   ["shops", "shops_plan_limit"], ["products", "products_plan_limit"], ["customers", "customers_plan_limit"], ["org_members", "org_members_plan_limit"],
   ["shops", "shops_theme_guard"], // 0071: 公開中のテーマは theme_publish だけが変える
   ["theme_versions", "theme_versions_plan_limit"], // 0073: テーマの版の数のプランの上限
+  ["pages", "pages_plan_limit"], ["pages", "pages_shop_limit"], // 0079: ページの数のプランの上限と 1 ショップの上限
   // 0075: SKU・商品の画像・在庫を変えたときの product.updated（連携サイトのキャッシュの入れ替え）
   ["skus", "skus_product_updated"], ["product_images", "product_images_product_updated"], ["inventory", "inventory_product_updated"],
 ];

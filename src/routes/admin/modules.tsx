@@ -7,7 +7,8 @@ import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
-import { MODULES, moduleEnabled } from "../../modules/registry";
+import { MODULES, moduleEnabled, type ModuleDef } from "../../modules/registry";
+import { migrated } from "../../db/migration-state";
 import { wooImport } from "../../modules/woo-import/admin";
 import { couponsAdmin } from "../../modules/coupons/admin";
 import { couponImport } from "../../modules/coupons/import";
@@ -19,6 +20,7 @@ import { deliveryAdmin } from "../../modules/delivery-time/admin";
 import { labelsAdmin } from "../../modules/shipping-labels/admin";
 import { tryonAdmin } from "../../modules/store-tryon/admin";
 import { inquiriesAdmin } from "../../modules/inquiries/admin";
+import { pagesAdmin } from "../../modules/pages/admin";
 
 /**
  * 同梱モジュールの ON/OFF（shops.settings.modules）。/admin/shops/:shopId/modules
@@ -26,16 +28,24 @@ import { inquiriesAdmin } from "../../modules/inquiries/admin";
  */
 export const modules = new Hono<AppEnv>();
 
+/** マイグレーションが当たっているモジュールだけ（当たる前は一覧に出さず、ON にもできない。CLAUDE.md §11） */
+async function availableModules(c: AdminContext): Promise<ModuleDef[]> {
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const ok = await Promise.all(MODULES.map((m) => (m.migration ? migrated(deps, m.migration) : true)));
+  return MODULES.filter((_, i) => ok[i]);
+}
+
 modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const saved = c.req.query("flash") === "saved";
+  const available = await availableModules(c);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("modules.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("modules.title")} sub={t("modules.intro")} />
       {saved ? <p class="notice">{t("modules.saved")}</p> : null}
       <div class="grid">
-        {MODULES.map((m) => {
+        {available.map((m) => {
           const on = moduleEnabled(shop.settings, m.id);
           return (
             <section class="card" data-module={m.id}>
@@ -73,7 +83,7 @@ modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
 modules.post("/:shopId/modules/:moduleId/enabled", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "settings");
-  const mod = MODULES.find((m) => m.id === param(c, "moduleId"));
+  const mod = (await availableModules(c)).find((m) => m.id === param(c, "moduleId"));
   if (!shop || !mod) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   const current = (shop.settings ?? {})["modules"];
@@ -100,3 +110,4 @@ modules.route("/:shopId/modules/shipping-labels", labelsAdmin);
 modules.route("/:shopId/modules/store-tryon", tryonAdmin);
 modules.route("/:shopId/modules/ga4", ga4Admin);
 modules.route("/:shopId/modules/inquiries", inquiriesAdmin);
+modules.route("/:shopId/modules/pages", pagesAdmin);

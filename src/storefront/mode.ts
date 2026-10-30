@@ -46,7 +46,8 @@ export type PageKind = "catalog" | "shopping" | "system";
 /** /:shop より後ろのパス（"" / "/p/tee" / "/cart" …）の種類 */
 export function pageKind(rest: string): PageKind {
   const r = rest.replace(/\/+$/, "");
-  if (r === "" || r.startsWith("/p/")) return "catalog";
+  // ショップのページ（同梱モジュール pages、0079）も外のサイトが持つ側（checkout / off では外のサイトへ）
+  if (r === "" || r.startsWith("/p/") || r.startsWith("/pages/")) return "catalog";
   if (/^\/(legal|privacy|returns|shipping)$/.test(r)) return "system";
   if (/^\/orders\/(lookup|receipt)$/.test(r)) return "system";
   if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";

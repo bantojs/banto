@@ -126,6 +126,7 @@ npm run deploy
 
 - **0073_plan_theme_limit（プランの上限にテーマの版の数）**: `plan_limits` に `theme_versions` を置けるようになります（この Banto 全体で置けるテーマの版の数。0 なら Liquid のテーマを取り込めません）。Banto をホスティングして貸す人向けで、セルフホストでは置かなくてかまいません。
 - **0074_theme_preview（テーマのプレビューと描く条件）**: テーマのプレビューに、版に保存した設定の値が効くようになります。`plan_limits.theme_versions` が 0 のときは、公開中の版も描かなくなります。当てるまでは、プレビューはテーマのファイルの値で描き、描く条件は Workers のプランだけです。
+- **0079_mod_pages（ショップのページ）**: 同梱モジュール「ページ」（「私たちについて」など、`/pages/<名前>`。docs/pages.md）と、組織のメンバーの項目「ページ」（`content`）が増えます。`plan_limits` に `pages` を置けるようになります。当てるまでは、モジュールの一覧に「ページ」が出ず、項目「ページ」も選べません。お客様の画面は、モジュールを ON にするまで何も変わりません。
 - **0078_api_image_order（画像の並び順を API で決める）**: AI 用 API に `PUT /api/v1/products/{id}/images/order` と MCP の `product_images_reorder` が増えます（その商品の画像の id をすべて、並べたい順に渡す）。並べ替えると `product.updated` が届きます（0075）。当てるまでは 409 `migration_required` です。管理画面・お客様の画面は何も変わりません。
 - **0077_api_image_replace（画像のファイルを差し替える）**: AI 用 API に `PUT /api/v1/images/{id}/file` が増えます（並び順・SKU への結び付けはそのままで、本画像とサムネイルだけを入れ替える。画像を WebP にする外部プラグインが使います）。当てるまでは 409 `migration_required` です。管理画面・お客様の画面は何も変わりません。
 - **0076_sales_timezone（売上集計の区切りを運営者の時間帯に）**: AI 用 API の売上集計（`GET /stats/sales`・MCP の `sales_summary`）の日別・月別の区切りが、デプロイの時間帯（`BANTO_TIMEZONE`、既定 Asia/Tokyo）になります。応答の `timezone` にその名前が入ります。`BANTO_TIMEZONE` を設定していない（日本時間の）デプロイは、結果が変わりません。当てるまでは今までどおり Asia/Tokyo で区切ります。

@@ -4,6 +4,7 @@
  * 本物との差異が疑わしい箇所は test/db/ の実 PostgreSQL テストで裏取りする。
  */
 
+import { pageHandleOk } from "../src/pages";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { normalizeTags } from "../src/products/tags";
 import { productFields } from "../src/products/fields";
@@ -36,7 +37,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -45,6 +46,7 @@ const UNIQUE: Partial<Record<TableName, string[][]>> = {
   products: [["shop_id", "slug"]],
   skus: [["shop_id", "code"]],
   coupon_campaigns: [["shop_id", "code"]],
+  pages: [["shop_id", "handle"]],
 };
 
 /** 0024: 表ごとの項目（ポリシーの banto_shop_perm 相当） */
@@ -72,7 +74,10 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   inquiries: "support",
   inquiry_messages: "support",
   theme_versions: "design",
+  pages: "content",
 };
+
+const moduleOn = (shop: Row, id: string) => ((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.[id] === true;
 
 /** POST の本文は 1 行のオブジェクトか行の配列。列の有無を見るために先頭の行を返す */
 function firstRow(body: unknown): Record<string, unknown> {
@@ -138,6 +143,7 @@ export class FakeSupabase {
     inquiry_messages: [],
     audit_log: [],
     theme_versions: [],
+    pages: [],
   };
   readonly calls: string[] = [];
   /** テスト用: 次の N リクエストを 503 で落とす（障害の再現） */
@@ -345,6 +351,13 @@ export class FakeSupabase {
     }
     return json(r);
       }
+
+  /** ショップのページ（0079）。既定は公開中・メニューに出さない */
+  addPage(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "about", title: "About", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: true, created_at: this.now(), updated_at: this.now(), ...fields };
+    this.tables.pages.push(row);
+    return row;
+  }
 
   addCategory(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
     const row = { id: `category-${++this.seq}`, shop_id: shopId, parent_id: null as string | null, slug: "cat", name: "Cat", sort_order: 0, created_at: this.now(), ...fields };
@@ -564,6 +577,7 @@ export class FakeSupabase {
     if (table === "shops") return row["published"] === true;
     if (table === "products") return row["published"] === true && this.shopPublished(row["shop_id"]);
     if (table === "categories") return this.shopPublished(row["shop_id"]);
+    if (table === "pages") return row["published"] === true && this.shopPublished(row["shop_id"]);
     if (table === "stores") return this.storeVisible(uid, row);
     if (table === "tryon_requests") return this.storePerm(uid, row["store_id"], "tryon");
     if (table === "tryon_items") return this.tables.tryon_requests.some((r) => r["id"] === row["request_id"] && this.storePerm(uid, r["store_id"], "tryon"));
@@ -737,6 +751,12 @@ export class FakeSupabase {
           if (bad) return json({ code: "P0001", message: bad }, 400);
         }
         if (table === "skus") this.tables.inventory.push({ sku_id: row["id"], shop_id: row["shop_id"], available: 0, updated_at: this.now() });
+        if (table === "pages") {
+          // 0079 の既定値と CHECK（本物は test/db/pages.test.ts）
+          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...r });
+          if (!pageHandleOk(String(row["handle"]))) return json({ code: "23514", message: 'new row for relation "pages" violates check constraint "pages_handle_check"' }, 400);
+          if (this.tables.pages.filter((x) => x["shop_id"] === row["shop_id"]).length >= 100) return json({ code: "P0001", message: "pages_full" }, 400);
+        }
         if (table === "product_images" && !Object.keys((row["options"] as Row | undefined) ?? {}).length) {
           row["options"] = this.imageHints.find((h) => h.product_id === row["product_id"] && String(row["storage_key"]).includes(h.tag))?.options ?? {};
         }
@@ -832,7 +852,7 @@ export class FakeSupabase {
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
   private orgRpc(fn: string, args: Record<string, unknown>, uid: string | null): Response | null {
-    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design"];
+    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design", "content"];
     const role = (org: unknown) => this.orgMembers.find((m) => m.org_id === org && m.user_id === uid)?.role ?? null;
     const isAdmin = (org: unknown) => ["owner", "admin"].includes(role(org) ?? "");
     const err = (message: string) => json({ code: "P0001", message }, 400);
@@ -1700,6 +1720,13 @@ export class FakeSupabase {
       legal_links: this.legalLinksLive(s),
       // 0071: 公開中のテーマの版（独自ドメインのあるショップだけ）。テストは shops の行に theme_public を置く
       theme: s["domain"] && s["theme_public"] ? s["theme_public"] : null,
+      // 0079: メニューに出すページ（モジュール pages が ON のショップの、公開中で nav のあるもの）
+      pages_nav: moduleOn(s, "pages")
+        ? this.tables.pages
+            .filter((p) => p["shop_id"] === s["id"] && p["published"] === true && p["nav"] !== "none" && p["nav"] !== undefined)
+            .sort((a, b) => Number(a["sort_order"] ?? 0) - Number(b["sort_order"] ?? 0))
+            .map((p) => ({ handle: p["handle"], title: p["title"], nav: p["nav"] }))
+        : [],
     };
   }
 
