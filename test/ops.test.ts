@@ -55,7 +55,7 @@ describe("運用: /health とバックアップ書き出し", () => {
     expect(body.tables["skus"]).toHaveLength(1);
     expect(body.tables["inventory"]).toHaveLength(1);
     expect(body.tables["products"]!.some((r) => r["slug"] === "theirs")).toBe(false);
-    expect(Object.keys(body.tables).sort()).toEqual(["categories", "coupon_campaigns", "coupon_grants", "coupon_slots", "customers", "hook_endpoints", "inquiries", "inquiry_messages", "inventory", "order_items", "orders", "product_images", "products", "skus"]);
+    expect(Object.keys(body.tables).sort()).toEqual(["categories", "coupon_campaigns", "coupon_grants", "coupon_slots", "customers", "hook_endpoints", "inquiries", "inquiry_messages", "inventory", "order_items", "orders", "pages", "product_images", "products", "skus"]);
 
     // 他人のショップ（公開中でも）は 404。未ログインはログインへ
     expect((await b.get(`/admin/shops/${otherShop.id}/export.json`)).status).toBe(404);

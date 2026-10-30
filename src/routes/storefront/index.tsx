@@ -26,8 +26,9 @@ import { bindScope, customerPrefill, customerSession, members, membersEnabled, r
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
+import { PAGES_MODULE, pageBodyHtml, pageHandleOk } from "../../pages";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -43,6 +44,7 @@ import { PrivilegedRpcError } from "../../db/privileged";
  *   /:shop/p/:product       商品詳細
  *   /:shop/cart             カート（署名付き Cookie）。/:shop/buy は購入リンク、/:shop/cart/load は API のカートを読み込む
  *   /:shop/legal|privacy|returns  法務ページ
+ *   /:shop/pages/:handle  ショップのページ（同梱モジュール pages）
  *   /:shop/checkout         決済手段を選ぶ → 配送先入力 → /:shop/checkout/:provider で最終確認 → 在庫予約と決済ページへ転送
  *   /:shop/shipping, /:shop/orders/lookup  送料案内、注文照会
  */
@@ -219,7 +221,14 @@ storefront.get("/sitemap.xml", async (c: Ctx) => {
 storefront.get("/sitemap-pages.xml", async (c: Ctx) => {
   const sf = data(c);
   if (!sf) return c.notFound();
-  return xmlResponse(c, urlset(pageUrls(await sitemapShops(c, sf)).map((u) => `  <url><loc>${xmlEsc(u)}</loc></url>`)));
+  const entries = await sitemapShops(c, sf);
+  const urls = pageUrls(entries);
+  // ショップのページ（同梱モジュール pages、0079）。お店の画面を使うショップで、モジュールが ON のものだけ問い合わせる
+  for (const { shop, home } of entries) {
+    if (storefrontSettings(shop.settings).mode !== "full" || !moduleEnabled(shop.settings, PAGES_MODULE)) continue;
+    for (const pg of await sf.pageHandles(shop)) urls.push(`${home}/pages/${encodeURIComponent(pg.handle)}`);
+  }
+  return xmlResponse(c, urlset(urls.map((u) => `  <url><loc>${xmlEsc(u)}</loc></url>`)));
 });
 
 storefront.get("/:shop/:file{sitemap-products-[0-9]{1,4}\\.xml}", async (c: Ctx) => {
@@ -338,6 +347,25 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
   const body = await readFeed(c.get("adapters").storage, shop.id);
   if (!body) return c.text(t("feed.not_ready"), 404);
   return new Response(body, { headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=600", "X-Content-Type-Options": "nosniff" } });
+});
+
+// ---------- ショップのページ（同梱モジュール pages、0079、docs/pages.md） ----------
+storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  // モジュールの ON/OFF はキャッシュ済みのショップ行で判定する（OFF なら DB に問い合わせない）
+  const handle = param(c, "handle");
+  if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
+  const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
+  if (!page) return notFoundPage(c, s);
+  const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = renderContentPage(c, s, lt, { page, html, categories });
+    if (res) return res;
+  }
+  if (!s.theme.ContentPage) return notFoundPage(c, s);
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html }));
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

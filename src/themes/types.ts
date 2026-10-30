@@ -6,6 +6,7 @@ import type { ProductDetail, ProductSummary, PublicShop, SkuWithStock } from "..
 import type { ProductRow } from "../db/types";
 import type { Confirmation } from "../commerce/checkout";
 import type { CategoryNode } from "../products/categories";
+import type { PageRow } from "../pages";
 
 /**
  * テーマ = SSR テンプレートの集合。src/themes/<name>/ に置き、storefront ルートが呼ぶ。
@@ -263,6 +264,11 @@ export interface Theme {
    */
   OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean; inquiry?: { token: string } | null; member?: { receiptUrl: string | null; inquiryUrl: string | null } }): Rendered;
   LegalPage(props: { ctx: ThemeContext; title: string; body: string }): Rendered;
+  /**
+   * ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。html は本文を src/pages/markdown.ts で HTML にしたもの
+   * （決まった形のタグだけで、そのまま出してよい）。無いテーマではページを出さない
+   */
+  ContentPage?(props: { ctx: ThemeContext; page: PageRow; html: string }): Rendered;
   /**
    * 決済ページから戻ってきた直後。注文確定は Webhook で行うので、status が無ければ「受付済み」の表示に留める。
    * status（0035、照会トークン付きで開いたとき）: confirmed なら orderNumber を出す、pending なら「確認中」（refresh が true なら数秒後に自動で再読み込み）、

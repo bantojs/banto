@@ -27,6 +27,7 @@ import { jsonLdText, productJsonLd } from "../../storefront/structured-data";
 import { yen } from "../../routes/common";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
 import { ConfirmationBlock } from "./confirmation";
+import { pagePath, pagesNav } from "../../pages";
 
 const css = `
 :root{color-scheme:light dark;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Hiragino Sans","Noto Sans JP",sans-serif}
@@ -51,6 +52,7 @@ table{border-collapse:collapse;width:100%}td,th{text-align:left;padding:.5rem;bo
 .notice{padding:.75rem 1rem;border-left:4px solid #f9a825;background:color-mix(in srgb,#f9a825 12%,transparent);margin:1rem 0}
 .error{color:#c62828}.muted{opacity:.7}
 pre.legal{white-space:pre-wrap;font:inherit}
+.page-body{max-width:44rem;line-height:1.8}.page-body img{max-width:100%;height:auto}.page-body blockquote{margin:1rem 0;padding-left:1rem;border-left:3px solid color-mix(in srgb,CanvasText 20%,transparent)}.banto-table{overflow-x:auto}
 a{color:var(--accent,#1f6feb)}header a,.card a{color:inherit}
 button{background:var(--accent,#1f6feb);color:#fff;border:0;border-radius:.3rem}button[disabled]{opacity:.5;cursor:not-allowed}
 a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6feb);color:#fff;border-radius:.3rem;text-decoration:none}
@@ -128,6 +130,11 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
           </a>
           {ctx ? (
             <span>
+              {pagesNav(ctx.shop, "header").map((pg) => (
+                <a href={pagePath(ctx.shopPath, pg.handle)} style="margin-right:1rem">
+                  {pg.title}
+                </a>
+              ))}
               {ctx.membersEnabled ? (
                 <a href={`${ctx.shopPath}/account`} style="margin-right:1rem">
                   {ctx.member ? t("member.account") : t("member.login")}
@@ -144,6 +151,9 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
         <footer>
           {ctx ? (
             <p>
+              {pagesNav(ctx.shop, "footer").map((pg) => (
+                <a href={pagePath(ctx.shopPath, pg.handle)}>{pg.title}</a>
+              ))}
               <a href={`${ctx.shopPath}/legal`}>{t("shop.legal_notice")}</a>
               <a href={`${ctx.shopPath}/privacy`}>{t("shop.privacy_policy")}</a>
               <a href={`${ctx.shopPath}/returns`}>{t("shop.return_policy")}</a>
@@ -787,6 +797,17 @@ export const defaultTheme: Theme = {
       <Layout title={title} ctx={ctx} seo={{ path: undefined }}>
         <h1>{title}</h1>
         <pre class="legal">{body}</pre>
+      </Layout>
+    );
+  },
+
+  ContentPage({ ctx, page, html }) {
+    return (
+      <Layout title={page.seo_title || page.title} ctx={ctx} seo={{ path: pagePath(ctx.shopPath, page.handle), ...(page.seo_description ? { description: page.seo_description } : {}) }}>
+        <article class="page">
+          <h1>{page.title}</h1>
+          <div class="page-body">{raw(html)}</div>
+        </article>
       </Layout>
     );
   },

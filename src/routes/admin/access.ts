@@ -8,7 +8,7 @@ import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
 import { owner, type AdminContext } from "./context";
 
-export const SHOP_PERMS = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design"] as const;
+export const SHOP_PERMS = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design", "content"] as const;
 export type ShopPerm = (typeof SHOP_PERMS)[number];
 export type OrgRole = "owner" | "admin" | "member";
 
@@ -25,6 +25,7 @@ export const PERM_TEMPLATES: Record<string, readonly ShopPerm[]> = {
   stores: ["stores"],
   support: ["support"],
   design: ["design"],
+  content: ["content"],
 };
 
 export interface ShopAccess {

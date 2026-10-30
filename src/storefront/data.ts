@@ -10,6 +10,7 @@ import { descendantIds } from "../products/categories";
 import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
+import { PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
 
 /** テーマのプレビューの設定・描く条件（0074） */
 export const THEME_PREVIEW_MIGRATION = "0074_theme_preview";
@@ -38,6 +39,8 @@ export interface PublicShop {
   legal_links?: Record<string, string>;
   /** 公開中の Liquid のテーマの版（0071。独自ドメインのあるショップだけ。docs/themes.md） */
   theme?: { id: string; storage_key: string; settings: Record<string, unknown> } | null;
+  /** メニューに出すページ（0079、同梱モジュール pages が ON のときだけ。src/pages/index.ts の pagesNav）。当たる前は無い */
+  pages_nav?: PageNavItem[];
 }
 
 /** anon で products を読むときの列（0055 から anon は products.attributes を読めない。商品詳細は product_public_get が公開の項目だけを返す） */
@@ -323,6 +326,22 @@ export class StorefrontData {
     const rows = await this.db.rpc<StoreRow[]>("shop_store_list", { p_shop_id: shop.id });
     await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
     return rows;
+  }
+
+  /** ショップのページ（同梱モジュール pages、0079）。公開中のものだけ（RLS）。商品の一覧と同じく短時間キャッシュする */
+  async pageByHandle(shop: PublicShop, handle: string): Promise<PageRow | null> {
+    const key = `page:${shop.id}:${handle}`;
+    const hit = await this.cache.get<{ page: PageRow | null }>(key);
+    if (hit) return hit.page;
+    const rows = await this.db.from<PageRow>("pages").select(PUBLIC_PAGE_COLUMNS, { eq: { shop_id: shop.id, handle, published: true }, limit: 1 });
+    const page = rows[0] ?? null;
+    await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
+    return page;
+  }
+
+  /** サイトマップに載せるページ（公開中のものの handle と更新日時） */
+  async pageHandles(shop: PublicShop): Promise<{ handle: string; updated_at: string }[]> {
+    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc", limit: 1000 });
   }
 
   async productBySlug(shop: PublicShop, slug: string): Promise<ProductDetail | null> {

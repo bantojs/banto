@@ -144,7 +144,7 @@ export class Browser {
     return this.send(path, body, contentType, opts);
   }
 
-  async postMultipart(path: string, fields: Record<string, string | File>, opts: { origin?: string } = {}): Promise<Response> {
+  async postMultipart(path: string, fields: Record<string, string | File>, opts: { origin?: string; headers?: Record<string, string> } = {}): Promise<Response> {
     const fd = new FormData();
     for (const [k, v] of Object.entries(fields)) fd.append(k, v);
     return this.send(path, fd, undefined, opts);

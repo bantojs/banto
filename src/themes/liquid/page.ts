@@ -14,7 +14,8 @@ import type { LoadedTheme } from "./cache";
 import { layoutGroup, readSectionSchemas, renderSection, renderSectionGroup, settingsWith, staticSection, withOverride, withRenderEnv, SECTIONS_PER_REQUEST, type SectionLayouts, type Paginate, type RenderEnv, type SectionData, type SectionOverrides, type SectionSchema, type SettingSchema } from "./shopify";
 import { globalSettingsOf } from "./editor";
 
-export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm" | "checkout_done" | "page" | "customers/account";
+/** page.<suffix> はショップのページ（同梱モジュール pages、0079）が選んだテンプレート（templates/page.<suffix>.json） */
+export type ThemeTemplate = "index" | "collection" | "product" | "404" | "cart" | "search" | "checkout" | "checkout_confirm" | "checkout_done" | "page" | `page.${string}` | "customers/account";
 
 interface Prepared {
   schemas: Map<string, SectionSchema>;
@@ -107,21 +108,28 @@ export function themeSettings(t: LoadedTheme, saved: Record<string, unknown> | n
   return settingsWith(p.settingsSchema, { ...p.settingsDefaults, ...globalSettingsOf(saved) });
 }
 
-/** template（Shopify では文字列のように比べる: template == 'product'、template.name） */
+/**
+ * template（Shopify では文字列のように比べる: template == 'product'、template.name）。
+ * page.about のように別のテンプレートを選んだときは name が page・suffix が about で、文字列としては page.about
+ */
 class TemplateDrop extends Drop {
-  readonly suffix = null;
+  readonly name: string;
+  readonly suffix: string | null;
   readonly directory = null;
-  constructor(readonly name: string) {
+  constructor(readonly full: string) {
     super();
+    const dot = full.indexOf(".");
+    this.name = dot < 0 ? full : full.slice(0, dot);
+    this.suffix = dot < 0 ? null : full.slice(dot + 1);
   }
   override valueOf(): string {
-    return this.name;
+    return this.full;
   }
   override toString(): string {
-    return this.name;
+    return this.full;
   }
   toJSON(): string {
-    return this.name;
+    return this.full;
   }
 }
 
