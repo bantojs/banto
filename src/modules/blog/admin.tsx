@@ -486,7 +486,7 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
       <ContentForm
-        kind={{ base: base(shop.id), urlPrefix: `/blogs/${blog.handle}/`, nav: false, article: { tags: v.tags.join(", "), excerpt: v.excerpt ?? "", author: v.author ?? "" } }}
+        kind={{ base: base(shop.id), back: `${base(shop.id)}/${blog.id}`, urlPrefix: `/blogs/${blog.handle}/`, nav: false, article: { tags: v.tags.join(", "), excerpt: v.excerpt ?? "", author: v.author ?? "" } }}
         selfUrl={opts.articleId ? `${at}/${opts.articleId}` : `${at}/new`}
         publishing={true}
         revisions={revisions}

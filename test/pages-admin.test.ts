@@ -166,6 +166,9 @@ describe("ショップのページの管理画面", () => {
     expect(html).toContain('id="blk-add-end"');
     expect(html).toContain('id="blk-top"');
     expect(html).toContain(`data-preview="${base}/products-preview"`);
+    // 全画面の形（左にブロックの一覧とリスト表示、右に設定）は JS が作る。戻る先は一覧
+    expect(html).toContain(`<div id="pe-root" data-back="${base}">`);
+    expect(html).toContain('<div id="pe-left" class="pe-left" hidden=""></div>');
   });
 
   it("商品のブロック: タグは公開中の商品のタグから選び、並ぶ商品の見本と件数を返す", async () => {

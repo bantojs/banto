@@ -79,7 +79,11 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     up:'<path d="M12 19V5M6 11l6-6 6 6"/>',
     down:'<path d="M12 5v14M6 13l6 6 6-6"/>',
     link:'<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
-    edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>'
+    edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>',
+    back:'<path d="M15 5l-7 7 7 7"/>',
+    list:'<path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/>',
+    side:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+    close:'<path d="M6 6l12 12M18 6L6 18"/>'
   };
   // ブロックの一覧（一覧の順・まとまり）
   var BLOCKS=[
@@ -133,7 +137,8 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     var r=sel.getBoundingClientRect();
     if(isEmpty(sel)&&document.activeElement===ed&&ins.hidden&&menu.hidden){ plus.hidden=false; at(plus,r,r.width-30,(r.height-26)/2); } else plus.hidden=true;
     buildTb(kindOf(sel)); tb.hidden=false;
-    var top=r.top-tb.offsetHeight-8; at(tb,r,0,top<70?r.height+8:-tb.offsetHeight-8);
+    var bar0=root&&root.classList.contains("pe-full")?bar.getBoundingClientRect().bottom+4:70;
+    var top=r.top-tb.offsetHeight-8; at(tb,r,0,top<bar0?r.height+8:-tb.offsetHeight-8);
   }
   function clearSel(){ if(sel&&sel.classList) sel.classList.remove("is-sel"); sel=null; refresh(); }
   // 文字を書けない箱（商品・ボタン）を押して選んだら、次に別の所を押すか打つまでそのまま
@@ -148,7 +153,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(e.key.length===1&&!e.ctrlKey&&!e.metaKey) tb.classList.add("typing");
   });
   document.addEventListener("mousemove",function(){ tb.classList.remove("typing"); });
-  window.addEventListener("resize",refresh); window.addEventListener("scroll",function(){ if(!tb.hidden||!plus.hidden) refresh(); },{passive:true});
+  window.addEventListener("resize",refresh);
+  // 本文の欄だけが動く画面（全画面の形）でも追いかける（scroll は泡立たないので捕まえる）
+  document.addEventListener("scroll",function(){ gap.hidden=true; if(!tb.hidden||!plus.hidden) refresh(); if(!ins.hidden) closeIns(); },{passive:true,capture:true});
 
   // ---------- ブロックの道具（種類・動かす・書式・設定・その他） ----------
   var tb=el("div","blk-tb"); tb.setAttribute("role","toolbar"); tb.setAttribute("aria-label",T("type")); tb.hidden=true; document.body.appendChild(tb);
@@ -182,14 +189,17 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     else if(k==="del"){ var next=blk.nextElementSibling||blk.previousElementSibling; ed.removeChild(blk); if(!ed.children.length){ next=emptyP(); ed.appendChild(next); } sel=null; blk=next; if(blk&&kindOf(blk)!=="products") caretIn(blk); }
     mark(); select(blk);
   }
-  // 段落・見出し・引用・箇条書きのあいだで種類を変える
+  // 段落・見出し・引用・箇条書きのあいだで種類を変える。execCommand は印の付いた段落の中に箇条書きを入れ子にすることが
+  // あるので、要素を作り直す（箇条書き → 段落は項目ごとに 1 つ、段落 → 箇条書きは 1 項目）
+  var TAGS={p:"P",h2:"H2",h3:"H3",q:"BLOCKQUOTE",ul:"UL",ol:"OL"};
   function convert(blk,k){
-    caretIn(blk); var from=kindOf(blk); var run=function(c,v){ document.execCommand(c,false,v); };
-    if(from===k) return;
-    if(from==="ul"||from==="ol"){ run(from==="ul"?"insertUnorderedList":"insertOrderedList"); if(k==="p"){ mark(); select(current()); return; } }
-    if(k==="ul") run("insertUnorderedList"); else if(k==="ol") run("insertOrderedList");
-    else run("formatBlock",k==="q"?"<blockquote>":"<"+k+">");
-    mark(); select(current());
+    if(!blk||blk.parentNode!==ed||kindOf(blk)===k||!TAGS[k]) return;
+    var parts=/^(UL|OL)$/.test(blk.nodeName)?Array.prototype.slice.call(blk.children):blk.querySelector(":scope > p, :scope > div")?Array.prototype.slice.call(blk.children):[blk];
+    var fill=function(to,from){ while(from.firstChild) to.appendChild(from.firstChild); if(!(to.textContent||"").trim()&&!to.querySelector("img")) { to.innerHTML=""; to.appendChild(document.createElement("br")); } return to; };
+    var made=null;
+    if(k==="ul"||k==="ol"){ made=document.createElement(TAGS[k]); parts.forEach(function(x){ made.appendChild(fill(document.createElement("li"),x)); }); ed.replaceChild(made,blk); caretIn(made.lastElementChild); }
+    else { parts.forEach(function(x){ made=fill(document.createElement(TAGS[k]),x); ed.insertBefore(made,blk); }); ed.removeChild(blk); caretIn(made); }
+    mark(); select(made);
   }
 
   // ---------- 小さな一覧（種類を変える・その他） ----------
@@ -209,16 +219,26 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var insBody=el("div",""); ins.appendChild(insBody);
   var insFor=null, insMode="after", insSel=0, insList=[];
   function match(b,f){ return !f||b.k.indexOf(f)===0||b.label.toLowerCase().indexOf(f)>=0||b.desc.toLowerCase().indexOf(f)>=0; }
-  function drawIns(){
-    var f=insQ.value.trim().toLowerCase(); insBody.innerHTML=""; insList=BLOCKS.filter(function(b){ return match(b,f); });
-    if(!insList.length){ var p=el("p","muted"); p.textContent=T("none"); insBody.appendChild(p); return; }
-    insSel=Math.min(insSel,insList.length-1);
+  // 図の並び（＋の一覧と左のブロックの一覧で共通）。list は絞り込んだもの、cur は選んでいる位置（-1 なら無し）
+  function tiles(box,list,cur,onPick,onDrag){
+    box.innerHTML="";
+    if(!list.length){ var p=el("p","muted"); p.textContent=T("none"); box.appendChild(p); return; }
     ["text","media","shop"].forEach(function(g){
-      var xs=insList.filter(function(b){ return b.g===g; }); if(!xs.length) return;
-      var h=el("div","blk-grp"); h.textContent=T("g-"+g); insBody.appendChild(h);
-      var grid=el("div","blk-grid"); insBody.appendChild(grid);
-      xs.forEach(function(b){ var i=insList.indexOf(b); var o=el("button","blk-tile",svg(ICO[b.k])); o.type="button"; o.title=b.desc; o.setAttribute("aria-selected",String(i===insSel)); o.appendChild(document.createTextNode(b.label)); o.addEventListener("mousedown",function(e){ e.preventDefault(); }); o.addEventListener("click",function(){ pickIns(i); }); grid.appendChild(o); });
+      var xs=list.filter(function(b){ return b.g===g; }); if(!xs.length) return;
+      var h=el("div","blk-grp"); h.textContent=T("g-"+g); box.appendChild(h);
+      var grid=el("div","blk-grid"); box.appendChild(grid);
+      xs.forEach(function(b){
+        var i=list.indexOf(b); var o=el("button","blk-tile",svg(ICO[b.k])); o.type="button"; o.title=b.desc; o.setAttribute("aria-selected",String(i===cur)); o.appendChild(document.createTextNode(b.label));
+        o.addEventListener("mousedown",function(e){ e.preventDefault(); });
+        o.addEventListener("click",function(){ if(!o.getAttribute("data-dragged")) onPick(i); o.removeAttribute("data-dragged"); });
+        if(onDrag) o.addEventListener("pointerdown",function(e){ onDrag(e,b,o); });
+        grid.appendChild(o);
+      });
     });
+  }
+  function drawIns(){
+    var f=insQ.value.trim().toLowerCase(); insList=BLOCKS.filter(function(b){ return match(b,f); });
+    insSel=Math.max(0,Math.min(insSel,insList.length-1)); tiles(insBody,insList,insSel,pickIns,null);
   }
   function openIns(blk,mode,anchor){
     closeMenu(); closePop(); insFor=blk; insMode=mode; insSel=0; insQ.value=""; drawIns();
@@ -228,11 +248,17 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     insQ.focus();
   }
   function closeIns(){ if(ins.hidden) return; ins.hidden=true; var b=insFor; insFor=null; if(b&&b.parentNode===ed){ if(kindOf(b)!=="products") caretIn(b); } refresh(); }
-  function pickIns(i){
-    var b=insList[i]; var blk=insFor, mode=insMode; ins.hidden=true; insFor=null; if(!b) return;
-    if(mode==="replace"&&blk&&blk.parentNode===ed&&isEmpty(blk)){ /* その行に入れる */ }
-    else { var p=emptyP(); if(blk&&blk.parentNode===ed) ed.insertBefore(p,mode==="before"?blk:blk.nextSibling); else ed.appendChild(p); blk=p; }
-    apply(b.k,blk);
+  function pickIns(i){ var b=insList[i]; var blk=insFor, mode=insMode; ins.hidden=true; insFor=null; if(b) insertAt(b.k,blk,mode); }
+  // ブロックを入れる: replace はその空の行に、before / after はその前後に新しい行を作って
+  function insertAt(k,ref,mode){
+    var blk=ref;
+    if(!(mode==="replace"&&ref&&ref.parentNode===ed&&isEmpty(ref))){ blk=emptyP(); if(ref&&ref.parentNode===ed) ed.insertBefore(blk,mode==="before"?ref:ref.nextSibling); else ed.appendChild(blk); }
+    apply(k,blk);
+  }
+  // カーソルの位置に入れる（空の行ならそこ、文字のある行なら後ろ、どこも選んでいなければ終わり）
+  function insertAtCursor(k){
+    var s0=sel&&sel.parentNode===ed?sel:null, last=ed.lastElementChild;
+    if(s0) insertAt(k,s0,isEmpty(s0)?"replace":"after"); else insertAt(k,last,last&&isEmpty(last)?"replace":"after");
   }
   insQ.addEventListener("input",function(){ insSel=0; drawIns(); });
   insQ.addEventListener("keydown",function(e){
@@ -342,17 +368,13 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
 
   // ---------- ブロックを入れる ----------
   function apply(kind,blk){
+    ed.focus({preventScroll:true});
     if(kind==="img"){ caretIn(blk); select(blk); if(window.bantoOpenMedia){ window.bantoOpenMedia("body"); return; } var inp=document.getElementById("page-image"); if(inp) inp.click(); return; }
     if(kind==="products"){ openProducts(null,blk); return; }
     if(kind==="button"){ openButton(null,blk); return; }
     caretIn(blk);
     var run=function(c,v){ document.execCommand(c,false,v); };
-    if(kind==="p") run("formatBlock","<p>");
-    else if(kind==="h2") run("formatBlock","<h2>");
-    else if(kind==="h3") run("formatBlock","<h3>");
-    else if(kind==="q") run("formatBlock","<blockquote>");
-    else if(kind==="ul") run("insertUnorderedList");
-    else if(kind==="ol") run("insertOrderedList");
+    if(TAGS[kind]){ if(kindOf(blk)===kind) { select(blk); return; } convert(blk,kind); return; }
     else if(kind==="hr"){ var hr=document.createElement("hr"); place2(hr,blk); return; }
     else if(kind==="table"){ var c=T("cell"); run("insertHTML","<table><thead><tr><th>"+c+"</th><th>"+c+"</th></tr></thead><tbody><tr><td>"+c+"</td><td>"+c+"</td></tr></tbody></table><p><br></p>"); }
     mark(); select(current());
@@ -360,7 +382,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   // ブロックの箱（商品・ボタン・区切り線）を blk の場所に置き、後ろに続きを書く段落を用意する
   function place2(box,blk){
     if(blk&&blk.parentNode===ed) ed.replaceChild(box,blk); else ed.appendChild(box);
-    var next=box.nextElementSibling; if(!next||!isEmpty(next)){ next=emptyP(); ed.insertBefore(next,box.nextSibling); }
+    // 終わりに置いたときだけ、続きを書く空の行を足す（途中なら次の行へ）
+    var next=box.nextElementSibling; if(!next){ next=emptyP(); ed.appendChild(next); }
+    if(kindOf(next)==="products"||kindOf(next)==="button") { mark(); select(box); return; }
     caretIn(next); mark(); select(box.nodeName==="HR"?next:box);
   }
 
@@ -458,6 +482,150 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   }
   if(window.MutationObserver) new MutationObserver(syncMode).observe(ed,{attributes:true,attributeFilter:["hidden"]});
   syncMode();
+
+  // ---------- 画面の形（WordPress のように: 左にブロックの一覧とリスト表示、中央は本文だけ、右に設定） ----------
+  // JS の無いブラウザでは今までの 2 列のまま。全画面の形は pe-full（管理画面の枠の上に重ねる）
+  var root=document.getElementById("pe-root"), left=document.getElementById("pe-left"), bar=form.querySelector(".pe-bar"), aside=form.querySelector(".split > aside");
+  var store=function(k,v){ try{ if(v===undefined) return window.localStorage.getItem("banto.editor."+k); window.localStorage.setItem("banto.editor."+k,v); }catch(_){ return null; } };
+  var leftMode=null, outlineTimer=0;
+  var libQ, libBody, olBody, tLib, tList, tSet;
+  if(root&&left&&bar){
+    root.classList.add("pe-full"); document.documentElement.classList.add("pe-lock");
+    // 保存しました・誤りの知らせは本文の上へ（枠の外にあると隠れるため）
+    var msgs=document.getElementById("pe-msgs");
+    if(msgs) Array.prototype.forEach.call(document.querySelectorAll("main > .notice, main > .error"),function(m){ msgs.appendChild(m); if(m.classList.contains("notice")) setTimeout(function(){ if(m.parentNode) m.parentNode.removeChild(m); },6000); });
+    // 上のバー: 戻る・ブロックの一覧・リスト表示（左）と、設定（右の端）
+    var lg=el("div","pe-bar-left");
+    var back=el("a","pe-back",svg(ICO.back)); back.href=root.getAttribute("data-back")||"#"; back.title=T("back"); back.setAttribute("aria-label",T("back"));
+    tLib=btn("pe-tog","lib","",T("lib"),"+"); tList=btn("pe-tog","outline","list",T("outline")); tSet=btn("pe-tog","settings","side",T("settings"));
+    lg.appendChild(back); lg.appendChild(tLib); lg.appendChild(tList); bar.insertBefore(lg,bar.firstChild); bar.appendChild(tSet);
+    // 左の欄
+    var head=el("div","pe-left-head"); head.setAttribute("role","tablist");
+    var tabLib=btn("","tab-lib","",T("lib"),T("lib")), tabOl=btn("","tab-outline","",T("outline"),T("outline")); tabLib.setAttribute("role","tab"); tabOl.setAttribute("role","tab");
+    var closeL=btn("pe-tog","close-left","close",T("close")); closeL.style.marginLeft="auto";
+    head.appendChild(tabLib); head.appendChild(tabOl); head.appendChild(closeL);
+    var bodyL=el("div","pe-left-body"); left.appendChild(head); left.appendChild(bodyL);
+    var libBox=el("div",""), olBox=el("div",""); bodyL.appendChild(libBox); bodyL.appendChild(olBox);
+    libQ=document.createElement("input"); libQ.type="search"; libQ.placeholder=T("search"); libQ.setAttribute("aria-label",T("search"));
+    libBody=el("div",""); var libHint=el("p","pe-hint"); libHint.textContent=T("lib-hint");
+    libBox.appendChild(libQ); libBox.appendChild(libBody); libBox.appendChild(libHint);
+    olBody=el("div",""); olBody.setAttribute("role","tree"); olBody.setAttribute("aria-label",T("outline")); olBody.tabIndex=0; olBody.style.position="relative";
+    var olHint=el("p","pe-hint"); olHint.textContent=T("outline-hint"); olBox.appendChild(olBody); olBox.appendChild(olHint);
+    var wide=function(){ return document.documentElement.clientWidth>900; };
+    var setLeft=function(m,keep){
+      leftMode=m; left.hidden=!m; libBox.hidden=m!=="lib"; olBox.hidden=m!=="outline";
+      tLib.setAttribute("aria-pressed",String(m==="lib")); tList.setAttribute("aria-pressed",String(m==="outline"));
+      tabLib.setAttribute("aria-selected",String(m==="lib")); tabOl.setAttribute("aria-selected",String(m==="outline"));
+      if(m==="lib") drawLib(); if(m==="outline") drawOutline();
+      if(!keep) store("left",m||"");
+      if(m&&!wide()&&aside) setSet(false,true);
+      refresh();
+    };
+    var setSet=function(on,keep){ if(!aside) return; aside.hidden=!on; tSet.setAttribute("aria-pressed",String(on)); if(!keep) store("settings",on?"1":"0"); if(on&&!wide()&&leftMode) setLeft(null,true); refresh(); };
+    tLib.addEventListener("click",function(){ setLeft(leftMode==="lib"?null:"lib"); if(leftMode==="lib") libQ.focus(); });
+    tList.addEventListener("click",function(){ setLeft(leftMode==="outline"?null:"outline"); });
+    tabLib.addEventListener("click",function(){ setLeft("lib"); }); tabOl.addEventListener("click",function(){ setLeft("outline"); });
+    closeL.addEventListener("click",function(){ setLeft(null); });
+    tSet.addEventListener("click",function(){ setSet(aside.hidden); });
+    // 前に開いていた形を覚える（広い画面だけ。狭い画面は本文だけで始める）
+    var l0=store("left"), s0=store("settings");
+    setLeft(wide()?(l0===null?"lib":(l0||null)):null,true);
+    setSet(wide()?s0!=="0":false,true);
+
+    // ブロックの一覧: 押すとカーソルの位置に、ドラッグすると置いた場所に入れる
+    var libSel=-1, libList=BLOCKS;
+    function drawLib(){ var f=libQ.value.trim().toLowerCase(); libList=BLOCKS.filter(function(b){ return match(b,f); }); tiles(libBody,libList,libSel,function(i){ var b=libList[i]; if(b) insertAtCursor(b.k); },dragTile); }
+    libQ.addEventListener("input",function(){ libSel=libQ.value.trim()?0:-1; drawLib(); });
+    libQ.addEventListener("keydown",function(e){ if(e.key==="Enter"&&libList.length){ e.preventDefault(); insertAtCursor(libList[Math.max(0,libSel)].k); } else if(e.key==="Escape"){ libQ.value=""; libSel=-1; drawLib(); } });
+    var newDrag=null;
+    function dragTile(e,b,o){
+      var x0=e.clientX, y0=e.clientY, moved=false;
+      var mv=function(ev){
+        if(!moved&&Math.abs(ev.clientX-x0)+Math.abs(ev.clientY-y0)<6) return;
+        moved=true; newDrag=b; o.setAttribute("data-dragged","1"); document.body.style.cursor="grabbing";
+        var er=ed.getBoundingClientRect();
+        if(ev.clientX<er.left||ev.clientX>er.right||ev.clientY<er.top-20||ev.clientY>er.bottom+40){ gap.hidden=true; dropAt=-1; return; }
+        var bs=boundaries(), best=bs[0]; bs.forEach(function(g){ if(Math.abs(g.y-ev.clientY)<Math.abs(best.y-ev.clientY)) best=g; });
+        dropAt=best.i; showGap(best);
+      };
+      var up=function(){
+        document.removeEventListener("pointermove",mv); document.removeEventListener("pointerup",up);
+        document.body.style.cursor=""; gap.hidden=true;
+        if(moved&&newDrag&&dropAt>=0){ var ref=ed.children[dropAt]||null; if(ref) insertAt(newDrag.k,ref,"before"); else insertAt(newDrag.k,ed.lastElementChild,"after"); }
+        newDrag=null; dropAt=-1;
+      };
+      document.addEventListener("pointermove",mv); document.addEventListener("pointerup",up);
+    }
+
+    // リスト表示: ブロックの階層（箇条書きの項目・引用の段落は下の段）。押すと本文のそのブロックへ、
+    // Shift / Ctrl（⌘）で複数を選び、ドラッグでまとめて動かす・まとめて消す
+    var picked=[], anchorIdx=-1;
+    function text1(b){ return (b.textContent||"").replace(/\s+/g," ").trim().slice(0,60); }
+    function drawOutline(){
+      if(leftMode!=="outline") return;
+      picked=picked.filter(function(b){ return b.parentNode===ed; });
+      olBody.innerHTML="";
+      Array.prototype.forEach.call(ed.children,function(b,i){
+        var k=kindOf(b); if(!k) return;
+        var row=el("div","ol-row",svg(ICO.drag)+svg(ICO[k])); row.setAttribute("role","treeitem"); row.setAttribute("data-i",String(i));
+        if(b===sel) row.classList.add("is-cur"); if(picked.indexOf(b)>=0){ row.classList.add("is-pick"); row.setAttribute("aria-selected","true"); }
+        var tx=el("span","ol-txt"); tx.textContent=T(k); var sm=el("small",""); sm.textContent=k==="products"?(b.getAttribute("data-tag")?"#"+b.getAttribute("data-tag"):""):text1(b); tx.appendChild(sm); row.appendChild(tx);
+        row.addEventListener("pointerdown",function(e){ rowDown(e,b,i); });
+        olBody.appendChild(row);
+        // 下の段（箇条書きの項目・引用の段落）
+        var kids=k==="ul"||k==="ol"?b.querySelectorAll(":scope > li"):k==="q"?b.querySelectorAll(":scope > p"):[];
+        Array.prototype.forEach.call(kids,function(c){ var cr=el("div","ol-row ol-child"); cr.setAttribute("role","treeitem"); cr.setAttribute("aria-level","2"); cr.textContent=text1(c)||"—"; cr.addEventListener("click",function(){ caretIn(c); c.scrollIntoView({block:"nearest"}); select(b); }); olBody.appendChild(cr); });
+      });
+      if(picked.length>1){
+        var pb=el("div","ol-picked"); var n=el("span",""); n.textContent=T("picked").replace("{n}",String(picked.length)); pb.appendChild(n);
+        var del=btn("secondary small","pick-del","",T("pick-del"),T("pick-del")); var clr=btn("secondary small","pick-clear","",T("pick-clear"),T("pick-clear"));
+        del.addEventListener("click",deletePicked); clr.addEventListener("click",function(){ picked=[]; drawOutline(); });
+        pb.appendChild(del); pb.appendChild(clr); olBody.appendChild(pb);
+      }
+    }
+    function deletePicked(){
+      if(!picked.length) return;
+      var next=null; picked.forEach(function(b){ if(b.parentNode===ed){ next=b.nextElementSibling; ed.removeChild(b); } });
+      if(!ed.children.length) ed.appendChild(emptyP());
+      picked=[]; sel=null; mark(); var n=next&&next.parentNode===ed?next:ed.lastElementChild; if(n&&kindOf(n)!=="products") caretIn(n); select(n); drawOutline();
+    }
+    function rowDown(e,b,i){
+      if(e.button!==0) return;
+      var x0=e.clientX, y0=e.clientY, moved=false, drop=-1, line=null;
+      var multi=e.shiftKey||e.ctrlKey||e.metaKey;
+      // 選ぶ
+      if(e.shiftKey&&anchorIdx>=0){ var a=Math.min(anchorIdx,i), z=Math.max(anchorIdx,i); picked=Array.prototype.slice.call(ed.children,a,z+1); }
+      else if(e.ctrlKey||e.metaKey){ var at0=picked.indexOf(b); if(at0>=0) picked.splice(at0,1); else picked.push(b); anchorIdx=i; }
+      else if(picked.indexOf(b)<0){ picked=[b]; anchorIdx=i; }
+      drawOutline();
+      var rows=Array.prototype.filter.call(olBody.children,function(r){ return r.classList.contains("ol-row")&&!r.classList.contains("ol-child"); });
+      var mv=function(ev){
+        if(!moved&&Math.abs(ev.clientX-x0)+Math.abs(ev.clientY-y0)<5) return;
+        moved=true; document.body.style.cursor="grabbing";
+        // 動かす先: 行の真ん中より上なら前、下なら後ろ
+        drop=rows.length; for(var r=0;r<rows.length;r++){ var rr=rows[r].getBoundingClientRect(); if(ev.clientY<rr.top+rr.height/2){ drop=r; break; } }
+        var ref=rows[drop]||rows[rows.length-1]; var top=ref?(drop<rows.length?ref.offsetTop:ref.offsetTop+ref.offsetHeight):0;
+        if(!line){ line=el("div","ol-drop"); olBody.appendChild(line); } line.style.top=(top-1)+"px";
+      };
+      var up=function(){
+        document.removeEventListener("pointermove",mv); document.removeEventListener("pointerup",up); document.body.style.cursor="";
+        if(line&&line.parentNode) line.parentNode.removeChild(line);
+        if(moved&&drop>=0){
+          var moving=Array.prototype.filter.call(ed.children,function(x){ return picked.indexOf(x)>=0; });
+          var ref=null; for(var j=drop;j<ed.children.length;j++){ if(moving.indexOf(ed.children[j])<0){ ref=ed.children[j]; break; } }
+          moving.forEach(function(x){ ed.insertBefore(x,ref); }); mark();
+        } else if(!multi){ picked=[b]; if(kindOf(b)!=="products"&&kindOf(b)!=="button"){ caretIn(b); } else pin=b; b.scrollIntoView({block:"nearest"}); select(b); }
+        drawOutline();
+      };
+      document.addEventListener("pointermove",mv); document.addEventListener("pointerup",up);
+    }
+    olBody.addEventListener("keydown",function(e){
+      if((e.key==="Delete"||e.key==="Backspace")&&picked.length){ e.preventDefault(); deletePicked(); }
+      else if(e.key==="Escape"){ picked=[]; drawOutline(); }
+    });
+    // 本文が変わったら描き直す（打っているあいだは間をおいて）
+    if(window.MutationObserver) new MutationObserver(function(){ if(leftMode!=="outline") return; clearTimeout(outlineTimer); outlineTimer=setTimeout(drawOutline,200); }).observe(ed,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:["class"]});
+  }
 
   // 画像: 選んだら置き場へ上げ、選んでいた場所に入れる
   var inp=document.getElementById("page-image"), imgForm=document.getElementById("page-image-form");

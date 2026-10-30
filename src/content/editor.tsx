@@ -128,7 +128,7 @@ export const EDITOR_CSS = `
 .pe-url{font-size:.85rem;word-break:break-all}
 .pe-canvas-head{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 .5rem}
 .blk-top{width:34px;height:34px;padding:0;border-radius:6px;font-size:1.35rem;line-height:1;justify-content:center}
-.blk-tb,.blk-ins,.blk-menu,.blk-pop{position:absolute;z-index:21;background:var(--bg);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
+.blk-tb,.blk-ins,.blk-menu,.blk-pop{position:absolute;z-index:61;background:var(--bg);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
 .blk-tb{display:flex;align-items:stretch;border-radius:6px;padding:2px}
 .blk-tb.typing{visibility:hidden}
 .blk-btn{height:32px;min-width:32px;padding:0 .4rem;background:var(--bg);color:var(--fg);border:0;border-radius:4px;font-size:.9rem;justify-content:center;gap:2px}
@@ -136,8 +136,8 @@ export const EDITOR_CSS = `
 .blk-btn[data-op=drag]{cursor:grab}
 .blk-sep{width:1px;background:var(--border);margin:4px 2px}
 .blk-ico{width:20px;height:20px;flex:none}
-.blk-plus{position:absolute;z-index:20;width:26px;height:26px;padding:0;border-radius:6px;background:var(--fg);color:var(--bg);border:0;font-size:1.1rem;line-height:1;justify-content:center}
-.blk-gap{position:absolute;z-index:19;height:2px;background:var(--link);pointer-events:none}
+.blk-plus{position:absolute;z-index:60;width:26px;height:26px;padding:0;border-radius:6px;background:var(--fg);color:var(--bg);border:0;font-size:1.1rem;line-height:1;justify-content:center}
+.blk-gap{position:absolute;z-index:59;height:2px;background:var(--link);pointer-events:none}
 .blk-gap button{pointer-events:auto;position:absolute;left:50%;top:-12px;margin-left:-13px;width:26px;height:26px;padding:0;border-radius:50%;background:var(--link);color:#fff;border:0;font-size:1.1rem;line-height:1;justify-content:center}
 .blk-ins{width:min(22rem,calc(100vw - 2rem));max-height:min(28rem,70vh);overflow:auto;border-radius:10px;padding:.5rem}
 .blk-ins input{width:100%;max-width:none;margin:0 0 .25rem}
@@ -166,6 +166,45 @@ export const EDITOR_CSS = `
 #blk-products,#blk-button{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
 #blk-products::backdrop,#blk-button::backdrop{background:rgba(0,0,0,.35)}
 @media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
+html.pe-lock,html.pe-lock body{overflow:hidden}
+.pe-full{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column}
+.pe-full>#page-form{display:flex;flex-direction:column;flex:1;min-height:0;margin:0}
+.pe-full .pe-bar{position:static;margin:0;padding:.45rem .75rem;gap:.35rem;flex:none;flex-wrap:nowrap;background:var(--bg)}
+.pe-full #body-visual{padding:.5rem 0 6rem}
+.pe-full .pe-canvas-hint{display:none}
+.pe-bar-left{display:flex;align-items:center;gap:.25rem}
+.pe-back{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:6px;background:var(--fg);color:var(--bg)}
+.pe-tog{height:36px;min-width:36px;padding:0 .5rem;background:transparent;color:var(--fg);border:0;border-radius:6px;justify-content:center;font-size:1.3rem}
+.pe-tog:hover{background:var(--bg-subtle);opacity:1}
+.pe-tog[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+.pe-full .split{position:relative;display:flex;flex:1;min-height:0;gap:0;align-items:stretch}
+.pe-full .split>.card{flex:1;min-width:0;overflow:auto;border:0;border-radius:0;box-shadow:none;margin:0;padding:2.5rem 1rem 6rem;display:block;background:var(--bg)}
+.pe-full .split>.card>*{max-width:48rem;margin-left:auto;margin-right:auto}
+.pe-full .split>aside{width:300px;flex:none;overflow:auto;border-left:1px solid var(--border);padding:.75rem;background:var(--bg-page)}
+.pe-full .split>aside>.card{margin:0 0 .75rem}
+.pe-full .split>aside[hidden],.pe-left[hidden]{display:none}
+.pe-full #blk-top{display:none}
+.pe-left{width:300px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg);min-height:0}
+.pe-left-head{display:flex;align-items:center;gap:.25rem;padding:.4rem .5rem;border-bottom:1px solid var(--border)}
+.pe-left-head [role=tab]{height:32px;padding:0 .7rem;background:transparent;color:var(--fg-muted);border:0;border-radius:0;border-bottom:2px solid transparent;font-weight:600}
+.pe-left-head [role=tab][aria-selected=true]{color:var(--fg);border-bottom-color:var(--fg)}
+.pe-left-body{flex:1;overflow:auto;padding:.6rem}
+.pe-left-body input[type=search]{width:100%;max-width:none}
+.pe-hint{font-size:.75rem;color:var(--fg-muted);margin:.75rem .25rem}
+.blk-tile{cursor:grab}
+.ol-row{display:flex;align-items:center;gap:.4rem;padding:.3rem .4rem;border-radius:4px;cursor:pointer;user-select:none;font-size:.85rem;position:relative}
+.ol-row:hover{background:var(--bg-subtle)}
+.ol-row.is-cur{box-shadow:inset 0 0 0 1.5px var(--link)}
+.ol-row.is-pick{background:var(--link);color:#fff}
+.ol-row .ol-txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ol-row .ol-txt small{color:var(--fg-muted);margin-left:.4rem}
+.ol-row.is-pick .ol-txt small{color:inherit;opacity:.8}
+.ol-row.ol-child{padding-left:1.9rem;font-size:.8rem;color:var(--fg-muted);cursor:default}
+.ol-drop{position:absolute;left:.4rem;right:.4rem;height:2px;background:var(--link);pointer-events:none}
+.ol-picked{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;padding:.5rem;margin-top:.5rem;background:var(--bg);border-top:1px solid var(--border);font-size:.8rem}
+#pe-msgs .notice,#pe-msgs .error{margin:0 auto 1rem}
+@media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}
+@media (max-width:900px){.pe-full .pe-left,.pe-full .split>aside{position:absolute;top:0;bottom:0;z-index:45;width:min(320px,88vw);box-shadow:var(--shadow)}.pe-full .pe-left{left:0}.pe-full .split>aside{right:0}.pe-full .pe-bar .status{display:none}}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 `;
 
@@ -177,6 +216,8 @@ export interface EditorKind {
   urlPrefix: string;
   /** メニュー・並び順の欄（ページだけ） */
   nav: boolean;
+  /** 編集の画面の左上の「戻る」の行き先（無ければ base） */
+  back?: string;
   /** 記事の欄（タグ・抜粋・書いた人） */
   article?: { tags: string; excerpt: string; author: string };
 }
@@ -258,10 +299,20 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-pv-unpublished": t("pages.products_preview_unpublished"),
     "data-t-pv-loading": t("pages.products_preview_loading"),
     "data-preview": `${props.kind.base}/products-preview`,
+    "data-t-back": t("pages.editor_back"),
+    "data-t-lib": t("pages.editor_library"),
+    "data-t-outline": t("pages.editor_outline"),
+    "data-t-settings": t("pages.editor_settings"),
+    "data-t-close": t("pages.editor_close"),
+    "data-t-picked": t("pages.editor_picked"),
+    "data-t-pick-del": t("pages.editor_picked_delete"),
+    "data-t-pick-clear": t("pages.editor_picked_clear"),
+    "data-t-lib-hint": t("pages.editor_library_hint"),
+    "data-t-outline-hint": t("pages.editor_outline_hint"),
   };
   for (const k of ["p", "h2", "h3", "ul", "ol", "q", "hr", "table", "img", "products", "button"]) blockText[`data-t-d-${k}`] = t(`pages.blockdesc_${k}` as MessageKey);
   return (
-    <>
+    <div id="pe-root" data-back={props.kind.back ?? props.kind.base}>
       <style dangerouslySetInnerHTML={{ __html: EDITOR_CSS }} />
       {props.error ? <p class="error">{t(props.error)}</p> : null}
       {props.image ? (
@@ -301,7 +352,10 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
         </div>
         <input type="hidden" name="published" value={v.published ? "on" : ""} />
         <div class="split">
+          {/* 左: ブロックの一覧とリスト表示（JS があるときだけ。PAGE_BLOCKS_SCRIPT が中を作る） */}
+          <div id="pe-left" class="pe-left" hidden></div>
           <div class="card">
+            <div id="pe-msgs" aria-live="polite"></div>
             <label for="title" class="sr-only">
               {t("pages.title")}
             </label>
@@ -339,7 +393,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <button type="button" id="blk-add-end" class="secondary small" hidden>
                 + {t("pages.block_add")}
               </button>{" "}
-              <span class="muted">{t("pages.block_hint")}</span>
+              <span class="muted pe-canvas-hint">{t("pages.block_hint")}</span>
             </p>
             <details>
               <summary>{t("pages.syntax")}</summary>
@@ -577,7 +631,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.kind.base) }} />
       <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
       {props.publishing ? <script dangerouslySetInnerHTML={{ __html: PAGE_MEDIA_SCRIPT }} /> : null}
-    </>
+    </div>
   );
 }
 
