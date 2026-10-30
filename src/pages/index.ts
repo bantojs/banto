@@ -41,7 +41,26 @@ export const RESERVED_HANDLES = ["legal", "privacy", "returns", "shipping", "car
 export function pageHandleOk(handle: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(handle) && !(RESERVED_HANDLES as readonly string[]).includes(handle);
 }
-export const PAGE_LIMITS = { title: 200, body: 50000, seoTitle: 200, seoDescription: 500 } as const;
+/** タイトルから URL の名前を作る（英数字の部分だけ。作れない・予約の名前なら空。編集の画面のスクリプトも同じ規則） */
+export function handleFromTitle(title: string): string {
+  const s = title
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
+  return pageHandleOk(s) ? s : "";
+}
+
+/** 名前を空で保存したとき・タイトルから作れないときの名前（page-xxxxxx） */
+export function randomPageHandle(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return `page-${Array.from(bytes, (b) => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("")}`;
+}
+
+export const PAGE_LIMITS ={ title: 200, body: 50000, seoTitle: 200, seoDescription: 500 } as const;
 
 export const pagePath = (shopPath: string, handle: string) => `${shopPath}/pages/${encodeURIComponent(handle)}`;
 

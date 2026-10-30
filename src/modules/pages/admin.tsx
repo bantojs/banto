@@ -14,18 +14,19 @@ import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../../media/im
 import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
-import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, pageHandleOk, type PageNav, type PageRow } from "../../pages";
+import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
 import { pageEditorClient } from "./editor-client";
+import { PAGE_BLOCKS_SCRIPT } from "./blocks-script";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
  *   GET  /admin/shops/:shopId/modules/pages            一覧
  *   GET  /admin/shops/:shopId/modules/pages/new        新しいページ
- *   POST /admin/shops/:shopId/modules/pages            作る（action=preview ならプレビューだけ）
+ *   POST /admin/shops/:shopId/modules/pages            作る（action: draft = 下書き保存 / publish = 公開 / update = 状態はそのまま / preview = 新しいタブにプレビューだけ）
  *   GET  /admin/shops/:shopId/modules/pages/:pageId    直す
- *   POST /admin/shops/:shopId/modules/pages/:pageId    保存（action=preview ならプレビューだけ）
+ *   POST /admin/shops/:shopId/modules/pages/:pageId    保存（action は作るときと同じ）
  *   POST /admin/shops/:shopId/modules/pages/:pageId/delete
  *   POST /admin/shops/:shopId/modules/pages/images     本文に使う画像を置く（ブラウザで縮小してから送る）
  */
@@ -40,30 +41,37 @@ type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo
 
 const EMPTY: PageValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: false };
 
-/** フォームの値 → 行。誤りは文言の鍵（DB の CHECK が正。画面で先に止めて、入れた値を残したまま知らせる） */
-function pageValues(f: Record<string, string>): { values: PageValues; error: MessageKey | null } {
+/**
+ * フォームの値 → 行。誤りは文言の鍵（DB の CHECK が正。画面で先に止めて、入れた値を残したまま知らせる）。
+ * 公開するかは押したボタン（action: draft → 下書き、publish → 公開、それ以外は published の欄のまま）。
+ * URL の名前が空ならタイトルから作り、作れなければ page-xxxxxx（autoHandle。重なったら作り直す）
+ */
+function pageValues(f: Record<string, string>): { values: PageValues; error: MessageKey | null; autoHandle: boolean } {
   const opt = (v: string | undefined, max: number) => {
     const s = (v ?? "").trim();
     return s ? s.slice(0, max) : null;
   };
   const nav = (PAGE_NAVS as readonly string[]).includes(f.nav ?? "") ? (f.nav as PageNav) : "none";
   const sort = Number.parseInt(f.sort_order ?? "0", 10);
+  const title = (f.title ?? "").trim();
+  const typed = (f.handle ?? "").trim().toLowerCase();
+  const autoHandle = typed === "";
   const values: PageValues = {
-    title: (f.title ?? "").trim(),
-    handle: (f.handle ?? "").trim().toLowerCase(),
+    title,
+    handle: autoHandle ? handleFromTitle(title) || randomPageHandle() : typed,
     body: (f.body ?? "").replace(/\r\n?/g, "\n"),
     seo_title: opt(f.seo_title, PAGE_LIMITS.seoTitle),
     seo_description: opt(f.seo_description, PAGE_LIMITS.seoDescription),
     template_suffix: opt(f.template_suffix, 40)?.toLowerCase() ?? null,
     nav,
     sort_order: Number.isInteger(sort) ? Math.max(-1000, Math.min(1000, sort)) : 0,
-    published: f.published === "on",
+    published: f.action === "publish" ? true : f.action === "draft" ? false : f.published === "on",
   };
-  if (!values.title || values.title.length > PAGE_LIMITS.title) return { values, error: "pages.error_title" };
-  if (!pageHandleOk(values.handle)) return { values, error: "pages.error_handle" };
-  if (values.body.length > PAGE_LIMITS.body) return { values, error: "pages.error_body" };
-  if (values.template_suffix && !/^[a-z0-9_-]{1,40}$/.test(values.template_suffix)) return { values, error: "pages.error_template" };
-  return { values, error: null };
+  if (!values.title || values.title.length > PAGE_LIMITS.title) return { values, error: "pages.error_title", autoHandle };
+  if (!pageHandleOk(values.handle)) return { values, error: "pages.error_handle", autoHandle };
+  if (values.body.length > PAGE_LIMITS.body) return { values, error: "pages.error_body", autoHandle };
+  if (values.template_suffix && !/^[a-z0-9_-]{1,40}$/.test(values.template_suffix)) return { values, error: "pages.error_template", autoHandle };
+  return { values, error: null, autoHandle };
 }
 
 /** DB の誤り → 文言の鍵 */
@@ -181,7 +189,31 @@ function visualEditorScript(shopId: string): string {
   return `${CLIENT_PRELUDE}(${pageEditorClient.toString()})().mount(${JSON.stringify(cfg).replace(/</g, "\\u003c")});`;
 }
 
-function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; error?: MessageKey | null; preview?: string | null; image?: string | null }) {
+/** 編集の画面の見た目（WordPress の編集に寄せた 2 列。管理画面の共通の CSS の上に足す） */
+const EDITOR_CSS = `
+.pe-bar{position:sticky;top:0;z-index:5;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;padding:.6rem 0;margin:0 0 1rem;background:var(--bg);border-bottom:1px solid var(--border)}
+.pe-bar .pe-grow{flex:1}
+#page-form .pe-title{max-width:none;min-height:0;font-size:1.6rem;font-weight:700;line-height:1.3;border:0;border-bottom:1px solid transparent;border-radius:0;padding:.25rem 0;margin:0 0 .75rem;width:100%;background:transparent;box-shadow:none}
+#page-form .pe-title:focus{outline:none;box-shadow:none;border-bottom-color:var(--border-strong)}
+#body-visual{min-height:24rem;border:1px solid var(--border);border-radius:6px;padding:.75rem 1rem;overflow:auto}
+#body-visual:focus{outline:2px solid var(--link);outline-offset:1px}
+#body-visual table{border-collapse:collapse}#body-visual th,#body-visual td{border:1px solid var(--border);padding:.3rem .5rem}
+#body-visual img{max-width:100%;height:auto}
+#body-visual blockquote{margin:.5rem 0;padding-left:1rem;border-left:3px solid var(--border-strong)}
+.pe-url{font-size:.85rem;word-break:break-all}
+.blk-bar,.blk-menu{position:absolute;z-index:21;background:var(--bg);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
+.blk-bar{display:flex;gap:2px;border-radius:6px;padding:2px}
+.blk-btn{height:26px;min-width:28px;padding:0 .35rem;background:var(--bg);color:var(--fg);border:0;border-radius:4px;font-size:.95rem}
+.blk-btn:hover{background:var(--bg-subtle);opacity:1}
+.blk-menu{display:flex;flex-direction:column;min-width:12rem;border-radius:8px;padding:4px}
+.blk-opt{justify-content:flex-start;height:32px;background:transparent;color:var(--fg);border:0;border-radius:4px}
+.blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
+.blk-bar[hidden],.blk-menu[hidden]{display:none}
+@media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+`;
+
+function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null }) {
   const v = props.values;
   const tools: [string, MessageKey, MessageKey?][] = [
     ["p", "pages.tool_p"],
@@ -196,112 +228,181 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
     ["hr", "pages.tool_hr"],
     ["table", "pages.tool_table", "pages.tool_table_cell"],
   ];
+  // ブロックの一覧と操作の文言（PAGE_BLOCKS_SCRIPT が data-t-* で読む）
+  const blockText: Record<string, string> = {
+    "data-t-p": t("pages.tool_p"),
+    "data-t-h2": t("pages.tool_h2"),
+    "data-t-h3": t("pages.tool_h3"),
+    "data-t-ul": t("pages.tool_ul"),
+    "data-t-ol": t("pages.tool_ol"),
+    "data-t-q": t("pages.tool_quote"),
+    "data-t-hr": t("pages.tool_hr"),
+    "data-t-table": t("pages.tool_table"),
+    "data-t-img": t("pages.block_image"),
+    "data-t-cell": t("pages.tool_table_cell"),
+    "data-t-add": t("pages.block_add"),
+    "data-t-up": t("pages.block_up"),
+    "data-t-down": t("pages.block_down"),
+    "data-t-del": t("pages.block_remove"),
+    "data-t-handle-auto": t("pages.handle_auto"),
+  };
   return (
     <>
+      <style dangerouslySetInnerHTML={{ __html: EDITOR_CSS }} />
       {props.error ? <p class="error">{t(props.error)}</p> : null}
       {props.image ? (
         <p class="notice">
           {t("pages.image_ready")} <code>![]({props.image})</code>
         </p>
       ) : null}
-      {props.preview !== undefined && props.preview !== null ? (
-        <section class="card">
-          <h2>{t("pages.preview")}</h2>
-          <h1>{v.title}</h1>
-          <div class="page-preview">{raw(props.preview)}</div>
-        </section>
-      ) : null}
-      <form method="post" action={props.action} class="card" id="page-form">
-        <label for="title">{t("pages.title")}</label>
-        <input id="title" name="title" value={v.title} required maxlength={PAGE_LIMITS.title} />
-        <label for="handle">{t("pages.handle")}</label>
-        <input id="handle" name="handle" value={v.handle} required maxlength={64} pattern="[a-z0-9]([a-z0-9\-]{0,62}[a-z0-9])?" />
-        <p class="muted">{t("pages.handle_help")}</p>
-        <label for="body">{t("pages.body")}</label>
-        {/* JS があるときだけ出す（見たまま / Markdown の切り替え。pageEditorClient） */}
-        <div id="body-tabs" role="tablist" hidden style="margin:.25rem 0">
-          <button type="button" class="secondary small" role="tab" data-mode="visual" aria-selected="false">
-            {t("pages.mode_visual")}
-          </button>{" "}
-          <button type="button" class="secondary small" role="tab" data-mode="markdown" aria-selected="true">
-            {t("pages.mode_markdown")}
-          </button>
-        </div>
-        <div class="toolbar" role="toolbar" aria-label={t("pages.tools")}>
-          {tools.map(([k, label, ph]) => (
-            <button type="button" class="secondary small" data-md={k} data-ph={ph ? t(ph) : undefined} data-ask={k === "link" ? t("pages.tool_link_ask") : undefined}>
-              {t(label)}
+      <form method="post" action={props.action} id="page-form" data-reserved={RESERVED_HANDLES.join(",")} {...blockText}>
+        {/* 上のバー: 状態と、下書き保存・プレビュー（新しいタブ）・公開 / 更新。Ctrl+S は data-save のボタン */}
+        <div class="pe-bar">
+          <span class={`status ${v.published ? "" : "off"}`}>{v.published ? t("pages.published") : t("pages.draft")}</span>
+          <span class="pe-grow" />
+          {v.published ? (
+            <button type="submit" name="action" value="draft" class="secondary small">
+              {t("pages.unpublish")}
             </button>
-          ))}
-        </div>
-        {/* 見たままの編集の領域。中身はお店の画面と同じ変換で作った HTML（決まった形のタグだけ）。保存のときは Markdown に直して送る */}
-        <div id="body-visual" class="page-preview" contenteditable={true} role="textbox" aria-multiline="true" aria-label={t("pages.body")} hidden data-ready="1" style="min-height:20rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.3rem;padding:.75rem 1rem;overflow:auto">
-          {raw(props.visual)}
-        </div>
-        <textarea id="body" name="body" rows={20} maxlength={PAGE_LIMITS.body} style="width:100%;font-family:ui-monospace,monospace">
-          {v.body}
-        </textarea>
-        <details>
-          <summary>{t("pages.syntax")}</summary>
-          <pre class="muted" style="white-space:pre-wrap">{t("pages.syntax_help")}</pre>
-        </details>
-        <label for="nav">{t("pages.nav")}</label>
-        <select id="nav" name="nav">
-          {PAGE_NAVS.map((n) => (
-            <option value={n} selected={v.nav === n}>
-              {t(`pages.nav_${n}` as MessageKey)}
-            </option>
-          ))}
-        </select>
-        <label for="sort_order">{t("pages.sort_order")}</label>
-        <input id="sort_order" name="sort_order" type="number" min={-1000} max={1000} value={String(v.sort_order)} style="width:6rem" />
-        <details>
-          <summary>{t("pages.more")}</summary>
-          <label for="seo_title">{t("pages.seo_title")}</label>
-          <input id="seo_title" name="seo_title" value={v.seo_title ?? ""} maxlength={PAGE_LIMITS.seoTitle} />
-          <label for="seo_description">{t("pages.seo_description")}</label>
-          <textarea id="seo_description" name="seo_description" rows={2} maxlength={PAGE_LIMITS.seoDescription} style="width:100%">
-            {v.seo_description ?? ""}
-          </textarea>
-          <label for="template_suffix">{t("pages.template")}</label>
-          <input id="template_suffix" name="template_suffix" value={v.template_suffix ?? ""} maxlength={40} pattern="[a-z0-9_\-]{1,40}" />
-          <p class="muted">{t("pages.template_help")}</p>
-        </details>
-        <label>
-          <input type="checkbox" name="published" value="on" checked={v.published} /> {t("pages.publish")}
-        </label>
-        <p>
-          <button type="submit" name="action" value="save">
-            {t("pages.save")}
-          </button>{" "}
-          <button type="submit" name="action" value="preview" class="secondary">
+          ) : (
+            <button type="submit" name="action" value="draft" class="secondary" data-save="1">
+              {t("pages.save_draft")}
+            </button>
+          )}
+          <button type="submit" name="action" value="preview" class="secondary" formtarget="_blank" formnovalidate>
             {t("pages.preview")}
           </button>
-        </p>
+          {v.published ? (
+            <button type="submit" name="action" value="update" data-save="1">
+              {t("pages.update")}
+            </button>
+          ) : (
+            <button type="submit" name="action" value="publish">
+              {t("pages.publish")}
+            </button>
+          )}
+        </div>
+        <input type="hidden" name="published" value={v.published ? "on" : ""} />
+        <div class="split">
+          <div class="card">
+            <label for="title" class="sr-only">
+              {t("pages.title")}
+            </label>
+            <input id="title" name="title" class="pe-title" value={v.title} required maxlength={PAGE_LIMITS.title} placeholder={t("pages.title_placeholder")} />
+            {/* JS があるときだけ出す（見たまま / Markdown の切り替え。pageEditorClient） */}
+            <div id="body-tabs" role="tablist" hidden style="margin:.25rem 0">
+              <button type="button" class="secondary small" role="tab" data-mode="visual" aria-selected="false">
+                {t("pages.mode_visual")}
+              </button>{" "}
+              <button type="button" class="secondary small" role="tab" data-mode="markdown" aria-selected="true">
+                {t("pages.mode_markdown")}
+              </button>
+            </div>
+            <div class="toolbar" role="toolbar" aria-label={t("pages.tools")}>
+              {tools.map(([k, label, ph]) => (
+                <button type="button" class="secondary small" data-md={k} data-ph={ph ? t(ph) : undefined} data-ask={k === "link" ? t("pages.tool_link_ask") : undefined}>
+                  {t(label)}
+                </button>
+              ))}
+            </div>
+            {/* 見たままの編集の領域。中身はお店の画面と同じ変換で作った HTML（決まった形のタグだけ）。保存のときは Markdown に直して送る */}
+            <div id="body-visual" class="page-preview" contenteditable={true} role="textbox" aria-multiline="true" aria-label={t("pages.body")} hidden data-ready="1">
+              {raw(props.visual)}
+            </div>
+            <textarea id="body" name="body" rows={20} maxlength={PAGE_LIMITS.body} aria-label={t("pages.body")} style="width:100%;font-family:ui-monospace,monospace">
+              {v.body}
+            </textarea>
+            <p>
+              <button type="button" id="blk-add-end" class="secondary small" hidden>
+                + {t("pages.block_add")}
+              </button>{" "}
+              <span class="muted">{t("pages.block_hint")}</span>
+            </p>
+            <details>
+              <summary>{t("pages.syntax")}</summary>
+              <pre class="muted" style="white-space:pre-wrap">{t("pages.syntax_help")}</pre>
+            </details>
+          </div>
+          <aside>
+            <section class="card">
+              <h2>{t("pages.settings")}</h2>
+              <label for="handle">{t("pages.handle")}</label>
+              <input id="handle" name="handle" value={v.handle} maxlength={64} pattern="[a-z0-9]([a-z0-9\-]{0,62}[a-z0-9])?" data-auto={props.pageId ? "0" : v.handle ? "0" : "1"} />
+              <p class="muted pe-url">
+                /pages/<span id="handle-show">{v.handle || t("pages.handle_auto")}</span>
+              </p>
+              <p class="muted">{t("pages.handle_help")}</p>
+              {props.viewUrl ? (
+                <p>
+                  <a href={props.viewUrl} target="_blank" rel="noopener">
+                    {t("pages.view")}
+                  </a>
+                </p>
+              ) : null}
+              <label for="nav">{t("pages.nav")}</label>
+              <select id="nav" name="nav">
+                {PAGE_NAVS.map((n) => (
+                  <option value={n} selected={v.nav === n}>
+                    {t(`pages.nav_${n}` as MessageKey)}
+                  </option>
+                ))}
+              </select>
+              <label for="sort_order">{t("pages.sort_order")}</label>
+              <input id="sort_order" name="sort_order" type="number" min={-1000} max={1000} value={String(v.sort_order)} style="width:6rem" />
+            </section>
+            <section class="card">
+              <h2>{t("pages.image")}</h2>
+              {/* 画像のフォームは外に置き、欄とボタンは form 属性でそちらに結ぶ（フォームは入れ子にできない） */}
+              <input id="page-image" type="file" name="file" accept="image/*" required form="page-image-form" />
+              <p class="muted">{t("pages.image_help")}</p>
+              <p>
+                <button type="submit" class="secondary small" form="page-image-form">
+                  {t("pages.image_upload")}
+                </button>{" "}
+                <span id="page-image-status" aria-live="polite"></span>
+              </p>
+            </section>
+            <section class="card">
+              <details>
+                <summary>{t("pages.more")}</summary>
+                <label for="seo_title">{t("pages.seo_title")}</label>
+                <input id="seo_title" name="seo_title" value={v.seo_title ?? ""} maxlength={PAGE_LIMITS.seoTitle} />
+                <label for="seo_description">{t("pages.seo_description")}</label>
+                <textarea id="seo_description" name="seo_description" rows={3} maxlength={PAGE_LIMITS.seoDescription} style="width:100%">
+                  {v.seo_description ?? ""}
+                </textarea>
+                <label for="template_suffix">{t("pages.template")}</label>
+                <input id="template_suffix" name="template_suffix" value={v.template_suffix ?? ""} maxlength={40} pattern="[a-z0-9_\-]{1,40}" />
+                <p class="muted">{t("pages.template_help")}</p>
+              </details>
+            </section>
+            {props.pageId ? (
+              <section class="card danger-zone">
+                <button type="submit" class="secondary small" form="page-delete">
+                  {t("pages.delete")}
+                </button>
+              </section>
+            ) : null}
+          </aside>
+        </div>
       </form>
-      <form method="post" action={`${base(props.shop.id)}/images`} enctype="multipart/form-data" id="page-image-form" class="card" data-busy={t("pages.image_busy")} data-failed={t("pages.image_failed")}>
+      <form method="post" action={`${base(props.shop.id)}/images`} enctype="multipart/form-data" id="page-image-form" data-busy={t("pages.image_busy")} data-failed={t("pages.image_failed")}>
         <input type="hidden" name="back" value={props.action} />
-        <label for="page-image">{t("pages.image")}</label>
-        <input id="page-image" type="file" name="file" accept="image/*" required />
-        <p class="muted">{t("pages.image_help")}</p>
-        <p>
-          <button type="submit" class="secondary">
-            {t("pages.image_upload")}
-          </button>{" "}
-          <span id="page-image-status" aria-live="polite"></span>
-        </p>
       </form>
+      {props.pageId ? <form method="post" action={`${props.action}/delete`} id="page-delete" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`} /> : null}
       <script dangerouslySetInnerHTML={{ __html: PAGE_EDITOR_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.shop.id) }} />
+      <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
     </>
   );
 }
 
-function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; preview?: string | null; status?: 200 | 400 | 409 }) {
+function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
   const title = opts.pageId ? opts.values.title || t("pages.edit") : t("pages.new");
   const action = opts.pageId ? `${base(shop.id)}/${opts.pageId}` : base(shop.id);
   const flash = c.req.query("flash");
   const image = c.req.query("image");
+  const viewUrl = opts.pageId && opts.values.published && shop.published ? `${shopHome(publicBaseUrl(c), shop)}/pages/${opts.values.handle}` : null;
   return layout(
     c,
     shop,
@@ -310,17 +411,27 @@ function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; value
     <>
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
-      <PageForm shop={shop} action={action} values={opts.values} visual={markdownToHtml(opts.values.body, { mediaBase: mediaBaseUrl(c) })} error={opts.error ?? null} preview={opts.preview ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
-      {opts.pageId ? (
-        <section class="card danger-zone">
-          <h2>{t("pages.delete")}</h2>
-          <form method="post" action={`${action}/delete`} onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`}>
-            <button type="submit">{t("pages.delete")}</button>
-          </form>
-        </section>
-      ) : null}
+      <PageForm shop={shop} action={action} values={opts.values} visual={markdownToHtml(opts.values.body, { mediaBase: mediaBaseUrl(c) })} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
+  );
+}
+
+/** プレビュー（新しいタブ。保存しない）。本文はお店の画面と同じ変換、見た目はテーマが決めるので管理画面の形で中身だけ見せる */
+function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null) {
+  return layout(
+    c,
+    shop,
+    t("pages.preview"),
+    [{ label: t("mod.pages.name"), href: base(shop.id) }, { label: t("pages.preview") }],
+    <>
+      <p class="notice">{t("pages.preview_note")}</p>
+      {error ? <p class="error">{t(error)}</p> : null}
+      <article class="card page-preview">
+        <h1>{values.title}</h1>
+        {raw(markdownToHtml(values.body, { mediaBase: mediaBaseUrl(c) }))}
+      </article>
+    </>,
   );
 }
 
@@ -330,26 +441,40 @@ pagesAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   return editPage(c, shop, { values: EMPTY });
 });
 
-/** 作る・保存する。action=preview なら保存せずにプレビューを出す（入れた値はそのまま） */
+/** 作る・保存する。action=preview なら保存せずにプレビューを出す */
 async function save(c: AdminContext, pageId: string | null) {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const f = await formFields(c);
-  const { values, error } = pageValues(f);
+  const { values, error, autoHandle } = pageValues(f);
   const page = pageId ? { pageId } : {};
-  if (f.action === "preview") return editPage(c, shop, { ...page, values, error, preview: markdownToHtml(values.body, { mediaBase: mediaBaseUrl(c) }) });
-  if (error) return editPage(c, shop, { ...page, values, error, status: 400 });
+  if (f.action === "preview") return previewPage(c, shop, values, error);
+  // 公開のボタンで誤りがあったら、画面の状態は押す前のまま（下書きなら下書き）に見せる
+  const shown = (v: PageValues) => ({ ...v, published: f.published === "on" });
+  if (error) return editPage(c, shop, { ...page, values: shown(values), error, status: 400 });
   const db = owner(c).db;
-  try {
+  const write = async (v: PageValues) => {
     if (pageId) {
-      const rows = await db.from<PageRow>("pages").update(values, { id: pageId, shop_id: shop.id });
-      if (rows.length === 0) return c.notFound();
-      return c.redirect(`${base(shop.id)}/${pageId}?flash=saved`);
+      const rows = await db.from<PageRow>("pages").update(v, { id: pageId, shop_id: shop.id });
+      return rows.length === 0 ? null : pageId;
     }
-    const [row] = await db.from<PageRow>("pages").insert({ ...values, shop_id: shop.id });
-    return c.redirect(`${base(shop.id)}/${row!.id}?flash=saved`);
+    const [row] = await db.from<PageRow>("pages").insert({ ...v, shop_id: shop.id });
+    return row!.id;
+  };
+  try {
+    let id: string | null;
+    try {
+      id = await write(values);
+    } catch (e) {
+      // 自動で作った名前が重なったら、1 回だけ作り直す
+      if (!(autoHandle && e instanceof DbError && e.code === "23505")) throw e;
+      values.handle = randomPageHandle();
+      id = await write(values);
+    }
+    if (!id) return c.notFound();
+    return c.redirect(`${base(shop.id)}/${id}?flash=saved`);
   } catch (e) {
-    if (e instanceof DbError) return editPage(c, shop, { ...page, values, error: dbError(e), status: e.code === "23505" ? 409 : 400 });
+    if (e instanceof DbError) return editPage(c, shop, { ...page, values: shown(values), error: dbError(e), status: e.code === "23505" ? 409 : 400 });
     throw e;
   }
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
-import { PAGES_MIGRATION } from "../src/pages";
+import { PAGES_MIGRATION, handleFromTitle } from "../src/pages";
+import { PAGE_BLOCKS_SCRIPT } from "../src/modules/pages/blocks-script";
 
 /** ショップのページの管理画面（同梱モジュール pages、0079）。扱えるのは content の項目を持つ人。本文は決まった書式でプレビューできる */
 function setup(opts: { enabled?: boolean } = {}) {
@@ -99,5 +100,65 @@ describe("ショップのページの管理画面", () => {
     expect(plain.headers.get("location")).toMatch(new RegExp(`^${base}/new\\?image=`));
     const svg = await owner.postMultipart(`${base}/images`, { file: new File(['<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>'], "x.png", { type: "image/png" }) });
     expect(svg.headers.get("location")).toContain("flash=image_error");
+  });
+
+  it("編集の画面: 上のバーのボタンで下書き保存・公開・更新・下書きに戻す。プレビューは新しいタブで保存しない", async () => {
+    const { sb, app, base } = setup();
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const blank = await (await owner.get(`${base}/new`)).text();
+    // 新しいページ: 下書き保存（Ctrl+S の先）と公開。プレビューは新しいタブ
+    expect(blank).toMatch(/<button[^>]*name="action"[^>]*value="draft"[^>]*data-save="1"/);
+    expect(blank).toMatch(/<button[^>]*name="action"[^>]*value="publish"/);
+    expect(blank).toMatch(/<button[^>]*value="preview"[^>]*formtarget="_blank"/);
+    expect(blank).toContain('data-auto="1"');
+    const { published: _p, ...draftForm } = form;
+    await owner.post(base, { ...draftForm, action: "draft" });
+    const page = sb.tables.pages[0]!;
+    expect(page["published"]).toBe(false);
+    const id = String(page["id"]);
+    // 公開 → 公開中の画面は「更新」と「下書きに戻す」
+    await owner.post(`${base}/${id}`, { ...draftForm, action: "publish" });
+    expect(page["published"]).toBe(true);
+    const live = await (await owner.get(`${base}/${id}`)).text();
+    expect(live).toMatch(/<button[^>]*value="update"[^>]*data-save="1"/);
+    expect(live).toMatch(/<button[^>]*value="draft"[^>]*>下書きに戻す/);
+    expect(live).toContain("/my-shop/pages/about");
+    await owner.post(`${base}/${id}`, { ...draftForm, published: "on", action: "update", title: "更新した" });
+    expect(page).toMatchObject({ title: "更新した", published: true });
+    await owner.post(`${base}/${id}`, { ...draftForm, title: "更新した", published: "on", action: "draft" });
+    expect(page["published"]).toBe(false);
+    // プレビューは保存せず、本文をお店の画面と同じ変換で見せる
+    const preview = await (await owner.post(`${base}/${id}`, { ...draftForm, title: "見るだけ", action: "preview" })).text();
+    expect(preview).toContain("<h1>見るだけ</h1>");
+    expect(preview).toContain("<h2>店のこと</h2>");
+    expect(page["title"]).toBe("更新した");
+  });
+
+  it("URL の名前が空ならタイトルから作り、作れなければ page-xxxxxx。重なったら作り直す", async () => {
+    const { sb, app, base } = setup();
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    await owner.post(base, { ...form, title: "About Us!", handle: "" });
+    await owner.post(base, { ...form, title: "About us", handle: "" });
+    await owner.post(base, { ...form, title: "私たちについて", handle: "" });
+    await owner.post(base, { ...form, title: "Shipping", handle: "" });
+    const handles = sb.tables.pages.map((p) => String(p["handle"]));
+    expect(handles[0]).toBe("about-us");
+    expect(handles[1]).toMatch(/^page-[a-z0-9]{6}$/);
+    expect(handles[2]).toMatch(/^page-[a-z0-9]{6}$/);
+    expect(handles[3]).toMatch(/^page-[a-z0-9]{6}$/);
+    expect(handleFromTitle("Café Été 2026")).toBe("cafe-ete-2026");
+    expect(handleFromTitle("cart")).toBe("");
+    // 手で入れた名前が重なったら作り直さずに知らせる
+    expect((await owner.post(base, { ...form, title: "x", handle: "about-us" })).status).toBe(409);
+  });
+
+  it("ブロックの操作のスクリプトは文として正しく、文言は画面から受け取る", async () => {
+    expect(() => new Function(PAGE_BLOCKS_SCRIPT)).not.toThrow();
+    const { app, base } = setup();
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await owner.get(`${base}/new`)).text();
+    expect(html).toContain('data-t-add="ブロックを追加"');
+    expect(html).toContain('data-reserved="legal,privacy,returns,shipping,cart,checkout,account,search,orders,inquiries"');
+    expect(html).toContain('id="blk-add-end"');
   });
 });
