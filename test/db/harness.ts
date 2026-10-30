@@ -5,15 +5,15 @@
  * Supabase CLI（npx supabase start）の DB に対して流す場合は auth スキーマが既にあるので、
  * シムは「auth.users が無いときだけ」適用する。
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
+import { MIGRATION_FILES } from "../../src/db/migrations";
 
 export const TEST_DB_URL = process.env.BANTO_TEST_DB_URL;
 export const dbAvailable = Boolean(TEST_DB_URL);
 
 const ROOT = join(import.meta.dirname, "..", "..");
-const MIGRATIONS_DIR = join(ROOT, "supabase", "migrations");
 const SHIM_PATH = join(ROOT, "supabase", "test", "auth_shim.sql");
 
 export type Role = "anon" | "authenticated" | "service_role";
@@ -34,13 +34,7 @@ export async function closePool(): Promise<void> {
   pool = undefined;
 }
 
-export function listMigrations(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
-}
-
-/** public スキーマを作り直し、シム + 全マイグレーションを順に適用する */
+/** public スキーマを作り直し、シム + 全マイグレーションを順に適用する（Worker が当てるのと同じ、注釈を外した同梱の SQL。scripts/sql-strip.mjs） */
 export async function resetDatabase(): Promise<void> {
   const client = await getPool().connect();
   try {
@@ -59,8 +53,8 @@ export async function resetDatabase(): Promise<void> {
       await client.query("alter default privileges in schema public grant all on sequences to anon, authenticated, service_role");
       await client.query("alter default privileges in schema public grant all on functions to anon, authenticated, service_role");
     }
-    for (const file of listMigrations()) {
-      await client.query(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
+    for (const m of MIGRATION_FILES) {
+      await client.query(m.sql);
     }
   } finally {
     client.release();
