@@ -175,6 +175,8 @@ describe("ショップのページの管理画面", () => {
     expect(cfg.schema["accordion"]!["icon"]!.values).toEqual(["chevron", "plus", "arrow", "caret", "none"]);
     expect(cfg.schema["group"]!["pad"]!.def).toBe("m");
     expect(cfg.t["kind.cover"]).toBe("カバー");
+    // メディアライブラリの「新しく置く」はダイアログの中のファイルの欄（iPad の写真の選択が閉じないように）
+    expect(html).toContain('<input type="file" id="media-file" accept="image/*" multiple');
   });
 
   it("商品のブロック: タグは公開中の商品のタグから選び、並ぶ商品の見本と件数を返す", async () => {
