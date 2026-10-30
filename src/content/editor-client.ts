@@ -19,7 +19,7 @@ export function pageEditorClient() {
     getAttribute?(name: string): string | null;
   }
 
-  const BLOCK = /^(P|DIV|H1|H2|H3|H4|H5|H6|UL|OL|LI|BLOCKQUOTE|HR|TABLE|THEAD|TBODY|TR|PRE|SECTION|ARTICLE|FIGURE)$/;
+  const BLOCK = /^(P|DIV|H1|H2|H3|H4|H5|H6|UL|OL|LI|BLOCKQUOTE|HR|TABLE|THEAD|TBODY|TR|PRE|SECTION|ARTICLE|FIGURE|DETAILS)$/;
 
   /** 文字の中の書式の記号を、記号のまま出るように \ を付ける */
   function escapeText(s: string, inTable: boolean): string {
@@ -140,8 +140,60 @@ export function pageEditorClient() {
     return parts.join(" ");
   }
 
+  /** 囲みの値に使える文字（選択肢は英小文字・数字・ハイフン。説明・題は " と改行を外す） */
+  const word = (v: string) => (/^[a-z0-9-]{1,20}$/.test(v) ? v : "");
+  const quoted = (v: string) => v.replace(/["\n\r]/g, "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const LAYOUT = /^(group|columns|column|cover|media|gallery|accordion)$/;
+  /** 囲みの中身を持つ要素（カバー・画像と文・アコーディオンは中の欄、ほかは自分） */
+  function slotOf(c: MdNode, kind: string): MdNode {
+    const cls = kind === "cover" ? "banto-cover__inner" : kind === "media" ? "banto-media__body" : kind === "accordion" ? "banto-accordion__body" : "";
+    if (!cls) return c;
+    return Array.from(c.childNodes).find((x) => x.nodeType === 1 && (" " + attr(x, "class") + " ").includes(` ${cls} `)) ?? { nodeType: 1, nodeName: "DIV", childNodes: [], textContent: "" };
+  }
+  /**
+   * レイアウトの囲み → 「::: 名前 値…」・中身・「:::」（src/pages/layout.ts）。外側ほど : を多く書く（意味は同じ、読みやすさのため）。
+   * heights に自分の高さ（中の囲みの段の数 + 1）を足す
+   */
+  function layout(c: MdNode, kind: string, out: string[], heights: number[]): void {
+    const parts = [kind];
+    // 選択肢の値（どの囲みにどの鍵があるかは変換が決める。ここは data-* にあるものをそのまま書く）
+    for (const k of ["bg", "pad", "ratio", "valign", "height", "overlay", "align", "side", "cols", "icon", "open"]) {
+      const v = word(attr(c, `data-${k}`));
+      if (v) parts.push(`${k}=${v}`);
+    }
+    const image = attr(c, "data-image").trim();
+    if (image && !/[\s"<>()]/.test(image)) parts.push(`image=${image}`);
+    const alt = quoted(attr(c, "data-alt"));
+    if (alt) parts.push(`alt="${alt}"`);
+    const inner: string[] = [];
+    const hs: number[] = [];
+    if (kind === "gallery") {
+      const walk = (x: MdNode) => {
+        for (const y of Array.from(x.childNodes)) {
+          if (y.nodeType !== 1) continue;
+          if (y.nodeName.toUpperCase() === "IMG") {
+            const src = attr(y, "src").trim();
+            if (src && !/[\s()<>]/.test(src)) inner.push(`![${escapeText(attr(y, "alt").replace(/[\s ]+/g, " "), false)}](${src})`);
+          } else walk(y);
+        }
+      };
+      walk(c);
+    } else {
+      if (kind === "accordion") {
+        const t = Array.from(c.childNodes).find((x) => x.nodeType === 1 && (" " + attr(x, "class") + " ").includes(" banto-accordion__title "));
+        const title = quoted(t?.textContent ?? "");
+        if (title) parts.push(`title="${title}"`);
+      }
+      blocks(slotOf(c, kind), inner, hs);
+    }
+    const h = 1 + Math.max(0, ...hs);
+    heights.push(h);
+    const fence = ":".repeat(2 + h);
+    out.push([`${fence} ${parts.join(" ")}`, ...(inner.length ? [inner.join(kind === "gallery" ? "\n" : "\n\n")] : []), fence].join("\n"));
+  }
+
   /** 塊（段落・見出し・…）を順に Markdown にする。インラインの並びは 1 つの段落にまとめる */
-  function blocks(n: MdNode, out: string[]): void {
+  function blocks(n: MdNode, out: string[], heights: number[] = []): void {
     let run: MdNode[] = [];
     const flush = () => {
       const p = paragraph(run.map((c) => inline(c, false)).join(""));
@@ -155,6 +207,17 @@ export function pageEditorClient() {
         continue;
       }
       flush();
+      // レイアウトの囲みとスペーサー（src/pages/layout.ts）
+      const kind = attr(c, "data-banto-block");
+      if (LAYOUT.test(kind)) {
+        layout(c, kind, out, heights);
+        continue;
+      }
+      if (kind === "spacer") {
+        const size = word(attr(c, "data-size"));
+        out.push(`::: spacer${size ? ` size=${size}` : ""}`);
+        continue;
+      }
       // 商品を並べる・ボタンのブロック（src/pages/blocks.ts と同じ 1 行の形に戻す）
       if (tag === "DIV" && attr(c, "data-banto-block") === "products") {
         const line = productsLine(c);

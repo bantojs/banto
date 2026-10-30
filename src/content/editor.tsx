@@ -24,6 +24,27 @@ import { responsiveImage } from "../media/images";
 import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
+import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, layoutDefault } from "../pages/layout";
+
+/** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
+function layoutConfig(): string {
+  const kinds = Object.keys(LAYOUT_ATTRS) as (keyof typeof LAYOUT_ATTRS)[];
+  const schema: Record<string, Record<string, { values: readonly string[]; def: string }>> = {};
+  const L: Record<string, string> = {};
+  for (const k of kinds) {
+    schema[k] = {};
+    L[`kind.${k}`] = t(`layout.kind_${k}` as MessageKey);
+    if (k !== "column") L[`desc.${k}`] = t(`layout.desc_${k}` as MessageKey);
+    for (const [key, values] of Object.entries(LAYOUT_ATTRS[k])) {
+      schema[k]![key] = { values, def: layoutDefault(k, key) };
+      L[`field.${key}`] = t(`layout.field_${key}` as MessageKey);
+      if (key !== "open") for (const v of values) L[`opt.${key}.${v}`] = t(`layout.opt_${key}_${v}` as MessageKey);
+    }
+  }
+  for (const k of ["image", "alt"]) L[`field.${k}`] = t(`layout.field_${k}` as MessageKey);
+  for (const k of ["group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
+  return JSON.stringify({ schema, depth: LAYOUT_DEPTH_MAX, t: L });
+}
 
 /** リビジョンの一覧に出す列（0080） */
 export interface RevisionRow {
@@ -70,7 +91,7 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
 }
 
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
-export const editorHtml = (c: AdminContext, body: string) => markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel });
+export const editorHtml = (c: AdminContext, body: string) => markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, editor: true });
 
 /**
  * 本文の入力の手助け（見出し・太字・リンク・箇条書き…のボタンと、画像を縮小して置いて ![](URL) を入れる）。
@@ -118,10 +139,29 @@ export const EDITOR_CSS = `
 #page-form .pe-title:focus{outline:none;box-shadow:none;border-bottom-color:var(--border-strong)}
 #body-visual{min-height:24rem;padding:.5rem 2.5rem 3rem;overflow:visible;border:0;border-radius:0}
 #body-visual:focus{outline:none}
-#body-visual>*{position:relative;border-radius:3px;transition:box-shadow .1s}
-#body-visual>*:hover{box-shadow:0 0 0 1px var(--border)}
-#body-visual>.is-sel{box-shadow:0 0 0 1.5px var(--link)}
-#body-visual>.is-ph::before{content:attr(data-ph);position:absolute;left:0;right:0;color:var(--fg-muted);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#body-visual>*,#body-visual [data-slot]>*,#body-visual .banto-accordion__title{position:relative;border-radius:3px;transition:box-shadow .1s}
+#body-visual>*:hover,#body-visual [data-slot]>*:hover{box-shadow:0 0 0 1px var(--border)}
+#body-visual .is-sel,#body-visual .is-sel:hover{box-shadow:0 0 0 1.5px var(--link)}
+#body-visual [data-slot]{min-height:1.5rem}
+#body-visual .banto-column{outline:1px dashed var(--border);outline-offset:3px}
+#body-visual .banto-cover:not([data-image]){background:linear-gradient(135deg,#555,#222)}
+#body-visual .banto-media__fig:empty,#body-visual .banto-gallery:empty{min-height:7rem;border:1.5px dashed var(--border-strong);border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+#body-visual .banto-media__fig:empty::before,#body-visual .banto-gallery:empty::before{content:attr(data-ph);color:var(--fg-muted);font-size:.85rem}
+#body-visual .banto-spacer{background:repeating-linear-gradient(45deg,transparent 0 6px,rgba(127,127,127,.12) 6px 12px);border-radius:4px}
+#body-visual .banto-accordion__title{font-weight:600;padding:.75rem 0}
+#body-visual .banto-accordion__body{border-top:1px dashed var(--border);padding-top:.5rem}
+#body-visual .is-ph-title::before{content:attr(data-ph);position:absolute;color:var(--fg-muted);font-weight:400;pointer-events:none}
+.pe-blockset h2{display:flex;align-items:center;gap:.4rem}
+.pe-blockset select,.pe-blockset input[type=text]{width:100%;max-width:none}
+.pe-icons{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+.pe-icons label{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;margin:0;padding:.55rem .2rem;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:.68rem;line-height:1.2;text-align:center}
+.pe-icons input{position:absolute;opacity:0;width:1px;height:1px}
+.pe-icons label:has(input:checked){border-color:var(--link);box-shadow:inset 0 0 0 1px var(--link)}
+.pe-icons .banto-accordion__icon{display:block}
+.pe-thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:.4rem 0}
+.pe-thumbs div{position:relative}.pe-thumbs img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:4px}
+.pe-thumbs button{position:absolute;top:2px;right:2px;width:22px;height:22px;min-width:0;padding:0;border-radius:50%;font-size:.8rem;justify-content:center}
+#body-visual .is-ph::before{content:attr(data-ph);position:absolute;left:0;right:0;color:var(--fg-muted);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #body-visual table{border-collapse:collapse}#body-visual th,#body-visual td{border:1px solid var(--border);padding:.3rem .5rem}
 #body-visual img{max-width:100%;height:auto}
 #body-visual blockquote{margin:.5rem 0;padding-left:1rem;border-left:3px solid var(--border-strong)}
@@ -206,6 +246,7 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 @media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}
 @media (max-width:900px){.pe-full .pe-left,.pe-full .split>aside{position:absolute;top:0;bottom:0;z-index:45;width:min(320px,88vw);box-shadow:var(--shadow)}.pe-full .pe-left{left:0}.pe-full .split>aside{right:0}.pe-full .pe-bar .status{display:none}}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+${LAYOUT_CSS}
 `;
 
 /** 編集の画面の種類ごとの違い（ページと記事） */
@@ -299,6 +340,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-pv-unpublished": t("pages.products_preview_unpublished"),
     "data-t-pv-loading": t("pages.products_preview_loading"),
     "data-preview": `${props.kind.base}/products-preview`,
+    "data-layout": layoutConfig(),
     "data-t-back": t("pages.editor_back"),
     "data-t-lib": t("pages.editor_library"),
     "data-t-outline": t("pages.editor_outline"),

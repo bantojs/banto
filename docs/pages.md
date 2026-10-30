@@ -102,6 +102,64 @@
 - ボタンのリンクの規則は本文のリンクと同じです。HTML は `<p class="banto-button"><a class="banto-button__link" href="…">文字</a></p>` で、見た目はテーマの CSS です。
 - 文字として `:::` で始めたいときは前に `\` を付けます（`\:::`）。
 
+### レイアウトのブロック（グループ・カラム・カバー・画像と文・ギャラリー・アコーディオン・スペーサー）
+
+WordPress のよく使うブロックを、決まった書式のまま入れ子の囲みで書けます（メンテナの決定 2026-10-30）。編集の画面ではブロックの一覧の「デザイン」「メディア」「テキスト」から入れ、値は右の欄の「ブロックの設定」で選びます。
+
+```
+::::: group bg=subtle pad=l
+:::: columns ratio=1-2
+::: column
+## 見出し
+文
+:::
+::: column
+::: products tag=NEW limit=4
+:::
+::::
+:::::
+
+:::: cover image=https://media.example.jp/pages/…/hero.webp height=l overlay=dark align=center
+## ようこそ
+::: button [商品を見る](/products)
+::::
+
+::: accordion icon=plus title="送料はいくらですか？"
+全国一律 600 円です。
+:::
+```
+
+- 囲みは「`::: 名前 値…`」の行で始まり、「`:::`」だけの行で**一番内側**を閉じます（`:` の数は問いません。編集の画面は読みやすいように外側ほど多く書きます）。閉じの無い囲みは本文の終わりまでです。
+- **入れ子は 4 段まで**（カラムと列で 2 段）。それより深い囲みは、行を外して中身だけを描きます。編集の画面は 4 段を超える置き方をさせません。
+- 値は**決まった選択肢だけ**で、色や大きさの実際の値はテーマが決めます（下の「テーマで決まる値」）。合わない値は既定になります。本文に CSS は入りません。
+- 画像（カバーの背景・画像と文・ギャラリー）は本文の画像と同じく、ショップの画像の置き場のものだけです。
+
+| 名前 | 値（太字が既定） | 中身 |
+| --- | --- | --- |
+| `group`（グループ） | `bg`=**none**/subtle/accent/dark、`pad`=none/s/**m**/l | ブロック |
+| `columns`（カラム） | `ratio`=**1-1**/1-2/2-1/1-1-1/1-2-1/1-1-1-1（列の数と幅）、`valign`=**top**/center/bottom | `column` だけ（スマホでは縦に並ぶ） |
+| `column`（列） | なし | ブロック |
+| `cover`（カバー・ヒーロー） | `image`=URL、`height`=s/**m**/l/full、`overlay`=none/light/**dark**、`align`=left/**center**/right | ブロック（見出し・文・ボタン…） |
+| `media`（画像と文） | `image`=URL、`alt="説明"`、`side`=**left**/right、`valign`=top/**center**/bottom | ブロック（文の側） |
+| `gallery`（ギャラリー） | `cols`=2/**3**/4 | 画像の行だけ（`![説明](URL)`。60 枚まで） |
+| `accordion`（アコーディオン・FAQ） | `title="質問"`、`icon`=**chevron**/plus/arrow/caret/none、`open`=**0**/1 | ブロック（答え）。`<details>` で、JS なしで開け閉め |
+| `spacer`（スペーサー、1 行） | `size`=s/**m**/l/xl | なし |
+
+#### テーマで決まる値
+
+ブロックは class だけで描き（`banto-group banto-bg-subtle banto-pad-m` など）、並べ方の最小の CSS をレイアウトのブロックがあるページにだけ 1 回添えます（`src/pages/layout.ts` の `LAYOUT_CSS`）。色と大きさは CSS の変数で、テーマが決めます（無ければ既定）。
+
+| 変数 | 使う所 | 既定 |
+| --- | --- | --- |
+| `--banto-bg-subtle` | 背景「薄い色」 | 薄い灰色 |
+| `--banto-bg-accent` / `--banto-fg-accent` | 背景「アクセントの色」と文字 | `--accent`（既定のテーマのアクセントの色）/ 白 |
+| `--banto-bg-dark` / `--banto-fg-dark` | 背景「濃い色」と文字・画像の無いカバー | 濃い灰色 / 白 |
+| `--banto-pad-s` / `-m` / `-l` | 余白 | 1rem / 2rem / 3.5rem |
+| `--banto-gap` | カラム・画像と文・ギャラリーのすき間 | 1.5rem（ギャラリーは .75rem） |
+| `--banto-cover-s` / `-m` / `-l` | カバーの高さ | 16rem / 26rem / 36rem |
+| `--banto-spacer-s` / `-m` / `-l` / `-xl` | スペーサー | 1.5rem / 3rem / 5rem / 8rem |
+| `--banto-radius` / `--banto-line` | 角の丸み・アコーディオンの線 | .5rem / 薄い線 |
+
 ## 3. 安全のための作り
 
 - 「ビジュアル」の編集はブラウザの中だけで、保存するときに上の書式に直して送ります（`src/content/editor-client.ts`）。書式で表せない飾り（文字の色・大きさなど）は文字だけが残ります。貼り付けは文字だけです（ほかのサイトの見た目やスクリプトを持ち込まない）。JS の無いブラウザでは「Markdown」の入力欄だけになります。
