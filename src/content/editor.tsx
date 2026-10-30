@@ -115,13 +115,17 @@ export const PAGE_EDITOR_SCRIPT = `
   var form=document.getElementById("page-image-form"), input=document.getElementById("page-image"), st=document.getElementById("page-image-status");
   if(!form||!input||!window.fetch) return;
   function load(file){ return new Promise(function(ok,ng){ var url=URL.createObjectURL(file); var im=new Image(); im.onload=function(){URL.revokeObjectURL(url);ok(im)}; im.onerror=function(){URL.revokeObjectURL(url);ng(new Error("decode"))}; im.src=url; }); }
-  function draw(im,max,q){ var w=im.naturalWidth,h=im.naturalHeight,r=Math.min(1,max/Math.max(w,h)); var c=document.createElement("canvas"); c.width=Math.max(1,Math.round(w*r)); c.height=Math.max(1,Math.round(h*r)); c.getContext("2d").drawImage(im,0,0,c.width,c.height); return new Promise(function(ok,ng){ c.toBlob(function(b){ if(b&&b.type==="image/webp") ok(b); else ng(new Error("webp")); },"image/webp",q); }); }
+  function draw(im,max,q){ var w=im.naturalWidth,h=im.naturalHeight,r=Math.min(1,max/Math.max(w,h)); var c=document.createElement("canvas"); c.width=Math.max(1,Math.round(w*r)); c.height=Math.max(1,Math.round(h*r)); c.getContext("2d").drawImage(im,0,0,c.width,c.height); return new Promise(function(ok,ng){ c.toBlob(function(b){ if(b&&b.type==="image/webp") return ok(b); /* Safari は WebP に書き出せないので JPEG に */ c.toBlob(function(j){ if(j&&j.type==="image/jpeg") ok(j); else ng(new Error("encode")); },"image/jpeg",q); },"image/webp",q); }); }
+  // 画像を縮めて置き場へ上げ、URL を返す（メディアライブラリの「新しく置く」も使う）。iPhone の HEIC も描ければ縮めて送る
+  function upload(file){
+    var send=function(blob,name){ var fd=new FormData(); fd.append("file",new File([blob],name,{type:blob.type})); return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json().then(function(j){ if(!r.ok||!j.url) throw new Error(j.error||"upload"); return j; }); }); };
+    return /^image\\/(jpeg|png|webp|avif|heic|heif)$/.test(file.type)?load(file).then(function(im){ return draw(im,1600,0.82); }).then(function(b){ return send(b,b.type==="image/jpeg"?"image.jpg":"image.webp"); },function(){ return send(file,file.name); }):send(file,file.name);
+  }
+  window.bantoUploadImage=function(file){ return upload(file).then(function(j){ return j.url; }); };
   form.addEventListener("submit",function(ev){
     var file=input.files&&input.files[0]; if(!file) return;
     ev.preventDefault(); st.textContent=form.getAttribute("data-busy")||"";
-    var send=function(blob,name){ var fd=new FormData(); fd.append("file",new File([blob],name,{type:blob.type})); return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json().then(function(j){ if(!r.ok||!j.url) throw new Error(j.error||"upload"); return j; }); }); };
-    var go=/^image\\/(jpeg|png|webp|avif)$/.test(file.type)?load(file).then(function(im){ return draw(im,1600,0.82); }).then(function(b){ return send(b,"image.webp"); }):send(file,file.name);
-    go.then(function(j){ if(!(window.bantoPageImage&&window.bantoPageImage(j.url))) insert("\\n![]("+j.url+")\\n"); st.textContent=""; input.value=""; }).catch(function(e){ st.textContent=(form.getAttribute("data-failed")||"")+" "+(e&&e.message||""); });
+    upload(file).then(function(j){ if(!(window.bantoPageImage&&window.bantoPageImage(j.url))) insert("\\n![]("+j.url+")\\n"); st.textContent=""; input.value=""; }).catch(function(e){ st.textContent=(form.getAttribute("data-failed")||"")+" "+(e&&e.message||""); });
   });
 })();`;
 
@@ -232,7 +236,9 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .pe-left-body input[type=search]{width:100%;max-width:none}
 .pe-hint{font-size:.75rem;color:var(--fg-muted);margin:.75rem .25rem}
 .blk-tile{cursor:grab}
-.ol-row{display:flex;align-items:center;gap:.4rem;padding:.3rem .4rem;border-radius:4px;cursor:pointer;user-select:none;font-size:.85rem;position:relative}
+.ol-row{display:flex;align-items:center;gap:.4rem;padding:.3rem .4rem;border-radius:4px;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;font-size:.85rem;position:relative}
+.ol-handle{display:inline-flex;padding:.35rem;margin:-.35rem 0 -.35rem -.35rem;touch-action:none;cursor:grab}
+.pe-left-body{-webkit-user-select:none;user-select:none}.pe-left-body input{-webkit-user-select:text;user-select:text}
 .ol-row:hover{background:var(--bg-subtle)}
 .ol-row.is-cur{box-shadow:inset 0 0 0 1.5px var(--link)}
 .ol-row.is-pick{background:var(--link);color:#fff}
@@ -245,6 +251,8 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 #pe-msgs .notice,#pe-msgs .error{margin:0 auto 1rem}
 @media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}
 @media (max-width:900px){.pe-full .pe-left,.pe-full .split>aside{position:absolute;top:0;bottom:0;z-index:45;width:min(320px,88vw);box-shadow:var(--shadow)}.pe-full .pe-left{left:0}.pe-full .split>aside{right:0}.pe-full .pe-bar .status{display:none}}
+.pe-file{position:relative;display:inline-flex;align-items:center;height:32px;padding:0 .8rem;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg);cursor:pointer;font-size:.85rem;font-weight:500;overflow:hidden;margin:0}
+.pe-file input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 ${LAYOUT_CSS}
 `;
@@ -589,13 +597,16 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             {t("pages.media_library")}
           </h2>
           <p>
-            <button type="button" class="secondary small" id="media-upload">
+            {/* ファイルを選ぶ欄をダイアログの中に置く（iPad の写真の選択は、押した欄の位置に出る。隠れた欄を押させると閉じてしまう） */}
+            <label class="pe-file" for="media-file">
               {t("pages.image_upload")}
-            </button>{" "}
+              <input type="file" id="media-file" accept="image/*" multiple />
+            </label>{" "}
             <button type="button" class="secondary small" id="media-close">
               {t("pages.cancel")}
             </button>
           </p>
+          <p id="media-status" class="muted" aria-live="polite"></p>
           <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(7rem,1fr));gap:.5rem;max-height:60vh;overflow:auto"></div>
         </dialog>
       ) : null}

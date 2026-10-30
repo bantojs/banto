@@ -248,7 +248,11 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   document.addEventListener("mousemove",function(){ tb.classList.remove("typing"); });
   window.addEventListener("resize",refresh);
   // 本文の欄だけが動く画面（全画面の形）でも追いかける（scroll は泡立たないので捕まえる）
-  document.addEventListener("scroll",function(){ gap.hidden=true; if(!tb.hidden||!plus.hidden) refresh(); if(!ins.hidden) closeIns(); },{passive:true,capture:true});
+  // ＋の一覧は閉じずに付いていく（一覧の中のスクロール・iPad のキーボードで画面が動いたときに閉じないように）
+  document.addEventListener("scroll",function(e){
+    var t=e.target; if(t&&t.nodeType===1&&(ins.contains(t)||menu.contains(t)||pop.contains(t)||(left&&left.contains(t)))) return;
+    gap.hidden=true; if(!tb.hidden||!plus.hidden) refresh(); if(!ins.hidden) placeIns();
+  },{passive:true,capture:true});
 
   // ---------- ブロックの道具（種類・動かす・書式・設定・その他） ----------
   var tb=el("div","blk-tb"); tb.setAttribute("role","toolbar"); tb.setAttribute("aria-label",T("type")); tb.hidden=true; document.body.appendChild(tb);
@@ -356,12 +360,18 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     var f=insQ.value.trim().toLowerCase(); insList=BLOCKS.filter(function(b){ return match(b,f); });
     insSel=Math.max(0,Math.min(insSel,insList.length-1)); tiles(insBody,insList,insSel,pickIns,null);
   }
+  var insAnchor=null;
+  // 指で使う端末（iPad など）では、開いたときに探す欄へ入らない（キーボードが一覧を隠すため）
+  var coarse=!!(window.matchMedia&&window.matchMedia("(pointer: coarse)").matches);
   function openIns(blk,mode,anchor){
     closeMenu(); closePop(); insFor=blk; insMode=mode; insSel=0; insQ.value=""; drawIns();
-    ins.hidden=false; plus.hidden=true; gap.hidden=true;
-    var r=(anchor||blk||ed).getBoundingClientRect(); var below=r.bottom+ins.offsetHeight+8<document.documentElement.clientHeight;
+    ins.hidden=false; plus.hidden=true; gap.hidden=true; insAnchor=anchor||blk||ed; placeIns();
+    if(!coarse) insQ.focus();
+  }
+  function placeIns(){
+    if(ins.hidden||!insAnchor) return;
+    var r=insAnchor.getBoundingClientRect(), vh=document.documentElement.clientHeight; var below=r.bottom+ins.offsetHeight+8<vh||r.top<ins.offsetHeight+8;
     at(ins,r,0,below?r.height+6:-ins.offsetHeight-6);
-    insQ.focus();
   }
   function closeIns(){ if(ins.hidden) return; ins.hidden=true; var b=insFor; insFor=null; if(isBlock(b)){ if(!BOXES[kindOf(b)]&&!CONT[kindOf(b)]) caretIn(b); } refresh(); }
   function pickIns(i){ var b=insList[i]; var blk=insFor, mode=insMode; ins.hidden=true; insFor=null; if(b) insertAt(b.k,blk,mode); }
@@ -379,6 +389,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   // カーソルの位置に入れる（空の行ならそこ、文字のある行なら後ろ、どこも選んでいなければ終わり）
   function insertAtCursor(k){
     var s0=isBlock(sel)?sel:null, last=ed.lastElementChild;
+    // 中にブロックを持つ囲み（カバー・グループ・列・画像と文・アコーディオン）を選んでいるなら、その中の終わりに
+    var sk=s0?kindOf(s0):"";
+    if(s0&&CONT[sk]&&sk!=="columns"&&sk!=="gallery"){ var sl=slotsOf(s0)[0]; if(sl){ var ll=sl.lastElementChild; insertAt(k,ll,ll&&isEmpty(ll)?"replace":"after"); return; } }
     if(s0) insertAt(k,s0,isEmpty(s0)?"replace":"after"); else insertAt(k,last,last&&isEmpty(last)?"replace":"after");
   }
   insQ.addEventListener("input",function(){ insSel=0; drawIns(); });
@@ -512,6 +525,30 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   });
   // 囲みを壊さないキー: 囲みの中の最初の行の頭の Backspace・文字を書けない箱の手前の Delete・題の Enter
   function edge(b,start){ var s=window.getSelection(); if(!s.rangeCount||!s.isCollapsed) return false; var r=document.createRange(); r.selectNodeContents(b); if(start) r.setEnd(s.anchorNode,s.anchorOffset); else r.setStart(s.anchorNode,s.anchorOffset); return r.toString()===""&&!r.cloneContents().querySelector("img,hr,table"); }
+  // 改行（Enter）はここで段落を分ける。ブラウザ任せだと iPad の Safari が余分な改行を残し、空の段落が増えるため。
+  // 箇条書き・引用・表の中はブラウザに任せる（項目を足す・抜ける）。Shift+Enter（行の中の改行）もそのまま
+  function splitBlock(b){
+    var s=window.getSelection(); if(!s.rangeCount) return;
+    var r=s.getRangeAt(0); if(!r.collapsed) r.deleteContents();
+    var empty=function(x){ return !(x.textContent||"").trim()&&!x.querySelector("img"); };
+    var np=document.createElement("p");
+    if(edge(b,true)&&!empty(b)){ np.appendChild(document.createElement("br")); b.parentNode.insertBefore(np,b); mark(); select(b); return; }
+    var tail=document.createRange(); tail.setStart(r.startContainer,r.startOffset); tail.setEnd(b,b.childNodes.length);
+    np.appendChild(tail.extractContents());
+    if(empty(np)) np.innerHTML="<br>"; if(empty(b)) b.innerHTML="<br>";
+    b.parentNode.insertBefore(np,b.nextSibling);
+    var c=document.createRange(); c.setStart(np,0); c.collapse(true); s.removeAllRanges(); s.addRange(c); saved=c.cloneRange();
+    mark(); select(np);
+  }
+  ed.addEventListener("beforeinput",function(e){
+    if(e.inputType!=="insertParagraph"||!menu.hidden) return;
+    var n=window.getSelection().anchorNode; var x=n&&(n.nodeType===1?n:n.parentNode);
+    var title=x&&x.closest?x.closest("[data-acc-title]"):null;
+    var b=current(); if(!b) return;
+    if(title){ e.preventDefault(); var body=b.querySelector("[data-slot]"); var f=body&&body.firstElementChild; if(f){ caretIn(f); select(f); } return; }
+    if(x&&x.closest&&x.closest("li,td,th,blockquote")) return;
+    if(/^(P|H[1-6])$/.test(b.nodeName)&&!/banto-button/.test(b.className)){ e.preventDefault(); splitBlock(b); }
+  });
   function guardKeys(e){
     var b=current(); if(!b) return;
     var title=window.getSelection().anchorNode; title=title&&(title.nodeType===1?title:title.parentNode); title=title&&title.closest?title.closest("[data-acc-title]"):null;
@@ -791,7 +828,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       var walk=function(slot,level){
         Array.prototype.forEach.call(slot.children,function(b){
           var k=kindOf(b); if(!k) return;
-          var row=el("div","ol-row",svg(ICO.drag)+svg(ICO[k]||ICO.p)); row.style.paddingLeft=(.4+level*1.1)+"rem"; row.setAttribute("role","treeitem"); row.setAttribute("aria-level",String(level+1));
+          var row=el("div","ol-row",'<span class="ol-handle">'+svg(ICO.drag)+"</span>"+svg(ICO[k]||ICO.p)); row.style.paddingLeft=(.4+level*1.1)+"rem"; row.setAttribute("role","treeitem"); row.setAttribute("aria-level",String(level+1));
           if(b===sel) row.classList.add("is-cur"); if(picked.indexOf(b)>=0){ row.classList.add("is-pick"); row.setAttribute("aria-selected","true"); }
           var sub=k==="products"?(b.getAttribute("data-tag")?"#"+b.getAttribute("data-tag"):""):k==="accordion"?text1(b.querySelector("[data-acc-title]")||b):CONT[k]||k==="spacer"?"":text1(b);
           var tx=el("span","ol-txt"); tx.textContent=nameOf(k); var sm=el("small",""); sm.textContent=sub; tx.appendChild(sm); row.appendChild(tx);
@@ -824,6 +861,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     }
     function rowDown(e,b){
       if(e.button!==0) return;
+      // 指では ⠿ をつかんだときだけ動かす（ほかの所はなぞるとスクロール、触れると選ぶ）
+      var canDrag=e.pointerType!=="touch"||!!(e.target.closest&&e.target.closest(".ol-handle"));
+      if(canDrag) e.preventDefault();
       var x0=e.clientX, y0=e.clientY, moved=false, drop=null, line=null;
       var multi=e.shiftKey||e.ctrlKey||e.metaKey;
       // 選ぶ（Shift は同じスロットの中の続き、Ctrl・⌘ は 1 つずつ）
@@ -833,8 +873,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       drawOutline();
       var moving=docOrder(tops(picked.indexOf(b)>=0?picked:[b]));
       var mv=function(ev){
+        if(!canDrag) return;
         if(!moved&&Math.abs(ev.clientX-x0)+Math.abs(ev.clientY-y0)<5) return;
-        moved=true; document.body.style.cursor="grabbing"; drop=null;
+        ev.preventDefault(); moved=true; document.body.style.cursor="grabbing"; drop=null;
         // 行の真ん中より上ならその前、下なら後ろ（同じスロットに入る）。動かすものの中・列の決まり・入れ子の上限に合わない所は落とせない
         for(var r=0;r<rowsInfo.length;r++){
           var info=rowsInfo[r], rr=info.row.getBoundingClientRect(); if(ev.clientY<rr.top||ev.clientY>=rr.bottom) continue;
@@ -896,7 +937,7 @@ export const PAGE_MEDIA_SCRIPT = String.raw`
   if(clr) clr.addEventListener("click",function(){ setFeatured(""); });
   // ライブラリ
   var dlg=document.getElementById("media-lib"); if(!dlg||!dlg.showModal||!window.fetch) return;
-  var grid=document.getElementById("media-grid"), mode="body", featuredUpload=false, pickCb=null, cbUpload=null;
+  var grid=document.getElementById("media-grid"), mode="body", pickCb=null;
   function pick(url){ dlg.close(); if(mode==="featured") setFeatured(url); else if(mode==="cb"&&pickCb){ var f=pickCb; pickCb=null; f(url); } else if(window.bantoPageImage) window.bantoPageImage(url); }
   function open(m){
     mode=m; grid.textContent="";
@@ -917,7 +958,17 @@ export const PAGE_MEDIA_SCRIPT = String.raw`
   Array.prototype.forEach.call(document.querySelectorAll("[data-media]"),function(b){ b.hidden=false; b.addEventListener("click",function(){ open(b.getAttribute("data-media")); }); });
   document.getElementById("media-close").addEventListener("click",function(){ dlg.close(); });
   // 新しく置く: 置き終えたら（bantoPageImage が呼ばれる）、アイキャッチを選んでいたならそちらへ
-  document.getElementById("media-upload").addEventListener("click",function(){ featuredUpload=mode==="featured"; cbUpload=mode==="cb"?pickCb:null; dlg.close(); var inp=document.getElementById("page-image"); if(inp) inp.click(); });
-  var orig=window.bantoPageImage;
-  window.bantoPageImage=function(url){ if(featuredUpload){ featuredUpload=false; setFeatured(url); return true; } if(cbUpload){ var f=cbUpload; cbUpload=null; f(url); return true; } return orig?orig(url):false; };
+  // 新しく置く: ダイアログの中のファイルの欄で選び（複数可）、置き終えたものから順に、開いたときの行き先（本文・アイキャッチ・ブロック）へ
+  var mf=document.getElementById("media-file"), ms=document.getElementById("media-status");
+  if(mf) mf.addEventListener("change",function(){
+    var files=Array.prototype.slice.call(mf.files||[]); if(!files.length||!window.bantoUploadImage) return;
+    var m0=mode, cb=pickCb, n=0;
+    var next=function(){
+      if(n>=files.length){ ms.textContent=""; mf.value=""; dlg.close(); if(m0==="cb") pickCb=null; return; }
+      ms.textContent=(document.getElementById("page-image-form").getAttribute("data-busy")||"")+" ("+(n+1)+"/"+files.length+")";
+      window.bantoUploadImage(files[n++]).then(function(url){ if(m0==="featured") setFeatured(url); else if(m0==="cb"&&cb) cb(url); else if(window.bantoPageImage) window.bantoPageImage(url); next(); })
+        .catch(function(e){ ms.textContent=(document.getElementById("page-image-form").getAttribute("data-failed")||"")+" "+(e&&e.message||""); mf.value=""; });
+    };
+    next();
+  });
 })();`;
