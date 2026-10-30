@@ -164,6 +164,39 @@ describe("ショップのページの管理画面", () => {
     expect(html).toContain('data-t-add="ブロックを追加"');
     expect(html).toContain('data-reserved="legal,privacy,returns,shipping,cart,checkout,account,search,orders,inquiries"');
     expect(html).toContain('id="blk-add-end"');
+    expect(html).toContain('id="blk-top"');
+    expect(html).toContain(`data-preview="${base}/products-preview"`);
+    // 全画面の形（左にブロックの一覧とリスト表示、右に設定）は JS が作る。戻る先は一覧
+    expect(html).toContain(`<div id="pe-root" data-back="${base}">`);
+    expect(html).toContain('<div id="pe-left" class="pe-left" hidden=""></div>');
+  });
+
+  it("商品のブロック: タグは公開中の商品のタグから選び、並ぶ商品の見本と件数を返す", async () => {
+    const { sb, app, shop, base } = setup();
+    for (const [slug, tags, published] of [["a", ["NEW", "冬"], true], ["b", ["NEW"], true], ["c", ["秘密"], false]] as const) {
+      const p = sb.addProduct(shop.id, { slug, name: `商品${slug}`, published, tags: [...tags] });
+      sb.addSku(shop.id, p.id, { code: slug, price_jpy: 1000, available: 1 });
+    }
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await owner.get(`${base}/new`)).text();
+    // 公開中の商品のタグだけ、多い順に件数つき（非公開の商品のタグは出さない）
+    expect(html).toContain('<select id="bp-tag" name="tag"');
+    expect(html.indexOf("NEW（2）")).toBeGreaterThan(0);
+    expect(html.indexOf("NEW（2）")).toBeLessThan(html.indexOf("冬（1）"));
+    expect(html).not.toContain("秘密");
+    // 見本: 大文字・小文字が違うタグは 0 件（それに気づけるように件数を返す）
+    const hit = (await (await owner.get(`${base}/products-preview?tag=NEW&limit=8&sort=new`)).json()) as { total: number; items: { name: string }[] };
+    expect(hit.total).toBe(2);
+    expect(hit.items.map((x) => x.name).sort()).toEqual(["商品a", "商品b"]);
+    expect(((await (await owner.get(`${base}/products-preview?tag=new`)).json()) as { total: number }).total).toBe(0);
+    expect(((await (await owner.get(`${base}/products-preview?limit=1`)).json()) as { total: number }).total).toBe(1);
+    // 非公開のショップは並ばないので、そう返す
+    sb.tables.shops[0]!["published"] = false;
+    const fresh = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
+    expect(await (await fresh.get(`${base}/products-preview?tag=NEW`)).json()).toMatchObject({ unpublished: true, total: 0 });
+    // ほかの項目の人は見られない
+    const other = await staff(sb, app, shop, "orders@example.com", ["orders"]);
+    expect((await other.get(`${base}/products-preview`)).status).not.toBe(200);
   });
 
   it("予約公開・ゴミ箱・リビジョン・アイキャッチ・メディアライブラリ（0080）", async () => {

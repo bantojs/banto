@@ -17,7 +17,10 @@ import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml } from "../pages/markdown";
 import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
-import { PRODUCT_SORTS } from "../storefront/data";
+import { PRODUCT_SORTS, toPublicShop, type ProductSort } from "../storefront/data";
+import { storefrontData } from "../routes/storefront/domain";
+import { tagCounts } from "../products/tags";
+import { responsiveImage } from "../media/images";
 import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
@@ -54,6 +57,16 @@ export function productsLabel(b: ProductBlock): string {
     t(`pages.sort_${b.sort}` as MessageKey),
   ];
   return `${t("pages.block_products")} — ${parts.join("・")}`;
+}
+
+/** 商品のブロックの設定で選ぶカテゴリーとタグ（タグは公開中の商品のものを多い順に。RLS で自分のショップのものだけ） */
+export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] }> {
+  const db = owner(c).db;
+  const [categories, rows] = await Promise.all([
+    db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
+    db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
+  ]);
+  return { categories, tags: tagCounts(rows).slice(0, 300) };
 }
 
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
@@ -103,26 +116,95 @@ export const EDITOR_CSS = `
 .pe-bar .pe-grow{flex:1}
 #page-form .pe-title{max-width:none;min-height:0;font-size:1.6rem;font-weight:700;line-height:1.3;border:0;border-bottom:1px solid transparent;border-radius:0;padding:.25rem 0;margin:0 0 .75rem;width:100%;background:transparent;box-shadow:none}
 #page-form .pe-title:focus{outline:none;box-shadow:none;border-bottom-color:var(--border-strong)}
-#body-visual{min-height:24rem;border:1px solid var(--border);border-radius:6px;padding:.75rem 1rem;overflow:auto}
-#body-visual:focus{outline:2px solid var(--link);outline-offset:1px}
+#body-visual{min-height:24rem;padding:.5rem 2.5rem 3rem;overflow:visible;border:0;border-radius:0}
+#body-visual:focus{outline:none}
+#body-visual>*{position:relative;border-radius:3px;transition:box-shadow .1s}
+#body-visual>*:hover{box-shadow:0 0 0 1px var(--border)}
+#body-visual>.is-sel{box-shadow:0 0 0 1.5px var(--link)}
+#body-visual>.is-ph::before{content:attr(data-ph);position:absolute;left:0;right:0;color:var(--fg-muted);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #body-visual table{border-collapse:collapse}#body-visual th,#body-visual td{border:1px solid var(--border);padding:.3rem .5rem}
 #body-visual img{max-width:100%;height:auto}
 #body-visual blockquote{margin:.5rem 0;padding-left:1rem;border-left:3px solid var(--border-strong)}
 .pe-url{font-size:.85rem;word-break:break-all}
-.blk-bar,.blk-menu{position:absolute;z-index:21;background:var(--bg);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
-.blk-bar{display:flex;gap:2px;border-radius:6px;padding:2px}
-.blk-btn{height:26px;min-width:28px;padding:0 .35rem;background:var(--bg);color:var(--fg);border:0;border-radius:4px;font-size:.95rem}
-.blk-btn:hover{background:var(--bg-subtle);opacity:1}
-.blk-menu{display:flex;flex-direction:column;min-width:12rem;border-radius:8px;padding:4px}
-.blk-opt{justify-content:flex-start;height:32px;background:transparent;color:var(--fg);border:0;border-radius:4px}
+.pe-canvas-head{display:flex;align-items:center;gap:.5rem;margin:.25rem 0 .5rem}
+.blk-top{width:34px;height:34px;padding:0;border-radius:6px;font-size:1.35rem;line-height:1;justify-content:center}
+.blk-tb,.blk-ins,.blk-menu,.blk-pop{position:absolute;z-index:61;background:var(--bg);border:1px solid var(--border-strong);box-shadow:var(--shadow)}
+.blk-tb{display:flex;align-items:stretch;border-radius:6px;padding:2px}
+.blk-tb.typing{visibility:hidden}
+.blk-btn{height:32px;min-width:32px;padding:0 .4rem;background:var(--bg);color:var(--fg);border:0;border-radius:4px;font-size:.9rem;justify-content:center;gap:2px}
+.blk-btn:hover,.blk-btn[aria-expanded=true]{background:var(--bg-subtle);opacity:1}
+.blk-btn[data-op=drag]{cursor:grab}
+.blk-sep{width:1px;background:var(--border);margin:4px 2px}
+.blk-ico{width:20px;height:20px;flex:none}
+.blk-plus{position:absolute;z-index:60;width:26px;height:26px;padding:0;border-radius:6px;background:var(--fg);color:var(--bg);border:0;font-size:1.1rem;line-height:1;justify-content:center}
+.blk-gap{position:absolute;z-index:59;height:2px;background:var(--link);pointer-events:none}
+.blk-gap button{pointer-events:auto;position:absolute;left:50%;top:-12px;margin-left:-13px;width:26px;height:26px;padding:0;border-radius:50%;background:var(--link);color:#fff;border:0;font-size:1.1rem;line-height:1;justify-content:center}
+.blk-ins{width:min(22rem,calc(100vw - 2rem));max-height:min(28rem,70vh);overflow:auto;border-radius:10px;padding:.5rem}
+.blk-ins input{width:100%;max-width:none;margin:0 0 .25rem}
+.blk-grp{font-size:.75rem;color:var(--fg-muted);margin:.5rem .25rem .25rem;text-transform:uppercase;letter-spacing:.04em}
+.blk-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px}
+.blk-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:auto;min-height:4.5rem;padding:.5rem .25rem;background:transparent;color:var(--fg);border:0;border-radius:6px;font-size:.8rem;font-weight:400;line-height:1.2;text-align:center}
+.blk-tile[aria-selected=true],.blk-tile:hover{background:var(--bg-subtle);opacity:1;box-shadow:inset 0 0 0 1.5px var(--link)}
+.blk-tile .blk-ico{width:24px;height:24px}
+.blk-menu,.blk-pop{display:flex;flex-direction:column;min-width:13rem;border-radius:8px;padding:4px}
+.blk-menu{min-width:18rem;max-height:20rem;overflow:auto}
+.blk-opt{display:flex;align-items:center;justify-content:flex-start;gap:.6rem;height:auto;min-height:34px;padding:.35rem .5rem;background:transparent;color:var(--fg);border:0;border-radius:4px;font-weight:400;text-align:left}
+.blk-opt small{display:block;color:var(--fg-muted);font-size:.75rem}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
-.blk-bar[hidden],.blk-menu[hidden]{display:none}
+#md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
 .page-preview .banto-products{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
-.page-preview .banto-products::before{content:"\\25A6  "}
+.page-preview .banto-products .bp-items{display:flex;gap:.5rem;margin-top:.5rem;overflow:hidden}
+.page-preview .banto-products .bp-item{flex:0 0 4.75rem;font-size:.7rem;line-height:1.3;overflow:hidden}
+.page-preview .banto-products .bp-item span{display:block;aspect-ratio:1/1;border-radius:4px;background:var(--border) center/cover no-repeat;margin-bottom:2px}
+.page-preview .banto-products .bp-item b{display:block;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bp-note{font-size:.8rem;color:var(--fg-muted);margin-top:.35rem}
+.bp-note.bad{color:var(--err);font-weight:600}
+.bp-preview{margin:.75rem 0 0;padding:.6rem .75rem;border-radius:6px;background:var(--bg-subtle)}
+.bp-preview:empty{display:none}
 .page-preview .banto-button__link{display:inline-block;padding:.5rem 1.25rem;border-radius:6px;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600}
-#blk-products{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
-#blk-products::backdrop{background:rgba(0,0,0,.35)}
+@media (max-width:600px){#body-visual{padding:.5rem .25rem 3rem 2rem}.blk-grid{grid-template-columns:repeat(3,1fr)}}
+#blk-products,#blk-button{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
+#blk-products::backdrop,#blk-button::backdrop{background:rgba(0,0,0,.35)}
 @media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
+html.pe-lock,html.pe-lock body{overflow:hidden}
+.pe-full{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column}
+.pe-full>#page-form{display:flex;flex-direction:column;flex:1;min-height:0;margin:0}
+.pe-full .pe-bar{position:static;margin:0;padding:.45rem .75rem;gap:.35rem;flex:none;flex-wrap:nowrap;background:var(--bg)}
+.pe-full #body-visual{padding:.5rem 0 6rem}
+.pe-full .pe-canvas-hint{display:none}
+.pe-bar-left{display:flex;align-items:center;gap:.25rem}
+.pe-back{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:6px;background:var(--fg);color:var(--bg)}
+.pe-tog{height:36px;min-width:36px;padding:0 .5rem;background:transparent;color:var(--fg);border:0;border-radius:6px;justify-content:center;font-size:1.3rem}
+.pe-tog:hover{background:var(--bg-subtle);opacity:1}
+.pe-tog[aria-pressed=true]{background:var(--fg);color:var(--bg)}
+.pe-full .split{position:relative;display:flex;flex:1;min-height:0;gap:0;align-items:stretch}
+.pe-full .split>.card{flex:1;min-width:0;overflow:auto;border:0;border-radius:0;box-shadow:none;margin:0;padding:2.5rem 1rem 6rem;display:block;background:var(--bg)}
+.pe-full .split>.card>*{max-width:48rem;margin-left:auto;margin-right:auto}
+.pe-full .split>aside{width:300px;flex:none;overflow:auto;border-left:1px solid var(--border);padding:.75rem;background:var(--bg-page)}
+.pe-full .split>aside>.card{margin:0 0 .75rem}
+.pe-full .split>aside[hidden],.pe-left[hidden]{display:none}
+.pe-full #blk-top{display:none}
+.pe-left{width:300px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg);min-height:0}
+.pe-left-head{display:flex;align-items:center;gap:.25rem;padding:.4rem .5rem;border-bottom:1px solid var(--border)}
+.pe-left-head [role=tab]{height:32px;padding:0 .7rem;background:transparent;color:var(--fg-muted);border:0;border-radius:0;border-bottom:2px solid transparent;font-weight:600}
+.pe-left-head [role=tab][aria-selected=true]{color:var(--fg);border-bottom-color:var(--fg)}
+.pe-left-body{flex:1;overflow:auto;padding:.6rem}
+.pe-left-body input[type=search]{width:100%;max-width:none}
+.pe-hint{font-size:.75rem;color:var(--fg-muted);margin:.75rem .25rem}
+.blk-tile{cursor:grab}
+.ol-row{display:flex;align-items:center;gap:.4rem;padding:.3rem .4rem;border-radius:4px;cursor:pointer;user-select:none;font-size:.85rem;position:relative}
+.ol-row:hover{background:var(--bg-subtle)}
+.ol-row.is-cur{box-shadow:inset 0 0 0 1.5px var(--link)}
+.ol-row.is-pick{background:var(--link);color:#fff}
+.ol-row .ol-txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ol-row .ol-txt small{color:var(--fg-muted);margin-left:.4rem}
+.ol-row.is-pick .ol-txt small{color:inherit;opacity:.8}
+.ol-row.ol-child{padding-left:1.9rem;font-size:.8rem;color:var(--fg-muted);cursor:default}
+.ol-drop{position:absolute;left:.4rem;right:.4rem;height:2px;background:var(--link);pointer-events:none}
+.ol-picked{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;padding:.5rem;margin-top:.5rem;background:var(--bg);border-top:1px solid var(--border);font-size:.8rem}
+#pe-msgs .notice,#pe-msgs .error{margin:0 auto 1rem}
+@media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}
+@media (max-width:900px){.pe-full .pe-left,.pe-full .split>aside{position:absolute;top:0;bottom:0;z-index:45;width:min(320px,88vw);box-shadow:var(--shadow)}.pe-full .pe-left{left:0}.pe-full .split>aside{right:0}.pe-full .pe-bar .status{display:none}}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 `;
 
@@ -134,6 +216,8 @@ export interface EditorKind {
   urlPrefix: string;
   /** メニュー・並び順の欄（ページだけ） */
   nav: boolean;
+  /** 編集の画面の左上の「戻る」の行き先（無ければ base） */
+  back?: string;
   /** 記事の欄（タグ・抜粋・書いた人） */
   article?: { tags: string; excerpt: string; author: string };
 }
@@ -153,7 +237,7 @@ export interface ContentValues {
   sort_order?: number;
 }
 
-export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; publishing: boolean; revisions: RevisionRow[] }) {
+export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; publishing: boolean; revisions: RevisionRow[] }) {
   const v = props.values;
   const state = contentState({ published: v.published, published_at: v.published_at ?? null, deleted_at: null });
   const tools: [string, MessageKey, MessageKey?][] = [
@@ -193,9 +277,42 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-products-max": tf("pages.products_max", { n: PRODUCT_BLOCKS_MAX }),
     "data-t-products-all": t("pages.products_all"),
     "data-t-products-items": t("pages.products_label_items"),
+    "data-t-ph": t("pages.block_placeholder"),
+    "data-t-search": t("pages.block_search"),
+    "data-t-more": t("pages.block_more"),
+    "data-t-dup": t("pages.block_duplicate"),
+    "data-t-before": t("pages.block_insert_before"),
+    "data-t-after": t("pages.block_insert_after"),
+    "data-t-edit": t("pages.block_edit"),
+    "data-t-drag": t("pages.block_drag"),
+    "data-t-type": t("pages.block_type"),
+    "data-t-bold": t("pages.tool_bold"),
+    "data-t-italic": t("pages.tool_italic"),
+    "data-t-link": t("pages.tool_link"),
+    "data-t-link-ask": t("pages.tool_link_ask"),
+    "data-t-g-text": t("pages.block_group_text"),
+    "data-t-g-media": t("pages.block_group_media"),
+    "data-t-g-shop": t("pages.block_group_shop"),
+    "data-t-none": t("pages.block_none"),
+    "data-t-pv-count": t("pages.products_preview_count"),
+    "data-t-pv-none": t("pages.products_preview_none"),
+    "data-t-pv-unpublished": t("pages.products_preview_unpublished"),
+    "data-t-pv-loading": t("pages.products_preview_loading"),
+    "data-preview": `${props.kind.base}/products-preview`,
+    "data-t-back": t("pages.editor_back"),
+    "data-t-lib": t("pages.editor_library"),
+    "data-t-outline": t("pages.editor_outline"),
+    "data-t-settings": t("pages.editor_settings"),
+    "data-t-close": t("pages.editor_close"),
+    "data-t-picked": t("pages.editor_picked"),
+    "data-t-pick-del": t("pages.editor_picked_delete"),
+    "data-t-pick-clear": t("pages.editor_picked_clear"),
+    "data-t-lib-hint": t("pages.editor_library_hint"),
+    "data-t-outline-hint": t("pages.editor_outline_hint"),
   };
+  for (const k of ["p", "h2", "h3", "ul", "ol", "q", "hr", "table", "img", "products", "button"]) blockText[`data-t-d-${k}`] = t(`pages.blockdesc_${k}` as MessageKey);
   return (
-    <>
+    <div id="pe-root" data-back={props.kind.back ?? props.kind.base}>
       <style dangerouslySetInnerHTML={{ __html: EDITOR_CSS }} />
       {props.error ? <p class="error">{t(props.error)}</p> : null}
       {props.image ? (
@@ -235,13 +352,21 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
         </div>
         <input type="hidden" name="published" value={v.published ? "on" : ""} />
         <div class="split">
+          {/* 左: ブロックの一覧とリスト表示（JS があるときだけ。PAGE_BLOCKS_SCRIPT が中を作る） */}
+          <div id="pe-left" class="pe-left" hidden></div>
           <div class="card">
+            <div id="pe-msgs" aria-live="polite"></div>
             <label for="title" class="sr-only">
               {t("pages.title")}
             </label>
             <input id="title" name="title" class="pe-title" value={v.title} required maxlength={PAGE_LIMITS.title} placeholder={t("pages.title_placeholder")} />
             {/* JS があるときだけ出す（見たまま / Markdown の切り替え。pageEditorClient） */}
-            <div id="body-tabs" role="tablist" hidden style="margin:.25rem 0">
+            <div class="pe-canvas-head">
+              <button type="button" id="blk-top" class="blk-top" hidden aria-label={t("pages.block_add")} title={t("pages.block_add")}>
+                +
+              </button>
+              <span class="pe-grow" />
+            <div id="body-tabs" role="tablist" hidden>
               <button type="button" class="secondary small" role="tab" data-mode="visual" aria-selected="false">
                 {t("pages.mode_visual")}
               </button>{" "}
@@ -249,7 +374,8 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
                 {t("pages.mode_markdown")}
               </button>
             </div>
-            <div class="toolbar" role="toolbar" aria-label={t("pages.tools")}>
+            </div>
+            <div class="toolbar" id="md-tools" role="toolbar" aria-label={t("pages.tools")}>
               {tools.map(([k, label, ph]) => (
                 <button type="button" class="secondary small" data-md={k} data-ph={ph ? t(ph) : undefined} data-ask={k === "link" ? t("pages.tool_link_ask") : undefined}>
                   {t(label)}
@@ -267,7 +393,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <button type="button" id="blk-add-end" class="secondary small" hidden>
                 + {t("pages.block_add")}
               </button>{" "}
-              <span class="muted">{t("pages.block_hint")}</span>
+              <span class="muted pe-canvas-hint">{t("pages.block_hint")}</span>
             </p>
             <details>
               <summary>{t("pages.syntax")}</summary>
@@ -445,7 +571,19 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             ))}
           </select>
           <label for="bp-tag">{t("pages.products_tag")}</label>
-          <input id="bp-tag" name="tag" maxlength={50} />
+          {props.tags && props.tags.length > 0 ? (
+            // お店にあるタグから選ぶ（大文字・小文字の違いで 0 件にならないように）。一覧に無いタグは開いたときにスクリプトが足す
+            <select id="bp-tag" name="tag" data-missing={t("pages.products_tag_missing")}>
+              <option value="">{t("pages.products_tag_any")}</option>
+              {props.tags.map((x) => (
+                <option value={x.tag}>
+                  {x.tag}（{x.count}）
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input id="bp-tag" name="tag" maxlength={50} />
+          )}
           <label for="bp-limit">{tf("pages.products_limit", { max: PRODUCT_BLOCK_LIMIT_MAX })}</label>
           <input id="bp-limit" name="limit" type="number" min={1} max={PRODUCT_BLOCK_LIMIT_MAX} value={String(PRODUCT_BLOCK_LIMIT_DEFAULT)} style="width:6rem" />
           <label for="bp-layout">{t("pages.products_layout")}</label>
@@ -459,7 +597,26 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <option value={x}>{t(`pages.sort_${x}` as MessageKey)}</option>
             ))}
           </select>
+          <div id="bp-preview" class="bp-preview" aria-live="polite"></div>
           <p class="muted">{tf("pages.products_help", { n: PRODUCT_BLOCKS_MAX })}</p>
+          <p>
+            <button type="submit" value="ok">
+              {t("pages.insert")}
+            </button>{" "}
+            <button type="submit" value="cancel" class="secondary" formnovalidate>
+              {t("pages.cancel")}
+            </button>
+          </p>
+        </form>
+      </dialog>
+      {/* ボタンのブロックの設定（PAGE_BLOCKS_SCRIPT が開く） */}
+      <dialog id="blk-button" aria-labelledby="blk-button-title">
+        <form method="dialog">
+          <h2 id="blk-button-title">{t("pages.block_button")}</h2>
+          <label for="bb-text">{t("pages.button_text")}</label>
+          <input id="bb-text" name="text" maxlength={100} />
+          <label for="bb-url">{t("pages.button_url")}</label>
+          <input id="bb-url" name="url" maxlength={500} placeholder="/" />
           <p>
             <button type="submit" value="ok">
               {t("pages.insert")}
@@ -474,7 +631,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.kind.base) }} />
       <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
       {props.publishing ? <script dangerouslySetInnerHTML={{ __html: PAGE_MEDIA_SCRIPT }} /> : null}
-    </>
+    </div>
   );
 }
 
@@ -518,6 +675,28 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   const items = await owner(c).db.from<{ id: string; url: string; created_at: string }>("page_media").select("id,url,created_at", { eq: { shop_id: shop.id }, order: "created_at.desc", limit: 100 });
   c.header("Cache-Control", "private, no-store");
   return c.json({ items });
+});
+
+/**
+ * 商品を並べるブロックの見本（お店の画面と同じ関数・同じキャッシュで、並ぶ商品の数と最初の 6 つ）。
+ * 置いたその場で「0 件」に気づけるように（タグの大文字・小文字の違いなど）。非公開のショップは並ばないので、そう返す
+ */
+  app.get("/products-preview", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop) return c.notFound();
+  c.header("Cache-Control", "private, no-store");
+  const sf = storefrontData(c);
+  if (!shop.published || !sf) return c.json({ unpublished: true, total: 0, items: [] });
+  const q = c.req.query();
+  const sort = (PRODUCT_SORTS as readonly string[]).includes(q.sort ?? "") ? (q.sort as ProductSort) : "new";
+  const n = Number(q.limit);
+  const limit = Number.isInteger(n) && n >= 1 && n <= PRODUCT_BLOCK_LIMIT_MAX ? n : PRODUCT_BLOCK_LIMIT_DEFAULT;
+  const tag = (q.tag ?? "").trim().slice(0, 50);
+  const category = /^[a-z0-9][a-z0-9-]{0,62}$/.test(q.category ?? "") ? q.category! : "";
+  const categories = category ? await owner(c).db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id } }) : [];
+  const r = await sf.productPage(toPublicShop(shop), { ...(category ? { category } : {}), ...(tag ? { tag } : {}), sort, limit }, categories, { count: true });
+  const items = (r?.items ?? []).slice(0, 6).map((x) => ({ name: x.product.name, image: x.image ? responsiveImage(mediaBaseUrl(c), x.image).src : null }));
+  return c.json({ total: Math.min(r?.total ?? items.length, limit), items });
 });
 
 /** 本文（決まった書式）を HTML にして返す。見たままの編集に切り替えるとき（お店の画面と同じ変換） */

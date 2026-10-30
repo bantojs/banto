@@ -15,7 +15,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
-import { ContentForm, contentState, editorHtml, imageUrlOk, mountEditorEndpoints, type ContentValues, type RevisionRow } from "../../content/editor";
+import { ContentForm, contentState, editorCatalog, editorHtml, imageUrlOk, mountEditorEndpoints, type ContentValues, type RevisionRow } from "../../content/editor";
 import { BLOG_MODULE, articleHandleOk, blogHandleOk, parseTags, type ArticleRow, type BlogRow } from "../../blog";
 
 /**
@@ -465,8 +465,8 @@ function articleDbError(e: DbError): MessageKey {
 async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: { articleId?: string; values: ArticleValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
   const db = owner(c).db;
   const at = `${base(shop.id)}/${blog.id}/articles`;
-  const [categories, revisions] = await Promise.all([
-    db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
+  const [catalog, revisions] = await Promise.all([
+    editorCatalog(c, shop),
     opts.articleId ? db.from<RevisionRow>("article_revisions").select("id,title,created_at", { eq: { article_id: opts.articleId, shop_id: shop.id }, order: "created_at.desc", limit: 20 }) : Promise.resolve([] as RevisionRow[]),
   ]);
   const title = opts.articleId ? opts.values.title || t("blog.edit_article") : t("blog.new_article");
@@ -486,7 +486,7 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
       <ContentForm
-        kind={{ base: base(shop.id), urlPrefix: `/blogs/${blog.handle}/`, nav: false, article: { tags: v.tags.join(", "), excerpt: v.excerpt ?? "", author: v.author ?? "" } }}
+        kind={{ base: base(shop.id), back: `${base(shop.id)}/${blog.id}`, urlPrefix: `/blogs/${blog.handle}/`, nav: false, article: { tags: v.tags.join(", "), excerpt: v.excerpt ?? "", author: v.author ?? "" } }}
         selfUrl={opts.articleId ? `${at}/${opts.articleId}` : `${at}/new`}
         publishing={true}
         revisions={revisions}
@@ -494,7 +494,8 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
         action={action}
         values={v}
         visual={editorHtml(c, v.body)}
-        categories={categories}
+        categories={catalog.categories}
+        tags={catalog.tags}
         {...(opts.articleId ? { pageId: opts.articleId } : {})}
         viewUrl={viewUrl}
         error={opts.error ?? null}

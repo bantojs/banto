@@ -22,7 +22,7 @@ import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MA
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
-import { ContentForm, contentState, editorHtml, imageUrlOk, mountEditorEndpoints, type RevisionRow } from "../../content/editor";
+import { ContentForm, contentState, editorCatalog, editorHtml, imageUrlOk, mountEditorEndpoints, type RevisionRow } from "../../content/editor";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
@@ -217,9 +217,9 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
 });
 
 async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
-  // 商品を並べるブロックで選ぶカテゴリー（RLS で自分のショップのものだけ）
+  // 商品を並べるブロックで選ぶカテゴリーとタグ
   const db = owner(c).db;
-  const [categories, pub] = await Promise.all([db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]), publishing(c)]);
+  const [catalog, pub] = await Promise.all([editorCatalog(c, shop), publishing(c)]);
   // リビジョン（0080。新しい順に 20 まで）
   const revisions = pub && opts.pageId ? await db.from<RevisionRow>("page_revisions").select("id,title,created_at", { eq: { page_id: opts.pageId, shop_id: shop.id }, order: "created_at.desc", limit: 20 }) : [];
   const title = opts.pageId ? opts.values.title || t("pages.edit") : t("pages.new");
@@ -237,7 +237,7 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
-      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} publishing={pub} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={categories} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} publishing={pub} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
   );
