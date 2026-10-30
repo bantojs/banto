@@ -57,7 +57,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   if(!(ed.textContent||"").trim()&&!ed.querySelector("img,hr,table")) ed.innerHTML="<p><br></p>";
   ed.addEventListener("input",wrapLoose);
   var BLOCKS=[
-    ["p",T("p")],["h2",T("h2")],["h3",T("h3")],["ul",T("ul")],["ol",T("ol")],["q",T("q")],["hr",T("hr")],["table",T("table")],["img",T("img")]
+    ["p",T("p")],["h2",T("h2")],["h3",T("h3")],["ul",T("ul")],["ol",T("ol")],["q",T("q")],["hr",T("hr")],["table",T("table")],["img",T("img")],["products",T("products")],["button",T("button")]
   ];
   var saved=null;
   function remember(){ var s=window.getSelection(); if(s&&s.rangeCount&&ed.contains(s.anchorNode)) saved=s.getRangeAt(0).cloneRange(); }
@@ -73,6 +73,14 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function emptyP(){ var p=document.createElement("p"); p.appendChild(document.createElement("br")); return p; }
   function apply(kind,blk){
     if(kind==="img"){ var inp=document.getElementById("page-image"); if(inp){ remember(); inp.click(); } return; }
+    if(kind==="products"){ openProducts(null,blk); return; }
+    if(kind==="button"){
+      var text=window.prompt(T("button-text"),""); if(!text) return;
+      var url=window.prompt(T("button-url"),"/"); if(!url) return;
+      var p=document.createElement("p"); p.className="banto-button";
+      var a=document.createElement("a"); a.className="banto-button__link"; a.setAttribute("href",url.replace(/[\s()<>"]/g,"")); a.textContent=text.replace(/[\[\]\n]/g,"").slice(0,100);
+      p.appendChild(a); place2(p,blk); return;
+    }
     if(blk){ caretIn(blk); }
     var run=function(c,v){ document.execCommand(c,false,v); };
     if(kind==="p") run("formatBlock","<p>");
@@ -85,6 +93,48 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     else if(kind==="table"){ var c=T("cell"); run("insertHTML","<table><thead><tr><th>"+c+"</th><th>"+c+"</th></tr></thead><tbody><tr><td>"+c+"</td><td>"+c+"</td></tr></tbody></table><p><br></p>"); }
     mark(); place();
   }
+
+  // ブロックの箱（商品・ボタン）を blk の場所に置き、後ろに続きを書く段落を用意する
+  function place2(box,blk){
+    if(blk&&blk.parentNode===ed) ed.replaceChild(box,blk); else ed.appendChild(box);
+    var next=box.nextElementSibling; if(!next){ next=emptyP(); ed.appendChild(next); }
+    caretIn(next); mark(); place();
+  }
+  // 商品を並べる: 設定のダイアログ（サーバーが選択肢を入れて置いてある）
+  var dlg=document.getElementById("blk-products");
+  var SORTS={new:1,updated:1,price_asc:1,price_desc:1,name:1};
+  function productsText(d){
+    var f=dlg?dlg.querySelector("form"):null; var opt=function(name,v){ var o=f&&f.querySelector("[name="+name+"] option[value='"+v+"']"); return o?o.textContent:v; };
+    var parts=[d.category?opt("category",d.category):T("products-all")];
+    if(d.tag) parts.push("#"+d.tag);
+    parts.push(d.limit+" "+T("products-items"),opt("layout",d.layout),opt("sort",d.sort));
+    return T("products")+" \u2014 "+parts.join("\u30fb");
+  }
+  function setBox(box,d){
+    box.className="banto-products banto-products--"+d.layout; box.setAttribute("data-banto-block","products"); box.setAttribute("contenteditable","false");
+    box.setAttribute("data-category",d.category); box.setAttribute("data-tag",d.tag); box.setAttribute("data-limit",String(d.limit)); box.setAttribute("data-layout",d.layout); box.setAttribute("data-sort",d.sort);
+    box.textContent=productsText(d);
+  }
+  function openProducts(box,blk){
+    if(!dlg||!dlg.showModal) return;
+    if(!box&&ed.querySelectorAll("[data-banto-block=products]").length>=3){ window.alert(T("products-max")); return; }
+    var f=dlg.querySelector("form");
+    var g=function(k,dv){ return box?(box.getAttribute("data-"+k)||dv):dv; };
+    f.elements.category.value=g("category",""); f.elements.tag.value=g("tag",""); f.elements.limit.value=g("limit","8"); f.elements.layout.value=g("layout","grid"); f.elements.sort.value=g("sort","new");
+    dlg.returnValue="";
+    var done=function(){
+      dlg.removeEventListener("close",done);
+      if(dlg.returnValue!=="ok") return;
+      var n=parseInt(f.elements.limit.value,10); var lay=f.elements.layout.value==="scroll"?"scroll":"grid"; var so=SORTS[f.elements.sort.value]?f.elements.sort.value:"new";
+      var cat=/^[a-z0-9][a-z0-9-]{0,62}$/.test(f.elements.category.value)?f.elements.category.value:"";
+      var d={category:cat,tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=24)?n:8,layout:lay,sort:so};
+      if(box){ setBox(box,d); mark(); }
+      else { var nb=document.createElement("div"); setBox(nb,d); place2(nb,blk); }
+    };
+    dlg.addEventListener("close",done);
+    dlg.showModal();
+  }
+  ed.addEventListener("click",function(e){ var el=e.target; while(el&&el!==ed&&!(el.getAttribute&&el.getAttribute("data-banto-block")==="products")) el=el.parentNode; if(el&&el!==ed){ e.preventDefault(); openProducts(el,null); } });
 
   // 「/」の一覧と「＋」の一覧（同じもの）
   var menu=document.createElement("div"); menu.className="blk-menu"; menu.setAttribute("role","listbox"); menu.hidden=true;

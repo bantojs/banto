@@ -32,6 +32,8 @@ export function pageEditorClient() {
   function escapeLineStart(line: string): string {
     if (/^\s{0,3}(#|>|[-+*]\s|[-*_]{3,}\s*$)/.test(line)) return line.replace(/^(\s*)([#>\-+*_])/, "$1\\$2");
     if (/^\s{0,3}\d{1,9}[.)]\s/.test(line)) return line.replace(/^(\s*\d{1,9})([.)])/, "$1\\$2");
+    // 「:::」で始まる行はブロックの行（商品・ボタン）に読まれるので、文字のままにする
+    if (/^\s{0,3}:::/.test(line)) return line.replace(/^(\s*):/, "$1\\:");
     return line;
   }
 
@@ -123,6 +125,21 @@ export function pageEditorClient() {
     return [line(rows[0]!), `| ${Array.from({ length: width }, () => "---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n");
   }
 
+  /** 商品を並べるブロックの箱 → 「::: products …」の 1 行（値は blocks.ts の parseProductsLine が受ける形だけ） */
+  function productsLine(n: MdNode): string {
+    const parts = ["::: products"];
+    const category = attr(n, "data-category");
+    if (/^[a-z0-9][a-z0-9-]{0,62}$/.test(category)) parts.push(`category=${category}`);
+    const tag = attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
+    if (tag) parts.push(/\s/.test(tag) ? `tag="${tag}"` : `tag=${tag}`);
+    const limit = Number(attr(n, "data-limit"));
+    parts.push(`limit=${Number.isInteger(limit) && limit >= 1 && limit <= 24 ? limit : 8}`);
+    parts.push(`layout=${attr(n, "data-layout") === "scroll" ? "scroll" : "grid"}`);
+    const sort = attr(n, "data-sort");
+    parts.push(`sort=${/^(new|updated|price_asc|price_desc|name)$/.test(sort) ? sort : "new"}`);
+    return parts.join(" ");
+  }
+
   /** 塊（段落・見出し・…）を順に Markdown にする。インラインの並びは 1 つの段落にまとめる */
   function blocks(n: MdNode, out: string[]): void {
     let run: MdNode[] = [];
@@ -138,6 +155,20 @@ export function pageEditorClient() {
         continue;
       }
       flush();
+      // 商品を並べる・ボタンのブロック（src/pages/blocks.ts と同じ 1 行の形に戻す）
+      if (tag === "DIV" && attr(c, "data-banto-block") === "products") {
+        const line = productsLine(c);
+        if (line) out.push(line);
+        continue;
+      }
+      if (tag === "P" && /(^|\s)banto-button(\s|$)/.test(attr(c, "class"))) {
+        const a = Array.from(c.childNodes).find((x) => x.nodeType === 1 && x.nodeName.toUpperCase() === "A");
+        const href = a ? attr(a, "href").trim() : "";
+        const text = (a?.textContent ?? "").replace(/[\s ]+/g, " ").replace(/[[\]]/g, "").trim().slice(0, 100);
+        if (text && href && !/[\s()<>]/.test(href)) out.push(`::: button [${text}](${href})`);
+        else if (text) out.push(paragraph(escapeText(text, false)));
+        continue;
+      }
       if (/^H[1-6]$/.test(tag)) {
         // 見出しはもともと太いので、中の太字は外す（ブラウザは太字のまま見出しにすることがある）
         const text = Array.from(c.childNodes, (x) => inline(x, false)).join("").replace(/(?<!\\)\*\*/g, "").replace(/\s+/g, " ").trim();

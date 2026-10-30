@@ -4,7 +4,7 @@ import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
-import { t, type MessageKey } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
 import { formFields, owner, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
@@ -16,6 +16,9 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
+import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../../pages/blocks";
+import { PRODUCT_SORTS } from "../../storefront/data";
+import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT } from "./blocks-script";
@@ -84,6 +87,21 @@ function dbError(e: DbError): MessageKey {
 }
 
 const base = (shopId: string) => `/admin/shops/${shopId}/modules/pages`;
+
+/** 見たままの編集での商品のブロックの説明（例: 商品を並べる — カテゴリー: tops・8 件・グリッド・新しい順） */
+function productsLabel(b: ProductBlock): string {
+  const parts = [
+    b.category ? tf("pages.products_label_category", { v: b.category }) : t("pages.products_all"),
+    ...(b.tag ? [tf("pages.products_label_tag", { v: b.tag })] : []),
+    tf("pages.products_label_limit", { n: b.limit }),
+    t(`pages.layout_${b.layout}` as MessageKey),
+    t(`pages.sort_${b.sort}` as MessageKey),
+  ];
+  return `${t("pages.block_products")} — ${parts.join("・")}`;
+}
+
+/** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
+const editorHtml = (c: AdminContext, body: string) => markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel });
 
 function layout(c: AdminContext, shop: ShopRow, title: string, crumbs: { label: string; href?: string }[], body: Child, status: 200 | 400 | 409 = 200) {
   return c.html(
@@ -209,11 +227,16 @@ const EDITOR_CSS = `
 .blk-opt{justify-content:flex-start;height:32px;background:transparent;color:var(--fg);border:0;border-radius:4px}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
 .blk-bar[hidden],.blk-menu[hidden]{display:none}
+.page-preview .banto-products{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
+.page-preview .banto-products::before{content:"\\25A6  "}
+.page-preview .banto-button__link{display:inline-block;padding:.5rem 1.25rem;border-radius:6px;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600}
+#blk-products{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
+#blk-products::backdrop{background:rgba(0,0,0,.35)}
 @media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 `;
 
-function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null }) {
+function PageForm(props: { shop: ShopRow; action: string; values: PageValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null }) {
   const v = props.values;
   const tools: [string, MessageKey, MessageKey?][] = [
     ["p", "pages.tool_p"],
@@ -245,6 +268,13 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
     "data-t-down": t("pages.block_down"),
     "data-t-del": t("pages.block_remove"),
     "data-t-handle-auto": t("pages.handle_auto"),
+    "data-t-products": t("pages.block_products"),
+    "data-t-button": t("pages.block_button"),
+    "data-t-button-text": t("pages.button_text_ask"),
+    "data-t-button-url": t("pages.tool_link_ask"),
+    "data-t-products-max": tf("pages.products_max", { n: PRODUCT_BLOCKS_MAX }),
+    "data-t-products-all": t("pages.products_all"),
+    "data-t-products-items": t("pages.products_label_items"),
   };
   return (
     <>
@@ -390,6 +420,45 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
         <input type="hidden" name="back" value={props.action} />
       </form>
       {props.pageId ? <form method="post" action={`${props.action}/delete`} id="page-delete" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`} /> : null}
+      {/* 商品を並べるブロックの設定（PAGE_BLOCKS_SCRIPT が開く。JS が無ければ書式の「::: products …」を直接書く） */}
+      <dialog id="blk-products" aria-labelledby="blk-products-title">
+        <form method="dialog">
+          <h2 id="blk-products-title">{t("pages.block_products")}</h2>
+          <label for="bp-category">{t("pages.products_category")}</label>
+          <select id="bp-category" name="category">
+            <option value="">{t("pages.products_all")}</option>
+            {props.categories.map((cat) => (
+              <option value={cat.slug}>
+                {cat.name}（{cat.slug}）
+              </option>
+            ))}
+          </select>
+          <label for="bp-tag">{t("pages.products_tag")}</label>
+          <input id="bp-tag" name="tag" maxlength={50} />
+          <label for="bp-limit">{tf("pages.products_limit", { max: PRODUCT_BLOCK_LIMIT_MAX })}</label>
+          <input id="bp-limit" name="limit" type="number" min={1} max={PRODUCT_BLOCK_LIMIT_MAX} value={String(PRODUCT_BLOCK_LIMIT_DEFAULT)} style="width:6rem" />
+          <label for="bp-layout">{t("pages.products_layout")}</label>
+          <select id="bp-layout" name="layout">
+            <option value="grid">{t("pages.layout_grid")}</option>
+            <option value="scroll">{t("pages.layout_scroll")}</option>
+          </select>
+          <label for="bp-sort">{t("pages.products_sort")}</label>
+          <select id="bp-sort" name="sort">
+            {PRODUCT_SORTS.map((x) => (
+              <option value={x}>{t(`pages.sort_${x}` as MessageKey)}</option>
+            ))}
+          </select>
+          <p class="muted">{tf("pages.products_help", { n: PRODUCT_BLOCKS_MAX })}</p>
+          <p>
+            <button type="submit" value="ok">
+              {t("pages.insert")}
+            </button>{" "}
+            <button type="submit" value="cancel" class="secondary" formnovalidate>
+              {t("pages.cancel")}
+            </button>
+          </p>
+        </form>
+      </dialog>
       <script dangerouslySetInnerHTML={{ __html: PAGE_EDITOR_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.shop.id) }} />
       <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
@@ -397,7 +466,12 @@ function PageForm(props: { shop: ShopRow; action: string; values: PageValues; vi
   );
 }
 
-function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
+async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
+  // 商品を並べるブロックで選ぶカテゴリー（RLS で自分のショップのものだけ）
+  const categories = await owner(c)
+    .db.from<CategoryRow>("categories")
+    .select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" })
+    .catch(() => [] as CategoryRow[]);
   const title = opts.pageId ? opts.values.title || t("pages.edit") : t("pages.new");
   const action = opts.pageId ? `${base(shop.id)}/${opts.pageId}` : base(shop.id);
   const flash = c.req.query("flash");
@@ -411,7 +485,7 @@ function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; value
     <>
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
-      <PageForm shop={shop} action={action} values={opts.values} visual={markdownToHtml(opts.values.body, { mediaBase: mediaBaseUrl(c) })} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      <PageForm shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={categories} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
   );
@@ -429,7 +503,7 @@ function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: 
       {error ? <p class="error">{t(error)}</p> : null}
       <article class="card page-preview">
         <h1>{values.title}</h1>
-        {raw(markdownToHtml(values.body, { mediaBase: mediaBaseUrl(c) }))}
+        {raw(editorHtml(c, values.body))}
       </article>
     </>,
   );
@@ -508,7 +582,7 @@ pagesAdmin.post("/render", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.notFound();
   const f = await formFields(c);
   const body = (f.body ?? "").slice(0, PAGE_LIMITS.body);
-  return c.json({ html: markdownToHtml(body, { mediaBase: mediaBaseUrl(c) }) });
+  return c.json({ html: editorHtml(c, body) });
 });
 
 pagesAdmin.get("/:pageId", requireOwner, async (c: AdminContext) => {

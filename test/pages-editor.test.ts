@@ -96,4 +96,14 @@ describe("見たままの編集 → 決まった書式", () => {
     expect(back("<p># ではない<br>- ではない<br>1. ではない<br>&gt; ではない</p>")).toBe("\\# ではない\n\\- ではない\n1\\. ではない\n\\> ではない");
     expect(html(back("<p># ではない</p>"))).toBe("<p># ではない</p>");
   });
+
+  it("商品を並べる・ボタンのブロックは同じ 1 行に戻し、「:::」で始まる文字は逃がす", () => {
+    const body = '::: products category=tops tag="冬 物" limit=12 layout=scroll sort=price_asc\n\n::: button [見る](/p/x)\n\n\\::: products は文字';
+    const h = markdownToHtml(body, { productsLabel: () => "商品" });
+    expect(h).toContain('contenteditable="false">商品</div>');
+    expect(h).toContain("<p>::: products は文字</p>");
+    expect(back(h)).toBe(body);
+    // ブラウザで箱の値を直したもの（値は決まった形だけに絞る）
+    expect(back('<div data-banto-block="products" data-category="Bad Slug" data-tag="a&quot;b" data-limit="99" data-layout="x" data-sort="random">x</div>')).toBe("::: products tag=ab limit=8 layout=grid sort=new");
+  });
 });

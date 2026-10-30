@@ -203,6 +203,23 @@ export function renderThemePage(t: LoadedTheme, input: ThemePageInput): { html: 
   return { html: i < 0 ? head + html : html.slice(0, i) + head + html.slice(i), errors: env.errors };
 }
 
+/** テーマに snippets/<name> があるか */
+export function themeHasSnippet(t: LoadedTheme, name: string): boolean {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(name) && t.engine.has(name);
+}
+
+/**
+ * snippets/<name> だけを、ページと同じ値（globals）に vars を足して描く（ショップのページの「商品を並べる」が使う。src/pages/blocks.ts）。
+ * 手数の上限は 1 ページ分。無ければ null
+ */
+export function renderThemeSnippet(t: LoadedTheme, input: Omit<ThemePageInput, "head">, name: string, vars: Record<string, unknown>): string | null {
+  if (!themeHasSnippet(t, name)) return null;
+  const p = prepare(t, input.locale ?? getLocale());
+  const globals = { ...input.globals, template: new TemplateDrop(input.template), __groups: p.groups };
+  const env = renderEnvOf(t, p, input, globals);
+  return withRenderEnv(env, () => t.engine.page(() => t.engine.render(name, { ...globals, ...vars })));
+}
+
 /**
  * セクションだけを描く（Shopify の Section Rendering API: ?sections=a,b・?section_id=a、AJAX のカートの sections）。
  * id はそのページのテンプレート（JSON）・セクションのまとまりの中の id か、セクションのファイルの名前（{% section %} と同じく置いたものとして描く）。
