@@ -3,6 +3,7 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
 import { PAGES_MIGRATION, PAGES_PUBLISHING_MIGRATION, handleFromTitle } from "../src/pages";
 import { PAGE_BLOCKS_SCRIPT } from "../src/content/blocks-script";
+import { MEDIA_PAGE } from "../src/content/editor";
 
 /** ショップのページの管理画面（同梱モジュール pages、0079）。扱えるのは content の項目を持つ人。本文は決まった書式でプレビューできる */
 function setup(opts: { enabled?: boolean } = {}) {
@@ -250,6 +251,18 @@ describe("ショップのページの管理画面", () => {
     const media = (await (await owner.get(`${base}/media`)).json()) as { items: { url: string }[] };
     expect(media.items).toHaveLength(1);
     expect(media.items[0]!.url).toMatch(new RegExp(`/media/pages/${shop.id}/`));
+    // 画像が増えても 1 回に読むのは MEDIA_PAGE 枚だけ。続きは next を after に渡す（同じ日時の行も id で取りこぼさない）
+    const at = (i: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, Math.floor(i / 2))).toISOString();
+    for (let i = 0; i < MEDIA_PAGE + 9; i++) sb.tables.page_media.push({ id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, shop_id: shop.id, url: `${BASE}/media/pages/${shop.id}/old-${i}.webp`, created_at: at(i) });
+    const first = (await (await owner.get(`${base}/media`)).json()) as { items: { id: string }[]; next: string | null };
+    expect(first.items).toHaveLength(MEDIA_PAGE);
+    expect(first.next).toBeTruthy();
+    const second = (await (await owner.get(`${base}/media?after=${first.next}`)).json()) as { items: { id: string }[]; next: string | null };
+    expect(second.next).toBeNull();
+    const ids = [...first.items, ...second.items].map((r) => r.id);
+    expect(ids).toHaveLength(MEDIA_PAGE + 10);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect((await owner.get(`${base}/media?after=broken`)).status).toBe(400);
   });
 
   it("0080 を当てるまでは今までの画面（日時・アイキャッチ・ゴミ箱の欄が無く、消すとすぐ消える）", async () => {

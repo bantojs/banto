@@ -962,17 +962,31 @@ export const PAGE_MEDIA_SCRIPT = String.raw`
   var dlg=document.getElementById("media-lib"); if(!dlg||!dlg.showModal||!window.fetch) return;
   var grid=document.getElementById("media-grid"), mode="body", pickCb=null;
   function pick(url){ dlg.close(); if(mode==="featured") setFeatured(url); else if(mode==="cb"&&pickCb){ var f=pickCb; pickCb=null; f(url); } else if(window.bantoPageImage) window.bantoPageImage(url); }
-  function open(m){
-    mode=m; grid.textContent="";
-    fetch(dlg.getAttribute("data-list"),{credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json(); }).then(function(j){
+  // 新しい順に 1 回 40 枚ずつ。下までスクロールすると次を読む（「さらに読み込む」でも）。一度に全部は読まない
+  var more=document.getElementById("media-more"), moreRow=document.getElementById("media-more-row"), nextCursor=null, loading=false, gen=0;
+  var sentinel=document.createElement("div"); sentinel.style.cssText="grid-column:1/-1;height:1px";
+  function loadPage(first){
+    if(loading) return; loading=true; var g=gen;
+    var url=dlg.getAttribute("data-list")+(nextCursor?"?after="+encodeURIComponent(nextCursor):"");
+    fetch(url,{credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json(); }).then(function(j){
+      loading=false; if(g!==gen) return;
       var items=(j&&j.items)||[];
-      if(!items.length){ var p=document.createElement("p"); p.className="muted"; p.textContent=dlg.getAttribute("data-empty"); grid.appendChild(p); return; }
+      if(first&&!items.length){ var p=document.createElement("p"); p.className="muted"; p.textContent=dlg.getAttribute("data-empty"); grid.appendChild(p); }
       items.forEach(function(it){
         var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.style.cssText="height:auto;padding:2px;aspect-ratio:1/1;overflow:hidden";
-        var im=document.createElement("img"); im.src=it.url; im.alt=""; im.loading="lazy"; im.style.cssText="width:100%;height:100%;object-fit:cover";
-        b.appendChild(im); b.addEventListener("click",function(){ pick(it.url); }); grid.appendChild(b);
+        var im=document.createElement("img"); im.src=it.url; im.alt=""; im.loading="lazy"; im.decoding="async"; im.style.cssText="width:100%;height:100%;object-fit:cover";
+        b.appendChild(im); b.addEventListener("click",function(){ pick(it.url); }); grid.insertBefore(b,sentinel.parentNode===grid?sentinel:null);
       });
-    }).catch(function(){});
+      nextCursor=j&&j.next||null;
+      if(moreRow) moreRow.hidden=!nextCursor;
+      if(nextCursor) grid.appendChild(sentinel); else if(sentinel.parentNode) sentinel.parentNode.removeChild(sentinel);
+    }).catch(function(){ loading=false; if(moreRow) moreRow.hidden=!nextCursor; });
+  }
+  if(window.IntersectionObserver){ new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting&&nextCursor&&dlg.open) loadPage(false); }); },{root:grid,rootMargin:"200px"}).observe(sentinel); }
+  if(more) more.addEventListener("click",function(){ loadPage(false); });
+  function open(m){
+    mode=m; gen++; loading=false; nextCursor=null; grid.textContent=""; if(moreRow) moreRow.hidden=true;
+    loadPage(true);
     dlg.showModal();
   }
   window.bantoOpenMedia=open;

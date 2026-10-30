@@ -1967,6 +1967,7 @@ export const ja = {
   "layout.media_empty": "画像を選んでください",
   "layout.acc_title": "質問や見出しを入力",
   "layout.colors_note": "色と大きさの実際の値はお店のテーマが決めます。",
+  "pages.media_more": "さらに読み込む",
   "pages.block_products": "商品を並べる",
   "pages.block_button": "ボタン",
   "pages.button_text_ask": "ボタンの文字",
