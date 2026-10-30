@@ -106,4 +106,62 @@ describe("見たままの編集 → 決まった書式", () => {
     // ブラウザで箱の値を直したもの（値は決まった形だけに絞る）
     expect(back('<div data-banto-block="products" data-category="Bad Slug" data-tag="a&quot;b" data-limit="99" data-layout="x" data-sort="random">x</div>')).toBe("::: products tag=ab limit=8 layout=grid sort=new");
   });
+  it("レイアウトの囲み（入れ子）: 編集の形 → 書式 → お店の HTML が元と同じ。外側ほど : が多い", () => {
+    const md = [
+      "::::: group bg=subtle pad=l",
+      ":::: columns ratio=1-2 valign=center",
+      "::: column",
+      "## 左",
+      "",
+      "**太字**の文",
+      ":::",
+      "::: column",
+      "::: products tag=NEW limit=4 layout=grid sort=new",
+      ":::",
+      "::::",
+      ":::::",
+      "",
+      ":::: cover image=https://media.example.jp/pages/s/a.webp height=l overlay=light align=left",
+      "## ようこそ",
+      "",
+      "::: accordion icon=plus open=1 title=\"送料は？\"",
+      "全国一律です。",
+      ":::",
+      "::::",
+      "",
+      "::: media side=right image=https://media.example.jp/pages/s/b.webp alt=\"店の外観\"",
+      "文",
+      ":::",
+      "",
+      "::: gallery cols=4",
+      "![一](https://media.example.jp/pages/s/1.webp)",
+      "![二](https://media.example.jp/pages/s/2.webp)",
+      ":::",
+      "",
+      "::: spacer size=xl",
+    ].join("\n");
+    const store = html(md);
+    const editor = markdownToHtml(md, { mediaBase: "https://media.example.jp", editor: true, productsLabel: () => "商品" });
+    expect(editor).not.toContain("<details");
+    expect(editor).toContain('data-slot="cols"');
+    const again = back(editor);
+    expect(html(again)).toBe(store);
+    expect(again.split("\n")[0]).toBe("::::: group bg=subtle pad=l");
+    expect(again).toContain(":::: columns ratio=1-2 valign=center");
+    expect(again).toContain('::: accordion icon=plus open=1 title="送料は？"');
+    // 値は決まった形だけ（ブラウザで書き換えられても、囲みの行に余計なものは入らない）
+    expect(back('<div data-banto-block="group" data-bg="red;x" data-pad="m" data-evil="1"><p>a</p></div>')).toBe("::: group pad=m\na\n:::");
+  });
+
+  it("レイアウトの囲み: 入れ子は 4 段まで（深い囲みは中身だけ）・画像は置き場のものだけ・閉じの無い囲みは最後まで", () => {
+    const deep = "::: group\n".repeat(6) + "x\n" + ":::\n".repeat(6);
+    expect((html(deep).match(/class="banto-group/g) ?? []).length).toBe(4);
+    const cover = html("::: cover image=https://evil.example/a.png\n## a\n:::");
+    expect(cover).not.toContain("evil.example");
+    expect(cover).toContain('<div class="banto-cover__inner"><h2>a</h2></div>');
+    expect(html("::: group\n文")).toContain('<p>文</p></div>');
+    // CSS はレイアウトのブロックがあるときだけ、1 回
+    expect(html("ただの文")).not.toContain("<style>");
+    expect((html("::: spacer\n\n::: group\na\n:::").match(/<style>/g) ?? []).length).toBe(1);
+  });
 });

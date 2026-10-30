@@ -169,6 +169,12 @@ describe("ショップのページの管理画面", () => {
     // 全画面の形（左にブロックの一覧とリスト表示、右に設定）は JS が作る。戻る先は一覧
     expect(html).toContain(`<div id="pe-root" data-back="${base}">`);
     expect(html).toContain('<div id="pe-left" class="pe-left" hidden=""></div>');
+    // レイアウトのブロックの値と文言（スクリプトが data-layout の JSON で受け取る。4 段まで）
+    const cfg = JSON.parse(/data-layout="([^"]*)"/.exec(html)![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&")) as { depth: number; schema: Record<string, Record<string, { values: string[]; def: string }>>; t: Record<string, string> };
+    expect(cfg.depth).toBe(4);
+    expect(cfg.schema["accordion"]!["icon"]!.values).toEqual(["chevron", "plus", "arrow", "caret", "none"]);
+    expect(cfg.schema["group"]!["pad"]!.def).toBe("m");
+    expect(cfg.t["kind.cover"]).toBe("カバー");
   });
 
   it("商品のブロック: タグは公開中の商品のタグから選び、並ぶ商品の見本と件数を返す", async () => {

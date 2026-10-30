@@ -8,9 +8,11 @@
  *
  * 書ける形: 見出し（# と ## は h2、### は h3、#### 以下は h4）・段落（行の折り返しは <br>）・箇条書き（- * ）・番号付き（1. ）・引用（> ）・
  * 区切り線（---）・表（| a | b | と | --- | --- |）・太字（**）・斜体（* か _）・コード（`）・リンク（[文字](URL)）・画像（![説明](URL)）・
- * 1 行のブロック（::: products … で商品を並べる・::: button [文字](URL) でボタン。src/pages/blocks.ts）
+ * 1 行のブロック（::: products … で商品を並べる・::: button [文字](URL) でボタン・::: spacer。src/pages/blocks.ts）・
+ * レイアウトの囲み（::: group … ::: のグループ・カラム・カバー・画像と文・ギャラリー・アコーディオン。入れ子 4 段まで。src/pages/layout.ts）
  */
 import { BLOCK_LINE, PRODUCT_BLOCKS_MAX, parseButtonLine, parseProductsLine, productsMarker, type ProductBlock } from "./blocks";
+import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, isLayoutClose, layoutEnd, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
   /** 画像として受け付ける URL の起点（MEDIA_BASE_URL。無ければ /media/ だけ） */
@@ -20,6 +22,13 @@ export interface MarkdownOptions {
    * （お店の画面では渡さない。中身は描くときに入る）
    */
   productsLabel?: (b: ProductBlock) => string;
+  /**
+   * 管理画面の見たままの編集の形で描く（囲みに data-slot、アコーディオンは開け閉めしない箱、画像は書き換えられない箱）。
+   * レイアウトの CSS は添えない（管理画面が持つ）
+   */
+  editor?: boolean;
+  /** レイアウトのブロックがあるとき、並べ方の CSS（LAYOUT_CSS）を先頭に 1 回添える（既定 true。editor では添えない） */
+  layoutCss?: boolean;
 }
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -182,14 +191,80 @@ function cells(row: string): string[] {
   return out;
 }
 
+interface RenderState {
+  opts: MarkdownOptions;
+  /** 商品のブロックの数（印の番号。文書の順） */
+  products: number;
+  /** レイアウトのブロックを描いたか（CSS を添えるため） */
+  layout: boolean;
+}
+
+const blank = (l: string | undefined) => l === undefined || l.trim() === "";
+const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE.test(l) || QUOTE.test(l) || LIST_UL.test(l) || LIST_OL.test(l);
+
 export function markdownToHtml(source: string, opts: MarkdownOptions = {}): string {
-  const src = source.replace(/\r\n?/g, "\n");
-  const rows = src.split("\n");
+  const rows = source.replace(/\r\n?/g, "\n").split("\n");
+  const st: RenderState = { opts, products: 0, layout: false };
+  const html = render(rows, 0, st).join("\n");
+  return st.layout && !opts.editor && opts.layoutCss !== false ? `<style>${LAYOUT_CSS}</style>\n${html}` : html;
+}
+
+const ESC_ATTR = (s: string) => esc(s);
+
+/** 囲みを HTML にする（中身は inner の行を同じ規則で描いたもの） */
+function layoutBlock(o: LayoutOpen, inner: string[], depth: number, st: RenderState): string {
+  st.layout = true;
+  const ed = st.opts.editor === true;
+  const a = o.attrs;
+  const data = (extra = "") => `data-banto-block="${o.kind}"${Object.entries(a).map(([k, v]) => ` data-${k}="${ESC_ATTR(v)}"`).join("")}${extra}`;
+  const slot = ed ? " data-slot" : "";
+  const body = () => render(inner, depth + 1, st).join("\n");
+  const img = (cls: string, alt: string) => {
+    const src = o.image ? safeImage(o.image, st.opts) : null;
+    return src ? `<img${cls ? ` class="${cls}"` : ""} src="${esc(src)}" alt="${esc(alt)}" loading="lazy" decoding="async"${ed ? ' contenteditable="false"' : ""}>` : "";
+  };
+  switch (o.kind) {
+    case "group":
+      return `<div class="banto-group banto-bg-${a["bg"]} banto-pad-${a["pad"]}" ${data()}${slot}>${body()}</div>`;
+    case "columns":
+      return `<div class="banto-columns banto-cols-${a["ratio"]} banto-valign-${a["valign"]}" ${data()}${ed ? ' data-slot="cols"' : ""}>${body()}</div>`;
+    case "column":
+      return `<div class="banto-column" ${data()}${slot}>${body()}</div>`;
+    case "cover": {
+      const image = o.image ? safeImage(o.image, st.opts) : null;
+      return `<div class="banto-cover banto-cover--h-${a["height"]} banto-cover--overlay-${a["overlay"]} banto-align-${a["align"]}" ${data(image ? ` data-image="${esc(image)}"` : "")}>${img("banto-cover__img", "")}<div class="banto-cover__inner"${slot}>${body()}</div></div>`;
+    }
+    case "media": {
+      const image = o.image ? safeImage(o.image, st.opts) : null;
+      return `<div class="banto-media banto-media--${a["side"]} banto-valign-${a["valign"]}" ${data(`${image ? ` data-image="${esc(image)}"` : ""}${o.alt ? ` data-alt="${esc(o.alt)}"` : ""}`)}><figure class="banto-media__fig"${ed ? ' contenteditable="false"' : ""}>${img("", o.alt)}</figure><div class="banto-media__body"${slot}>${body()}</div></div>`;
+    }
+    case "gallery": {
+      // 中は画像の行だけ（![説明](URL)。1 行に並べても、行を分けてもよい）。ほかの文字は描かない
+      const figs: string[] = [];
+      const re = /!\[([^\]\n]{0,200})\]\(([^)\s]{1,2000})\)/g;
+      for (const line of inner) {
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(line)) && figs.length < 60) {
+          const src = safeImage(m[2]!, st.opts);
+          if (src) figs.push(`<figure><img src="${esc(src)}" alt="${esc(m[1]!)}" loading="lazy" decoding="async"></figure>`);
+        }
+      }
+      return `<div class="banto-gallery banto-gallery--${a["cols"]}" ${data()}${ed ? ' contenteditable="false"' : ""}>${figs.join("")}</div>`;
+    }
+    case "accordion": {
+      const title = esc(o.title);
+      if (ed)
+        return `<div class="banto-accordion banto-accordion--${a["icon"]}" ${data()}><div class="banto-accordion__title" data-acc-title>${title || "<br>"}</div><div class="banto-accordion__body" data-slot>${body()}</div></div>`;
+      return `<details class="banto-accordion banto-accordion--${a["icon"]}" ${data()}${a["open"] === "1" ? " open" : ""}><summary><span class="banto-accordion__title">${title}</span><span class="banto-accordion__icon" aria-hidden="true"></span></summary><div class="banto-accordion__body">${body()}</div></details>`;
+    }
+  }
+}
+
+/** 行の並びを描く（囲みの中も同じ規則。depth は囲みの深さ） */
+function render(rows: readonly string[], depth: number, st: RenderState): string[] {
+  const opts = st.opts;
   const out: string[] = [];
   let i = 0;
-  const blank = (l: string | undefined) => l === undefined || l.trim() === "";
-  const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE.test(l) || QUOTE.test(l) || LIST_UL.test(l) || LIST_OL.test(l);
-  let products = 0;
   while (i < rows.length) {
     const row = rows[i]!;
     if (blank(row)) {
@@ -197,14 +272,36 @@ export function markdownToHtml(source: string, opts: MarkdownOptions = {}): stri
       continue;
     }
     if (BLOCK_LINE.test(row)) {
+      // レイアウトの囲み（入れ子は LAYOUT_DEPTH_MAX 段まで。深すぎる囲みは行を外して中身だけ描く）
+      const lo = parseLayoutOpen(row);
+      if (lo) {
+        const end = layoutEnd(rows, i);
+        const inner = rows.slice(i + 1, end);
+        if (depth < LAYOUT_DEPTH_MAX) out.push(layoutBlock(lo, inner, depth, st));
+        else out.push(...render(inner, depth, st));
+        i = end + 1;
+        continue;
+      }
+      // 対になる始まりの無い閉じの行は捨てる
+      if (isLayoutClose(row)) {
+        i++;
+        continue;
+      }
+      const sp = parseSpacerLine(row);
+      if (sp) {
+        st.layout = true;
+        out.push(`<div class="banto-spacer banto-spacer--${sp.size}" data-banto-block="spacer" data-size="${sp.size}" aria-hidden="true"${opts.editor ? ' contenteditable="false"' : ""}></div>`);
+        i++;
+        continue;
+      }
       const b = parseProductsLine(row);
       if (b) {
         const data = `data-banto-block="products" data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"`;
         const cls = `banto-products banto-products--${b.layout}`;
         // 印は先頭から PRODUCT_BLOCKS_MAX 個まで（それより後は描かない）
         if (opts.productsLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.productsLabel(b))}</div>`);
-        else out.push(`<div class="${cls}" ${data}>${products < PRODUCT_BLOCKS_MAX ? productsMarker(products) : ""}</div>`);
-        products++;
+        else out.push(`<div class="${cls}" ${data}>${st.products < PRODUCT_BLOCKS_MAX ? productsMarker(st.products) : ""}</div>`);
+        st.products++;
         i++;
         continue;
       }
@@ -275,5 +372,5 @@ export function markdownToHtml(source: string, opts: MarkdownOptions = {}): stri
     while (i < rows.length && !blank(rows[i]) && (ls.length === 0 || !startsBlock(rows[i]!))) ls.push(rows[i++]!);
     out.push(`<p>${lines(ls, opts)}</p>`);
   }
-  return out.join("\n");
+  return out;
 }
