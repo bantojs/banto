@@ -7,7 +7,7 @@ import type { Hono } from "hono";
 import { raw } from "hono/html";
 import type { AppEnv } from "../app";
 import type { CategoryRow, ShopRow } from "../db/types";
-import { t, tf, type MessageKey } from "../i18n";
+import { getLocale, t, tf, type MessageKey } from "../i18n";
 import { formFields, owner, type AdminContext } from "../routes/admin/context";
 import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
@@ -17,12 +17,17 @@ import { PAGE_LIMITS, PAGE_NAVS, PAGES_PUBLISHING_MIGRATION, RESERVED_HANDLES, t
 import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml } from "../pages/markdown";
-import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
+import { ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
 import { PRODUCT_SORTS, toPublicShop, type ProductSort } from "../storefront/data";
 import { storefrontData } from "../routes/storefront/domain";
 import { tagCounts } from "../products/tags";
 import { responsiveImage } from "../media/images";
 import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
+import { PATTERNS_FILE, STYLES_FILE, bantoPatterns, parseBlockStyles, parsePatterns, type BlockStyles, type EditorPattern, type PatternBody } from "./theme-blocks";
+import { readThemeBundle } from "../themes/liquid/versions";
+import type { CacheAdapter, StorageAdapter } from "../adapters/types";
+import { THEMES_MIGRATION } from "../themes/liquid";
+import { BLOG_MIGRATION } from "../blog";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, layoutDefault } from "../pages/layout";
@@ -82,17 +87,44 @@ export function productsLabel(b: ProductBlock): string {
 }
 
 /** 商品のブロックの設定で選ぶカテゴリーとタグ（タグは公開中の商品のものを多い順に。RLS で自分のショップのものだけ） */
-export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] }> {
+export interface EditorExtras {
+  /** 記事を並べるブロックで選ぶブログ（0081 が当たっていれば） */
+  blogs: { handle: string; title: string }[];
+  /** ブロックの一覧の「パターン」（公開中のテーマのものと Banto の既定。本文は選んだときに …/pattern で受け取る） */
+  patterns: EditorPattern[];
+  /** 公開中のテーマのブロックのスタイル */
+  styles: BlockStyles;
+}
+
+export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] } & EditorExtras> {
   const db = owner(c).db;
-  const [categories, rows] = await Promise.all([
+  const deps = { db, cache: c.get("adapters").cache };
+  const [categories, rows, blogs, theme] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
+    migrated(deps, BLOG_MIGRATION).then((ok) => (ok ? db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }) : [])).catch(() => []),
+    editorTheme(c, shop),
   ]);
-  return { categories, tags: tagCounts(rows).slice(0, 300) };
+  const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles };
+}
+
+/** 公開中の Liquid のテーマのパターンとスタイル（0071 が当たっていて、公開中の版があるときだけ） */
+async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: PatternBody[]; styles: BlockStyles }> {
+  const db = owner(c).db;
+  const adapters = c.get("adapters");
+  try {
+    if (!(await migrated({ db, cache: adapters.cache }, THEMES_MIGRATION))) return { patterns: [], styles: {} };
+    const row = await db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } });
+    return await themeEditorFiles({ storage: adapters.storage, cache: adapters.cache }, shop.id, row?.theme_version_id ?? null, getLocale());
+  } catch (e) {
+    console.error("[banto] editor theme:", e instanceof Error ? e.message : e);
+    return { patterns: [], styles: {} };
+  }
 }
 
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
-export const editorHtml = (c: AdminContext, body: string) => markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, editor: true });
+export const editorHtml = (c: AdminContext, body: string) => markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), editor: true });
 
 /**
  * 本文の入力の手助け（見出し・太字・リンク・箇条書き…のボタンと、画像を縮小して置いて ![](URL) を入れる）。
@@ -206,6 +238,7 @@ export const EDITOR_CSS = `
 .blk-opt small{display:block;color:var(--fg-muted);font-size:.75rem}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
 #md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
+.page-preview .banto-articles{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-products{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-products .bp-items{display:flex;gap:.5rem;margin-top:.5rem;overflow:hidden}
 .page-preview .banto-products .bp-item{flex:0 0 4.75rem;font-size:.7rem;line-height:1.3;overflow:hidden}
@@ -217,8 +250,8 @@ export const EDITOR_CSS = `
 .bp-preview:empty{display:none}
 .page-preview .banto-button__link{display:inline-block;padding:.5rem 1.25rem;border-radius:6px;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600}
 @media (max-width:600px){#body-visual{padding:.5rem .25rem 3rem 2rem}.blk-grid{grid-template-columns:repeat(3,1fr)}}
-#blk-products,#blk-button{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
-#blk-products::backdrop,#blk-button::backdrop{background:rgba(0,0,0,.35)}
+#blk-products,#blk-button,#blk-articles{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
+#blk-products::backdrop,#blk-button::backdrop,#blk-articles::backdrop{background:rgba(0,0,0,.35)}
 @media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
 html.pe-lock,html.pe-lock body{overflow:hidden}
 .pe-full{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column}
@@ -297,7 +330,7 @@ export interface ContentValues {
   sort_order?: number;
 }
 
-export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; publishing: boolean; revisions: RevisionRow[] }) {
+export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; extras?: EditorExtras; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; publishing: boolean; revisions: RevisionRow[] }) {
   const v = props.values;
   const state = contentState({ published: v.published, published_at: v.published_at ?? null, deleted_at: null });
   const tools: [string, MessageKey, MessageKey?][] = [
@@ -360,6 +393,18 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-pv-loading": t("pages.products_preview_loading"),
     "data-preview": `${props.kind.base}/products-preview`,
     "data-layout": layoutConfig(),
+    // パターン（一覧に出す名前だけ）とテーマのスタイル、記事を並べるブロックの文言
+    "data-patterns": JSON.stringify(props.extras?.patterns ?? []),
+    "data-styles": JSON.stringify(props.extras?.styles ?? {}),
+    "data-t-patterns": t("pages.block_patterns"),
+    "data-t-patterns-theme": t("pages.block_patterns_theme"),
+    "data-t-style": t("pages.block_style"),
+    "data-t-style-default": t("pages.block_style_default"),
+    "data-t-articles": t("pages.block_articles"),
+    "data-t-d-articles": t("pages.blockdesc_articles"),
+    "data-t-articles-max": tf("pages.articles_max", { n: ARTICLE_BLOCKS_MAX }),
+    "data-t-articles-none": t("pages.articles_none"),
+    "data-t-articles-label": t("pages.articles_label"),
     "data-t-back": t("pages.editor_back"),
     "data-t-lib": t("pages.editor_library"),
     "data-t-outline": t("pages.editor_outline"),
@@ -666,6 +711,11 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <option value={x}>{t(`pages.sort_${x}` as MessageKey)}</option>
             ))}
           </select>
+          {/* テーマのスタイル（テーマが決めているときだけスクリプトが出す） */}
+          <label for="bp-style" hidden>
+            {t("pages.block_style")}
+          </label>
+          <select id="bp-style" name="style" hidden></select>
           <div id="bp-preview" class="bp-preview" aria-live="polite"></div>
           <p class="muted">{tf("pages.products_help", { n: PRODUCT_BLOCKS_MAX })}</p>
           <p>
@@ -686,6 +736,10 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
           <input id="bb-text" name="text" maxlength={100} />
           <label for="bb-url">{t("pages.button_url")}</label>
           <input id="bb-url" name="url" maxlength={500} placeholder="/" />
+          <label for="bb-style" hidden>
+            {t("pages.block_style")}
+          </label>
+          <select id="bb-style" name="style" hidden></select>
           <p>
             <button type="submit" value="ok">
               {t("pages.insert")}
@@ -696,6 +750,44 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
           </p>
         </form>
       </dialog>
+      {/* 記事を並べるブロックの設定（PAGE_BLOCKS_SCRIPT が開く。ブログのあるショップだけ） */}
+      {props.extras?.blogs.length ? (
+        <dialog id="blk-articles" aria-labelledby="blk-articles-title">
+          <form method="dialog">
+            <h2 id="blk-articles-title">{t("pages.block_articles")}</h2>
+            <label for="ba-blog">{t("pages.articles_blog")}</label>
+            <select id="ba-blog" name="blog">
+              {props.extras.blogs.map((b) => (
+                <option value={b.handle}>
+                  {b.title}（{b.handle}）
+                </option>
+              ))}
+            </select>
+            <label for="ba-tag">{t("pages.articles_tag")}</label>
+            <input id="ba-tag" name="tag" maxlength={50} />
+            <label for="ba-limit">{tf("pages.articles_limit", { max: ARTICLE_BLOCK_LIMIT_MAX })}</label>
+            <input id="ba-limit" name="limit" type="number" min={1} max={ARTICLE_BLOCK_LIMIT_MAX} value={String(ARTICLE_BLOCK_LIMIT_DEFAULT)} style="width:6rem" />
+            <label for="ba-layout">{t("pages.articles_layout")}</label>
+            <select id="ba-layout" name="layout">
+              <option value="grid">{t("pages.articles_layout_grid")}</option>
+              <option value="list">{t("pages.articles_layout_list")}</option>
+            </select>
+            <label for="ba-style" hidden>
+              {t("pages.block_style")}
+            </label>
+            <select id="ba-style" name="style" hidden></select>
+            <p class="muted">{tf("pages.articles_help", { n: ARTICLE_BLOCKS_MAX })}</p>
+            <p>
+              <button type="submit" value="ok">
+                {t("pages.insert")}
+              </button>{" "}
+              <button type="submit" value="cancel" class="secondary" formnovalidate>
+                {t("pages.cancel")}
+              </button>
+            </p>
+          </form>
+        </dialog>
+      ) : null}
       <script dangerouslySetInnerHTML={{ __html: PAGE_EDITOR_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.kind.base) }} />
       <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
@@ -775,6 +867,18 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
 });
 
 /** 本文（決まった書式）を HTML にして返す。見たままの編集に切り替えるとき（お店の画面と同じ変換） */
+  /** パターンの本文を編集の形の HTML で返す（ブロックの一覧の「パターン」を選んだとき） */
+  app.get("/pattern", requireOwner, async (c: AdminContext) => {
+    const shop = await scope(c);
+    if (!shop) return c.notFound();
+    const name = c.req.query("name") ?? "";
+    const all = [...(await editorTheme(c, shop)).patterns, ...bantoPatterns()];
+    const p = all.find((x) => x.name === name);
+    if (!p) return c.json({ error: "not_found" }, 404);
+    c.header("Cache-Control", "private, no-store");
+    return c.json({ html: editorHtml(c, p.body) });
+  });
+
   app.post("/render", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
@@ -782,4 +886,19 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   const body = (f.body ?? "").slice(0, PAGE_LIMITS.body);
   return c.json({ html: editorHtml(c, body) });
 });
+}
+
+/**
+ * 編集の画面で使うテーマのパターンとスタイル（公開中の Liquid のテーマ。版ごとに覚える）。
+ * テーマが無ければ空。束ねたファイルが読めなければ空（編集の画面は既定のパターンだけで使える）
+ */
+async function themeEditorFiles(deps: { storage: StorageAdapter; cache: CacheAdapter }, shopId: string, versionId: string | null, locale: string): Promise<{ patterns: PatternBody[]; styles: BlockStyles }> {
+  if (!versionId) return { patterns: [], styles: {} };
+  const key = `themeblocks:${shopId}:${versionId}:${locale}`;
+  const hit = await deps.cache.get<{ patterns: PatternBody[]; styles: BlockStyles }>(key);
+  if (hit) return hit;
+  const bundle = await readThemeBundle(deps.storage, shopId, versionId).catch(() => null);
+  const out = bundle ? { patterns: parsePatterns(bundle.files[PATTERNS_FILE], locale).patterns, styles: parseBlockStyles(bundle.files[STYLES_FILE], locale).styles } : { patterns: [], styles: {} };
+  await deps.cache.set(key, out, 300);
+  return out;
 }

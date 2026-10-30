@@ -18,8 +18,9 @@ import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
-import { defaultProductsHtml, fillProductBlocks, productBlocksOf } from "../../pages/blocks";
-import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSummary, atomFeed, blogHandleOk, blogPath } from "../../blog";
+import { formatDateTime } from "../../i18n/time";
+import { articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, fillArticleBlocks, fillProductBlocks, productBlocksOf, type ArticlesBlock } from "../../pages/blocks";
+import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
@@ -382,7 +383,33 @@ async function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[
     }),
   );
   const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl, taxNote: t("store.tax_included"), yen }));
-  return { blocks, cards };
+  const articles = await bodyArticles(s, body);
+  return { blocks, cards, ...articles };
+}
+
+/**
+ * 本文の中の「記事を並べる」（1 ページに 2 つまで。ブログ・記事の一覧と同じ問い合わせ・キャッシュ）。ブログのモジュールが OFF なら空
+ */
+async function bodyArticles(s: ShopScope, body: string): Promise<{ ablocks: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards: string[] }> {
+  const list = moduleEnabled(s.shop.settings, BLOG_MODULE) ? articleBlocksOf(body) : [];
+  const ablocks = await Promise.all(
+    list.map(async (block) => {
+      try {
+        const blog = await s.sf.blogByHandle(s.shop, block.blog);
+        if (!blog) return null;
+        const { items } = await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: block.limit, tag: block.tag });
+        return { block, blog, items };
+      } catch (e) {
+        console.error("[banto] page articles:", e);
+        return null;
+      }
+    }),
+  );
+  const acards = ablocks.map((b) =>
+    b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(s.ctx.shopPath, b.blog.handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
+  );
+  // 印の番号と同じ並び（ブログが無い・取れなかったブロックは null で、中身は空）
+  return { ablocks, acards };
 }
 
 storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
@@ -394,14 +421,14 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return notFoundPage(c, s);
   const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
-  const { blocks, cards } = await bodyProducts(s, page.body, categories);
+  const { blocks, cards, ablocks, acards } = await bodyProducts(s, page.body, categories);
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards });
+    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards });
     if (res) return res;
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
-  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillProductBlocks(html, cards) }));
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillArticleBlocks(fillProductBlocks(html, cards), acards) }));
 });
 
 // ---------- ブログ（同梱モジュール blog、0081、docs/blog.md） ----------
@@ -466,15 +493,15 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return notFoundPage(c, s);
   const html = pageBodyHtml(article, s.ctx.mediaBaseUrl);
-  const { blocks, cards } = await bodyProducts(s, article.body, categories);
+  const { blocks, cards, ablocks, acards } = await bodyProducts(s, article.body, categories);
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards });
+    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards });
     if (res) return res;
   }
   if (!s.theme.ArticlePage) return notFoundPage(c, s);
-  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillProductBlocks(html, cards), feedUrl }));
+  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillArticleBlocks(fillProductBlocks(html, cards), acards), feedUrl }));
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

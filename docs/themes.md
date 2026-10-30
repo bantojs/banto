@@ -99,12 +99,50 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | `sections/*.json` | セクションのまとまり（`{% sections 'header-group' %}`） |
 | `snippets/*.liquid` | 部品（`{% render 'card', product: product %}`） |
 | `snippets/page-products.liquid`（任意） | ショップのページの「商品を並べる」ブロックの見た目（下の「使える名前」のショップのページ） |
+| `snippets/page-articles.liquid`（任意） | ショップのページ・記事の「記事を並べる」ブロックの見た目。`articles`（記事の一覧の形）・`blog`・`block`（`layout`（`grid` / `list`）・`limit`・`tag`・`style`・`index`）を渡す。無ければ Banto の既定のカード（`ul.banto-articles__list`） |
+| `config/banto_patterns.json`（任意） | 編集の画面のブロックの一覧に出す「パターン」（下の「パターンとブロックのスタイル」） |
+| `config/banto_block_styles.json`（任意） | ブロックごとの見た目の選択肢（下の「パターンとブロックのスタイル」） |
 | `blocks/*.liquid` | テーマのブロック（`{% content_for 'blocks' %}`・`{% content_for 'block', type: 'x', id: 'y' %}`）。`{% schema %}` に設定の宣言 |
 | `config/settings_schema.json`・`settings_data.json` | テーマの設定の宣言と既定の値（`settings.*`） |
 | `locales/ja.json`（・`*.default.json`） | 翻訳（`{{ 'products.add_to_cart' \| t }}`） |
 | `assets/*` | CSS・JS・画像・フォント（`{{ 'theme.css' \| asset_url \| stylesheet_tag }}`）。HTML と SVG は置けません |
 
 テンプレートが無い種類のページは、既定のテーマで描きます。テーマに誤りがある・上限を超えたときも、そのページは既定のテーマで描き、お店は止まりません（セクションの中の誤りは、そのセクションだけを空にします）。
+
+## パターンとブロックのスタイル（メンテナの決定 2026-10-30）
+
+ページと記事の本文は Banto の決まった書式で、ブロックは Banto のものだけです（テーマを替えても本文が崩れないように）。テーマはその上に 2 つを足せます。
+
+**パターン**（`config/banto_patterns.json`）: よく使うブロックの組み合わせに名前を付けたもの。編集の画面のブロックの一覧の「テーマのパターン」に出て、選ぶとカーソルの位置に普通のブロックとして入ります（入れた後はテーマと結びつきません）。Banto にも既定のパターン（ヒーロー・特長を 3 つ・よくある質問・画像と文）があります。
+
+```json
+{
+  "patterns": [
+    {
+      "name": "lookbook",
+      "title": { "ja": "ルックブック", "en": "Lookbook" },
+      "description": "画像を大きく見せる入口",
+      "body": ":::: cover height=l\n## 秋の装い\n::::"
+    }
+  ]
+}
+```
+
+- `name` は英小文字・数字・ハイフン（40 字まで、重ならない）、`title` は 60 字まで、`description` は 160 字まで、`body` は 20,000 字まで（docs/pages.md の書式）。40 個まで。
+- `title` と `description` は文字か、言語ごとの文字（`{"ja": …, "en": …}`。デプロイの言語が無ければ最初のもの）。
+
+**ブロックのスタイル**（`config/banto_block_styles.json`）: ブロックの種類ごとの見た目の選択肢。編集の画面のブロックの設定に「スタイル」として出て、本文には `style=<名前>` が残り、HTML には class `banto-style-<名前>` が付きます。見た目はテーマの CSS で書きます。
+
+```json
+{
+  "group": [{ "name": "framed", "label": { "ja": "細い罫線で囲む", "en": "Framed" } }],
+  "button": [{ "name": "outline", "label": "線だけ" }]
+}
+```
+
+- 付けられるブロック: `group`・`columns`・`column`・`cover`・`media`・`gallery`・`accordion`・`button`・`products`・`articles`。1 つに 12 個まで、`name` は英小文字・数字・ハイフン（30 字まで）、`label` は 40 字まで。
+- テーマを替えて、その名前がテーマに無くなっても本文はそのまま（class が付くだけで、見た目は既定に戻る）。編集の画面では前の名前も選んだまま残ります。
+- どちらのファイルも、取り込むときに形を確かめます（誤りはファイル名と場所で知らせ、取り込まない）。
 
 ## 使える名前
 
