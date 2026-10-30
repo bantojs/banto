@@ -7,12 +7,19 @@
  * - 描くときに呼ぶ（DB に HTML を置かない）。長い入力でも行と文字を 1 回ずつなめるだけで、正規表現の後戻りで遅くならない
  *
  * 書ける形: 見出し（# と ## は h2、### は h3、#### 以下は h4）・段落（行の折り返しは <br>）・箇条書き（- * ）・番号付き（1. ）・引用（> ）・
- * 区切り線（---）・表（| a | b | と | --- | --- |）・太字（**）・斜体（* か _）・コード（`）・リンク（[文字](URL)）・画像（![説明](URL)）
+ * 区切り線（---）・表（| a | b | と | --- | --- |）・太字（**）・斜体（* か _）・コード（`）・リンク（[文字](URL)）・画像（![説明](URL)）・
+ * 1 行のブロック（::: products … で商品を並べる・::: button [文字](URL) でボタン。src/pages/blocks.ts）
  */
+import { BLOCK_LINE, PRODUCT_BLOCKS_MAX, parseButtonLine, parseProductsLine, productsMarker, type ProductBlock } from "./blocks";
 
 export interface MarkdownOptions {
   /** 画像として受け付ける URL の起点（MEDIA_BASE_URL。無ければ /media/ だけ） */
   mediaBase?: string;
+  /**
+   * 管理画面の見たままの編集: 商品のブロックを印の代わりに説明の文字にし、直接は書き換えられない箱にする
+   * （お店の画面では渡さない。中身は描くときに入る）
+   */
+  productsLabel?: (b: ProductBlock) => string;
 }
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -82,7 +89,7 @@ function inline(s: string, opts: MarkdownOptions, depth = 0): string {
   while (i < s.length) {
     const ch = s[i]!;
     // \ の後の記号は文字として出す
-    if (ch === "\\" && i + 1 < s.length && /[\\`*_[\]()!#>|-]/.test(s[i + 1]!)) {
+    if (ch === "\\" && i + 1 < s.length && /[\\`*_[\]()!#>|:-]/.test(s[i + 1]!)) {
       out += esc(s[i + 1]!);
       i += 2;
       continue;
@@ -179,12 +186,34 @@ export function markdownToHtml(source: string, opts: MarkdownOptions = {}): stri
   const out: string[] = [];
   let i = 0;
   const blank = (l: string | undefined) => l === undefined || l.trim() === "";
-  const startsBlock = (l: string) => HEADING.test(l) || RULE.test(l) || QUOTE.test(l) || LIST_UL.test(l) || LIST_OL.test(l);
+  const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE.test(l) || QUOTE.test(l) || LIST_UL.test(l) || LIST_OL.test(l);
+  let products = 0;
   while (i < rows.length) {
     const row = rows[i]!;
     if (blank(row)) {
       i++;
       continue;
+    }
+    if (BLOCK_LINE.test(row)) {
+      const b = parseProductsLine(row);
+      if (b) {
+        const data = `data-banto-block="products" data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"`;
+        const cls = `banto-products banto-products--${b.layout}`;
+        // 印は先頭から PRODUCT_BLOCKS_MAX 個まで（それより後は描かない）
+        if (opts.productsLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.productsLabel(b))}</div>`);
+        else out.push(`<div class="${cls}" ${data}>${products < PRODUCT_BLOCKS_MAX ? productsMarker(products) : ""}</div>`);
+        products++;
+        i++;
+        continue;
+      }
+      const btn = parseButtonLine(row);
+      const href = btn ? safeLink(btn.url) : null;
+      if (btn && href) {
+        const external = /^https?:/i.test(href);
+        out.push(`<p class="banto-button"><a class="banto-button__link" href="${esc(href)}"${external ? ' rel="noopener"' : ""}>${esc(btn.text)}</a></p>`);
+        i++;
+        continue;
+      }
     }
     const h = HEADING.exec(row);
     if (h) {

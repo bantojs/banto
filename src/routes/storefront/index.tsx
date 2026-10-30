@@ -16,7 +16,8 @@ import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
-import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, type Ctx } from "../common";
+import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
+import { defaultProductsHtml, fillProductBlocks, productBlocksOf } from "../../pages/blocks";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
@@ -359,13 +360,26 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return notFoundPage(c, s);
   const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
+  // 本文の中の「商品を並べる」（1 ページに 3 つまで、ブロックごとに一覧と同じ問い合わせ 1 回・キャッシュ）。取れなければそのブロックは空
+  const blocks = await Promise.all(
+    productBlocksOf(page.body).map(async (block) => {
+      try {
+        const r = await s.sf.productPage(s.shop, { ...(block.category ? { category: block.category } : {}), ...(block.tag ? { tag: block.tag } : {}), sort: block.sort, limit: block.limit }, categories);
+        return { block, items: r?.items ?? [] };
+      } catch (e) {
+        console.error("[banto] page products:", e);
+        return { block, items: [] };
+      }
+    }),
+  );
+  const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl, taxNote: t("store.tax_included"), yen }));
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderContentPage(c, s, lt, { page, html, categories });
+    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards });
     if (res) return res;
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
-  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html }));
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillProductBlocks(html, cards) }));
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

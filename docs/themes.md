@@ -98,6 +98,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | `sections/*.liquid` | セクション。`{% schema %}` に設定の宣言（既定値が使われます） |
 | `sections/*.json` | セクションのまとまり（`{% sections 'header-group' %}`） |
 | `snippets/*.liquid` | 部品（`{% render 'card', product: product %}`） |
+| `snippets/page-products.liquid`（任意） | ショップのページの「商品を並べる」ブロックの見た目（下の「使える名前」のショップのページ） |
 | `blocks/*.liquid` | テーマのブロック（`{% content_for 'blocks' %}`・`{% content_for 'block', type: 'x', id: 'y' %}`）。`{% schema %}` に設定の宣言 |
 | `config/settings_schema.json`・`settings_data.json` | テーマの設定の宣言と既定の値（`settings.*`） |
 | `locales/ja.json`（・`*.default.json`） | 翻訳（`{{ 'products.add_to_cart' \| t }}`） |
@@ -120,7 +121,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | レジ: 最終確認 | `checkout_confirm` | `checkout.confirmation`（要約に使う値）。中身は **`{% banto_confirmation %}` が必須**（下の「レジ」） |
 | 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上で、2 文字以下は探さず `performed` が false、`too_short`（Banto の名前）が true になります（「3 文字以上で」の案内に使えます） |
 | 法務（`/legal`・`/privacy`・`/returns`） | `page` | `page`（`title`・`handle`（`legal` / `privacy` / `returns`）・`url`・`content`）。`content` は Banto が文面から作ります（改行を `<br>` にしてエスケープ）。連携サイトのページに向けていればそちらへ転送します（テーマでは描きません） |
-| ショップのページ（`/pages/<名前>`、同梱モジュール「ページ」、docs/pages.md） | `page`（ページで選んだ名前があれば `page.<名前>`。テーマに無ければ `page`） | `page`（`id`・`title`・`handle`・`url`・`content`・`template_suffix`・`published_at`・`updated_at`）。`content` は Banto が本文の決まった書式から作った HTML（決まった形のタグだけ）。`template` は `page.faq` のように出て、`template.name` は `page`・`template.suffix` は `faq`。メニューに出すページは `linklists['main-menu']`（ヘッダー）の後ろと `linklists.footer` の前に入ります |
+| ショップのページ（`/pages/<名前>`、同梱モジュール「ページ」、docs/pages.md） | `page`（ページで選んだ名前があれば `page.<名前>`。テーマに無ければ `page`） | `page`（`id`・`title`・`handle`・`url`・`content`・`template_suffix`・`published_at`・`updated_at`）。`content` は Banto が本文の決まった書式から作った HTML（決まった形のタグだけ）。`template` は `page.faq` のように出て、`template.name` は `page`・`template.suffix` は `faq`。メニューに出すページは `linklists['main-menu']`（ヘッダー）の後ろと `linklists.footer` の前に入ります。本文の「商品を並べる」（`::: products`）は、テーマに `snippets/page-products.liquid` があれば `products`（一覧の形の商品）と `block`（`layout`（`grid` / `scroll`）・`limit`・`sort`・`category`・`tag`・`index`）を渡して描いた HTML が `content` のその場所に入ります（無ければ Banto の既定のカード `ul.banto-products__list`）。「ボタン」は `p.banto-button > a.banto-button__link` です |
 | 購入の完了（`/checkout/done`） | `checkout_done` | `checkout`（`status`（`confirmed`・`pending`・`released`・`not_found`・`unknown`）・`order_number`（確定していれば）・`message`（既定のテーマと同じ文言）・`free`・`inquiry_url`・`continue_url`）。確定を待つあいだは数秒ごとに読み込み直します |
 | 会員ページ（`/account`） | `customers/account`（`templates/customers/account.liquid`） | `customer`（`email`・`name`・`default_address`・`accepts_marketing`・`orders`（`name`（`#1001`）・`order_number`・`created_at`・`status`・`status_label`・`total_price`・`url`（注文照会））・`orders_count`）。住所の保存・ログインの方法・クーポン・ログアウト・退会などは **`{% banto_account %}`** が Banto の部品として描きます。住所が載るので、レジと同じ CSP を付けます |
 

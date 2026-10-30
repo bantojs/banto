@@ -43,6 +43,8 @@ footer{max-width:60rem;margin:3rem auto 2rem;padding:0 1rem;font-size:.85rem;opa
 .card .thumb{aspect-ratio:1/1;background:color-mix(in srgb,CanvasText 6%,transparent);display:flex;align-items:center;justify-content:center;overflow:hidden}
 .card img{width:100%;height:100%;object-fit:cover}
 .card .body{padding:.75rem}
+.banto-products{margin:1.5rem 0}.banto-button{margin:1.25rem 0}
+.banto-button__link{display:inline-block;padding:.65rem 1.5rem;border-radius:.4rem;background:var(--accent,#1f6feb);color:#fff!important;text-decoration:none;font-weight:600}
 .price{font-weight:600}
 .gallery img{max-width:100%;height:auto;max-height:32rem;object-fit:contain;display:block;margin-bottom:.5rem}
 .product{display:grid;grid-template-columns:1fr 1fr;gap:2rem}@media(max-width:40rem){.product{grid-template-columns:1fr}}

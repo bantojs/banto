@@ -35,6 +35,8 @@ const BUDGET = {
   // ショップのページ（同梱モジュール pages、0079）: 初回はショップ行 1 + ページ 1 + カテゴリー 1（並列）。2 回目以降は 0。
   // メニューの一覧はショップ行（pages_nav）に乗るので、ほかのページは増えない
   pages: { cold: 3, warm: 0 },
+  // 本文に「商品を並べる」が 3 つ（4 つ目は描かない）: ブロックごとに一覧の問い合わせ 1 回（並列、一覧と同じキャッシュ）
+  pagesWithProducts: { cold: 6, warm: 0 },
 } as const;
 
 function setup(opts: { coupons?: boolean; campaigns?: number } = {}) {
@@ -107,6 +109,15 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     expect(await calls(sb, () => b.get("/my-shop/pages/about"))).toHaveLength(BUDGET.pages.warm);
     for (const path of Object.keys(BUDGET.warm)) await b.get(path);
     for (const [path, n] of Object.entries(BUDGET.warm)) expect(await calls(sb, () => b.get(path)), path).toHaveLength(n);
+  });
+
+  it("ページの「商品を並べる」はブロックごとに 1 回（3 つまで）。2 回目からは 0", async () => {
+    const { sb, b } = setup();
+    const shop = sb.tables.shops[0]!;
+    shop["settings"] = { modules: { pages: true } };
+    sb.addPage(String(shop["id"]), { handle: "picks", title: "Picks", body: ["::: products tag=a", "::: products tag=b", "::: products tag=c", "::: products tag=d"].join("\n") });
+    expect(await calls(sb, () => b.get("/my-shop/pages/picks"))).toHaveLength(BUDGET.pagesWithProducts.cold);
+    expect(await calls(sb, () => b.get("/my-shop/pages/picks"))).toHaveLength(BUDGET.pagesWithProducts.warm);
   });
 
   it("商品のページの在庫は、その商品の SKU だけを引く（ショップ全体の在庫を読まない）", async () => {
