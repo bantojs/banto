@@ -19,6 +19,9 @@ import { registerImageImportJob } from "../modules/woo-import/job";
 import { todayHere } from "../modules/store-tryon";
 import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
+import { createDbClient } from "../db/client";
+import { migrated } from "../db/migration-state";
+import { PAGES_PUBLISHING_MIGRATION, PAGES_TRASH_DAYS } from "../pages";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -49,6 +52,13 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     await db.maskShippedOrders(days);
     // 監査ログの保持（0051）
     await db.pruneAuditLog(auditKeepDays(cfg.get("AUDIT_LOG_KEEP_DAYS")));
+  });
+
+  // ショップのページのゴミ箱（0080）: 30 日を過ぎたものを消す。0080 を当てるまでは何もしない
+  const anonKey = cfg.get("SUPABASE_ANON_KEY");
+  adapters.scheduler.register("pages_trash", async () => {
+    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, PAGES_PUBLISHING_MIGRATION))) return;
+    await db.purgePagesTrash(PAGES_TRASH_DAYS);
   });
 
   // hooks の配信。1 回に取り出す数は DB が Workers のプランで決める（claim_hook_deliveries、0056）

@@ -72,7 +72,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function caretIn(el){ var r=document.createRange(); r.selectNodeContents(el); r.collapse(false); var s=window.getSelection(); s.removeAllRanges(); s.addRange(r); saved=r.cloneRange(); }
   function emptyP(){ var p=document.createElement("p"); p.appendChild(document.createElement("br")); return p; }
   function apply(kind,blk){
-    if(kind==="img"){ var inp=document.getElementById("page-image"); if(inp){ remember(); inp.click(); } return; }
+    if(kind==="img"){ remember(); if(window.bantoOpenMedia){ window.bantoOpenMedia("body"); return; } var inp=document.getElementById("page-image"); if(inp) inp.click(); return; }
     if(kind==="products"){ openProducts(null,blk); return; }
     if(kind==="button"){
       var text=window.prompt(T("button-text"),""); if(!text) return;
@@ -214,4 +214,47 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   if(inp&&imgForm){ inp.addEventListener("change",function(){ if(inp.files&&inp.files.length){ if(imgForm.requestSubmit) imgForm.requestSubmit(); } }); }
   var orig=window.bantoPageImage;
   if(orig) window.bantoPageImage=function(url){ restore(); var ok=orig(url); mark(); return ok; };
+})();`;
+
+
+/**
+ * メディアライブラリ・アイキャッチ画像・予約公開の表示（0080。DB に入っているときだけ画面に出す）。
+ * ライブラリは置いた画像の一覧（…/media）から選ぶか、新しく置く。本文に入れるときは選んでいた場所に、アイキャッチなら右の欄に入れる
+ */
+export const PAGE_MEDIA_SCRIPT = String.raw`
+(function(){
+  var form=document.getElementById("page-form"); if(!form) return;
+  var mark=function(){ form.dispatchEvent(new Event("change",{bubbles:true})); };
+  // 予約公開: 未来の日時なら「公開」のボタンを「予約公開」に
+  var at=document.getElementById("published_at"), pb=document.getElementById("pe-publish");
+  function label(){ if(!pb) return; var v=at&&at.value?new Date(at.value).getTime():0; pb.textContent=v>Date.now()?pb.getAttribute("data-later"):pb.getAttribute("data-now"); }
+  if(at){ at.addEventListener("input",label); label(); }
+  // アイキャッチ
+  var fi=document.getElementById("image_url"), prev=document.getElementById("featured-preview"), clr=document.getElementById("featured-clear");
+  function setFeatured(url){ if(!fi) return; fi.value=url||""; if(prev){ prev.src=url||""; prev.hidden=!url; } if(clr) clr.hidden=!url; mark(); }
+  if(clr) clr.addEventListener("click",function(){ setFeatured(""); });
+  // ライブラリ
+  var dlg=document.getElementById("media-lib"); if(!dlg||!dlg.showModal||!window.fetch) return;
+  var grid=document.getElementById("media-grid"), mode="body", featuredUpload=false;
+  function pick(url){ dlg.close(); if(mode==="featured") setFeatured(url); else if(window.bantoPageImage) window.bantoPageImage(url); }
+  function open(m){
+    mode=m; grid.textContent="";
+    fetch(dlg.getAttribute("data-list"),{credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json(); }).then(function(j){
+      var items=(j&&j.items)||[];
+      if(!items.length){ var p=document.createElement("p"); p.className="muted"; p.textContent=dlg.getAttribute("data-empty"); grid.appendChild(p); return; }
+      items.forEach(function(it){
+        var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.style.cssText="height:auto;padding:2px;aspect-ratio:1/1;overflow:hidden";
+        var im=document.createElement("img"); im.src=it.url; im.alt=""; im.loading="lazy"; im.style.cssText="width:100%;height:100%;object-fit:cover";
+        b.appendChild(im); b.addEventListener("click",function(){ pick(it.url); }); grid.appendChild(b);
+      });
+    }).catch(function(){});
+    dlg.showModal();
+  }
+  window.bantoOpenMedia=open;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-media]"),function(b){ b.hidden=false; b.addEventListener("click",function(){ open(b.getAttribute("data-media")); }); });
+  document.getElementById("media-close").addEventListener("click",function(){ dlg.close(); });
+  // 新しく置く: 置き終えたら（bantoPageImage が呼ばれる）、アイキャッチを選んでいたならそちらへ
+  document.getElementById("media-upload").addEventListener("click",function(){ featuredUpload=mode==="featured"; dlg.close(); var inp=document.getElementById("page-image"); if(inp) inp.click(); });
+  var orig=window.bantoPageImage;
+  window.bantoPageImage=function(url){ if(featuredUpload){ featuredUpload=false; setFeatured(url); return true; } return orig?orig(url):false; };
 })();`;

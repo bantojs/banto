@@ -805,9 +805,10 @@ export const defaultTheme: Theme = {
 
   ContentPage({ ctx, page, html }) {
     return (
-      <Layout title={page.seo_title || page.title} ctx={ctx} seo={{ path: pagePath(ctx.shopPath, page.handle), ...(page.seo_description ? { description: page.seo_description } : {}) }}>
+      <Layout title={page.seo_title || page.title} ctx={ctx} seo={{ path: pagePath(ctx.shopPath, page.handle), ...(page.seo_description ? { description: page.seo_description } : {}), ...(page.image_url ? { image: page.image_url } : {}) }}>
         <article class="page">
           <h1>{page.title}</h1>
+          {page.image_url ? <img class="page-image" src={page.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
         </article>
       </Layout>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
-import { PAGES_MIGRATION, handleFromTitle } from "../src/pages";
+import { PAGES_MIGRATION, PAGES_PUBLISHING_MIGRATION, handleFromTitle } from "../src/pages";
 import { PAGE_BLOCKS_SCRIPT } from "../src/modules/pages/blocks-script";
 
 /** ショップのページの管理画面（同梱モジュール pages、0079）。扱えるのは content の項目を持つ人。本文は決まった書式でプレビューできる */
@@ -56,6 +56,10 @@ describe("ショップのページの管理画面", () => {
     expect(await (await writer.get(`${base}/${String(page["id"])}`)).text()).toContain('value="about"');
     await writer.post(`${base}/${String(page["id"])}`, { ...form, title: "店について", published: "", template_suffix: "FAQ" });
     expect(page).toMatchObject({ title: "店について", published: false, template_suffix: "faq" });
+    // 0080 からは、消すのはゴミ箱の中のものだけ（先にゴミ箱へ）
+    await writer.post(`${base}/${String(page["id"])}/delete`, {});
+    expect(sb.tables.pages).toHaveLength(1);
+    await writer.post(`${base}/${String(page["id"])}/trash`, {});
     await writer.post(`${base}/${String(page["id"])}/delete`, {});
     expect(sb.tables.pages).toHaveLength(0);
   });
@@ -160,5 +164,68 @@ describe("ショップのページの管理画面", () => {
     expect(html).toContain('data-t-add="ブロックを追加"');
     expect(html).toContain('data-reserved="legal,privacy,returns,shipping,cart,checkout,account,search,orders,inquiries"');
     expect(html).toContain('id="blk-add-end"');
+  });
+
+  it("予約公開・ゴミ箱・リビジョン・アイキャッチ・メディアライブラリ（0080）", async () => {
+    const { sb, app, base, shop } = setup();
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const { published: _p, ...f } = form;
+    // 予約公開: 未来の日時で「公開」→ 状態は予約、お客様には見えない
+    await owner.post(base, { ...f, action: "publish", published_at: "2099-01-01T09:00" });
+    const page = sb.tables.pages[0]!;
+    expect(page).toMatchObject({ published: true });
+    expect(String(page["published_at"])).toMatch(/^2099-01-01T00:00:00/);
+    const list = await (await owner.get(`${base}?status=scheduled`)).text();
+    expect(list).toContain("私たちについて");
+    expect(await (await owner.get(`${base}/${String(page["id"])}`)).text()).toContain('value="2099-01-01T09:00"');
+    expect((await new Browser(app, BASE).get("/my-shop/pages/about")).status).toBe(404);
+    // 日時を外して更新 → 公開中。アイキャッチは置き場のものだけ
+    const id = String(page["id"]);
+    expect((await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: "https://evil.example/x.png" })).status).toBe(400);
+    await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
+    expect(page).toMatchObject({ published_at: null, image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
+    // お客様の画面はページを短い時間覚えるので、別のアプリ（別の isolate に当たる）で見る
+    const live = await (await new Browser(appWith(sb, {}, new MemoryStorage(`${BASE}/media`)), BASE).get("/my-shop/pages/about")).text();
+    expect(live).toContain(`<meta property="og:image" content="${BASE}/media/pages/${shop.id}/a.webp"`);
+    // リビジョン: 前の版に戻す（今の版もリビジョンに残る）
+    expect(sb.tables.page_revisions).toHaveLength(1);
+    const rev = sb.tables.page_revisions[0]!;
+    const edit = await (await owner.get(`${base}/${id}`)).text();
+    expect(edit).toContain(`/revisions/${String(rev["id"])}/restore`);
+    await owner.post(`${base}/${id}/revisions/${String(rev["id"])}/restore`, {});
+    expect(page["title"]).toBe("私たちについて");
+    expect(sb.tables.page_revisions).toHaveLength(2);
+    // ゴミ箱: お客様に見えず、同じ名前で作れる。戻すとき重なれば知らせる
+    await owner.post(`${base}/${id}/trash`, {});
+    expect((await new Browser(appWith(sb, {}, new MemoryStorage(`${BASE}/media`)), BASE).get("/my-shop/pages/about")).status).toBe(404);
+    expect((await owner.get(`${base}/${id}`)).headers.get("location")).toContain("status=trash");
+    await owner.post(base, { ...f, action: "publish" });
+    const conflict = await owner.post(`${base}/${id}/restore`, {});
+    expect(conflict.headers.get("location")).toContain("flash=restore_conflict");
+    const trash = await (await owner.get(`${base}?status=trash`)).text();
+    expect(trash).toContain("完全に削除");
+    // メディアライブラリ: 置いた画像を記録し、一覧で返す
+    await owner.postMultipart(`${base}/images`, { file: new File([tinyPng()], "a.png", { type: "image/png" }) }, { headers: { accept: "application/json" } });
+    const media = (await (await owner.get(`${base}/media`)).json()) as { items: { url: string }[] };
+    expect(media.items).toHaveLength(1);
+    expect(media.items[0]!.url).toMatch(new RegExp(`/media/pages/${shop.id}/`));
+  });
+
+  it("0080 を当てるまでは今までの画面（日時・アイキャッチ・ゴミ箱の欄が無く、消すとすぐ消える）", async () => {
+    const { sb, shop } = setup();
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== PAGES_PUBLISHING_MIGRATION);
+    const owner = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/pages`;
+    const blank = await (await owner.get(`${base}/new`)).text();
+    expect(blank).not.toContain('name="published_at"');
+    expect(blank).not.toContain('name="image_url"');
+    // 0080 の列を送っても書かない（DB に列が無い）
+    await owner.post(base, { ...form, published_at: "2099-01-01T09:00", image_url: `${BASE}/media/x.webp` });
+    const page = sb.tables.pages[0]!;
+    expect(page["published_at"]).toBeUndefined();
+    expect(page["image_url"]).toBeUndefined();
+    expect((await owner.get(`${base}/media`)).status).toBe(404);
+    await owner.post(`${base}/${String(page["id"])}/delete`, {});
+    expect(sb.tables.pages).toHaveLength(0);
   });
 });

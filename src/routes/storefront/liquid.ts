@@ -26,7 +26,7 @@ import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
-import { pagePath, pagesNav, type PageRow } from "../../pages";
+import { pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
 import { fillProductBlocks, type ProductBlock } from "../../pages/blocks";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
@@ -490,9 +490,11 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
   const pg = p.page;
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
+  // アイキャッチ画像（0080）: page.image と、Shopify と同じ page_image（テーマが OG の画像に使う）
+  const image = pg.image_url ? { src: pg.image_url, url: pg.image_url, alt: pg.title } : null;
   const parts = (html: string): PageParts => ({
     template,
-    values: { page: { id: pg.id, handle: pg.handle, title: pg.title, content: new SafeHtml(html), url: pagePath(s.ctx.shopPath, pg.handle), template_suffix: pg.template_suffix, published_at: pg.created_at, updated_at: pg.updated_at } },
+    values: { page: { id: pg.id, handle: pg.handle, title: pg.title, content: new SafeHtml(html), url: pagePath(s.ctx.shopPath, pg.handle), template_suffix: pg.template_suffix, published_at: pagePublishedAt(pg), updated_at: pg.updated_at, image }, ...(image ? { page_image: image } : {}) },
     title: pg.seo_title || pg.title,
     ...(pg.seo_description ? { description: pg.seo_description } : {}),
     path: `/pages/${encodeURIComponent(pg.handle)}`,
