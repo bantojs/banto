@@ -125,7 +125,9 @@ function inline(s: string, opts: MarkdownOptions, depth = 0): string {
       }
     }
     if (ch === "*" && s[i + 1] === "*") {
-      const close = find("**", i + 2);
+      let close = find("**", i + 2);
+      // 「***太字の斜体***」: 閉じの記号が 3 つ続くなら、外側の ** は最後の 2 つ（中は *斜体*）
+      if (s[i + 2] === "*") while (close >= 0 && s[close + 2] === "*") close++;
       if (close > i + 2) {
         out += `<strong>${inline(s.slice(i + 2, close), opts, depth + 1)}</strong>`;
         i = close + 2;

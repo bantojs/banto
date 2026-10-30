@@ -35,6 +35,12 @@ describe("ページの本文の書式", () => {
     expect(md("[**太字の**リンク](/a)")).toBe('<p><a href="/a"><strong>太字の</strong>リンク</a></p>');
   });
 
+  it("太字の斜体（***、見たままの編集で太字と斜体を重ねた形）", () => {
+    expect(md("***両方***")).toBe("<p><strong><em>両方</em></strong></p>");
+    expect(md("***a*** と ***b***")).toBe("<p><strong><em>a</em></strong> と <strong><em>b</em></strong></p>");
+    expect(md("**a *b* c**")).toBe("<p><strong>a <em>b</em> c</strong></p>");
+  });
+
   it("画像はショップの画像の置き場だけ。ほかは説明の文字になる", () => {
     expect(md("![店の外観](https://media.example.jp/pages/s/a.webp)")).toBe('<p><img src="https://media.example.jp/pages/s/a.webp" alt="店の外観" loading="lazy" decoding="async"></p>');
     expect(md("![a](/media/pages/s/a.webp)")).toContain('<img src="/media/pages/s/a.webp"');
