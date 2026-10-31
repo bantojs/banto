@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
-import { PAGES_MIGRATION, PAGES_PUBLISHING_MIGRATION, handleFromTitle } from "../src/pages";
+import { PAGE_MEDIA_THUMB_MIGRATION, PAGES_MIGRATION, PAGES_PUBLISHING_MIGRATION, handleFromTitle } from "../src/pages";
 import { PAGE_BLOCKS_SCRIPT } from "../src/content/blocks-script";
 import { MEDIA_PAGE } from "../src/content/editor";
 
@@ -209,7 +209,7 @@ describe("ショップのページの管理画面", () => {
   });
 
   it("予約公開・ゴミ箱・リビジョン・アイキャッチ・メディアライブラリ（0080）", async () => {
-    const { sb, app, base, shop } = setup();
+    const { sb, app, base, shop, storage } = setup();
     const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const { published: _p, ...f } = form;
     // 予約公開: 未来の日時で「公開」→ 状態は予約、お客様には見えない
@@ -261,6 +261,14 @@ describe("ショップのページの管理画面", () => {
     const media = (await (await owner.get(`${base}/media`)).json()) as { items: { url: string }[] };
     expect(media.items).toHaveLength(1);
     expect(media.items[0]!.url).toMatch(new RegExp(`/media/pages/${shop.id}/`));
+    // 一覧用の縮小版（0082）: ブラウザが作って一緒に送ると、置き場に .thumb で置き、一覧はそれを返す
+    await owner.postMultipart(`${base}/images`, { file: new File([tinyPng()], "b.png", { type: "image/png" }), thumb: new File([tinyPng()], "t.png", { type: "image/png" }) }, { headers: { accept: "application/json" } });
+    const withThumb = (await (await owner.get(`${base}/media`)).json()) as { items: { url: string; thumb_url?: string | null }[] };
+    expect(withThumb.items[0]!.thumb_url).toBe(withThumb.items[0]!.url.replace(/\.png$/, ".thumb.png"));
+    expect(await storage.get(withThumb.items[0]!.thumb_url!.slice(`${BASE}/media/`.length))).not.toBeNull();
+    // 縮小版に画像でないものを送っても、本画像は置ける（縮小版は無し）
+    await owner.postMultipart(`${base}/images`, { file: new File([tinyPng()], "c.png", { type: "image/png" }), thumb: new File(["<svg/>"], "t.svg", { type: "image/svg+xml" }) }, { headers: { accept: "application/json" } });
+    expect(sb.tables.page_media.at(-1)!["thumb_url"]).toBeUndefined();
     // 画像が増えても 1 回に読むのは MEDIA_PAGE 枚だけ。続きは next を after に渡す（同じ日時の行も id で取りこぼさない）
     const at = (i: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, Math.floor(i / 2))).toISOString();
     for (let i = 0; i < MEDIA_PAGE + 9; i++) sb.tables.page_media.push({ id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, shop_id: shop.id, url: `${BASE}/media/pages/${shop.id}/old-${i}.webp`, created_at: at(i) });
@@ -270,9 +278,21 @@ describe("ショップのページの管理画面", () => {
     const second = (await (await owner.get(`${base}/media?after=${first.next}`)).json()) as { items: { id: string }[]; next: string | null };
     expect(second.next).toBeNull();
     const ids = [...first.items, ...second.items].map((r) => r.id);
-    expect(ids).toHaveLength(MEDIA_PAGE + 10);
+    expect(ids).toHaveLength(MEDIA_PAGE + 12);
     expect(new Set(ids).size).toBe(ids.length);
     expect((await owner.get(`${base}/media?after=broken`)).status).toBe(400);
+  });
+
+  it("0082 を当てるまでは縮小版を置かず、メディアライブラリの一覧で thumb_url を選ばない", async () => {
+    const { sb, shop, storage } = setup();
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== PAGE_MEDIA_THUMB_MIGRATION);
+    const owner = await Browser.loggedIn(appWith(sb, {}, storage), "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/pages`;
+    await owner.postMultipart(`${base}/images`, { file: new File([tinyPng()], "a.png", { type: "image/png" }), thumb: new File([tinyPng()], "t.png", { type: "image/png" }) }, { headers: { accept: "application/json" } });
+    expect([...storage.objects.keys()].filter((k) => k.includes(".thumb."))).toEqual([]);
+    const media = (await (await owner.get(`${base}/media`)).json()) as { items: Record<string, unknown>[] };
+    expect(media.items).toHaveLength(1);
+    expect(media.items[0]).not.toHaveProperty("thumb_url");
   });
 
   it("0080 を当てるまでは今までの画面（日時・アイキャッチ・ゴミ箱の欄が無く、消すとすぐ消える）", async () => {

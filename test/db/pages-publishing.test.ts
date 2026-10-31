@@ -76,6 +76,10 @@ describe.skipIf(!dbAvailable)("ショップのページの予約公開・ゴミ�
     expect(await expectDbError(() => add(f.ownerId, "pages/00000000-0000-4000-8000-000000000000/b.webp"))).toMatch(/row-level security/);
     expect(await expectDbError(() => add(catalogOnly, `pages/${f.shopId}/c.webp`))).toMatch(/row-level security/);
     expect((await asUser(f.ownerId, (c) => c.query("select url from page_media where shop_id = $1", [f.shopId]))).rows).toHaveLength(1);
+    // 一覧用の縮小版の URL（0082）も同じ形だけ
+    await asUser(f.ownerId, (c) => c.query("insert into page_media (shop_id, storage_key, url, thumb_url) values ($1, $2, $3, $4)", [f.shopId, `pages/${f.shopId}/t.webp`, "https://media.example/t.webp", "https://media.example/t.thumb.webp"]));
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("insert into page_media (shop_id, storage_key, url, thumb_url) values ($1, $2, $3, $4)", [f.shopId, `pages/${f.shopId}/u.webp`, "https://media.example/u.webp", "javascript:alert(1)"])))).toMatch(/check constraint/);
+    await asUser(f.ownerId, (c) => c.query("delete from page_media where storage_key = $1", [`pages/${f.shopId}/t.webp`]));
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update pages set image_url = 'javascript:alert(1)' where shop_id = $1", [f.shopId])))).toMatch(/check constraint/);
     await asUser(f.ownerId, (c) => c.query("update pages set image_url = 'https://media.example/pages/x.webp' where shop_id = $1 and handle = 'rev'", [f.shopId]));
   });
