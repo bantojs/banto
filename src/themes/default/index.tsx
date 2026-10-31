@@ -27,7 +27,7 @@ import { jsonLdText, productJsonLd } from "../../storefront/structured-data";
 import { yen } from "../../routes/common";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
 import { ConfirmationBlock } from "./confirmation";
-import { pagePath, pagesNav } from "../../pages";
+import { absoluteMedia, pagePath, pagesNav } from "../../pages";
 import { articlePath, blogPath, blogsNav } from "../../blog";
 
 const css = `
@@ -119,7 +119,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
         <meta property="og:type" content={seo?.type === "product" ? "product" : "website"} />
         {ctx ? <meta property="og:site_name" content={ctx.shop.name} /> : null}
         {canonical ? <meta property="og:url" content={canonical} /> : null}
-        {seo?.image ? <meta property="og:image" content={seo.image} /> : null}
+        {seo?.image ? <meta property="og:image" content={absoluteMedia(seo.image, ctx?.publicBaseUrl)} /> : null}
         <meta name="twitter:card" content={seo?.image ? "summary_large_image" : "summary"} />
         {seo?.jsonLd ? <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(seo.jsonLd) }} /> : null}
         <style>{raw(css)}</style>

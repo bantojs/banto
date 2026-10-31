@@ -22,7 +22,7 @@ import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MA
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
-import { ContentForm, contentState, editorCatalog, editorHtml, imageUrlOk, mountEditorEndpoints, type RevisionRow } from "../../content/editor";
+import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow } from "../../content/editor";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
@@ -78,7 +78,11 @@ function pageValues(f: Record<string, string>, opts: { publishing: boolean; medi
     image_url: opts.publishing ? (f.image_url ?? "").trim() || null : null,
   };
   if (opts.publishing && f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
-  if (values.image_url && !imageUrlOk(values.image_url, opts.mediaBase)) return { values, error: "pages.error_image", autoHandle };
+  if (values.image_url) {
+    const img = featuredImageUrl(values.image_url, opts.mediaBase);
+    if (!img) return { values, error: "pages.error_image", autoHandle };
+    values.image_url = img;
+  }
   if (!values.title || values.title.length > PAGE_LIMITS.title) return { values, error: "pages.error_title", autoHandle };
   if (!pageHandleOk(values.handle)) return { values, error: "pages.error_handle", autoHandle };
   if (values.body.length > PAGE_LIMITS.body) return { values, error: "pages.error_body", autoHandle };

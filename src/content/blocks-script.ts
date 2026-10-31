@@ -1053,7 +1053,7 @@ export const PAGE_MEDIA_SCRIPT = String.raw`
       if(first&&!items.length){ var p=document.createElement("p"); p.className="muted"; p.textContent=dlg.getAttribute("data-empty"); grid.appendChild(p); }
       items.forEach(function(it){
         var b=document.createElement("button"); b.type="button"; b.className="secondary"; b.style.cssText="height:auto;padding:2px;aspect-ratio:1/1;overflow:hidden";
-        var im=document.createElement("img"); im.src=it.url; im.alt=""; im.loading="lazy"; im.decoding="async"; im.style.cssText="width:100%;height:100%;object-fit:cover";
+        var im=document.createElement("img"); im.src=it.thumb_url||it.url; im.alt=""; im.loading="lazy"; im.decoding="async"; im.style.cssText="width:100%;height:100%;object-fit:cover";
         b.appendChild(im); b.addEventListener("click",function(){ pick(it.url); }); grid.insertBefore(b,sentinel.parentNode===grid?sentinel:null);
       });
       nextCursor=j&&j.next||null;

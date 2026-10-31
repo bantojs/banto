@@ -15,7 +15,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
-import { ContentForm, contentState, editorCatalog, editorHtml, imageUrlOk, mountEditorEndpoints, type ContentValues, type RevisionRow } from "../../content/editor";
+import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow } from "../../content/editor";
 import { BLOG_MODULE, articleHandleOk, blogHandleOk, parseTags, type ArticleRow, type BlogRow } from "../../blog";
 
 /**
@@ -446,7 +446,11 @@ function articleValues(f: Record<string, string>, mediaBase: string): { values: 
     author: opt(f.author, 100),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
-  if (values.image_url && !imageUrlOk(values.image_url, mediaBase)) return { values, error: "pages.error_image", autoHandle };
+  if (values.image_url) {
+    const img = featuredImageUrl(values.image_url, mediaBase);
+    if (!img) return { values, error: "pages.error_image", autoHandle };
+    values.image_url = img;
+  }
   if (!values.title || values.title.length > PAGE_LIMITS.title) return { values, error: "pages.error_title", autoHandle };
   if (!articleHandleOk(values.handle)) return { values, error: "blog.error_article_handle", autoHandle };
   if (values.body.length > PAGE_LIMITS.body) return { values, error: "pages.error_body", autoHandle };

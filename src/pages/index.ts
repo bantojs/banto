@@ -10,6 +10,8 @@ export const PAGES_MIGRATION = "0079_mod_pages";
 export const PAGES_PUBLISHING_MIGRATION = "0080_mod_pages_publishing";
 /** ページ・ブログの記事を AI 用トークンで扱う（content:read / content:write） */
 export const CONTENT_API_MIGRATION = "0083_api_content";
+/** メディアライブラリの一覧用の小さい画像（page_media.thumb_url） */
+export const PAGE_MEDIA_THUMB_MIGRATION = "0082_page_media_thumb";
 /** ゴミ箱に置いておく日数（過ぎたら Cron が消す） */
 export const PAGES_TRASH_DAYS = 30;
 
@@ -80,6 +82,9 @@ export function randomPageHandle(): string {
 
 export const PAGE_LIMITS ={ title: 200, body: 50000, seoTitle: 200, seoDescription: 500 } as const;
 
+/** /media/… の画像をこのオリジンの絶対 URL にする（OG の画像・Liquid の image.src。ほかはそのまま） */
+export const absoluteMedia = (url: string, origin: string | undefined): string => (url.startsWith("/") && !url.startsWith("//") && origin ? `${origin.replace(/\/+$/, "")}${url}` : url);
+
 export const pagePath = (shopPath: string, handle: string) => `${shopPath}/pages/${encodeURIComponent(handle)}`;
 
 /** メニューに出すページ（モジュールが OFF なら DB 側で空。キャッシュ済みのショップ行から読むので往復しない） */
@@ -94,11 +99,11 @@ export function pagesNav(shop: { pages_nav?: unknown }, place: "header" | "foote
  */
 const htmlCache = new Map<string, string>();
 const HTML_CACHE_MAX = 200;
-export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string): string {
-  const key = `${page.id}|${page.updated_at}|${mediaBase}`;
+export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string, origin?: string): string {
+  const key = `${page.id}|${page.updated_at}|${mediaBase}|${origin ?? ""}`;
   const hit = htmlCache.get(key);
   if (hit !== undefined) return hit;
-  const html = markdownToHtml(page.body, { mediaBase });
+  const html = markdownToHtml(page.body, { mediaBase, ...(origin ? { origin } : {}) });
   htmlCache.set(key, html);
   if (htmlCache.size > HTML_CACHE_MAX) htmlCache.delete(htmlCache.keys().next().value!);
   return html;

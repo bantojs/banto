@@ -21,6 +21,9 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
   const member = [{ memberBearer: [] }];
   const memberOptional = [{}, { memberBearer: [] }];
   const common = { 404: err("not_found（ショップが無い・非公開）"), 503: err("not_configured") };
+  const contentPage = obj({ handle: str, title: str, url: str, nav: str, sort_order: int, template_suffix: nStr, seo_title: nStr, seo_description: nStr, image_url: nStr, published_at: str, updated_at: str });
+  const contentBlog = obj({ handle: str, title: str, description: nStr, url: str, nav: str, sort_order: int, seo_title: nStr, seo_description: nStr, updated_at: str });
+  const contentArticle = obj({ handle: str, title: str, url: str, excerpt: nStr, summary: str, tags: arr(str), image_url: nStr, author: nStr, published_at: str, updated_at: str });
   const ref = obj({ slug: str, name: str });
 
   const cartItem = obj({ sku_id: str, sku_code: str, sku_name: nStr, product_id: str, product_slug: str, product_name: str, unit_price_jpy: int, qty: int, line_total_jpy: int, in_stock: bool, short: { ...bool, description: "在庫が足りない" } });
@@ -193,6 +196,30 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       },
       "/shops/{shop}/categories": { get: { summary: "カテゴリーの木（公開中の商品数つき、子孫を含む）", parameters: [shopPath], responses: { 200: ok(obj({ categories: arr(obj({ slug: str, name: str, count: int, children: arr({ type: "object" }) })) })), ...common } } },
 
+      // ページ・ブログ（同梱モジュール pages・blog。docs/headless.md「ページ・ブログ」）。モジュールが OFF なら 404
+      "/shops/{shop}/pages": { get: { summary: "公開中のページの一覧（並び順。本文は持たない）", parameters: [shopPath], responses: { 200: ok(obj({ pages: arr(contentPage) })), ...common } } },
+      "/shops/{shop}/pages/{handle}": {
+        get: {
+          summary: "ページ 1 つ。body は元の書式、html は Banto が描いた HTML（並べ方の CSS・商品と記事のカード入り。画像はこの Banto の絶対 URL、本文のリンクは書いたまま）",
+          parameters: [shopPath, { name: "handle", in: "path", required: true, schema: str }],
+          responses: { 200: ok(obj({ page: { allOf: [contentPage, obj({ body: str, html: str })] } })), ...common },
+        },
+      },
+      "/shops/{shop}/blogs": { get: { summary: "ブログの一覧（並び順）", parameters: [shopPath], responses: { 200: ok(obj({ blogs: arr(contentBlog) })), ...common } } },
+      "/shops/{shop}/blogs/{blog}/articles": {
+        get: {
+          summary: "ブログの記事の一覧（公開した日時の新しい順に 12 本ずつ。深さは 1,200 本まで）",
+          parameters: [shopPath, { name: "blog", in: "path", required: true, schema: str }, { name: "page", in: "query", schema: int }, { name: "tag", in: "query", schema: str }],
+          responses: { 200: ok(obj({ blog: contentBlog, articles: arr(contentArticle), page: int, per_page: int, has_next: { type: "boolean" } })), ...common },
+        },
+      },
+      "/shops/{shop}/blogs/{blog}/articles/{article}": {
+        get: {
+          summary: "記事 1 つ（body と html はページと同じ）",
+          parameters: [shopPath, { name: "blog", in: "path", required: true, schema: str }, { name: "article", in: "path", required: true, schema: str }],
+          responses: { 200: ok(obj({ blog: contentBlog, article: { allOf: [contentArticle, obj({ seo_title: nStr, seo_description: nStr, template_suffix: nStr, body: str, html: str })] } })), ...common },
+        },
+      },
       "/shops/{shop}/cart": {
         get: { summary: "カートの中身（最新の価格・在庫で計算し直す）", security: memberOptional, parameters: [shopPath, { name: "cart", in: "query", schema: str, description: "カートのトークン。省略で空のカート" }], responses: { 200: ok(cart), 400: err("invalid_cart（トークンを捨てて作り直す）"), 401: err("invalid_member_token"), ...common } },
         post: {
@@ -356,6 +383,11 @@ const OPERATION_IDS: Record<string, string> = {
   "get /shops/{shop}/products": "listProducts",
   "get /shops/{shop}/products/{product}": "getProduct",
   "get /shops/{shop}/categories": "listCategories",
+  "get /shops/{shop}/pages": "listPages",
+  "get /shops/{shop}/pages/{handle}": "getPage",
+  "get /shops/{shop}/blogs": "listBlogs",
+  "get /shops/{shop}/blogs/{blog}/articles": "listArticles",
+  "get /shops/{shop}/blogs/{blog}/articles/{article}": "getArticle",
   "get /shops/{shop}/cart": "getCart",
   "post /shops/{shop}/cart": "updateCart",
   "post /shops/{shop}/checkout/quote": "createCheckoutQuote",
