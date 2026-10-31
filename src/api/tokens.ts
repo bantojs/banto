@@ -55,9 +55,6 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "content:write": "content",
 };
 
-/** 0072 が当たるまで出さないスコープ（DB の CHECK が知らない） */
-export const THEME_SCOPES: readonly ApiScope[] = ["theme:write", "theme:publish"];
-
 /** 0083 が当たるまで出さないスコープ（ページ・ブログの記事） */
 export const CONTENT_SCOPES: readonly ApiScope[] = ["content:read", "content:write"];
 

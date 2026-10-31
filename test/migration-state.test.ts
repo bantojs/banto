@@ -13,8 +13,8 @@ function deps(applied: string[]) {
 }
 
 describe("新しい機能を出すかどうか（migrated）", () => {
-  it("土台（v0.4.0 の前提 = v0.3.0 のセットアップで当たる 0070 まで）は同梱のマイグレーションのひとつ", () => {
-    expect(BASELINE_MIGRATION).toBe("0070_mod_passkey_headless_add");
+  it("土台（v0.5.0 の前提 = v0.4 系のセットアップで当たる 0078 まで）は同梱のマイグレーションのひとつ", () => {
+    expect(BASELINE_MIGRATION).toBe("0078_api_image_order");
     expect(BUNDLED_MIGRATIONS).toContain(BASELINE_MIGRATION);
   });
 

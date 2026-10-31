@@ -3,7 +3,6 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { forgetThemes } from "../src/themes/liquid/cache";
-import { THEME_API_MIGRATION } from "../src/themes/liquid/versions";
 
 /**
  * /api/v1/themes（theme:write / theme:publish、0072、docs/themes.md）。CLI と GitHub Actions が使う経路。
@@ -168,17 +167,9 @@ describe("REST /api/v1/themes", () => {
     expect((await nodomain.call(nt, "POST", `/themes/not-a-uuid/complete`)).status).toBe(404);
   });
 
-  it("0072 が当たるまでは migration_required。トークンの画面もテーマのスコープを出さない", async () => {
+  it("トークンの画面にテーマのスコープが出る", async () => {
     const { shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     expect(await (await admin.get(`/admin/shops/${shop.id}/tokens`)).text()).toContain('value="theme:publish"');
-    const fresh = setup();
-    fresh.sb.appliedMigrations = fresh.sb.appliedMigrations.filter((v) => v !== THEME_API_MIGRATION);
-    const t2 = await fresh.issue(["theme:write"]);
-    expect((await fresh.call(t2, "GET", "/themes")).json.error?.code).toBe("migration_required");
-    const admin2 = await Browser.loggedIn(fresh.app, "owner@example.com", "password-123");
-    const page = await (await admin2.get(`/admin/shops/${fresh.shop.id}/tokens`)).text();
-    expect(page).not.toContain('value="theme:write"');
-    expect(page).toContain('value="products:read"');
   });
 });

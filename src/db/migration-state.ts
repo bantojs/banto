@@ -5,15 +5,15 @@
  * そのあいだも、お客様の画面と既存の機能は止めない。新しいマイグレーションを使う機能だけを、適用されるまで出さない。
  * 機能ごとに「表が無いエラーを受け止める」書き方はしない。判定はここの migrated() 1 つ。
  *
- * v0.4.0 は 0001〜BASELINE を前提にする（セットアップのウィザードが全部当ててから運営者を作らせる）。
+ * v0.5.0 は 0001〜BASELINE を前提にする（セットアップのウィザードが全部当ててから運営者を作らせる）。
  * BASELINE までの版は問い合わせずに「適用済み」とみなす。サポートする古い DB は「ひとつ前のマイナー版まで」で、
  * 次のマイナー版で BASELINE を進め、それまでの migrated() の分岐を消す。
  */
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "./client";
 
-/** v0.4.0 の土台（v0.3.0 のセットアップで当たる 0001〜0070）。これ以前のマイグレーションは適用済みとみなす */
-export const BASELINE_MIGRATION = "0070_mod_passkey_headless_add";
+/** v0.5.0 の土台（v0.4 系のセットアップで当たる 0001〜0078）。これ以前のマイグレーションは適用済みとみなす */
+export const BASELINE_MIGRATION = "0078_api_image_order";
 
 export const APPLIED_MIGRATIONS_CACHE_KEY = "migrations:applied";
 /** isolate ごとに覚える秒数。適用した isolate では即座に消すが、ほかの isolate は最大この秒数だけ古い一覧を使う */

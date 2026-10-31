@@ -20,19 +20,13 @@ import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checko
 import { shopHome } from "../storefront/urls";
 import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
-import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, THEME_API_MIGRATION, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
+import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
 import { CONTENT_API_MIGRATION } from "../pages";
 import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone } from "../i18n/time";
 
-/** 売上集計の区切りの時間帯（p_time_zone）を受け付ける版 */
-export const SALES_TIMEZONE_MIGRATION = "0076_sales_timezone";
-/** 画像のファイルだけを差し替える（api_image_replace_file）版 */
-export const IMAGE_REPLACE_MIGRATION = "0077_api_image_replace";
-/** 商品の画像の並び順（0078、PUT /products/{id}/images/order） */
-export const IMAGE_ORDER_MIGRATION = "0078_api_image_order";
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
 export interface ThemeApiDeps {
@@ -334,10 +328,6 @@ export class ApiService {
    */
   async imageReplaceFile(imageId: string, image: Uint8Array, thumbnail: Uint8Array | null): Promise<Record<string, unknown>> {
     uuidOr404(imageId);
-    if (!(await this.migratedTo(IMAGE_REPLACE_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `replacing image files needs the database update ${IMAGE_REPLACE_MIGRATION}; apply it from /admin/update`, 409);
-    }
     const main = sniffImage(image.subarray(0, 256));
     if (!main) throw new ApiError("invalid", "image must be JPEG, PNG, WebP, GIF or AVIF", 400);
     if (image.byteLength > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 400);
@@ -389,10 +379,6 @@ export class ApiService {
     uuidOr404(productId);
     if (!Array.isArray(imageIds) || imageIds.length > 200 || imageIds.some((v) => typeof v !== "string" || !isUuid(v))) {
       throw new ApiError("invalid", "image_ids must be an array of the product's image ids", 400);
-    }
-    if (!(await this.migratedTo(IMAGE_ORDER_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `reordering images needs the database update ${IMAGE_ORDER_MIGRATION}; apply it from /admin/update`, 409);
     }
     return this.call<Record<string, unknown>>("api_images_reorder", { p_product_id: productId, p_image_ids: imageIds });
   }
@@ -619,10 +605,6 @@ export class ApiService {
 
   // ---- テーマ（theme:write / theme:publish、0072。docs/themes.md） ----
   private async themeReady(): Promise<ThemeApiDeps> {
-    if (!(await this.migratedTo(THEME_API_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `themes need the database update ${THEME_API_MIGRATION}; apply it from /admin/update`, 409);
-    }
     if (!this.theme) throw new ApiError("upstream", "not configured", 502);
     return this.theme;
   }
@@ -712,10 +694,9 @@ export class ApiService {
   }
 
   // ---- stats ----
-  /** 日別・月別の区切りはデプロイの時間帯（BANTO_TIMEZONE）。0076 が当たるまでは SQL の既定（Asia/Tokyo） */
+  /** 日別・月別の区切りはデプロイの時間帯（BANTO_TIMEZONE） */
   async salesSummary(from: string, to: string, groupBy: "day" | "month" | "product" = "day"): Promise<Record<string, unknown>> {
-    const tz = (await this.migratedTo(SALES_TIMEZONE_MIGRATION)) ? { p_time_zone: getTimeZone() } : {};
-    return this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy, ...tz });
+    return this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy, p_time_zone: getTimeZone() });
   }
   inventoryLow = (threshold?: number) => this.call<Record<string, unknown>[]>("api_inventory_low", { p_threshold: threshold ?? null });
 }

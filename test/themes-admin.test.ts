@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
 import { forgetThemes } from "../src/themes/liquid/cache";
-import { THEMES_MIGRATION } from "../src/themes/liquid";
 
 /** 管理画面の「デザイン」（0071、docs/themes.md）: 取り込み・資産・プレビュー・公開・取り下げ・削除 */
 const DOMAIN = "https://shop.example.jp";
@@ -141,7 +140,7 @@ describe("管理画面のデザイン（Liquid のテーマ）", () => {
     expect(sb.tables.theme_versions).toHaveLength(0);
   });
 
-  it("design の項目の無いスタッフは開けない。0071 が当たるまでは案内だけ", async () => {
+  it("design の項目の無いスタッフは開けない", async () => {
     const { sb, shop, app, base } = setup();
     const staff = sb.addUser("staff@example.com", "password-123");
     sb.orgMembers.push({ org_id: String(shop["org_id"]), user_id: staff.id, role: "member", created_at: new Date().toISOString() });
@@ -149,8 +148,5 @@ describe("管理画面のデザイン（Liquid のテーマ）", () => {
     const s = await Browser.loggedIn(app, "staff@example.com", "password-123");
     expect((await s.get(base)).status).toBe(404);
     expect((await s.postJson(`${base}/versions`, { name: "x", bundle })).status).toBe(404);
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== THEMES_MIGRATION);
-    const owner = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    expect(await (await owner.get(base)).text()).toContain("0071_themes");
   });
 });

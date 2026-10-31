@@ -26,7 +26,6 @@ import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
 import { PATTERNS_FILE, STYLES_FILE, bantoPatterns, parseBlockStyles, parsePatterns, type BlockStyles, type EditorPattern, type PatternBody } from "./theme-blocks";
 import { readThemeBundle, themeStorage } from "../themes/liquid/versions";
 import type { CacheAdapter, StorageAdapter } from "../adapters/types";
-import { THEMES_MIGRATION } from "../themes/liquid";
 import { BLOG_MIGRATION } from "../blog";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
@@ -111,12 +110,11 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
   return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles };
 }
 
-/** 公開中の Liquid のテーマのパターンとスタイル（0071 が当たっていて、公開中の版があるときだけ） */
+/** 公開中の Liquid のテーマのパターンとスタイル（公開中の版があるときだけ） */
 async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: PatternBody[]; styles: BlockStyles }> {
   const db = owner(c).db;
   const adapters = c.get("adapters");
   try {
-    if (!(await migrated({ db, cache: adapters.cache }, THEMES_MIGRATION))) return { patterns: [], styles: {} };
     const row = await db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } });
     return await themeEditorFiles({ storage: themeStorage(adapters), cache: adapters.cache }, shop.id, row?.theme_version_id ?? null, getLocale());
   } catch (e) {

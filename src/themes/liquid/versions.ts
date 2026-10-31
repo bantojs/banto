@@ -10,8 +10,6 @@ import type { StorageAdapter } from "../../adapters/types";
 import { assetType, checkThemeBundle, stripJsonComments, THEME_BUNDLE_LIMITS, type ThemeBundle } from "./bundle";
 import { extendShopify } from "./shopify";
 
-/** AI 用 API でテーマを扱う（theme:write / theme:publish、0072） */
-export const THEME_API_MIGRATION = "0072_theme_api";
 
 /**
  * テーマの置き場。公開しない置き場（privateStorage）があればそこに置き、読むときはそこから、無ければ公開の置き場から

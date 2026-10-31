@@ -5,7 +5,6 @@ import type { ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { migrated } from "../../db/migration-state";
-import { THEMES_MIGRATION } from "../../themes/liquid";
 import { THEME_BUNDLE_LIMITS } from "../../themes/liquid/bundle";
 import { themePreviewUrl } from "../../themes/liquid/preview";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, themeStorage, THEME_UPLOAD_MAX_BYTES, THEME_VERSION_ID as UUID } from "../../themes/liquid/versions";
@@ -136,14 +135,6 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const tabs = { shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "design" as const };
   const crumbs = [{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("design.title") }];
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, THEMES_MIGRATION))) {
-    return c.html(
-      <AdminLayout title={`${shop.name} · ${t("design.title")}`} nav crumbs={crumbs} shopTabs={tabs}>
-        <PageHead title={t("design.title")} />
-        <p class="notice">{t("design.needs_update")}</p>
-      </AdminLayout>,
-    );
-  }
   const [versions, published, plan] = await Promise.all([
     db.from<VersionRow>("theme_versions").select("id,name,complete,size_bytes,file_count,manifest,created_at", { eq: { shop_id: shop.id }, order: "created_at.desc" }),
     db.from<{ theme_version_id: string | null }>("shops").selectOne("theme_version_id", { eq: { id: shop.id } }),

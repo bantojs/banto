@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
-import { SALES_TIMEZONE_MIGRATION } from "../src/api/service";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 afterEach(() => externalHosts.clear());
 
@@ -255,16 +253,13 @@ describe("MCP /mcp", () => {
     expect(((await tooBig.json()) as { error: { code: number } }).error.code).toBe(-32600);
   });
 
-  it("集計の日別・月別の区切りはデプロイの時間帯（BANTO_TIMEZONE）。0076 の前は渡さない（SQL の既定の Asia/Tokyo）", async () => {
+  it("集計の日別・月別の区切りはデプロイの時間帯（BANTO_TIMEZONE）", async () => {
     const from = new Date(Date.now() - 86400_000).toISOString();
     const to = new Date(Date.now() + 86400_000).toISOString();
     const q = `/stats/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&group_by=day`;
     const la = await setup({ BANTO_TIMEZONE: "America/Los_Angeles" });
     const r = (await (await rest(la.app, await la.issue(["stats:read"]), "GET", q)).json()) as { timezone: string };
     expect(r.timezone).toBe("America/Los_Angeles");
-    const old = await setup({ BANTO_TIMEZONE: "America/Los_Angeles" }, { appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== SALES_TIMEZONE_MIGRATION) });
-    const before = (await (await rest(old.app, await old.issue(["stats:read"]), "GET", q)).json()) as { timezone: string };
-    expect(before.timezone).toBe("Asia/Tokyo");
   });
 
   it("集計ツールは group_by を検証する", async () => {
