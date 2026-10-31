@@ -18,6 +18,11 @@ export interface MarkdownOptions {
   /** 画像として受け付ける URL の起点（MEDIA_BASE_URL。無ければ /media/ だけ） */
   mediaBase?: string;
   /**
+   * /media/ から始まる画像をこのオリジンの絶対 URL にする（ヘッドレスの API。連携サイトに差し込んでも読めるように）。
+   * お店の画面では渡さない（同じオリジンなので /media/ のまま）
+   */
+  origin?: string;
+  /**
    * 管理画面の見たままの編集: 商品のブロックを印の代わりに説明の文字にし、直接は書き換えられない箱にする
    * （お店の画面では渡さない。中身は描くときに入る）
    */
@@ -57,6 +62,11 @@ export function shopImageUrl(url: string, mediaBase: string | undefined): string
 }
 
 function safeImage(url: string, opts: MarkdownOptions): string | null {
+  const u = mediaPath(url, opts);
+  return u && opts.origin && u.startsWith("/media/") ? `${opts.origin.replace(/\/+$/, "")}${u}` : u;
+}
+
+function mediaPath(url: string, opts: MarkdownOptions): string | null {
   const u = url.trim();
   if (u.length === 0 || u.length > 2000 || /[\s<>"'`\\]/.test(u) || u.includes("..")) return null;
   const base = opts.mediaBase?.replace(/\/+$/, "");

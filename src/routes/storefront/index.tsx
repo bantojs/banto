@@ -19,7 +19,8 @@ import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
 import { formatDateTime } from "../../i18n/time";
-import { articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, fillArticleBlocks, fillProductBlocks, productBlocksOf, type ArticlesBlock } from "../../pages/blocks";
+import { fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
+import { bodyBlocks } from "../../content/body-blocks";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
@@ -366,50 +367,9 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
 });
 
 // ---------- ショップのページ（同梱モジュール pages、0079、docs/pages.md） ----------
-/**
- * 本文の中の「商品を並べる」（1 ページに 3 つまで、ブロックごとに一覧と同じ問い合わせ 1 回・キャッシュ）。取れなければそのブロックは空。
- * cards は既定のカード（既定のテーマと、snippets/page-products の無い Liquid のテーマ）。ページと記事で共通
- */
-async function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {
-  const blocks = await Promise.all(
-    productBlocksOf(body).map(async (block) => {
-      try {
-        const r = await s.sf.productPage(s.shop, { ...(block.category ? { category: block.category } : {}), ...(block.tag ? { tag: block.tag } : {}), sort: block.sort, limit: block.limit }, categories);
-        return { block, items: r?.items ?? [] };
-      } catch (e) {
-        console.error("[banto] page products:", e);
-        return { block, items: [] };
-      }
-    }),
-  );
-  const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl, taxNote: t("store.tax_included"), yen }));
-  const articles = await bodyArticles(s, body);
-  return { blocks, cards, ...articles };
-}
-
-/**
- * 本文の中の「記事を並べる」（1 ページに 2 つまで。ブログ・記事の一覧と同じ問い合わせ・キャッシュ）。ブログのモジュールが OFF なら空
- */
-async function bodyArticles(s: ShopScope, body: string): Promise<{ ablocks: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards: string[] }> {
-  const list = moduleEnabled(s.shop.settings, BLOG_MODULE) ? articleBlocksOf(body) : [];
-  const ablocks = await Promise.all(
-    list.map(async (block) => {
-      try {
-        const blog = await s.sf.blogByHandle(s.shop, block.blog);
-        if (!blog) return null;
-        const { items } = await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: block.limit, tag: block.tag });
-        return { block, blog, items };
-      } catch (e) {
-        console.error("[banto] page articles:", e);
-        return null;
-      }
-    }),
-  );
-  const acards = ablocks.map((b) =>
-    b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(s.ctx.shopPath, b.blog.handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
-  );
-  // 印の番号と同じ並び（ブログが無い・取れなかったブロックは null で、中身は空）
-  return { ablocks, acards };
+/** 本文の中の「商品を並べる」「記事を並べる」（src/content/body-blocks.ts。ヘッドレスの API と共通） */
+function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {
+  return bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl }, body, categories);
 }
 
 storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
