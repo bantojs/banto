@@ -2091,7 +2091,6 @@ export const ja = {
   "org.template.design": "デザインの担当",
   "design.title": "デザイン",
   "design.intro": "Liquid で書いたテーマを取り込んで、お店の画面の見た目を変えます。取り込んだ版をプレビューで確かめてから公開します（docs/themes.md）。",
-  "design.needs_update": "データベースの更新（0071_themes）を適用すると使えます（管理画面の「アップデート」）。",
   "design.conditions": "使える条件",
   "design.cond_domain_ok": "独自ドメイン: {domain}",
   "design.cond_domain_ng": "独自ドメイン: 未設定（テーマはショップの独自ドメインでだけ表示します。ショップの設定で独自ドメインを入れてください）",

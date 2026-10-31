@@ -2084,7 +2084,6 @@ export const en: Record<MessageKey, string> = {
   "org.template.design": "Designer",
   "design.title": "Design",
   "design.intro": "Import a theme written in Liquid to change how the storefront looks. Check an imported version in preview before publishing it (docs/themes.md).",
-  "design.needs_update": "Apply the database update (0071_themes) to use this (Admin → Update).",
   "design.conditions": "Requirements",
   "design.cond_domain_ok": "Custom domain: {domain}",
   "design.cond_domain_ng": "Custom domain: not set (themes are shown only on the shop's custom domain; set one in the shop settings)",

@@ -14,7 +14,6 @@ import { authClient, dbClient, formFields, owner, param, publicBaseUrl, sessionS
 import { adminLoginGuard, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { myOrgs, PERM_TEMPLATES, requireOrgAdmin, SHOP_PERMS, isShopPerm, type OrgRole, type ShopPerm } from "./access";
 import { migrated } from "../../db/migration-state";
-import { THEMES_MIGRATION } from "../../themes/liquid";
 import { PAGES_MIGRATION } from "../../pages";
 
 /**
@@ -145,11 +144,10 @@ function readShopPerms(
   return out;
 }
 
-/** design（テーマ、0071）・content（ページ、0079）は DB に入るまで出さない（入る前の DB は項目を知らず、0024 の検査で断る） */
+/** content（ページ、0079）は DB に入るまで出さない（入る前の DB は項目を知らず、0024 の検査で断る） */
 async function shopPermsHere(c: AdminContext): Promise<readonly ShopPerm[]> {
-  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [themes, pages] = await Promise.all([migrated(deps, THEMES_MIGRATION), migrated(deps, PAGES_MIGRATION)]);
-  return SHOP_PERMS.filter((p) => (p !== "design" || themes) && (p !== "content" || pages));
+  const pages = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGES_MIGRATION);
+  return SHOP_PERMS.filter((p) => p !== "content" || pages);
 }
 
 function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; current?: { shop_id: string; perms: string[] }[]; currentStores?: { store_id: string; perms: string[] }[]; perms: readonly ShopPerm[] }) {

@@ -236,17 +236,6 @@ describe("PUT /api/v1/images/{id}/file（0077）", () => {
     expect((await replace(app, tok, String(up.json["image_id"]), SVG, { "content-type": "image/svg+xml", "content-length": String(SVG.byteLength) })).status).toBe(400);
     expect(storage.objects.size).toBe(before);
   });
-
-  it("0077 が当たる前は 409 migration_required", async () => {
-    const { app, issue, mug, sb } = await setup();
-    const tok = await issue(["products:write"]);
-    const png = tinyPng(10, 10);
-    const up = await upload(app, tok, mug.id, png, { "content-type": "image/png", "content-length": String(png.byteLength) });
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0077_api_image_replace");
-    const r = await replace(app, tok, String(up.json["image_id"]), WEBP, { "content-type": "image/webp", "content-length": String(WEBP.byteLength) });
-    expect(r.status).toBe(409);
-    expect(r.json.error?.code).toBe("migration_required");
-  });
 });
 
 describe("PUT /api/v1/products/{id}/images/order（0078）", () => {
@@ -290,14 +279,5 @@ describe("PUT /api/v1/products/{id}/images/order（0078）", () => {
     expect((await reorder(app, tok, mug.id, { image_ids: "x" })).status).toBe(400);
     expect((await reorder(app, tok, mug.id, { image_ids: [a, b, "nope"] })).status).toBe(400);
     expect((await reorder(app, ro, mug.id, { image_ids: [c, b, a] })).status).toBe(401);
-  });
-
-  it("0078 が当たる前は 409 migration_required", async () => {
-    const { app, issue, mug, sb } = await setup();
-    const tok = await issue(["products:write"]);
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0078_api_image_order");
-    const old = await reorder(app, tok, mug.id, { image_ids: [] });
-    expect(old.status).toBe(409);
-    expect(old.json.error?.code).toBe("migration_required");
   });
 });

@@ -13,7 +13,7 @@ import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
-import { THEME_PREVIEW_MIGRATION, type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
+import { type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
@@ -112,7 +112,6 @@ export async function cartImagesFor(sf: StorefrontData, shop: PublicShop, lines:
 }
 
 async function previewSettings(c: Ctx, s: LiquidScope, versionId: string): Promise<Record<string, unknown> | null> {
-  if (!(await s.sf.migrationApplied(THEME_PREVIEW_MIGRATION))) return null;
   const db = privilegedFor(c);
   if (!db) return null;
   const v = await db.themePreviewSettings(s.shop.id, versionId);
