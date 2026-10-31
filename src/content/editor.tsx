@@ -12,8 +12,8 @@ import { formFields, owner, type AdminContext } from "../routes/admin/context";
 import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
 import { mediaBaseUrl } from "../routes/common";
-import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../media/images";
-import { PAGE_LIMITS, PAGE_NAVS, PAGES_PUBLISHING_MIGRATION, RESERVED_HANDLES, type PageNav } from "../pages";
+import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
+import { PAGE_LIMITS, PAGE_NAVS, PAGE_MEDIA_THUMB_MIGRATION, PAGES_PUBLISHING_MIGRATION, RESERVED_HANDLES, type PageNav } from "../pages";
 import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
@@ -149,8 +149,8 @@ export const PAGE_EDITOR_SCRIPT = `
   function draw(im,max,q){ var w=im.naturalWidth,h=im.naturalHeight,r=Math.min(1,max/Math.max(w,h)); var c=document.createElement("canvas"); c.width=Math.max(1,Math.round(w*r)); c.height=Math.max(1,Math.round(h*r)); c.getContext("2d").drawImage(im,0,0,c.width,c.height); return new Promise(function(ok,ng){ c.toBlob(function(b){ if(b&&b.type==="image/webp") return ok(b); /* Safari は WebP に書き出せないので JPEG に */ c.toBlob(function(j){ if(j&&j.type==="image/jpeg") ok(j); else ng(new Error("encode")); },"image/jpeg",q); },"image/webp",q); }); }
   // 画像を縮めて置き場へ上げ、URL を返す（メディアライブラリの「新しく置く」も使う）。iPhone の HEIC も描ければ縮めて送る
   function upload(file){
-    var send=function(blob,name){ var fd=new FormData(); fd.append("file",new File([blob],name,{type:blob.type})); return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json().then(function(j){ if(!r.ok||!j.url) throw new Error(j.error||"upload"); return j; }); }); };
-    return /^image\\/(jpeg|png|webp|avif|heic|heif)$/.test(file.type)?load(file).then(function(im){ return draw(im,1600,0.82); }).then(function(b){ return send(b,b.type==="image/jpeg"?"image.jpg":"image.webp"); },function(){ return send(file,file.name); }):send(file,file.name);
+    var send=function(blob,name,thumb){ var fd=new FormData(); fd.append("file",new File([blob],name,{type:blob.type})); if(thumb) fd.append("thumb",new File([thumb],thumb.type==="image/jpeg"?"thumb.jpg":"thumb.webp",{type:thumb.type})); return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json().then(function(j){ if(!r.ok||!j.url) throw new Error(j.error||"upload"); return j; }); }); };
+    return /^image\\/(jpeg|png|webp|avif|heic|heif)$/.test(file.type)?load(file).then(function(im){ return Promise.all([draw(im,1600,0.82),draw(im,400,0.8).catch(function(){ return null; })]); }).then(function(r){ var b=r[0]; return send(b,b.type==="image/jpeg"?"image.jpg":"image.webp",r[1]); },function(){ return send(file,file.name); }):send(file,file.name);
   }
   window.bantoUploadImage=function(file){ return upload(file).then(function(j){ return j.url; }); };
   form.addEventListener("submit",function(ev){
@@ -802,7 +802,10 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
  */
 export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext) => Promise<ShopRow | null>, baseOf: (c: AdminContext, shop: ShopRow) => string): void {
   const publishing = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGES_PUBLISHING_MIGRATION);
-/** 本文に使う画像を置く。中身の先頭のバイトで種類を決め（SVG・HTML は受けない）、pages/<ショップ>/ に置く */
+/**
+ * 本文に使う画像を置く。中身の先頭のバイトで種類を決め（SVG・HTML は受けない）、pages/<ショップ>/ に置く。
+ * thumb はブラウザが作った長辺 400px の縮小版（任意。メディアライブラリの一覧に使う、0082）
+ */
   app.post("/images", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
@@ -821,8 +824,20 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   const key = `pages/${shop.id}/${randomKey()}.${kind.ext}`;
   await c.get("adapters").storage.put(key, bytes.buffer as ArrayBuffer, kind.contentType);
   const url = imageUrl(mediaBaseUrl(c), key);
+  // 一覧用の縮小版（形が合わなければ置かない。本画像はそのまま使える）
+  let thumbUrl: string | null = null;
+  const thumb = body.thumb;
+  if (thumb instanceof File && thumb.size > 0 && thumb.size <= MAX_THUMB_BYTES && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_MEDIA_THUMB_MIGRATION))) {
+    const tb = new Uint8Array(await thumb.arrayBuffer());
+    const tk = sniffImage(tb);
+    if (tk) {
+      const tKey = thumbKey(key, tk.ext);
+      await c.get("adapters").storage.put(tKey, tb.buffer as ArrayBuffer, tk.contentType);
+      thumbUrl = imageUrl(mediaBaseUrl(c), tKey);
+    }
+  }
   // メディアライブラリに記録する（0080。記録できなくても画像は使える）
-  if (await publishing(c)) await owner(c).db.from("page_media").insert({ shop_id: shop.id, storage_key: key, url }).catch((e: unknown) => console.error("[banto] page_media:", e));
+  if (await publishing(c)) await owner(c).db.from("page_media").insert({ shop_id: shop.id, storage_key: key, url, ...(thumbUrl ? { thumb_url: thumbUrl } : {}) }).catch((e: unknown) => console.error("[banto] page_media:", e));
   if (wantsJson) return c.json({ url });
   return c.redirect(`${back}?image=${encodeURIComponent(url)}`);
 });
@@ -836,7 +851,8 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   if (!shop || !(await publishing(c))) return c.notFound();
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.json({ error: "bad_cursor" }, 400);
-  const rows = await owner(c).db.from<{ id: string; url: string; created_at: string }>("page_media").select("id,url,created_at", { eq: { shop_id: shop.id }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: MEDIA_PAGE + 1 });
+  const thumbs = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_MEDIA_THUMB_MIGRATION);
+  const rows = await owner(c).db.from<{ id: string; url: string; thumb_url?: string | null; created_at: string }>("page_media").select(thumbs ? "id,url,thumb_url,created_at" : "id,url,created_at", { eq: { shop_id: shop.id }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: MEDIA_PAGE + 1 });
   const page = splitPage(rows, (r) => r.created_at, MEDIA_PAGE);
   c.header("Cache-Control", "private, no-store");
   return c.json({ items: page.rows, next: page.next });
