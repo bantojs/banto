@@ -47,6 +47,7 @@ Supabase CLI がある環境なら `npx supabase start` のあと `npm run test:
 ## コミットと PR
 
 - Conventional Commits（`feat:` `fix:` `docs:` `chore:`）。本文に「何を・なぜ」。
+- ブランチの名前もコミットの種類から始めます: `feat/<短い名前>`・`fix/…`・`docs/…`・`chore/…`（例: `feat/page-media-thumb`、`chore/v0.5.0`）。道具の名前や人の名前（`claude/…` など）は付けません。
 - PR には、通したコマンド（lint / test / build:workers / check:rls）と、依存を足したときは Worker の追加サイズを書いてください。
 - UI の文言は `src/i18n/ja.ts` を正とし、`en.ts` に同じキーで英訳を置きます。
 
