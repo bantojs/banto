@@ -490,6 +490,31 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 ---
 
+## ページ・ブログ（同梱モジュール pages・blog）
+
+「私たちについて」などのページと、ブログの記事を、連携サイトのデザインで出せます（docs/pages.md・docs/blog.md）。お店の画面の使い方（`settings.storefront`）が `off` のショップでも読めます。モジュールが OFF のショップは 404 です。
+
+| 読むもの | エンドポイント |
+| --- | --- |
+| 公開中のページの一覧（並び順。本文なし） | `GET /api/shops/:shop/pages` |
+| ページ 1 つ | `GET /api/shops/:shop/pages/:handle` |
+| ブログの一覧 | `GET /api/shops/:shop/blogs` |
+| 記事の一覧（公開した日時の新しい順に 12 本ずつ、`?page=`・`?tag=`、深さは 1,200 本まで） | `GET /api/shops/:shop/blogs/:blog/articles` |
+| 記事 1 つ | `GET /api/shops/:shop/blogs/:blog/articles/:article` |
+
+- 返るのは公開中・公開の日時を過ぎた・ゴミ箱の外のものだけです。
+- ページと記事 1 つには、本文が 2 つの形で入ります。
+  - `body`: 元の書式（Markdown の一部と、`::: 名前 …` のブロック。docs/pages.md）。連携サイトで描き直すときに使います。
+  - `html`: Banto が描いた HTML。そのまま差し込めます。
+- `html` の中身:
+  - レイアウトのブロックの並べ方の CSS（`<style>`）。色と大きさは CSS の変数 `--banto-*` で、連携サイトの CSS で上書きできます。
+  - 「商品を並べる」「記事を並べる」のブロックには、既定のカードが入ります。
+  - 画像は、この Banto の絶対 URL です。
+  - カードのリンクは、ショップの絶対 URL です（独自ドメインがあればそのドメイン）。
+  - 本文の中に書いたリンクは、書いたままです（`/shipping` のような相対のリンクは、連携サイトの中のページを指します）。
+- アイキャッチ（`image_url`）も絶対 URL です。`url` は Banto のお店の画面の URL です（canonical などに使えます）。
+- 生の HTML は本文に書けない作りなので、`html` に運営者のスクリプトが入ることはありません。
+
 ## お問い合わせ（同梱モジュール inquiries）
 
 同梱モジュール「お問い合わせ」を ON にしたショップでは、連携側の画面からお問い合わせを受け、やり取りを続けられます（docs/inquiries.md）。

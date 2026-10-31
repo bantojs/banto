@@ -92,11 +92,11 @@ export function pagesNav(shop: { pages_nav?: unknown }, place: "header" | "foote
  */
 const htmlCache = new Map<string, string>();
 const HTML_CACHE_MAX = 200;
-export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string): string {
-  const key = `${page.id}|${page.updated_at}|${mediaBase}`;
+export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string, origin?: string): string {
+  const key = `${page.id}|${page.updated_at}|${mediaBase}|${origin ?? ""}`;
   const hit = htmlCache.get(key);
   if (hit !== undefined) return hit;
-  const html = markdownToHtml(page.body, { mediaBase });
+  const html = markdownToHtml(page.body, { mediaBase, ...(origin ? { origin } : {}) });
   htmlCache.set(key, html);
   if (htmlCache.size > HTML_CACHE_MAX) htmlCache.delete(htmlCache.keys().next().value!);
   return html;

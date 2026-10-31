@@ -342,6 +342,31 @@ export class StorefrontData {
     return page;
   }
 
+  /**
+   * 公開中のページの一覧（ヘッドレスの API。本文は持たない）。1 つのショップに 100 まで（0079）なので全部。短時間キャッシュ。
+   * publishing は 0080 が当たっているか
+   */
+  async pagesList(shop: PublicShop, publishing: boolean): Promise<Omit<PageRow, "body">[]> {
+    const key = `pages:${shop.id}:${publishing ? 1 : 0}`;
+    const hit = await this.cache.get<Omit<PageRow, "body">[]>(key);
+    if (hit) return hit;
+    // published_at・image_url は 0080 から（当てるまでは選ばない）
+    const cols = `id,shop_id,handle,title,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at${publishing ? ",published_at,image_url" : ""}`;
+    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc,id.asc", limit: 100 });
+    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    return rows;
+  }
+
+  /** ブログの一覧（ヘッドレスの API。1 つのショップに 20 まで、0081）。短時間キャッシュ */
+  async blogsList(shop: PublicShop): Promise<BlogRow[]> {
+    const key = `blogs:${shop.id}`;
+    const hit = await this.cache.get<BlogRow[]>(key);
+    if (hit) return hit;
+    const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc,id.asc", limit: 20 });
+    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    return rows;
+  }
+
   /** サイトマップに載せるページ（公開中のものの handle と更新日時） */
   async pageHandles(shop: PublicShop): Promise<{ handle: string; updated_at: string }[]> {
     return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc", limit: 1000 });
