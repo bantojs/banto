@@ -26,7 +26,7 @@ import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
-import { pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
+import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
 import { fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
@@ -494,7 +494,8 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
   // アイキャッチ画像（0080）: page.image と、Shopify と同じ page_image（テーマが OG の画像に使う）
-  const image = pg.image_url ? { src: pg.image_url, url: pg.image_url, alt: pg.title } : null;
+  const img = pg.image_url ? absoluteMedia(pg.image_url, s.ctx.publicBaseUrl) : null;
+  const image = img ? { src: img, url: img, alt: pg.title } : null;
   const parts = (html: string): PageParts => ({
     template,
     values: { page: { id: pg.id, handle: pg.handle, title: pg.title, content: new SafeHtml(html), url: pagePath(s.ctx.shopPath, pg.handle), template_suffix: pg.template_suffix, published_at: pagePublishedAt(pg), updated_at: pg.updated_at, image }, ...(image ? { page_image: image } : {}) },
@@ -522,7 +523,7 @@ function withArticleBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: 
     rendered = (p.acards ?? []).map((card, i) => {
       const b = p.ablocks?.[i];
       if (!b) return card;
-      const out = renderThemeSnippet(choice.lt, input, "page-articles", { articles: b.items.map((a) => articleObject(sp, b.blog, a, "")), blog: blogObject(sp, b.blog), block: { ...b.block, index: i } });
+      const out = renderThemeSnippet(choice.lt, input, "page-articles", { articles: b.items.map((a) => articleObject(sp, b.blog, a, "", s.ctx.publicBaseUrl)), blog: blogObject(sp, b.blog), block: { ...b.block, index: i } });
       return out ?? card;
     });
   } catch (e) {
@@ -567,8 +568,9 @@ function blogObject(shopPath: string, b: BlogRow, extra: Record<string, unknown>
 }
 
 /** 記事（Liquid の article）。content は本文の HTML（一覧では空）、excerpt は抜粋か本文の頭の文字 */
-function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: string) {
-  const image = a.image_url ? { src: a.image_url, url: a.image_url, alt: a.title } : null;
+function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: string, origin?: string) {
+  const img = a.image_url ? absoluteMedia(a.image_url, origin) : null;
+  const image = img ? { src: img, url: img, alt: a.title } : null;
   const excerpt = articleSummary(a);
   return {
     id: a.id,
@@ -594,7 +596,7 @@ function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: 
 /** ブログの記事の一覧（同梱モジュール blog、0081、/blogs/<handle>）。templates/blog.<suffix> か templates/blog */
 export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; pageNo: number; newer: string | null; older: string | null; categories: CategoryRow[] }): Response | null {
   const sp = s.ctx.shopPath;
-  const articles = p.articles.map(({ article }) => articleObject(sp, p.blog, article, ""));
+  const articles = p.articles.map(({ article }) => articleObject(sp, p.blog, article, "", s.ctx.publicBaseUrl));
   const paginate: Paginate = {
     current_page: p.pageNo,
     page_size: articles.length,
@@ -623,7 +625,7 @@ export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
   const a = p.article;
   const sp = s.ctx.shopPath;
   const parts = (html: string): PageParts => {
-    const article = articleObject(sp, p.blog, a, html);
+    const article = articleObject(sp, p.blog, a, html, s.ctx.publicBaseUrl);
     return {
       template: suffixedTemplate(choice.lt, "article", a.template_suffix),
       values: { article, blog: blogObject(sp, p.blog), ...(article.image ? { page_image: article.image } : {}) },

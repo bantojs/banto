@@ -67,9 +67,13 @@ export function contentState(p: { published: boolean; published_at?: string | nu
   return p.published_at && Date.parse(p.published_at) > now ? "scheduled" : "published";
 }
 
-/** アイキャッチ画像に使える URL（ショップの画像の置き場のものだけ。本文の画像と同じ規則） */
-export function imageUrlOk(url: string, mediaBase: string): boolean {
-  return shopImageUrl(url, mediaBase) !== null;
+/**
+ * アイキャッチ画像として保存する URL（ショップの画像の置き場のものだけ。本文の画像と同じ規則）。使えなければ null。
+ * 置き場の URL（MEDIA_BASE_URL）はそのまま、ほかの入口の /media/… はホストを外した /media/… にして保存する
+ * （ほかのホストの URL をそのまま残すと、外の画像を指せてしまうため）
+ */
+export function featuredImageUrl(url: string, mediaBase: string): string | null {
+  return shopImageUrl(url, mediaBase);
 }
 
 /** 見たままの編集での商品のブロックの説明（例: 商品を並べる — カテゴリー: tops・8 件・グリッド・新しい順） */

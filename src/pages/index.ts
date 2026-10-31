@@ -78,6 +78,9 @@ export function randomPageHandle(): string {
 
 export const PAGE_LIMITS ={ title: 200, body: 50000, seoTitle: 200, seoDescription: 500 } as const;
 
+/** /media/… の画像をこのオリジンの絶対 URL にする（OG の画像・Liquid の image.src。ほかはそのまま） */
+export const absoluteMedia = (url: string, origin: string | undefined): string => (url.startsWith("/") && !url.startsWith("//") && origin ? `${origin.replace(/\/+$/, "")}${url}` : url);
+
 export const pagePath = (shopPath: string, handle: string) => `${shopPath}/pages/${encodeURIComponent(handle)}`;
 
 /** メニューに出すページ（モジュールが OFF なら DB 側で空。キャッシュ済みのショップ行から読むので往復しない） */
