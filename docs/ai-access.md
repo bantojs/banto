@@ -43,9 +43,11 @@ Banto は、運営者が発行した **AI 用トークン** を使って、Claud
 | `inquiries:write` | お問い合わせへの返事（お客様にはリンクだけのメールが届く）・完了にする / 開き直す・担当者を決める（0068）。削除はできない |
 | `theme:write` | Liquid のテーマの版の一覧・取り込み（束ねたファイルと資産）・プレビューのリンク・公開していない版の削除（0072、docs/themes.md）。**テーマにはお店の画面で動く JS を入れられる**（プレビューを開いた人の画面で動く） |
 | `theme:publish` | テーマの公開・取り下げ（0072）。お店の画面が切り替わる。`theme:write` と分けてあるので、プレビュー用のトークン（CI のプルリクエストなど）には付けない |
+| `content:read` | ショップのページ・ブログの記事の参照（0083。モジュール「ページ」「ブログ」が ON のショップだけ）。下書き・予約・ゴミ箱も読める |
+| `content:write` | ページ・記事を作る・直す・**公開する**（予約公開も）・ゴミ箱へ移す（0083、§9）。お店の画面に出る |
 
 - 有効期限（任意）、失効（管理画面でいつでも）、最終利用日時の記録。
-- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
+- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
 - **発行した人の権限が続いている間だけ使える**（0026）: 発行者がそのショップの `integrations` の項目（組織の owner / admin を含む）を失うと、トークンは `unauthorized` になります（メンバーを組織から外した・項目を外したときに、発行済みのトークンが残って使えてしまわないように）。項目を戻せばまた使えます。
 - お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read、連絡先は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。メンテナの決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
 - クーポンと会員（0036）: 判断の理由は §6。
@@ -256,3 +258,19 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   - MCP には足しません（AI にファイルの中身を渡さない。`inquiry_get` の `attachments` は今までどおり種類と大きさだけ、ファイル名は `orders:pii` のときだけ）。
   - 公開しない置き場（Binding `PRIVATE`）が無いデプロイでは、添付つきの返事と受け取りは 409 `attachments_unavailable`。DB が 0064 より前なら 409 `migration_required`（文字だけの返事は今までどおり）。
 - メールアドレスの確認がまだのお問い合わせ（`verified: false`）は、送り主が本人とは限りません。ツールの説明で、注文の中身・住所を書かないよう示します。
+
+## 9. ページ・ブログの記事（0083）
+
+- **公開も `content:write` に含める**（メンテナの決定 2026-10-31）。`products:write` が商品を公開できるのと同じです。本文は決まった書式で、生の HTML は書けません（docs/pages.md）。なので、書き込みでお客様の画面に出るのは文章・画像・決まったブロックだけで、スクリプトは入りません。
+- スコープの項目はどちらも `content`（組織のメンバーの「ページ」）です。モジュールが OFF なら 409 `module_disabled` になります。
+- 作る・直すは 1 つの口です（`page_save` / `POST /api/v1/pages`、記事は `article_save` / `POST /api/v1/blogs/<ブログ>/articles`）。
+  - `id` があればそのページを直します。
+  - 無ければ、`handle` が同じゴミ箱の外のページを直します。
+  - それも無ければ作ります（作るときは `handle` と `title` が要ります）。
+  - 送らなかった項目は今のままです。`PATCH …/<id>` も同じです。
+- アイキャッチ（`image_url`）は、このショップの画像の置き場のものだけです（管理画面と同じ規則）。ほかのホストの `/media/…` はホストを外して保存し、外の画像は 400 `invalid_image_url` です。本文の中の外の画像は、描くときに捨てます。
+- **消すのはゴミ箱へ移すだけ**（30 日で消える。戻すのは管理画面）。ブログそのものを作る・消すのも管理画面だけです。
+- 値の誤りは `invalid_<項目>`（`invalid_handle`・`invalid_title`・`invalid_content_body` など）、`handle` の重なりは 409 `handle_taken` です。リビジョンは今までどおり保存のたびに残ります。
+- MCP: `pages_list`・`page_get`・`blogs_list`・`articles_list`・`article_get`（content:read）、`page_save`・`page_trash`・`article_save`・`article_trash`（content:write、`destructiveHint`）。
+- REST: `/api/v1/pages`・`/api/v1/pages/<id か handle>`・`/api/v1/blogs`・`/api/v1/blogs/<ブログ>/articles`・`/api/v1/blogs/<ブログ>/articles/<id か handle>`。
+- 公開中のページ・記事を連携サイトで出すだけなら、トークンの要らないヘッドレスの公開 API（docs/headless.md「ページ・ブログ」）を使います。

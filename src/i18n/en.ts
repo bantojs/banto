@@ -711,6 +711,8 @@ export const en: Record<MessageKey, string> = {
   "tokens.scope.inquiries_write": "Reply to inquiries (the customer gets a link-only email) and close them",
   "tokens.scope.theme_write": "Upload theme versions, get preview links and delete unpublished versions (themes can include storefront JS; publishing needs theme:publish)",
   "tokens.scope.theme_publish": "Publish or withdraw a theme (switches the storefront)",
+  "tokens.scope.content_read": "Read pages and blog articles (including drafts and the trash)",
+  "tokens.scope.content_write": "Create, edit, publish and trash pages and blog articles (shown on the storefront)",
 
   "store.subtotal_tax_included": "Items (tax included)",
   "store.tax_included": "tax incl.",

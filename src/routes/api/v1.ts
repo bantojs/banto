@@ -296,6 +296,29 @@ v1.post("/tryon-requests/:number{[0-9]+}/status", async (c) =>
     .catch((e) => errorJson(c, e)),
 );
 
+// ページ・ブログの記事（0083。content:read / content:write、docs/ai-access.md §9）。:ref は id（UUID）か handle。消すのはゴミ箱へ
+v1.get("/pages", async (c) =>
+  api(c)
+    .pagesList({ status: c.req.query("status") || undefined, query: c.req.query("q") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+v1.post("/pages", async (c) => body(c).then((b) => api(c).pageSave(b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/pages/:ref", async (c) => api(c).pageGet(c.req.param("ref")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.patch("/pages/:id", async (c) => body(c).then((b) => api(c).pageSave({ ...b, id: c.req.param("id") })).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.delete("/pages/:id", async (c) => api(c).pageTrash(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/blogs", async (c) => api(c).blogsList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/blogs/:blog/articles", async (c) =>
+  api(c)
+    .articlesList(c.req.param("blog"), { status: c.req.query("status") || undefined, query: c.req.query("q") || undefined, tag: c.req.query("tag") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+v1.post("/blogs/:blog/articles", async (c) => body(c).then((b) => api(c).articleSave(c.req.param("blog"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/blogs/:blog/articles/:ref", async (c) => api(c).articleGet(c.req.param("blog"), c.req.param("ref")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.patch("/blogs/:blog/articles/:id", async (c) => body(c).then((b) => api(c).articleSave(c.req.param("blog"), { ...b, id: c.req.param("id") })).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.delete("/blogs/:blog/articles/:id", async (c) => api(c).articleTrash(c.req.param("blog"), c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+
 // クーポン（0036。coupons:read / coupons:write）。:ref は id（UUID）かコード
 v1.get("/coupons", async (c) =>
   api(c)

@@ -17,6 +17,21 @@ export function openapiDocument(origin: string, version: string): Record<string,
   const tryon = obj({ id: str, number: int, status: str, store_id: str, store_name: str, visit_date: { type: ["string", "null"] }, hold_until: { type: ["string", "null"] }, items: { type: "array" }, customer: { type: "object", description: "orders:pii スコープがあるときだけ（email・name・phone・note）" } });
   const theme = obj({ id: str, name: str, complete: bool, published: bool, size_bytes: int, file_count: int, manifest: { type: "object" }, created_at: str, assets: { type: "array", items: str, description: "POST /themes の応答だけ: 置く資産の名前" } });
   const idPath = [{ name: "id", in: "path", required: true, schema: str }];
+  const blogPath = { name: "blog", in: "path", required: true, schema: str, description: "ブログの handle" };
+  const contentCommon = {
+    title: { ...str, description: "1〜200 文字" },
+    body: { ...str, description: "決まった書式（Markdown の一部と ::: のブロック。生の HTML は書けない。50,000 文字まで）" },
+    seo_title: nullableStr,
+    seo_description: nullableStr,
+    template_suffix: { ...nullableStr, description: "Liquid のテーマのテンプレートの名前（英小文字・数字・_-）" },
+    image_url: { ...nullableStr, description: "アイキャッチ。このショップの画像の置き場のもの（ページの画像の URL）だけ" },
+    published: bool,
+    published_at: { ...nullableStr, description: "公開する日時（ISO 8601）。未来なら予約公開" },
+  };
+  const contentPageFields = { id: str, handle: { ...str, description: "URL の名前（英小文字・数字・ハイフン）" }, ...contentCommon, nav: { type: "string", enum: ["none", "header", "footer"] }, sort_order: int };
+  const contentArticleFields = { id: str, handle: str, ...contentCommon, excerpt: nullableStr, tags, author: nullableStr };
+  const contentPage = obj({ id: str, handle: str, title: str, body: str, nav: str, sort_order: int, status: { type: "string", enum: ["published", "scheduled", "draft", "trash"] }, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
+  const contentArticle = obj({ id: str, blog: str, handle: str, title: str, body: str, excerpt: nullableStr, tags, author: nullableStr, status: str, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
   const page = [{ name: "limit", in: "query", schema: int }, { name: "offset", in: "query", schema: int }];
   const ids = { type: "array", items: str };
   const couponFields = {
@@ -146,6 +161,26 @@ export function openapiDocument(origin: string, version: string): Record<string,
       "/tryon-requests/{number}": { get: { summary: "お店で試着の申し込みを受付番号で取得（orders:read）", security: bearer, parameters: [{ name: "number", in: "path", required: true, schema: int }], responses: { 200: resp("ok", tryon), ...errors } } },
       "/tryon-requests/{number}/status": { post: { summary: "お店で試着の申し込みの状態を進める（orders:write）。ready は hold_until（YYYY-MM-DD）が必要。在庫は戻らない（/restock）", security: bearer, parameters: [{ name: "number", in: "path", required: true, schema: int }], requestBody: { content: { "application/json": { schema: obj({ status: { type: "string", enum: ["sent", "ready", "purchased", "not_purchased", "cancelled"] }, hold_until: str }, ["status"]) } } }, responses: { 200: resp("ok", tryon), ...errors } } },
       "/tryon-requests/{number}/restock": { post: { summary: "終わった申し込み（not_purchased / expired / cancelled）の在庫を EC に戻す（orders:write）。1 回だけ、2 回目は restocked_skus: 0", security: bearer, parameters: [{ name: "number", in: "path", required: true, schema: int }], responses: { 200: resp("ok", tryon), ...errors } } },
+      // ページ・ブログの記事（0083。content:read / content:write、モジュール pages / blog が OFF なら 409 module_disabled）
+      "/pages": {
+        get: { summary: "ページの一覧（content:read。並び順・本文なし）。status: all（既定・ゴミ箱の外）/ published / scheduled / draft / trash", security: bearer, parameters: [{ name: "status", in: "query", schema: { type: "string", enum: ["all", "published", "scheduled", "draft", "trash"] } }, { name: "q", in: "query", schema: str, description: "題名・handle の部分一致" }, ...page], responses: { 200: resp("ok", obj({ items: { type: "array", items: contentPage }, total: int, limit: int, offset: int })), ...errors } },
+        post: { summary: "ページを作る・直す（content:write。公開も含む）。id があればそのページ、無ければ handle が同じゴミ箱の外のページを直し、無ければ作る（作るときは handle と title が要る）。送らなかった鍵は今のまま。本文は決まった書式（docs/pages.md、生の HTML は書けない）", security: bearer, requestBody: { content: { "application/json": { schema: obj(contentPageFields) } } }, responses: { 200: resp("ok", contentPage), ...errors } },
+      },
+      "/pages/{ref}": { get: { summary: "ページを id か handle で取得（content:read。本文つき）", security: bearer, parameters: [{ name: "ref", in: "path", required: true, schema: str }], responses: { 200: resp("ok", contentPage), ...errors } } },
+      "/pages/{id}": {
+        patch: { summary: "ページを直す（content:write）。渡した項目だけ変わる", security: bearer, parameters: idPath, requestBody: { content: { "application/json": { schema: obj(contentPageFields) } } }, responses: { 200: resp("ok", contentPage), ...errors } },
+        delete: { summary: "ページをゴミ箱へ（content:write。30 日で消える。戻すのは管理画面）", security: bearer, parameters: idPath, responses: { 200: resp("ok", contentPage), ...errors } },
+      },
+      "/blogs": { get: { summary: "ブログの一覧（content:read。ゴミ箱の外の記事の数つき。ブログを作るのは管理画面）", security: bearer, responses: { 200: resp("ok", obj({ items: { type: "array", items: obj({ id: str, handle: str, title: str, description: nullableStr, articles: int }) } })), ...errors } } },
+      "/blogs/{blog}/articles": {
+        get: { summary: "ブログの記事の一覧（content:read。公開した日時の新しい順・本文なし）。status はページと同じ", security: bearer, parameters: [blogPath, { name: "status", in: "query", schema: { type: "string", enum: ["all", "published", "scheduled", "draft", "trash"] } }, { name: "q", in: "query", schema: str }, { name: "tag", in: "query", schema: str }, ...page], responses: { 200: resp("ok", obj({ blog: { type: "object" }, items: { type: "array", items: contentArticle }, total: int, limit: int, offset: int })), ...errors } },
+        post: { summary: "記事を作る・直す（content:write。ページと同じ決まり）。公開して published_at が無ければ今", security: bearer, parameters: [blogPath], requestBody: { content: { "application/json": { schema: obj(contentArticleFields) } } }, responses: { 200: resp("ok", contentArticle), ...errors } },
+      },
+      "/blogs/{blog}/articles/{ref}": { get: { summary: "記事を id か handle で取得（content:read。本文つき）", security: bearer, parameters: [blogPath, { name: "ref", in: "path", required: true, schema: str }], responses: { 200: resp("ok", contentArticle), ...errors } } },
+      "/blogs/{blog}/articles/{id}": {
+        patch: { summary: "記事を直す（content:write）", security: bearer, parameters: [blogPath, ...idPath], requestBody: { content: { "application/json": { schema: obj(contentArticleFields) } } }, responses: { 200: resp("ok", contentArticle), ...errors } },
+        delete: { summary: "記事をゴミ箱へ（content:write）", security: bearer, parameters: [blogPath, ...idPath], responses: { 200: resp("ok", contentArticle), ...errors } },
+      },
       "/coupons": {
         get: { summary: "クーポンの一覧（coupons:read。モジュール coupons が OFF なら 409 module_disabled）", security: bearer, parameters: [{ name: "q", in: "query", schema: str, description: "名前・コードの部分一致" }, { name: "active", in: "query", schema: bool }, ...page], responses: { 200: resp("ok", list(coupon)), ...errors } },
         post: { summary: "クーポンを作成（coupons:write）", security: bearer, requestBody: { content: { "application/json": { schema: obj(couponFields, ["name", "kind"]) } } }, responses: { 201: resp("created", coupon), ...errors } },
