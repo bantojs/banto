@@ -226,10 +226,15 @@ describe("ショップのページの管理画面", () => {
     expect((await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: "https://evil.example/x.png" })).status).toBe(400);
     await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
     expect(page).toMatchObject({ published_at: null, image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
-    // 別の入口（MEDIA_BASE_URL を付ける前・独自ドメインの前の管理画面）の /media/ のアイキャッチも、保存し直せる
-    const before = `https://banto.example.workers.dev/media/pages/${shop.id}/old.webp`;
-    expect((await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: before, title: "新しいタイトル" })).status).toBe(302);
-    expect(page["image_url"]).toBe(before);
+    // 別の入口（MEDIA_BASE_URL を付ける前・独自ドメインの前の管理画面）の /media/ のアイキャッチも保存し直せる。
+    // ホストは外して /media/… で残す（ほかのホストの URL をそのまま残すと、外の画像を指せてしまう）。OG の画像は絶対 URL で出す
+    for (const host of ["https://banto.example.workers.dev", "https://evil.example"]) {
+      expect((await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: `${host}/media/pages/${shop.id}/old.webp`, title: "新しいタイトル" })).status).toBe(302);
+      expect(page["image_url"]).toBe(`/media/pages/${shop.id}/old.webp`);
+    }
+    const rel = await (await new Browser(appWith(sb, {}, new MemoryStorage(`${BASE}/media`)), BASE).get("/my-shop/pages/about")).text();
+    expect(rel).toContain(`<meta property="og:image" content="${BASE}/media/pages/${shop.id}/old.webp"`);
+    expect(rel).not.toContain("evil.example");
     await owner.post(`${base}/${id}`, { ...f, published: "on", action: "update", published_at: "", image_url: `${BASE}/media/pages/${shop.id}/a.webp`, title: "新しいタイトル" });
     // お客様の画面はページを短い時間覚えるので、別のアプリ（別の isolate に当たる）で見る
     const live = await (await new Browser(appWith(sb, {}, new MemoryStorage(`${BASE}/media`)), BASE).get("/my-shop/pages/about")).text();
