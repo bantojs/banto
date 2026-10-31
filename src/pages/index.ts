@@ -8,6 +8,8 @@ export const PAGES_MODULE = "pages";
 export const PAGES_MIGRATION = "0079_mod_pages";
 /** 予約公開・ゴミ箱・リビジョン・アイキャッチ・メディアライブラリ（0080） */
 export const PAGES_PUBLISHING_MIGRATION = "0080_mod_pages_publishing";
+/** ページ・ブログの記事を AI 用トークンで扱う（content:read / content:write） */
+export const CONTENT_API_MIGRATION = "0083_api_content";
 /** ゴミ箱に置いておく日数（過ぎたら Cron が消す） */
 export const PAGES_TRASH_DAYS = 30;
 

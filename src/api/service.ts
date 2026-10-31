@@ -23,6 +23,8 @@ import type { InquiryMailShop } from "../modules/inquiries/mail";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, THEME_API_MIGRATION, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
+import { CONTENT_API_MIGRATION } from "../pages";
+import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone } from "../i18n/time";
 
 /** 売上集計の区切りの時間帯（p_time_zone）を受け付ける版 */
@@ -91,7 +93,9 @@ function mapRpcError(e: unknown): never {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
     // クーポンと会員（0036）
-    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries) in the admin screen", 409);
+    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
+    // ページ・記事（0083）
+    if (e.is("handle_taken")) throw new ApiError("conflict", "handle_taken: another page (or article in this blog) outside the trash already uses this handle", 409);
     if (e.is("pii_scope_required")) throw new ApiError("unauthorized", "attachments need the orders:pii scope as well as inquiries:read", 401);
     if (e.is("too_many_attachments")) throw new ApiError("invalid", "invalid_attachment: up to 3 files per reply and 20 per inquiry", 400);
     if (e.is("invalid_attachment")) throw new ApiError("invalid", "invalid_attachment", 400);
@@ -555,6 +559,64 @@ export class ApiService {
   /** メールアドレスで引いて、あれば渡した鍵だけ更新、無ければ作る（外部のマスタからの同期の窓口。email は変えない） */
   customerUpsert = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_upsert", { p_values: values });
   customerDelete = async (id: string) => this.call<Record<string, unknown>>("api_customer_delete", { p_customer_id: uuidOr404(id) });
+  // ---- ページ・ブログの記事（content:read / content:write、0083。docs/ai-access.md §9） ----
+  private async contentReady(): Promise<void> {
+    if (!(await this.migratedTo(CONTENT_API_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `pages and articles need the database update ${CONTENT_API_MIGRATION}; apply it from /admin/update`, 409);
+    }
+  }
+
+  /** 書く値: アイキャッチはショップの画像の置き場のものだけ（管理画面と同じ規則。ほかのホストの /media/ はホストを外す） */
+  private contentValues(values: Record<string, unknown>): Record<string, unknown> {
+    const v = { ...values };
+    if (typeof v["image_url"] === "string" && v["image_url"] !== "") {
+      const img = shopImageUrl(v["image_url"], this.config.get("MEDIA_BASE_URL"));
+      if (!img) throw new ApiError("invalid", "invalid_image_url: use an image from this shop's media library (an uploaded page image URL), or null", 400);
+      v["image_url"] = img;
+    } else if (v["image_url"] === "") v["image_url"] = null;
+    return v;
+  }
+
+  async pagesList(q: { status?: string | undefined; query?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
+    await this.contentReady();
+    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("api_pages_list", { p_status: q.status ?? null, p_query: q.query ?? null, p_limit: q.limit ?? 50, p_offset: q.offset ?? 0 });
+  }
+  /** ページ 1 つ（id か handle） */
+  async pageGet(ref: string) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_page_get", { p_page: ref });
+  }
+  /** 作る・直す（id があればそのページ、無ければ handle が同じページ、無ければ作る。送らなかった鍵は今のまま） */
+  async pageSave(values: Record<string, unknown>) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_page_save", { p_page: this.contentValues(values) });
+  }
+  async pageTrash(id: string) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_page_trash", { p_page_id: uuidOr404(id) });
+  }
+  async blogsList() {
+    await this.contentReady();
+    return this.call<{ items: Record<string, unknown>[] }>("api_blogs_list", {});
+  }
+  async articlesList(blog: string, q: { status?: string | undefined; query?: string | undefined; tag?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_articles_list", { p_blog: blog, p_status: q.status ?? null, p_query: q.query ?? null, p_tag: q.tag ?? null, p_limit: q.limit ?? 50, p_offset: q.offset ?? 0 });
+  }
+  async articleGet(blog: string, ref: string) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_article_get", { p_blog: blog, p_article: ref });
+  }
+  async articleSave(blog: string, values: Record<string, unknown>) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_article_save", { p_blog: blog, p_article: this.contentValues(values) });
+  }
+  async articleTrash(blog: string, id: string) {
+    await this.contentReady();
+    return this.call<Record<string, unknown>>("api_article_trash", { p_blog: blog, p_article_id: uuidOr404(id) });
+  }
+
   // ---- テーマ（theme:write / theme:publish、0072。docs/themes.md） ----
   private async themeReady(): Promise<ThemeApiDeps> {
     if (!(await this.migratedTo(THEME_API_MIGRATION))) {

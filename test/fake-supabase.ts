@@ -1929,6 +1929,45 @@ export class FakeSupabase {
         }
       }
     }
+    // 0083: ページ・記事（スコープ・モジュール・ショップの限定と、作る / 直すの振り分けだけ再現。値の検査は test/db/content-api.test.ts）
+    if (/^api_(pages?|blogs?|articles?)_/.test(fn)) {
+      if (!need(/save|trash/.test(fn) ? "content:write" : "content:read")) return unauthorized();
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const mod = /page/.test(fn) ? "pages" : "blog";
+      if (((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.[mod] !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+      const status = (r: Row) => (r["deleted_at"] ? "trash" : !r["published"] ? "draft" : r["published_at"] && Date.parse(String(r["published_at"])) > Date.now() ? "scheduled" : "published");
+      const view = (r: Row, body: boolean): Row => { const { body: b, ...rest } = r; return { ...rest, status: status(r), ...(body ? { body: b } : {}) }; };
+      const save = (table: "pages" | "articles", base: Row, values: Row) => {
+        const rows = this.tables[table].filter((r) => Object.entries(base).every(([k, v]) => r[k] === v));
+        let row = values["id"] ? rows.find((r) => r["id"] === values["id"] && !r["deleted_at"]) : rows.find((r) => r["handle"] === values["handle"] && !r["deleted_at"]);
+        if (values["id"] && !row) return notFound();
+        if (!row) {
+          row = { id: fakeUuid(++this.seq), ...base, body: "", published: false, published_at: null, deleted_at: null, image_url: null, created_at: this.now(), updated_at: this.now() };
+          this.tables[table].push(row);
+        }
+        Object.assign(row, Object.fromEntries(Object.entries(values).filter(([k]) => k !== "id")), { updated_at: this.now() });
+        if (row["published"] && !row["published_at"] && table === "articles") row["published_at"] = this.now();
+        return json(view(row, true));
+      };
+      const blog = this.tables.blogs.find((b) => b["shop_id"] === shopId && b["handle"] === args["p_blog"]);
+      if (/article/.test(fn) && fn !== "api_blogs_list" && !blog) return notFound();
+      const pages = this.tables.pages.filter((r) => r["shop_id"] === shopId);
+      const arts = blog ? this.tables.articles.filter((r) => r["blog_id"] === blog["id"]) : [];
+      const byStatus = (r: Row) => (args["p_status"] ? status(r) === args["p_status"] : !r["deleted_at"]);
+      const ref = (rows: Row[], v: unknown) => rows.find((r) => r["id"] === v || (r["handle"] === v && !r["deleted_at"]));
+      const trash = (r: Row | undefined) => { if (!r) return notFound(); r["deleted_at"] ??= this.now(); return json(view(r, false)); };
+      switch (fn) {
+        case "api_pages_list": return json(page(pages.filter(byStatus).map((r) => view(r, false))));
+        case "api_page_get": { const r = ref(pages, args["p_page"]); return r ? json(view(r, true)) : notFound(); }
+        case "api_page_save": return save("pages", { shop_id: shopId }, args["p_page"] as Row);
+        case "api_page_trash": return trash(pages.find((r) => r["id"] === args["p_page_id"]));
+        case "api_blogs_list": return json({ items: this.tables.blogs.filter((b) => b["shop_id"] === shopId).map((b) => ({ ...b, articles: this.tables.articles.filter((a) => a["blog_id"] === b["id"] && !a["deleted_at"]).length })) });
+        case "api_articles_list": return json({ blog, ...page(arts.filter(byStatus).map((r) => ({ ...view(r, false), blog: blog!["handle"] }))) });
+        case "api_article_get": { const r = ref(arts, args["p_article"]); return r ? json({ ...view(r, true), blog: blog!["handle"] }) : notFound(); }
+        case "api_article_save": return save("articles", { shop_id: shopId, blog_id: blog!["id"] }, args["p_article"] as Row);
+        case "api_article_trash": return trash(arts.find((r) => r["id"] === args["p_article_id"]));
+      }
+    }
     if (fn.startsWith("api_coupon")) {
       if (!need(/create|update|delete|issue|revoke/.test(fn) ? "coupons:write" : "coupons:read")) return unauthorized();
       const shop = this.tables.shops.find((x) => x["id"] === shopId);

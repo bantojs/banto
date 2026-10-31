@@ -716,6 +716,8 @@ export const ja = {
   "tokens.scope.inquiries_write": "お問い合わせへの返事（お客様にはリンクだけのメール）・完了にする",
   "tokens.scope.theme_write": "テーマの版の取り込み・プレビューのリンク・公開していない版の削除（お店の画面の JS も取り込めます。公開は theme:publish）",
   "tokens.scope.theme_publish": "テーマの公開・取り下げ（お店の画面が切り替わります）",
+  "tokens.scope.content_read": "ページ・ブログの記事の参照（下書き・ゴミ箱を含む）",
+  "tokens.scope.content_write": "ページ・ブログの記事を作る・直す・公開する・ゴミ箱へ移す（お店の画面に出ます）",
 
 
   "store.subtotal_tax_included": "商品合計（税込）",

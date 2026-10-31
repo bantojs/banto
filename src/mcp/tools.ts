@@ -94,6 +94,19 @@ const EXTERNAL_REF = { ...obj({ provider: s("string", "提供元（例: hubspot�
 const MARKETING_CONSENT_WRITE = s("boolean", "案内メール（お得な情報やセールの案内）の同意。API で書けるのは false（配信停止の書き戻し）だけ。true は本人がレジか会員ページで選ぶ", { enum: [false] });
 const CUSTOMER_ATTRIBUTES = { type: "object", description: "独自項目の値。鍵はショップの設定「会員の項目」で定義したものだけ（知らない鍵は invalid_attribute_<鍵>）。更新は渡した鍵だけ重ね、null で消す", additionalProperties: { type: ["string", "number", "null"] } };
 
+const CONTENT_STATUSES = ["all", "published", "scheduled", "draft", "trash"];
+/** ページと記事で共通の項目 */
+const CONTENT_FIELDS: Record<string, unknown> = {
+  title: s("string", "題名（1〜200 文字）"),
+  body: s("string", "本文。決まった書式（Markdown の一部と、::: products / ::: group などのブロック。docs/pages.md）。生の HTML は書けない。50,000 文字まで"),
+  seo_title: s(["string", "null"], "検索結果の題名（200 文字まで）"),
+  seo_description: s(["string", "null"], "検索結果の説明（500 文字まで）"),
+  template_suffix: s(["string", "null"], "Liquid のテーマのテンプレートの名前"),
+  image_url: s(["string", "null"], "アイキャッチ。このショップの画像の置き場の URL だけ"),
+  published: s("boolean", "公開するか（true でお店の画面に出る）"),
+  published_at: s(["string", "null"], "公開する日時（ISO 8601）。未来なら予約公開"),
+};
+
 export const MCP_TOOLS: McpTool[] = [
   {
     name: "shop_get",
@@ -388,6 +401,71 @@ export const MCP_TOOLS: McpTool[] = [
       if (!isInquiryApiStatus(status)) throw new ApiError("invalid", `status must be one of ${INQUIRY_API_STATUSES.join(", ")}`, 400);
       return api.inquirySetStatus(n, status);
     },
+  },
+  // ---- ページ・ブログの記事（0083。モジュール pages / blog が ON のショップだけ）----
+  {
+    name: "pages_list",
+    description: "ショップのページ（「私たちについて」など）の一覧。並び順・本文なし。status: all（既定・ゴミ箱の外）/ published / scheduled / draft / trash。スコープ content:read。" + DATA_NOTE,
+    inputSchema: obj({ status: s("string", "状態で絞る", { enum: CONTENT_STATUSES }), query: s("string", "題名・handle の部分一致"), limit: s("integer", "1〜100、既定 50"), offset: s("integer", "既定 0") }),
+    readOnly: true,
+    run: (api, a) => api.pagesList({ status: str(a, "status"), query: str(a, "query"), limit: num(a, "limit"), offset: num(a, "offset") }),
+  },
+  {
+    name: "page_get",
+    description: "ページを 1 つ取得する（id か handle）。本文は決まった書式（Markdown の一部と ::: のブロック）。スコープ content:read。" + DATA_NOTE,
+    inputSchema: obj({ ref: s("string", "ページの id（UUID）か handle") }, ["ref"]),
+    readOnly: true,
+    run: (api, a) => api.pageGet(str(a, "ref", true)!),
+  },
+  {
+    name: "page_save",
+    description:
+      "【書き込み】ページを作る・直す。id があればそのページ、無ければ handle が同じページを直し、無ければ作る（作るときは handle と title が要る）。送らなかった項目は今のまま。published: true でお店の画面に出る（published_at が未来なら予約公開）。本文に生の HTML は書けない。画像はこのショップの画像の置き場のものだけ。スコープ content:write。",
+    inputSchema: obj({ id: s("string", "直すページの id"), handle: s("string", "URL の名前（英小文字・数字・ハイフン。/pages/<handle>）"), ...CONTENT_FIELDS, nav: s("string", "メニューに出すか", { enum: ["none", "header", "footer"] }), sort_order: s("integer", "並び順（小さいほど先）") }),
+    readOnly: false,
+    run: (api, a) => api.pageSave(pick(a, ["id", "handle", ...Object.keys(CONTENT_FIELDS), "nav", "sort_order"])),
+  },
+  {
+    name: "page_trash",
+    description: "【書き込み】ページをゴミ箱へ移す（お店の画面から消える。30 日で消え、戻すのは管理画面）。スコープ content:write。",
+    inputSchema: obj({ id: s("string", "ページの id") }, ["id"]),
+    readOnly: false,
+    run: (api, a) => api.pageTrash(str(a, "id", true)!),
+  },
+  {
+    name: "blogs_list",
+    description: "ブログの一覧（ゴミ箱の外の記事の数つき）。ブログを作るのは管理画面。スコープ content:read。" + DATA_NOTE,
+    inputSchema: obj({}),
+    readOnly: true,
+    run: (api) => api.blogsList(),
+  },
+  {
+    name: "articles_list",
+    description: "ブログの記事の一覧（公開した日時の新しい順・本文なし）。status はページと同じ。スコープ content:read。" + DATA_NOTE,
+    inputSchema: obj({ blog: s("string", "ブログの handle"), status: s("string", "状態で絞る", { enum: CONTENT_STATUSES }), query: s("string", "題名・handle の部分一致"), tag: s("string", "タグで絞る"), limit: s("integer", "1〜100、既定 50"), offset: s("integer", "既定 0") }, ["blog"]),
+    readOnly: true,
+    run: (api, a) => api.articlesList(str(a, "blog", true)!, { status: str(a, "status"), query: str(a, "query"), tag: str(a, "tag"), limit: num(a, "limit"), offset: num(a, "offset") }),
+  },
+  {
+    name: "article_get",
+    description: "記事を 1 つ取得する（id か handle）。スコープ content:read。" + DATA_NOTE,
+    inputSchema: obj({ blog: s("string", "ブログの handle"), ref: s("string", "記事の id（UUID）か handle") }, ["blog", "ref"]),
+    readOnly: true,
+    run: (api, a) => api.articleGet(str(a, "blog", true)!, str(a, "ref", true)!),
+  },
+  {
+    name: "article_save",
+    description: "【書き込み】ブログの記事を作る・直す（page_save と同じ決まり）。公開して published_at が無ければ今。スコープ content:write。",
+    inputSchema: obj({ blog: s("string", "ブログの handle"), id: s("string", "直す記事の id"), handle: s("string", "URL の名前（英小文字・数字・ハイフン、feed は不可）"), ...CONTENT_FIELDS, excerpt: s(["string", "null"], "抜粋（1,000 文字まで）"), tags: s("array", "タグ（20 個・1 つ 50 文字まで）", { items: { type: "string" } }), author: s(["string", "null"], "書いた人（100 文字まで）") }, ["blog"]),
+    readOnly: false,
+    run: (api, a) => api.articleSave(str(a, "blog", true)!, pick(a, ["id", "handle", ...Object.keys(CONTENT_FIELDS), "excerpt", "tags", "author"])),
+  },
+  {
+    name: "article_trash",
+    description: "【書き込み】記事をゴミ箱へ移す（30 日で消え、戻すのは管理画面）。スコープ content:write。",
+    inputSchema: obj({ blog: s("string", "ブログの handle"), id: s("string", "記事の id") }, ["blog", "id"]),
+    readOnly: false,
+    run: (api, a) => api.articleTrash(str(a, "blog", true)!, str(a, "id", true)!),
   },
   // ---- クーポン（0036。モジュール coupons が ON のショップだけ）----
   {

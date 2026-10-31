@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, THEME_SCOPES, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { API_SCOPES, CONTENT_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, THEME_SCOPES, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { migrated } from "../../db/migration-state";
 import { THEME_API_MIGRATION } from "../../themes/liquid/versions";
+import { CONTENT_API_MIGRATION } from "../../pages";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
@@ -46,14 +47,17 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "inquiries:write": "tokens.scope.inquiries_write",
   "theme:write": "tokens.scope.theme_write",
   "theme:publish": "tokens.scope.theme_publish",
+  "content:read": "tokens.scope.content_read",
+  "content:write": "tokens.scope.content_write",
 };
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
 
-/** 発行できるスコープ（テーマのスコープは 0072 が当たってから） */
+/** 発行できるスコープ（テーマのスコープは 0072、ページ・記事のスコープは 0083 が当たってから） */
 async function issuableScopes(c: AdminContext): Promise<readonly ApiScope[]> {
-  if (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, THEME_API_MIGRATION)) return API_SCOPES;
-  return API_SCOPES.filter((sc) => !THEME_SCOPES.includes(sc));
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const [theme, content] = await Promise.all([migrated(deps, THEME_API_MIGRATION), migrated(deps, CONTENT_API_MIGRATION)]);
+  return API_SCOPES.filter((sc) => (theme || !THEME_SCOPES.includes(sc)) && (content || !CONTENT_SCOPES.includes(sc)));
 }
 
 tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
