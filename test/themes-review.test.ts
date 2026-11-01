@@ -149,7 +149,7 @@ describe("プレビューと資産", () => {
     const { b, shop, s1 } = setup();
     const token = await sealThemePreview(SECRET, shop.id, DRAFT, "api");
     const res = await b.get(`/?preview_theme=${DRAFT}&preview_token=${encodeURIComponent(token)}`);
-    expect(res.headers.get("content-security-policy")).toBe(SANDBOXED_PREVIEW_CSP);
+    expect(res.headers.get("content-security-policy")).toBe(`${SANDBOXED_PREVIEW_CSP}; frame-ancestors 'self'`);
     expect(await res.text()).toContain('<h1 class="top">保存した見出し</h1>');
     await b.post("/cart/add", { id: s1.id, quantity: "1" });
     const co = await b.post("/checkout", { provider: "stripe" });
@@ -162,7 +162,7 @@ describe("プレビューと資産", () => {
     const { b, shop, s1 } = setup();
     const token = await sealThemePreview(SECRET, shop.id, DRAFT, "admin");
     const res = await b.get(`/?preview_theme=${DRAFT}&preview_token=${encodeURIComponent(token)}`);
-    expect(res.headers.get("content-security-policy")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'self'"); // sandbox は付けない（枠の指示だけ）
     expect(await res.text()).toContain("保存した見出し");
     await b.post("/cart/add", { id: s1.id, quantity: "1" });
     expect(await (await b.post("/checkout", { provider: "stripe" })).text()).toContain("テーマのレジ");

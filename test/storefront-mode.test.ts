@@ -168,3 +168,18 @@ describe("管理画面: 同梱モジュール ga4", () => {
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({ analytics: { ga4_id: null } });
   });
 });
+
+describe("お店の画面をほかのサイトの枠に入れさせない", () => {
+  it("お店の画面・API は同じオリジンの枠だけ。管理画面は今までどおりどこにも入れない", async () => {
+    const { b, app } = setup();
+    for (const path of ["/my-shop", "/my-shop/p/tee", "/my-shop/cart", "/my-shop/legal"]) {
+      const res = await b.get(path);
+      expect(res.headers.get("x-frame-options"), path).toBe("SAMEORIGIN");
+      expect(res.headers.get("content-security-policy"), path).toBe("frame-ancestors 'self'");
+    }
+    const api = await app.request("http://localhost:8787/api/shops/my-shop");
+    expect(api.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+    const admin = await b.get("/admin/login");
+    expect([admin.headers.get("x-frame-options"), admin.headers.get("content-security-policy")]).toEqual(["DENY", "frame-ancestors 'none'"]);
+  });
+});

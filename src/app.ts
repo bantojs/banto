@@ -81,6 +81,13 @@ export function createApp(
     if (c.req.path.startsWith("/admin") && !h.has("X-Frame-Options")) {
       h.set("X-Frame-Options", "DENY");
       if (!h.has("Content-Security-Policy")) h.set("Content-Security-Policy", "frame-ancestors 'none'");
+    } else if (!h.has("X-Frame-Options")) {
+      // お店の画面ほか: 同じオリジンの枠にだけ入れられる（ほかのサイトの枠に入れて上に偽の表示を重ねる手口を断つ）。
+      // ルートが自分で frame-ancestors を決めたもの（Liquid のレジ）はそのまま。CSP が別の指示だけなら frame-ancestors を足す
+      h.set("X-Frame-Options", "SAMEORIGIN");
+      const csp = h.get("Content-Security-Policy");
+      if (!csp) h.set("Content-Security-Policy", "frame-ancestors 'self'");
+      else if (!/(^|;)\s*frame-ancestors\b/i.test(csp)) h.set("Content-Security-Policy", `${csp}; frame-ancestors 'self'`);
     }
     if (isSecureRequest(c) && !h.has("Strict-Transport-Security")) h.set("Strict-Transport-Security", "max-age=31536000");
   });

@@ -91,7 +91,7 @@ describe("レジを Liquid のテーマで描く", () => {
     const { b, sku } = setup(files);
     await b.post("/cart/add", { id: sku.id, quantity: "1" });
     const res = await b.post("/checkout", { provider: "stripe" });
-    expect(res.headers.get("content-security-policy")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'self'"); // スクリプトの CSP は付けない（枠の指示だけ）
     expect(await res.text()).toContain('name="postal_code"');
   });
 });

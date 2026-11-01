@@ -162,7 +162,8 @@ describe("セットアップウィザード（Step 3）", () => {
     expect(page.headers.get("x-content-type-options")).toBe("nosniff");
     expect(page.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
     const front = await app.request(`${BASE}/`);
-    expect(front.headers.get("x-frame-options")).toBeNull();
+    // お店の画面は同じオリジンの枠にだけ入れられる
+    expect(front.headers.get("x-frame-options")).toBe("SAMEORIGIN");
     expect(front.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
