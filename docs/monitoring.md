@@ -11,10 +11,12 @@ Banto はあなたの Cloudflare と Supabase で動くので、止まっても�
 | 同上 | `{"ok":false,"checks":{"db":"error",...}}`（HTTP 503） | Worker は動くが Supabase が応答しない（一時停止・障害・キー変更） |
 | 同上 | `{"ok":false,"checks":{"db":"ok","cron":"stale"}}`（HTTP 503） | Cron が 15 分以上動いていない（在庫予約の解放・メール送信・hooks の再送が止まっている） |
 | 同上 | `"cron":"unknown"` | Cron がまだ一度も動いていない（デプロイ直後）か、`0006_ops` マイグレーションが未適用 |
+| 同上 | `"stripe":"ok"` / `"incomplete"` / `"not_configured"` | Stripe のシークレットキーと Webhook の署名シークレットがそろい、形が合っているか。`incomplete` は片方だけ・取り違え（`whsec_` をシークレットキーの欄に入れたなど） |
+| 同上 | `"mail":"ok"` / `"incomplete"` / `"not_configured"` | メールの送り手（`MAIL_TRANSPORT`、既定 resend）に要る設定がそろっているか。`incomplete` は送り手を選んだのに値が足りない・知らない送り手の名前 |
 | `https://<ショップ>/<スラッグ>` | ショップのトップ（HTTP 200） | 公開ページが見える（公開停止やテーマの不具合も拾える） |
 
 `/health` は DB の確認結果を 30 秒キャッシュするので、監視サービスが 1 分ごとに叩いても Supabase の負荷にはなりません。
-秘密情報や接続先は返しません。
+秘密情報や接続先は返しません。`stripe`・`mail` は設定の名前があるか・形が合うかだけを見ます（値・送り手の種類は返さず、本当に送れるか・決済できるかは確かめません）。使わない運営者もいるので、`ok`（200 / 503）には効きません。決済とメールを使うなら、Keyword 型の監視で `"stripe":"ok"`・`"mail":"ok"` も見ると、設定の消し忘れ・入れ違いに気づけます。
 
 ## 2. UptimeRobot で設定する（無料・5 分間隔）
 

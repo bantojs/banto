@@ -31,6 +31,28 @@ describe("運用: /health とバックアップ書き出し", () => {
     expect((await down.request(`${BASE}/health`)).status).toBe(503);
   });
 
+  it("/health の stripe・mail は設定の有無だけ（値・送り手の種類は出さない。ok / 503 には効かない）", async () => {
+    const sb = new FakeSupabase();
+    const get = async (vars: Record<string, string | undefined>) => {
+      const res = await appWith(sb, vars).request(`${BASE}/health`);
+      const text = await res.text();
+      return { status: res.status, text, checks: (JSON.parse(text) as { checks: Record<string, string> }).checks };
+    };
+    const none = await get({});
+    expect(none.status).toBe(200);
+    expect(none.checks).toMatchObject({ stripe: "not_configured", mail: "not_configured" });
+    const full = await get({ STRIPE_SECRET_KEY: "sk_test_abcdef", STRIPE_WEBHOOK_SECRET: "whsec_abcdef", RESEND_API_KEY: "re_abcdef" });
+    expect(full.checks).toMatchObject({ stripe: "ok", mail: "ok" });
+    for (const secret of ["sk_test_abcdef", "whsec_abcdef", "re_abcdef", "resend"]) expect(full.text).not.toContain(secret);
+    // 片方だけ・形の取り違え（whsec_ をシークレットキーに）・送り手を選んだのに値が無い
+    expect((await get({ STRIPE_SECRET_KEY: "sk_live_x" })).checks["stripe"]).toBe("incomplete");
+    expect((await get({ STRIPE_SECRET_KEY: "whsec_x", STRIPE_WEBHOOK_SECRET: "whsec_y" })).checks["stripe"]).toBe("incomplete");
+    expect((await get({ STRIPE_CLIENT_ID: "ca_x" })).checks["stripe"]).toBe("incomplete");
+    expect((await get({ MAIL_TRANSPORT: "smtp" })).checks["mail"]).toBe("incomplete");
+    expect((await get({ MAIL_TRANSPORT: "carrier-pigeon" })).checks["mail"]).toBe("incomplete");
+    expect((await get({ MAIL_TRANSPORT: "smtp", SMTP_HOST: "smtp.example.jp" })).checks["mail"]).toBe("ok");
+  });
+
   it("export.json は自分のショップの全テーブルを 1,000 行ページングで書き出し、他人のショップは 404", async () => {
     const sb = new FakeSupabase();
     const owner = sb.addUser("o@example.com", "password-123", { owner: true });
