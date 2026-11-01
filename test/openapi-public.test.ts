@@ -30,6 +30,8 @@ describe("ヘッドレスの公開 API の OpenAPI", () => {
       api.routes
         .filter((r) => r.method === "GET" || r.method === "POST")
         .filter((r) => r.path !== "/")
+        // 貼れるタグのスクリプト（JSON の API ではない。docs/embed.md）
+        .filter((r) => r.path !== "/embed/v1.js")
         .map((r) => `${r.method.toLowerCase()} ${toOpenapi(r.path)}`),
     );
     const documented = new Set(Object.entries(spec.paths).flatMap(([p, ops]) => Object.keys(ops).map((m) => `${m} ${p}`)));

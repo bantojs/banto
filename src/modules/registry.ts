@@ -41,6 +41,9 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "pages", name: "mod.pages.name", description: "mod.pages.description", adminPath: "pages" },
   // ブログと記事（/blogs/<ブログ>・/blogs/<ブログ>/<記事>。編集の画面はページと同じ、0081_mod_blog、docs/blog.md）
   { id: "blog", name: "mod.blog.name", description: "mod.blog.description", adminPath: "blog" },
+  // 貼れるタグ（Web Component。STUDIO・Wix・ペライチなど HTML を貼れるサイトに商品とカートを置く。レジは Banto の画面）。
+  // スクリプト（/api/embed/v1.js）は公開 API を呼ぶだけの静的なファイルなので ON/OFF に関係なく配り、ON で貼るコードの画面を出す（docs/embed.md）
+  { id: "embed", name: "mod.embed.name", description: "mod.embed.description", adminPath: "embed" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

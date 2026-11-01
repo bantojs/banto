@@ -618,7 +618,7 @@ document.getElementById("add").onclick = () => cart({ op: "add", sku_id: sku, qt
 
 「購入手続きへ」は Banto のカート画面に引き継ぎ、配送先 → 最終確認 → 決済は Banto の画面で進みます。
 
-WordPress のプラグイン（Gutenberg ブロック）にする場合も、この 3 つの薄い皮にとどめ、注文・決済・カートのロジックは WordPress 側に置かないでください（別リポジトリで作る予定）。
+この 3 つを部品にしたものが、同梱モジュール「貼れるタグ」（docs/embed.md）です。HTML を貼れるサイトなら、スクリプトを 1 行読み込んで `<banto-product>`・`<banto-cart>` などを置くだけで使えます。
 
 ---
 

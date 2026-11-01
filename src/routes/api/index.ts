@@ -21,6 +21,7 @@ import { contentApi } from "./content";
 import { imageOptionsOf } from "../../products/images";
 import { displayOptionAxes } from "../../products/option-axes";
 import { publicOpenapiDocument } from "./openapi-public";
+import { embedScript } from "../../modules/embed/script";
 
 /**
  * ヘッドレス API（公開）。外部フロント（WordPress・Next.js 等）やプラグインが使う。docs/headless.md
@@ -54,6 +55,14 @@ function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
     mediaBaseUrl: mediaBaseUrl(c),
   };
 }
+
+/**
+ * 貼れるタグのスクリプト（同梱モジュール embed、docs/embed.md）。公開 API を呼ぶだけの静的なファイルなので、モジュールの ON/OFF も DB も見ない。
+ * 貼った側のサイトから <script src> で読む。版は URL に入れる（形を変えるときは v2 を足す）
+ */
+api.get("/embed/v1.js", (c) =>
+  c.body(embedScript(), 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*" }),
+);
 
 api.get("/openapi.json", (c) => c.json(publicOpenapiDocument(new URL(c.req.url).origin, BANTO_VERSION)));
 api.get("/", (c) => c.json({ name: "banto", version: BANTO_VERSION, openapi: "/api/openapi.json", public: ["/api/shops", "/api/shops/:slug", "/api/shops/:slug/products", "/api/shops/:slug/products/:slug", "/api/shops/:slug/categories", "/api/shops/:slug/pages", "/api/shops/:slug/pages/:handle", "/api/shops/:slug/blogs", "/api/shops/:slug/blogs/:blog/articles", "/api/shops/:slug/blogs/:blog/articles/:article"], cart: ["GET /api/shops/:slug/cart", "POST /api/shops/:slug/cart"], checkout: ["POST /api/shops/:slug/checkout/quote", "POST /api/shops/:slug/checkout"], buy_link: "/:slug/buy?sku=<sku_id>&qty=1", docs: "docs/headless.md", authenticated: "/api/v1 (OpenAPI: /api/v1/openapi.json)", mcp: "/mcp" }));
