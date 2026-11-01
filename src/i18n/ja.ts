@@ -2372,6 +2372,8 @@ export const ja = {
   "inq.template_body": "本文",
   "inq.template_insert": "差し込む",
   "inq.template_default_name": "お客様",
+  "passkey.add_cancel": "やめて元のサイトに戻る",
+  "pages.body_too_large": "本文が大きすぎます。",
 } as const;
 
 export type MessageKey = keyof typeof ja;

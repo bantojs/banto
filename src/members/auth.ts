@@ -83,12 +83,21 @@ export interface MemberSession {
   chk?: number;
   /** ログインした時刻（UNIX 秒）。画面の出し分けだけに使う（パスキーの追加が今できるか。判定は DB） */
   iat?: number;
+  /**
+   * ヘッドレスのパスキーの追加（0070）のためだけに作ったセッションの印。会員ページ・パスワードの変更などには使えず、
+   * パスキーの登録とログアウトだけに通す（券を使っただけで登録をやめた端末に、長いログインを残さない）
+   */
+  add?: true;
 }
 
 /** Cookie の期限（開くたびに延ばす） */
 export const SESSION_SECONDS = 60 * 60 * 24 * 30;
 /** セッションの行の絶対の期限。延ばさない。過ぎたらログインし直す */
 export const SESSION_ABSOLUTE_SECONDS = 60 * 60 * 24 * 90;
+/** パスキーの追加のためだけのセッション（0070、`add`）の期限。延ばさない。登録が済めば取り消す */
+export const PASSKEY_ADD_SESSION_SECONDS = 20 * 60;
+/** パスキーの追加のためだけのセッションの行の目印（label の先頭。端末の一覧で見分けられるように） */
+export const PASSKEY_ADD_LABEL = "passkey-add";
 /** Cookie のセッションを DB で確かめ直す間隔。取り消しが効くまで最大この秒数かかる（毎回は問い合わせない。速度の予算） */
 export const SESSION_CHECK_SECONDS = 5 * 60;
 
@@ -109,6 +118,7 @@ export async function openSession(secret: string, shopId: string, raw: string | 
     ...(typeof v.sid === "string" ? { sid: v.sid } : {}),
     ...(typeof v.chk === "number" ? { chk: v.chk } : {}),
     ...(typeof v.iat === "number" ? { iat: v.iat } : {}),
+    ...(v.add === true ? { add: true as const } : {}),
   };
 }
 

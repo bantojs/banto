@@ -62,7 +62,8 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   adapters.scheduler.register("deliver_hooks", async () => {
     const sessionSecret = await resolveSessionSecret(cfg);
     if (!sessionSecret) return;
-    await deliverPendingHooks({ db, sessionSecret, fetch: doFetch, config: cfg, socket: adapters.socket });
+    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信は素の fetch
+    await deliverPendingHooks({ db, sessionSecret, fetch: adapters.publicFetch ?? doFetch, config: cfg, socket: adapters.socket });
   });
 
   // 期限切れのログインのコードを消す（0012）。終わった会員のセッション（0045）とパスキーの challenge（0046）も消す

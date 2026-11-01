@@ -421,6 +421,41 @@ describe("お問い合わせの添付ファイル（公開しない置き場）"
     await openedGuest(plain.b, plain.mail);
     expect(await (await plain.b.get("/my-shop/inquiries/thread")).text()).not.toContain('name="files"');
   });
+
+  it("開けないチケット（形だけのリンクのトークン）・完了したチケットへの添付は、置き場に書く前に断る", async () => {
+    const priv = new MemoryStorage(`${BASE}/never`);
+    const { app, b, mail, tickets } = setup({ privateStorage: priv });
+    // 形だけのトークン（ヘッドレス API、認証なし）
+    const form = new FormData();
+    form.set("token", "A".repeat(40));
+    form.set("body", "x");
+    form.set("files", new File([jpeg], "a.jpg", { type: "image/jpeg" }));
+    const res = await app.request(`${BASE}/api/shops/my-shop/inquiries/reply`, { method: "POST", headers: { origin: "https://wp.example.com" }, body: form });
+    expect(res.status).toBe(404);
+    expect(priv.objects.size).toBe(0);
+    // 完了したチケット（同梱テーマの画面）
+    await openedGuest(b, mail);
+    tickets[0]!.status = "closed";
+    const closed = await b.postMultipart("/my-shop/inquiries/reply", { body: "x", files: new File([jpeg], "a.jpg", { type: "image/jpeg" }) });
+    expect(closed.status).toBe(409);
+    expect(priv.objects.size).toBe(0);
+    expect(tickets[0]!.messages).toHaveLength(1);
+  });
+
+  it("「リンクを送り直す」のメールは応答を返した後に送る（合ったかどうかで応答の時間を変えない）", async () => {
+    const { app, b, mail } = setup();
+    await openedGuest(b, mail);
+    const before = mail.sent.length;
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => void pending.push(p), passThroughOnException: () => {}, props: {} };
+    const res = await app.request(`${BASE}/api/shops/my-shop/inquiries/resend`, { method: "POST", headers: { origin: "https://wp.example.com", "content-type": "application/json" }, body: JSON.stringify({ number: 1, email: "att@example.com" }) }, undefined, ctx);
+    expect(res.status).toBe(202);
+    // 送信は waitUntil に渡してある（応答はそれを待たない。テストの送り手はその場で返すので、ここでは数だけ確かめる）
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(mail.sent.length).toBe(before + 1);
+    expect(mail.sent.at(-1)!.to).toBe("att@example.com");
+  });
 });
 
 describe("お問い合わせ（管理画面）", () => {

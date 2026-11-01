@@ -2365,4 +2365,6 @@ export const en: Record<MessageKey, string> = {
   "inq.template_body": "Body",
   "inq.template_insert": "Insert",
   "inq.template_default_name": "customer",
+  "passkey.add_cancel": "Cancel and go back to the original site",
+  "pages.body_too_large": "The body is too large.",
 };

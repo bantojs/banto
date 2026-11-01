@@ -25,7 +25,7 @@ import {
 } from "../../modules/inquiries";
 import { privilegedFor } from "../payment-deps";
 import { memberFromRequest, type ApiMember } from "./members";
-import { clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import type { InquiryView } from "../../db/privileged";
 import { t } from "../../i18n";
 import { inquiryLinkHash } from "../../members/auth";
@@ -206,7 +206,7 @@ inquiriesApi.post("/shops/:shop/inquiries/resend", async (c: Ctx) => {
   const email = (str(b?.["email"]) ?? "").trim().toLowerCase();
   if (!Number.isInteger(number) || number <= 0 || !email) return c.json({ error: "invalid_request" }, 400);
   const returnTo = safeReturnUrl(b?.["return_to"], returnOrigins(s.shop.settings), "");
-  const r = await resendInquiryLink(s.deps, s.shop, number, email, { ip: await clientIpFor(c, s.shop), link: linkFor(c, s.shop, returnTo) });
+  const r = await resendInquiryLink(s.deps, s.shop, number, email, { ip: await clientIpFor(c, s.shop), link: linkFor(c, s.shop, returnTo), defer: (w) => afterResponse(c, w) });
   if (!r.ok) return fail(c, r.error);
   return c.body(null, 202);
 });

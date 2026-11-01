@@ -82,6 +82,7 @@ MEDIA_BASE_URL=https://media.shop.example   # バケットの公開ドメイン
 Workers の Cron Trigger の代わりに、プロセス内の `setInterval` で同じジョブ（`src/jobs/`）を回します。
 複数プロセスで動かす場合は 1 プロセスだけ `CRON_INTERVAL_SECONDS` を設定し、他は `0` にしてください
 （hooks 配信はリースで二重配信を防ぎますが、無駄な負荷を避けるため）。
+hooks の配信・テスト送信・マニフェストの取得は、画像の取り込みと同じく、送信先の名前を引いた先が社内のアドレス（Docker で同居するサービスなど）なら接続の直前に止めます（`src/adapters/node/public-fetch.ts`）。
 
 ## 7. Supabase から離れる場合
 

@@ -190,7 +190,7 @@ export function registerConnectRoutes(hooks: Hono<AppEnv>, externalHookUrl: (url
     const f = await formFields(c);
     const url = (f.url ?? "").trim();
     if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
-    const manifest = await fetchManifest(url, c.get("deps").fetch);
+    const manifest = await fetchManifest(url, c.get("adapters").publicFetch ?? c.get("deps").fetch);
     if (!connectable(manifest)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=manifest_failed`);
     // 許せるのはマニフェストが求めたスコープのうち、画面で選んだものだけ
     const scopes = (manifest.scopes ?? []).filter((s) => picked.includes(s) && isApiScope(s));
@@ -231,7 +231,7 @@ export function registerConnectRoutes(hooks: Hono<AppEnv>, externalHookUrl: (url
     const ep = await owner(c).db.from<{ id: string; url: string }>("hook_endpoints").selectOne("id,url", { eq: { id: endpointId, shop_id: shopId } });
     const conn = ep ? await connectionOf(c, endpointId) : null;
     if (!ep || !conn) return c.text(t("hooks.not_found"), 404);
-    const manifest = await fetchManifest(ep.url, c.get("deps").fetch);
+    const manifest = await fetchManifest(ep.url, c.get("adapters").publicFetch ?? c.get("deps").fetch);
     if (!connectable(manifest)) return c.redirect(`${base}?flash=manifest_failed`);
     const scopes = conn.scopes.filter((s): s is ApiScope => isApiScope(s) && (manifest.scopes ?? []).includes(s));
     await owner(c).db.from("hook_endpoints").update({ manifest }, { id: endpointId, shop_id: shopId });

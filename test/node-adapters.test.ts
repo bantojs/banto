@@ -142,7 +142,10 @@ describe("publicFetch（Node、監査 M12）", () => {
       const e = (await createPublicFetch()(`http://localhost:${port}/`).catch((x: unknown) => x)) as Error & { code?: string };
       expect(e.code).toBe("EBANTOBLOCKED");
       expect(hits).toBe(1);
-      await expect(createPublicFetch()(`http://localhost:${port}/`, { method: "POST" })).rejects.toThrow(/only GET/);
+      // POST も同じ判定（本文を運ぶ形は test/hooks-target.test.ts）
+      const p = (await createPublicFetch()(`http://localhost:${port}/`, { method: "POST", body: "x" }).catch((x: unknown) => x)) as Error & { code?: string };
+      expect(p.code).toBe("EBANTOBLOCKED");
+      expect(hits).toBe(1);
     } finally {
       server.close();
     }

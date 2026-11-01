@@ -2,6 +2,8 @@
  * hooks の配信ワーカー。Cron から service_role で呼ぶ（src/jobs/）。
  * claim_hook_deliveries で取り出し → 署名付き POST → finish_hook_delivery。
  * 2xx を成功、それ以外とネットワークエラー・タイムアウトを失敗として扱う（再送は DB 側で判断）。
+ * 送る直前に行き先を確かめ（blockedHookTarget）、私設のアドレス・社内の名前には送らない。
+ * 渡す fetch は Node では adapters.publicFetch（名前を引いた先も接続の直前に確かめる）。
  */
 import type { PrivilegedDb } from "../db/privileged";
 import type { ConfigAdapter, SocketAdapter } from "../adapters/types";
@@ -10,6 +12,7 @@ import { openSecret } from "../members/secret-box";
 import type { HookEnvelope } from "./events";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../plugins";
 import { readTextCapped } from "../util/read-capped";
+import { BLOCKED_HOOK_TARGET, blockedHookTarget } from "./target";
 
 export const HOOK_TIMEOUT_MS = 10_000;
 
@@ -70,6 +73,12 @@ export async function deliverPendingHooks(opts: {
         return;
       }
 
+      // 行き先が私設のアドレス・社内の名前なら送らずに失敗にする（登録時の検査を通らずに入った行の最後の砦）
+      if (blockedHookTarget(row.url)) {
+        await opts.db.finishHookDelivery(row.id, false, null, BLOCKED_HOOK_TARGET);
+        result.failed++;
+        return;
+      }
       const body = JSON.stringify(envelope);
       // つないだ連携（0088）は接続ごとの署名シークレット。開けなければ（サイトの秘密が変わった）送らずに失敗にする（つなぎ直してもらう）
       const secret = row.secret_box ? await openSecret(opts.sessionSecret, row.shop_id, connectionSecretPurpose(row.endpoint_id), row.secret_box) : await endpointSecret(opts.sessionSecret, row.endpoint_id);

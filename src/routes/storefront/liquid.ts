@@ -25,7 +25,7 @@ import { ConfirmationBlock } from "../../themes/default/confirmation";
 import { AccountBody } from "../../themes/default";
 import { assetType } from "../../themes/liquid/bundle";
 import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
-import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
+import { extendShopify, fillConfirmation, newConfirmationMark, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
@@ -139,6 +139,8 @@ interface PageParts {
    * confirm は {% banto_confirmation %} を描いたときだけ
    */
   checkout?: "address" | "confirm" | "account";
+  /** 最終確認画面: Banto が描いた表示（特商法の項目と確定のボタン）。{% banto_confirmation %} の印の場所に、描き終えてから入れる */
+  confirmation?: string;
   /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
   headExtra?: string;
   /** 今のショップのページの handle（メニューの active。同梱モジュール pages） */
@@ -270,25 +272,32 @@ function render(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts): 
   const want = !page.checkout && c.req.method === "GET" ? sectionsRequested(c) : null;
   if (want) return sectionsResponse(c, choice, pageInput(c, s, choice, page), want);
   if (!themeHasTemplate(lt, page.template)) return null;
-  const input = pageInput(c, s, choice, page);
+  // 最終確認画面: 印はリクエストごとの乱数（テーマの変数からは読めない）。描いた結果の印を Banto の表示に差し替える
+  const mark = page.checkout === "confirm" ? newConfirmationMark() : null;
+  const input = { ...pageInput(c, s, choice, page), ...(mark ? { confirmationMark: mark } : {}) };
   try {
     const r = renderThemePage(lt, input);
     if (!r) return null;
     if (r.errors.length > 0) console.error("[banto] theme sections:", r.errors.slice(0, 5).join(" / "));
-    // 最終確認画面に Banto の表示（特商法）が無ければ描かない（既定のテーマで描く）
-    if (page.checkout === "confirm" && !r.html.includes(CONFIRMATION_MARK)) return null;
+    let html = r.html;
+    if (mark) {
+      // 最終確認画面に Banto の表示（特商法）の印が無ければ描かない（既定のテーマで描く）
+      const filled = fillConfirmation(html, mark, page.confirmation ?? "");
+      if (filled === null) return null;
+      html = filled;
+    }
     if (page.checkout) {
       c.header("Content-Security-Policy", CHECKOUT_CSP);
       c.header("Cache-Control", "private, no-store");
     }
-    if (!choice.preview) return c.html(r.html, page.status ?? 200);
+    if (!choice.preview) return c.html(html, page.status ?? 200);
     // プレビュー: 帯を出し、覚えさせず、検索エンジンに載せない
     const bar = `<div style="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#111;color:#fff;font:14px/1.6 sans-serif;padding:8px 12px">${escapeHtml(t("design.preview_bar"))} <a style="color:#9cf" href="?preview_theme=off">${escapeHtml(t("design.preview_end"))}</a></div>`;
-    const i = r.html.search(/<\/body>/i);
+    const i = html.search(/<\/body>/i);
     c.header("Cache-Control", "private, no-store");
     c.header("X-Robots-Tag", "noindex");
     if (choice.sandboxed) c.header("Content-Security-Policy", SANDBOXED_PREVIEW_CSP);
-    return c.html(i < 0 ? r.html + bar : r.html.slice(0, i) + bar + r.html.slice(i), page.status ?? 200);
+    return c.html(i < 0 ? html + bar : html.slice(0, i) + bar + html.slice(i), page.status ?? 200);
   } catch (e) {
     console.error("[banto] theme render:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
     return null;
@@ -444,7 +453,8 @@ export async function renderCheckoutConfirm(c: Ctx, s: LiquidScope, choice: Liqu
   };
   return render(c, s, choice, {
     template: "checkout_confirm",
-    values: { checkout, __banto_confirmation: new SafeHtml(block) },
+    values: { checkout },
+    confirmation: block,
     title: t("confirm.title"),
     path: "/checkout",
     noindex: true,

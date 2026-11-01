@@ -65,6 +65,28 @@ export interface BundleCheck {
 
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
+const CONFIRMATION_TAG = /\{%-?\s*banto_confirmation\s*-?%\}/;
+
+/**
+ * templates/checkout_confirm に {% banto_confirmation %} があるか。.json（描くときはこちらが先）なら並べたセクションの sections/<type>.liquid に、
+ * .liquid ならそのファイル自身に書いてあることを求める（描かない snippet や別のテンプレートに書いても通らない）。レジのテンプレートが無ければ true
+ */
+function hasConfirmationTag(files: Record<string, string>): boolean {
+  const json = files["templates/checkout_confirm.json"];
+  if (json !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripJsonComments(json));
+    } catch {
+      return true; // JSON の誤りは別に断る
+    }
+    const sections = isObject(parsed) && isObject(parsed["sections"]) ? Object.values(parsed["sections"]) : [];
+    return sections.some((sec) => isObject(sec) && typeof sec["type"] === "string" && CONFIRMATION_TAG.test(files[`sections/${sec["type"]}.liquid`] ?? ""));
+  }
+  const liquid = files["templates/checkout_confirm.liquid"];
+  return liquid === undefined || CONFIRMATION_TAG.test(liquid);
+}
+
 /**
  * 取り込むテーマを確かめる: 形・名前・数・大きさ、必須のファイル、JSON が読めるか、すべての Liquid が解析できるか（知らないフィルターも止まる）。
  * extend は描画のときと同じフィルター・タグ（Shopify の名前）を渡す
@@ -122,10 +144,8 @@ export function checkThemeBundle(raw: unknown, engineOpts: EngineOptions = {}): 
   }
   // 編集の画面のパターンとブロックのスタイル（config/banto_patterns.json・config/banto_block_styles.json）
   errors.push(...checkThemeEditorFiles(files));
-  // 最終確認画面（特商法）を描くテーマは、Banto の表示の部品を置く（無ければ取り込まない。docs/themes.md「レジ」）
-  if ((files["templates/checkout_confirm.liquid"] !== undefined || files["templates/checkout_confirm.json"] !== undefined) && !Object.entries(files).some(([p, src]) => p.endsWith(".liquid") && /\{%-?\s*banto_confirmation\s*-?%\}/.test(src))) {
-    errors.push("templates/checkout_confirm: {% banto_confirmation %} is required");
-  }
+  // 最終確認画面（特商法）を描くテーマは、Banto の表示の部品をそのテンプレート自身に置く（無ければ取り込まない。docs/themes.md「レジ」）
+  if (!hasConfirmationTag(files)) errors.push("templates/checkout_confirm: {% banto_confirmation %} is required");
   if (errors.length > 0) return { ok: false, errors };
 
   const engine = createThemeEngine(files as ThemeFiles, engineOpts);

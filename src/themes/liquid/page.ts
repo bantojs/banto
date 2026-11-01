@@ -149,6 +149,8 @@ export interface ThemePageInput {
   overrides?: SectionOverrides;
   /** 運営者が管理画面で変えたセクションの並び（editor.ts の sectionLayoutsOf） */
   layouts?: SectionLayouts;
+  /** 最終確認画面: {% banto_confirmation %} が書く印（newConfirmationMark。テーマの値からは読めない） */
+  confirmationMark?: string;
 }
 
 const HEAD_MARK = "<!-- banto:head -->";
@@ -168,6 +170,7 @@ function renderEnvOf(t: LoadedTheme, p: Prepared, input: Omit<ThemePageInput, "h
     overrides: input.overrides ?? {},
     layouts: input.layouts ?? {},
     globals,
+    ...(input.confirmationMark ? { confirmationMark: input.confirmationMark } : {}),
     paginate: input.paginate ?? null,
     preview: Boolean(input.preview),
     errors: [],

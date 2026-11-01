@@ -54,7 +54,7 @@ import { openStatusToken } from "../../commerce/checkout";
 import { shopHome } from "../../storefront/urls";
 import { readCookie } from "../../util/signed";
 import { privilegedFor } from "../payment-deps";
-import { clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
+import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
 import { customerSession, type MemberSession } from "./members";
 import type { InquiryView } from "../../db/privileged";
 
@@ -301,7 +301,7 @@ inquiries.post("/:shop/inquiries/resend", async (c: Ctx) => {
   const number = Number.parseInt((f["number"] ?? "").replace(/[^0-9]/g, ""), 10);
   const email = (f["email"] ?? "").trim().toLowerCase();
   if (!Number.isInteger(number) || number <= 0 || !email) return render(c, s, { step: "resend", values: { email }, error: t("inq.error_resend") }, 400);
-  const r = await resendInquiryLink(s.deps, s.shop, number, email, { ip: await clientIpFor(c, s.shop), link: linkFor(c, s) });
+  const r = await resendInquiryLink(s.deps, s.shop, number, email, { ip: await clientIpFor(c, s.shop), link: linkFor(c, s), defer: (w) => afterResponse(c, w) });
   if (!r.ok) return render(c, s, { step: "resend", values: { email }, error: t(ERROR_MESSAGES[r.error]) }, r.error === "too_many" ? 429 : 409);
   // 合ったかどうかは言わない（受付番号とアドレスの組を探られないように）
   return render(c, s, { step: "resend", values: {}, info: tf("inq.resend_done", { email }) });

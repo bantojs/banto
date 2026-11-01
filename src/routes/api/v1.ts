@@ -154,9 +154,8 @@ v1.post("/products/:id/images/upload", async (c) => {
 // 商品の画像の並び順（0078、products:write）。{ image_ids: [...] } にその商品の画像の id をすべて、並べたい順に
 v1.put("/products/:id/images/order", async (c) => {
   try {
-    const body = await c.req.json<Record<string, unknown>>().catch(() => null);
-    if (!body || typeof body !== "object") throw new ApiError("invalid", "send JSON: { \"image_ids\": [...] }", 400);
-    return c.json(await api(c).imagesReorder(c.req.param("id"), body["image_ids"]));
+    const b = await body(c);
+    return c.json(await api(c).imagesReorder(c.req.param("id"), b["image_ids"]));
   } catch (e) {
     return errorJson(c, e);
   }

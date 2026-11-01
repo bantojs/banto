@@ -245,6 +245,8 @@ export class ApiService {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "image_url must be an absolute http(s) URL", 400);
     }
     const optionsArg = this.imageOptionsArg(options);
+    // 外に取りに行く前・置き場に書く前に、書き込みのスコープを確かめる（imageUpload と同じ）
+    if (!(await this.call<boolean>("api_has_scope", { p_scope: "products:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     // 所有確認を先に（取得前に他ショップの product_id を弾く）
     await this.productGet({ id: productId });
     let image: Awaited<ReturnType<typeof fetchImage>>;

@@ -118,6 +118,8 @@ export interface RenderEnv {
   layouts?: SectionLayouts;
   /** セクションの外から渡す値（product・collection など。セクションも同じものを読む） */
   globals: Record<string, unknown>;
+  /** {% banto_confirmation %} が書く印（最終確認画面だけ。リクエストごとの乱数。newConfirmationMark） */
+  confirmationMark?: string;
   paginate: Paginate | null;
   /** テンプレートが {% layout %} で選んだレイアウト（undefined なら theme、null なら無し） */
   layout?: string | null;
@@ -468,8 +470,22 @@ const FORM_ACTIONS: Readonly<Record<string, string>> = {
   recover_customer_password: "/account/login",
 };
 
-/** {% banto_confirmation %} を描いた印（描いた結果にこれが無ければ、既定のテーマの最終確認画面にする） */
-export const CONFIRMATION_MARK = "<!-- banto:confirmation -->";
+/**
+ * {% banto_confirmation %} が書く印。リクエストごとの乱数で、描いた結果のこの印を Banto の表示（特商法の項目と確定のボタン）に差し替える
+ * （fillConfirmation、src/routes/storefront/liquid.ts）。タグは Banto の HTML を書かないので、テーマは capture で切り出せず、
+ * 乱数を知らないので印を真似できない。描いた結果に印が無ければ既定のテーマで描く
+ */
+export function newConfirmationMark(): string {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return `<!--banto:confirmation:${Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("")}-->`;
+}
+
+/** 描いた結果の印を Banto の表示に差し替える（印が無ければ null = 既定のテーマで描く） */
+export function fillConfirmation(html: string, mark: string, block: string): string | null {
+  if (!html.includes(mark)) return null;
+  return html.split(mark).join(block);
+}
 
 export function registerShopifyTags(liquid: Liquid): void {
   liquid.registerTag(
@@ -551,13 +567,13 @@ export function registerShopifyTags(liquid: Liquid): void {
       }
     },
   );
-  // 最終確認画面の中身（特商法の表示と注文を確定するボタン）。Banto が描いたものをそのまま置く。templates/checkout_confirm には必須
+  // 最終確認画面の中身（特商法の表示と注文を確定するボタン）の置き場。印だけを書き、Banto の HTML は描き終えてから入れる。templates/checkout_confirm には必須
   liquid.registerTag(
     "banto_confirmation",
     class extends Tag {
       *render(_ctx: Context, emitter: Emitter) {
-        const v = env().globals["__banto_confirmation"];
-        if (v instanceof SafeHtml) emitter.write(`${CONFIRMATION_MARK}${v.html}`);
+        const mark = env().confirmationMark;
+        if (mark) emitter.write(mark);
       }
     },
   );

@@ -12,6 +12,7 @@
  * レイアウトの囲み（::: group … ::: のグループ・カラム・カバー・画像と文・ギャラリー・アコーディオン。入れ子 4 段まで。src/pages/layout.ts）
  */
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
+import { t } from "../i18n";
 import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, isLayoutClose, layoutEnd, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
@@ -197,6 +198,11 @@ const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
 const RULE = /^\s{0,3}(?:-\s*){3,}$|^\s{0,3}(?:\*\s*){3,}$|^\s{0,3}(?:_\s*){3,}$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+/** 表の列と行の上限（docs/pages.md「書式」） */
+export const TABLE_COLS_MAX = 30;
+export const TABLE_ROWS_MAX = 500;
+/** 本文の HTML の上限（文字）。超えた本文は「本文が大きすぎます」の段落だけにする（書いた人が、見る人全員の Worker を止められないように） */
+export const BODY_HTML_MAX = 1_000_000;
 
 function cells(row: string): string[] {
   let r = row.trim();
@@ -236,6 +242,7 @@ export function markdownToHtml(source: string, opts: MarkdownOptions = {}): stri
   const rows = source.replace(/\r\n?/g, "\n").split("\n");
   const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false };
   const html = render(rows, 0, st).join("\n");
+  if (html.length > BODY_HTML_MAX) return `<p class="banto-too-large">${esc(t("pages.body_too_large"))}</p>`;
   return st.layout && !opts.editor && opts.layoutCss !== false ? `<style>${LAYOUT_CSS}</style>\n${html}` : html;
 }
 
@@ -307,10 +314,13 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       // レイアウトの囲み（入れ子は LAYOUT_DEPTH_MAX 段まで。深すぎる囲みは行を外して中身だけ描く）
       const lo = parseLayoutOpen(row);
       if (lo) {
+        // 深すぎる囲みは再帰せず、始まりの行を外して平らに続ける（閉じの行は下で捨てる。入れ子の数だけ再帰しない）
+        if (depth >= LAYOUT_DEPTH_MAX) {
+          i++;
+          continue;
+        }
         const end = layoutEnd(rows, i);
-        const inner = rows.slice(i + 1, end);
-        if (depth < LAYOUT_DEPTH_MAX) out.push(layoutBlock(lo, inner, depth, st));
-        else out.push(...render(inner, depth, st));
+        out.push(layoutBlock(lo, rows.slice(i + 1, end), depth, st));
         i = end + 1;
         continue;
       }
@@ -411,10 +421,14 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
     }
     // 表: 見出しの行の次が区切りの行
     if (row.includes("|") && TABLE_SEP.test(rows[i + 1] ?? "")) {
-      const head = cells(row);
+      // 列と行は上限まで（超えた列は捨て、超えた行は打ち切る。列 × 行で出力が膨らまないように）
+      const head = cells(row).slice(0, TABLE_COLS_MAX);
       i += 2;
       const body: string[][] = [];
-      while (i < rows.length && !blank(rows[i]) && rows[i]!.includes("|")) body.push(cells(rows[i++]!));
+      while (i < rows.length && !blank(rows[i]) && rows[i]!.includes("|")) {
+        if (body.length < TABLE_ROWS_MAX) body.push(cells(rows[i]!).slice(0, TABLE_COLS_MAX));
+        i++;
+      }
       const th = head.map((c) => `<th>${inline(c, opts)}</th>`).join("");
       const tb = body.map((r) => `<tr>${head.map((_, k) => `<td>${inline(r[k] ?? "", opts)}</td>`).join("")}</tr>`).join("");
       out.push(`<div class="banto-table"><table><thead><tr>${th}</tr></thead>${tb ? `<tbody>${tb}</tbody>` : ""}</table></div>`);

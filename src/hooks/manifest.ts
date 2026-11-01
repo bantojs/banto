@@ -4,6 +4,7 @@
  */
 import { readTextCapped } from "../util/read-capped";
 import { isApiScope, type ApiScope } from "../api/tokens";
+import { blockedHookTarget } from "./target";
 
 export interface ManifestSetting {
   key: string;
@@ -172,6 +173,8 @@ export function parseManifest(input: unknown): PluginManifest | null {
 }
 
 export async function fetchManifest(url: string, doFetch: typeof fetch, timeoutMs = 8000): Promise<PluginManifest | null> {
+  // 私設のアドレス・社内の名前には取りに行かない（登録の検査と同じ。Node は doFetch に publicFetch を渡し、引いた先も確かめる）
+  if (blockedHookTarget(url)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

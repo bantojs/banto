@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { classifyHost } from "../../media/address";
 import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
 import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
 import { migrated } from "../../db/migration-state";
 import { APP_DATA_MIGRATION } from "../../apps/app-data";
 import { endpointSecret, signHookPayload, signPluginTicket } from "../../hooks/signing";
+import { blockedHookTarget, externalHookUrl } from "../../hooks/target";
 import { ConnectConfirm, ConnectionCard, connectReady, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
 import { t, type MessageKey } from "../../i18n";
@@ -73,17 +73,9 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
 
 const URL_RE = /^https?:\/\/[^\s]+$/;
 
-/** 外部プラグインの URL として受け付けるか。同梱プラグインの内部 URL（banto.invalid）は /plugins の経路だけ（重複して通知が二重に届くのを防ぐ、0031） */
-function externalHookUrl(url: string): boolean {
-  if (!URL_RE.test(url)) return false;
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host === "banto.invalid" || host.endsWith(".banto.invalid")) return false;
-    // 私設のアドレス・localhost 等は受け付けない（Node 実行で社内へ届かないように。画像の取り込みと同じ判定。2026-10-25 の監査）
-    return classifyHost(host) !== "blocked";
-  } catch {
-    return false;
-  }
+/** 外から渡された URL を開く fetch（Node は名前を引いた先を接続の直前に確かめる publicFetch、Workers は素の fetch） */
+function outboundFetch(c: AdminContext): typeof fetch {
+  return c.get("adapters").publicFetch ?? c.get("deps").fetch;
 }
 
 /** 同梱プラグインのうち、イベントを受け取らないもの（決済事業者の Webhook を受ける側）。イベントの購読欄を出さない */
@@ -293,7 +285,7 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   const f = await formFields(c);
   const url = (f.url ?? "").trim();
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
-  const manifest = await fetchManifest(url, c.get("deps").fetch);
+  const manifest = await fetchManifest(url, outboundFetch(c));
   // つなぐ手順に対応したプラグイン（0088）は、許す画面を出す（秘密を手で写さない）
   if (connectable(manifest) && (await connectReady(c))) {
     return c.html(
@@ -319,9 +311,11 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   );
 });
 
-function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
+function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false, bundled = false): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
   const url = (f.url ?? "").trim();
-  if (!URL_RE.test(url)) return "invalid_url"; // 既存の行の保存（同梱プラグインの設定もここを通る）。新規の登録は externalHookUrl
+  // 同梱プラグインの設定の保存は内部 URL（呼び出し側が元の URL に戻す）。外部プラグインは新規も更新も externalHookUrl
+  // （私設のアドレス・localhost・banto.invalid への書き換えを受けない。外部として登録した行の URL は同梱の内部 URL に変えられない）
+  if (bundled ? !URL_RE.test(url) : !externalHookUrl(url)) return "invalid_url";
   const values: Partial<EndpointRow> = {
     name: (f.name ?? "").trim().slice(0, 200) || url,
     url,
@@ -360,7 +354,7 @@ hooks.post("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   const url = (f.url ?? "").trim();
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   // マニフェストは登録時に再取得する（フォームの値を信用しない）
-  const manifest = await fetchManifest(url, c.get("deps").fetch);
+  const manifest = await fetchManifest(url, outboundFetch(c));
   const values = endpointValues(f, events, manifest, await appsReady(c));
   if (typeof values === "string") return c.redirect(`/admin/shops/${shopId}/hooks?flash=${values}`);
   try {
@@ -447,8 +441,8 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const f = await formFields(c);
   const bundled = bundledPluginIdFromUrl(endpoint.url) !== null;
   // 外部プラグインはマニフェストを読み直す（ブロックの提案などが増えたとき。取れなければ前のまま）
-  const fresh = !bundled ? await fetchManifest(endpoint.url, c.get("deps").fetch) : null;
-  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled && (await appsReady(c)));
+  const fresh = !bundled ? await fetchManifest(endpoint.url, outboundFetch(c)) : null;
+  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled && (await appsReady(c)), bundled);
   if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
   if (bundled) values.url = endpoint.url;
   if (fresh) values.manifest = fresh;
@@ -476,6 +470,8 @@ hooks.post("/:shopId/hooks/:endpointId/test", requireOwner, async (c: AdminConte
   const { shop, endpoint } = data;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   // つないだ連携（0088）は接続ごとの署名シークレットで署名する
+  // 行き先が私設のアドレス・社内の名前なら送らない（直叩き・復元で入った行を止める最後の砦）
+  if (blockedHookTarget(endpoint.url)) return c.redirect(`${base}?flash=test_failed`);
   const secret = await signingSecretFor(c, shop.id, endpoint.id, Boolean(await connectionOf(c, endpoint.id)));
   if (!secret) return c.redirect(`${base}?flash=test_failed`);
   const body = JSON.stringify({
@@ -490,7 +486,7 @@ hooks.post("/:shopId/hooks/:endpointId/test", requireOwner, async (c: AdminConte
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
-    const res = await c.get("deps").fetch(endpoint.url, {
+    const res = await outboundFetch(c)(endpoint.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

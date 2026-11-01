@@ -14,6 +14,7 @@ import { getLocale } from "../../i18n";
 import { requireOwner } from "./auth";
 import { planLimitOf } from "../../plan/limits";
 import { loadShop } from "./shops";
+import { readBodyLimited } from "../common";
 
 /**
  * デザイン（Liquid のテーマ、0071、docs/themes.md）: /admin/shops/:shopId/design。項目 design の人だけ。
@@ -265,11 +266,12 @@ design.post("/:shopId/design/versions", requireOwner, async (c: AdminContext) =>
   const shop = await scope(c);
   if (!shop) return c.json({ ok: false, errors: [t("shop.not_found")] }, 404);
   if (!(await cpuOk(c))) return c.json({ ok: false, errors: [t("design.upload_paid_only")] }, 409);
-  const length = Number(c.req.header("content-length") ?? "0");
-  if (length > THEME_UPLOAD_MAX_BYTES) return c.json({ ok: false, errors: [t("design.too_large")] }, 413);
+  // 本文の上限は Content-Length ではなく読みながら数える（chunked でも超えて読まない）
+  const bytes = await readBodyLimited(c.req.raw, THEME_UPLOAD_MAX_BYTES);
+  if (bytes === null) return c.json({ ok: false, errors: [t("design.too_large")] }, 413);
   let body: { name?: unknown; bundle?: unknown };
   try {
-    const raw = (await c.req.json()) as unknown;
+    const raw = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("body");
     body = raw as { name?: unknown; bundle?: unknown };
   } catch {

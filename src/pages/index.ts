@@ -92,12 +92,20 @@ export function pagesNav(shop: { pages_nav?: unknown }, place: "header" | "foote
  */
 const htmlCache = new Map<string, string>();
 const HTML_CACHE_MAX = 200;
+/** 覚える HTML の合計（文字）。数だけでなく大きさでも抑える（isolate のメモリ） */
+const HTML_CACHE_CHARS_MAX = 4_000_000;
+let htmlCacheChars = 0;
 export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string, origin?: string): string {
   const key = `${page.id}|${page.updated_at}|${mediaBase}|${origin ?? ""}`;
   const hit = htmlCache.get(key);
   if (hit !== undefined) return hit;
   const html = markdownToHtml(page.body, { mediaBase, ...(origin ? { origin } : {}) });
   htmlCache.set(key, html);
-  if (htmlCache.size > HTML_CACHE_MAX) htmlCache.delete(htmlCache.keys().next().value!);
+  htmlCacheChars += html.length;
+  while (htmlCache.size > HTML_CACHE_MAX || (htmlCacheChars > HTML_CACHE_CHARS_MAX && htmlCache.size > 1)) {
+    const oldest = htmlCache.keys().next().value!;
+    htmlCacheChars -= htmlCache.get(oldest)!.length;
+    htmlCache.delete(oldest);
+  }
   return html;
 }

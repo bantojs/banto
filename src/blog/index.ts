@@ -92,8 +92,9 @@ export function articleSummary(a: { excerpt?: string | null; body?: string | nul
     .split("\n")
     .filter((l) => !/^\s{0,3}(:::|\||---)/.test(l))
     .join(" ")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    // 文字と URL は長さで縛り、次の [ と ( で止める（閉じの無い [ の羅列で二乗にならない。長い・入れ子のものは文字のまま残る）
+    .replace(/!\[[^[\]\n]{0,300}\]\([^()\n]{0,2000}\)/g, "")
+    .replace(/\[([^[\]\n]{0,300})\]\([^()\n]{0,2000}\)/g, "$1")
     .replace(/(^|\s)(#{1,6}|>|[-*+]|\d+\.)\s+/g, "$1")
     .replace(/[*_`\\]/g, "")
     .replace(/\s+/g, " ")

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
 import { forgetThemes } from "../src/themes/liquid/cache";
+import { THEME_UPLOAD_MAX_BYTES } from "../src/themes/liquid/versions";
 
 /** 管理画面の「デザイン」（0071、docs/themes.md）: 取り込み・資産・プレビュー・公開・取り下げ・削除 */
 const DOMAIN = "https://shop.example.jp";
@@ -37,6 +38,26 @@ async function upload(admin: Browser, base: string): Promise<string> {
 
 describe("管理画面のデザイン（Liquid のテーマ）", () => {
   beforeEach(forgetThemes);
+
+  it("取り込みの本文の上限は読みながら数える（Content-Length の無い chunked の本文でも、上限を超えたら 413 で読み切らない）", async () => {
+    const { sb, app, base } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const chunk = new TextEncoder().encode(`{"name":"big","bundle":${JSON.stringify(bundle).slice(0, -1)},"files":{"x":"${"a".repeat(64 * 1024)}`);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent > THEME_UPLOAD_MAX_BYTES * 2) return controller.close();
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    const cookie = [...admin.cookies].map(([k, v]) => `${k}=${v}`).join("; ");
+    const req = new Request(`${BASE}${base}/versions`, { method: "POST", headers: { cookie, origin: BASE, "content-type": "application/json" }, body: stream, ...({ duplex: "half" } as object) });
+    const res = await app.request(req);
+    expect(res.status).toBe(413);
+    expect(sent).toBeLessThan(THEME_UPLOAD_MAX_BYTES * 2);
+    expect(sb.tables.theme_versions).toHaveLength(0);
+  });
 
   it("取り込み: 検査して置き場に置き、版を足す。資産は束ねたファイルに名前があるものだけ。壊れたテーマは理由を返す", async () => {
     const { sb, shop, storage, app, base } = setup();
