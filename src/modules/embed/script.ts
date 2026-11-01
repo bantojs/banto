@@ -26,6 +26,8 @@ const SOURCE = String.raw`(function(I){
 "use strict";
 if(window.__bantoEmbed)return;window.__bantoEmbed=1;
 var me=document.currentScript;var BASE="";
+/* 読み込み方によっては currentScript が無い（取ってきて eval する作成ツールなど）。そのときは自分の script 要素を探す */
+if(!me||!me.src){var ss=document.querySelectorAll("script[src]");for(var si=ss.length-1;si>=0;si--){if(/\/api\/embed\/v1\.js(\?|#|$)/.test(ss[si].src)){me=ss[si];break}}}
 try{BASE=new URL(me&&me.src?me.src:"").origin}catch(e){}
 if(!BASE||!window.customElements||!Element.prototype.attachShadow)return;
 var nf=new Intl.NumberFormat(I.locale);
@@ -56,7 +58,14 @@ if(!loading[shop])loading[shop]=cartOp(shop,null).catch(function(){setTok(shop,"
 return loading[shop]}
 window.addEventListener("storage",function(e){if(!e.key||e.key.indexOf("banto-cart-")!==0)return;var shop=e.key.slice(11);delete views[shop];
 if(e.newValue)loadCart(shop);else publish(shop,null)});
-function goCheckout(shop,url){var u=safeUrl(url);if(!u)return;setTok(shop,"");delete views[shop];location.href=u}
+/* 作成ツールが部品を iframe に入れていても、Banto の画面はページ全体で開く（Banto の画面は他のサイトの枠に入らない） */
+var FRAMED=false;try{FRAMED=window.top!==window.self}catch(e){FRAMED=true}
+function navigate(u){if(!FRAMED){location.href=u;return}
+try{window.top.location.href=u;return}catch(e){}
+var w=null;try{w=window.open(u,"_blank");if(w)w.opener=null}catch(e){}
+if(!w)location.href=u}
+function linkTarget(a){if(FRAMED){a.target="_top"}}
+function goCheckout(shop,url){var u=safeUrl(url);if(!u)return;setTok(shop,"");delete views[shop];navigate(u)}
 var CSS=":host{display:block;font:inherit;color:inherit}*{box-sizing:border-box}"+
 ".card{border:1px solid var(--banto-border,#d0d7de);border-radius:var(--banto-radius,6px);padding:12px;background:var(--banto-bg,transparent);height:100%}"+
 "img{width:100%;aspect-ratio:1;object-fit:cover;display:block;border-radius:calc(var(--banto-radius,6px) - 2px);background:#f3f3f3}"+
@@ -101,13 +110,13 @@ var tmpl=attr(host,"product-url");
 api(shop,"/products?"+q.join("&")).then(function(r){
 if(!r.ok||!r.v.products||!r.v.products.length){grid.appendChild(el("p","muted",I.empty));return}
 r.v.products.forEach(function(p){var a=el("a","card");
-var href=tmpl&&tmpl.indexOf("{slug}")>=0?safeUrl(tmpl.split("{slug}").join(encodeURIComponent(p.slug))):BASE+"/"+encodeURIComponent(shop)+"/p/"+encodeURIComponent(p.slug);a.href=href||"#";
+var href=tmpl&&tmpl.indexOf("{slug}")>=0?safeUrl(tmpl.split("{slug}").join(encodeURIComponent(p.slug))):BASE+"/"+encodeURIComponent(shop)+"/p/"+encodeURIComponent(p.slug);a.href=href||"#";linkTarget(a);
 var src=safeUrl(p.thumb||p.image||"");if(src){var img=el("img");img.src=src;img.alt=p.name;img.loading="lazy";a.appendChild(img)}
 a.appendChild(el("div","name",p.name));if(p.min_price_jpy!=null)a.appendChild(el("div","price",I.from.replace("{price}",yen(p.min_price_jpy))));grid.appendChild(a)})})}});
 
 define("banto-buy-button",{connectedCallback:function(){if(this._done)return;this._done=1;var shop=attr(this,"shop"),sku=attr(this,"sku"),label=attr(this,"label")||I.addToCart;var qty=parseInt(attr(this,"qty"),10);if(!(qty>0))qty=1;var root=shadow(this);
 if(!shop||!sku){root.appendChild(el("span","muted",I.unavailable));return}
-if(attr(this,"mode")==="link"){var a=el("a","btn",label);a.href=BASE+"/"+encodeURIComponent(shop)+"/buy?sku="+encodeURIComponent(sku)+"&qty="+qty;root.appendChild(a);return}
+if(attr(this,"mode")==="link"){var a=el("a","btn",label);a.href=BASE+"/"+encodeURIComponent(shop)+"/buy?sku="+encodeURIComponent(sku)+"&qty="+qty;linkTarget(a);root.appendChild(a);return}
 var btn=el("button",null,label);btn.type="button";root.appendChild(btn);var msg=el("p","msg");msg.setAttribute("aria-live","polite");root.appendChild(msg);
 btn.addEventListener("click",function(){btn.disabled=true;msg.textContent="";cartOp(shop,{op:"add",sku_id:sku,qty:qty}).then(function(v){addedMsg(msg,shop,v)},function(e){msg.textContent=errText(e)}).then(function(){btn.disabled=false})})}});
 
