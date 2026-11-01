@@ -74,3 +74,27 @@ export async function sendAccountChangeNotice(
     }),
   }).catch((e: unknown) => console.error("[banto] account change notice:", e));
 }
+
+/**
+ * 退会を受け付けたことを本人に知らせる（0090）。会員の行はもう無いので、マイページへのボタンは付けない。
+ * 盗まれたセッションから退会されても本人が気づけるように、端末の印に関わらず送る。送信元が無ければ送らない
+ */
+export async function sendWithdrawNotice(
+  deps: NoticeDeps,
+  shop: { name: string; settings?: Record<string, unknown> | null },
+  m: { from: string | null | undefined; to: string | null | undefined; at?: Date },
+): Promise<void> {
+  if (!deps.mailer || !m.from || !m.to) return;
+  const time = formatDateTime((m.at ?? new Date()).toISOString());
+  const intro = tf("member.withdraw_intro", { email: m.to, time });
+  await sendMail(deps.mailer, {
+    from: m.from,
+    to: m.to,
+    subject: tf("member.withdraw_subject", { shop: shop.name }),
+    text: tf("member.withdraw_body", { intro, advice: t("member.withdraw_advice"), shop: shop.name }),
+    html: renderMailHtml(shop, {
+      heading: t("member.withdraw_heading"),
+      paragraphs: [intro, t("member.withdraw_advice")],
+    }),
+  }).catch((e: unknown) => console.error("[banto] withdraw notice:", e));
+}

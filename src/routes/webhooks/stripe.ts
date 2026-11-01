@@ -3,6 +3,7 @@ import type { AppEnv } from "../../app";
 import { createPrivilegedDb, PrivilegedRpcError, type OrderInput } from "../../db/privileged";
 import { createStripeClient, verifyStripeSignature, type CheckoutSession, type StripeEvent } from "../../payments/stripe";
 import type { Ctx } from "../common";
+import { PLATFORM_PAYMENT_ACCOUNT } from "../../orders/cancel";
 
 /**
  * Stripe Webhook（Connect: 接続済みアカウントのイベント）。
@@ -15,7 +16,11 @@ export const stripeWebhook = new Hono<AppEnv>();
 const CONFIRM_EVENTS = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded"]);
 const RELEASE_EVENTS = new Set(["checkout.session.expired", "checkout.session.async_payment_failed"]);
 
-export function orderInputFromSession(session: CheckoutSession): OrderInput {
+/**
+ * paymentAccount: 決済した口座（0090 の orders.payment_account）。Connect のイベントなら event.account、API キー方式（自分のアカウント）なら
+ * "platform" の印。返金はこの口座で行う（接続先を変えた後の旧注文も返金できる）
+ */
+export function orderInputFromSession(session: CheckoutSession, paymentAccount: string = PLATFORM_PAYMENT_ACCOUNT): OrderInput {
   const shipping = session.collected_information?.shipping_details ?? session.shipping_details ?? null;
   const address = shipping?.address ?? null;
   return {
@@ -38,6 +43,7 @@ export function orderInputFromSession(session: CheckoutSession): OrderInput {
     // 照合用（Banto の計算と違えば confirm_reservation が amount_mismatch で確定しない、0029）
     amount_paid_jpy: typeof session.amount_total === "number" ? session.amount_total : null,
     currency: typeof session.currency === "string" ? session.currency : null,
+    payment_account: paymentAccount,
   };
 }
 
@@ -105,12 +111,13 @@ stripeWebhook.post("/", async (c: Ctx) => {
   };
 
   try {
-    const orderId = await db.confirmReservation(reservationId, shopId, orderInputFromSession(session));
+    const orderId = await db.confirmReservation(reservationId, shopId, orderInputFromSession(session, typeof event.account === "string" ? event.account : PLATFORM_PAYMENT_ACCOUNT));
     await db.recordWebhookEvent("stripe", event.id);
     return c.json({ received: true, order_id: orderId });
   } catch (e) {
-    if (e instanceof PrivilegedRpcError && e.is("insufficient_stock_after_release")) {
-      // TTL 切れで在庫が他の人に渡ってしまった
+    if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock_after_release") || e.is("quote_superseded") || e.is("coupon_exhausted_after_release"))) {
+      // TTL 切れで在庫が他の人に渡ってしまった / 解放の後に同じ quote で出し直した予約が生きている / クーポンの先着枠が埋まった（0090）。
+      // どれも確定できないので返金して、イベントは済みにする
       const refunded = await refund();
       await db.recordWebhookEvent("stripe", event.id);
       return c.json({ received: true, refunded });

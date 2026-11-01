@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asService, closePool, createShopFixture, dbAvailable, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asService, closePool, createShopFixture, dbAvailable, getPool, resetDatabase, type Fixture } from "./harness";
 
 describe.skipIf(!dbAvailable)("配送の指定（0018_delivery）", () => {
   let f: Fixture;
@@ -10,7 +10,7 @@ describe.skipIf(!dbAvailable)("配送の指定（0018_delivery）", () => {
   afterAll(closePool);
 
   const reserve = () => asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty: 1 }])])).rows[0]!.id);
-  const confirm = (id: string) => asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [id, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: `pi_${id}` })])).rows[0]!.id);
+  const confirm = (id: string) => asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [id, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: `pi_${id}` })])).rows[0]!.id);
 
   it("予約の customer.delivery を注文に写す。無ければ null", async () => {
     const r1 = await reserve();

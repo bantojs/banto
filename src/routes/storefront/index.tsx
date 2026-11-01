@@ -67,10 +67,20 @@ const data = storefrontData;
  *  - 使わない画面: GET は外のサイトへ 302、それ以外は 404
  *  - <head>: ON の同梱モジュールが返す決まった形のタグを、HTML の応答の </head> の前に入れる（ルートが積んだ出来事を渡す）
  */
+function safeDecode(s: string): string | null {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
+}
+
 storefront.use("*", async (c, next) => {
   const m = /^\/([^/]+)(\/.*)?$/.exec(c.req.path);
   const sf = m && !m[1]!.startsWith("_") && !m[1]!.includes(".") ? data(c) : null;
-  const shop = sf ? await sf.shopBySlug(decodeURIComponent(m![1]!)).catch(() => null) : null;
+  // 壊れたパーセント符号（/%E0%A4%A）で 500 にしない: 直せなければショップ無しとして次へ
+  const slug = sf ? safeDecode(m![1]!) : null;
+  const shop = sf && slug !== null ? await sf.shopBySlug(slug).catch(() => null) : null;
   if (!shop) return next();
   const target = blockedTarget(storefrontSettings(shop.settings), m![2] ?? "");
   if (target) {

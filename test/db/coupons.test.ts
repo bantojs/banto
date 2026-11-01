@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 /** ゲストの subject（メールアドレスの SHA-256。メールアドレスそのものは DB に置かない） */
 const guest = (email: string) => `e:${createHash("sha256").update(email.trim().toLowerCase()).digest("hex")}`;
@@ -26,7 +26,7 @@ describe.skipIf(!dbAvailable)("クーポン（0010_coupons）", () => {
       (await c.query<{ r: Record<string, unknown> }>("select apply_reservation_discounts($1, $2, $3, $4::jsonb) as r", [resId, f.shopId, subject, JSON.stringify({ total_jpy: total, lines, applied })])).rows[0]!.r,
     );
   const confirm = (resId: string, order: Record<string, unknown> = { payment_provider: "stripe", payment_ref: "pi_1" }) =>
-    asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify(order)])).rows[0]!.id);
+    asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify(order)])).rows[0]!.id);
   const release = (resId: string) => asService(async (c) => (await c.query<{ ok: boolean }>("select release_reservation($1, $2) as ok", [resId, f.shopId])).rows[0]!.ok);
   const lookup = (codes: string[], subject: string | null = null, shop: Fixture = f) =>
     asService(async (c) => (await c.query<{ r: Record<string, unknown>[] }>("select coupon_lookup($1, $2, $3) as r", [shop.shopId, codes, subject])).rows[0]!.r);

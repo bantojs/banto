@@ -400,7 +400,7 @@ orders.post("/:shopId/orders/:orderId/status", requireOwner, async (c: AdminCont
     try {
       // 監査ログ（0051）に「誰がキャンセルしたか」を残すため、特権経路でも運営者を名乗る
       const privileged = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch, actor: actorHeader("user", session.user_id) });
-      const r = await cancelOrderWithRefund(privileged, orderId, shopId, { config: cfg, fetch: c.get("deps").fetch, stripeAccountId: shop.stripe_account_id });
+      const r = await cancelOrderWithRefund(privileged, orderId, shopId, { config: cfg, fetch: c.get("deps").fetch, stripeAccountId: shop.stripe_account_id, migrationState: { db, cache: c.get("adapters").cache } });
       return c.redirect(`${back}?flash=${r.refunded ? "refunded" : "cancelled"}`);
     } catch (e) {
       if (e instanceof CancelError) return c.redirect(`${back}?flash=${e.code === "refund_failed" ? "refund_failed" : e.code === "not_cancellable" ? "not_cancellable" : "generic"}`);

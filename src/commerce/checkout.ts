@@ -636,7 +636,7 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
   // 金額は recheckQuote で引き直したもの（購入者の入力は信じない）
   if (input.subtotal + quote.shipping - discount.total === 0) {
     try {
-      const orderId = await deps.privileged.confirmReservation(reservationId, shop.id, { payment_provider: FREE_PROVIDER, payment_ref: `free-${reservationId}`, amount_paid_jpy: 0 });
+      const orderId = await deps.privileged.confirmReservation(reservationId, shop.id, { payment_provider: FREE_PROVIDER, payment_ref: `free-${reservationId}`, amount_paid_jpy: 0, currency: "jpy" });
       return { ok: true, url: input.successUrl, reservationId, free: { orderId } };
     } catch (e) {
       await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asAnon, asService, asUser, closePool, createShopFixture, CUSTOMER_COLUMNS, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createShopFixture, CUSTOMER_COLUMNS, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 describe.skipIf(!dbAvailable)("運用 RPC（0006_ops）", () => {
   let f: Fixture;
@@ -30,7 +30,7 @@ describe.skipIf(!dbAvailable)("運用 RPC（0006_ops）", () => {
     // 元ショップに注文を 1 件作る（予約 → 確定）
     const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty: 2 }])])).rows[0]!.id);
     await asService((c) => c.query("select attach_reservation_customer($1, $2, $3::jsonb)", [resId, f.shopId, JSON.stringify({ customer_email: "a@example.com", customer_name: "A", shipping_address: { state: "東京都" }, shipping_jpy: 500 })]));
-    const orderId = await asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_1" })])).rows[0]!.id);
+    const orderId = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_1" })])).rows[0]!.id);
     await getPool().query("insert into product_images (shop_id, product_id, storage_key, thumb_key, width, height) values ($1, $2, 'shops/x/a.webp', 'shops/x/a.thumb.webp', 1600, 1200)", [f.shopId, f.productId]);
     await getPool().query("insert into hook_endpoints (shop_id, name, url, events, settings) values ($1, 'crm', 'https://crm.example/hook', '{order.paid}', '{\"to\":\"x\"}')", [f.shopId]);
 

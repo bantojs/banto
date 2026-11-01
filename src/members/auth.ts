@@ -35,7 +35,28 @@ async function hmacHex(secret: string, purpose: string, value: string): Promise<
 /** コード・トークン・IP の HMAC（用途ごとに鍵を分ける） */
 export const codeHash = (secret: string, code: string) => hmacHex(secret, "code", code);
 export const linkHash = (secret: string, token: string) => hmacHex(secret, "link", token);
-export const ipHash = (secret: string, ip: string) => hmacHex(secret, "ip", ip);
+export const ipHash = (secret: string, ip: string) => hmacHex(secret, "ip", ipBucket(ip));
+
+/**
+ * 回数の制限で「同じ IP」とみなす単位。IPv4 はそのまま、IPv6 は上位 64 ビット（/64）に丸める
+ * （1 台の端末が 1 つの /64 の中で IP をいくらでも変えられるので、そのままでは IP ごとの上限が効かない）。
+ * IPv4 射影（::ffff:1.2.3.4）は中の IPv4。形が読めなければそのまま返す
+ */
+export function ipBucket(ip: string): string {
+  const s = ip.trim().toLowerCase();
+  if (!s.includes(":")) return s;
+  const v4 = /^(?:0*:)*:?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(s);
+  if (v4) return v4[1]!;
+  const halves = s.split("::");
+  if (halves.length > 2) return s;
+  const head = halves[0] === "" ? [] : halves[0]!.split(":");
+  const tail = halves.length === 2 && halves[1] !== "" ? halves[1]!.split(":") : [];
+  const missing = 8 - head.length - tail.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return s;
+  const groups = [...head, ...Array<string>(missing).fill("0"), ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return s;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
 /** 在庫予約・試着の「同じ人」（会員 ID かメールアドレス）の HMAC（0029） */
 export const subjectHash = (secret: string, who: string) => hmacHex(secret, "subject", who);
 /** パスキーの challenge の HMAC（0046。DB には生の値を置かない） */

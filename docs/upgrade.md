@@ -138,6 +138,12 @@ npm run deploy
 
 - **0073_plan_theme_limit（プランの上限にテーマの版の数）**: `plan_limits` に `theme_versions` を置けるようになります（この Banto 全体で置けるテーマの版の数。0 なら Liquid のテーマを取り込めません）。Banto をホスティングして貸す人向けで、セルフホストでは置かなくてかまいません。
 - **0074_theme_preview（テーマのプレビューと描く条件）**: テーマのプレビューに、版に保存した設定の値が効くようになります。`plan_limits.theme_versions` が 0 のときは、公開中の版も描かなくなります。当てるまでは、プレビューはテーマのファイルの値で描き、描く条件は Workers のプランだけです。
+- **0090_security_hardening_4（守りの締め直し 4）**: 次のリリースに入るデータベースの変更です。当てると次が変わります。
+  - **会員の「ログインしてから 15 分以内」の起点**を `member_sessions.authenticated_at`（ログインを確かめた時刻）で数えます。パスワードの変更などでセッションを作り直しても起点は若返りません（`member_session_start` の `p_authenticated_at`。既存の行はセッションを作った時刻で埋めます）。
+  - **退会・LINE / Google の連携の解除・パスキーの削除・全端末ログアウト**は、ログインしてから 15 分以内のセッションだけになります（`member_withdraw` / `member_unlink_identity` / `member_passkey_delete` / `member_logout_all` の `p_session_id`。過ぎていれば `reauth_required` で、入り直してからやり直します）。退会したときは本人に知らせのメールが届きます（送信元はメール通知プラグインの設定。無ければ送りません）。**このリリースの Worker に更新すると `p_session_id` を必ず渡します**（当てるまでの古いデータベースでは今までどおり世代だけで確かめます）。
+  - **ログインのコードの発行**: 宛先ごとの 1 日 30 通の枠が埋まっていても、その宛先にまだ出していない IP からの最初の 1 通は 1 日 5 通まで通します（他人が本人の枠を使い切っても、本人の端末からは入れます）。IP ごとの上限は変わりません。
+  - **注文の確定（`confirm_reservation`）は支払額と通貨を必ず受け取ります**。額が無い・整数でない・通貨が無い・`jpy` でないときは `amount_mismatch` で確定しません（Webhook が返金します）。0 円の確定（`payment_provider = 'free'`）は合計が 0 のときだけです。注文に決済の口座（`orders.payment_account`、Stripe Connect の接続先か API キー方式の印）が残り、接続先を変えた後の旧注文の返金に使います。解放済みの予約を遅れて確定するとき、同じ見積もりで出し直した予約が生きていれば `quote_superseded`、クーポンの先着枠が残っていなければ `coupon_exhausted_after_release` で確定せず、在庫が足りないとき（`insufficient_stock_after_release`）と同じく返金します。自前で `confirm_reservation` を呼ぶ連携は `amount_paid_jpy` と `currency` を渡してください。
+  - **お店で試着**: 申し込んだまま（`requested`）店が扱わずに 14 日（`settings.store_tryon.request_days`）過ぎたものは、Cron が期限切れ（`expired`）にして在庫を EC に戻します（`tryon.updated` の hooks が出ます）。
 - **0089_security_hardening_3（守りの締め直し 3）**: 次のリリースに入るデータベースの変更です。当てると次が変わります。
   - **在庫の数は匿名から読めなくなります**（`inventory` の公開の読み取りを外し、お店の画面とヘッドレスは `product_public_stock` で 0〜99 の段階値だけを受け取ります。100 以上は 99）。自前で anon キーから `inventory` を読んでいた連携は `product_public_stock(p_shop_id, p_sku_ids)`（SKU は 200 個まで）に変えてください。
   - **ゲストの注文照会（番号とメールアドレス）は会員の注文を返しません**（会員の注文は会員のログイン・会員トークンで。docs/headless.md「注文照会・領収書」）。外れた照会はメールアドレスごと（1 時間 20 回）とショップ全体（1 時間 200 回、`settings.order_lookup.per_hour`）でも数えます。

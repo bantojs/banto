@@ -68,6 +68,8 @@ describe("orderInputFromSession", () => {
       // amount_total が無いセッション（古いイベント）では照合しない
       amount_paid_jpy: null,
       currency: null,
+      // 決済した口座（0090）。account を渡さなければ API キー方式の印
+      payment_account: "platform",
     });
   });
 });

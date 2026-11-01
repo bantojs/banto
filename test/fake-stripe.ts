@@ -82,6 +82,7 @@ export class FakeStripe {
           payment_status: paid ? "paid" : "unpaid",
           payment_intent: s.payment_intent,
           amount_total: this.amountTotal(s.params),
+          currency: "jpy",
           client_reference_id: s.params.get("client_reference_id"),
           metadata: metadataOf(s.params),
           customer_details: { email: "buyer@example.com", name: "山田 太郎", phone: "+819012345678" },

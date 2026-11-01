@@ -2368,4 +2368,9 @@ export const en: Record<MessageKey, string> = {
   "passkey.add_cancel": "Cancel and go back to the original site",
   "pages.body_too_large": "The body is too large.",
   "inq.sent_nonumber": "We received your inquiry.",
+  "member.withdraw_subject": "[{shop}] Your account has been closed",
+  "member.withdraw_heading": "Your account has been closed",
+  "member.withdraw_intro": "At {time}, the member account for {email} was closed. The member information has been deleted (order records remain).",
+  "member.withdraw_advice": "If this was you, you can discard this email. If you do not recognize this, please contact the shop.",
+  "member.withdraw_body": "{intro}\n\n{advice}\n\n{shop}",
 };

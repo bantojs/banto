@@ -4,17 +4,17 @@ import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
 import { consentCollected, returnOrigins, safeReturnUrl } from "../../commerce/checkout";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import { SECURITY_HARDENING_4_MIGRATION, StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
 import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import { randomToken } from "../../util/signed";
-import { sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
+import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
-import type { PrivilegedDb } from "../../db/privileged";
+import { PrivilegedRpcError, type PrivilegedDb } from "../../db/privileged";
 import { PASSKEY_MODULE } from "../../modules/passkey";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
 import { receiptAvailable, receiptData } from "../../modules/receipt/data";
@@ -109,11 +109,23 @@ export async function memberFromRequest(c: Ctx, shop: PublicShop): Promise<{ ok:
  * ログインに成功した会員にトークンを渡す。この端末のセッションの行（0045）を作る。
  * 世代が変わっていた（ログインの途中で全端末からログアウトされた等）なら null
  */
-async function grant(c: Ctx, db: PrivilegedDb, secret: string, shopId: string, customerId: string, epoch: number) {
-  const sid = await db.memberSessionStart(shopId, customerId, epoch, "api", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS);
+/** authenticatedAt: セッションを作り直すとき（パスワードの設定）に引き継ぐ「ログインを確かめた時刻」（0090）。「ログインから 15 分」の起点が若返らない */
+async function grant(c: Ctx, db: PrivilegedDb, secret: string, shopId: string, customerId: string, epoch: number, authenticatedAt?: string | null) {
+  const sid = await db.memberSessionStart(shopId, customerId, epoch, "api", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS, authenticatedAt);
   if (!sid) return null;
   return issueTokens(secret, shopId, customerId, epoch, { sid, gen: 0, expiresAt: Math.floor(Date.now() / 1000) + SESSION_ABSOLUTE_SECONDS });
 }
+
+/** 0090 が当たっているか（会員の再認証・セッションの authenticated_at）。anon キーが無ければ false（古い関数の形で呼ぶ） */
+async function hardened4(c: Ctx): Promise<boolean> {
+  const cfg = c.get("adapters").config;
+  const url = cfg.get("SUPABASE_URL");
+  const anonKey = cfg.get("SUPABASE_ANON_KEY");
+  if (!url || !anonKey) return false;
+  return new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache).migratedTo(SECURITY_HARDENING_4_MIGRATION);
+}
+
+const isReauthRequired = (e: unknown): boolean => e instanceof PrivilegedRpcError && e.is("reauth_required");
 
 async function shopFor(c: Ctx, slug: string = param(c, "shop")): Promise<PublicShop | null> {
   const cfg = c.get("adapters").config;
@@ -304,10 +316,20 @@ membersApi.post("/shops/:shop/members/withdraw", async (c: Ctx) => {
   const s = await bearerMember(c);
   if (s instanceof Response) return s;
   if ((await body(c))["confirm"] !== true) return c.json({ error: "confirm_required" }, 400);
-  const db = privilegedFor(c);
-  if (!db) return c.json({ error: "not_configured" }, 503);
-  const ok = await db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch);
-  return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
+  const deps = loginDeps(c);
+  if (!deps) return c.json({ error: "not_configured" }, 503);
+  let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
+  try {
+    // 0090: ログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth_required。連携側はログインし直させる）
+    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid && (await hardened4(c)) ? s.member.sid : undefined);
+  } catch (e) {
+    if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
+    throw e;
+  }
+  if (!r.ok) return c.json({ error: "invalid_member_token" }, 401);
+  // 本人に知らせる（盗まれたトークンから退会されても気づけるように。送信元が無ければ送らない）
+  if (r.mail_from && r.email) await afterResponse(c, sendWithdrawNotice(deps, s.shop, { from: r.mail_from, to: r.email }));
+  return c.json({ ok: true });
 });
 
 /** 会員の注文 1 件（0066。注文照会のページで会員の注文を開くとき。住所・アドレスは返さない） */
@@ -363,8 +385,14 @@ membersApi.post("/shops/:shop/members/logout-all", async (c: Ctx) => {
   if (s instanceof Response) return s;
   const db = privilegedFor(c);
   if (!db) return c.json({ error: "not_configured" }, 503);
-  const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch);
-  return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
+  try {
+    // 0090: ログインしてから 15 分以内のセッションだけ
+    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid && (await hardened4(c)) ? s.member.sid : undefined);
+    return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
+  } catch (e) {
+    if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
+    throw e;
+  }
 });
 
 membersApi.post("/shops/:shop/members/password-login", async (c: Ctx) => {
@@ -397,7 +425,8 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   if (!r.ok) return r.reason === "reauth" ? c.json({ error: "reauth" }, 403) : c.json({ error: "invalid_member_token" }, 401);
   // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
   if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
-  const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch);
+  // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）。古い DB には渡さない
+  const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, (await hardened4(c)) ? r.authenticated_at : undefined);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });
 

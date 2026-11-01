@@ -115,7 +115,13 @@ describe.skipIf(!dbAvailable)("会員のログイン（0012_member_auth）", () 
 
   it("発行の上限（0029）: アドレス全体で 1 日 30 通、ショップ全体で 1 時間 100 通・1 日 500 通（settings.members_login_limits で変更）", async () => {
     await getPool().query("insert into member_login_challenges (shop_id, email, code_hash, link_hash, ip_hash, created_at, expires_at, consumed_at) select $1, 'bomb@example.com', $2, $2, md5(g::text) || md5((g * 7)::text), now() - interval '2 hours', now(), now() from generate_series(1, 30) g", [a.shopId, h("x")]);
+    // 0090: 宛先の枠が埋まっていても、この宛先にまだ出していない IP からの最初の 1 通は通る（宛先ごと 1 日 5 通まで）。同じ IP の 2 通目は通らない
+    expect((await start(a.shopId, "bomb@example.com", "730000", { ip: "203.0.113.50" })).send).toBe(true);
     expect((await start(a.shopId, "bomb@example.com", "730000", { ip: "203.0.113.50" })).send).toBe(false);
+    for (let i = 1; i <= 4; i++) expect((await start(a.shopId, "bomb@example.com", "730000", { ip: `203.0.113.${50 + i}` })).send).toBe(true);
+    expect((await start(a.shopId, "bomb@example.com", "730000", { ip: "203.0.113.60" })).send).toBe(false);
+    // IP が分からないときは通らない
+    expect((await start(a.shopId, "bomb@example.com", "730000")).send).toBe(false);
     expect((await start(a.shopId, "someone-else@example.com", "730001", { ip: "203.0.113.50" })).send).toBe(true);
     await getPool().query("delete from member_login_challenges");
     await getPool().query("update shops set settings = settings || '{\"members_login_limits\": {\"per_hour\": \"2\"}}' where id = $1", [a.shopId]);
@@ -154,8 +160,8 @@ describe.skipIf(!dbAvailable)("会員のログイン（0012_member_auth）", () 
     expect(await get(0)).toBeNull();
     expect(await get(1)).toMatchObject({ customer: { name: "会員 花子", default_address: { state: "東京都" } } });
     expect(await expectDbError(() => attach(0))).toMatch(/member_session_invalid/);
-    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 0) as ok", [a.shopId, v.customer_id])).rows[0].ok)).toBe(false);
-    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 1) as ok", [a.shopId, v.customer_id])).rows[0].ok)).toBe(true);
+    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 0) as r", [a.shopId, v.customer_id])).rows[0].r)).toEqual({ ok: false });
+    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 1) as r", [a.shopId, v.customer_id])).rows[0].r)).toEqual({ ok: true, email: "epoch@example.com", mail_from: expect.any(String) });
   });
 
   it("運営者によるメールアドレスの変更: 自分の店だけ。重複は不可。世代が上がり、未使用のコードは無効", async () => {

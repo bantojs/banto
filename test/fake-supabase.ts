@@ -2553,6 +2553,19 @@ export class FakeSupabase {
   }
 
   /** 0045 の banto_member_session_live: 取り消されていない・期限内・世代が今と同じ */
+  /** ログインを確かめた時刻（0090 の authenticated_at。無ければ作った時刻）のエポックミリ秒 */
+  private sessionAuthAt(ms: Row): number {
+    return Date.parse(String(ms["authenticated_at"] ?? ms["created_at"]));
+  }
+
+  /** 0090: p_session_id を渡された操作は、ログインを確かめてから 15 分以内の生きたセッションだけ。満たさなければ reauth_required */
+  private reauthGuard(shopId: unknown, customerId: unknown, epoch: unknown, sessionId: unknown, now: number): Response | null {
+    if (!sessionId) return null;
+    const ms = this.liveMemberSession(shopId, customerId, epoch, sessionId, now);
+    if (!ms || now - this.sessionAuthAt(ms) > 15 * 60_000) return json({ code: "P0001", message: "reauth_required" }, 400);
+    return null;
+  }
+
   private liveMemberSession(shopId: unknown, customerId: unknown, epoch: unknown, sessionId: unknown, now: number): Row | null {
     const c = this.tables.customers.find((x) => x["id"] === customerId && x["shop_id"] === shopId);
     const ms = this.memberSessions.find((x) => x["id"] === sessionId && x["shop_id"] === shopId && x["customer_id"] === customerId);
@@ -2731,12 +2744,17 @@ export class FakeSupabase {
         return json(true);
       }
       case "member_withdraw": {
+        // 0090: 15 分以内の再認証、戻り値は { ok, email, mail_from }（本人に知らせる）
+        const guard = this.reauthGuard(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
+        if (guard) return guard;
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);
-        if (!c) return json(false);
+        if (!c) return json({ ok: false });
         this.tables.customers.splice(this.tables.customers.indexOf(c), 1);
-        return json(true);
+        return json({ ok: true, email: c["email"] ?? null, mail_from: this.mailFrom(shopId) });
       }
       case "member_logout_all": {
+        const guard = this.reauthGuard(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
+        if (guard) return guard;
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);
         if (!c) return json(false);
         c["session_epoch"] = Number(c["session_epoch"] ?? 0) + 1;
@@ -2779,12 +2797,13 @@ export class FakeSupabase {
         // 0057: ログインしてから 15 分以内のセッションだけ。今のセッションの行を新しい世代に付け替える
         const ms = this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now());
         if (!ms) return json({ ok: false, reason: "session" });
-        if (Date.now() - Date.parse(String(ms["created_at"])) > 15 * 60 * 1000) return json({ ok: false, reason: "reauth" });
+        if (Date.now() - this.sessionAuthAt(ms) > 15 * 60 * 1000) return json({ ok: false, reason: "reauth" });
         c["password_hash"] = `fake$${pw}`;
         c["legacy_password_hash"] = null;
         c["session_epoch"] = Number(c["session_epoch"] ?? 0) + 1;
         ms["session_epoch"] = c["session_epoch"];
-        return json({ ok: true, epoch: c["session_epoch"], email: c["email"] ?? null, mail_from: this.mailFrom(shopId) });
+        // 0090: ログインを確かめた時刻は変えない（Worker がセッションを作り直すときに引き継ぐ）
+        return json({ ok: true, epoch: c["session_epoch"], email: c["email"] ?? null, mail_from: this.mailFrom(shopId), authenticated_at: new Date(this.sessionAuthAt(ms)).toISOString() });
       }
       case "import_member_passwords": {
         const out = { imported: 0, created: 0, skipped_format: 0, skipped_has_password: 0, skipped_invalid_email: 0 };
@@ -2821,7 +2840,7 @@ export class FakeSupabase {
           // 0057: 連携はログインしてから 15 分以内のセッションだけ
           const ms = this.liveMemberSession(shopId, args["p_link_customer_id"], args["p_link_epoch"], args["p_link_session_id"], Date.now());
           if (!ms) return json({ ok: false, reason: "session" });
-          if (Date.now() - Date.parse(String(ms["created_at"])) > 15 * 60 * 1000) return json({ ok: false, reason: "reauth" });
+          if (Date.now() - this.sessionAuthAt(ms) > 15 * 60 * 1000) return json({ ok: false, reason: "reauth" });
           if (ident && ident["customer_id"] !== args["p_link_customer_id"]) return json({ ok: false, reason: "already_linked" });
           if (!ident) {
             if (this.memberIdentities.some((i) => i["shop_id"] === shopId && i["customer_id"] === args["p_link_customer_id"] && i["provider"] === provider)) return json({ ok: false, reason: "other_linked" });
@@ -2848,6 +2867,8 @@ export class FakeSupabase {
         return json({ ok: true, customer_id: c["id"], session_epoch: Number(c["session_epoch"] ?? 0), email: c["email"] ?? null, created, linked, mail_from: args["p_link_customer_id"] && linked ? this.mailFrom(shopId) : null });
       }
       case "member_unlink_identity": {
+        const guard = this.reauthGuard(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
+        if (guard) return guard;
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);
         if (!c) return json(false);
         if (!c["email"]) return json({ code: "P0001", message: "last_login_method" }, 400);
@@ -2879,7 +2900,9 @@ export class FakeSupabase {
       case "member_session_start": {
         if (!findCustomer(args["p_customer_id"], args["p_epoch"])) return json(null);
         const id = crypto.randomUUID();
-        this.memberSessions.push({ id, shop_id: shopId, customer_id: args["p_customer_id"], session_epoch: args["p_epoch"], kind: args["p_kind"], label: args["p_label"] ?? null, refresh_gen: 0, rotated_at: null, created_at: new Date(now).toISOString(), last_seen_at: new Date(now).toISOString(), expires_at: now + Number(args["p_ttl_seconds"]) * 1000, revoked_at: null });
+        // 0090: ログインを確かめた時刻を引き継げる（今より未来にはしない）。渡されなければ created_at と同じ扱い（sessionAuthAt）
+        const authAt = typeof args["p_authenticated_at"] === "string" ? Math.min(Date.parse(args["p_authenticated_at"]), now) : null;
+        this.memberSessions.push({ id, shop_id: shopId, customer_id: args["p_customer_id"], session_epoch: args["p_epoch"], kind: args["p_kind"], label: args["p_label"] ?? null, refresh_gen: 0, rotated_at: null, created_at: new Date(now).toISOString(), last_seen_at: new Date(now).toISOString(), expires_at: now + Number(args["p_ttl_seconds"]) * 1000, revoked_at: null, ...(authAt !== null && Number.isFinite(authAt) ? { authenticated_at: new Date(authAt).toISOString() } : {}) });
         return json(id);
       }
       case "member_session_check":
@@ -2926,7 +2949,7 @@ export class FakeSupabase {
         if (!args["p_session_id"] || !this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now)) return json({ ok: false, reason: "session" });
         const ms = this.memberSessions.find((x) => x["id"] === args["p_session_id"])!;
         if (ms["kind"] !== "api") return json({ ok: false, reason: "session" });
-        if (now - Date.parse(String(ms["created_at"])) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
+        if (now - this.sessionAuthAt(ms) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
         const id = crypto.randomUUID();
         this.passkeyTickets.push({ id, shop_id: shopId, customer_id: args["p_customer_id"], epoch: args["p_epoch"], session_id: args["p_session_id"], token_hash: args["p_token_hash"], expires_at: now + 120_000, used_at: null });
         return json({ ok: true, id });
@@ -2952,7 +2975,7 @@ export class FakeSupabase {
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);
         if (!c || !this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now)) return json({ ok: false, reason: "session" });
         const ms = this.memberSessions.find((x) => x["id"] === args["p_session_id"])!;
-        if (ms["kind"] !== "web" || now - Date.parse(String(ms["created_at"])) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
+        if (ms["kind"] !== "web" || now - this.sessionAuthAt(ms) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
         const mine = this.memberPasskeys.filter((k) => k["shop_id"] === shopId && k["customer_id"] === c["id"]);
         if (mine.length >= 10) return json({ ok: false, reason: "too_many" });
         this.passkeyChallenges.push(row);
@@ -2999,6 +3022,8 @@ export class FakeSupabase {
           .map((k) => ({ id: k["id"], label: k["label"], created_at: k["created_at"], last_used_at: k["last_used_at"], backed_up: k["backed_up"], usable: k["rp_id"] === shop?.["domain"] })));
       }
       case "member_passkey_delete": {
+        const guard = this.reauthGuard(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
+        if (guard) return guard;
         if (!findCustomer(args["p_customer_id"], args["p_epoch"])) return json(false);
         const i = this.memberPasskeys.findIndex((k) => k["id"] === args["p_id"] && k["shop_id"] === shopId && k["customer_id"] === args["p_customer_id"]);
         if (i < 0) return json(false);
@@ -3281,18 +3306,27 @@ export class FakeSupabase {
       const existing = this.tables.orders.find((o) => o["reservation_id"] === res["id"]);
       if (existing) return json(existing["id"]);
       const items = res["items"] as { sku_id: string; qty: number; unit_price_jpy: number }[];
-      if (res["status"] === "released") {
-        for (const it of items) if ((inv(it.sku_id)!["available"] as number) < it.qty) return fail("insufficient_stock_after_release");
-        for (const it of items) inv(it.sku_id)!["available"] = (inv(it.sku_id)!["available"] as number) - it.qty;
-      }
       const order = (args["p_order"] ?? {}) as Record<string, unknown>;
       const cust = (res["customer"] ?? {}) as Record<string, unknown>;
       const shipping = Number(res["shipping_jpy"] ?? 0);
       const discount = Number(res["discount_jpy"] ?? 0);
-      // 0029: 支払額・通貨が Banto の計算と違えば確定しない（在庫も動かさない）
+      // 0029 / 0090: 支払額は整数で必須、通貨は jpy で必須。Banto の計算と違えば確定しない（在庫も動かさない）。free は 0 円だけ
       const expected = Math.max(0, items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0) + shipping - discount);
-      if (typeof order["amount_paid_jpy"] === "number" && order["amount_paid_jpy"] !== expected) return fail("amount_mismatch");
-      if (typeof order["currency"] === "string" && order["currency"].toLowerCase() !== "jpy") return fail("amount_mismatch");
+      if (!/^-?[0-9]{1,9}$/.test(String(order["amount_paid_jpy"] ?? "")) || Number(order["amount_paid_jpy"]) !== expected) return fail("amount_mismatch");
+      if (!/^jpy$/i.test(String(order["currency"] ?? "").trim())) return fail("amount_mismatch");
+      if (order["payment_provider"] === "free" && expected !== 0) return fail("amount_mismatch");
+      if (res["status"] === "released") {
+        // 0090: 解放の後に同じ quote で出し直した予約が生きていれば、こちらは古い（Worker が返金する）
+        if (res["quote_id"] && this.tables.reservations.some((r) => r["shop_id"] === res["shop_id"] && r["quote_id"] === res["quote_id"] && r["id"] !== res["id"] && ["pending", "confirmed"].includes(String(r["status"])))) return fail("quote_superseded");
+        for (const it of items) if ((inv(it.sku_id)!["available"] as number) < it.qty) return fail("insufficient_stock_after_release");
+        // 0090: クーポンの先着枠が残っていなければ確定しない
+        for (const r of this.tables.coupon_redemptions) {
+          if (r["reservation_id"] !== res["id"] || r["status"] !== "released") continue;
+          const camp = this.tables.coupon_campaigns.find((k) => k["id"] === r["campaign_id"]);
+          if (camp?.["usage_limit"] != null && this.couponUses(camp["id"]) >= Number(camp["usage_limit"])) return fail("coupon_exhausted_after_release");
+        }
+        for (const it of items) inv(it.sku_id)!["available"] = (inv(it.sku_id)!["available"] as number) - it.qty;
+      }
       const id = `order-${++this.seq}`;
       const shopRow = this.tables.shops.find((x) => x["id"] === res["shop_id"])!;
       shopRow["order_seq"] = Number(shopRow["order_seq"] ?? 1000) + 1;
@@ -3313,7 +3347,8 @@ export class FakeSupabase {
         shipping_address: cust["shipping_address"] ?? order["shipping_address"] ?? null, payment_provider: order["payment_provider"] ?? null,
         // 0018 のトリガー: 予約の customer.delivery を写す
         delivery: cust["delivery"] && typeof cust["delivery"] === "object" ? cust["delivery"] : null,
-        payment_ref: order["payment_ref"] ?? null, shipped_at: null, created_at: this.now(), updated_at: this.now(),
+        payment_ref: order["payment_ref"] ?? null, payment_account: typeof order["payment_account"] === "string" && order["payment_account"].trim() ? order["payment_account"].trim().slice(0, 200) : null,
+        shipped_at: null, created_at: this.now(), updated_at: this.now(),
       });
       for (const it of items) {
         const row: Row = { id: `oi-${++this.seq}`, shop_id: res["shop_id"], order_id: id, sku_id: it.sku_id, qty: it.qty, unit_price_jpy: it.unit_price_jpy, discount_jpy: Number((it as Row)["discount_jpy"] ?? 0) };

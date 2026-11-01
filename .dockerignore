@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler
+test
+docs
+*.log

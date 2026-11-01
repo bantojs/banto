@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, withRole, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, withRole, type Fixture } from "./harness";
 
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 
@@ -34,7 +34,7 @@ describe.skipIf(!dbAvailable)("監査ログ（0051_audit_log）", () => {
   async function order(shop: Fixture): Promise<{ id: string; number: number }> {
     const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [shop.shopId, items(shop.skuId, 1)])).rows[0]!.id);
     await asService((c) => c.query("select attach_reservation_customer($1, $2, $3::jsonb)", [resId, shop.shopId, JSON.stringify({ customer_email: "buyer@example.com", customer_name: "買い手", shipping_address: {}, shipping_jpy: 0 })]));
-    const id = await asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, shop.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: `pi_${resId}` })])).rows[0]!.id);
+    const id = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, shop.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: `pi_${resId}` })])).rows[0]!.id);
     const number = (await getPool().query<{ number: number }>("select number from orders where id = $1", [id])).rows[0]!.number;
     return { id, number };
   }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 const h = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -18,7 +18,7 @@ describe.skipIf(!dbAvailable)("予約の上限と支払額の照合（0029_reser
     );
   const release = (id: string) => asService((c) => c.query("select release_reservation($1, $2)", [id, f.shopId]));
   const confirm = (id: string, order: Record<string, unknown>) =>
-    asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [id, f.shopId, JSON.stringify(order)])).rows[0]!.id);
+    asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [id, f.shopId, JSON.stringify(order)])).rows[0]!.id);
   const available = async () => (await getPool().query<{ available: number }>("select available from inventory where sku_id = $1", [f.skuId])).rows[0]!.available;
 
   beforeAll(async () => {

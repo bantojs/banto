@@ -18,6 +18,7 @@ import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
 import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checkout";
 import { shopHome } from "../storefront/urls";
+import { SECURITY_HARDENING_4_MIGRATION } from "../storefront/data";
 import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
@@ -288,9 +289,11 @@ export class ApiService {
     if (info.status === "cancelled" || info.status === "refunded") return this.orderGet(id);
     if (info.status !== "paid") throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
     const shop = await this.call<{ shop_id: string; stripe_account_id?: string | null }>("api_token_shop", {});
+    // 0090: 決済した口座で返金する（列は 0090 から）
+    const payment_account = (await this.migratedTo(SECURITY_HARDENING_4_MIGRATION)) ? await this.db.orderPaymentAccount(id, shop.shop_id) : null;
     let refunded = false;
     try {
-      refunded = await refundPayment(info, { config: this.config, fetch: this.fetchImpl, stripeAccountId: shop.stripe_account_id ?? null, idempotencyKey: `cancel-${id}` });
+      refunded = await refundPayment({ ...info, payment_account }, { config: this.config, fetch: this.fetchImpl, stripeAccountId: shop.stripe_account_id ?? null, idempotencyKey: `cancel-${id}` });
     } catch (e) {
       throw new ApiError("upstream", `refund failed: ${e instanceof CancelError || e instanceof Error ? e.message : String(e)}`, 502);
     }

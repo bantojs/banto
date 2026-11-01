@@ -104,6 +104,15 @@ export const asUser = <T>(uid: string, fn: (c: pg.PoolClient) => Promise<T>) =>
   withRole("authenticated", { sub: uid }, fn);
 export const asService = <T>(fn: (c: pg.PoolClient) => Promise<T>) => withRole("service_role", {}, fn);
 
+/**
+ * 0090 から confirm_reservation は支払額と通貨を必ず受け取る。テストでは予約から Banto の計算の合計（小計 + 送料 - 値引き）を引いて
+ * 注文の JSON に足す（resParam は予約 id のプレースホルダ）。テストが amount_paid_jpy / currency を自分で渡せばそちらが勝つ
+ */
+export const paidJson = (resParam: string) =>
+  `jsonb_build_object('amount_paid_jpy', (select greatest(0, coalesce((select sum((e->>'qty')::int * (e->>'unit_price_jpy')::int) from jsonb_array_elements(r.items) e), 0) + r.shipping_jpy - r.discount_jpy) from reservations r where r.id = ${resParam}), 'currency', 'jpy')`;
+/** confirm_reservation($1 = 予約, $2 = ショップ, $3 = 注文の JSON か null）。戻りは id */
+export const CONFIRM_SQL = `select confirm_reservation($1, $2, ${paidJson("$1")} || coalesce($3::jsonb, '{}'::jsonb)) as id`;
+
 /** fn が投げた PostgreSQL エラーのメッセージを返す。投げなければ失敗 */
 export async function expectDbError(fn: () => Promise<unknown>): Promise<string> {
   try {

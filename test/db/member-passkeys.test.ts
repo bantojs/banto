@@ -91,7 +91,7 @@ describe.skipIf(!dbAvailable)("パスキー（0046_mod_passkey）", () => {
 
   it("追加はログインしてから 15 分以内のお店の画面のセッションだけ。10 個まで。同じパスキーは 2 回入れない", async () => {
     const sid = await session(alice);
-    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes' where id = $1", [sid]);
+    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes', authenticated_at = now() - interval '16 minutes' where id = $1", [sid]);
     expect(await beginRegister("x", alice, sid)).toEqual({ ok: false, reason: "reauth" });
     const api = await session(alice, "api");
     expect(await beginRegister("x", alice, api)).toEqual({ ok: false, reason: "reauth" });

@@ -64,6 +64,17 @@ export const csrfGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 /**
+ * 画面の遷移（フォームの送信）からだけ受ける POST。`Sec-Fetch-Mode` が付いていて `navigate` でなければ 403。
+ * テーマの JS（Liquid のテーマはお店の画面と同じオリジンで動く、docs/themes.md）の fetch からは `cors` / `same-origin` が付くので通らない。
+ * ヘッダーを付けない古いブラウザは今までどおり csrfGuard だけで受ける。入る手段を足す・消す操作（パスワード・連携・退会・パスキーの追加）に使う
+ */
+export const navigateOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const mode = c.req.header("sec-fetch-mode");
+  if (mode && mode.toLowerCase() !== "navigate") return c.text(t("error.csrf"), 403);
+  await next();
+};
+
+/**
  * Origin が自分か。リクエストの URL のオリジンと同じか、ホストが同じ（TLS を終端するリバースプロキシの後ろでは
  * ブラウザの Origin は https、サーバーが見る URL は http になる）か、PUBLIC_BASE_URL のオリジンと同じなら自分
  */

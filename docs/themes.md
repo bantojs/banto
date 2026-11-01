@@ -10,7 +10,7 @@ Banto のお店の画面は、同梱の既定のテーマ（TSX、`src/themes/de
 | --- | --- |
 | Cloudflare Workers の **有料プラン**（または Node で動かす） | Liquid の描画は既定のテーマより重く、凝ったテーマは無料プランの CPU の上限（1 リクエスト 10ms）に収まりません。無料プランでは既定のテーマを使います。判定はサイトの設定の「Workers のプラン」 |
 | ショップに **独自ドメイン** がある | テーマの JS は、お店の画面と同じオリジンで動きます。管理画面は独自ドメインでは開かないので、テーマの JS が管理画面に届きません。独自ドメインの無いショップは既定のテーマのままです |
-| 権限の項目「デザイン（テーマ）」（`design`） | テーマを取り込み・公開できるのは、この項目を持つ人（組織の owner / admin を含む）だけです。テーマの JS はショップのドメインでお客様の画面に入るので、この項目は「お店の画面に任意の JS を置ける」強い権限です（信頼できる人にだけ渡してください） |
+| 権限の項目「デザイン（テーマ）」（`design`） | テーマを取り込み・公開できるのは、この項目を持つ人（組織の owner / admin を含む）だけです。テーマの JS はショップのドメインでお客様の画面に入るので、この項目は「お店の画面に任意の JS を置ける」強い権限です（信頼できる人にだけ渡してください）。レジと会員ページもテーマの JS が動くので、`customers` / `orders` の項目が無くても配送先・会員の氏名住所・注文の内容に届きます。**`customers` / `orders` の項目と同じ重さで渡してください**。パスワードの設定・LINE / Google の連携・退会・パスキーの追加はフォームの送信だけ受け（JS の `fetch` からの POST は 403）、退会・連携の解除・パスキーの削除・全端末ログアウトはログインしてから 15 分以内のセッションだけです |
 
 ## 書き方
 
@@ -173,6 +173,8 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 **金額**: Shopify と同じく、最小の単位の 100 倍の整数です（¥1,200 は `120000`）。`{{ product.price | money }}` で `¥1,200` になります。
 
 **フィルター**（標準の Liquid のフィルターに加えて）: `money`・`money_with_currency`・`money_without_currency`・`money_without_trailing_zeros`・`image_url`（`width:`。Banto の画像は本画像と長辺 400px の 2 つなので、幅 400 以下ならサムネイル）・`img_url`・`image_tag`・`asset_url`・`asset_img_url`・`stylesheet_tag`・`script_tag`・`preload_tag`・`t`・`json`・`handleize`・`pluralize`・`link_to`・`within`・`default_pagination`・`placeholder_svg_tag`・`time_tag`。整数どうしの `divided_by` は切り捨てです。
+
+`date` の書式は strftime の主なもの（`%Y` `%m` `%d` `%H` `%M` `%S` `%z` `%:z` `%Z` `%A` `%a` `%B` `%b` `%j` `%p` `%I` `%e` `%s` `%L` `%U` `%W` `%%` と、`%-d` `%_m` `%05Y` `%^A` のような幅・詰め方・大文字の指定）で、出力は liquidjs の `date` と同じです。時間帯はデプロイの `BANTO_TIMEZONE`（既定は日本時間）で、2 つ目の引数で変えられます（`{{ order.created_at | date: '%Y-%m-%d %H:%M', 'America/New_York' }}`。IANA の名前か分の数）。入力は日付の文字列・UNIX 秒・`'now'` です。描画のたびに `Intl.DateTimeFormat` を作り直さず使い回すので、ループの中で使っても重くなりません。1 ページの描画には手数（200,000）・範囲 `(a..b)` の大きさ（100,000）・出力の大きさの上限があり、超えたテーマは既定のテーマに戻ります（Node ではさらに 1 ページ 2 秒の時計の上限）。
 
 **タグ**（標準の Liquid のタグに加えて）: `section`・`sections`・`schema`・`form`（`'product'`: カートに入れる（`id` = バリエーション、`quantity`）、`'cart'`: カートの数を変える・購入手続きへ、`'contact'`: お問い合わせ（同梱モジュール「お問い合わせ」が ON のショップ。`contact[email]`・`contact[name]`・`contact[body]` を Banto のお問い合わせの画面に写して続けます）、`'customer_login'` / `'create_customer'`: 会員のログイン（Banto はメールのコードでログインするので、`customer[email]` だけを使います））・`content_for`（`'blocks'` と `'block'`。テーマのブロックは 8 段まで入れ子にできます）・`paginate`（1 ページの数は Banto が決めます（48）。Banto は位置で次のページへ進むので、`paginate.parts` は今のページと前後だけ、2 ページ目より先の `current_page` は 2 です。`paginate.pages`・`items` は全体の数から出します。`paginate.next.url` / `previous.url`）・`style`・`stylesheet`・`javascript`・`layout`。
 

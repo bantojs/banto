@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 const h = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -15,7 +15,7 @@ describe.skipIf(!dbAvailable)("回数の上限の締め直し（0056_rate_limits
       (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb, 900, $3, $4, $5) as id", [f.shopId, items(1), `q-${Math.random()}`, opts.subject ? h(opts.subject) : null, opts.ip ? h(opts.ip) : null])).rows[0]!.id,
     );
   const confirmFree = (id: string) =>
-    asService((c) => c.query("select confirm_reservation($1, $2, $3::jsonb)", [id, f.shopId, JSON.stringify({ payment_provider: "free", payment_ref: `free-${id}`, amount_paid_jpy: 0 })]));
+    asService((c) => c.query(CONFIRM_SQL, [id, f.shopId, JSON.stringify({ payment_provider: "free", payment_ref: `free-${id}`, amount_paid_jpy: 0, currency: "jpy" })]));
 
   type Start = { send: boolean; challenge_id: string };
   type Verify = { ok: boolean; reason?: string };
@@ -43,7 +43,7 @@ describe.skipIf(!dbAvailable)("回数の上限の締め直し（0056_rate_limits
     await getPool().query("update skus set price_jpy = 100 where id = $1", [f.skuId]);
     for (let i = 0; i < 3; i++) {
       const id = await reserve({ ip: "203.0.113.5" });
-      await asService((c) => c.query("select confirm_reservation($1, $2, $3::jsonb)", [id, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: `pi_${i}`, amount_paid_jpy: 100, currency: "jpy" })]));
+      await asService((c) => c.query(CONFIRM_SQL, [id, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: `pi_${i}`, amount_paid_jpy: 100, currency: "jpy" })]));
     }
     for (let i = 0; i < 20; i++) await reserve({ ip: "203.0.113.5" });
     expect(await expectDbError(() => reserve({ ip: "203.0.113.5" }))).toMatch(/too_many_reservations/);

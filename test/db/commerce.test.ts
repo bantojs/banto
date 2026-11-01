@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import { asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 const items = (skuId: string, qty: number) => JSON.stringify([{ sku_id: skuId, qty }]);
 
@@ -11,7 +11,7 @@ describe.skipIf(!dbAvailable)("商取引（0004_commerce）", () => {
 
   const reserve = (qty: number) => asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, items(f.skuId, qty)])).rows[0]!.id);
   const confirm = (resId: string, order: Record<string, unknown> = { payment_provider: "stripe", payment_ref: "pi_1" }) =>
-    asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify(order)])).rows[0]!.id);
+    asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify(order)])).rows[0]!.id);
   const available = async () => (await getPool().query<{ available: number }>("select available from inventory where sku_id = $1", [f.skuId])).rows[0]!.available;
 
   beforeAll(async () => {
@@ -42,7 +42,7 @@ describe.skipIf(!dbAvailable)("商取引（0004_commerce）", () => {
 
     // 他ショップは独立した連番
     const rr = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [other.shopId, items(other.skuId, 1)])).rows[0]!.id);
-    const oo = await asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2) as id", [rr, other.shopId])).rows[0]!.id);
+    const oo = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [rr, other.shopId, null])).rows[0]!.id);
     expect((await getPool().query("select number from orders where id = $1", [oo])).rows[0].number).toBe(1001);
 
     // hooks のペイロードに番号と送料

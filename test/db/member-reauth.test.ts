@@ -30,25 +30,25 @@ describe.skipIf(!dbAvailable)("会員の入る手段の追加（0057_member_reau
   it("パスワード: セッション無し・15 分を過ぎたセッションでは設定できない。15 分以内なら設定でき、同じ行が新しい世代に付け替わる。知らせの送信元が返る", async () => {
     expect(await setPassword(0, null)).toEqual({ ok: false, reason: "session" });
     const stale = await sessionStart(0);
-    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes' where id = $1", [stale]);
+    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes', authenticated_at = now() - interval '16 minutes' where id = $1", [stale]);
     expect(await setPassword(0, stale)).toEqual({ ok: false, reason: "reauth" });
     const fresh = await sessionStart(0);
     const r = await setPassword(0, fresh);
-    expect(r).toEqual({ ok: true, epoch: 1, email: "m@example.com", mail_from: "Shop <shop@example.com>" });
+    expect(r).toMatchObject({ ok: true, epoch: 1, email: "m@example.com", mail_from: "Shop <shop@example.com>" });
     // 今の行は新しい世代で生きている。古い行は世代が合わずに止まる。新しい行は作られていない
     const rows = await getPool().query<{ id: string; session_epoch: number }>("select id, session_epoch from member_sessions where customer_id = $1 order by created_at", [cid]);
     expect(rows.rows.map((x) => [x.id === fresh, x.session_epoch])).toEqual([[false, 0], [true, 1]]);
     expect((await asService(async (c) => (await c.query<{ r: boolean }>("select member_session_check($1, $2, 1, $3) as r", [f.shopId, cid, fresh])).rows[0]!.r))).toBe(true);
     expect((await asService(async (c) => (await c.query<{ r: boolean }>("select member_session_check($1, $2, 1, $3) as r", [f.shopId, cid, stale])).rows[0]!.r))).toBe(false);
     // パスキーの追加（0046）の「15 分以内」は、付け替えた行の作成時刻で判定される（パスワードの変更で若返らない）
-    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes' where id = $1", [fresh]);
+    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes', authenticated_at = now() - interval '16 minutes' where id = $1", [fresh]);
     const begin = await asService(async (c) => (await c.query<{ r: { reason?: string } }>("select member_passkey_begin($1, 'register', $2, null, $3, 1, $4) as r", [f.shopId, h("ch"), cid, fresh])).rows[0]!.r);
     expect(begin.reason).toMatch(/reauth|disabled/);
   });
 
   it("連携: 15 分を過ぎたセッションでは reauth。15 分以内なら連携でき、知らせの送信元が返る", async () => {
     const stale = await sessionStart(1);
-    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes' where id = $1", [stale]);
+    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes', authenticated_at = now() - interval '16 minutes' where id = $1", [stale]);
     expect(await link(1, stale)).toEqual({ ok: false, reason: "reauth" });
     expect(await link(1, null)).toEqual({ ok: false, reason: "session" });
     const fresh = await sessionStart(1);

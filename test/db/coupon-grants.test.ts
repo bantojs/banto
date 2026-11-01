@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 describe.skipIf(!dbAvailable)("配布型のクーポン（0019_coupon_grants）", () => {
   let f: Fixture;
@@ -63,7 +63,7 @@ describe.skipIf(!dbAvailable)("配布型のクーポン（0019_coupon_grants）"
     // 確定で使用済み
     const r3 = await reserve();
     await apply(r3, guest, g);
-    const orderId = (await asService((c) => c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [r3, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_g" })]))).rows[0]!.id;
+    const orderId = (await asService((c) => c.query<{ id: string }>(CONFIRM_SQL, [r3, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_g" })]))).rows[0]!.id;
     expect((await grantRow(g.id)).status).toBe("used");
     // キャンセルで戻る
     await asService((c) => c.query("select cancel_order($1, $2, true)", [orderId, f.shopId]));

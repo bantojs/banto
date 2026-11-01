@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 const h = (t: string) => createHash("sha256").update(t).digest("hex");
 
@@ -22,7 +22,7 @@ describe.skipIf(!dbAvailable)("注文の状態の照会（0035_checkout_status�
     const r1 = await reserve("quote-one-0001");
     expect(await status("quote-one-0001")).toMatchObject({ status: "pending", order: null, expires_at: expect.any(String) });
     await asService((c) => c.query("select attach_reservation_customer($1, $2, $3::jsonb)", [r1, f.shopId, JSON.stringify({ customer_email: "buyer@example.com", customer_name: "山田", shipping_address: { state: "東京都" } })]));
-    await asService((c) => c.query("select confirm_reservation($1, $2, $3::jsonb)", [r1, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_1" })]));
+    await asService((c) => c.query(CONFIRM_SQL, [r1, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_1" })]));
     const confirmed = await status("quote-one-0001");
     expect(confirmed).toMatchObject({ status: "confirmed", order: { number: 1001, status: "paid", total_jpy: expect.any(Number), payment_provider: "stripe", created_at: expect.any(String) } });
     expect(JSON.stringify(confirmed)).not.toMatch(/buyer@example.com|山田|東京都/);

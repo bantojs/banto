@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 const items = (skuId: string, qty: number) => JSON.stringify([{ sku_id: skuId, qty }]);
 
@@ -72,7 +72,7 @@ describe.skipIf(!dbAvailable)("hooks（0002_hooks）", () => {
   it("confirm_reservation が order.created / order.paid / inventory.low を積む（個人情報は含まない）", async () => {
     const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, items(f.skuId, 3)])).rows[0]!.id);
     const orderId = await asService(async (c) =>
-      (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify({ customer_email: "secret@example.com", customer_name: "秘密", payment_provider: "stripe", payment_ref: "pi_1" })])).rows[0]!.id,
+      (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify({ customer_email: "secret@example.com", customer_name: "秘密", payment_provider: "stripe", payment_ref: "pi_1" })])).rows[0]!.id,
     );
     const rows = await getPool().query<{ event: string; payload: Record<string, unknown> }>("select event, payload from hook_deliveries order by event");
     // order.created は購読していないので積まれない。在庫 5-3=2 <= 3 なので inventory.low
@@ -141,7 +141,7 @@ describe.skipIf(!dbAvailable)("hooks（0002_hooks）", () => {
     await asService((c) => c.query("select attach_reservation_customer($1, $2, $3::jsonb)", [resId, f.shopId, JSON.stringify({ customer_email: "k@example.com", customer_name: "小森", shipping_address: { line1: "住所" } })]));
     let r = await getPool().query("select customer from reservations where id = $1", [resId]);
     expect(r.rows[0].customer).toMatchObject({ customer_email: "k@example.com" });
-    const orderId = await asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify({ payment_provider: "komoju", payment_ref: "pay_1" })])).rows[0]!.id);
+    const orderId = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify({ payment_provider: "komoju", payment_ref: "pay_1" })])).rows[0]!.id);
     const o = await getPool().query("select customer_email, customer_name, shipping_address, payment_provider from orders where id = $1", [orderId]);
     expect(o.rows[0]).toEqual({ customer_email: "k@example.com", customer_name: "小森", shipping_address: { line1: "住所" }, payment_provider: "komoju" });
     r = await getPool().query("select customer from reservations where id = $1", [resId]);

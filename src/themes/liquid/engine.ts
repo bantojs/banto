@@ -9,9 +9,12 @@
  * - 渡したデータの自前のプロパティだけを読む（`constructor`・`__proto__` に触れない）。知らないフィルターは解析で止める
  * - **描画の手数（テンプレートの部品を描いた回数）を数えて上限で止める**。liquidjs の renderLimit は時計で測るが、本番の Workers は
  *   計算のあいだ時計が進まないので効かない。量（文字列・配列・範囲）は memoryLimit、出力の大きさはここで数える
+ * - **1 手の重さも縛る**: `date` フィルターは Intl を使い回す Banto の実装（date.ts）、範囲 `(a..b)` の大きさは `THEME_LIMITS.range` まで。
+ *   Node では時計の上限（`THEME_LIMITS.timeMs`）も効かせる（Workers では時計が進まないので効かない。手数と量が守る）
  */
 /// <reference path="./liquidjs.d.ts" />
-import { CaptureTag, Drop, Liquid, type Context, type Template } from "liquidjs/dist/liquid.browser.mjs";
+import { CaptureTag, Drop, Liquid, Tokenizer, TokenKind, evalTokenValue, type Context, type RangeToken, type Template } from "liquidjs/dist/liquid.browser.mjs";
+import { registerDateFilters } from "./date";
 
 /** テーマのファイルの形（束ねたファイルの中身）。鍵は "layout/theme.liquid" のような置き場の相対パス */
 export type ThemeFiles = Readonly<Record<string, string>>;
@@ -25,6 +28,10 @@ export const THEME_LIMITS = {
   memory: 20_000_000,
   /** 1 つのテンプレートの大きさ（文字。liquidjs の parseLimit） */
   parseChars: 512 * 1024,
+  /** 範囲 `(a..b)` の大きさ（要素の数）。配列のフィルター（where・uniq・sort）は要素ごとに手間がかかるので、1 手の重さをここで縛る */
+  range: 100_000,
+  /** 1 ページの描画にかける時間（ミリ秒）。Node で効く。Workers は計算のあいだ時計が進まないので効かない（手数・量・範囲の上限が守る） */
+  timeMs: 2000,
 } as const;
 
 /** テーマの誤り（解析・描画）。message は運営者に見せてよい（テーマのファイル名と位置だけで、データは含めない） */
@@ -88,9 +95,60 @@ function templateName(path: string): string | null {
 /** 描画の手数を数える（1 回の描画ごとに reset する。描画は同期なので、同じ isolate のほかのリクエストと混ざらない） */
 class StepCounter {
   steps = 0;
+  /** 時計の上限（performance.now() の値）。reset のたびに引き直す */
+  deadline = Infinity;
+  constructor(private readonly timeMs: number) {}
   reset() {
     this.steps = 0;
+    this.deadline = performance.now() + this.timeMs;
   }
+  /** 時計の上限を超えていれば ThemeError(limit)。Workers では時計が進まないので超えない */
+  checkClock() {
+    if (performance.now() > this.deadline) throw new ThemeError(`theme render time limit exceeded (${this.timeMs}ms)`, "limit");
+  }
+}
+
+/**
+ * 範囲 `(a..b)` の大きさの上限（Liquid のインスタンスごと）。liquidjs は範囲を評価するとき memoryLimit に要素の数を足すだけで、
+ * 1 つの範囲の大きさは縛れない（配列のフィルターは要素ごとに手間がかかる）。評価の入口（evalRangeToken）は差し替えられないので、
+ * 字句解析で作られた RangeToken の右端を「評価するとき大きさを確かめる値」で包む（patchRangeTokens）。
+ * 無い（Banto の engine で作っていない Liquid）なら上限なし
+ */
+const RANGE_LIMIT = new WeakMap<Liquid, number>();
+let rangePatched = false;
+function patchRangeTokens(): void {
+  if (rangePatched) return;
+  rangePatched = true;
+  const proto = Tokenizer.prototype;
+  const original = proto.readGroupOrRange;
+  proto.readGroupOrRange = function (this: Tokenizer) {
+    const token = original.call(this);
+    if (token && token.kind === TokenKind.Range) {
+      const range = token as RangeToken;
+      const { lhs, rhs } = range;
+      // FilteredValue の形（initial.evaluate(ctx) を呼んで値にする）。位置の情報は元の右端から写す（誤りの文に使われる）。
+      // `content` を持たせない（liquidjs の evalToken は content があればそれを返して終わる）
+      const guard = {
+        kind: TokenKind.FilteredValue,
+        input: rhs.input,
+        begin: rhs.begin,
+        end: rhs.end,
+        file: rhs.file,
+        filters: [],
+        initial: {
+          *evaluate(ctx: Context): Generator<unknown, unknown, unknown> {
+            const low = Number(yield evalTokenValue(lhs, ctx));
+            const high: unknown = yield evalTokenValue(rhs, ctx);
+            const max = RANGE_LIMIT.get(ctx.liquid as Liquid);
+            if (max !== undefined && Number(high) - low + 1 > max) throw new ThemeError(`theme range limit exceeded (${max})`, "limit");
+            return high;
+          },
+        },
+      };
+      range.rhs = guard as unknown as typeof rhs;
+    }
+    return token;
+  };
 }
 
 export interface ThemeEngine {
@@ -135,6 +193,10 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     jsTruthy: false,
     ...(opts.timezone ? { timezoneOffset: opts.timezone } : {}),
   });
+  patchRangeTokens();
+  RANGE_LIMIT.set(liquid, limits.range);
+  // date 系のフィルターは Intl を使い回す Banto の実装（date.ts）
+  registerDateFilters(liquid);
 
   // escape / escape_once: エスケープした結果を、もうエスケープしない
   liquid.registerFilter("escape", { handler: (v: unknown) => escapeHtml(v), raw: true });
@@ -160,12 +222,15 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
 
   // 手数を数える: liquidjs はテンプレートの部品の並びを renderTemplates で 1 つずつ描くので、その入口で部品の数を足す。
   // 中身が空の for も 1 回ごとに 1 手（数えないと、空のループの入れ子でいくらでも回せる）
-  const counter = new StepCounter();
+  const counter = new StepCounter(limits.timeMs);
   const renderer = liquid.renderer;
   const original = renderer.renderTemplates.bind(renderer);
+  let calls = 0;
   renderer.renderTemplates = function* (tpls, ctx, emitter) {
     counter.steps += Math.max(1, tpls.length);
     if (counter.steps > limits.steps) throw new ThemeError(`theme render step limit exceeded (${limits.steps})`, "limit");
+    // 時計は 32 回に 1 回だけ見る（performance.now() も手間）。1 手が重くても範囲の上限で 1 手の長さは限られる
+    if ((++calls & 31) === 0) counter.checkClock();
     return yield* original(tpls, ctx, emitter);
   };
 
@@ -206,6 +271,7 @@ export function createThemeEngine(files: ThemeFiles, opts: EngineOptions = {}): 
     } finally {
       depth--;
     }
+    counter.checkClock();
     const html = String(out ?? "");
     pageOutput += html.length;
     if (html.length > limits.outputChars || pageOutput > limits.outputChars * 2) throw new ThemeError(`theme output limit exceeded (${limits.outputChars})`, "limit");

@@ -30,7 +30,7 @@ describe.skipIf(!dbAvailable)("パスキーの追加の券（0070）", () => {
     expect(await create(api, "t1")).toMatchObject({ ok: true });
     expect(await create(await session("web"), "t2")).toEqual({ ok: false, reason: "session" });
     const old = await session("api");
-    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes' where id = $1", [old]);
+    await getPool().query("update member_sessions set created_at = now() - interval '16 minutes', authenticated_at = now() - interval '16 minutes' where id = $1", [old]);
     expect(await create(old, "t3")).toEqual({ ok: false, reason: "reauth" });
     expect(await expectDbError(() => asAnon((c) => c.query("select member_passkey_ticket_create($1, $2, 0, $3, $4)", [a.shopId, cid, api, hash("x")])))).toMatch(/permission denied/);
     expect(await expectDbError(() => asAnon((c) => c.query("select * from member_passkey_tickets")))).toMatch(/permission denied/);

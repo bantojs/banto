@@ -48,6 +48,8 @@ export interface OrderInput {
   amount_paid_jpy?: number | null;
   /** 決済事業者の通貨（jpy 以外なら amount_mismatch） */
   currency?: string | null;
+  /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"）。返金はこの口座で行う */
+  payment_account?: string | null;
 }
 
 /** 在庫予約の上限の材料（0029）。quote は 1 回限り、同じ人・同じ IP の未確定の予約に上限 */
@@ -114,8 +116,12 @@ export type MemberLoginResult =
 
 /** パスワードの設定（0057）。reauth = ログインしてから 15 分を過ぎたセッション（確かめのコードで入り直す） */
 export type MemberSetPasswordResult =
-  | { ok: true; epoch: number; email: string | null; mail_from: string | null }
+  /** authenticated_at: このセッションがログインを確かめた時刻（0090。セッションを作り直すときに引き継ぐ。0090 より前の DB では null） */
+  | { ok: true; epoch: number; email: string | null; mail_from: string | null; authenticated_at: string | null }
   | { ok: false; reason: "session" | "reauth" };
+
+/** 退会（0090 から email と送信元を返す。本人に知らせるため。0090 より前の DB では boolean なので null にそろえる） */
+export type MemberWithdrawResult = { ok: true; email: string | null; mail_from: string | null } | { ok: false };
 
 /** 会員のログイン（0012_member_auth） */
 export interface MemberLoginStart {
@@ -315,8 +321,12 @@ export interface PrivilegedDb {
   memberSaveAddress(shopId: string, customerId: string, epoch: number, name: string | null, address: Record<string, unknown>): Promise<boolean>;
   /** 「お得な情報やセールの案内を受け取る」を本人が変える（0050。世代を確かめる） */
   memberSetMarketingConsent(shopId: string, customerId: string, epoch: number, consent: boolean): Promise<boolean>;
-  memberWithdraw(shopId: string, customerId: string, epoch: number): Promise<boolean>;
-  memberLogoutAll(shopId: string, customerId: string, epoch: number): Promise<boolean>;
+  /**
+   * 退会・全端末からログアウト・連携を外す・パスキーを消す: sessionId を渡すと（0090 が当たっている DB だけ）、
+   * ログインを確かめてから 15 分以内のセッションでなければ reauth_required を投げる（盗まれた Cookie から消されない）
+   */
+  memberWithdraw(shopId: string, customerId: string, epoch: number, sessionId?: string): Promise<MemberWithdrawResult>;
+  memberLogoutAll(shopId: string, customerId: string, epoch: number, sessionId?: string): Promise<boolean>;
   /** パスワードでログインする（0013）。照合・回数の制限は DB。パスワードは保存しない・ログに出さない */
   memberPasswordLogin(shopId: string, email: string, password: string, ipHash: string | null): Promise<MemberLoginResult>;
   /** パスワードを決める・変える（0013）。新しい世代を返す（世代が合わなければ null） */
@@ -330,7 +340,7 @@ export interface PrivilegedDb {
   /** 外部のアカウントでログインする（0014）。link があればログイン中のその会員に結びつける */
   /** LINE / Google でのログイン・連携。連携（link）は 0057 以降、ログインしてから 15 分以内のセッション（sessionId）だけ（過ぎていれば reason: 'reauth'） */
   memberOauthLogin(shopId: string, provider: "line" | "google", subject: string, email: string | null, emailVerified: boolean, link: { customerId: string; epoch: number; sessionId?: string } | null): Promise<MemberLoginResult>;
-  memberUnlinkIdentity(shopId: string, customerId: string, epoch: number, provider: "line" | "google"): Promise<boolean>;
+  memberUnlinkIdentity(shopId: string, customerId: string, epoch: number, provider: "line" | "google", sessionId?: string): Promise<boolean>;
   /** ショップごとの提供元の設定（0014）。secret_box は暗号文（src/members/secret-box.ts で開く）。無ければ null */
   shopOauthClient(shopId: string, provider: "line" | "google"): Promise<{ client_id: string; secret_box: string } | null>;
   /** ヘッドレスの引き換え券（0014、2 分・1 回限り） */
@@ -339,7 +349,8 @@ export interface PrivilegedDb {
   /** 期限切れのチャレンジを消す（Cron） */
   memberLoginCleanup(): Promise<number>;
   /** 会員のセッション（0045）。作る: 世代が今と違えば null */
-  memberSessionStart(shopId: string, customerId: string, epoch: number, kind: "web" | "api", label: string | null, ttlSeconds: number): Promise<string | null>;
+  /** authenticatedAt: 作り直すときに引き継ぐ「ログインを確かめた時刻」（0090 が当たっている DB だけ渡す。省けば今） */
+  memberSessionStart(shopId: string, customerId: string, epoch: number, kind: "web" | "api", label: string | null, ttlSeconds: number, authenticatedAt?: string | null): Promise<string | null>;
   /** Cookie のセッションが生きているか（最後に使った日時も更新する） */
   memberSessionCheck(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<boolean>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
@@ -367,11 +378,13 @@ export interface PrivilegedDb {
   memberPasskeyLookup(shopId: string, credentialId: string): Promise<{ id: string; customer_id: string; public_key: string; alg: number } | null>;
   memberPasskeyLogin(shopId: string, challengeId: string, challengeHash: string, passkeyId: string, signCount: number, backedUp: boolean): Promise<MemberLoginResult | { ok: false; reason: "counter" }>;
   memberPasskeysList(shopId: string, customerId: string, epoch: number): Promise<PasskeyRow[] | null>;
-  memberPasskeyDelete(shopId: string, customerId: string, epoch: number, id: string): Promise<boolean>;
+  memberPasskeyDelete(shopId: string, customerId: string, epoch: number, id: string, sessionId?: string): Promise<boolean>;
   /** 期限切れの challenge を消す（Cron） */
   memberPasskeyCleanup(): Promise<number>;
   /** 返金に必要な情報（キャンセル処理の前段） */
   orderPaymentInfo(orderId: string, shopId: string): Promise<{ order_id: string; status: string; payment_provider: string | null; payment_ref: string | null; total_jpy: number } | null>;
+  /** 注文の決済の口座（0090 の orders.payment_account。0090 が当たっている DB でだけ呼ぶ）。無ければ null */
+  orderPaymentAccount(orderId: string, shopId: string): Promise<string | null>;
   /** キャンセル: 在庫を戻し cancelled / refunded にする（返金は呼び出し側が先に行う） */
   cancelOrder(orderId: string, shopId: string, refunded: boolean): Promise<{ order_id: string; status: string; already: boolean }>;
   /** 取引メール用の連絡先と明細（同梱メールプラグイン専用） */
@@ -542,18 +555,29 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberSetMarketingConsent: (shopId, customerId, epoch, consent) => rpc<boolean>("member_set_marketing_consent", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_consent: consent }),
     memberSaveAddress: (shopId, customerId, epoch, name, address) =>
       rpc("member_save_address", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_name: name, p_address: address }),
-    memberWithdraw: (shopId, customerId, epoch) => rpc("member_withdraw", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
-    memberLogoutAll: (shopId, customerId, epoch) => rpc("member_logout_all", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
+    memberWithdraw: async (shopId, customerId, epoch, sessionId) => {
+      const r = await rpc<boolean | { ok?: boolean; email?: string | null; mail_from?: string | null } | null>("member_withdraw", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}),
+      });
+      // 0090 より前の DB は boolean を返す（知らせの材料は無い）
+      if (r === true) return { ok: true, email: null, mail_from: null };
+      if (!r || typeof r !== "object" || r.ok !== true) return { ok: false };
+      return { ok: true, email: r.email ?? null, mail_from: r.mail_from ?? null };
+    },
+    memberLogoutAll: (shopId, customerId, epoch, sessionId) =>
+      rpc("member_logout_all", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     memberLoginCleanup: () => rpc<number>("member_login_cleanup", {}),
     imageImportClaim: () => rpc<ImageImportJob[]>("image_import_claim", {}),
     imageImportFinish: (results) => rpc("image_import_finish", { p_results: results }),
     memberPasswordLogin: (shopId, email, password, ipHash) => rpc("member_password_login", { p_shop_id: shopId, p_email: email, p_password: password, p_ip_hash: ipHash }),
     memberSetPassword: async (shopId, customerId, epoch, password, sessionId) => {
-      const r = await rpc<{ ok: boolean; reason?: string; epoch?: number; email?: string | null; mail_from?: string | null } | null>("member_set_password", {
+      const r = await rpc<{ ok: boolean; reason?: string; epoch?: number; email?: string | null; mail_from?: string | null; authenticated_at?: string | null } | null>("member_set_password", {
         p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_password: password, ...(sessionId ? { p_session_id: sessionId } : {}),
       });
       if (r === null || r === undefined) return { ok: false, reason: "session" };
-      if (r.ok && typeof r.epoch === "number") return { ok: true, epoch: r.epoch, email: r.email ?? null, mail_from: r.mail_from ?? null };
+      if (r.ok && typeof r.epoch === "number") {
+        return { ok: true, epoch: r.epoch, email: r.email ?? null, mail_from: r.mail_from ?? null, authenticated_at: typeof r.authenticated_at === "string" ? r.authenticated_at : null };
+      }
       return { ok: false, reason: r.reason === "reauth" ? "reauth" : "session" };
     },
     importMemberPasswords: (shopId, rows) => rpc("import_member_passwords", { p_shop_id: shopId, p_rows: rows }),
@@ -562,12 +586,17 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
         p_shop_id: shopId, p_provider: provider, p_subject: subject, p_email: email, p_email_verified: emailVerified,
         p_link_customer_id: link?.customerId ?? null, p_link_epoch: link?.epoch ?? null, ...(link?.sessionId ? { p_link_session_id: link.sessionId } : {}),
       }),
-    memberUnlinkIdentity: (shopId, customerId, epoch, provider) => rpc("member_unlink_identity", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_provider: provider }),
+    memberUnlinkIdentity: (shopId, customerId, epoch, provider, sessionId) =>
+      rpc("member_unlink_identity", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_provider: provider, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     shopOauthClient: (shopId, provider) => rpc("shop_oauth_client", { p_shop_id: shopId, p_provider: provider }),
     memberHandoffCreate: (shopId, customerId, epoch, tokenHash) => rpc("member_handoff_create", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_token_hash: tokenHash }),
     memberHandoffRedeem: (shopId, id, tokenHash) => rpc("member_handoff_redeem", { p_shop_id: shopId, p_id: id, p_token_hash: tokenHash }),
-    memberSessionStart: (shopId, customerId, epoch, kind, label, ttlSeconds) =>
-      rpc("member_session_start", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_kind: kind, p_label: label, p_ttl_seconds: ttlSeconds }),
+    memberSessionStart: (shopId, customerId, epoch, kind, label, ttlSeconds, authenticatedAt) =>
+      rpc("member_session_start", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_kind: kind, p_label: label, p_ttl_seconds: ttlSeconds,
+        // 0090 より前の DB は 6 引数の関数しか無いので、渡されたときだけ付ける
+        ...(authenticatedAt !== undefined ? { p_authenticated_at: authenticatedAt } : {}),
+      }),
     memberSessionCheck: (shopId, customerId, epoch, sessionId) => rpc("member_session_check", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
     memberSessionRefresh: (shopId, customerId, epoch, sessionId, gen) =>
       rpc("member_session_refresh", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_gen: gen }),
@@ -607,12 +636,21 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberPasskeyLogin: (shopId, challengeId, challengeHash, passkeyId, signCount, backedUp) =>
       rpc("member_passkey_login", { p_shop_id: shopId, p_challenge_id: challengeId, p_challenge_hash: challengeHash, p_passkey_id: passkeyId, p_sign_count: signCount, p_backed_up: backedUp }),
     memberPasskeysList: (shopId, customerId, epoch) => rpc("member_passkeys_list", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
-    memberPasskeyDelete: (shopId, customerId, epoch, id) => rpc("member_passkey_delete", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_id: id }),
+    memberPasskeyDelete: (shopId, customerId, epoch, id, sessionId) =>
+      rpc("member_passkey_delete", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_id: id, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     memberPasskeyCleanup: () => rpc<number>("member_passkey_cleanup", {}),
     async applyReservationDiscounts(reservationId, shopId, subject, discounts) {
       await rpc("apply_reservation_discounts", { p_reservation_id: reservationId, p_shop_id: shopId, p_subject: subject, p_discounts: discounts });
     },
     orderPaymentInfo: (orderId, shopId) => rpc("order_payment_info", { p_order_id: orderId, p_shop_id: shopId }),
+    async orderPaymentAccount(orderId, shopId) {
+      // order_payment_info（0004）は列を返さないので、service_role でその列だけ読む（0090）
+      const res = await doFetch(`${base}/rest/v1/orders?select=payment_account&id=eq.${encodeURIComponent(orderId)}&shop_id=eq.${encodeURIComponent(shopId)}`, { headers });
+      if (!res.ok) throw new PrivilegedRpcError("orders.payment_account", res.status, await res.text());
+      const rows = (await res.json()) as { payment_account?: string | null }[];
+      const v = rows[0]?.payment_account;
+      return typeof v === "string" && v.trim() ? v.trim() : null;
+    },
     cancelOrder: (orderId, shopId, refunded) => rpc("cancel_order", { p_order_id: orderId, p_shop_id: shopId, p_refunded: refunded }),
     orderContact: (orderId, shopId) => rpc("order_contact", { p_order_id: orderId, p_shop_id: shopId }),
     releaseReservation: (reservationId, shopId) => rpc<boolean>("release_reservation", { p_reservation_id: reservationId, p_shop_id: shopId }),

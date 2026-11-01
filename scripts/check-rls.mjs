@@ -84,7 +84,8 @@ const COLUMN_DENIES = [
   { role: "anon", table: "customers", privilege: "SELECT", columns: ["id", "email", "password_hash"] },
   { role: "anon", table: "orders", privilege: "SELECT", columns: ["id", "customer_email"] },
   { role: "authenticated", table: "customers", privilege: "SELECT", columns: ["password_hash", "legacy_password_hash", "session_epoch", "password_updated_at", "legacy_password_expires_at"] },
-  { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["total_jpy", "customer_email", "customer_name", "shipping_address", "number", "shop_id", "payment_ref", "amount_paid_jpy", "discount_jpy", "tax_rate", "reservation_id", "customer_id"] },
+  // 0090: payment_account（返金に使う決済の口座）は confirm_reservation だけが書く
+  { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["total_jpy", "customer_email", "customer_name", "shipping_address", "number", "shop_id", "payment_ref", "amount_paid_jpy", "discount_jpy", "tax_rate", "reservation_id", "customer_id", "payment_account"] },
   { role: "authenticated", table: "shop_oauth_clients", privilege: "SELECT", columns: ["secret_box"] },
   // 0088: 接続の券と署名シークレットの暗号文は運営者にも読ませない
   { role: "authenticated", table: "app_connections", privilege: "SELECT", columns: ["ticket_hash", "secret_box"] },

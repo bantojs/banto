@@ -425,7 +425,7 @@ describe("クーポン: ヘッドレスの会員（Authorization: Bearer）", ()
 
     // 会員本人の注文（確定後）
     const res0 = sb.tables.reservations.at(-1)!;
-    await sb.fetch(`${sb.url}/rest/v1/rpc/confirm_reservation`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${sb.serviceRoleKey}`, apikey: sb.serviceRoleKey }, body: JSON.stringify({ p_reservation_id: res0["id"], p_shop_id: res0["shop_id"], p_order: { payment_provider: "stripe", payment_ref: "pi_x" } }) });
+    await sb.fetch(`${sb.url}/rest/v1/rpc/confirm_reservation`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${sb.serviceRoleKey}`, apikey: sb.serviceRoleKey }, body: JSON.stringify({ p_reservation_id: res0["id"], p_shop_id: res0["shop_id"], p_order: { payment_provider: "stripe", payment_ref: "pi_x", amount_paid_jpy: 3200, currency: "jpy" } }) });
     const me = (await (await withToken(app, token, "/api/shops/my-shop/members/me")).json()) as Record<string, unknown>;
     expect(me).toMatchObject({ id: memberId, email: "member@example.com", orders: [expect.objectContaining({ total_jpy: 3200, discount_jpy: 300 })] });
     expect(JSON.stringify(me)).not.toContain("千代田");

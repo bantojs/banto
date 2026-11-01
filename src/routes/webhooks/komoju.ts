@@ -55,6 +55,8 @@ komojuWebhook.post("/", async (c: Ctx) => {
       payment_ref: payment.id,
       amount_paid_jpy: typeof payment.amount === "number" ? payment.amount : null,
       currency: typeof payment.currency === "string" ? payment.currency : null,
+      // 決済した口座（0090）。KOMOJU は API キー方式だけ
+      payment_account: "komoju",
     });
     await db.recordWebhookEvent("komoju", event.id);
     return c.json({ received: true, order_id: orderId });
@@ -66,7 +68,8 @@ komojuWebhook.post("/", async (c: Ctx) => {
       await createKomojuClient({ secretKey, fetch: c.get("deps").fetch }).refundPayment(payment.id, `refund-${event.id}`);
       return true;
     };
-    if (e instanceof PrivilegedRpcError && e.is("insufficient_stock_after_release")) {
+    if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock_after_release") || e.is("quote_superseded") || e.is("coupon_exhausted_after_release"))) {
+      // 解放後の在庫切れ / 同じ quote で出し直した予約が生きている / クーポンの先着枠が埋まった（0090）: 確定できないので返金して済みにする
       const refunded = await refund();
       await db.recordWebhookEvent("komoju", event.id);
       return c.json({ received: true, refunded });

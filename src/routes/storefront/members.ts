@@ -21,7 +21,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { PREFECTURES, isPrefecture } from "../../commerce/shipping";
-import type { PrivilegedDb } from "../../db/privileged";
+import { PrivilegedRpcError, type PrivilegedDb } from "../../db/privileged";
 import { t, tf, type MessageKey } from "../../i18n";
 import {
   PASSKEY_ADD_LABEL,
@@ -46,14 +46,14 @@ import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, pr
 import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
-import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice } from "../../members/notice";
+import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, yen, type Ctx } from "../common";
+import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
 import type { AccountPageProps, AddressFormValues } from "../../themes/types";
 import { liquidThemeFor, renderAccount } from "./liquid";
-import type { PublicShop } from "../../storefront/data";
+import { SECURITY_HARDENING_4_MIGRATION, type PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
 import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
@@ -184,6 +184,23 @@ export function loginDeps(c: Ctx): LoginDeps | null {
   const doFetch = c.get("deps").fetch;
   return { db, secret, fetch: doFetch, mailer: createMailer(c.get("adapters"), doFetch) };
 }
+
+/**
+ * 0090 が当たっているか（会員の再認証: 退会・連携の解除・パスキーの削除・全端末ログアウトはログインしてから 15 分以内のセッションだけ）。
+ * 当たっていれば今のセッションの行の id を渡し、DB が確かめる。古い DB には渡さない（引数の無い関数しか無い）
+ */
+async function reauthSessionId(c: Ctx, session: MemberSession): Promise<string | undefined> {
+  const sf = storefrontData(c);
+  return sf && session.sid && (await sf.migratedTo(SECURITY_HARDENING_4_MIGRATION)) ? session.sid : undefined;
+}
+
+/** 15 分を過ぎたセッションからの操作（reauth_required）: この端末のセッションを終えて、ログイン画面に理由を出す */
+async function reauthRedirect(c: Ctx, s: Scope): Promise<Response> {
+  await writeSession(c, s, null);
+  return c.redirect(`${s.shopPath}/account/login?error=reauth`);
+}
+
+const isReauthRequired = (e: unknown): boolean => e instanceof PrivilegedRpcError && e.is("reauth_required");
 
 // ---------- ルート ----------
 export const members = new Hono<AppEnv>();
@@ -535,7 +552,15 @@ members.post("/:shop/account/logout-all", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const db = privilegedFor(c);
-  if (s.session && db) await db.memberLogoutAll(s.shop.id, s.session.cid, s.session.ep);
+  if (s.session && db) {
+    try {
+      // 0090: ログインしてから 15 分以内のセッションだけ（盗まれた Cookie から本人を締め出さない）
+      await db.memberLogoutAll(s.shop.id, s.session.cid, s.session.ep, await reauthSessionId(c, s.session));
+    } catch (e) {
+      if (isReauthRequired(e)) return reauthRedirect(c, s);
+      throw e;
+    }
+  }
   await writeSession(c, s, null);
   return c.redirect(`${s.shopPath}/account/login?info=logged_out_all`);
 });
@@ -578,12 +603,27 @@ members.post("/:shop/account/consent", async (c: Ctx) => {
   return c.redirect(ok ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account/login`);
 });
 
-/** 退会: customers 行を消す（注文は残る。注文の個人情報は運営者のマスク運用に従う） */
-members.post("/:shop/account/delete", async (c: Ctx) => {
+/**
+ * 退会: customers 行を消す（注文は残る。注文の個人情報は運営者のマスク運用に従う）。
+ * 0090: ログインしてから 15 分以内のセッションだけ（過ぎていれば入り直す）。受け付けたら本人に知らせる（送信元が無ければ送らない）。
+ * フォームの送信だけ受ける（テーマの JS の fetch からは消せない）
+ */
+members.post("/:shop/account/delete", navigateOnly, async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  await withMember(c, s, (db, m) => db.memberWithdraw(s.shop.id, m.cid, m.ep));
+  const db = privilegedFor(c);
+  if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
+  let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
+  try {
+    r = await db.memberWithdraw(s.shop.id, s.session.cid, s.session.ep, await reauthSessionId(c, s.session));
+  } catch (e) {
+    if (isReauthRequired(e)) return reauthRedirect(c, s);
+    throw e;
+  }
   await writeSession(c, s, null);
+  if (!r.ok) return c.redirect(`${s.shopPath}/account/login`);
+  const ld = loginDeps(c);
+  if (ld && r.mail_from && r.email) await afterResponse(c, sendWithdrawNotice(ld, s.shop, { from: r.mail_from, to: r.email }));
   return c.redirect(s.shopPath || "/");
 });
 
@@ -689,7 +729,7 @@ members.get("/:shop/account/passkey/add", async (c: Ctx) => {
   return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "passkey_add", ticket, returnTo }));
 });
 
-members.post("/:shop/account/passkey/add", async (c: Ctx) => {
+members.post("/:shop/account/passkey/add", navigateOnly, async (c: Ctx) => {
   const s = await scope(c);
   const deps = loginDeps(c);
   if (!s || !deps || !passkeyReady(c, s.shop)) return notFound(c);
@@ -859,9 +899,14 @@ members.post("/:shop/account/passkeys/:id{[0-9a-f-]{36}}/delete", async (c: Ctx)
   if (!s || !passkeyReady(c, s.shop)) return notFound(c);
   const db = privilegedFor(c);
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
-  // false は「無い・他人のもの」か「古いセッション」。古いセッションなら一覧の画面がログインへ送る
-  const ok = await db.memberPasskeyDelete(s.shop.id, s.session.cid, s.session.ep, c.req.param("id") ?? "");
-  return c.redirect(ok ? `${s.shopPath}/account/passkeys?flash=deleted` : `${s.shopPath}/account/passkeys`);
+  // false は「無い・他人のもの」か「古いセッション」。古いセッションなら一覧の画面がログインへ送る。0090: 15 分を過ぎていれば入り直す
+  try {
+    const ok = await db.memberPasskeyDelete(s.shop.id, s.session.cid, s.session.ep, c.req.param("id") ?? "", await reauthSessionId(c, s.session));
+    return c.redirect(ok ? `${s.shopPath}/account/passkeys?flash=deleted` : `${s.shopPath}/account/passkeys`);
+  } catch (e) {
+    if (isReauthRequired(e)) return reauthRedirect(c, s);
+    throw e;
+  }
 });
 
 // ---------- パスワード（0013。店の設定 members_password がオンのとき） ----------
@@ -887,7 +932,8 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
   return c.redirect(`${s.shopPath}/account`);
 });
 
-members.post("/:shop/account/password", async (c: Ctx) => {
+// フォームの送信だけ受ける（テーマの JS の fetch から入る手段を足されない）
+members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
   const s = await scope(c);
   if (!s || (s.shop.settings ?? {})["members_password"] !== true) return notFound(c);
   const db = privilegedFor(c);
@@ -984,7 +1030,7 @@ members.get("/:shop/account/oauth/:provider", async (c: Ctx) => {
   return startOAuth(c, s.shop, p, "login");
 });
 
-members.post("/:shop/account/oauth/:provider/link", async (c: Ctx) => {
+members.post("/:shop/account/oauth/:provider/link", navigateOnly, async (c: Ctx) => {
   const s = await scope(c);
   const p = providerOf(c);
   if (!s || !p) return notFound(c);
@@ -999,9 +1045,11 @@ members.post("/:shop/account/oauth/:provider/unlink", async (c: Ctx) => {
   const db = privilegedFor(c);
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   try {
-    const ok = await db.memberUnlinkIdentity(s.shop.id, s.session.cid, s.session.ep, p);
+    // 0090: ログインしてから 15 分以内のセッションだけ
+    const ok = await db.memberUnlinkIdentity(s.shop.id, s.session.cid, s.session.ep, p, await reauthSessionId(c, s.session));
     return c.redirect(ok ? `${s.shopPath}/account?flash=oauth_unlinked` : `${s.shopPath}/account`);
   } catch (e) {
+    if (isReauthRequired(e)) return reauthRedirect(c, s);
     if (e instanceof Error && /last_login_method/.test(e.message)) return c.redirect(`${s.shopPath}/account?error=last_method`);
     throw e;
   }

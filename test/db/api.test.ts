@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
-import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { CONFIRM_SQL, asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 const ALL_SCOPES = ["products:read", "products:write", "orders:read", "orders:pii", "orders:write", "shop:read", "shop:write", "stats:read"];
 
@@ -189,7 +189,7 @@ describe.skipIf(!dbAvailable)("AI 用トークンと api_* RPC（0003_api）", (
     const paidOrder = async (f: Fixture, qty: number, email: string) => {
       const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty }])])).rows[0]!.id);
       return asService(async (c) =>
-        (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify({ customer_email: email, customer_name: "山田 太郎", shipping_address: { state: "東京都", line1: "秘密の住所" }, payment_provider: "stripe", payment_ref: "pi" })])).rows[0]!.id,
+        (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify({ customer_email: email, customer_name: "山田 太郎", shipping_address: { state: "東京都", line1: "秘密の住所" }, payment_provider: "stripe", payment_ref: "pi" })])).rows[0]!.id,
       );
     };
 

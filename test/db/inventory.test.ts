@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
 import {
+  CONFIRM_SQL,
   asService,
   asUser,
   closePool,
@@ -141,8 +142,8 @@ describe.skipIf(!dbAvailable)("在庫 RPC（CLAUDE.md §6）", () => {
     it("予約を注文に変換し、同じ予約 ID では同じ注文 ID を返す（冪等）", async () => {
       const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, items(f.skuId, 2)])).rows[0]!.id);
       const [first, second] = await asService(async (c) => {
-        const a = await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify(order)]);
-        const b = await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify(order)]);
+        const a = await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify(order)]);
+        const b = await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify(order)]);
         return [a.rows[0]!.id, b.rows[0]!.id];
       });
       expect(first).toBe(second);
@@ -162,13 +163,13 @@ describe.skipIf(!dbAvailable)("在庫 RPC（CLAUDE.md §6）", () => {
     it("別ショップの shop_id では見つからない", async () => {
       const other = await createShopFixture({ email: "x@example.com", slug: "x-shop", publish: true, stock: 1 });
       const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, items(f.skuId, 1)])).rows[0]!.id);
-      const msg = await expectDbError(() => asService((c) => c.query("select confirm_reservation($1, $2)", [resId, other.shopId])));
+      const msg = await expectDbError(() => asService((c) => c.query(CONFIRM_SQL, [resId, other.shopId, null])));
       expect(msg).toMatch(/reservation_not_found/);
     });
 
     it("owner は注文を閲覧・発送済みに更新できる", async () => {
       const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, items(f.skuId, 1)])).rows[0]!.id);
-      const orderId = await asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [resId, f.shopId, JSON.stringify(order)])).rows[0]!.id);
+      const orderId = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify(order)])).rows[0]!.id);
       await asUser(f.ownerId, async (c) => {
         const r = await c.query("update orders set status = 'shipped', shipped_at = now() where id = $1", [orderId]);
         expect(r.rowCount).toBe(1);
@@ -203,7 +204,7 @@ describe.skipIf(!dbAvailable)("在庫 RPC（CLAUDE.md §6）", () => {
       expect(await available(f.skuId)).toBe(5);
 
       // 在庫あり → 再予約して確定
-      const orderId = await asService(async (c) => (await c.query<{ id: string }>("select confirm_reservation($1, $2) as id", [resId, f.shopId])).rows[0]!.id);
+      const orderId = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, null])).rows[0]!.id);
       expect(orderId).toBeTruthy();
       expect(await available(f.skuId)).toBe(2);
 
@@ -212,7 +213,7 @@ describe.skipIf(!dbAvailable)("在庫 RPC（CLAUDE.md §6）", () => {
       await getPool().query("update reservations set expires_at = now() - interval '1 second' where id = $1", [res2]);
       await asService((c) => c.query("select release_expired_reservations()"));
       await getPool().query("update inventory set available = 1 where sku_id = $1", [f.skuId]);
-      const msg = await expectDbError(() => asService((c) => c.query("select confirm_reservation($1, $2)", [res2, f.shopId])));
+      const msg = await expectDbError(() => asService((c) => c.query(CONFIRM_SQL, [res2, f.shopId, null])));
       expect(msg).toMatch(/insufficient_stock_after_release/);
       expect(await available(f.skuId)).toBe(1);
     });
@@ -237,7 +238,7 @@ describe.skipIf(!dbAvailable)("在庫 RPC（CLAUDE.md §6）", () => {
       expect(await available(f.skuId)).toBe(4);
 
       // confirmed 済みは戻さない
-      await asService((c) => c.query("select confirm_reservation($1, $2)", [res2, f.shopId]));
+      await asService((c) => c.query(CONFIRM_SQL, [res2, f.shopId, null]));
       const confirmed = await asService(async (c) => (await c.query<{ ok: boolean }>("select release_reservation($1, $2) as ok", [res2, f.shopId])).rows[0]!.ok);
       expect(confirmed).toBe(false);
       expect(await available(f.skuId)).toBe(4);
@@ -265,7 +266,7 @@ describe.skipIf(!dbAvailable)("在庫 RPC（CLAUDE.md §6）", () => {
     async function paidOrder(email: string): Promise<string> {
       const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, items(f.skuId, 1)])).rows[0]!.id);
       return asService(async (c) =>
-        (await c.query<{ id: string }>("select confirm_reservation($1, $2, $3::jsonb) as id", [
+        (await c.query<{ id: string }>(CONFIRM_SQL, [
           resId,
           f.shopId,
           JSON.stringify({ customer_email: email, customer_name: "名前", shipping_address: { line1: "住所" } }),

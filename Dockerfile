@@ -14,6 +14,9 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist/node/server.js ./dist/node/server.js
 # 自前の PostgreSQL にマイグレーションを当てるコマンド（docs/self-hosted-db.md）
 COPY --from=build /app/dist/node/migrate.js ./dist/node/migrate.js
+RUN mkdir -p /app/data && chown -R node:node /app/data
 VOLUME ["/app/data"]
 EXPOSE 8787
+# root で動かさない（公式イメージの node ユーザー）
+USER node
 CMD ["node", "dist/node/server.js"]
