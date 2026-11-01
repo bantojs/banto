@@ -17,7 +17,8 @@ import { getLocale, t, type Locale } from "../../i18n";
  * - 金額は Banto が返した値を出すだけで、計算しない。
  * - 運営者が入れた文字列は textContent でだけ入れる（innerHTML を使わない）。画像の URL は http(s) だけ。
  * - Shadow DOM の中で描く。見た目は CSS の変数（--banto-accent など）だけを外から変えられる。
- * - 問い合わせ先（Banto の URL）はこのスクリプトを読み込んだ URL のオリジン。
+ * - 問い合わせ先（Banto の URL）は配るときにサーバーが書き込む（publicBaseUrl のオリジン）。
+ * - 作成ツールの iframe の中では、購入手続き・商品ページを新しいタブで開く（Banto の画面は他のサイトの枠に入らない）。
  *
  * サーバー側では文字列を返すだけ（CPU を使わない）。Worker と Node の両方で同じ。
  * keepNames などのビルドの変換を受けないよう、関数ではなく文字列で持つ（中にバッククォートと「${」を書かない）。
@@ -25,10 +26,8 @@ import { getLocale, t, type Locale } from "../../i18n";
 const SOURCE = String.raw`(function(I){
 "use strict";
 if(window.__bantoEmbed)return;window.__bantoEmbed=1;
-var me=document.currentScript;var BASE="";
-/* 読み込み方によっては currentScript が無い（取ってきて eval する作成ツールなど）。そのときは自分の script 要素を探す */
-if(!me||!me.src){var ss=document.querySelectorAll("script[src]");for(var si=ss.length-1;si>=0;si--){if(/\/api\/embed\/v1\.js(\?|#|$)/.test(ss[si].src)){me=ss[si];break}}}
-try{BASE=new URL(me&&me.src?me.src:"").origin}catch(e){}
+/* 問い合わせ先（Banto の URL）は配るときにサーバーが書き込む。作成ツールが読み込み方を変えても（currentScript が無くても）同じ */
+var BASE=__BANTO_BASE__;
 if(!BASE||!window.customElements||!Element.prototype.attachShadow)return;
 var nf=new Intl.NumberFormat(I.locale);
 function yen(n){return I.yen.replace("{n}",nf.format(Number(n)||0))}
@@ -60,11 +59,12 @@ window.addEventListener("storage",function(e){if(!e.key||e.key.indexOf("banto-ca
 if(e.newValue)loadCart(shop);else publish(shop,null)});
 /* 作成ツールが部品を iframe に入れていても、Banto の画面はページ全体で開く（Banto の画面は他のサイトの枠に入らない） */
 var FRAMED=false;try{FRAMED=window.top!==window.self}catch(e){FRAMED=true}
+/* iframe の中（作成ツールの埋め込みの多く）では新しいタブで開く（Shopify の Buy Button と同じ）。
+   上の画面を移す許可の無い sandbox が多く、移せなかったことを検知できないため。新しいタブも許されなければ上の画面を移してみる */
 function navigate(u){if(!FRAMED){location.href=u;return}
-try{window.top.location.href=u;return}catch(e){}
 var w=null;try{w=window.open(u,"_blank");if(w)w.opener=null}catch(e){}
-if(!w)location.href=u}
-function linkTarget(a){if(FRAMED){a.target="_top"}}
+if(w)return;try{window.top.location.href=u}catch(e){}}
+function linkTarget(a){if(FRAMED){a.target="_blank";a.rel="noopener"}}
 function goCheckout(shop,url){var u=safeUrl(url);if(!u)return;setTok(shop,"");delete views[shop];navigate(u)}
 var CSS=":host{display:block;font:inherit;color:inherit}*{box-sizing:border-box}"+
 ".card{border:1px solid var(--banto-border,#d0d7de);border-radius:var(--banto-radius,6px);padding:12px;background:var(--banto-bg,transparent);height:100%}"+
@@ -168,18 +168,23 @@ const KEYS = {
   yen: "embed.js.yen",
 } as const;
 
-const built = new Map<Locale, string>();
+const built = new Map<string, string>();
 
-/** 配るスクリプト（ロケールはデプロイ単位なので、ロケールごとに 1 回だけ組み立てて持っておく） */
-export function embedScript(locale: Locale = getLocale()): string {
-  const hit = built.get(locale);
+/**
+ * 配るスクリプト。base は問い合わせ先の Banto の URL（publicBaseUrl）。
+ * ロケールと URL はデプロイ単位なので、組み合わせごとに 1 回だけ組み立てて持っておく
+ */
+export function embedScript(base: string, locale: Locale = getLocale()): string {
+  const cacheKey = `${locale} ${base}`;
+  const hit = built.get(cacheKey);
   if (hit) return hit;
   const strings: Record<string, string> = { locale: locale === "ja" ? "ja-JP" : "en-US" };
   for (const [k, key] of Object.entries(KEYS)) strings[k] = t(key, locale);
   // スクリプトのファイルとして配るが、念のため < と行区切りの文字は \u で書く（文言から文脈を抜けさせない）
   const json = JSON.stringify(strings).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-  const js = SOURCE.replace("__BANTO_I18N__", json);
-  built.set(locale, js);
+  const origin = JSON.stringify(new URL(base).origin).replace(/</g, "\\u003c");
+  const js = SOURCE.replace("__BANTO_BASE__", origin).replace("__BANTO_I18N__", json);
+  built.set(cacheKey, js);
   return js;
 }
 

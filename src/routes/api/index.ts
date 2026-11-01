@@ -10,7 +10,7 @@ import { productFields, publicAttributes } from "../../products/fields";
 import type { CategoryRow } from "../../db/types";
 import { imageUrl } from "../../media/images";
 import { BANTO_VERSION } from "../../version";
-import { mediaBaseUrl, param, type Ctx } from "../common";
+import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 import { cors } from "hono/cors";
 import { commerceApi } from "./commerce";
 import { memberCors, membersApi } from "./members";
@@ -61,7 +61,7 @@ function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
  * 貼った側のサイトから <script src> で読む。版は URL に入れる（形を変えるときは v2 を足す）
  */
 api.get("/embed/v1.js", (c) =>
-  c.body(embedScript(), 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*" }),
+  c.body(embedScript(publicBaseUrl(c)), 200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*" }),
 );
 
 api.get("/openapi.json", (c) => c.json(publicOpenapiDocument(new URL(c.req.url).origin, BANTO_VERSION)));

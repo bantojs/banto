@@ -33,7 +33,7 @@ describe("貼れるタグのスクリプト", () => {
   });
 
   it("運営者の文字列は textContent だけ。会員の API・AI 用の API は呼ばない", () => {
-    const js = embedScript("ja");
+    const js = embedScript(BASE, "ja");
     expect(js).not.toContain("innerHTML");
     expect(js).not.toContain("insertAdjacentHTML");
     expect(js).not.toContain("/members");
@@ -42,8 +42,10 @@ describe("貼れるタグのスクリプト", () => {
   });
 
   it("文言はロケールごと。< と行区切りはエスケープして埋める", () => {
-    expect(embedScript("en")).toContain('"addToCart":"Add to cart"');
-    expect(embedScript("ja")).not.toContain("__BANTO_I18N__");
+    expect(embedScript(BASE, "en")).toContain('"addToCart":"Add to cart"');
+    expect(embedScript(BASE, "ja")).not.toContain("__BANTO_I18N__");
+    // 問い合わせ先はサーバーが書き込む（読み込み方に左右されない）
+    expect(embedScript("https://banto.example/x", "ja")).toContain('var BASE="https://banto.example";');
   });
 });
 
