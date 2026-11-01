@@ -24,7 +24,7 @@ import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
 import { CONTENT_API_MIGRATION } from "../pages";
-import { APP_DATA_MIGRATION, isAppDataKind } from "../apps/app-data";
+import { APP_DATA_CUSTOM_MIGRATION, APP_DATA_KEY_RE, APP_DATA_MIGRATION, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone } from "../i18n/time";
 
@@ -91,6 +91,7 @@ function mapRpcError(e: unknown): never {
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
     // ページ・記事（0083）
     // 拡張データ（0084）
+    if (e.is("app_data_keys_full")) throw new ApiError("conflict", "app_data_keys_full: a plugin can keep up to 20 custom.v1 keys per product; delete some first", 409);
     if (e.is("app_handle_required")) throw new ApiError("conflict", "app_handle_required: give this plugin (hook endpoint) an app name in the admin screen first", 409);
     if (e.is("handle_taken")) throw new ApiError("conflict", "handle_taken: another page (or article in this blog) outside the trash already uses this handle", 409);
     if (e.is("pii_scope_required")) throw new ApiError("unauthorized", "attachments need the orders:pii scope as well as inquiries:read", 401);
@@ -607,25 +608,36 @@ export class ApiService {
   }
 
   // ---- 拡張データ（app_data:write、0084。docs/app-data.md）。トークンに結んだ送信先（プラグイン）の名前の空間だけ ----
-  private async appDataReady(kind?: string): Promise<void> {
+  private async appDataReady(kind?: string, key?: string): Promise<void> {
     if (!(await this.migratedTo(APP_DATA_MIGRATION))) {
       await this.call("api_token_shop", {});
       throw new ApiError("migration_required", `app data needs the database update ${APP_DATA_MIGRATION}; apply it from /admin/update`, 409);
     }
-    if (kind !== undefined && !isAppDataKind(kind)) throw new ApiError("invalid", "invalid_app_data_kind: the kind must be reviews.v1", 400);
+    if (kind === undefined) return;
+    if (!isAppDataKind(kind)) throw new ApiError("invalid", "invalid_app_data_kind: the kind must be reviews.v1 or custom.v1", 400);
+    // custom.v1 と名前（0085）
+    if (kind === "custom.v1" && !(await this.migratedTo(APP_DATA_CUSTOM_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `custom.v1 needs the database update ${APP_DATA_CUSTOM_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    if (key !== undefined && kind !== "custom.v1") throw new ApiError("invalid", "invalid_app_data_key: only custom.v1 takes a key", 400);
+    if (key !== undefined && !APP_DATA_KEY_RE.test(key)) throw new ApiError("invalid", "invalid_app_data_key: lowercase letters, digits and hyphens, up to 40 characters, starting with a letter", 400);
   }
   async appDataList(q: { productId?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
     await this.appDataReady();
     return this.call<{ app: string; items: Record<string, unknown>[]; total: number }>("api_app_data_list", { p_product_id: q.productId ? uuidOr404(q.productId) : null, p_limit: q.limit ?? 50, p_offset: q.offset ?? 0 });
   }
-  /** 置き直す（同じ商品・同じ形の行は丸ごと入れ替え。public が false ならお客様の画面に出さない） */
-  async appDataSet(productId: string, kind: string, data: unknown, isPublic = true) {
-    await this.appDataReady(kind);
-    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic });
+  /** 置き直す（同じ商品・同じ形（custom.v1 は同じ名前）の行は丸ごと入れ替え。public が false ならお客様の画面に出さない） */
+  async appDataSet(productId: string, kind: string, data: unknown, isPublic = true, key?: string) {
+    await this.appDataReady(kind, key);
+    if (kind === "custom.v1" && key === undefined) throw new ApiError("invalid", "invalid_app_data_key: custom.v1 needs a key (PUT /products/{id}/app-data/custom.v1/{key})", 400);
+    // p_key は custom.v1 のときだけ送る（0085 の前の DB の関数は p_key を知らない）
+    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic, ...(key !== undefined ? { p_key: key } : {}) });
   }
-  async appDataDelete(productId: string, kind: string) {
-    await this.appDataReady(kind);
-    const deleted = await this.call<boolean>("api_app_data_delete", { p_product_id: uuidOr404(productId), p_kind: kind });
+  /** 消す。custom.v1 で名前を省くと、その種類の自分の行をすべて */
+  async appDataDelete(productId: string, kind: string, key?: string) {
+    await this.appDataReady(kind, key);
+    const deleted = await this.call<boolean>("api_app_data_delete", { p_product_id: uuidOr404(productId), p_kind: kind, ...(key !== undefined ? { p_key: key } : {}) });
     return { deleted };
   }
 

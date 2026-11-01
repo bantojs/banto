@@ -1273,8 +1273,8 @@ export class FakeSupabase {
       // 0084: 外部プラグインの拡張データ（公開・送信先が有効・名前あり）
       const appData = this.tables.app_data
         .filter((d) => d["product_id"] === p["id"] && d["public"] !== false)
-        .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => ({ app: e["app_handle"], kind: d["kind"], data: d["data"], updated_at: d["updated_at"] })))
-        .sort((a, b) => String(a.app).localeCompare(String(b.app)));
+        .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => ({ app: e["app_handle"], kind: d["kind"], key: d["key"] ?? "", data: d["data"], updated_at: d["updated_at"] })))
+        .sort((a, b) => `${String(a.app)}/${a.kind}/${a.key}`.localeCompare(`${String(b.app)}/${b.kind}/${b.key}`));
       return json({ ...p, attributes: pub, app_data: appData });
     }
     // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
@@ -1941,7 +1941,8 @@ export class FakeSupabase {
       const ep = this.tables.hook_endpoints.find((e) => e["id"] === tok["endpoint_id"] && e["shop_id"] === shopId);
       if (!ep) return unauthorized();
       if (!ep["app_handle"]) return json({ code: "P0001", message: "app_handle_required" }, 400);
-      const view = (d: Row) => ({ app: ep["app_handle"], product_id: d["product_id"], kind: d["kind"], public: d["public"], data: d["data"], updated_at: d["updated_at"] });
+      const view = (d: Row) => ({ app: ep["app_handle"], product_id: d["product_id"], kind: d["kind"], key: d["key"] ?? "", public: d["public"], data: d["data"], updated_at: d["updated_at"] });
+      const key = (args["p_key"] ?? (fn === "api_app_data_delete" ? null : "")) as string | null;
       const mine = this.tables.app_data.filter((d) => d["endpoint_id"] === ep["id"]);
       if (fn === "api_app_data_list") {
         const items = mine.filter((d) => !args["p_product_id"] || d["product_id"] === args["p_product_id"]);
@@ -1950,17 +1951,20 @@ export class FakeSupabase {
       if (!this.tables.products.some((x) => x["id"] === args["p_product_id"] && x["shop_id"] === shopId)) return fn === "api_app_data_delete" ? json(false) : notFound();
       if (fn === "api_app_data_delete") {
         const before = this.tables.app_data.length;
-        this.tables.app_data = this.tables.app_data.filter((d) => !(d["endpoint_id"] === ep["id"] && d["product_id"] === args["p_product_id"] && d["kind"] === args["p_kind"]));
+        this.tables.app_data = this.tables.app_data.filter((d) => !(d["endpoint_id"] === ep["id"] && d["product_id"] === args["p_product_id"] && d["kind"] === args["p_kind"] && (key === null || (d["key"] ?? "") === key)));
         return json(this.tables.app_data.length < before);
       }
       const data = args["p_data"] as Row | null;
-      if (!data || typeof data !== "object" || typeof data["rating_avg"] !== "number" || typeof data["rating_count"] !== "number") return json({ code: "P0001", message: "invalid_app_data" }, 400);
-      let row = mine.find((d) => d["product_id"] === args["p_product_id"] && d["kind"] === args["p_kind"]);
+      const custom = args["p_kind"] === "custom.v1";
+      if ((custom && !key) || (!custom && key)) return json({ code: "P0001", message: "invalid_app_data_key" }, 400);
+      if (!data || typeof data !== "object" || (!custom && (typeof data["rating_avg"] !== "number" || typeof data["rating_count"] !== "number"))) return json({ code: "P0001", message: "invalid_app_data" }, 400);
+      let row = mine.find((d) => d["product_id"] === args["p_product_id"] && d["kind"] === args["p_kind"] && (d["key"] ?? "") === key);
       if (!row) {
-        row = { shop_id: shopId, endpoint_id: ep["id"], product_id: args["p_product_id"], kind: args["p_kind"] };
+        if (custom && mine.filter((d) => d["product_id"] === args["p_product_id"] && d["kind"] === "custom.v1").length >= 20) return json({ code: "P0001", message: "app_data_keys_full" }, 400);
+        row = { shop_id: shopId, endpoint_id: ep["id"], product_id: args["p_product_id"], kind: args["p_kind"], key };
         this.tables.app_data.push(row);
       }
-      Object.assign(row, { data: { rating_avg: data["rating_avg"], rating_count: data["rating_count"], items: data["items"] ?? [] }, public: args["p_public"] !== false, updated_at: this.now() });
+      Object.assign(row, { data: custom ? data : { rating_avg: data["rating_avg"], rating_count: data["rating_count"], items: data["items"] ?? [] }, public: args["p_public"] !== false, updated_at: this.now() });
       return json(view(row));
     }
     // 0083: ページ・記事（スコープ・モジュール・ショップの限定と、作る / 直すの振り分けだけ再現。値の検査は test/db/content-api.test.ts）

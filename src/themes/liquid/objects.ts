@@ -11,7 +11,7 @@ import type { CartLine } from "../types";
 import type { CategoryNode } from "../../products/categories";
 import { firstImageForSku, orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
-import { appDataOf, productReviews } from "../../apps/app-data";
+import { appDataOf, customAppData, productReviews } from "../../apps/app-data";
 import { escapeHtml, SafeHtml } from "./engine";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -146,7 +146,9 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     updated_at: p.updated_at,
     // 外部プラグインの拡張データ（0084、docs/app-data.md）。文字は既定でエスケープして描かれる
     reviews: reviewsObject(p),
-    app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, data: x.data })),
+    app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, key: x.key ?? "", data: x.data })),
+    // custom.v1 をプラグインの名前 → 名前（key）で（0085）。{{ product.apps['size-guide']['size-table'].note }}
+    apps: customAppData(p),
   };
 }
 

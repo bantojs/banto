@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
-import { APP_DATA_MIGRATION, productReviews, reviewsJsonLd } from "../src/apps/app-data";
+import { APP_DATA_CUSTOM_MIGRATION, APP_DATA_MIGRATION, productReviews, reviewsJsonLd } from "../src/apps/app-data";
 import { MCP_TOOLS } from "../src/mcp/tools";
 import { productFromDetail } from "../src/themes/liquid/objects";
 
@@ -111,7 +111,7 @@ describe("拡張データ（0084）: お客様の画面", () => {
     expect(o.reviews).toMatchObject({ app: "reviews", rating: 4.5, rating_count: 12 });
     expect(o.reviews?.items[0]).toMatchObject({ author: "東京都 T さん", verified_purchase: true });
     expect(o.reviews?.items[1]).toMatchObject({ title: null, incentivized: true });
-    expect(o.app_data).toEqual([{ app: "reviews", kind: "reviews.v1", data: reviews }]);
+    expect(o.app_data).toEqual([{ app: "reviews", kind: "reviews.v1", key: "", data: reviews }]);
   });
 
   it("productReviews: 件数 0・壊れた行は出さない。構造化データは見えている分だけ", () => {
@@ -149,5 +149,43 @@ describe("拡張データ（0084）: 管理画面", () => {
     // ほかのスコープだけのトークンは結ばない
     await b.post(`/admin/shops/${shop.id}/tokens`, { name: "読む", scopes: "products:read", endpoint_id: "ep-reviews" });
     expect(sb.tables.api_tokens.at(-1)!["endpoint_id"]).toBeUndefined();
+  });
+});
+
+describe("拡張データの custom.v1（0085）", () => {
+  it("名前ごとに置く → ヘッドレスに key 付きで出る・既定のテーマは描かない。名前なし・名前の誤り・reviews.v1 の名前は 400", async () => {
+    const { app, rest, issue, product } = setup();
+    const tok = await issue(["app_data:write"]);
+    const table = { note: "<b>平置き</b>", rows: [{ size: "M", chest_cm: 96 }] };
+    const put = await rest(tok, "PUT", `/products/${product.id}/app-data/custom.v1/size-table`, { data: table });
+    expect(put.status).toBe(200);
+    expect(put.json).toMatchObject({ app: "reviews", kind: "custom.v1", key: "size-table" });
+    expect((await rest(tok, "PUT", `/products/${product.id}/app-data/custom.v1`, { data: table })).status).toBe(400);
+    expect((await rest(tok, "PUT", `/products/${product.id}/app-data/custom.v1/Bad_Key`, { data: table })).status).toBe(400);
+    expect((await rest(tok, "PUT", `/products/${product.id}/app-data/reviews.v1/x`, { data: reviews })).status).toBe(400);
+    const p = ((await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: Record<string, unknown> }).product;
+    expect(p["app_data"]).toEqual([{ app: "reviews", kind: "custom.v1", key: "size-table", data: table }]);
+    expect(p["reviews"]).toBeNull();
+    const html = await (await app.request(`${BASE}/my-shop/p/tee`)).text();
+    expect(html).not.toContain("平置き");
+    expect((await rest(tok, "DELETE", `/products/${product.id}/app-data/custom.v1/size-table`)).json).toEqual({ deleted: true });
+  });
+
+  it("Liquid: product.apps[プラグイン][名前]", () => {
+    const product = { id: "p1", shop_id: "s", slug: "tee", name: "T", description: null, tags: [], published: true, created_at: "", updated_at: "", app_data: [{ app: "size-guide", kind: "custom.v1", key: "size-table", data: { note: "平置き" } }, { app: "reviews", kind: "reviews.v1", key: "", data: reviews }] };
+    const o = productFromDetail({ shopPath: "/my-shop", mediaBaseUrl: "/media" }, { product, images: [], skus: [] } as never);
+    expect(o.apps).toEqual({ "size-guide": { "size-table": { note: "平置き" } } });
+    expect(o.app_data[0]).toMatchObject({ app: "size-guide", key: "size-table" });
+    expect(o.reviews).toMatchObject({ app: "reviews" });
+  });
+
+  it("0085 の前は custom.v1 だけ 409 migration_required（reviews.v1 は今までどおり）", async () => {
+    const old = setup();
+    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== APP_DATA_CUSTOM_MIGRATION);
+    const tok = await old.issue(["app_data:write"]);
+    const m = await old.rest(tok, "PUT", `/products/${old.product.id}/app-data/custom.v1/size-table`, { data: { a: 1 } });
+    expect(m.status).toBe(409);
+    expect(m.json.error?.code).toBe("migration_required");
+    expect((await old.rest(tok, "PUT", `/products/${old.product.id}/app-data/reviews.v1`, { data: reviews })).status).toBe(200);
   });
 });

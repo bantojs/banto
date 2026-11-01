@@ -185,7 +185,7 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       /** SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値（出てくる順）。軸の無い商品は [] */
       option_axes: optionAxesForSelect(p.option_axes, detail.skus),
       /** 外部プラグインの拡張データ（0084、公開の分だけ）。reviews はレビューの要約（無ければ null） */
-      app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, data: x.data })),
+      app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, key: x.key ?? "", data: x.data })),
       reviews: productReviews(p),
     },
   });

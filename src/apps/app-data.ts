@@ -5,9 +5,14 @@
  */
 
 export const APP_DATA_MIGRATION = "0084_app_data";
+/** 形を決めない custom.v1 と名前（key）。0085 */
+export const APP_DATA_CUSTOM_MIGRATION = "0085_app_data_custom";
 
-/** 知っている形 */
-export const APP_DATA_KINDS = ["reviews.v1"] as const;
+/** 知っている形。custom.v1 は形を決めない種類で、Banto 自身は描かない（Liquid のテーマとヘッドレスだけが読む） */
+export const APP_DATA_KINDS = ["reviews.v1", "custom.v1"] as const;
+
+/** custom.v1 の名前（0085 の CHECK と同じ） */
+export const APP_DATA_KEY_RE = /^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 export type AppDataKind = (typeof APP_DATA_KINDS)[number];
 
 export function isAppDataKind(v: unknown): v is AppDataKind {
@@ -35,6 +40,8 @@ export interface ReviewsV1 {
 export interface PublicAppData {
   app: string;
   kind: string;
+  /** custom.v1 の名前（ほかの種類と 0085 の前は空か無い） */
+  key?: string;
   data: unknown;
   updated_at?: string;
 }
@@ -68,6 +75,16 @@ function reviewItem(v: unknown): ReviewItem | null {
     incentivized: v["incentivized"] === true,
     verified_purchase: v["verified_purchase"] === true,
   };
+}
+
+/** custom.v1 をプラグインの名前 → 名前（key）→ 中身にまとめる（Liquid の product.apps） */
+export function customAppData(product: { app_data?: unknown }): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const row of appDataOf(product)) {
+    if (row.kind !== "custom.v1" || typeof row.key !== "string" || row.key === "") continue;
+    (out[row.app] ??= {})[row.key] = row.data;
+  }
+  return out;
 }
 
 /** レビュー（reviews.v1）。複数のプラグインが置いていれば名前の順で最初のもの。件数 0 なら null */

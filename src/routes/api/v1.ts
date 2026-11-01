@@ -303,17 +303,20 @@ v1.get("/app-data", async (c) =>
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),
 );
-v1.put("/products/:id/app-data/:kind", async (c) =>
+// custom.v1 は名前（:key）ごと（0085）。名前なしの DELETE はその種類の自分の行をすべて
+const appDataPut = (c: Ctx, key: string | undefined) =>
   body(c)
     .then((b) => {
       if (b["public"] !== undefined && typeof b["public"] !== "boolean") throw new ApiError("invalid", "public must be a boolean", 400);
       if (b["data"] === undefined) throw new ApiError("invalid", "data is required", 400);
-      return api(c).appDataSet(c.req.param("id"), c.req.param("kind"), b["data"], b["public"] !== false);
+      return api(c).appDataSet(c.req.param("id")!, c.req.param("kind")!, b["data"], b["public"] !== false, key);
     })
     .then((r) => c.json(r))
-    .catch((e) => errorJson(c, e)),
-);
+    .catch((e) => errorJson(c, e));
+v1.put("/products/:id/app-data/:kind", async (c) => appDataPut(c, undefined));
+v1.put("/products/:id/app-data/:kind/:key", async (c) => appDataPut(c, c.req.param("key")));
 v1.delete("/products/:id/app-data/:kind", async (c) => api(c).appDataDelete(c.req.param("id"), c.req.param("kind")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.delete("/products/:id/app-data/:kind/:key", async (c) => api(c).appDataDelete(c.req.param("id"), c.req.param("kind"), c.req.param("key")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 
 // ページ・ブログの記事（0083。content:read / content:write、docs/ai-access.md §9）。:ref は id（UUID）か handle。消すのはゴミ箱へ
 v1.get("/pages", async (c) =>

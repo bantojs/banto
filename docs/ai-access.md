@@ -282,5 +282,5 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - **トークンは連携（hooks の送信先）に結んで発行します**（`api_tokens.endpoint_id`）。結ばずに `app_data:write` は付けられず、あとから付け替えもできません。
   書けるのは、その連携の名前の空間（`hook_endpoints.app_handle`）だけです。連携を消すと、トークンとデータも消えます。
 - スコープの項目は `apps`（組織のメンバーの「プラグインのデータ」）。商品の担当（`catalog`）とは分けます。
-- 形は Banto が知っているものだけ（最初は `reviews.v1`）。知らない鍵は落とし、文字はエスケープして描きます。
-- REST: `PUT` / `DELETE /api/v1/products/<id>/app-data/<kind>`、`GET /api/v1/app-data`。MCP には出しません。
+- 種類は `reviews.v1`（Banto が形を知っていて描く。知らない鍵は落とす）と `custom.v1`（形を決めない JSON を名前ごとに。0085。Banto は描かず、テーマとヘッドレスが読む）。文字はエスケープして描きます。
+- REST: `PUT` / `DELETE /api/v1/products/<id>/app-data/<kind>`（custom.v1 は `…/custom.v1/<名前>`）、`GET /api/v1/app-data`。MCP には出しません。
