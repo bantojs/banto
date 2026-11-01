@@ -57,8 +57,6 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "app_data:write": "apps",
 };
 
-/** 0083 が当たるまで出さないスコープ（ページ・ブログの記事） */
-export const CONTENT_SCOPES: readonly ApiScope[] = ["content:read", "content:write"];
 
 /** 0084 が当たるまで出さないスコープ（外部プラグインの拡張データ。送信先に結んで発行する） */
 export const APP_DATA_SCOPES: readonly ApiScope[] = ["app_data:write"];

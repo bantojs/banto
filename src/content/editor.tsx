@@ -13,7 +13,7 @@ import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
 import { mediaBaseUrl } from "../routes/common";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
-import { PAGE_LIMITS, PAGE_NAVS, PAGE_MEDIA_THUMB_MIGRATION, PAGES_PUBLISHING_MIGRATION, RESERVED_HANDLES, type PageNav } from "../pages";
+import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
@@ -26,7 +26,6 @@ import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
 import { PATTERNS_FILE, STYLES_FILE, bantoPatterns, parseBlockStyles, parsePatterns, type BlockStyles, type EditorPattern, type PatternBody } from "./theme-blocks";
 import { readThemeBundle, themeStorage } from "../themes/liquid/versions";
 import type { CacheAdapter, StorageAdapter } from "../adapters/types";
-import { BLOG_MIGRATION } from "../blog";
 import { APP_BLOCKS_MIGRATION } from "../apps/app-data";
 import { parseManifest, type ManifestBlock } from "../hooks/manifest";
 import { pageEditorClient } from "./editor-client";
@@ -131,7 +130,7 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
   const [categories, rows, blogs, theme, apps] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
-    migrated(deps, BLOG_MIGRATION).then((ok) => (ok ? db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }) : [])).catch(() => []),
+    db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }).catch(() => []),
     editorTheme(c, shop),
     editorAppBlocks(c, shop),
   ]);
@@ -360,7 +359,7 @@ export interface ContentValues {
   sort_order?: number;
 }
 
-export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; extras?: EditorExtras; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; publishing: boolean; revisions: RevisionRow[] }) {
+export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; extras?: EditorExtras; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; revisions: RevisionRow[] }) {
   const v = props.values;
   const state = contentState({ published: v.published, published_at: v.published_at ?? null, deleted_at: null });
   const tools: [string, MessageKey, MessageKey?][] = [
@@ -547,30 +546,26 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             </details>
           </div>
           <aside>
-            {props.publishing ? (
-              <section class="card">
-                <h2>{t("pages.publish_card")}</h2>
-                <label for="published_at">{t("pages.published_at")}</label>
-                <input id="published_at" name="published_at" type="datetime-local" value={isoToZonedInput(v.published_at)} />
-                <p class="muted">{t("pages.published_at_help")}</p>
-              </section>
-            ) : null}
-            {props.publishing ? (
-              <section class="card">
-                <h2>{t("pages.featured")}</h2>
-                <input type="hidden" id="image_url" name="image_url" value={v.image_url ?? ""} />
-                <img id="featured-preview" src={v.image_url ?? ""} alt="" hidden={!v.image_url} style="width:100%;height:auto;border-radius:6px;border:1px solid var(--border)" />
-                <p class="muted">{t("pages.featured_help")}</p>
-                <p>
-                  <button type="button" class="secondary small" data-media="featured" hidden>
-                    {t("pages.featured_choose")}
-                  </button>{" "}
-                  <button type="button" class="secondary small" id="featured-clear" hidden={!v.image_url}>
-                    {t("pages.featured_clear")}
-                  </button>
-                </p>
-              </section>
-            ) : null}
+            <section class="card">
+              <h2>{t("pages.publish_card")}</h2>
+              <label for="published_at">{t("pages.published_at")}</label>
+              <input id="published_at" name="published_at" type="datetime-local" value={isoToZonedInput(v.published_at)} />
+              <p class="muted">{t("pages.published_at_help")}</p>
+            </section>
+            <section class="card">
+              <h2>{t("pages.featured")}</h2>
+              <input type="hidden" id="image_url" name="image_url" value={v.image_url ?? ""} />
+              <img id="featured-preview" src={v.image_url ?? ""} alt="" hidden={!v.image_url} style="width:100%;height:auto;border-radius:6px;border:1px solid var(--border)" />
+              <p class="muted">{t("pages.featured_help")}</p>
+              <p>
+                <button type="button" class="secondary small" data-media="featured" hidden>
+                  {t("pages.featured_choose")}
+                </button>{" "}
+                <button type="button" class="secondary small" id="featured-clear" hidden={!v.image_url}>
+                  {t("pages.featured_clear")}
+                </button>
+              </p>
+            </section>
             <section class="card">
               <h2>{t("pages.settings")}</h2>
               <label for="handle">{t("pages.handle")}</label>
@@ -620,13 +615,9 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <input id="page-image" type="file" name="file" accept="image/*" required form="page-image-form" />
               <p class="muted">{t("pages.image_help")}</p>
               <p>
-                {props.publishing ? (
-                  <>
-                    <button type="button" class="secondary small" data-media="body" hidden>
-                      {t("pages.media_library")}
-                    </button>{" "}
-                  </>
-                ) : null}
+                <button type="button" class="secondary small" data-media="body" hidden>
+                  {t("pages.media_library")}
+                </button>{" "}
                 <button type="submit" class="secondary small" form="page-image-form">
                   {t("pages.image_upload")}
                 </button>{" "}
@@ -669,7 +660,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             {props.pageId ? (
               <section class="card danger-zone">
                 <button type="submit" class="secondary small" form="page-delete">
-                  {props.publishing ? t("pages.trash") : t("pages.delete")}
+                  {t("pages.trash")}
                 </button>
               </section>
             ) : null}
@@ -679,38 +670,30 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
       <form method="post" action={`${props.kind.base}/images`} enctype="multipart/form-data" id="page-image-form" data-busy={t("pages.image_busy")} data-failed={t("pages.image_failed")}>
         <input type="hidden" name="back" value={props.selfUrl} />
       </form>
-      {props.pageId ? (
-        props.publishing ? (
-          <form method="post" action={`${props.action}/trash`} id="page-delete" />
-        ) : (
-          <form method="post" action={`${props.action}/delete`} id="page-delete" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`} />
-        )
-      ) : null}
+      {props.pageId ? <form method="post" action={`${props.action}/trash`} id="page-delete" /> : null}
       {props.pageId && props.revisions.length > 0 ? <form method="post" action={`${props.action}/revisions`} id="page-revert" onsubmit={`return confirm(${JSON.stringify(t("pages.revision_confirm"))})`} /> : null}
-      {props.publishing ? (
-        <dialog id="media-lib" aria-labelledby="media-lib-title" data-list={`${props.kind.base}/media`} data-empty={t("pages.media_empty")}>
-          <h2 id="media-lib-title" style="margin-top:0">
-            {t("pages.media_library")}
-          </h2>
-          <p>
-            {/* ファイルを選ぶ欄をダイアログの中に置く（iPad の写真の選択は、押した欄の位置に出る。隠れた欄を押させると閉じてしまう） */}
-            <label class="pe-file" for="media-file">
-              {t("pages.image_upload")}
-              <input type="file" id="media-file" accept="image/*" multiple />
-            </label>{" "}
-            <button type="button" class="secondary small" id="media-close">
-              {t("pages.cancel")}
-            </button>
-          </p>
-          <p id="media-status" class="muted" aria-live="polite"></p>
-          <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(7rem,1fr));gap:.5rem;max-height:60vh;overflow:auto"></div>
-          <p id="media-more-row" style="text-align:center;margin:.5rem 0 0" hidden>
-            <button type="button" class="secondary small" id="media-more">
-              {t("pages.media_more")}
-            </button>
-          </p>
-        </dialog>
-      ) : null}
+      <dialog id="media-lib" aria-labelledby="media-lib-title" data-list={`${props.kind.base}/media`} data-empty={t("pages.media_empty")}>
+        <h2 id="media-lib-title" style="margin-top:0">
+          {t("pages.media_library")}
+        </h2>
+        <p>
+          {/* ファイルを選ぶ欄をダイアログの中に置く（iPad の写真の選択は、押した欄の位置に出る。隠れた欄を押させると閉じてしまう） */}
+          <label class="pe-file" for="media-file">
+            {t("pages.image_upload")}
+            <input type="file" id="media-file" accept="image/*" multiple />
+          </label>{" "}
+          <button type="button" class="secondary small" id="media-close">
+            {t("pages.cancel")}
+          </button>
+        </p>
+        <p id="media-status" class="muted" aria-live="polite"></p>
+        <div id="media-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(7rem,1fr));gap:.5rem;max-height:60vh;overflow:auto"></div>
+        <p id="media-more-row" style="text-align:center;margin:.5rem 0 0" hidden>
+          <button type="button" class="secondary small" id="media-more">
+            {t("pages.media_more")}
+          </button>
+        </p>
+      </dialog>
       {/* 商品を並べるブロックの設定（PAGE_BLOCKS_SCRIPT が開く。JS が無ければ書式の「::: products …」を直接書く） */}
       <dialog id="blk-products" aria-labelledby="blk-products-title">
         <form method="dialog">
@@ -857,7 +840,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
       <script dangerouslySetInnerHTML={{ __html: PAGE_EDITOR_SCRIPT }} />
       <script dangerouslySetInnerHTML={{ __html: visualEditorScript(props.kind.base) }} />
       <script dangerouslySetInnerHTML={{ __html: PAGE_BLOCKS_SCRIPT }} />
-      {props.publishing ? <script dangerouslySetInnerHTML={{ __html: PAGE_MEDIA_SCRIPT }} /> : null}
+      <script dangerouslySetInnerHTML={{ __html: PAGE_MEDIA_SCRIPT }} />
     </div>
   );
 }
@@ -869,7 +852,6 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
  *   POST <base>/render   本文（決まった書式）を HTML にする（見たままの編集に切り替えるとき）
  */
 export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext) => Promise<ShopRow | null>, baseOf: (c: AdminContext, shop: ShopRow) => string): void {
-  const publishing = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGES_PUBLISHING_MIGRATION);
 /**
  * 本文に使う画像を置く。中身の先頭のバイトで種類を決め（SVG・HTML は受けない）、pages/<ショップ>/ に置く。
  * thumb はブラウザが作った長辺 400px の縮小版（任意。メディアライブラリの一覧に使う、0082）
@@ -895,7 +877,7 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   // 一覧用の縮小版（形が合わなければ置かない。本画像はそのまま使える）
   let thumbUrl: string | null = null;
   const thumb = body.thumb;
-  if (thumb instanceof File && thumb.size > 0 && thumb.size <= MAX_THUMB_BYTES && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_MEDIA_THUMB_MIGRATION))) {
+  if (thumb instanceof File && thumb.size > 0 && thumb.size <= MAX_THUMB_BYTES) {
     const tb = new Uint8Array(await thumb.arrayBuffer());
     const tk = sniffImage(tb);
     if (tk) {
@@ -904,8 +886,8 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
       thumbUrl = imageUrl(mediaBaseUrl(c), tKey);
     }
   }
-  // メディアライブラリに記録する（0080。記録できなくても画像は使える）
-  if (await publishing(c)) await owner(c).db.from("page_media").insert({ shop_id: shop.id, storage_key: key, url, ...(thumbUrl ? { thumb_url: thumbUrl } : {}) }).catch((e: unknown) => console.error("[banto] page_media:", e));
+  // メディアライブラリに記録する（記録できなくても画像は使える）
+  await owner(c).db.from("page_media").insert({ shop_id: shop.id, storage_key: key, url, ...(thumbUrl ? { thumb_url: thumbUrl } : {}) }).catch((e: unknown) => console.error("[banto] page_media:", e));
   if (wantsJson) return c.json({ url });
   return c.redirect(`${back}?image=${encodeURIComponent(url)}`);
 });
@@ -916,11 +898,10 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
  */
   app.get("/media", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
-  if (!shop || !(await publishing(c))) return c.notFound();
+  if (!shop) return c.notFound();
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.json({ error: "bad_cursor" }, 400);
-  const thumbs = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_MEDIA_THUMB_MIGRATION);
-  const rows = await owner(c).db.from<{ id: string; url: string; thumb_url?: string | null; created_at: string }>("page_media").select(thumbs ? "id,url,thumb_url,created_at" : "id,url,created_at", { eq: { shop_id: shop.id }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: MEDIA_PAGE + 1 });
+  const rows = await owner(c).db.from<{ id: string; url: string; thumb_url?: string | null; created_at: string }>("page_media").select("id,url,thumb_url,created_at", { eq: { shop_id: shop.id }, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: MEDIA_PAGE + 1 });
   const page = splitPage(rows, (r) => r.created_at, MEDIA_PAGE);
   c.header("Cache-Control", "private, no-store");
   return c.json({ items: page.rows, next: page.next });

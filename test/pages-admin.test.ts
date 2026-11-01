@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
-import { PAGE_MEDIA_THUMB_MIGRATION, PAGES_MIGRATION, PAGES_PUBLISHING_MIGRATION, handleFromTitle } from "../src/pages";
+import { handleFromTitle } from "../src/pages";
 import { PAGE_BLOCKS_SCRIPT } from "../src/content/blocks-script";
 import { MEDIA_PAGE } from "../src/content/editor";
 
@@ -26,16 +26,12 @@ async function staff(sb: FakeSupabase, app: ReturnType<typeof appWith>, shop: { 
 const form = { title: "私たちについて", handle: "about", body: "## 店のこと\n\n**手しごと**の店です。<b>x</b>", nav: "header", sort_order: "0", published: "on", action: "save" };
 
 describe("ショップのページの管理画面", () => {
-  it("モジュールの一覧に出て ON にでき、0079 が当たるまでは出ない", async () => {
+  it("モジュールの一覧に出て ON にできる", async () => {
     const { sb, app, shop } = setup({ enabled: false });
     const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
     expect(await (await owner.get(`/admin/shops/${shop.id}/modules`)).text()).toContain('data-module="pages"');
     await owner.post(`/admin/shops/${shop.id}/modules/pages/enabled`, { enabled: "on" });
     expect(((sb.tables.shops[0]!["settings"] as Record<string, unknown>)["modules"] as Record<string, unknown>)["pages"]).toBe(true);
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== PAGES_MIGRATION);
-    const fresh = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    expect(await (await fresh.get(`/admin/shops/${shop.id}/modules`)).text()).not.toContain('data-module="pages"');
-    expect((await fresh.post(`/admin/shops/${shop.id}/modules/pages/enabled`, { enabled: "on" })).status).toBe(404);
   });
 
   it("content の項目の人が作り・直し・消せる。プレビューは保存しない。タブに出る", async () => {
@@ -281,35 +277,5 @@ describe("ショップのページの管理画面", () => {
     expect(ids).toHaveLength(MEDIA_PAGE + 12);
     expect(new Set(ids).size).toBe(ids.length);
     expect((await owner.get(`${base}/media?after=broken`)).status).toBe(400);
-  });
-
-  it("0082 を当てるまでは縮小版を置かず、メディアライブラリの一覧で thumb_url を選ばない", async () => {
-    const { sb, shop, storage } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== PAGE_MEDIA_THUMB_MIGRATION);
-    const owner = await Browser.loggedIn(appWith(sb, {}, storage), "owner@example.com", "password-123");
-    const base = `/admin/shops/${shop.id}/modules/pages`;
-    await owner.postMultipart(`${base}/images`, { file: new File([tinyPng()], "a.png", { type: "image/png" }), thumb: new File([tinyPng()], "t.png", { type: "image/png" }) }, { headers: { accept: "application/json" } });
-    expect([...storage.objects.keys()].filter((k) => k.includes(".thumb."))).toEqual([]);
-    const media = (await (await owner.get(`${base}/media`)).json()) as { items: Record<string, unknown>[] };
-    expect(media.items).toHaveLength(1);
-    expect(media.items[0]).not.toHaveProperty("thumb_url");
-  });
-
-  it("0080 を当てるまでは今までの画面（日時・アイキャッチ・ゴミ箱の欄が無く、消すとすぐ消える）", async () => {
-    const { sb, shop } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== PAGES_PUBLISHING_MIGRATION);
-    const owner = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    const base = `/admin/shops/${shop.id}/modules/pages`;
-    const blank = await (await owner.get(`${base}/new`)).text();
-    expect(blank).not.toContain('name="published_at"');
-    expect(blank).not.toContain('name="image_url"');
-    // 0080 の列を送っても書かない（DB に列が無い）
-    await owner.post(base, { ...form, published_at: "2099-01-01T09:00", image_url: `${BASE}/media/x.webp` });
-    const page = sb.tables.pages[0]!;
-    expect(page["published_at"]).toBeUndefined();
-    expect(page["image_url"]).toBeUndefined();
-    expect((await owner.get(`${base}/media`)).status).toBe(404);
-    await owner.post(`${base}/${String(page["id"])}/delete`, {});
-    expect(sb.tables.pages).toHaveLength(0);
   });
 });

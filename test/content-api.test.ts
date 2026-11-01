@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, MemoryStorage, appWith } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
-import { CONTENT_API_MIGRATION } from "../src/pages";
 import { MCP_TOOLS } from "../src/mcp/tools";
 
 /**
@@ -71,7 +70,7 @@ describe("ページ・記事の AI 用 API（REST /api/v1・MCP）", () => {
     expect((await rest(tok, "POST", "/pages", { handle: "c", title: "c", image_url: `${BASE}/media/pages/x/c.webp` })).json["image_url"]).toBe(`${BASE}/media/pages/x/c.webp`);
   });
 
-  it("スコープ不足は 401、モジュールが OFF は 409 module_disabled、0083 の前は 409 migration_required", async () => {
+  it("スコープ不足は 401、モジュールが OFF は 409 module_disabled", async () => {
     const ro = setup();
     const read = await ro.issue(["content:read"]);
     expect((await ro.rest(read, "POST", "/pages", { handle: "x", title: "x" })).status).toBe(401);
@@ -80,12 +79,6 @@ describe("ページ・記事の AI 用 API（REST /api/v1・MCP）", () => {
     const r = await off.rest(t, "GET", "/pages");
     expect(r.status).toBe(409);
     expect(r.json.error?.message).toMatch(/^module_disabled/);
-    const old = setup();
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== CONTENT_API_MIGRATION);
-    const t2 = await old.issue(["content:read"]);
-    const m = await old.rest(t2, "GET", "/pages");
-    expect(m.status).toBe(409);
-    expect(m.json.error?.code).toBe("migration_required");
   });
 
   it("MCP: 読むツールは readOnly、書くツールは【書き込み】と destructiveHint。page_save で作れる", async () => {

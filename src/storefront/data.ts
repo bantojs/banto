@@ -331,15 +331,13 @@ export class StorefrontData {
   }
 
   /**
-   * 公開中のページの一覧（ヘッドレスの API。本文は持たない）。1 つのショップに 100 まで（0079）なので全部。短時間キャッシュ。
-   * publishing は 0080 が当たっているか
+   * 公開中のページの一覧（ヘッドレスの API。本文は持たない）。1 つのショップに 100 まで（0079）なので全部。短時間キャッシュ
    */
-  async pagesList(shop: PublicShop, publishing: boolean): Promise<Omit<PageRow, "body">[]> {
-    const key = `pages:${shop.id}:${publishing ? 1 : 0}`;
+  async pagesList(shop: PublicShop): Promise<Omit<PageRow, "body">[]> {
+    const key = `pages:${shop.id}`;
     const hit = await this.cache.get<Omit<PageRow, "body">[]>(key);
     if (hit) return hit;
-    // published_at・image_url は 0080 から（当てるまでは選ばない）
-    const cols = `id,shop_id,handle,title,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at${publishing ? ",published_at,image_url" : ""}`;
+    const cols = "id,shop_id,handle,title,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at,published_at,image_url";
     const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc,id.asc", limit: 100 });
     await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
     return rows;

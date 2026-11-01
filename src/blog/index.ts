@@ -6,7 +6,6 @@
 import type { PageNav } from "../pages";
 
 export const BLOG_MODULE = "blog";
-export const BLOG_MIGRATION = "0081_mod_blog";
 /** 一覧の 1 ページの記事の数 */
 export const ARTICLES_PER_PAGE = 12;
 /** 一覧で読む深さの上限（それより先は出さない。DB を重くしない） */

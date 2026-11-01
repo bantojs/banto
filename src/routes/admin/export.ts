@@ -4,9 +4,6 @@ import type { DbClient, Row } from "../../db/client";
 import { createPrivilegedDb, PrivilegedRpcError } from "../../db/privileged";
 import { t } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
-import { migrated } from "../../db/migration-state";
-import { PAGES_MIGRATION } from "../../pages";
-import { BLOG_MIGRATION } from "../../blog";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
@@ -67,11 +64,7 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  const deps = { db, cache: c.get("adapters").cache };
-  const [hasPages, hasBlog] = await Promise.all([migrated(deps, PAGES_MIGRATION), migrated(deps, BLOG_MIGRATION)]);
-  const pages = hasPages ? PAGE_TABLES : [];
-  const blog = hasBlog ? BLOG_TABLES : [];
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...pages, ...blog]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,

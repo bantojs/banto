@@ -1,15 +1,14 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { migrated } from "../../db/migration-state";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
-import { PAGES_MODULE, PAGES_PUBLISHING_MIGRATION, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
+import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSummary, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
-import { mediaBaseUrl, migrationStateFor, param, publicBaseUrl, type Ctx } from "../common";
+import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 
 /**
  * ヘッドレスの公開 API: ショップのページ（同梱モジュール pages、0079）とブログ・記事（blog、0081）。docs/headless.md「ページ・ブログ」。
@@ -74,9 +73,7 @@ function pageSummary(s: Scope, p: Omit<PageRow, "body">) {
 contentApi.get("/shops/:shop/pages", async (c: Ctx) => {
   const s = await scope(c, PAGES_MODULE);
   if (s instanceof Response) return s;
-  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
-  const publishing = state ? await migrated(state, PAGES_PUBLISHING_MIGRATION) : false;
-  const pages = await s.sf.pagesList(s.shop, publishing);
+  const pages = await s.sf.pagesList(s.shop);
   return c.json({ pages: pages.map((p) => pageSummary(s, p)) });
 });
 

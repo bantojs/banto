@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, appWith } from "./helpers";
-import { PAGES_PUBLISHING_MIGRATION } from "../src/pages";
 
 /** ヘッドレスの公開 API: ページ（0079）とブログ・記事（0081）。docs/headless.md「ページ・ブログ」 */
 function setup(modules: Record<string, boolean> = { pages: true, blog: true }) {
@@ -66,15 +65,10 @@ describe("ヘッドレスの公開 API: ページ・ブログ", () => {
     expect((await get("/blogs/none/articles")).status).toBe(404);
   });
 
-  it("モジュールが OFF なら 404。0080 を当てる前でもページの一覧を読める", async () => {
+  it("モジュールが OFF なら 404", async () => {
     const off = setup({});
     expect((await off.get("/pages")).status).toBe(404);
     expect((await off.get("/blogs")).status).toBe(404);
     expect((await off.get("/blogs/news/articles/post-1")).status).toBe(404);
-    const old = setup({ pages: true });
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== PAGES_PUBLISHING_MIGRATION);
-    const r = await old.get("/pages");
-    expect(r.status).toBe(200);
-    expect((r.json["pages"] as Record<string, unknown>[]).map((p) => p["handle"])).toEqual(["faq", "about"]);
   });
 });

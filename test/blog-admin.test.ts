@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
-import { BLOG_MIGRATION, parseTags } from "../src/blog";
+import { parseTags } from "../src/blog";
 
 /** ブログの管理画面（同梱モジュール blog、0081）。扱えるのは content の項目の人。記事の編集の画面はページと同じ */
 function setup(opts: { enabled?: boolean } = {}) {
@@ -32,9 +32,6 @@ describe("ブログの管理画面", () => {
     expect(await (await writer.get(`/admin/shops/${shop.id}/modules/blog`)).text()).toContain(`href="/admin/shops/${shop.id}/modules/blog"`);
     const catalog = await staff(sb, app, shop, "c@example.com", ["catalog"]);
     expect((await catalog.get(`/admin/shops/${shop.id}/modules/blog`)).status).toBe(404);
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== BLOG_MIGRATION);
-    const fresh = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    expect(await (await fresh.get(`/admin/shops/${shop.id}/modules`)).text()).not.toContain('data-module="blog"');
   });
 
   it("ブログを作り、記事を書いて公開・予約・タグ・抜粋。編集の画面はページと同じ（ブロック・メディア・リビジョン）", async () => {

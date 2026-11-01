@@ -38,9 +38,9 @@ export const MODULES: readonly ModuleDef[] = [
   // お問い合わせ（チケット。メールはリンクだけで、やり取りは Banto の画面。0061_mod_inquiries、docs/inquiries.md）
   { id: "inquiries", name: "mod.inquiries.name", description: "mod.inquiries.description", adminPath: "inquiries" },
   // ショップのページ（「私たちについて」など。/pages/<handle>。本文は決まった書式、0079_mod_pages、docs/pages.md）
-  { id: "pages", name: "mod.pages.name", description: "mod.pages.description", adminPath: "pages", migration: "0079_mod_pages" },
+  { id: "pages", name: "mod.pages.name", description: "mod.pages.description", adminPath: "pages" },
   // ブログと記事（/blogs/<ブログ>・/blogs/<ブログ>/<記事>。編集の画面はページと同じ、0081_mod_blog、docs/blog.md）
-  { id: "blog", name: "mod.blog.name", description: "mod.blog.description", adminPath: "blog", migration: "0081_mod_blog" },
+  { id: "blog", name: "mod.blog.name", description: "mod.blog.description", adminPath: "blog" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

@@ -1,9 +1,8 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_SCOPES, APP_DATA_SCOPES, CONTENT_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { API_SCOPES, APP_DATA_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { migrated } from "../../db/migration-state";
-import { CONTENT_API_MIGRATION } from "../../pages";
 import { APP_DATA_MIGRATION } from "../../apps/app-data";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -62,11 +61,11 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
 
-/** 発行できるスコープ（ページ・記事のスコープは 0083、拡張データは 0084 が当たってから） */
+/** 発行できるスコープ（拡張データは 0084 が当たってから） */
 async function issuableScopes(c: AdminContext): Promise<readonly ApiScope[]> {
   const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [content, apps] = await Promise.all([migrated(deps, CONTENT_API_MIGRATION), migrated(deps, APP_DATA_MIGRATION)]);
-  return API_SCOPES.filter((sc) => (content || !CONTENT_SCOPES.includes(sc)) && (apps || !APP_DATA_SCOPES.includes(sc)));
+  const apps = await migrated(deps, APP_DATA_MIGRATION);
+  return API_SCOPES.filter((sc) => apps || !APP_DATA_SCOPES.includes(sc));
 }
 
 /** app_data:write のトークンを結べる連携（名前のあるもの） */
