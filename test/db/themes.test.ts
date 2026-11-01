@@ -104,12 +104,12 @@ describe.skipIf(!dbAvailable)("テーマ（0071）", () => {
 
   it("公開中の版は theme_publish を通してしか変えられない（settings の項目で shops を直接書き換えても止まる。外すのは消えたときだけ）", async () => {
     const id = await create(designer, f.shopId, "直接");
-    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update shops set theme_version_id = $2 where id = $1", [f.shopId, id])))).toMatch(/theme_version_readonly/);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update shops set theme_version_id = $2 where id = $1", [f.shopId, id])))).toMatch(/permission denied/);
     expect(await expectDbError(() => asService((c) => c.query("update shops set theme_version_id = $2 where id = $1", [f.shopId, id])))).toMatch(/theme_version_readonly/);
     // 取り下げ（null）も theme_publish だけ（settings の項目のスタッフが直接外せない）
     await getPool().query("update shops set domain = 'th.example.com' where id = $1", [f.shopId]);
     await asUser(f.ownerId, (c) => c.query("select theme_publish($1, $2)", [f.shopId, id]));
-    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update shops set theme_version_id = null where id = $1", [f.shopId])))).toMatch(/theme_version_readonly/);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update shops set theme_version_id = null where id = $1", [f.shopId])))).toMatch(/permission denied/);
     await asUser(f.ownerId, (c) => c.query("select theme_publish($1, null)", [f.shopId]));
     await getPool().query("update shops set domain = null where id = $1", [f.shopId]);
     // ほかの列の書き換えは今までどおり

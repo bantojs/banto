@@ -43,6 +43,8 @@ export const passkeyChallengeHash = (secret: string, challenge: string) => hmacH
 /** お問い合わせのチケットを開くリンクのトークンと、試行の回数を数えるメールアドレスの HMAC（0061。DB には生の値を置かない） */
 export const inquiryLinkHash = (secret: string, token: string) => hmacHex(secret, "inquiry-link", token);
 export const inquiryEmailHash = (secret: string, email: string) => hmacHex(secret, "inquiry-email", email.trim().toLowerCase());
+/** 注文照会の外れをアドレスごとに数えるための HMAC（0089、order_lookup の p_email_hash。小文字にしてから） */
+export const orderEmailHash = (secret: string, email: string) => hmacHex(secret, "order-email", email.trim().toLowerCase());
 /** この端末でこの会員がログインしたことがある印（知らせのメールを送るかの判定、src/members/notice.ts） */
 export const deviceMark = (secret: string, shopId: string, customerId: string) => hmacHex(secret, "device", `${shopId}|${customerId}`);
 

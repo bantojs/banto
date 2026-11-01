@@ -84,9 +84,10 @@ const FILTERS = ["open", "waiting_shop", "waiting_customer", "closed", "unverifi
 /** 担当者の絞り込み（0068）: all / mine（自分）/ none（未割り当て） */
 const ASSIGNEE_FILTERS = ["all", "mine", "none"] as const;
 
+/** 0089 からはメールアドレスを出さない（user_id と表示用の label = メールの @ より前） */
 interface Assignee {
   user_id: string;
-  email: string;
+  label: string;
 }
 
 /** 担当者にできる人 */
@@ -108,7 +109,7 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
     limit: 200,
   });
   const list = filter === "unverified" ? rows.filter((r) => !r.email_verified_at) : rows;
-  const emailOf = new Map((assignees ?? []).map((a) => [a.user_id, a.email]));
+  const labelOf = new Map((assignees ?? []).map((a) => [a.user_id, a.label]));
   const s = inquirySettings(shop.settings);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("mod.inquiries.name")}`} nav crumbs={crumbs(shop)} shopTabs={tabs(c, shop)}>
@@ -165,7 +166,7 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
                 <td>{categoryLabel(r.category)}</td>
                 <td>{[r.contact_name, r.contact_email].filter(Boolean).join(" / ")}</td>
                 <td>{r.order_id ? t("inq.order_linked") : r.claimed_order_number ? tf("inq.order_claimed", { number: r.claimed_order_number }) : ""}</td>
-                {assignees ? <td>{r.assignee_id ? (emailOf.get(r.assignee_id) ?? t("inq.assignee_unknown")) : <span class="muted">{t("inq.assignee_none")}</span>}</td> : null}
+                {assignees ? <td>{r.assignee_id ? (labelOf.get(r.assignee_id) ?? t("inq.assignee_unknown")) : <span class="muted">{t("inq.assignee_none")}</span>}</td> : null}
                 <td>{formatDateTime(r.last_message_at)}</td>
               </tr>
             ))}
@@ -326,7 +327,7 @@ inquiriesAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
                     ) : null}
                     {assignees.map((a) => (
                       <option value={a.user_id} selected={a.user_id === d.assignee_id}>
-                        {a.email}
+                        {a.label}
                         {a.user_id === owner(c).session.user_id ? ` ${t("inq.assignee_me")}` : ""}
                       </option>
                     ))}

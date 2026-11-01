@@ -62,6 +62,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     app_handle_taken: "hooks.app_handle_taken",
     connect_scope: "connect.scope_error",
     manifest_failed: "hooks.manifest_failed",
+    not_found: "hooks.not_found",
     test_ok: "hooks.test_ok",
     test_failed: "hooks.test_failed",
     generic: "error.generic",

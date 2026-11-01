@@ -69,11 +69,12 @@ describe.skipIf(!dbAvailable)("WooCommerce からの移行の続き（0023_woo_h
   });
 
   it("取り込んだ注文は注文照会・会員の注文で取り込んだ時点の品名で見える", async () => {
-    const r = await asService(async (c) => (await c.query<{ r: { items: { name: string; sku: string }[] } }>("select lookup_order($1, 5001, 'm@example.com') as r", [f.shopId])).rows[0]!.r);
-    expect(r.items.map((i) => i.name).sort()).toEqual(["お茶（旧名）", "販売終了の品"]);
-    expect(r.items.find((i) => i.name === "販売終了の品")!.sku).toBe("赤");
-    const m = await asService(async (c) => (await c.query<{ r: { number: number } }>("select member_order($1, $2, 0, 5001) as r", [f.shopId, member])).rows[0]!.r);
+    // 会員に結んだ注文はゲストの注文照会（番号 + メール）では開けない（0089）。会員の注文（member_order）で
+    expect(await asService(async (c) => (await c.query("select lookup_order($1, 5001, 'm@example.com') as r", [f.shopId])).rows[0]!.r)).toBeNull();
+    const m = await asService(async (c) => (await c.query<{ r: { number: number; items: { name: string; sku: string }[] } }>("select member_order($1, $2, 0, 5001) as r", [f.shopId, member])).rows[0]!.r);
     expect(m).toMatchObject({ number: 5001 });
+    expect(m.items.map((i) => i.name).sort()).toEqual(["お茶（旧名）", "販売終了の品"]);
+    expect(m.items.find((i) => i.name === "販売終了の品")!.sku).toBe("赤");
   });
 
   it("import_coupon_usage: 1 人ごとの使用回数を、ゲストと会員の両方の識別子で数に入れる。入れ直しても重ならない", async () => {

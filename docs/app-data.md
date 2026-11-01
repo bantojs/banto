@@ -90,7 +90,7 @@
 
 - 名前（`{名前}`）: 英小文字で始まり、英小文字・数字・ハイフンの 40 文字まで。**1 つの商品に 20 まで**（超えると 409 `app_data_keys_full`）。名前ごとに丸ごと入れ替わります。
 - 中身: JSON のオブジェクト。全体で 64KB・入れ子は 5 段・1 つのオブジェクトの鍵は 50 個・配列は 100 個・文字は 5,000 字まで。鍵の名前は英小文字・数字・`_`（`^[a-z][a-z0-9_]{0,63}$`）。
-- **URL**: 鍵が `url` か `…_url` の値は `https://` で始まるものだけ。どの文字も `javascript:`・`data:`・`vbscript:`・`file:` で始まるものは受けません（テーマが `href` にそのまま使っても危なくないように）。
+- **URL**: 鍵が `url` か `…_url` の値は `https://` で始まるものだけで、**テーマが `href` にそのまま使ってよいのはこの鍵だけ**です。どの文字も `javascript:`・`data:`・`vbscript:`・`file:` で始まるもの（スキームの途中にタブ・改行を挟んだものも）は受けませんが、ほかの鍵の文字は URL として確かめていないので `href` に入れないでください。
 - 中身は組み直さずに、そのまま保存します。誤りは 400 `invalid_app_data_<場所>`（`invalid_app_data_key`・`invalid_app_data_url`・`invalid_app_data_too_deep` など）。
 - 個人情報は置かないでください（お客様の画面に出ます）。
 
@@ -101,7 +101,7 @@
 - **既定のテーマ**: 商品の名前の下に星と件数（一覧へのリンク）、商品の下に「レビュー」の一覧。構造化データに `aggregateRating` と `review`。
 - **Liquid のテーマ**（docs/themes.md）:
   - `product.reviews` … `rating`・`rating_count`・`items`（`id`・`rating`・`title`・`body`・`author`・`created_at`・`verified_purchase`・`incentivized`）・`app`。無ければ `nil`。
-  - `product.apps` … `custom.v1` を「プラグインの名前 → 名前 → 中身」で。`{{ product.apps['size-guide']['size-table'].note }}`。文字は既定でエスケープされます。URL を `href` に使うときも `https://` のものしか入っていません。
+  - `product.apps` … `custom.v1` を「プラグインの名前 → 名前 → 中身」で。`{{ product.apps['size-guide']['size-table'].note }}`。文字は既定でエスケープされます。`href` に使ってよいのは `url` / `…_url` の鍵の値だけです（`https://` のものしか入っていません。ほかの鍵は URL として確かめていません）。
   - `product.app_data` … 公開の分すべて（`app`・`kind`・`key`・`data`）。
   - 構造化データは Banto が入れます（テーマで二重に入れないでください）。
 - **ヘッドレスの公開 API**（docs/headless.md）: 商品の `app_data`（`key` 付き）と `reviews`。

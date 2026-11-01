@@ -47,7 +47,7 @@ describe.skipIf(!dbAvailable)("hooks（0002_hooks）", () => {
     const bad = await expectDbError(() =>
       asUser(f.ownerId, (c) => c.query("insert into hook_endpoints (shop_id, name, url) values ($1, 'x', 'ftp://x.example')", [f.shopId])),
     );
-    expect(bad).toMatch(/check constraint/);
+    expect(bad).toMatch(/invalid_url|check constraint/);
   });
 
   it("enqueue_hook: 購読している有効な送信先ごとに1行。owner は自ショップのみ、イベント名を検証", async () => {

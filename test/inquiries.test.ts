@@ -40,9 +40,11 @@ interface Ticket {
 const STAFF = "00000000-0000-4000-8000-000000000005";
 /** 担当にできる人（0068 の真似）: ショップの owner と、support の項目を持つスタッフ 1 人 */
 const ASSIGNEES = (sb: FakeSupabase) => [
-  { user_id: String(sb.tables.shops[0]!["owner_id"]), email: "owner@example.com" },
-  { user_id: STAFF, email: "staff@example.com" },
+  { user_id: String(sb.tables.shops[0]!["owner_id"]), email: "owner@example.com", label: "owner" },
+  { user_id: STAFF, email: "staff@example.com", label: "staff" },
 ];
+/** 一覧と 1 件の assignee に出すのは user_id と label だけ（0089。メールアドレスは出さない） */
+const assigneeJson = (a: { user_id: string; label: string }) => ({ user_id: a.user_id, label: a.label });
 
 /** 0061 の関数の小さな真似（回数の制限・メールの記録は DB のテストで確かめる） */
 function fakeInquiries(sb: FakeSupabase) {
@@ -91,6 +93,10 @@ function fakeInquiries(sb: FakeSupabase) {
           verified = true;
         } else if (i["order_number"]) {
           order = sb.tables.orders.find((o) => o["shop_id"] === shop && String(o["number"]) === String(i["order_number"]) && o["customer_email"] === email);
+        }
+        // 0089: 未確認の枠（同じアドレスで 24 時間に 3 件）を超えたら行を作らず、同じ形で返す（number は null・send は false）
+        if (!verified && tickets.filter((x) => x.shop_id === shop && x.contact_email === email && !x.verified).length >= 3) {
+          return json({ id: "00000000-0000-4000-8000-00000000ffff", number: null, verified: false, to: email, mail_from: from, send: false, kind: "verify", notify: null });
         }
         const t: Ticket = { id: `inq-${tickets.length + 1}`, shop_id: String(shop), number: tickets.length + 1, category: String(i["category"]), status: "waiting_shop", origin: String(i["basis"]), contact_email: email, verified, customer_id: customer, order_id: order ? String(order["id"]) : null, claimed: order ? null : i["order_number"] ? Number(i["order_number"]) : null, return_to: (i["return_to"] as string | null) ?? null, links: new Set([String(a["p_link_hash"])]), messages: [{ author: "customer", body: String(i["body"]), created_at: "2026-10-27T00:00:00Z" }] };
         tickets.push(t);
@@ -141,7 +147,7 @@ function fakeInquiries(sb: FakeSupabase) {
       // 0068 の真似（担当にできる人の判定・知らせてよいかは test/db/inquiry-assignee.test.ts）
       case "inquiry_assignees":
       case "api_inquiry_assignees":
-        return json(ASSIGNEES(sb));
+        return json(ASSIGNEES(sb).map(assigneeJson));
       case "inquiry_assign":
       case "api_inquiry_assign": {
         const t = fn === "inquiry_assign" ? tickets.find((x) => x.id === a["p_inquiry_id"])! : tickets.find((x) => x.number === a["p_number"])!;
@@ -154,7 +160,7 @@ function fakeInquiries(sb: FakeSupabase) {
         const r = { inquiry_id: t.id, number: t.number, send, to: send ? ASSIGNEES(sb).find((x) => x.user_id === to)!.email : null, mail_from: from };
         if (fn === "inquiry_assign") return json(r);
         const shop = sb.tables.shops[0]!;
-        return json({ inquiry: { ...view(t), assignee: to ? ASSIGNEES(sb).find((x) => x.user_id === to) : null }, mail: { ...r, shop: { id: shop["id"], name: shop["name"], slug: shop["slug"], domain: null, settings: shop["settings"] } } });
+        return json({ inquiry: { ...view(t), assignee: to ? assigneeJson(ASSIGNEES(sb).find((x) => x.user_id === to)!) : null }, mail: { ...r, shop: { id: shop["id"], name: shop["name"], slug: shop["slug"], domain: null, settings: shop["settings"] } } });
       }
       case "inquiry_reply": {
         const t = tickets.find((x) => x.id === a["p_inquiry_id"])!;
@@ -363,6 +369,24 @@ describe("お問い合わせ（同梱テーマ）", () => {
     expect(html).toContain('name="n" value="1"');
   });
 
+  it("未確認の枠（同じアドレスで 24 時間に 3 件）を超えたら、行もメールも無しで作れたときと同じ画面（番号は出さない・送り直しの案内も出さない）", async () => {
+    const { b, mail, tickets } = setup();
+    const form = { category: "product", body: "質問です", email: "guest@example.com", name: "", order_number: "" };
+    for (let i = 0; i < 3; i++) expect((await b.post("/my-shop/inquiries/submit", form)).status).toBe(200);
+    expect(tickets).toHaveLength(3);
+    expect(mail.sent.filter((x) => x.to === "guest@example.com")).toHaveLength(3);
+    const res = await b.post("/my-shop/inquiries/submit", form);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("お問い合わせを受け付けました");
+    expect(html).toContain("確認のメールを送りました");
+    expect(html).not.toContain("受付番号");
+    expect(html).not.toContain("メールを送れませんでした");
+    expect(tickets).toHaveLength(3);
+    expect(mail.sent.filter((x) => x.to === "guest@example.com")).toHaveLength(3);
+    expect(mail.sent.some((x) => x.to === "shop@example.com")).toBe(false);
+  });
+
   it("お店の画面を使わない（off）ショップでも、お問い合わせの画面は出す", async () => {
     const { b } = setup({ storefront: "off" });
     expect((await b.get("/my-shop/inquiries/new")).status).toBe(200);
@@ -508,8 +532,10 @@ describe("お問い合わせの担当者（0068）", () => {
     const page = `/admin/shops/${shop.id}/modules/inquiries`;
     let html = await (await admin.get(`${page}/inq-1`)).text();
     expect(html).toContain(`action="${page}/inq-1/assign"`);
-    expect(html).toContain("staff@example.com");
-    expect(html).toContain("owner@example.com （自分）");
+    // 0089: 選択肢と一覧に出すのは表示用の label（メールアドレスは出さない）
+    expect(html).toContain(">staff</option>");
+    expect(html).toContain("owner （自分）");
+    expect(html).not.toContain("staff@example.com");
 
     let res = await admin.post(`${page}/inq-1/assign`, { assignee: STAFF });
     expect(res.headers.get("location")).toBe(`${page}/inq-1?flash=assigned`);
@@ -520,7 +546,8 @@ describe("お問い合わせの担当者（0068）", () => {
     expect(m.text).not.toContain("届きません");
 
     html = await (await admin.get(page)).text();
-    expect(html).toContain("<td>staff@example.com</td>");
+    expect(html).toContain("<td>staff</td>");
+    expect(html).not.toContain("staff@example.com");
     expect(await (await admin.get(`${page}?assignee=mine`)).text()).not.toContain(`${page}/inq-1"`);
     expect(await (await admin.get(`${page}?assignee=none`)).text()).not.toContain(`${page}/inq-1"`);
 
@@ -540,7 +567,9 @@ describe("お問い合わせの担当者（0068）", () => {
     await app.request(`${BASE}/api/shops/my-shop/inquiries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "other", body: "質問", email: "ai-guest@example.com" }) });
     const auth = { "content-type": "application/json", authorization: `Bearer banto_${"a".repeat(43)}` };
     let res = await app.request(`${BASE}/api/v1/inquiries/assignees`, { headers: auth });
-    expect(((await res.json()) as { assignees: { email: string }[] }).assignees.map((x) => x.email)).toEqual(["owner@example.com", "staff@example.com"]);
+    const listed = ((await res.json()) as { assignees: Record<string, unknown>[] }).assignees;
+    expect(listed.map((x) => x["label"])).toEqual(["owner", "staff"]);
+    expect(listed.some((x) => "email" in x)).toBe(false);
     res = await app.request(`${BASE}/api/v1/inquiries/1/assignee`, { method: "PUT", headers: auth, body: JSON.stringify({ user_id: STAFF }) });
     const r = (await res.json()) as Record<string, unknown>;
     expect(r).toMatchObject({ number: 1, assignee: { user_id: STAFF }, mail_sent: true });
@@ -663,6 +692,15 @@ describe("お問い合わせ（ヘッドレス API）", () => {
     expect(mail.link("evil@example.com").startsWith(`${BASE}/my-shop/inquiries/open?t=`)).toBe(true);
 
     expect((await post(app, "/api/shops/my-shop/inquiries", { category: "other", body: "" , email: "a@example.com" })).status).toBe(400);
+
+    // 0089: 未確認の枠を超えたら、同じ形の応答（number は null）でメールは送らない
+    // 最初の 1 件はリンクで開いて確認済みなので、未確認はここからの 3 件
+    for (let i = 0; i < 3; i++) expect((await post(app, "/api/shops/my-shop/inquiries", { category: "other", body: "b", email: "api@example.com" })).status).toBe(201);
+    const before = mail.sent.length;
+    res = await post(app, "/api/shops/my-shop/inquiries", { category: "other", body: "b", email: "api@example.com" });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ number: null, verified: false, mail_sent: true });
+    expect(mail.sent).toHaveLength(before);
   });
 
   it("注文を確かめる → 注文トークンで送る（注文時のアドレスへ）。合わなければ order: null", async () => {

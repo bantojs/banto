@@ -165,7 +165,18 @@ describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () =
     const ip = hash("ip-flood");
     for (let i = 0; i < 10; i++) await create({ basis: "form", category: "other", body: `${i}`, email: `flood${i}@example.com` }, undefined, ip);
     expect(await expectDbError(() => create({ basis: "form", category: "other", body: "x", email: "flood-x@example.com" }, undefined, ip))).toMatch(/too_many_requests/);
-    for (let i = 0; i < 5; i++) await create({ basis: "form", category: "other", body: `${i}`, email: "same@example.com" }, undefined, hash(`ip-same-${i}`));
+    // 0089: 「開いているチケット 5 件」は確認済みだけを数える。未確認は 24 時間に 3 件までで、超えたら行を作らず send:false の同じ形
+    for (let i = 0; i < 5; i++) {
+      const r = await create({ basis: "form", category: "other", body: `${i}`, email: "same@example.com" }, undefined, hash(`ip-same-${i}`));
+      if (i < 3) expect(r).toMatchObject({ send: true, kind: "verify", verified: false });
+      else expect(r).toMatchObject({ send: false, kind: "verify", verified: false, number: null, notify: null, to: "same@example.com" });
+    }
+    expect((await getPool().query("select count(*)::int as n from inquiries where shop_id = $1 and contact_email = 'same@example.com'", [f.shopId])).rows[0]!.n).toBe(3);
+    await getPool().query("update inquiries set email_verified_at = now() where shop_id = $1 and contact_email = 'same@example.com'", [f.shopId]);
+    for (let i = 0; i < 2; i++) {
+      const r = await create({ basis: "form", category: "other", body: `${i}`, email: "same@example.com" }, undefined, hash(`ip-same-v-${i}`));
+      await getPool().query("update inquiries set email_verified_at = now() where id = $1", [r.id]);
+    }
     expect(await expectDbError(() => create({ basis: "form", category: "other", body: "x", email: "same@example.com" }, undefined, hash("ip-same-x")))).toMatch(/too_many_requests/);
     const ipc = hash("ip-check-flood");
     for (let i = 0; i < 20; i++) await asService((c) => c.query("select inquiry_order_check($1, 9999, 'x@example.com', $2, null)", [f.shopId, ipc]));
@@ -322,7 +333,7 @@ describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () =
     expect(await expectDbError(() => api("api_inquiry_attachment_get", [otherTok, r.number, attId]))).toMatch(/not_found/);
   });
 
-  it("個人情報: 顧客の削除の依頼で連絡先と本文を消す。完了から日数が経ったもの・未確認のまま 30 日のものは Cron が消す。メールはプランの 1 日の数に入る", async () => {
+  it("個人情報: 顧客の削除の依頼で連絡先と本文を消す。完了から日数が経ったもの・未確認のまま 7 日のものは Cron が消す。メールはプランの 1 日の数に入る", async () => {
     const r = await create({ basis: "form", category: "other", body: "消してください", email: "erase@example.com" });
     await asUser(f.ownerId, (c) => c.query("select mask_customer($1, 'Erase@example.com')", [f.shopId]));
     expect(await row(r.id)).toMatchObject({ contact_email: null, contact_name: "[masked]", status: "closed" });
@@ -331,7 +342,7 @@ describe.skipIf(!dbAvailable)("お問い合わせ（0061_mod_inquiries）", () =
     const old = await create({ basis: "form", category: "other", body: "古い", email: "old@example.com" });
     await getPool().query("update inquiries set email_verified_at = now(), status = 'closed', closed_at = now() - interval '400 days' where id = $1", [old.id]);
     const spam = await create({ basis: "form", category: "other", body: "未確認", email: "spam@example.com" });
-    await getPool().query("update inquiries set created_at = now() - interval '31 days' where id = $1", [spam.id]);
+    await getPool().query("update inquiries set created_at = now() - interval '8 days' where id = $1", [spam.id]);
     const n = await asService(async (c) => (await c.query<{ n: number }>("select mask_inquiries(365) as n")).rows[0]!.n);
     expect(n).toBeGreaterThanOrEqual(2);
     expect(await row(old.id)).toMatchObject({ contact_email: null });

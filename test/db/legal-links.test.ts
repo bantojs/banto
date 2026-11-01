@@ -65,7 +65,7 @@ describe.skipIf(!dbAvailable)("法務のページの外の URL（0062_legal_link
   });
 
   it("legal_links_state は直接書けない。legal_links_record は integrations の項目が要り、anon は呼べない", async () => {
-    expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query(`update shops set legal_links_state = '{"legal":{"url":"https://wp.example/legal","ok":true}}' where id = $1`, [a.shopId])))).toContain("legal_links_state_readonly");
+    expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query(`update shops set legal_links_state = '{"legal":{"url":"https://wp.example/legal","ok":true}}' where id = $1`, [a.shopId])))).toContain("permission denied");
     expect(await expectDbError(() => asService((c) => c.query(`update shops set legal_links_state = '{}' where id = $1`, [a.shopId])))).toContain("legal_links_state_readonly");
     // 運営者（owner）は書ける
     await asUser(a.ownerId, (c) => c.query("select legal_links_record($1, $2::jsonb)", [a.shopId, JSON.stringify({ legal: { url: `${WP}/legal`, ok: true } })]));

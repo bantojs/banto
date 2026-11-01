@@ -203,7 +203,8 @@ export async function sendAssignNotice(deps: { mailer: Mailer | null; adminBase:
   return trySend(deps.mailer, { from: r.mail_from, to: r.to, ...buildShopNotice("assign", shop, { number: r.number }, `${deps.adminBase}/admin/shops/${shop.id}/modules/inquiries/${r.inquiry_id}`) });
 }
 
-export type SubmitResult = { ok: true; number: number; verified: boolean; mailSent: boolean } | { ok: false; error: InquiryError };
+/** number は、未確認の枠を超えて行を作らなかったときは null（画面・応答は作れたときと同じ形で返す。0089） */
+export type SubmitResult = { ok: true; number: number | null; verified: boolean; mailSent: boolean } | { ok: false; error: InquiryError };
 
 /**
  * 送る。link(token) がメールのリンクの URL（同梱テーマなら /inquiries/open?t=…、ヘッドレスなら連携サイトの画面）。
@@ -230,6 +231,8 @@ export async function submitInquiry(
     if (err) return { ok: false, error: err };
     throw e;
   }
+  // 未確認の枠を超えたとき（0089）: 行は無く、メールも送らない。送り直しの案内は出さない（受付番号が無く、送り直せるものも無い）
+  if (r.number === null) return { ok: true, number: null, verified: r.verified, mailSent: true };
   const mailSent = r.send ? await trySend(deps.mailer, { from: r.mail_from, to: r.to, ...buildCustomerMail(r.kind, shop, r.number, opts.link(token)) }) : false;
   await notifyShop(deps, shop, r.notify, r.mail_from, "new", { id: r.id, number: r.number, category: input.category });
   return { ok: true, number: r.number, verified: r.verified, mailSent };

@@ -2374,6 +2374,7 @@ export const ja = {
   "inq.template_default_name": "お客様",
   "passkey.add_cancel": "やめて元のサイトに戻る",
   "pages.body_too_large": "本文が大きすぎます。",
+  "inq.sent_nonumber": "お問い合わせを受け付けました。",
 } as const;
 
 export type MessageKey = keyof typeof ja;

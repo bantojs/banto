@@ -345,7 +345,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "inquiry_assignees",
-    description: "お問い合わせの担当者にできる人の一覧（このショップの「お問い合わせ」の項目を持つ運営側の人。user_id と運営者のメールアドレス）。スコープ inquiries:read。",
+    description: "お問い合わせの担当者にできる人の一覧（このショップの「お問い合わせ」の項目を持つ運営側の人。user_id と表示用の label。メールアドレスは出さない）。スコープ inquiries:read。",
     inputSchema: obj({}),
     readOnly: true,
     run: (api) => api.inquiryAssignees(),

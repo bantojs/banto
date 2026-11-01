@@ -249,7 +249,8 @@ export interface Theme {
     order?: InquiryOrderView | null;
     orders?: { number: number; label: string }[] | null;
     orderUnmatched?: boolean;
-    sent?: { number: number; verified: boolean; mailSent: boolean };
+    /** number は受付番号。未確認の枠を超えて受け付けだけ返したときは null（番号を出さず、同じ画面にする） */
+    sent?: { number: number | null; verified: boolean; mailSent: boolean };
     token?: string;
     inquiry?: InquiryThreadView | null;
     list?: { number: number; status: string; statusLabel: string; categoryLabel: string; created_at: string; last_message_at: string; order_number: number | null }[];

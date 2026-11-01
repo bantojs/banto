@@ -183,7 +183,7 @@ describe.skipIf(!dbAvailable)("10 万件の性能（0058〜0060）", () => {
       asAnon(async (c) => {
         const p = (await c.query<{ r: { id: string } }>("select product_public_get($1, 'p-54321') as r", [shop.shopId])).rows[0]!.r;
         const skus = (await c.query<{ id: string }>("select id from skus where product_id = $1", [p.id])).rows;
-        return (await c.query("select sku_id, available from inventory where shop_id = $1 and sku_id = any($2)", [shop.shopId, skus.map((s) => s.id)])).rows;
+        return (await c.query("select sku_id, available from product_public_stock($1, $2)", [shop.shopId, skus.map((s) => s.id)])).rows;
       }),
     );
     expect(r).toHaveLength(1);

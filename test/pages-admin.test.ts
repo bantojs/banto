@@ -53,12 +53,14 @@ describe("ショップのページの管理画面", () => {
     expect(await (await writer.get(`${base}/${String(page["id"])}`)).text()).toContain('value="about"');
     await writer.post(`${base}/${String(page["id"])}`, { ...form, title: "店について", published: "", template_suffix: "FAQ" });
     expect(page).toMatchObject({ title: "店について", published: false, template_suffix: "faq" });
-    // 0080 からは、消すのはゴミ箱の中のものだけ（先にゴミ箱へ）
+    // 0080 からは、消すのはゴミ箱の中のものだけ（先にゴミ箱へ）。0089 からは「完全に削除」が無く（Cron の pages_purge_trash が 30 日で消す）、POST しても消えない
     await writer.post(`${base}/${String(page["id"])}/delete`, {});
     expect(sb.tables.pages).toHaveLength(1);
     await writer.post(`${base}/${String(page["id"])}/trash`, {});
-    await writer.post(`${base}/${String(page["id"])}/delete`, {});
-    expect(sb.tables.pages).toHaveLength(0);
+    expect(page["deleted_at"]).toBeTruthy();
+    expect(await (await writer.get(`${base}?status=trash`)).text()).not.toContain(`${base}/${String(page["id"])}/delete`);
+    expect((await writer.post(`${base}/${String(page["id"])}/delete`, {})).headers.get("location")).toBe(`${base}?status=trash`);
+    expect(sb.tables.pages).toHaveLength(1);
   });
 
   it("入れた値の誤りは入れた値を残したまま知らせる（ハンドル・タイトル・重なり）", async () => {
@@ -251,7 +253,8 @@ describe("ショップのページの管理画面", () => {
     const conflict = await owner.post(`${base}/${id}/restore`, {});
     expect(conflict.headers.get("location")).toContain("flash=restore_conflict");
     const trash = await (await owner.get(`${base}?status=trash`)).text();
-    expect(trash).toContain("完全に削除");
+    expect(trash).toContain("戻す");
+    expect(trash).not.toContain("完全に削除"); // 0089: 物理削除は Cron だけ
     // メディアライブラリ: 置いた画像を記録し、一覧で返す
     await owner.postMultipart(`${base}/images`, { file: new File([tinyPng()], "a.png", { type: "image/png" }) }, { headers: { accept: "application/json" } });
     const media = (await (await owner.get(`${base}/media`)).json()) as { items: { url: string }[] };

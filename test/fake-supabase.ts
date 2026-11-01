@@ -184,7 +184,7 @@ export class FakeSupabase {
   /** 0070 のパスキーの追加の券 */
   passkeyTickets: Row[] = [];
   /** 0067 の order_lookup_failures（外れた照会） */
-  orderLookupFailures: { shop_id: unknown; number: number; ip: string | null; at: number }[] = [];
+  orderLookupFailures: { shop_id: unknown; number: number; ip: string | null; email: string | null; at: number }[] = [];
   /** legal_links_record に渡った結果（0062） */
   legalLinkRecords: { shop_id: string; results: unknown }[] = [];
   /** 0060 の banto_site_plan（0038 の workers_plan） */
@@ -625,6 +625,8 @@ export class FakeSupabase {
     if (table === "tryon_items") return this.tables.tryon_requests.some((r) => r["id"] === row["request_id"] && this.storePerm(uid, r["store_id"], "tryon"));
     if (table === "skus" || table === "product_images") return this.productPublished(row["product_id"]);
     if (table === "inventory") {
+      // 0089: anon は在庫の数を読めない（product_public_stock で 0〜99 の段階値を引く）
+      if (this.appliedMigrations.includes("0089_security_hardening_3")) return false;
       const sku = this.tables.skus.find((k) => k["id"] === row["sku_id"]);
       return Boolean(sku && this.productPublished(sku["product_id"]));
     }
@@ -637,6 +639,8 @@ export class FakeSupabase {
     if (table === "audit_log") return false; // 書くのは DB のトリガーだけ（0051）
     if (table === "theme_versions") return false; // 書くのは theme_* の関数だけ（0071）
     if (table === "page_revisions" || table === "article_revisions") return false; // 書くのはトリガーだけ（0080・0081）
+    // 0089: ページ・ブログ・記事の物理削除は運営者の JWT からできない（ブログは blog_delete、ページ・記事は Cron の purge だけ）
+    if (op === "delete" && (table === "pages" || table === "blogs" || table === "articles") && this.appliedMigrations.includes("0089_security_hardening_3")) return false;
     if (table === "shops") {
       if (op === "insert") return this.orgMembers.some((m) => m.user_id === uid && m.role !== "member");
       return this.ownedShopIds(uid).has(row["id"] as string) || (op === "update" && this.hasPerm(table, row, uid));
@@ -1290,6 +1294,26 @@ export class FakeSupabase {
       }
     }
     if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, uid, false);
+    // 0089: ブログを消す（記事ごと。項目 content の人だけ）
+    if (fn === "blog_delete") {
+      const b = this.tables.blogs.find((x) => x["id"] === args["p_blog_id"] && x["shop_id"] === args["p_shop_id"]);
+      if (!b || !(this.hasPerm("blogs", b, uid) || this.ownedShopIds(uid).has(String(b["shop_id"])))) return json({ code: "42501", message: "blog_not_found" }, 403);
+      this.cascadeDelete("blogs", b);
+      return json(null);
+    }
+    // 0089: 公開中の SKU の在庫（0〜99 に頭打ち。anon は inventory を読めない）
+    if (fn === "product_public_stock") {
+      const ids = (args["p_sku_ids"] ?? []) as string[];
+      if (ids.length > 200) return json({ code: "P0001", message: "too_many_skus" }, 400);
+      if (!this.shopPublished(args["p_shop_id"])) return json([]);
+      const out: { sku_id: string; available: number }[] = [];
+      for (const i of this.tables.inventory) {
+        const sku = this.tables.skus.find((k) => k["id"] === i["sku_id"]);
+        if (!sku || sku["shop_id"] !== args["p_shop_id"] || !ids.includes(String(i["sku_id"])) || !this.productPublished(sku["product_id"])) continue;
+        out.push({ sku_id: String(i["sku_id"]), available: Math.min(Math.max(Number(i["available"]), 0), 99) });
+      }
+      return json(out);
+    }
     // 0055: 商品詳細（公開中のショップの公開中の商品だけ。attributes は公開の項目だけ）
     if (fn === "product_public_get") {
       if (!this.shopPublished(args["p_shop_id"])) return json(null);
@@ -3158,11 +3182,16 @@ export class FakeSupabase {
       const recent = this.orderLookupFailures.filter((f) => f.shop_id === shopId && f.at > since);
       const v = String(((this.tables.shops.find((x) => x["id"] === shopId)?.["settings"] as Row | undefined)?.["order_lookup"] as Row | undefined)?.["per_ip_per_hour"] ?? "");
       const ip = typeof args["p_ip_hash"] === "string" ? args["p_ip_hash"] : null;
+      // 0089: アドレスの HMAC ごと・ショップ全体でも数える（Worker は当たっている DB にだけ p_email_hash を渡す）
+      const emailHash = typeof args["p_email_hash"] === "string" && /^[0-9a-f]{64}$/.test(args["p_email_hash"]) ? args["p_email_hash"] : null;
+      if (emailHash && !this.appliedMigrations.includes("0089_security_hardening_3")) return json({ code: "PGRST202", message: "Could not find the function public.order_lookup(p_email, p_email_hash, p_ip_hash, p_number, p_shop_id)" }, 404);
       if (ip && recent.filter((f) => f.ip === ip).length >= (/^[0-9]{1,4}$/.test(v) ? Number(v) : 20)) return json({ code: "P0001", message: "too_many_requests" }, 400);
+      if (emailHash && recent.filter((f) => f.email === emailHash).length >= 20) return json({ code: "P0001", message: "too_many_requests" }, 400);
+      if (recent.length >= 200) return json({ code: "P0001", message: "too_many_requests" }, 400);
       if (recent.filter((f) => f.number === Number(args["p_number"])).length >= 50) return json({ code: "P0001", message: "too_many_requests" }, 400);
       const o = this.tables.orders.find((x) => x["shop_id"] === shopId && x["number"] === Number(args["p_number"]) && String(x["customer_email"] ?? "").toLowerCase() === String(args["p_email"]).trim().toLowerCase() && this.shopPublished(x["shop_id"]));
       if (!o) {
-        this.orderLookupFailures.push({ shop_id: shopId, number: Number(args["p_number"]), ip, at: Date.now() });
+        this.orderLookupFailures.push({ shop_id: shopId, number: Number(args["p_number"]), ip, email: emailHash, at: Date.now() });
         return json(null);
       }
       return json(this.orderJson(o));

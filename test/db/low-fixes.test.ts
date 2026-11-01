@@ -77,8 +77,13 @@ describe.skipIf(!dbAvailable)("Low 群の修正（0031_low_fixes）", () => {
   it("shops: settings の項目では slug / domain / order_seq / tryon_seq を変えられない（name や settings は変えられる）。owner は変えられる", async () => {
     expect((await asUser(settingsStaff, (c) => c.query("update shops set name = 'renamed' where id = $1 returning id", [f.shopId]))).rows).toHaveLength(1);
     expect((await asUser(settingsStaff, (c) => c.query("update shops set settings = settings || '{\"notice\":\"hi\"}' where id = $1 returning id", [f.shopId]))).rows).toHaveLength(1);
-    for (const sql of ["update shops set order_seq = 1 where id = $1", "update shops set tryon_seq = 5 where id = $1", "update shops set domain = 'evil.example' where id = $1", "update shops set slug = 'taken' where id = $1"]) {
+    for (const sql of ["update shops set domain = 'evil.example' where id = $1", "update shops set slug = 'taken' where id = $1"]) {
       expect(await expectDbError(() => asUser(settingsStaff, (c) => c.query(sql, [f.shopId]))), sql).toMatch(/admin_required/);
+    }
+    // 採番の列は運営者の JWT からは誰も書けない（0089 の列の権限）
+    for (const sql of ["update shops set order_seq = 1 where id = $1", "update shops set tryon_seq = 5 where id = $1", "update shops set inquiry_seq = 0 where id = $1"]) {
+      expect(await expectDbError(() => asUser(settingsStaff, (c) => c.query(sql, [f.shopId]))), sql).toMatch(/permission denied/);
+      expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query(sql, [f.shopId]))), sql).toMatch(/permission denied/);
     }
     expect((await asUser(f.ownerId, (c) => c.query("update shops set domain = 'shop.example.jp' where id = $1 returning domain", [f.shopId]))).rows[0]).toEqual({ domain: "shop.example.jp" });
   });

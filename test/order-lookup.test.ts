@@ -106,6 +106,27 @@ describe("注文照会の回数の上限（0067）", () => {
     expect(res.status).toBe(429);
     expect(await res.text()).toContain("照会の回数が多すぎます");
   });
+
+  it("0089: 外れをメールアドレスの HMAC ごとにも数える（IP を変えても同じアドレスで 20 回を超えると 429）。古い DB には渡さない", async () => {
+    const { app, sb } = setup();
+    const lookup = (ip: string, number: number) =>
+      app.request(`${BASE}/api/shops/my-shop/orders/lookup`, { method: "POST", headers: { origin: "https://wp.example.com", "cf-connecting-ip": ip, "content-type": "application/json" }, body: JSON.stringify({ number, email: " Guest@Example.com " }) });
+    for (let i = 0; i < 20; i++) expect((await lookup(`203.0.113.${i + 1}`, 2000 + i)).status).toBe(404);
+    expect(sb.orderLookupFailures).toHaveLength(20);
+    // 小文字にしてから HMAC（同じアドレスの大文字小文字の違いは同じ値）
+    expect(sb.orderLookupFailures[0]!.email).toMatch(/^[0-9a-f]{64}$/);
+    expect(new Set(sb.orderLookupFailures.map((f) => f.email)).size).toBe(1);
+    expect((await lookup("203.0.113.99", 1001)).status).toBe(429);
+
+    // 0089 が当たる前の DB では従来の形で呼ぶ（p_email_hash を渡さない）
+    const old = new FakeSupabase({ appliedMigrations: sb.appliedMigrations.filter((v) => v !== "0089_security_hardening_3") });
+    const owner = old.addUser("owner@example.com", "password-123", { owner: true });
+    old.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: {} });
+    const oldApp = appWith(old, { RESEND_API_KEY: "re_test" });
+    const r = await oldApp.request(`${BASE}/api/shops/my-shop/orders/lookup`, { method: "POST", headers: { origin: BASE, "cf-connecting-ip": "203.0.113.9", "content-type": "application/json" }, body: JSON.stringify({ number: 1001, email: "guest@example.com" }) });
+    expect(r.status).toBe(404);
+    expect(old.orderLookupFailures[0]!.email).toBeNull();
+  });
 });
 
 describe("会員の注文の API", () => {

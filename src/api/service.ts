@@ -434,7 +434,7 @@ export class ApiService {
   };
   /** 担当者にできる人（そのショップの「お問い合わせ」の項目を持つ運営側の人。user_id と運営者のメールアドレス） */
   inquiryAssignees = async () => {
-    return this.call<{ user_id: string; email: string }[]>("api_inquiry_assignees", {});
+    return this.call<{ user_id: string; label: string }[]>("api_inquiry_assignees", {});
   };
   /** 担当者を決める・外す（userId = null で外す）。担当になった人にはリンクだけのメール（宛先は AI に返さない） */
   inquiryAssign = async (number: number, userId: string | null): Promise<Record<string, unknown>> => {

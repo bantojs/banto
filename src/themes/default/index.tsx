@@ -1552,7 +1552,7 @@ export const defaultTheme: Theme = {
     } else if (step === "sent") {
       body = (
         <div>
-          <p class="notice">{tf("inq.sent", { number: sent?.number ?? "" })}</p>
+          <p class="notice">{sent?.number != null ? tf("inq.sent", { number: sent.number }) : t("inq.sent_nonumber")}</p>
           <p>{sent?.verified ? t("inq.sent_verified") : t("inq.sent_verify")}</p>
           {sent && !sent.mailSent ? (
             <>

@@ -48,13 +48,16 @@ describe.skipIf(!dbAvailable)("ショップのページ（0079）", () => {
     expect(await expectDbError(() => asUser(writer, (c) => c.query("update pages set shop_id = $1 where handle = 'draft' and shop_id = $2", [other.shopId, f.shopId])))).toMatch(/row-level security/);
   });
 
-  it("お客様（anon）は公開中のショップの公開中のページだけ読める。書けない", async () => {
+  it("お客様（anon）は公開中のショップの公開中のページだけ読める（モジュール pages が ON のときだけ、0089）。書けない", async () => {
+    expect((await asAnon((c) => c.query("select handle from pages where shop_id = $1", [f.shopId]))).rows).toEqual([]);
+    await getPool().query("update shops set settings = jsonb_set(settings, '{modules}', '{\"pages\": true}'::jsonb) where id = $1", [f.shopId]);
     const rows = (await asAnon((c) => c.query<{ handle: string }>("select handle from pages where shop_id = $1 order by handle", [f.shopId]))).rows;
     expect(rows.map((r) => r.handle)).toEqual(["about", "faq"]);
     expect(await expectDbError(() => asAnon((c) => c.query("insert into pages (shop_id, handle, title) values ($1, 'z', 'z')", [f.shopId])))).toMatch(/permission denied|row-level security/);
     await getPool().query("update shops set published = false where id = $1", [f.shopId]);
     expect((await asAnon((c) => c.query("select handle from pages where shop_id = $1", [f.shopId]))).rows).toEqual([]);
     await getPool().query("update shops set published = true where id = $1", [f.shopId]);
+    await getPool().query("update shops set settings = settings - 'modules' where id = $1", [f.shopId]);
   });
 
   it("ハンドルの形と予約の名前、長さの上限、ショップの中で重ならない", async () => {

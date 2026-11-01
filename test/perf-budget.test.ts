@@ -144,9 +144,10 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
       sb.addSku(shopId, other.id, { code: `O${i}`, price_jpy: 500, available: 1 });
     }
     await b.get("/my-shop/p/tee");
-    const inventory = (await calls(sb, () => b.get("/my-shop/p/tee"))).filter((x) => x.includes("/rest/v1/inventory"));
+    // 0089 からは product_public_stock（その商品の SKU の id だけを渡す。往復は select 1 回 → rpc 1 回で変わらない）
+    const inventory = (await calls(sb, () => b.get("/my-shop/p/tee"))).filter((x) => x.includes("/rest/v1/rpc/product_public_stock"));
     expect(inventory).toHaveLength(1);
-    expect(decodeURIComponent(inventory[0]!)).toContain("sku_id=in.(");
+    expect(sb.calls.some((x) => x.includes("/rest/v1/inventory"))).toBe(false);
   });
 
   it("会員: ログイン中でも商品のページの回数は変わらない。会員ページは 1 回", async () => {

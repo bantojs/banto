@@ -13,6 +13,8 @@ import { mediaBaseUrl, publicBaseUrl } from "../../routes/common";
 import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
+import { migrated } from "../../db/migration-state";
+import { SECURITY_HARDENING_3_MIGRATION } from "../../storefront/data";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow } from "../../content/editor";
@@ -240,6 +242,8 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
   const blog = await loadBlog(c, shop);
   if (!blog) return c.notFound();
   const all = await owner(c).db.from<ArticleRow>("articles").select("id,handle,title,tags,published,published_at,deleted_at,updated_at", { eq: { blog_id: blog.id, shop_id: shop.id }, order: "created_at.desc", limit: 5000 });
+  // 0089 からは「完全に削除」が無い（ゴミ箱のものは Cron が 30 日で消す）
+  const canDelete = !(await hardened(c));
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
   const tabs = ["all", "published", "scheduled", "draft", "trash"] as const;
@@ -329,12 +333,17 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
                         <button type="submit" class="secondary small">
                           {t("pages.restore")}
                         </button>
-                      </form>{" "}
-                      <form method="post" action={`${at}/${a.id}/delete`} style="display:inline" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`}>
-                        <button type="submit" class="secondary small">
-                          {t("pages.delete_forever")}
-                        </button>
                       </form>
+                      {canDelete ? (
+                        <>
+                          {" "}
+                          <form method="post" action={`${at}/${a.id}/delete`} style="display:inline" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`}>
+                            <button type="submit" class="secondary small">
+                              {t("pages.delete_forever")}
+                            </button>
+                          </form>
+                        </>
+                      ) : null}
                     </>
                   ) : (
                     <form method="post" action={`${at}/${a.id}/trash`} style="display:inline">
@@ -405,11 +414,23 @@ blogAdmin.post("/:blogId/settings", requireOwner, async (c: AdminContext) => {
   return c.redirect(`${base(shop.id)}/${blog.id}/settings?flash=saved`);
 });
 
+/** 0089 が当たっていれば、ブログは blog_delete で消し、記事の物理削除（ゴミ箱の中の「完全に削除」）は Cron の purge に任せる */
+const hardened = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SECURITY_HARDENING_3_MIGRATION);
+
 blogAdmin.post("/:blogId/delete", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   const blog = shop ? await loadBlog(c, shop) : null;
   if (!shop || !blog) return c.notFound();
-  await owner(c).db.from("blogs").delete({ id: blog.id, shop_id: shop.id });
+  if (await hardened(c)) {
+    try {
+      await owner(c).db.rpc("blog_delete", { p_shop_id: shop.id, p_blog_id: blog.id });
+    } catch (e) {
+      if (e instanceof DbError) return c.notFound();
+      throw e;
+    }
+  } else {
+    await owner(c).db.from("blogs").delete({ id: blog.id, shop_id: shop.id });
+  }
   return c.redirect(`${base(shop.id)}?flash=deleted`);
 });
 
@@ -623,8 +644,9 @@ blogAdmin.post("/:blogId/articles/:articleId/delete", requireOwner, async (c: Ad
   const blog = shop ? await loadBlog(c, shop) : null;
   if (!shop || !blog) return c.notFound();
   const row = await loadArticle(c, shop, blog);
-  // 消すのはゴミ箱の中のものだけ
+  // 消すのはゴミ箱の中のものだけ。0089 からは運営者の JWT で物理削除できない（Cron の articles_purge_trash が 30 日で消す。画面にもボタンを出さない）
   if (!row?.deleted_at) return c.redirect(`${base(shop.id)}/${blog.id}`);
+  if (await hardened(c)) return c.redirect(`${base(shop.id)}/${blog.id}?status=trash`);
   await owner(c).db.from("articles").delete({ id: row.id, shop_id: shop.id });
   return c.redirect(`${base(shop.id)}/${blog.id}?status=trash&flash=deleted`);
 });

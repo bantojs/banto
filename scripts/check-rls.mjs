@@ -43,6 +43,10 @@ const ANON_FUNCTIONS = new Set([
   "product_public_count", "product_public_slugs", "product_feed_page", "banto_site_plan",
   // 0074: お店の画面が Liquid のテーマを描いてよいか（Workers のプランと plan_limits.theme_versions が 0 でないか。秘密ではない）
   "banto_site_liquid",
+  // 0089: SKU の在庫の段階値（公開中のショップ・商品の SKU だけ。0〜99 に丸める。inventory の行は anon に読ませない）
+  "product_public_stock",
+  // 0089: pages / blogs / articles の公開の RLS が使う「そのモジュールが ON の公開中のショップか」（ON / OFF しか返さない）
+  "banto_shop_module_public",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */
@@ -70,6 +74,8 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "app_connect_begin", // 0088: 外部プラグインに「つなぐ」券を作る（中で integrations の項目と、許すスコープが自分の項目までかを確かめる）
   "shop_app_blocks", // 0086: 編集の画面に出すプラグインのブロックの一覧（中で content の項目を確かめる。連携の URL・設定は返さない）
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
+  "banto_content_image_url_ok", // 0089: pages / articles の image_url の CHECK（値の形を見るだけ）
+  "blog_delete", // 0089: ブログを記事ごと消す（中で content の項目を確かめる。blogs / articles の DELETE は運営者の JWT から外した）
 ]);
 
 /** 列の権限。must: その役割がその列にその権限を持ってはいけない */
@@ -87,10 +93,19 @@ const COLUMN_DENIES = [
   // 0055: 非公開の独自項目は anon に見せない。require_mfa は org_set_require_mfa（owner + aal2 + 監査）だけ。AI 用トークンは失効（revoked_at）と name だけ変えられる
   { role: "anon", table: "products", privilege: "SELECT", columns: ["attributes"] },
   { role: "authenticated", table: "organizations", privilege: "UPDATE", columns: ["require_mfa", "id", "created_at"] },
+  // 0089: 在庫の正確な数は anon に読ませない（product_public_stock の段階値だけ）。shops の採番・判定だけが書く列は運営者の JWT から UPDATE できない
+  { role: "anon", table: "inventory", privilege: "SELECT", columns: ["available"] },
+  { role: "authenticated", table: "shops", privilege: "UPDATE", columns: ["inquiry_seq", "order_seq", "tryon_seq", "legal_links_state", "theme_version_id"] },
 ];
 
 /** 表の権限。must: その役割がその表にその権限を持ってはいけない（0055: AI 用トークンの削除は無し。失効は revoked_at） */
-const TABLE_DENIES = [{ role: "authenticated", table: "api_tokens", privilege: "DELETE" }];
+const TABLE_DENIES = [
+  { role: "authenticated", table: "api_tokens", privilege: "DELETE" },
+  // 0089: ページ・記事はゴミ箱と Cron の purge、ブログは blog_delete だけ
+  { role: "authenticated", table: "pages", privilege: "DELETE" },
+  { role: "authenticated", table: "blogs", privilege: "DELETE" },
+  { role: "authenticated", table: "articles", privilege: "DELETE" },
+];
 
 /**
  * 守りを担うトリガー（0028 / 0031 / 0051 / 0052 / 0055）。後のマイグレーションが drop trigger して戻し忘れると、列の権限だけでは
@@ -105,6 +120,8 @@ const REQUIRED_TRIGGERS = [
   // 0079: ページの数のプランの上限と 1 ショップの上限
   // 0075: SKU・商品の画像・在庫を変えたときの product.updated（連携サイトのキャッシュの入れ替え）
   ["skus", "skus_product_updated"], ["product_images", "product_images_product_updated"], ["inventory", "inventory_product_updated"],
+  // 0089: hooks の送信先の URL（私設のアドレス・同梱の内部 URL への書き換え）、テーマの版と AI 用トークンの削除の監査ログ
+  ["hook_endpoints", "hook_endpoints_guard"], ["theme_versions", "theme_versions_audit"], ["api_tokens", "api_tokens_audit_delete"],
 ];
 
 const client = new pg.Client({ connectionString: url });

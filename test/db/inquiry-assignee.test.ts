@@ -37,7 +37,7 @@ describe.skipIf(!dbAvailable)("お問い合わせの担当者（0068）", () => 
   afterAll(closePool);
 
   const create = async () => {
-    const r = await asService(async (c) => (await c.query<{ r: J }>("select inquiry_create($1, $2::jsonb, $3, $4) as r", [f.shopId, JSON.stringify({ basis: "form", category: "other", body: "質問です", email: "q@example.com" }), hash(`l-${Math.random()}`), null])).rows[0]!.r);
+    const r = await asService(async (c) => (await c.query<{ r: J }>("select inquiry_create($1, $2::jsonb, $3, $4) as r", [f.shopId, JSON.stringify({ basis: "form", category: "other", body: "質問です", email: `q-${Math.random().toString(36).slice(2)}@example.com` }), hash(`l-${Math.random()}`), null])).rows[0]!.r);
     return r as { id: string; number: number };
   };
   const assignee = async (id: string) => (await getPool().query<{ assignee_id: string | null }>("select assignee_id from inquiries where id = $1", [id])).rows[0]!.assignee_id;
@@ -45,8 +45,11 @@ describe.skipIf(!dbAvailable)("お問い合わせの担当者（0068）", () => 
   const mails = async (id: string) => (await getPool().query<{ kind: string }>("select kind from inquiry_mails where inquiry_id = $1 and kind = 'assign'", [id])).rows.length;
 
   it("担当者にできるのは support の項目を持つ人（owner / admin を含む）。support の無い人は一覧にも割り当てにも出ない", async () => {
-    const list = (await asUser(support, async (c) => (await c.query<{ r: { user_id: string; email: string }[] }>("select inquiry_assignees($1) as r", [f.shopId])).rows[0]!.r)).map((x) => x.email);
-    expect(list).toEqual(["as-owner@example.com", "as-support2@example.com", "as-support@example.com"].sort());
+    // 0089: メールアドレスは出さない（user_id と表示用の label = @ より前）
+    const list = await asUser(support, async (c) => (await c.query<{ r: { user_id: string; label: string; email?: string }[] }>("select inquiry_assignees($1) as r", [f.shopId])).rows[0]!.r);
+    expect(list.map((x) => x.label)).toEqual(["as-owner", "as-support", "as-support2"]);
+    expect(list.map((x) => x.user_id).sort()).toEqual([f.ownerId, support, support2].sort());
+    expect(JSON.stringify(list)).not.toContain("@");
     expect(await expectDbError(() => asUser(catalogOnly, (c) => c.query("select inquiry_assignees($1)", [f.shopId])))).toMatch(/shop_not_found/);
     expect(await expectDbError(() => asAnon((c) => c.query("select inquiry_assignees($1)", [f.shopId])))).toMatch(/permission denied/);
     const r = await create();
@@ -94,9 +97,12 @@ describe.skipIf(!dbAvailable)("お問い合わせの担当者（0068）", () => 
     const api = <T>(fn: string, args: unknown[]) => asService(async (c) => (await c.query<{ r: T }>(`select ${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0]!.r);
     await getPool().query("update inquiries set assignee_id = null where shop_id = $1", [f.shopId]);
     const r = await create();
-    expect((await api<{ email: string }[]>("api_inquiry_assignees", [hash(readRaw)])).map((x) => x.email)).toContain("as-support@example.com");
+    const assignees = await api<{ user_id: string; label: string }[]>("api_inquiry_assignees", [hash(readRaw)]);
+    expect(assignees).toContainEqual({ user_id: support, label: "as-support" });
+    expect(JSON.stringify(assignees)).not.toContain("@");
     const out = await api<{ inquiry: J; mail: J }>("api_inquiry_assign", [tok, r.number, support]);
-    expect(out.inquiry).toMatchObject({ number: r.number, assignee: { user_id: support, email: "as-support@example.com" } });
+    expect(out.inquiry).toMatchObject({ number: r.number, assignee: { user_id: support, label: "as-support" } });
+    expect(JSON.stringify(out.inquiry)).not.toContain("as-support@example.com");
     expect(out.mail).toMatchObject({ send: true, to: "as-support@example.com" });
     expect(await expectDbError(() => api("api_inquiry_assign", [hash(readRaw), r.number, support]))).toMatch(/unauthorized/);
     expect(await expectDbError(() => api("api_inquiry_assign", [tok, r.number, catalogOnly]))).toMatch(/invalid_assignee/);

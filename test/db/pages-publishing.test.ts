@@ -81,6 +81,9 @@ describe.skipIf(!dbAvailable)("ショップのページの予約公開・ゴミ�
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("insert into page_media (shop_id, storage_key, url, thumb_url) values ($1, $2, $3, $4)", [f.shopId, `pages/${f.shopId}/u.webp`, "https://media.example/u.webp", "javascript:alert(1)"])))).toMatch(/check constraint/);
     await asUser(f.ownerId, (c) => c.query("delete from page_media where storage_key = $1", [`pages/${f.shopId}/t.webp`]));
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update pages set image_url = 'javascript:alert(1)' where shop_id = $1", [f.shopId])))).toMatch(/check constraint/);
-    await asUser(f.ownerId, (c) => c.query("update pages set image_url = 'https://media.example/pages/x.webp' where shop_id = $1 and handle = 'rev'", [f.shopId]));
+    // 0089: アイキャッチは Banto の置き場の形（/media/pages/<ショップ>/<名前> か MEDIA_BASE_URL + /pages/…）だけ。外の画像は置けない
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update pages set image_url = 'https://tracker.example/pixel.png?x=1' where shop_id = $1 and handle = 'rev'", [f.shopId])))).toMatch(/check constraint/);
+    await asUser(f.ownerId, (c) => c.query("update pages set image_url = $2 where shop_id = $1 and handle = 'rev'", [f.shopId, `https://media.example/pages/${f.shopId}/x.webp`]));
+    await asUser(f.ownerId, (c) => c.query("update pages set image_url = $2 where shop_id = $1 and handle = 'rev'", [f.shopId, `/media/pages/${f.shopId}/x.webp`]));
   });
 });

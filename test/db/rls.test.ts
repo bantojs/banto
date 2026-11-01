@@ -71,9 +71,12 @@ describe.skipIf(!dbAvailable)("RLS（CLAUDE.md §3）", () => {
         expect(products.rows.map((r) => r.id)).toEqual([a.productId]);
         const skus = await c.query("select id from skus");
         expect(skus.rows.map((r) => r.id)).toEqual([a.skuId]);
-        const inv = await c.query<{ available: number }>("select available from inventory");
-        expect(inv.rows).toEqual([{ available: 5 }]);
+        // 0089: 在庫は product_public_stock の段階値（0〜99）だけ
+        const inv = await c.query<{ sku_id: string; available: number }>("select * from product_public_stock($1, $2)", [a.shopId, [a.skuId]]);
+        expect(inv.rows).toEqual([{ sku_id: a.skuId, available: 5 }]);
       });
+      // inventory の行そのものは anon に読ませない
+      expect(await expectDbError(() => asAnon((c) => c.query("select available from inventory")))).toMatch(/permission denied/);
     });
 
     it("注文・予約・Webhook イベント・owners は一切見えない", async () => {
@@ -102,11 +105,9 @@ describe.skipIf(!dbAvailable)("RLS（CLAUDE.md §3）", () => {
       expect(msg).toMatch(/permission denied/);
     });
 
-    it("inventory を直接 UPDATE できない（ポリシーなし）", async () => {
-      await asAnon(async (c) => {
-        const r = await c.query("update inventory set available = 999 where sku_id = $1", [a.skuId]);
-        expect(r.rowCount).toBe(0);
-      });
+    it("inventory を直接 UPDATE できない（0089 からは権限そのものが無い）", async () => {
+      const msg = await expectDbError(() => asAnon((c) => c.query("update inventory set available = 999 where sku_id = $1", [a.skuId])));
+      expect(msg).toMatch(/permission denied/);
     });
   });
 

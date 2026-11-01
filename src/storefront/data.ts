@@ -16,6 +16,11 @@ import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, type ArticleRow, type BlogNa
 
 export const STOREFRONT_CACHE_TTL = 30;
 
+/** 守りの締め直し 3（0089）: 在庫は product_public_stock（anon は inventory を読めない）、注文照会はアドレスの HMAC も渡す、ブログは blog_delete、物理削除は Cron だけ */
+export const SECURITY_HARDENING_3_MIGRATION = "0089_security_hardening_3";
+/** product_public_stock に 1 回で渡せる SKU の数（超えると too_many_skus） */
+const PUBLIC_STOCK_MAX_SKUS = 200;
+
 
 /**
  * 公開中のショップのうち、お客様の画面（anon）に渡してよい部分（0028_security_hardening の shop_public_get / shop_public_list）。
@@ -439,9 +444,18 @@ export class StorefrontData {
     return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })) };
   }
 
-  /** SKU の在庫（その SKU の分だけ。SKU が無ければ問い合わせない） */
-  private inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
-    return selectIn<InventoryRow>(this.db, "inventory", "sku_id,available", shop.id, "sku_id", skuIds);
+  /**
+   * SKU の在庫（その SKU の分だけ。SKU が無ければ問い合わせない）。
+   * 0089 からは anon が inventory を読めないので product_public_stock（公開中の SKU だけ、0〜99 に頭打ち）を 200 個ずつ呼ぶ。
+   * 当たる前の DB では従来の select（docs/upgrade.md「適用するまでのあいだ」）
+   */
+  private async inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
+    if (!(await this.migratedTo(SECURITY_HARDENING_3_MIGRATION))) return selectIn<InventoryRow>(this.db, "inventory", "sku_id,available", shop.id, "sku_id", skuIds);
+    const unique = [...new Set(skuIds)];
+    const parts: string[][] = [];
+    for (let i = 0; i < unique.length; i += PUBLIC_STOCK_MAX_SKUS) parts.push(unique.slice(i, i + PUBLIC_STOCK_MAX_SKUS));
+    const rows = await Promise.all(parts.map((part) => this.db.rpc<InventoryRow[] | null>("product_public_stock", { p_shop_id: shop.id, p_sku_ids: part })));
+    return rows.flatMap((r) => (Array.isArray(r) ? r : []));
   }
 
   /** 有効な同梱決済プラグイン（shop_payment_options RPC、anon から読める。シークレットは含まない） */
