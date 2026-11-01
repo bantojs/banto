@@ -8,7 +8,7 @@ import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
 import { owner, type AdminContext } from "./context";
 
-export const SHOP_PERMS = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design", "content"] as const;
+export const SHOP_PERMS = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design", "content", "apps"] as const;
 export type ShopPerm = (typeof SHOP_PERMS)[number];
 export type OrgRole = "owner" | "admin" | "member";
 
@@ -18,7 +18,8 @@ export function isShopPerm(v: unknown): v is ShopPerm {
 
 /** よく使う組み合わせ（ひな形）。中身はいつでも直せる */
 export const PERM_TEMPLATES: Record<string, readonly ShopPerm[]> = {
-  shop_admin: SHOP_PERMS.filter((p) => p !== "integrations"),
+  // 外のサービスに書かせる項目（integrations・apps）は入れない
+  shop_admin: SHOP_PERMS.filter((p) => p !== "integrations" && p !== "apps"),
   catalog: ["catalog"],
   fulfillment: ["orders", "orders_cancel"],
   marketing: ["marketing", "reports"],

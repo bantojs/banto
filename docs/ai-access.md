@@ -45,9 +45,10 @@ Banto は、運営者が発行した **AI 用トークン** を使って、Claud
 | `theme:publish` | テーマの公開・取り下げ（0072）。お店の画面が切り替わる。`theme:write` と分けてあるので、プレビュー用のトークン（CI のプルリクエストなど）には付けない |
 | `content:read` | ショップのページ・ブログの記事の参照（0083。モジュール「ページ」「ブログ」が ON のショップだけ）。下書き・予約・ゴミ箱も読める |
 | `content:write` | ページ・記事を作る・直す・**公開する**（予約公開も）・ゴミ箱へ移す（0083、§9）。お店の画面に出る |
+| `app_data:write` | 外部プラグインが商品に付くデータ（レビューの要約）を置き直す（0084、§10）。**連携（プラグイン）に結んで発行**し、その名前の空間だけに書ける。お店の画面に出る。REST だけ |
 
 - 有効期限（任意）、失効（管理画面でいつでも）、最終利用日時の記録。
-- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
+- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content`、`app_data:write` は `apps` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
 - **発行した人の権限が続いている間だけ使える**（0026）: 発行者がそのショップの `integrations` の項目（組織の owner / admin を含む）を失うと、トークンは `unauthorized` になります（メンバーを組織から外した・項目を外したときに、発行済みのトークンが残って使えてしまわないように）。項目を戻せばまた使えます。
 - お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read、連絡先は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。メンテナの決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
 - クーポンと会員（0036）: 判断の理由は §6。
@@ -274,3 +275,12 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - MCP: `pages_list`・`page_get`・`blogs_list`・`articles_list`・`article_get`（content:read）、`page_save`・`page_trash`・`article_save`・`article_trash`（content:write、`destructiveHint`）。
 - REST: `/api/v1/pages`・`/api/v1/pages/<id か handle>`・`/api/v1/blogs`・`/api/v1/blogs/<ブログ>/articles`・`/api/v1/blogs/<ブログ>/articles/<id か handle>`。
 - 公開中のページ・記事を連携サイトで出すだけなら、トークンの要らないヘッドレスの公開 API（docs/headless.md「ページ・ブログ」）を使います。
+
+## 10. 外部プラグインの拡張データ（0084）
+
+- 外部プラグイン（レビューなど）が、商品に付くデータを Banto に置き直す口です。仕組みと形は docs/app-data.md。
+- **トークンは連携（hooks の送信先）に結んで発行します**（`api_tokens.endpoint_id`）。結ばずに `app_data:write` は付けられず、あとから付け替えもできません。
+  書けるのは、その連携の名前の空間（`hook_endpoints.app_handle`）だけです。連携を消すと、トークンとデータも消えます。
+- スコープの項目は `apps`（組織のメンバーの「プラグインのデータ」）。商品の担当（`catalog`）とは分けます。
+- 形は Banto が知っているものだけ（最初は `reviews.v1`）。知らない鍵は落とし、文字はエスケープして描きます。
+- REST: `PUT` / `DELETE /api/v1/products/<id>/app-data/<kind>`、`GET /api/v1/app-data`。MCP には出しません。

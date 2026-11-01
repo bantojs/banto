@@ -24,6 +24,7 @@ export const API_SCOPES = [
   "theme:publish",
   "content:read",
   "content:write",
+  "app_data:write",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -34,7 +35,7 @@ export const DEFAULT_SCOPES: readonly ApiScope[] = ["products:read", "orders:rea
  * スコープに対応する、ショップの権限の項目（0028 の banto_scope_perm と同じ。判定は DB が行い、ここは画面の出し分け用）。
  * 発行者がその項目を持たないスコープは付けられず、項目を外すとそのスコープだけ効かなくなる。shop:read は発行できる人なら誰でも。
  */
-export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support" | "design" | "content"> = {
+export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support" | "design" | "content" | "apps"> = {
   "products:read": "catalog",
   "products:write": "catalog",
   "orders:read": "orders",
@@ -53,10 +54,14 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "theme:publish": "design",
   "content:read": "content",
   "content:write": "content",
+  "app_data:write": "apps",
 };
 
 /** 0083 が当たるまで出さないスコープ（ページ・ブログの記事） */
 export const CONTENT_SCOPES: readonly ApiScope[] = ["content:read", "content:write"];
+
+/** 0084 が当たるまで出さないスコープ（外部プラグインの拡張データ。送信先に結んで発行する） */
+export const APP_DATA_SCOPES: readonly ApiScope[] = ["app_data:write"];
 
 export function isApiScope(s: string): s is ApiScope {
   return (API_SCOPES as readonly string[]).includes(s);

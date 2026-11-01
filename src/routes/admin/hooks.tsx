@@ -3,7 +3,9 @@ import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { classifyHost } from "../../media/address";
 import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
-import { fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
+import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
+import { migrated } from "../../db/migration-state";
+import { APP_DATA_MIGRATION } from "../../apps/app-data";
 import { endpointSecret, signHookPayload } from "../../hooks/signing";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
 import { t, type MessageKey } from "../../i18n";
@@ -29,6 +31,13 @@ interface EndpointRow {
   manifest: PluginManifest | null;
   settings: Record<string, string | boolean>;
   created_at: string;
+  /** 拡張データの名前の空間（0084） */
+  app_handle?: string | null;
+}
+
+/** 拡張データ（0084）が DB に入ったか。入る前は app_handle の列が無い */
+function appsReady(c: AdminContext): Promise<boolean> {
+  return migrated({ db: owner(c).db, cache: c.get("adapters").cache }, APP_DATA_MIGRATION);
 }
 
 interface DeliveryRow {
@@ -48,6 +57,8 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     saved: "shop.saved",
     deleted: "hooks.deleted",
     invalid_url: "hooks.invalid_url",
+    invalid_app_handle: "hooks.app_handle_invalid",
+    app_handle_taken: "hooks.app_handle_taken",
     manifest_failed: "hooks.manifest_failed",
     test_ok: "hooks.test_ok",
     test_failed: "hooks.test_failed",
@@ -80,7 +91,7 @@ function receivesEvents(url: string | undefined): boolean {
   return Boolean(findBundledPlugin(id)?.handle);
 }
 
-function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest: PluginManifest | null }) {
+function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest: PluginManifest | null; apps?: boolean }) {
   const e = props.endpoint;
   const events = new Set(e?.events ?? props.manifest?.events ?? []);
   const showEvents = receivesEvents(e?.url);
@@ -142,6 +153,13 @@ function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest:
             );
           })}
         </fieldset>
+      ) : null}
+      {props.apps && !(e && bundledPluginIdFromUrl(e.url) !== null) ? (
+        <div>
+          <label for="app_handle">{t("hooks.app_handle")}</label>
+          <input id="app_handle" type="text" name="app_handle" value={e?.app_handle ?? (e?.id ? "" : (props.manifest?.app ?? ""))} maxlength={40} pattern="[a-z]([a-z0-9\-]{0,38}[a-z0-9])?" style="width:16rem" />
+          <div class="muted">{t("hooks.app_handle_hint")}</div>
+        </div>
       ) : null}
       <label>
         <input type="checkbox" name="enabled" value="on" checked={e?.enabled ?? true} /> {t("hooks.enabled")}
@@ -282,21 +300,33 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
       ) : (
         <p class="muted">{t("hooks.manifest_missing")}</p>
       )}
-      <EndpointForm action={`/admin/shops/${shop.id}/hooks`} manifest={manifest} endpoint={{ id: "", shop_id: shopId, name: manifest?.name ?? "", url, events: manifest?.events ?? [], enabled: true, manifest, settings: {}, created_at: "" }} />
+      <EndpointForm action={`/admin/shops/${shop.id}/hooks`} apps={await appsReady(c)} manifest={manifest} endpoint={{ id: "", shop_id: shopId, name: manifest?.name ?? "", url, events: manifest?.events ?? [], enabled: true, manifest, settings: {}, created_at: "" }} />
     </AdminLayout>,
   );
 });
 
-function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null): Partial<EndpointRow> | "invalid_url" {
+function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
   const url = (f.url ?? "").trim();
   if (!URL_RE.test(url)) return "invalid_url"; // 既存の行の保存（同梱プラグインの設定もここを通る）。新規の登録は externalHookUrl
-  return {
+  const values: Partial<EndpointRow> = {
     name: (f.name ?? "").trim().slice(0, 200) || url,
     url,
     events: receivesEvents(url) ? eventsRaw.filter(isHookEvent) : [],
     enabled: f.enabled === "on",
     settings: settingsFromForm(manifest, f),
   };
+  // 拡張データの名前の空間（0084）。同梱プラグインには付けない
+  if (apps && bundledPluginIdFromUrl(url) === null && f.app_handle !== undefined) {
+    const handle = f.app_handle.trim();
+    if (handle !== "" && !APP_HANDLE_RE.test(handle)) return "invalid_app_handle";
+    values.app_handle = handle === "" ? null : handle;
+  }
+  return values;
+}
+
+/** 保存の失敗を画面の知らせに直す（名前の重なりは一意の索引） */
+function saveError(e: DbError): string {
+  return e.code === "23505" || /hook_endpoints_app_handle_unique|duplicate key/.test(e.message) ? "app_handle_taken" : "generic";
 }
 
 async function eventsFromBody(c: AdminContext): Promise<string[]> {
@@ -317,13 +347,13 @@ hooks.post("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   // マニフェストは登録時に再取得する（フォームの値を信用しない）
   const manifest = await fetchManifest(url, c.get("deps").fetch);
-  const values = endpointValues(f, events, manifest);
-  if (values === "invalid_url") return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
+  const values = endpointValues(f, events, manifest, await appsReady(c));
+  if (typeof values === "string") return c.redirect(`/admin/shops/${shopId}/hooks?flash=${values}`);
   try {
     const [created] = await db.from<EndpointRow>("hook_endpoints").insert({ ...values, shop_id: shopId, manifest });
     return c.redirect(`/admin/shops/${shopId}/hooks/${created!.id}?flash=saved`);
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/hooks?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/hooks?flash=${saveError(e)}`);
     throw e;
   }
 });
@@ -359,7 +389,7 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         sub={<code>{endpoint.url}</code>}
       />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
-      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} />
+      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps={await appsReady(c)} />
 
       {bundledPluginIdFromUrl(endpoint.url) === null ? (
         <div>
@@ -394,13 +424,14 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const events = await eventsFromBody(c);
   const f = await formFields(c);
-  const values = endpointValues(f, events, endpoint.manifest);
-  if (values === "invalid_url") return c.redirect(`${base}?flash=invalid_url`);
-  if (bundledPluginIdFromUrl(endpoint.url) !== null) values.url = endpoint.url;
+  const bundled = bundledPluginIdFromUrl(endpoint.url) !== null;
+  const values = endpointValues(f, events, endpoint.manifest, !bundled && (await appsReady(c)));
+  if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
+  if (bundled) values.url = endpoint.url;
   try {
     await db.from<EndpointRow>("hook_endpoints").update(values, { id: endpoint.id, shop_id: shop.id });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${saveError(e)}`);
     throw e;
   }
   return c.redirect(`${base}?flash=saved`);

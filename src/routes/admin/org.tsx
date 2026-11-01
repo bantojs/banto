@@ -15,6 +15,7 @@ import { adminLoginGuard, requireOwner, setSessionCookie, toSessionData } from "
 import { myOrgs, PERM_TEMPLATES, requireOrgAdmin, SHOP_PERMS, isShopPerm, type OrgRole, type ShopPerm } from "./access";
 import { migrated } from "../../db/migration-state";
 import { PAGES_MIGRATION } from "../../pages";
+import { APP_DATA_MIGRATION } from "../../apps/app-data";
 
 /**
  * 組織の画面（0024_organizations、docs/knowledge/11-organizations.md）。組織の owner / admin だけ。
@@ -44,6 +45,7 @@ const PERM_LABEL: Record<ShopPerm, MessageKey> = {
   support: "perm.support",
   design: "perm.design",
   content: "perm.content",
+  apps: "perm.apps",
 };
 const ROLE_LABEL: Record<OrgRole, MessageKey> = {
   owner: "org.role.owner",
@@ -144,10 +146,11 @@ function readShopPerms(
   return out;
 }
 
-/** content（ページ、0079）は DB に入るまで出さない（入る前の DB は項目を知らず、0024 の検査で断る） */
+/** content（ページ、0079）・apps（拡張データ、0084）は DB に入るまで出さない（入る前の DB は項目を知らず、0024 の検査で断る） */
 async function shopPermsHere(c: AdminContext): Promise<readonly ShopPerm[]> {
-  const pages = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGES_MIGRATION);
-  return SHOP_PERMS.filter((p) => p !== "content" || pages);
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const [pages, apps] = await Promise.all([migrated(deps, PAGES_MIGRATION), migrated(deps, APP_DATA_MIGRATION)]);
+  return SHOP_PERMS.filter((p) => (p !== "content" || pages) && (p !== "apps" || apps));
 }
 
 function ShopPermsFields(props: { shops: OrgShop[]; stores?: OrgStoreRef[]; current?: { shop_id: string; perms: string[] }[]; currentStores?: { store_id: string; perms: string[] }[]; perms: readonly ShopPerm[] }) {

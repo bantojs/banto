@@ -296,6 +296,25 @@ v1.post("/tryon-requests/:number{[0-9]+}/status", async (c) =>
     .catch((e) => errorJson(c, e)),
 );
 
+// 拡張データ（0084。app_data:write、docs/app-data.md）。トークンに結んだプラグインの分だけ読み書きする。MCP には出さない
+v1.get("/app-data", async (c) =>
+  api(c)
+    .appDataList({ productId: c.req.query("product_id") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+v1.put("/products/:id/app-data/:kind", async (c) =>
+  body(c)
+    .then((b) => {
+      if (b["public"] !== undefined && typeof b["public"] !== "boolean") throw new ApiError("invalid", "public must be a boolean", 400);
+      if (b["data"] === undefined) throw new ApiError("invalid", "data is required", 400);
+      return api(c).appDataSet(c.req.param("id"), c.req.param("kind"), b["data"], b["public"] !== false);
+    })
+    .then((r) => c.json(r))
+    .catch((e) => errorJson(c, e)),
+);
+v1.delete("/products/:id/app-data/:kind", async (c) => api(c).appDataDelete(c.req.param("id"), c.req.param("kind")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+
 // ページ・ブログの記事（0083。content:read / content:write、docs/ai-access.md §9）。:ref は id（UUID）か handle。消すのはゴミ箱へ
 v1.get("/pages", async (c) =>
   api(c)

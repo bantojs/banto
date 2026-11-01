@@ -22,7 +22,12 @@ export interface PluginManifest {
   settings: ManifestSetting[];
   /** 管理画面に iframe で埋め込む独自画面（任意） */
   admin_url?: string;
+  /** 拡張データの名前の空間の候補（0084。決めるのは運営者で、登録の画面の初めの値に使うだけ） */
+  app?: string;
 }
+
+/** 拡張データの名前の空間（hook_endpoints.app_handle、0084 の CHECK と同じ） */
+export const APP_HANDLE_RE = /^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
@@ -56,6 +61,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     }
   }
   const admin_url = typeof m["admin_url"] === "string" && /^https:\/\//.test(m["admin_url"]) ? m["admin_url"] : undefined;
+  const app = typeof m["app"] === "string" && APP_HANDLE_RE.test(m["app"]) ? m["app"] : undefined;
   return {
     name: m["name"].trim().slice(0, 200),
     ...(typeof m["version"] === "string" ? { version: m["version"].slice(0, 50) } : {}),
@@ -63,6 +69,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     events,
     settings,
     ...(admin_url ? { admin_url } : {}),
+    ...(app ? { app } : {}),
   };
 }
 

@@ -11,6 +11,7 @@ import type { CartLine } from "../types";
 import type { CategoryNode } from "../../products/categories";
 import { firstImageForSku, orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
+import { appDataOf, productReviews } from "../../apps/app-data";
 import { escapeHtml, SafeHtml } from "./engine";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -143,6 +144,21 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     first_available_variant: available[0] ?? null,
     created_at: p.created_at,
     updated_at: p.updated_at,
+    // 外部プラグインの拡張データ（0084、docs/app-data.md）。文字は既定でエスケープして描かれる
+    reviews: reviewsObject(p),
+    app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, data: x.data })),
+  };
+}
+
+/** product.reviews（レビューのプラグインが置いた要約。無ければ null） */
+function reviewsObject(p: ProductDetail["product"]) {
+  const r = productReviews(p);
+  if (!r) return null;
+  return {
+    app: r.app,
+    rating: r.rating_avg,
+    rating_count: r.rating_count,
+    items: r.items.map((i) => ({ id: i.id, rating: i.rating, title: i.title, body: i.body, author: i.author_display, created_at: i.created_at, incentivized: i.incentivized, verified_purchase: i.verified_purchase })),
   };
 }
 

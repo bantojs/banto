@@ -571,6 +571,10 @@ export const ja = {
   "hooks.test_ok": "テスト送信に成功しました（2xx）。",
   "hooks.test_failed": "テスト送信に失敗しました。URL と送信先のログを確認してください。",
   "hooks.plugin_ui": "プラグインの画面",
+  "hooks.app_handle": "プラグインの名前（拡張データの名前の空間）",
+  "hooks.app_handle_hint": "レビューなど、商品に付くデータを Banto に置くプラグインに付けます（英小文字・数字・ハイフン、40 文字まで。例: reviews）。テーマからはこの名前で読めます。データを置かないプラグインは空のままで構いません。",
+  "hooks.app_handle_invalid": "プラグインの名前は英小文字で始まり、英小文字・数字・ハイフンの 40 文字までです",
+  "hooks.app_handle_taken": "このショップの別の連携が同じ名前を使っています",
   "hooks.deliveries": "配信履歴（最新 50 件）",
   "hooks.no_deliveries": "配信はまだありません。",
   "hooks.event": "イベント",
@@ -718,6 +722,11 @@ export const ja = {
   "tokens.scope.theme_publish": "テーマの公開・取り下げ（お店の画面が切り替わります）",
   "tokens.scope.content_read": "ページ・ブログの記事の参照（下書き・ゴミ箱を含む）",
   "tokens.scope.content_write": "ページ・ブログの記事を作る・直す・公開する・ゴミ箱へ移す（お店の画面に出ます）",
+  "tokens.scope.app_data_write": "外部プラグインが商品に付くデータ（レビューの星・件数・新しい 20 件）を置く（お店の画面に出ます）",
+  "tokens.app_endpoint": "書き込む先のプラグイン（app_data:write を選んだとき）",
+  "tokens.app_endpoint_hint": "このトークンは選んだプラグインの名前の空間にだけ書けます。プラグインの名前は「連携」の画面で付けます。連携を消すと、このトークンとプラグインのデータも消えます。",
+  "tokens.app_endpoint_none": "名前を付けた連携（プラグイン）がまだありません",
+  "tokens.app_endpoint_required": "app_data:write には書き込む先のプラグインを選んでください",
 
 
   "store.subtotal_tax_included": "商品合計（税込）",
@@ -1737,6 +1746,13 @@ export const ja = {
   // ショップのページ（同梱モジュール pages、0079）
   "perm.content": "ページ",
   "org.template.content": "ページの担当",
+  // 外部プラグインの拡張データ（0084）
+  "perm.apps": "プラグインのデータ（レビューなど）",
+  "store.reviews": "レビュー",
+  "store.reviews_count": "{count} 件のレビュー",
+  "store.reviews_rating": "5 点満点中 {rating} 点",
+  "store.review_verified": "購入者",
+  "store.review_incentivized": "PR（お礼つきのレビュー）",
   "plan.kind.pages": "ショップのページ",
   "plan.limit_pages": "この Banto のプランで置けるページの数の上限に達しています。使わないページを消すか、プランの変更を運営者にご相談ください。",
   "mod.blog.name": "ブログ",

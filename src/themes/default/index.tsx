@@ -27,6 +27,8 @@ import { jsonLdText, productJsonLd } from "../../storefront/structured-data";
 import { yen } from "../../routes/common";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
 import { ConfirmationBlock } from "./confirmation";
+import { REVIEWS_CSS, ReviewsList, ReviewsSummary } from "./reviews";
+import { productReviews } from "../../apps/app-data";
 import { absoluteMedia, pagePath, pagesNav } from "../../pages";
 import { articlePath, blogPath, blogsNav } from "../../blog";
 
@@ -67,6 +69,8 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .tags{display:flex;flex-wrap:wrap;gap:.4rem}.tags a{padding:.15rem .6rem;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:1rem;text-decoration:none;font-size:.9rem}.tags a.active{background:var(--accent,#1f6feb);color:#fff;border-color:transparent}
 .categories{display:flex;flex-wrap:wrap;gap:.25rem .9rem;margin:.5rem 0 1rem}.categories a{text-decoration:none}.categories a.active{font-weight:700}.categories a.sub{font-size:.9rem;margin-left:.5rem;opacity:.8}
 table.attributes th{width:30%;font-weight:600}
+.badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
+${REVIEWS_CSS}
 .pager{display:flex;justify-content:space-between;gap:1rem;margin:2rem 0}
 .thumbs{display:flex;gap:.5rem;flex-wrap:wrap}.thumbs img{width:4.5rem;height:4.5rem;object-fit:cover;border-radius:.25rem;border:1px solid color-mix(in srgb,CanvasText 15%,transparent)}
 `;
@@ -553,6 +557,8 @@ export const defaultTheme: Theme = {
     const axes = skus.length > 1 ? displayOptionAxes(product.option_axes, skus) : [];
     const axesOn = axes.length > 0;
     const first = images[0];
+    // 外部プラグインのレビュー（0084）。星と件数は名前の下、一覧は商品の下。構造化データにも同じものだけ
+    const reviews = productReviews(product);
     return (
       <Layout
         title={product.name}
@@ -569,6 +575,7 @@ export const defaultTheme: Theme = {
                 images: images.map((img) => imageUrl(ctx.mediaBaseUrl, img.storage_key)),
                 skus,
                 category: (categoryPath ?? []).map((cat) => cat.name),
+                reviews,
               })
             : undefined,
         }}
@@ -603,6 +610,7 @@ export const defaultTheme: Theme = {
           <div>
             {product.brand ? <p class="muted">{product.brand}</p> : null}
             <h1>{product.name}</h1>
+            {reviews ? <ReviewsSummary reviews={reviews} href="#reviews" /> : null}
             {added ? (
               <p class="notice">
                 {t("store.added")} <a href={`${ctx.shopPath}/cart`}>{t("store.view_cart")}</a>
@@ -655,6 +663,7 @@ export const defaultTheme: Theme = {
             {axesOn ? <script dangerouslySetInnerHTML={{ __html: OPTION_AXES_SCRIPT }} /> : null}
           </div>
         </div>
+        {reviews ? <ReviewsList reviews={reviews} id="reviews" /> : null}
       </Layout>
     );
   },

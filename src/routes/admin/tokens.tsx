@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_SCOPES, CONTENT_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { API_SCOPES, APP_DATA_SCOPES, CONTENT_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { migrated } from "../../db/migration-state";
 import { CONTENT_API_MIGRATION } from "../../pages";
+import { APP_DATA_MIGRATION } from "../../apps/app-data";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
@@ -27,6 +28,14 @@ interface TokenRow {
   revoked_at: string | null;
   last_used_at: string | null;
   created_at: string;
+  endpoint_id?: string | null;
+}
+
+/** 名前を付けた連携（app_data:write のトークンを結ぶ先、0084） */
+interface AppEndpoint {
+  id: string;
+  name: string;
+  app_handle: string;
 }
 
 const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
@@ -48,14 +57,22 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "theme:publish": "tokens.scope.theme_publish",
   "content:read": "tokens.scope.content_read",
   "content:write": "tokens.scope.content_write",
+  "app_data:write": "tokens.scope.app_data_write",
 };
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
 
-/** 発行できるスコープ（ページ・記事のスコープは 0083 が当たってから） */
+/** 発行できるスコープ（ページ・記事のスコープは 0083、拡張データは 0084 が当たってから） */
 async function issuableScopes(c: AdminContext): Promise<readonly ApiScope[]> {
-  if (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, CONTENT_API_MIGRATION)) return API_SCOPES;
-  return API_SCOPES.filter((sc) => !CONTENT_SCOPES.includes(sc));
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const [content, apps] = await Promise.all([migrated(deps, CONTENT_API_MIGRATION), migrated(deps, APP_DATA_MIGRATION)]);
+  return API_SCOPES.filter((sc) => (content || !CONTENT_SCOPES.includes(sc)) && (apps || !APP_DATA_SCOPES.includes(sc)));
+}
+
+/** app_data:write のトークンを結べる連携（名前のあるもの） */
+async function appEndpoints(c: AdminContext, shopId: string): Promise<AppEndpoint[]> {
+  const rows = await owner(c).db.from<AppEndpoint & { app_handle: string | null }>("hook_endpoints").select("id,name,app_handle", { eq: { shop_id: shopId }, order: "created_at.asc" });
+  return rows.filter((r): r is AppEndpoint => typeof r.app_handle === "string" && r.app_handle !== "");
 }
 
 tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
@@ -67,7 +84,12 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
   const scopeList = await issuableScopes(c);
-  const rows = await db.from<TokenRow>("api_tokens").select("id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at", { eq: { shop_id: shopId }, order: "created_at.desc" });
+  const withApps = scopeList.includes("app_data:write");
+  const [rows, apps] = await Promise.all([
+    db.from<TokenRow>("api_tokens").select(`id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at${withApps ? ",endpoint_id" : ""}`, { eq: { shop_id: shopId }, order: "created_at.desc" }),
+    withApps ? appEndpoints(c, shopId) : Promise.resolve([]),
+  ]);
+  const appName = new Map(apps.map((a) => [a.id, a.app_handle]));
   const base = publicBaseUrl(c);
   const flash = c.req.query("flash");
   return c.html(
@@ -79,6 +101,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
       </PageHead>
       {flash === "revoked" ? <p class="notice">{t("tokens.revoked_ok")}</p> : null}
       {flash === "generic" ? <p class="error">{t("error.generic")}</p> : null}
+      {flash === "app_endpoint" ? <p class="error">{t("tokens.app_endpoint_required")}</p> : null}
 
       {rows.length === 0 ? (
         <div class="empty">
@@ -107,7 +130,10 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
                 <td>
                   <code>{r.prefix}…</code>
                 </td>
-                <td>{r.scopes.join(", ")}</td>
+                <td>
+                  {r.scopes.join(", ")}
+                  {r.endpoint_id ? <span class="muted"> → {appName.get(r.endpoint_id) ?? "-"}</span> : null}
+                </td>
                 <td>{fmt(r.last_used_at)}</td>
                 <td>{fmt(r.expires_at)}</td>
                 <td>
@@ -141,6 +167,24 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
             </div>
           ))}
         </fieldset>
+        {withApps && grantable("app_data:write") ? (
+          <div>
+            <label for="endpoint_id">{t("tokens.app_endpoint")}</label>
+            {apps.length > 0 ? (
+              <select id="endpoint_id" name="endpoint_id">
+                <option value="">-</option>
+                {apps.map((a) => (
+                  <option value={a.id}>
+                    {a.name} ({a.app_handle})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p class="muted">{t("tokens.app_endpoint_none")}</p>
+            )}
+            <div class="muted">{t("tokens.app_endpoint_hint")}</div>
+          </div>
+        ) : null}
         <p class="notice">{t("tokens.pii_warning")}</p>
         <label for="expires_days">{t("tokens.expires_days")}</label>
         <input id="expires_days" type="number" name="expires_days" min={1} max={3650} placeholder="無期限" style="width:8rem" />
@@ -176,6 +220,13 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const name = (f.name ?? "").trim().slice(0, 100);
   const days = Number.parseInt(f.expires_days ?? "", 10);
   if (!name || scopes.length === 0) return c.redirect(`/admin/shops/${shopId}/tokens?flash=generic`);
+  // app_data:write は名前のある連携に結ぶ（ほかのスコープだけのトークンは結ばない）
+  let endpointId: string | null = null;
+  if (scopes.includes("app_data:write")) {
+    const ep = (await appEndpoints(c, shopId)).find((a) => a.id === f.endpoint_id);
+    if (!ep) return c.redirect(`/admin/shops/${shopId}/tokens?flash=app_endpoint`);
+    endpointId = ep.id;
+  }
   const raw = generateApiToken();
   try {
     await db.from("api_tokens").insert({
@@ -186,6 +237,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
       prefix: tokenPrefix(raw),
       scopes,
       expires_at: Number.isInteger(days) && days > 0 ? new Date(Date.now() + days * 86400_000).toISOString() : null,
+      ...(endpointId ? { endpoint_id: endpointId } : {}),
     });
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/tokens?flash=generic`);

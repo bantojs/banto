@@ -37,7 +37,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -134,6 +134,7 @@ export class FakeSupabase {
     order_items: [],
     reservations: [],
     hook_endpoints: [],
+    app_data: [],
     hook_deliveries: [],
     api_tokens: [],
     customers: [],
@@ -914,7 +915,7 @@ export class FakeSupabase {
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
   private orgRpc(fn: string, args: Record<string, unknown>, uid: string | null): Response | null {
-    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design", "content"];
+    const ALL = ["catalog", "orders", "orders_cancel", "customers", "marketing", "reports", "stores", "settings", "integrations", "support", "design", "content", "apps"];
     const role = (org: unknown) => this.orgMembers.find((m) => m.org_id === org && m.user_id === uid)?.role ?? null;
     const isAdmin = (org: unknown) => ["owner", "admin"].includes(role(org) ?? "");
     const err = (message: string) => json({ code: "P0001", message }, 400);
@@ -1269,7 +1270,12 @@ export class FakeSupabase {
       const attrs = (p["attributes"] ?? {}) as Record<string, unknown>;
       const pub: Record<string, unknown> = {};
       for (const f of fields) if (f.public && f.key in attrs) pub[f.key] = attrs[f.key];
-      return json({ ...p, attributes: pub });
+      // 0084: 外部プラグインの拡張データ（公開・送信先が有効・名前あり）
+      const appData = this.tables.app_data
+        .filter((d) => d["product_id"] === p["id"] && d["public"] !== false)
+        .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => ({ app: e["app_handle"], kind: d["kind"], data: d["data"], updated_at: d["updated_at"] })))
+        .sort((a, b) => String(a.app).localeCompare(String(b.app)));
+      return json({ ...p, attributes: pub, app_data: appData });
     }
     // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
     if (fn === "product_public_list") return this.productPublicList(args);
@@ -1928,6 +1934,34 @@ export class FakeSupabase {
           return json({ published_id: args["p_version_id"] ?? null });
         }
       }
+    }
+    // 0084: 拡張データ（送信先に結んだトークンの名前の空間だけ。形の検査は test/db/app-data.test.ts）
+    if (/^api_app_data_/.test(fn)) {
+      if (!need("app_data:write")) return unauthorized();
+      const ep = this.tables.hook_endpoints.find((e) => e["id"] === tok["endpoint_id"] && e["shop_id"] === shopId);
+      if (!ep) return unauthorized();
+      if (!ep["app_handle"]) return json({ code: "P0001", message: "app_handle_required" }, 400);
+      const view = (d: Row) => ({ app: ep["app_handle"], product_id: d["product_id"], kind: d["kind"], public: d["public"], data: d["data"], updated_at: d["updated_at"] });
+      const mine = this.tables.app_data.filter((d) => d["endpoint_id"] === ep["id"]);
+      if (fn === "api_app_data_list") {
+        const items = mine.filter((d) => !args["p_product_id"] || d["product_id"] === args["p_product_id"]);
+        return json({ app: ep["app_handle"], items: items.map(view), total: items.length });
+      }
+      if (!this.tables.products.some((x) => x["id"] === args["p_product_id"] && x["shop_id"] === shopId)) return fn === "api_app_data_delete" ? json(false) : notFound();
+      if (fn === "api_app_data_delete") {
+        const before = this.tables.app_data.length;
+        this.tables.app_data = this.tables.app_data.filter((d) => !(d["endpoint_id"] === ep["id"] && d["product_id"] === args["p_product_id"] && d["kind"] === args["p_kind"]));
+        return json(this.tables.app_data.length < before);
+      }
+      const data = args["p_data"] as Row | null;
+      if (!data || typeof data !== "object" || typeof data["rating_avg"] !== "number" || typeof data["rating_count"] !== "number") return json({ code: "P0001", message: "invalid_app_data" }, 400);
+      let row = mine.find((d) => d["product_id"] === args["p_product_id"] && d["kind"] === args["p_kind"]);
+      if (!row) {
+        row = { shop_id: shopId, endpoint_id: ep["id"], product_id: args["p_product_id"], kind: args["p_kind"] };
+        this.tables.app_data.push(row);
+      }
+      Object.assign(row, { data: { rating_avg: data["rating_avg"], rating_count: data["rating_count"], items: data["items"] ?? [] }, public: args["p_public"] !== false, updated_at: this.now() });
+      return json(view(row));
     }
     // 0083: ページ・記事（スコープ・モジュール・ショップの限定と、作る / 直すの振り分けだけ再現。値の検査は test/db/content-api.test.ts）
     if (/^api_(pages?|blogs?|articles?)_/.test(fn)) {

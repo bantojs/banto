@@ -3,6 +3,7 @@
  * Google の検索結果の商品情報（価格・在庫）に使われる。データ取得はしない（テーマに渡された値だけで組む）。
  */
 import type { ProductRow, SkuRow } from "../db/types";
+import { reviewsJsonLd, type ProductReviews } from "../apps/app-data";
 
 export interface ProductLdInput {
   url: string;
@@ -10,6 +11,8 @@ export interface ProductLdInput {
   images: string[];
   skus: (Pick<SkuRow, "code" | "name" | "price_jpy" | "gtin"> & { available: number })[];
   category?: string[];
+  /** 外部プラグインのレビュー（0084）。ページに見えている分と同じもの */
+  reviews?: ProductReviews | null;
 }
 
 /** GTIN の桁で schema.org の項目名を選ぶ（8 / 12 / 13 / 14 桁） */
@@ -43,6 +46,7 @@ export function productJsonLd(i: ProductLdInput): Record<string, unknown> {
     ...(i.category && i.category.length > 0 ? { category: i.category.join(" > ") } : {}),
     ...(single ? { sku: single.code, ...gtinField(single.gtin) } : {}),
     ...(i.skus.length > 0 ? { offers: single ? offer(single) : i.skus.map(offer) } : {}),
+    ...(i.reviews ? reviewsJsonLd(i.reviews) : {}),
   };
 }
 

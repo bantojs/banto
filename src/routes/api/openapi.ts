@@ -30,6 +30,10 @@ export function openapiDocument(origin: string, version: string): Record<string,
   };
   const contentPageFields = { id: str, handle: { ...str, description: "URL の名前（英小文字・数字・ハイフン）" }, ...contentCommon, nav: { type: "string", enum: ["none", "header", "footer"] }, sort_order: int };
   const contentArticleFields = { id: str, handle: str, ...contentCommon, excerpt: nullableStr, tags, author: nullableStr };
+  const reviewItem = obj({ id: str, rating: int, title: nullableStr, body: str, author_display: str, created_at: str, incentivized: bool, verified_purchase: bool }, ["id", "rating", "body", "author_display", "created_at"]);
+  const reviewsV1 = obj({ rating_avg: { type: "number" }, rating_count: int, items: { type: "array", items: reviewItem, maxItems: 20 } }, ["rating_avg", "rating_count"]);
+  const appDataRow = obj({ app: str, product_id: str, kind: str, public: bool, data: { type: "object" }, updated_at: str });
+  const kindPath = { name: "kind", in: "path", required: true, schema: { type: "string", enum: ["reviews.v1"] } };
   const contentPage = obj({ id: str, handle: str, title: str, body: str, nav: str, sort_order: int, status: { type: "string", enum: ["published", "scheduled", "draft", "trash"] }, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
   const contentArticle = obj({ id: str, blog: str, handle: str, title: str, body: str, excerpt: nullableStr, tags, author: nullableStr, status: str, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
   const page = [{ name: "limit", in: "query", schema: int }, { name: "offset", in: "query", schema: int }];
@@ -180,6 +184,12 @@ export function openapiDocument(origin: string, version: string): Record<string,
       "/blogs/{blog}/articles/{id}": {
         patch: { summary: "記事を直す（content:write）", security: bearer, parameters: [blogPath, ...idPath], requestBody: { content: { "application/json": { schema: obj(contentArticleFields) } } }, responses: { 200: resp("ok", contentArticle), ...errors } },
         delete: { summary: "記事をゴミ箱へ（content:write）", security: bearer, parameters: [blogPath, ...idPath], responses: { 200: resp("ok", contentArticle), ...errors } },
+      },
+      // 拡張データ（0084。app_data:write、送信先に結んだトークンだけ。docs/app-data.md）
+      "/app-data": { get: { summary: "このトークンのプラグインが置いた拡張データ（app_data:write）。product_id で絞れる", security: bearer, parameters: [{ name: "product_id", in: "query", schema: str }, ...page], responses: { 200: resp("ok", obj({ app: str, items: { type: "array", items: appDataRow }, total: int })), ...errors } } },
+      "/products/{id}/app-data/{kind}": {
+        put: { summary: "商品に付くデータを置き直す（app_data:write）。同じ商品・同じ形の分は丸ごと入れ替わる。kind は reviews.v1 だけ（rating_avg・rating_count・新しい items 20 件まで）。public: false ならお客様の画面に出さない。知らない鍵は落とし、文字はエスケープして描く", security: bearer, parameters: [...idPath, kindPath], requestBody: { content: { "application/json": { schema: obj({ data: reviewsV1, public: bool }, ["data"]) } } }, responses: { 200: resp("ok", appDataRow), ...errors } },
+        delete: { summary: "商品に付くデータを消す（app_data:write）", security: bearer, parameters: [...idPath, kindPath], responses: { 200: resp("ok", obj({ deleted: bool })), ...errors } },
       },
       "/coupons": {
         get: { summary: "クーポンの一覧（coupons:read。モジュール coupons が OFF なら 409 module_disabled）", security: bearer, parameters: [{ name: "q", in: "query", schema: str, description: "名前・コードの部分一致" }, { name: "active", in: "query", schema: bool }, ...page], responses: { 200: resp("ok", list(coupon)), ...errors } },

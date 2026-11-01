@@ -38,6 +38,8 @@ export interface ProductRow {
   brand?: string | null;
   /** カスタム項目の値（定義は shops.settings.product_fields。src/products/fields.ts） */
   attributes?: Record<string, string | number>;
+  /** 0084。外部プラグインの拡張データ（product_public_get が公開の分だけ返す。src/apps/app-data.ts） */
+  app_data?: unknown;
   /** 0017_tax。税の区分（standard 標準 / reduced 軽減 / exempt 非課税）。src/commerce/tax.ts */
   tax_class?: "standard" | "reduced" | "exempt";
   /** 0065。SKU を分ける軸（null = 決めていない）と、商品で上書きしたか。src/products/option-axes.ts */

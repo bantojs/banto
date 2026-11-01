@@ -103,7 +103,8 @@ export default {
     { "key": "verbose", "label": "明細も送る", "type": "boolean" },
     { "key": "lang", "label": "言語", "type": "select", "options": [{ "value": "ja", "label": "日本語" }] }
   ],
-  "admin_url": "https://plugin.example/admin"
+  "admin_url": "https://plugin.example/admin",
+  "app": "line-notify"
 }
 ```
 
@@ -113,6 +114,7 @@ export default {
 | `events` | 購読したいイベント。登録画面で変更可 |
 | `settings[]` | `key` は `^[a-z][a-z0-9_]{0,63}$`。`type` は `text` / `boolean` / `select`。**`secret` 型は受け付けません**（API キー等はプラグイン側の環境変数に置く。CLAUDE.md §1-5） |
 | `admin_url` | `https://` のみ。管理画面に iframe で埋め込み、`?shop_id=&endpoint_id=` を付けて開きます |
+| `app` | 任意。商品に付くデータ（レビューなど）を Banto に置くプラグインの、名前の空間の候補（`^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$`）。登録の画面の初めの値になるだけで、決めるのは運営者です（0084、docs/app-data.md） |
 
 設定値は `hook_endpoints.settings` に保存され、テスト送信（`banto.ping`）のボディに `settings` として含まれます。
 通常のイベントには含まれないので、必要なら `banto.ping` 受信時に保存するか、プラグイン側で保持してください。

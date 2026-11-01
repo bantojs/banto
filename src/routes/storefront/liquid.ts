@@ -13,6 +13,7 @@ import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
+import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
 import { shopHome, shopOrigin } from "../../storefront/urls";
@@ -355,6 +356,7 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
     images: product.images.map((i) => String(i["src"])),
     skus: p.detail.skus,
     category: p.categoryNames,
+    reviews: productReviews(p.detail.product),
   });
   return render(c, s, choice, {
     template: "product",

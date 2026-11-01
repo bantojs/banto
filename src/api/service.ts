@@ -24,6 +24,7 @@ import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
 import { CONTENT_API_MIGRATION } from "../pages";
+import { APP_DATA_MIGRATION, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone } from "../i18n/time";
 
@@ -89,6 +90,8 @@ function mapRpcError(e: unknown): never {
     // クーポンと会員（0036）
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
     // ページ・記事（0083）
+    // 拡張データ（0084）
+    if (e.is("app_handle_required")) throw new ApiError("conflict", "app_handle_required: give this plugin (hook endpoint) an app name in the admin screen first", 409);
     if (e.is("handle_taken")) throw new ApiError("conflict", "handle_taken: another page (or article in this blog) outside the trash already uses this handle", 409);
     if (e.is("pii_scope_required")) throw new ApiError("unauthorized", "attachments need the orders:pii scope as well as inquiries:read", 401);
     if (e.is("too_many_attachments")) throw new ApiError("invalid", "invalid_attachment: up to 3 files per reply and 20 per inquiry", 400);
@@ -601,6 +604,29 @@ export class ApiService {
   async articleTrash(blog: string, id: string) {
     await this.contentReady();
     return this.call<Record<string, unknown>>("api_article_trash", { p_blog: blog, p_article_id: uuidOr404(id) });
+  }
+
+  // ---- 拡張データ（app_data:write、0084。docs/app-data.md）。トークンに結んだ送信先（プラグイン）の名前の空間だけ ----
+  private async appDataReady(kind?: string): Promise<void> {
+    if (!(await this.migratedTo(APP_DATA_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `app data needs the database update ${APP_DATA_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    if (kind !== undefined && !isAppDataKind(kind)) throw new ApiError("invalid", "invalid_app_data_kind: the kind must be reviews.v1", 400);
+  }
+  async appDataList(q: { productId?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
+    await this.appDataReady();
+    return this.call<{ app: string; items: Record<string, unknown>[]; total: number }>("api_app_data_list", { p_product_id: q.productId ? uuidOr404(q.productId) : null, p_limit: q.limit ?? 50, p_offset: q.offset ?? 0 });
+  }
+  /** 置き直す（同じ商品・同じ形の行は丸ごと入れ替え。public が false ならお客様の画面に出さない） */
+  async appDataSet(productId: string, kind: string, data: unknown, isPublic = true) {
+    await this.appDataReady(kind);
+    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic });
+  }
+  async appDataDelete(productId: string, kind: string) {
+    await this.appDataReady(kind);
+    const deleted = await this.call<boolean>("api_app_data_delete", { p_product_id: uuidOr404(productId), p_kind: kind });
+    return { deleted };
   }
 
   // ---- テーマ（theme:write / theme:publish、0072。docs/themes.md） ----
