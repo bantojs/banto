@@ -6,7 +6,8 @@ import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
 import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
 import { migrated } from "../../db/migration-state";
 import { APP_DATA_MIGRATION } from "../../apps/app-data";
-import { endpointSecret, signHookPayload } from "../../hooks/signing";
+import { endpointSecret, signHookPayload, signPluginTicket } from "../../hooks/signing";
+import { ConnectConfirm, ConnectionCard, connectReady, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -59,6 +60,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     invalid_url: "hooks.invalid_url",
     invalid_app_handle: "hooks.app_handle_invalid",
     app_handle_taken: "hooks.app_handle_taken",
+    connect_scope: "connect.scope_error",
     manifest_failed: "hooks.manifest_failed",
     test_ok: "hooks.test_ok",
     test_failed: "hooks.test_failed",
@@ -170,6 +172,9 @@ function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest:
     </form>
   );
 }
+
+// つなぐ（0088）。/:shopId/hooks/:endpointId より先に登録する（connect が連携の id に読まれないように）
+registerConnectRoutes(hooks, externalHookUrl);
 
 hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -289,6 +294,15 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   const url = (f.url ?? "").trim();
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   const manifest = await fetchManifest(url, c.get("deps").fetch);
+  // つなぐ手順に対応したプラグイン（0088）は、許す画面を出す（秘密を手で写さない）
+  if (connectable(manifest) && (await connectReady(c))) {
+    return c.html(
+      <AdminLayout title={t("connect.title")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
+        <PageHead title={t("connect.title")} />
+        <ConnectConfirm shop={shop} access={c.get("shopAccess")} url={url} manifest={manifest} />
+      </AdminLayout>,
+    );
+  }
   return c.html(
     <AdminLayout title={t("hooks.add")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
       <PageHead title={t("hooks.add")} />
@@ -374,7 +388,9 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
   if (!data) return c.text(t("hooks.not_found"), 404);
   const { shop, endpoint } = data;
   const secret = sessionSecret(c);
-  const signing = secret ? await endpointSecret(secret, endpoint.id) : null;
+  // つないだ連携（0088）は接続ごとの署名シークレットをプラグインに渡し済み。画面には出さない
+  const conn = await connectionOf(c, endpoint.id);
+  const signing = secret && !conn ? await endpointSecret(secret, endpoint.id) : null;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const f = flash(c.req.query("flash"));
   return c.html(
@@ -389,13 +405,18 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         sub={<code>{endpoint.url}</code>}
       />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
+      {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
       <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps={await appsReady(c)} />
 
       {bundledPluginIdFromUrl(endpoint.url) === null ? (
         <div>
-          <h2>{t("hooks.secret")}</h2>
-          <p class="muted">{t("hooks.secret_hint")}</p>
-          {signing ? <Copyable value={signing} name={t("hooks.secret")} /> : <p class="error">{t("error.secret_missing")}</p>}
+          {conn ? null : (
+            <>
+              <h2>{t("hooks.secret")}</h2>
+              <p class="muted">{t("hooks.secret_hint")}</p>
+              {signing ? <Copyable value={signing} name={t("hooks.secret")} /> : <p class="error">{t("error.secret_missing")}</p>}
+            </>
+          )}
           <h2>{t("hooks.test")}</h2>
           <form method="post" action={`${base}/test`}>
             <button type="submit">{t("hooks.test_send")}</button>
@@ -454,7 +475,8 @@ hooks.post("/:shopId/hooks/:endpointId/test", requireOwner, async (c: AdminConte
   if (!data) return c.text(t("hooks.not_found"), 404);
   const { shop, endpoint } = data;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
-  const secret = sessionSecret(c);
+  // つないだ連携（0088）は接続ごとの署名シークレットで署名する
+  const secret = await signingSecretFor(c, shop.id, endpoint.id, Boolean(await connectionOf(c, endpoint.id)));
   if (!secret) return c.redirect(`${base}?flash=test_failed`);
   const body = JSON.stringify({
     id: crypto.randomUUID(),
@@ -474,7 +496,7 @@ hooks.post("/:shopId/hooks/:endpointId/test", requireOwner, async (c: AdminConte
         "Content-Type": "application/json",
         "User-Agent": "banto-hooks",
         "X-Banto-Event": "banto.ping",
-        "X-Banto-Signature": await signHookPayload(await endpointSecret(secret, endpoint.id), body),
+        "X-Banto-Signature": await signHookPayload(secret, body),
       },
       body,
       signal: controller.signal,
@@ -496,6 +518,9 @@ hooks.get("/:shopId/hooks/:endpointId/ui", requireOwner, async (c: AdminContext)
   const src = new URL(adminUrl);
   src.searchParams.set("shop_id", shop.id);
   src.searchParams.set("endpoint_id", endpoint.id);
+  // 署名付きの短い券（5 分）。プラグインは署名シークレットで確かめて、Banto のどの運営者が開いたかを知れる（0088）
+  const signing = await signingSecretFor(c, shop.id, endpoint.id, Boolean(await connectionOf(c, endpoint.id)));
+  if (signing) src.searchParams.set("banto_ticket", await signPluginTicket(signing, { shop_id: shop.id, endpoint_id: endpoint.id, user_id: owner(c).session.user_id }));
   return c.html(
     <AdminLayout title={endpoint.name} nav>
       <p>

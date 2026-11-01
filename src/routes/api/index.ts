@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { connectApi } from "./connect";
 import { appDataOf, productReviews } from "../../apps/app-data";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
@@ -41,6 +42,7 @@ api.route("/", tryonApi);
 api.route("/", inquiriesApi);
 api.route("/", ordersApi);
 api.route("/", contentApi);
+api.route("/", connectApi);
 
 function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   const cfg = c.get("adapters").config;

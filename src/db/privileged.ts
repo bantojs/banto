@@ -74,6 +74,19 @@ export interface HookDeliveryRow {
   url: string;
   settings: Record<string, string | boolean>;
   created_at: string;
+  /** つないだ連携の署名シークレットの暗号文（0088。無ければ従来どおりサイトの秘密から作る） */
+  secret_box?: string | null;
+}
+
+/** つなぐ手順の引き換えの結果（0088） */
+export interface AppConnectExchange {
+  shop_id: string;
+  shop_slug: string;
+  shop_name: string;
+  endpoint_id: string;
+  app: string | null;
+  scopes: string[];
+  token_id: string;
 }
 
 export interface ReservationCustomer extends Omit<OrderInput, "payment_provider" | "payment_ref"> {
@@ -377,6 +390,12 @@ export interface PrivilegedDb {
   purgeArticlesTrash(days?: number): Promise<number>;
   /** hooks: 配信待ちを取り出す（リース付き） */
   claimHookDeliveries(limit: number): Promise<HookDeliveryRow[]>;
+  /** つなぐ（0088）: 券の行き先（ショップと連携）。期限切れ・使用済みなら null。券は消さない */
+  appConnectTicket(ticketHash: string): Promise<{ shop_id: string; endpoint_id: string } | null>;
+  /** つなぐ（0088）: 券を引き換えて、連携に結んだトークンを作り、署名シークレットの暗号文を置く。券は 1 回だけ */
+  appConnectExchange(ticketHash: string, tokenHash: string, tokenPrefix: string, secretBox: string): Promise<AppConnectExchange>;
+  /** つないだ連携の署名シークレットの暗号文（0088）。つないでいなければ null */
+  appConnectionSecretBox(endpointId: string): Promise<string | null>;
   /** hooks: 配信結果を記録（失敗は DB 側でバックオフ） */
   finishHookDelivery(id: string, success: boolean, status: number | null, error: string | null): Promise<void>;
   /** hooks: service_role からイベントを積む（Webhook 処理等） */
@@ -601,6 +620,10 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     purgePagesTrash: (days = 30) => rpc<number>("pages_purge_trash", { p_days: days }),
     purgeArticlesTrash: (days = 30) => rpc<number>("articles_purge_trash", { p_days: days }),
     claimHookDeliveries: (limit) => rpc<HookDeliveryRow[]>("claim_hook_deliveries", { p_limit: limit }),
+    appConnectTicket: (ticketHash) => rpc<{ shop_id: string; endpoint_id: string } | null>("app_connect_ticket", { p_ticket_hash: ticketHash }),
+    appConnectExchange: (ticketHash, tokenHash, tokenPrefix, secretBox) =>
+      rpc<AppConnectExchange>("app_connect_exchange", { p_ticket_hash: ticketHash, p_token_hash: tokenHash, p_token_prefix: tokenPrefix, p_secret_box: secretBox }),
+    appConnectionSecretBox: (endpointId) => rpc<string | null>("app_connection_secret_box", { p_endpoint_id: endpointId }),
     finishHookDelivery: (id, success, status, error) =>
       rpc<void>("finish_hook_delivery", { p_id: id, p_success: success, p_status: status, p_error: error }),
     enqueueHook: (shopId, event, payload) => rpc<number>("enqueue_hook", { p_shop_id: shopId, p_event: event, p_payload: payload }),

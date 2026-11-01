@@ -37,7 +37,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -67,6 +67,7 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   coupon_redemptions: "marketing",
   coupon_grants: "marketing",
   hook_endpoints: "integrations",
+  app_connections: "integrations",
   hook_deliveries: "integrations",
   api_tokens: "integrations",
   shop_secret_boxes: "integrations",
@@ -135,6 +136,7 @@ export class FakeSupabase {
     reservations: [],
     hook_endpoints: [],
     app_data: [],
+    app_connections: [],
     hook_deliveries: [],
     api_tokens: [],
     customers: [],
@@ -911,6 +913,12 @@ export class FakeSupabase {
     }
     if (table === "skus") remove("inventory", (r) => r["sku_id"] === id);
     if (table === "blogs") remove("articles", (r) => r["blog_id"] === id);
+    // 0084・0088: 連携を消すとトークン・拡張データ・接続も消える（外す）
+    if (table === "hook_endpoints") {
+      remove("api_tokens", (r) => r["endpoint_id"] === id);
+      remove("app_data", (r) => r["endpoint_id"] === id);
+      remove("app_connections", (r) => r["endpoint_id"] === id);
+    }
   }
 
   /** 0024 の org_* / banto_* の関数（規則は test/db/organizations.test.ts で裏取り済みのものを最小限） */
@@ -1217,6 +1225,21 @@ export class FakeSupabase {
     }
     const orgResult = this.orgRpc(fn, args, uid);
     if (orgResult) return orgResult;
+    // 0088: つなぐの券（integrations の項目。スコープの細かい規則は test/db/app-connect.test.ts）
+    if (fn === "app_connect_begin") {
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.hasPerm("hook_endpoints", { shop_id: shopId }, uid))) return json({ code: "42501", message: "forbidden" }, 403);
+      const ep = this.tables.hook_endpoints.find((e) => e["id"] === args["p_endpoint_id"] && e["shop_id"] === shopId);
+      if (!ep) return json({ code: "P0001", message: "not_found" }, 400);
+      const scopes = (args["p_scopes"] ?? []) as string[];
+      if (scopes.includes("app_data:write") && !ep["app_handle"]) return json({ code: "P0001", message: "app_handle_required" }, 400);
+      const exp = new Date(Date.now() + 120_000).toISOString();
+      const row = this.tables.app_connections.find((x) => x["endpoint_id"] === ep["id"]);
+      const values = { scopes, created_by: uid, ticket_hash: args["p_ticket_hash"], ticket_expires_at: exp, updated_at: this.now() };
+      if (row) Object.assign(row, values);
+      else this.tables.app_connections.push({ endpoint_id: ep["id"], shop_id: shopId, secret_box: null, token_id: null, connected_at: null, created_at: this.now(), ...values });
+      return json(exp);
+    }
     if (fn === "heartbeat_age_seconds") {
       const at = this.heartbeats.get(String(args["p_name"]));
       return json(at === undefined ? null : Math.floor((Date.now() - at) / 1000));
@@ -3040,6 +3063,21 @@ export class FakeSupabase {
       return json({ email: i["email"], org_name: o?.["name"], role: i["role"], valid: i["accepted_at"] == null && String(i["expires_at"]) > this.now(), user_exists: [...this.users.values()].some((u) => u.email === i["email"]) });
     }
     if (fn.startsWith("api_")) return this.apiRpc(fn, args);
+    // 0088: つなぐの引き換え（service_role）
+    if (fn === "app_connect_ticket" || fn === "app_connect_exchange") {
+      const c = this.tables.app_connections.find((x) => x["ticket_hash"] === args["p_ticket_hash"] && String(x["ticket_expires_at"]) > this.now());
+      if (fn === "app_connect_ticket") return json(c ? { shop_id: c["shop_id"], endpoint_id: c["endpoint_id"] } : null);
+      if (!c) return json({ code: "P0001", message: "invalid_ticket" }, 400);
+      const ep = this.tables.hook_endpoints.find((e) => e["id"] === c["endpoint_id"])!;
+      const shop = this.tables.shops.find((x) => x["id"] === c["shop_id"])!;
+      const old = this.tables.api_tokens.find((x) => x["id"] === c["token_id"]);
+      if (old && old["revoked_at"] == null) old["revoked_at"] = this.now();
+      const tokenId = `tok-${this.tables.api_tokens.length + 1}`;
+      this.tables.api_tokens.push({ id: tokenId, shop_id: c["shop_id"], owner_id: c["created_by"], name: `連携: ${String(ep["name"])}`, token_hash: args["p_token_hash"], prefix: args["p_token_prefix"], scopes: c["scopes"], endpoint_id: c["endpoint_id"], expires_at: null, revoked_at: null, last_used_at: null, created_at: this.now() });
+      Object.assign(c, { ticket_hash: null, ticket_expires_at: null, secret_box: args["p_secret_box"], token_id: tokenId, connected_at: this.now() });
+      return json({ shop_id: c["shop_id"], shop_slug: shop["slug"], shop_name: shop["name"], endpoint_id: c["endpoint_id"], app: ep["app_handle"] ?? null, scopes: c["scopes"], token_id: tokenId });
+    }
+    if (fn === "app_connection_secret_box") return json(this.tables.app_connections.find((x) => x["endpoint_id"] === args["p_endpoint_id"])?.["secret_box"] ?? null);
     if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, null, true);
     if (fn === "legal_links_due") return json(this.legalLinksDue(Number(args["p_limit"] ?? 1)));
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
@@ -3274,7 +3312,7 @@ export class FakeSupabase {
         if (!e || e["enabled"] !== true) continue;
         d["attempts"] = (d["attempts"] as number) + 1;
         d["next_attempt_at"] = new Date(Date.now() + 600_000).toISOString();
-        out.push({ id: d["id"], shop_id: d["shop_id"], endpoint_id: d["endpoint_id"], event: d["event"], payload: d["payload"], attempts: d["attempts"], url: e["url"], settings: e["settings"] ?? {}, created_at: d["created_at"] });
+        out.push({ id: d["id"], shop_id: d["shop_id"], endpoint_id: d["endpoint_id"], event: d["event"], payload: d["payload"], attempts: d["attempts"], url: e["url"], settings: e["settings"] ?? {}, created_at: d["created_at"], secret_box: this.tables.app_connections.find((x) => x["endpoint_id"] === d["endpoint_id"])?.["secret_box"] ?? null });
         if (out.length >= Number(args["p_limit"] ?? 50)) break;
       }
       return json(out);

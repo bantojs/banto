@@ -5,7 +5,8 @@
  */
 import type { PrivilegedDb } from "../db/privileged";
 import type { ConfigAdapter, SocketAdapter } from "../adapters/types";
-import { endpointSecret, signHookPayload } from "./signing";
+import { connectionSecretPurpose, endpointSecret, signHookPayload } from "./signing";
+import { openSecret } from "../members/secret-box";
 import type { HookEnvelope } from "./events";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../plugins";
 import { readTextCapped } from "../util/read-capped";
@@ -70,7 +71,13 @@ export async function deliverPendingHooks(opts: {
       }
 
       const body = JSON.stringify(envelope);
-      const secret = await endpointSecret(opts.sessionSecret, row.endpoint_id);
+      // つないだ連携（0088）は接続ごとの署名シークレット。開けなければ（サイトの秘密が変わった）送らずに失敗にする（つなぎ直してもらう）
+      const secret = row.secret_box ? await openSecret(opts.sessionSecret, row.shop_id, connectionSecretPurpose(row.endpoint_id), row.secret_box) : await endpointSecret(opts.sessionSecret, row.endpoint_id);
+      if (!secret) {
+        await opts.db.finishHookDelivery(row.id, false, null, "connection signing secret could not be opened (the site secret changed?); reconnect the plugin");
+        result.failed++;
+        return;
+      }
       const signature = await signHookPayload(secret, body);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? HOOK_TIMEOUT_MS);

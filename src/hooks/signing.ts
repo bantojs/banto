@@ -19,6 +19,24 @@ export function endpointSecret(sessionSecret: string, endpointId: string): Promi
   return hmacHex(sessionSecret, `banto-hook-endpoint:${endpointId}`);
 }
 
+/**
+ * つないだ連携の署名シークレット（0088）。サイトの秘密から切り離した乱数（64 桁 hex）を、
+ * サイトの秘密から作った鍵で暗号化して DB に置く（CLAUDE.md §1-5 の例外 (c)、src/members/secret-box.ts）。
+ * 追加認証データはショップと "hook:<連携>"（暗号文を別の連携に移しても開けない）
+ */
+export const connectionSecretPurpose = (endpointId: string) => `hook:${endpointId}`;
+
+export function newConnectionSecret(): string {
+  const b = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+/** プラグインの画面（admin_url の iframe）に付ける券: base64url(JSON).hex(HMAC(シークレット, base64url 部分))。5 分 */
+export async function signPluginTicket(secret: string, claims: { shop_id: string; endpoint_id: string; user_id: string }, now = Math.floor(Date.now() / 1000)): Promise<string> {
+  const body = btoa(JSON.stringify({ ...claims, exp: now + 300 })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${body}.${await hmacHex(secret, `banto-plugin-ticket.${body}`)}`;
+}
+
 export async function signHookPayload(secret: string, body: string, timestamp = Math.floor(Date.now() / 1000)): Promise<string> {
   return `t=${timestamp},v1=${await hmacHex(secret, `${timestamp}.${body}`)}`;
 }

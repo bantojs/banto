@@ -133,6 +133,19 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
     },
     paths: {
       "/openapi.json": { get: { summary: "この文書", responses: { 200: ok(any("OpenAPI 3.1")) } } },
+      // 0088: プラグインに「つなぐ」（docs/hooks.md §6）。プラグインのサーバーが裏で呼ぶ。CORS は付かない
+      "/connect/exchange": {
+        post: {
+          summary: "つなぐ手順の券を引き換える（プラグインのサーバーから。券は 2 分・1 回だけ）。AI 用トークンと接続ごとの署名シークレットを 1 回だけ返す",
+          requestBody: { content: { "application/json": { schema: obj({ ticket: str }, ["ticket"]) } } },
+          responses: {
+            200: ok(obj({ token: str, signing_secret: str, shop: obj({ id: str, slug: str, name: str }), endpoint_id: str, app: { type: ["string", "null"] }, scopes: arr(str), api_base: str, banto_version: str })),
+            400: err("invalid_ticket（期限切れ・使用済み・形が違う）"),
+            409: err("scope_not_permitted（許した人の権限の項目が外れた）"),
+            503: common[503],
+          },
+        },
+      },
       "/shops": { get: { summary: "公開中のショップの一覧", responses: { 200: ok(obj({ shops: arr(obj({ id: str, slug: str, name: str })) })), 503: common[503] } } },
       "/shops/{shop}": {
         get: {
@@ -378,6 +391,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
 
 const OPERATION_IDS: Record<string, string> = {
   "get /openapi.json": "getOpenapi",
+  "post /connect/exchange": "exchangeConnectTicket",
   "get /shops": "listShops",
   "get /shops/{shop}": "getShop",
   "get /shops/{shop}/products": "listProducts",

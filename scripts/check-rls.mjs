@@ -67,6 +67,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   // 0071: テーマの版（中で design の項目を確かめる）
   "theme_preview_audit", "theme_publish", "theme_version_complete", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
   "banto_page_handle_ok", // 0079: pages.handle の CHECK（値の形を見るだけ）
+  "app_connect_begin", // 0088: 外部プラグインに「つなぐ」券を作る（中で integrations の項目と、許すスコープが自分の項目までかを確かめる）
   "shop_app_blocks", // 0086: 編集の画面に出すプラグインのブロックの一覧（中で content の項目を確かめる。連携の URL・設定は返さない）
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
 ]);
@@ -79,6 +80,9 @@ const COLUMN_DENIES = [
   { role: "authenticated", table: "customers", privilege: "SELECT", columns: ["password_hash", "legacy_password_hash", "session_epoch", "password_updated_at", "legacy_password_expires_at"] },
   { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["total_jpy", "customer_email", "customer_name", "shipping_address", "number", "shop_id", "payment_ref", "amount_paid_jpy", "discount_jpy", "tax_rate", "reservation_id", "customer_id"] },
   { role: "authenticated", table: "shop_oauth_clients", privilege: "SELECT", columns: ["secret_box"] },
+  // 0088: 接続の券と署名シークレットの暗号文は運営者にも読ませない
+  { role: "authenticated", table: "app_connections", privilege: "SELECT", columns: ["ticket_hash", "secret_box"] },
+  { role: "anon", table: "app_connections", privilege: "SELECT", columns: ["ticket_hash", "secret_box"] },
   { role: "authenticated", table: "shop_secret_boxes", privilege: "SELECT", columns: ["secret_box"] },
   // 0055: 非公開の独自項目は anon に見せない。require_mfa は org_set_require_mfa（owner + aal2 + 監査）だけ。AI 用トークンは失効（revoked_at）と name だけ変えられる
   { role: "anon", table: "products", privilege: "SELECT", columns: ["attributes"] },

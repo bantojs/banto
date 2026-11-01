@@ -3,6 +3,7 @@
  * 取得できなくても登録は可能（イベントは手動で選ぶ）。シークレット型の設定項目は受け付けない。
  */
 import { readTextCapped } from "../util/read-capped";
+import { isApiScope, type ApiScope } from "../api/tokens";
 
 export interface ManifestSetting {
   key: string;
@@ -48,6 +49,10 @@ export interface PluginManifest {
   blocks?: ManifestBlock[];
   /** 「もっと見る」で押した人のブラウザが取りに行く公開 API（種類 → https の URL。0087） */
   more?: Record<string, string>;
+  /** つなぐ（0088）: 運営者が許したあと、券を付けて移す先（https） */
+  connect_url?: string;
+  /** つなぐ（0088）: 求める AI 用トークンのスコープ（運営者が画面で絞れる） */
+  scopes?: ApiScope[];
 }
 
 /** 「もっと見る」の URL（0087 の banto_app_more_url と同じ形） */
@@ -144,6 +149,8 @@ export function parseManifest(input: unknown): PluginManifest | null {
   const admin_url = typeof m["admin_url"] === "string" && /^https:\/\//.test(m["admin_url"]) ? m["admin_url"] : undefined;
   const app = typeof m["app"] === "string" && APP_HANDLE_RE.test(m["app"]) ? m["app"] : undefined;
   const blocks = parseBlocks(m["blocks"]);
+  const connect_url = typeof m["connect_url"] === "string" && m["connect_url"].length <= 500 && MORE_URL_RE.test(m["connect_url"]) ? m["connect_url"] : undefined;
+  const scopes = Array.isArray(m["scopes"]) ? [...new Set(m["scopes"].filter((x): x is ApiScope => typeof x === "string" && isApiScope(x)))] : [];
   const more: Record<string, string> = {};
   if (m["more"] && typeof m["more"] === "object" && !Array.isArray(m["more"])) {
     const v = (m["more"] as Record<string, unknown>)["reviews.v1"];
@@ -159,6 +166,8 @@ export function parseManifest(input: unknown): PluginManifest | null {
     ...(app ? { app } : {}),
     ...(blocks.length > 0 ? { blocks } : {}),
     ...(Object.keys(more).length > 0 ? { more } : {}),
+    ...(connect_url ? { connect_url } : {}),
+    ...(scopes.length > 0 ? { scopes } : {}),
   };
 }
 
