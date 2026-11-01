@@ -172,7 +172,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 
 **金額**: Shopify と同じく、最小の単位の 100 倍の整数です（¥1,200 は `120000`）。`{{ product.price | money }}` で `¥1,200` になります。
 
-**フィルター**（標準の Liquid のフィルターに加えて）: `money`・`money_with_currency`・`money_without_currency`・`money_without_trailing_zeros`・`image_url`（`width:`。Banto の画像は本画像と長辺 400px の 2 つなので、幅 400 以下ならサムネイル）・`img_url`・`image_tag`・`asset_url`・`asset_img_url`・`stylesheet_tag`・`script_tag`・`preload_tag`・`t`・`json`・`handleize`・`pluralize`・`link_to`・`within`・`default_pagination`・`placeholder_svg_tag`・`time_tag`。整数どうしの `divided_by` は切り捨てです。
+**フィルター**（標準の Liquid のフィルターに加えて）: `money`・`money_with_currency`・`money_without_currency`・`money_without_trailing_zeros`・`image_url`（`width:`。Banto が持っている段（サムネイル 400px・中間・本画像、docs/images.md）のうち、求めた幅以上でいちばん小さいもの）・`img_url`・`image_tag`（求めた幅までの段を `srcset` に入れる）・`asset_url`・`asset_img_url`・`stylesheet_tag`・`script_tag`・`preload_tag`・`t`・`json`・`handleize`・`pluralize`・`link_to`・`within`・`default_pagination`・`placeholder_svg_tag`・`time_tag`。整数どうしの `divided_by` は切り捨てです。
 
 `date` の書式は strftime の主なもの（`%Y` `%m` `%d` `%H` `%M` `%S` `%z` `%:z` `%Z` `%A` `%a` `%B` `%b` `%j` `%p` `%I` `%e` `%s` `%L` `%U` `%W` `%%` と、`%-d` `%_m` `%05Y` `%^A` のような幅・詰め方・大文字の指定）で、出力は liquidjs の `date` と同じです。時間帯はデプロイの `BANTO_TIMEZONE`（既定は日本時間）で、2 つ目の引数で変えられます（`{{ order.created_at | date: '%Y-%m-%d %H:%M', 'America/New_York' }}`。IANA の名前か分の数）。入力は日付の文字列・UNIX 秒・`'now'` です。描画のたびに `Intl.DateTimeFormat` を作り直さず使い回すので、ループの中で使っても重くなりません。1 ページの描画には手数（200,000）・範囲 `(a..b)` の大きさ（100,000）・出力の大きさの上限があり、超えたテーマは既定のテーマに戻ります（Node ではさらに 1 ページ 2 秒の時計の上限）。
 

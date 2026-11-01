@@ -2,6 +2,7 @@
  * AI 用トークンでの操作をまとめる層（docs/ai-access.md）。REST（/api/v1）と MCP（/mcp）の両方がここを使う。
  * 権限の判定は SQL（api_*）側。ここはトークンのハッシュ化、エラーの分類、画像の取り込みだけを担う。
  */
+import { VARIANT_SIZES, imageKeys } from "../media/variants";
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
@@ -357,13 +358,14 @@ export class ApiService {
       await Promise.all([key, tkey].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
       throw e;
     }
-    await Promise.all([r.previous.storage_key, r.previous.thumb_key].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+    // 中間の段（0091）は行から分からないので、あり得る段をすべて消す（無いキーの削除は何もしない）
+    await Promise.all(withVariantKeys(r.previous.storage_key, r.previous.thumb_key).map((k) => this.storage.delete(k).catch(() => undefined)));
     return { image_id: r.image_id, product: r.product };
   }
 
   async imageDelete(imageId: string): Promise<void> {
     const keys = await this.call<{ storage_key: string; thumb_key: string | null }>("api_image_delete", { p_image_id: imageId });
-    await Promise.all([keys.storage_key, keys.thumb_key].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+    await Promise.all(withVariantKeys(keys.storage_key, keys.thumb_key).map((k) => this.storage.delete(k).catch(() => undefined)));
   }
 
   /**
@@ -726,4 +728,9 @@ export class ApiService {
     return this.call<Record<string, unknown>>("api_sales_summary", { p_from: from, p_to: to, p_group_by: groupBy, p_time_zone: getTimeZone() });
   }
   inventoryLow = (threshold?: number) => this.call<Record<string, unknown>[]>("api_inventory_low", { p_threshold: threshold ?? null });
+}
+
+/** 画像の行が持ちうるキー（中間の段（0091）はあり得るものすべて） */
+function withVariantKeys(storageKey: string, thumbKey: string | null): string[] {
+  return imageKeys({ storage_key: storageKey, thumb_key: thumbKey, variants: [...VARIANT_SIZES] });
 }

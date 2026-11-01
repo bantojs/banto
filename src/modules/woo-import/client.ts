@@ -1487,6 +1487,10 @@ export function wooImporter() {
     large?: { slug: string; url: string }[];
     /** クーポンの CSV 取り込みの画面（同梱モジュール coupons、0043）。要確認のクーポンを直したら、ここから入れる */
     couponImport: string;
+    /** 本画像の長辺（ショップの設定、src/media/variants.ts）。無ければ 1600 */
+    imageMax?: number;
+    /** 作る中間の段の長辺（0091 が当たっていなければ空） */
+    variantSizes?: number[];
   }
 
   function mount(root: El, cfg: MountConfig) {
@@ -1595,9 +1599,13 @@ export function wooImporter() {
             else {
               let main: Blob | null = null;
               let thumb: Blob | null = null;
+              const max = cfg.imageMax ?? 1600;
+              const mainLong = Math.min(max, Math.max(bmp.width, bmp.height));
+              const variants: { size: number; blob: Blob }[] = [];
               try {
-                main = await shrink(bmp, 1600, 0.82);
+                main = await shrink(bmp, max, 0.82);
                 thumb = await shrink(bmp, 400, 0.8);
+                for (const size of cfg.variantSizes ?? []) if (size > 400 && size < mainLong) variants.push({ size, blob: await shrink(bmp, size, 0.82) });
               } catch {
                 main = null;
               } finally {
@@ -1611,6 +1619,7 @@ export function wooImporter() {
                 fd.append("url", it.url);
                 fd.append("image", main, "image.webp");
                 fd.append("thumbnail", thumb, "thumbnail.webp");
+                for (const v of variants) fd.append(`variant_${v.size}`, v.blob, `v${v.size}.webp`);
                 const up = await fetch(`${cfg.base}/images/resized`, { method: "POST", body: fd, credentials: "same-origin" });
                 if (up.ok) added++;
                 else fail(`request_${up.status}`);

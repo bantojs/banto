@@ -90,7 +90,8 @@ describe("商品画像の配信（サムネイル / srcset）", () => {
     expect(list).toContain('decoding="async"');
 
     const detail = await (await b.get("/s/p/with-thumb")).text();
-    expect(detail).toContain(`<img src="${BASE}/media/shops/s/a.webp" width="1600" height="1200"`);
+    // 詳細の大きい画像も持っている段から選ばせる（0091。中間の段があればそれも）
+    expect(detail).toContain(`<img src="${BASE}/media/shops/s/a.thumb.webp" width="1600" height="1200" srcset="${BASE}/media/shops/s/a.thumb.webp 400w, ${BASE}/media/shops/s/a.webp 1600w" sizes="(max-width: 40rem) 100vw, 50vw"`);
     expect(detail).toContain('fetchpriority="high"');
 
     // 公開 API にもサムネイルと寸法

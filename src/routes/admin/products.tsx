@@ -6,7 +6,9 @@ import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage } f
 import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
-import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageUrl, productImageKey, thumbKey } from "../../media/images";
+import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, imageUrl, productImageKey, thumbKey } from "../../media/images";
+import { IMAGE_VARIANTS_MIGRATION, imageKeys, imageMaxLongSide, readVariantFiles, resizeScript, variantKey } from "../../media/variants";
+import { migrated } from "../../db/migration-state";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
 import { SLUG_RE, formFields, mediaBaseUrl, owner, param, params, type AdminContext } from "./context";
@@ -58,29 +60,31 @@ const Flash = (props: { flash: ReturnType<typeof flash> }) =>
 // ---------- 一覧 ----------
 /**
  * ブラウザ側で縮小してからアップロードする（サーバーでは画像処理をしない: Workers の CPU 制限と可搬性のため）。
- * 本画像は長辺 1600px、サムネイルは長辺 400px の WebP。GIF（アニメーションの可能性）と SVG は触らない。
- * canvas / WebP が使えない環境では通常のフォーム送信にフォールバックする（サムネイルなし）。
+ * 本画像は長辺がショップの設定（既定 1600px）、サムネイルは長辺 400px、そのあいだの段（800 など、0091）も作る。どれも WebP（src/media/variants.ts）。
+ * GIF（アニメーションの可能性）と SVG は触らない。canvas / WebP が使えない環境では通常のフォーム送信にフォールバックする（サムネイルなし）。
+ * 中間の段は 0091 が当たるまで送らない（data-variants）。
  */
 const IMAGE_RESIZE_SCRIPT = `
 (function(){
   var form=document.getElementById("image-form"); if(!form) return;
   var input=document.getElementById("file"), status=document.getElementById("image-status");
-  var MAIN=1600, THUMB=400;
+  var MAX=Number(form.getAttribute("data-max"))||1600, VARIANTS=form.getAttribute("data-variants")==="1";
+  ${resizeScript()}
   function load(file){ return new Promise(function(ok,ng){ var url=URL.createObjectURL(file); var im=new Image(); im.onload=function(){URL.revokeObjectURL(url);ok(im)}; im.onerror=function(){URL.revokeObjectURL(url);ng(new Error("decode"))}; im.src=url; }); }
-  function draw(im,max,q){ var w=im.naturalWidth,h=im.naturalHeight,r=Math.min(1,max/Math.max(w,h)); var cw=Math.max(1,Math.round(w*r)),ch=Math.max(1,Math.round(h*r)); var c=document.createElement("canvas"); c.width=cw;c.height=ch; c.getContext("2d").drawImage(im,0,0,cw,ch); return new Promise(function(ok,ng){ c.toBlob(function(b){ if(b&&b.type==="image/webp") ok({blob:b,w:cw,h:ch}); else ng(new Error("webp")); },"image/webp",q); }); }
   form.addEventListener("submit",function(ev){
     var file=input.files&&input.files[0]; if(!file) return;
     if(!/^image\\/(jpeg|png|webp|avif)$/.test(file.type)) return; // GIF などはそのまま送る
-    ev.preventDefault(); var btn=form.querySelector("button[type=submit]"); btn.disabled=true; status.textContent="縮小しています…";
+    ev.preventDefault(); var btn=form.querySelector("button[type=submit]"); btn.disabled=true; status.textContent=form.getAttribute("data-resizing")||"";
     load(file).then(function(im){
-      return Promise.all([draw(im,MAIN,0.82),draw(im,THUMB,0.8)]).then(function(r){
-        var main=r[0],thumb=r[1],fd=new FormData();
+      return bantoResize(im,MAX).then(function(r){
+        var fd=new FormData();
         // 元が小さく、縮小しても軽くならないなら元ファイルのまま
-        var keepOrig=Math.max(im.naturalWidth,im.naturalHeight)<=MAIN&&main.blob.size>=file.size;
-        var mainFile=keepOrig?file:new File([main.blob],file.name.replace(/\\.[^.]+$/,"")+".webp",{type:"image/webp"});
-        fd.append("file",mainFile); fd.append("thumb",new File([thumb.blob],"thumb.webp",{type:"image/webp"}));
-        fd.append("width",String(keepOrig?im.naturalWidth:main.w)); fd.append("height",String(keepOrig?im.naturalHeight:main.h));
-        status.textContent="アップロードしています…";
+        var keepOrig=Math.max(im.naturalWidth,im.naturalHeight)<=MAX&&r.main.size>=file.size;
+        var mainFile=keepOrig?file:new File([r.main],file.name.replace(/\\.[^.]+$/,"")+".webp",{type:"image/webp"});
+        fd.append("file",mainFile); fd.append("thumb",new File([r.thumb],"thumb.webp",{type:"image/webp"}));
+        if(VARIANTS) r.variants.forEach(function(v){ fd.append("variant_"+v.size,new File([v.blob],"v"+v.size+".webp",{type:"image/webp"})); });
+        fd.append("width",String(keepOrig?im.naturalWidth:r.w)); fd.append("height",String(keepOrig?im.naturalHeight:r.h));
+        status.textContent=form.getAttribute("data-uploading")||"";
         return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",redirect:"follow"}).then(function(res){ location.href=res.url||location.href; });
       });
     }).catch(function(){ status.textContent=""; btn.disabled=false; form.submit(); });
@@ -369,7 +373,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const { shop, product, skus, images } = data;
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const mediaBase = mediaBaseUrl(c);
-  const catalog = await catalogContext(c, shop);
+  const [catalog, variantsReady] = await Promise.all([catalogContext(c, shop), imageVariantsReady(c)]);
   // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
   const optionChoices = skuOptionChoices(skus);
   // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
@@ -579,10 +583,10 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
           </tbody>
         </table>
       ) : null}
-      <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card">
+      <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxLongSide(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
         <label for="file">{t("image.file")}</label>
         <input id="file" type="file" name="file" accept="image/*" required />
-        <p class="muted">{t("image.resize_note")}</p>
+        <p class="muted">{tf("image.resize_note", { max: imageMaxLongSide(shop.settings) })}</p>
         <p>
           <button type="submit">{t("image.upload")}</button> <span id="image-status" aria-live="polite"></span>
         </p>
@@ -630,7 +634,7 @@ products.post("/:shopId/products/:productId/delete", requireOwner, async (c: Adm
   if (!data) return c.text(t("product.not_found"), 404);
   // 画像はストレージからも消す（DB 行は on delete cascade）
   const storage = c.get("adapters").storage;
-  await Promise.all(data.images.flatMap((img) => [storage.delete(img.storage_key), ...(img.thumb_key ? [storage.delete(img.thumb_key)] : [])]));
+  await Promise.all(data.images.flatMap((img) => imageKeys(img).map((k) => storage.delete(k))));
   await db.from("products").delete({ id: productId, shop_id: shopId });
   return c.redirect(`/admin/shops/${shopId}/products?flash=saved`);
 });
@@ -950,6 +954,9 @@ products.post("/:shopId/products/:productId/skus/:skuId/delete", requireOwner, a
 });
 
 // ---------- 画像 ----------
+/** 中間の段の列（0091）が当たっているか */
+const imageVariantsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION);
+
 products.post("/:shopId/products/:productId/images", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
@@ -971,11 +978,19 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   const width = imageDimension(typeof body.width === "string" ? body.width : undefined);
   const height = imageDimension(typeof body.height === "string" ? body.height : undefined);
 
+  // 中間の段（0091 が当たってから。本画像の実際の長辺より小さいものだけ）
+  const mainBytes = new Uint8Array(await file.arrayBuffer());
+  const mainDim = imageSize(mainBytes, file.type);
+  const variants = (await imageVariantsReady(c)) ? await readVariantFiles(body, mainDim ? Math.max(mainDim.width, mainDim.height) : 0) : [];
+  if (variants === null) return c.redirect(`${base}?flash=image_type`);
+
   const storage = c.get("adapters").storage;
   const key = productImageKey(shopId, productId, ext);
   const tKey = thumb && thumbExt ? thumbKey(key, thumbExt) : null;
-  await storage.put(key, await file.arrayBuffer(), file.type);
+  const vKeys = variants.map((v) => variantKey(key, v.size));
+  await storage.put(key, mainBytes.slice().buffer, file.type);
   if (thumb && tKey) await storage.put(tKey, await thumb.arrayBuffer(), thumb.type);
+  await Promise.all(variants.map((v, i) => storage.put(vKeys[i]!, v.bytes.slice().buffer, "image/webp")));
   const sortOrder = data.images.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
   try {
     await db.from<ProductImageRow>("product_images").insert({
@@ -986,9 +1001,10 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
       width: width && height ? width : null,
       height: width && height ? height : null,
       sort_order: sortOrder,
+      ...(variants.length ? { variants: variants.map((v) => v.size) } : {}),
     });
   } catch (e) {
-    await Promise.all([storage.delete(key), tKey ? storage.delete(tKey) : Promise.resolve()]);
+    await Promise.all([key, ...(tKey ? [tKey] : []), ...vKeys].map((k) => storage.delete(k)));
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
   }
@@ -1029,7 +1045,7 @@ products.post("/:shopId/products/:productId/images/:imageId/delete", requireOwne
   if (img) {
     await db.from("product_images").delete({ id: imageId });
     const storage = c.get("adapters").storage;
-    await Promise.all([storage.delete(img.storage_key), img.thumb_key ? storage.delete(img.thumb_key) : Promise.resolve()]);
+    await Promise.all(imageKeys(img).map((k) => storage.delete(k)));
   }
   return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved`);
 });

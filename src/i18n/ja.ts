@@ -414,7 +414,7 @@ export const ja = {
   "image.list": "画像",
   "image.upload": "画像をアップロード",
   "image.file": "ファイル（JPEG / PNG / WebP / GIF / AVIF、5MB まで）",
-  "image.resize_note": "アップロード時にブラウザが長辺 1600px の WebP に縮小し、一覧用のサムネイル（400px）も作ります。GIF はそのまま保存します。",
+  "image.resize_note": "アップロード時にブラウザが長辺 {max}px の WebP に縮小し、一覧や画面幅に合わせた小さい段（400px・800px など）も作ります。大きさはショップの設定で変えられます。GIF はそのまま保存します。",
   "image.no_thumb": "（サムネイルなし。アップロードし直すと作られます）",
   "image.delete": "削除",
   "image.invalid_type": "対応していない画像形式です。",
@@ -2420,6 +2420,11 @@ export const ja = {
   "embed.js.subtotal": "小計（税込）",
   "embed.js.free_shipping": "あと {price} で送料無料",
   "embed.js.yen": "¥{n}",
+  "image.resizing": "縮小しています…",
+  "image.uploading": "アップロードしています…",
+  "shop.image_max": "商品画像の大きさ（長辺）",
+  "shop.image_max_option": "{n}px",
+  "shop.image_max_hint": "アップロードのときに、この大きさの本画像と、一覧や画面幅に合わせた小さい段（400px・800px など）をブラウザで作ります。お客様の画面は端末に合う段を選ぶので、大きくしても一覧は重くなりません。生地や細部を拡大して見せたいときは 2048px 以上に。これから上げる画像から効きます。",
 } as const;
 
 export type MessageKey = keyof typeof ja;

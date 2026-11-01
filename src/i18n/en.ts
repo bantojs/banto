@@ -415,7 +415,7 @@ export const en: Record<MessageKey, string> = {
   "image.list": "Images",
   "image.upload": "Upload image",
   "image.file": "File (JPEG / PNG / WebP / GIF / AVIF, up to 5 MB)",
-  "image.resize_note": "On upload your browser shrinks the image to 1600px on the long edge as WebP and creates a 400px thumbnail for listings. GIFs are stored as is.",
+  "image.resize_note": "On upload your browser shrinks the image to {max}px on the long edge as WebP and also makes smaller steps (400px, 800px, …) for listings and screen widths. The size can be changed in the shop settings. GIFs are stored as is.",
   "image.no_thumb": "(no thumbnail; upload again to create one)",
   "image.delete": "Delete",
   "image.invalid_type": "Unsupported image format.",
@@ -2413,4 +2413,9 @@ export const en: Record<MessageKey, string> = {
   "embed.js.subtotal": "Subtotal (tax incl.)",
   "embed.js.free_shipping": "{price} more for free shipping",
   "embed.js.yen": "¥{n}",
+  "image.resizing": "Resizing…",
+  "image.uploading": "Uploading…",
+  "shop.image_max": "Product image size (long edge)",
+  "shop.image_max_option": "{n}px",
+  "shop.image_max_hint": "On upload, your browser makes the main image at this size plus smaller steps (400px, 800px, …) for listings and screen widths. The storefront picks the step that fits each device, so a larger size doesn't slow down listings. Choose 2048px or more to let customers zoom into fabric or detail. Applies to images uploaded from now on.",
 };

@@ -205,7 +205,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 - [x] **Step 1** リポジトリ初期化（本ファイル、LICENSE、README、SECURITY、wrangler.jsonc、.dev.vars.example、CI）
 - [x] **Step 2** Supabase スキーマ + RLS + 在庫 RPC（`0001_init.sql`）とそのテスト
 - [x] **Step 3** セットアップウィザード + Deploy ボタン（Secret の受け渡しは「運営者が Cloudflare 側で設定し、ウィザードは不足を検出して案内する」方式。API トークン方式は未採用、§13 参照）
-- [x] **Step 4** 商品管理 + R2 画像アップロード（StorageAdapter）。縮小とサムネイル生成は **管理画面のブラウザ側**（canvas → WebP、長辺 1600px / 400px、`0005_images.sql` の `thumb_key` / `width` / `height`）。サーバー側では画像処理をしない（Cloudflare Images は固有機能のため §1-1 に抵触、wasm は Workers Free の CPU 制限に抵触）。AI 経由の URL 取り込みはサムネイルなし（テーマは本画像にフォールバック）。本番は R2 のカスタムドメイン + `MEDIA_BASE_URL` で Worker を通さず配信するのを推奨（docs/setup.md §7）
+- [x] **Step 4** 商品管理 + R2 画像アップロード（StorageAdapter）。縮小とサムネイル生成は **管理画面のブラウザ側**（canvas → WebP。本画像の長辺はショップの設定 `settings.images.max_long_side`（1600 既定 / 2048 / 2560 / 3200）、サムネイル 400px、そのあいだの段（800 / 1600 / 2048 / 2560、`0091_image_variants` の `variants`）。メンテナの決定 2026-11-01、`src/media/variants.ts`、docs/images.md。`0005_images.sql` の `thumb_key` / `width` / `height`）。サーバー側では画像処理をしない（Cloudflare Images は固有機能のため §1-1 に抵触、wasm は Workers Free の CPU 制限に抵触）。AI 経由の URL 取り込みはサムネイルなし（テーマは本画像にフォールバック）。本番は R2 のカスタムドメイン + `MEDIA_BASE_URL` で Worker を通さず配信するのを推奨（docs/setup.md §7）
 - [x] **Step 5** Hono SSR ストアフロント + 公開前チェック（特商法表記等）。テーマは `src/themes/`、カートは署名付き Cookie、公開読み取りの `/api`
 - [x] **Step 6** Stripe Connect 決済 + Webhook + 予約在庫の確定/解放（`src/payments/stripe.ts` は SDK なしの REST、Cron は `src/jobs/`）
 - [x] **Step 7** アップデート機構（バージョン表示、最新リリース表示、未適用マイグレーション検出、docs/upgrade.md）。管理画面からの **適用** は §13 の未決事項

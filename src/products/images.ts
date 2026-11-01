@@ -85,7 +85,7 @@ export const SKU_IMAGE_SCRIPT = `(function(){
     items.sort(function(a,b){return a.r===b.r?a.i-b.i:a.r===-1?1:b.r===-1?-1:b.r-a.r;});
     if(box)items.forEach(function(x){box.appendChild(x.el);});
     var f=items[0]&&items[0].el;
-    if(main&&f){main.src=f.getAttribute("data-src");main.removeAttribute("width");main.removeAttribute("height");}
+    if(main&&f){var ss=f.getAttribute("data-srcset");if(ss)main.setAttribute("srcset",ss);else main.removeAttribute("srcset");main.src=f.getAttribute("data-src");main.removeAttribute("width");main.removeAttribute("height");}
     try{var u=new URL(location.href);u.searchParams.set("sku",o.getAttribute("data-code")||"");history.replaceState(null,"",u.toString());}catch(e){}
   }
   sel.addEventListener("change",apply);

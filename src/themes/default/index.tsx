@@ -557,6 +557,8 @@ export const defaultTheme: Theme = {
     const axes = skus.length > 1 ? displayOptionAxes(product.option_axes, skus) : [];
     const axesOn = axes.length > 0;
     const first = images[0];
+    // 商品ページの大きい画像: 持っている段から端末に合うものを選ばせる（画面の半分、スマホでは画面いっぱい。0091）
+    const mainImage = (img: (typeof images)[number]) => responsiveImage(ctx.mediaBaseUrl, img, { sizes: "(max-width: 40rem) 100vw, 50vw" });
     // 外部プラグインのレビュー（0084）。星と件数は名前の下、一覧は商品の下。構造化データにも同じものだけ
     const reviews = productReviews(product);
     return (
@@ -591,7 +593,7 @@ export const defaultTheme: Theme = {
         </p>
         <div class="product">
           <div class="gallery" data-sku-images={skuImages ? "" : undefined}>
-            {first ? <img src={imageUrl(ctx.mediaBaseUrl, first.storage_key)} width={first.width ?? undefined} height={first.height ?? undefined} alt={product.name} fetchpriority="high" decoding="async" data-main="" /> : null}
+            {first ? <img {...mainImage(first)} alt={product.name} fetchpriority="high" decoding="async" data-main="" /> : null}
             {images.length > 1 ? (
               <div class="thumbs">
                 {images.map((img) => (
@@ -599,7 +601,7 @@ export const defaultTheme: Theme = {
                     href={imageUrl(ctx.mediaBaseUrl, img.storage_key)}
                     target="_blank"
                     rel="noopener"
-                    {...(skuImages ? { "data-image-options": JSON.stringify(imageOptionsOf(img.options)), "data-index": String(detail.images.indexOf(img)), "data-src": imageUrl(ctx.mediaBaseUrl, img.storage_key) } : {})}
+                    {...(skuImages ? { "data-image-options": JSON.stringify(imageOptionsOf(img.options)), "data-index": String(detail.images.indexOf(img)), "data-src": mainImage(img).src, "data-srcset": mainImage(img).srcset ?? "" } : {})}
                   >
                     <img src={imageUrl(ctx.mediaBaseUrl, img.thumb_key ?? img.storage_key)} alt="" loading="lazy" decoding="async" />
                   </a>

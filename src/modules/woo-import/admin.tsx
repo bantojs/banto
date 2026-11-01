@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { IMAGE_VARIANTS_MIGRATION, VARIANT_SIZES, imageMaxLongSide, readVariantFiles, variantKey } from "../../media/variants";
+import { migrated } from "../../db/migration-state";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
@@ -87,7 +89,10 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
   const large = (queue?.failures ?? []).filter((f) => f.code === "too_large").map((f) => ({ slug: f.slug, url: f.url }));
   // 要確認のクーポンを直して入れる画面（0043）
   const couponImport = `/admin/shops/${shop.id}/modules/coupons/import`;
-  const cfg = { base: `/admin/shops/${shop.id}/modules/woo-import`, shopUrl: shopHome(publicBaseUrl(c), shop), t: dict, large, couponImport };
+  // 画像の大きさ（ショップの設定）と中間の段（0091 が当たってから）
+  const imageMax = imageMaxLongSide(shop.settings);
+  const variantSizes = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION)) ? [...VARIANT_SIZES] : [];
+  const cfg = { base: `/admin/shops/${shop.id}/modules/woo-import`, shopUrl: shopHome(publicBaseUrl(c), shop), t: dict, large, couponImport, imageMax, variantSizes };
   // </script> を閉じさせない（< をエスケープ）
   const json = JSON.stringify(cfg).replace(/</g, "\\u003c");
   const script = `${CLIENT_PRELUDE}(${wooImporter.toString()})().mount(document.getElementById("woo-import"), ${json});`;
@@ -412,13 +417,14 @@ wooImport.get("/images/original", requireOwner, async (c: AdminContext) => {
 });
 
 /**
- * このページのブラウザで縮小した画像（長辺 1600px）とサムネイル（400px）を受け取り、元の URL の置き場所のキーで登録する
+ * このページのブラウザで縮小した画像（長辺はショップの設定、既定 1600px）とサムネイル（400px）・中間の段（0091）を受け取り、元の URL の置き場所のキーで登録する
  * （次に取り込みを押しても、この画像は取り込み済みとして飛ばす）。multipart: slug・url・image・thumbnail（任意）
  */
 wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  if (Number(c.req.header("content-length") ?? 0) > MAX_IMAGE_BYTES + MAX_THUMB_BYTES + 64 * 1024) return c.json({ error: "too_large" }, 413);
+  // 本画像・サムネイル・中間の段（4 つまで）の分
+  if (Number(c.req.header("content-length") ?? 0) > MAX_IMAGE_BYTES * 3 + MAX_THUMB_BYTES + 64 * 1024) return c.json({ error: "too_large" }, 413);
   let form: Record<string, unknown>;
   try {
     form = await c.req.parseBody();
@@ -445,13 +451,17 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
     await resolve();
     return c.json({ added: 0, skipped: 1 });
   }
+  const size = imageSize(image, kind.contentType);
+  const variants = (await migrated({ db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION)) ? await readVariantFiles(form, size ? Math.max(size.width, size.height) : 0) : [];
+  if (variants === null) return c.json({ error: "invalid_image" }, 400);
   const storage = c.get("adapters").storage;
   const key = wcImageKey(shop.id, product.id, url, kind.ext);
   const tKey = thumb && thumbKind ? thumbKey(key, thumbKind.ext) : null;
-  const size = imageSize(image, kind.contentType);
+  const vKeys = variants.map((v) => variantKey(key, v.size));
   await storage.put(key, image.slice().buffer, kind.contentType);
   try {
     if (thumb && thumbKind && tKey) await storage.put(tKey, thumb.slice().buffer, thumbKind.contentType);
+    await Promise.all(variants.map((v, i) => storage.put(vKeys[i]!, v.bytes.slice().buffer, "image/webp")));
     await db.from<ProductImageRow>("product_images").insert({
       shop_id: shop.id,
       product_id: product.id,
@@ -460,9 +470,10 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
       width: size?.width ?? null,
       height: size?.height ?? null,
       sort_order: existing.reduce((n, i) => Math.max(n, i.sort_order + 1), 0),
+      ...(variants.length ? { variants: variants.map((v) => v.size) } : {}),
     });
   } catch (e) {
-    await Promise.all([key, tKey].filter((k): k is string => !!k).map((k) => storage.delete(k).catch(() => undefined)));
+    await Promise.all([key, tKey, ...vKeys].filter((k): k is string => !!k).map((k) => storage.delete(k).catch(() => undefined)));
     if (e instanceof DbError) return c.json({ error: "db_error" }, 502);
     throw e;
   }

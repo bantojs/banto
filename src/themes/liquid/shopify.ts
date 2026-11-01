@@ -9,6 +9,7 @@
 import { Hash, Tag, type Context, type Emitter, type Liquid, type TagToken, type Template, type TopLevelToken } from "liquidjs/dist/liquid.browser.mjs";
 import { escapeHtml, SafeHtml, ThemeError, type ThemeEngine } from "./engine";
 import { stripJsonComments } from "./bundle";
+import { imageLadder, keyForWidth } from "../../media/variants";
 
 /** セクションの設定の宣言（{% schema %} の中身。使うのは既定値だけ） */
 export interface SectionSchema {
@@ -169,6 +170,8 @@ export class ImageUrl {
     readonly width: number | null,
     readonly height: number | null,
     readonly alt: string,
+    /** 持っている段の srcset（image_tag が使う。段が 1 つなら null） */
+    readonly srcset: string | null = null,
   ) {}
   toString(): string {
     return this.url;
@@ -178,6 +181,8 @@ export class ImageUrl {
 interface ImageLike {
   key?: string;
   thumb_key?: string | null;
+  /** 中間の段の長辺（0091） */
+  variants?: number[] | null;
   width?: number | null;
   height?: number | null;
   alt?: string | null;
@@ -195,20 +200,25 @@ function mediaUrl(key: string): string {
   return `${env().mediaBaseUrl.replace(/\/+$/, "")}/${key}`;
 }
 
-/** 画像の URL。Banto は縮小した版を 2 つ（本画像と長辺 400px）しか持たないので、幅 400 以下ならサムネイル */
+/** 画像の URL。Banto は縮小した版を数段（サムネイル 400・中間・本画像。src/media/variants.ts）持つので、求めた幅以上でいちばん小さい段 */
 function imageUrlOf(input: unknown, width?: number, height?: number): ImageUrl | string {
   let img: ImageLike | null = null;
   if (isObject(input)) img = (isObject(input["preview_image"]) ? input["preview_image"] : isObject(input["featured_image"]) ? input["featured_image"] : input) as ImageLike;
   if (!img) return typeof input === "string" ? input : "";
   if (typeof img.asset === "string") return new ImageUrl(themeAssetUrl(img.asset), null, null, String(img.alt ?? ""));
   if (!img.key) return typeof img.src === "string" ? img.src : "";
-  const key = width && width <= 400 && img.thumb_key ? img.thumb_key : img.key;
+  const sized = { storage_key: img.key, thumb_key: img.thumb_key ?? null, width: img.width ?? null, height: img.height ?? null, variants: Array.isArray(img.variants) ? img.variants : [] };
+  const key = width ? keyForWidth(sized, width) : img.key;
   const w = img.width ?? null;
   const h = img.height ?? null;
   // 求めた幅に合わせた大きさ（縦横の比は元のまま）
   const tw = width ?? (height && w && h ? Math.round((height * w) / h) : w);
   const th = tw && w && h ? Math.round((tw * h) / w) : (height ?? h);
-  return new ImageUrl(mediaUrl(key), tw ?? null, th ?? null, String(img.alt ?? ""));
+  // image_tag が srcset を出せるように、求めた幅までの段を持たせる
+  const srcset = imageLadder(sized)
+    .filter((x) => !tw || x.width <= tw || x.key === key)
+    .map((x) => `${mediaUrl(x.key)} ${x.width}w`);
+  return new ImageUrl(mediaUrl(key), tw ?? null, th ?? null, String(img.alt ?? ""), srcset.length > 1 ? srcset.join(", ") : null);
 }
 
 // ---------- 翻訳 ----------
@@ -264,7 +274,9 @@ export function registerShopifyFilters(liquid: Liquid): void {
       .filter(([k]) => !["alt", "width", "height", "widths", "preload", "loading"].includes(k) && /^[a-z][a-z0-9_-]*$/.test(k))
       .map(([k, v]) => attr(k.replace(/_/g, "-"), v))
       .join("");
-    return new SafeHtml(`<img src="${escapeHtml(src)}"${attr("alt", alt) || ' alt=""'}${attr("width", width)}${attr("height", height)}${attr("loading", kw["loading"] ?? "lazy")}${extra}>`);
+    // srcset は Banto が持っている段から（テーマは sizes を渡せば端末に合う段が選ばれる）
+    const srcset = u?.srcset && kw["srcset"] === undefined ? attr("srcset", u.srcset) : "";
+    return new SafeHtml(`<img src="${escapeHtml(src)}"${srcset}${attr("alt", alt) || ' alt=""'}${attr("width", width)}${attr("height", height)}${attr("loading", kw["loading"] ?? "lazy")}${extra}>`);
   });
   liquid.registerFilter("asset_url", (name: unknown) => themeAssetUrl(String(name ?? "")));
   liquid.registerFilter("asset_img_url", (name: unknown) => {
