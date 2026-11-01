@@ -17,4 +17,4 @@ export function ReviewsList(props: { reviews: ProductReviews; id?: string }) {
 }
 
 export const REVIEWS_CSS =
-  ".stars{color:#e3a008;letter-spacing:.05em}.stars-off{color:color-mix(in srgb,CanvasText 20%,transparent)}.reviews-summary{margin:.25rem 0}.reviews{margin-top:2rem}.review-list{list-style:none;padding:0}.review{border-top:1px solid color-mix(in srgb,CanvasText 15%,transparent);padding:.75rem 0}.review-head,.review-meta{margin:.2rem 0}.review-body{white-space:pre-wrap;margin:.4rem 0}.review-meta .badge{margin-left:.5rem}";
+  ".stars{color:#e3a008;letter-spacing:.05em}.stars-off{color:color-mix(in srgb,CanvasText 20%,transparent)}.reviews-summary{margin:.25rem 0}.reviews{margin-top:2rem}.review-list{list-style:none;padding:0}.review{border-top:1px solid color-mix(in srgb,CanvasText 15%,transparent);padding:.75rem 0}.review-head,.review-meta{margin:.2rem 0}.review-body{white-space:pre-wrap;margin:.4rem 0}.review-meta .badge{margin-left:.5rem}.reviews-more{margin-top:.5rem}";

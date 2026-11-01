@@ -46,11 +46,15 @@ export interface PublicAppData {
   key?: string;
   data: unknown;
   updated_at?: string;
+  /** 「もっと見る」の公開 API（0087、https だけ） */
+  more_url?: string;
 }
 
 /** お客様の画面に出すレビュー（どのプラグインのものか付き） */
 export interface ProductReviews extends ReviewsV1 {
   app: string;
+  /** 「もっと見る」に使う（0087）。URL と商品の id がそろったときだけ */
+  more?: { url: string; product_id: string };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -90,7 +94,7 @@ export function customAppData(product: { app_data?: unknown }): Record<string, R
 }
 
 /** レビュー（reviews.v1）。複数のプラグインが置いていれば名前の順で最初のもの。件数 0 なら null */
-export function productReviews(product: { app_data?: unknown }): ProductReviews | null {
+export function productReviews(product: { id?: string; app_data?: unknown }): ProductReviews | null {
   for (const row of appDataOf(product)) {
     if (row.kind !== "reviews.v1" || !isObj(row.data)) continue;
     const d = row.data;
@@ -98,7 +102,8 @@ export function productReviews(product: { app_data?: unknown }): ProductReviews 
     const avg = Number(d["rating_avg"]);
     if (!Number.isInteger(count) || count <= 0 || !Number.isFinite(avg) || avg < 0 || avg > 5) continue;
     const items = Array.isArray(d["items"]) ? d["items"].map(reviewItem).filter((x): x is ReviewItem => x !== null).slice(0, 20) : [];
-    return { app: row.app, rating_avg: avg, rating_count: count, items };
+    const more = typeof row.more_url === "string" && /^https:\/\/[^\s"'<>`]+$/.test(row.more_url) && typeof product.id === "string" && product.id ? { url: row.more_url, product_id: product.id } : null;
+    return { app: row.app, rating_avg: avg, rating_count: count, items, ...(more ? { more } : {}) };
   }
   return null;
 }

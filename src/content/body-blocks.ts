@@ -88,7 +88,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
         try {
           const product = await d.sf.productAppData(d.shop, block.product);
           if (!product) return null;
-          const mine = { app_data: Array.isArray(product.app_data) ? product.app_data.filter((x: unknown) => typeof x === "object" && x !== null && (x as { app?: unknown }).app === block.app) : [] };
+          const mine = { id: product.id, app_data: Array.isArray(product.app_data) ? product.app_data.filter((x: unknown) => typeof x === "object" && x !== null && (x as { app?: unknown }).app === block.app) : [] };
           return { block, product, reviews: productReviews(mine), data: customAppData(mine)[block.app] ?? {} };
         } catch (e) {
           console.error("[banto] page app block:", e);

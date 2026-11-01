@@ -166,6 +166,44 @@ snippet に渡すもの:
 - 既定の見た目（`reviews.v1`）は、設定の `layout=summary` で星と件数だけ、`limit=1〜20` で一覧の件数です。
 - ヘッドレスの公開 API のページ・記事の `html` には、既定の見た目が入ります。
 
+## 7. もっと見る（0087）
+
+Banto に置くレビューは新しい 20 件までです。21 件目からは、お客様が「もっと見る」を押したときに、**その人のブラウザがプラグインの公開 API から取り**、Banto の決まった形で描きます。お店の画面を描くときにはプラグインへ取りに行きません。
+
+### プラグインの作り手
+
+マニフェストに、種類ごとの公開 API の URL を書きます（`https://` だけ。問い合わせの文字列は付けてよい）。
+
+```json
+{ "name": "レビュー", "app": "reviews", "more": { "reviews.v1": "https://reviews.example/api/banto/reviews" } }
+```
+
+Banto のスクリプトは次のように取りに行きます。
+
+```
+GET https://reviews.example/api/banto/reviews?product=<商品の id>&offset=20&limit=20
+```
+
+- 返すのは `{ "items": [ …reviews.v1 の items と同じ形… ], "next_offset": 40 }`。続きが無ければ `next_offset` を `null` にします。
+- **CORS を許してください**（`Access-Control-Allow-Origin: *` で十分です。Cookie は送られません）。
+- `offset` は Banto に置いた並び（新しい順）と同じ数え方です。既定の見た目は置いた分のあとから、`::: app` のブロックは画面に出した件数のあとから取りに行きます。
+- 形の違う項目は描きません。1 回に 20 件、1 つの一覧で合わせて 200 件までです。
+
+### Banto がすること
+
+- 置いた件数より `rating_count` が多く、マニフェストに URL があるとき、一覧の下に「もっと見る」のボタンを出します。
+- スクリプトは Banto のもの（`src/apps/reviews-html.ts`）だけです。受け取った文字は `textContent` で入れ、HTML として解釈しません。Cookie と参照元（Referer）は送りません。
+- 足すのは `[data-banto-reviews]` の中の `ol.review-list` に、既定の見た目と同じ形の `li.review` です。
+
+### テーマ（Liquid）
+
+- 自分でレビューを描くテーマは、`[data-banto-reviews]` を付けた要素の中に `ol.review-list` と `{{ product.reviews.more_html }}` を置きます（ボタンとスクリプト。押すと `li.review` が足されます）。
+- URL だけが要るときは `product.reviews.more_url`。
+
+### 運営者へ
+
+- 「もっと見る」を押した人のブラウザは、プラグインのドメインに問い合わせます（IP アドレスなどがプラグインに届きます）。**プライバシーポリシーにレビューのサービスを書いてください**。
+
 ## 5. 権限と保存
 
 - 表は `app_data`（ショップ・連携・商品・形ごとに 1 行）。RLS があり、運営者は項目 `apps` で読めます。

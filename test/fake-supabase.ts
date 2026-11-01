@@ -1280,7 +1280,11 @@ export class FakeSupabase {
       // 0084: 外部プラグインの拡張データ（公開・送信先が有効・名前あり）
       const appData = this.tables.app_data
         .filter((d) => d["product_id"] === p["id"] && d["public"] !== false)
-        .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => ({ app: e["app_handle"], kind: d["kind"], key: d["key"] ?? "", data: d["data"], updated_at: d["updated_at"] })))
+        .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => {
+          // 0087: マニフェストの more の、その種類の https の URL
+          const more = ((e["manifest"] as Row | null)?.["more"] as Row | undefined)?.[String(d["kind"])];
+          return { app: e["app_handle"], kind: d["kind"], key: d["key"] ?? "", data: d["data"], updated_at: d["updated_at"], ...(typeof more === "string" && /^https:\/\/[A-Za-z0-9.-]+(\/[^\s"'<>`]*)?$/.test(more) ? { more_url: more } : {}) };
+        }))
         .sort((a, b) => `${String(a.app)}/${a.kind}/${a.key}`.localeCompare(`${String(b.app)}/${b.kind}/${b.key}`));
       return json({ ...p, attributes: pub, app_data: appData });
     }

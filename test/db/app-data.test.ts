@@ -223,3 +223,23 @@ describe.skipIf(!dbAvailable)("プラグインのブロックの一覧（0086）
     expect(await expectDbError(() => asAnon((c) => c.query("select shop_app_blocks($1)", [f.shopId])))).toMatch(/permission/);
   });
 });
+
+/** 0087_app_data_more: 「もっと見る」の URL（マニフェストの more の、その種類の https の URL だけ） */
+describe.skipIf(!dbAvailable)("もっと見るの URL（0087）", () => {
+  it("https の URL だけを商品と一緒に返す。ほかの形・ほかの種類は返さない", async () => {
+    await resetDatabase();
+    const f = await createShopFixture({ email: "mo-owner@example.com", slug: "mo-shop", publish: true });
+    const ep = async (handle: string, manifest: unknown) =>
+      (await asUser(f.ownerId, (c) => c.query<{ id: string }>("insert into hook_endpoints (shop_id, name, url, events, app_handle, manifest) values ($1, $2, 'https://x.example/', '{}', $2, $3) returning id", [f.shopId, handle, JSON.stringify(manifest)]))).rows[0]!.id;
+    const rows = [
+      [await ep("good", { name: "g", more: { "reviews.v1": "https://r.example/api/reviews" } }), "https://r.example/api/reviews"],
+      [await ep("bad", { name: "b", more: { "reviews.v1": "javascript:alert(1)" } }), null],
+      [await ep("quote", { name: "q", more: { "reviews.v1": 'https://r.example/"><script>' } }), null],
+      [await ep("other", { name: "o", more: { "qa.v1": "https://r.example/qa" } }), null],
+    ] as const;
+    for (const [id] of rows) await getPool().query("insert into app_data (shop_id, endpoint_id, product_id, kind, data) values ($1, $2, $3, 'reviews.v1', '{\"rating_avg\":5,\"rating_count\":30,\"items\":[]}')", [f.shopId, id, f.productId]);
+    const r = (await asAnon((c) => c.query<{ r: J }>("select product_public_get($1, 'tee') as r", [f.shopId]))).rows[0]!.r;
+    const byApp = Object.fromEntries((r["app_data"] as J[]).map((x) => [String(x["app"]), x["more_url"] ?? null]));
+    expect(byApp).toEqual({ bad: null, good: "https://r.example/api/reviews", other: null, quote: null });
+  });
+});

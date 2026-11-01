@@ -12,6 +12,7 @@ import type { CategoryNode } from "../../products/categories";
 import { firstImageForSku, orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
 import { appDataOf, customAppData, productReviews, type ProductReviews } from "../../apps/app-data";
+import { reviewsMoreHtml } from "../../apps/reviews-html";
 import { escapeHtml, SafeHtml } from "./engine";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -165,6 +166,9 @@ export function reviewsLiquid(r: ProductReviews | null) {
     rating: r.rating_avg,
     rating_count: r.rating_count,
     items: r.items.map((i) => ({ id: i.id, rating: i.rating, title: i.title, body: i.body, author: i.author_display, created_at: i.created_at, incentivized: i.incentivized, verified_purchase: i.verified_purchase })),
+    // 「もっと見る」（0087）: ボタンと Banto のスクリプト。data-banto-reviews の中の ol.review-list に li.review を足す
+    more_url: r.more?.url ?? null,
+    more_html: new SafeHtml(reviewsMoreHtml(r, r.items.length)),
   };
 }
 

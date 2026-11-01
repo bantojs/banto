@@ -46,7 +46,12 @@ export interface PluginManifest {
   app?: string;
   /** 提案するブロック（0086） */
   blocks?: ManifestBlock[];
+  /** 「もっと見る」で押した人のブラウザが取りに行く公開 API（種類 → https の URL。0087） */
+  more?: Record<string, string>;
 }
+
+/** 「もっと見る」の URL（0087 の banto_app_more_url と同じ形） */
+export const MORE_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)?(\?[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*)?$/;
 
 /** ブロックの id（`::: app <プラグイン> <ブロック>` の 2 つ目） */
 export const APP_BLOCK_ID_RE = /^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -139,6 +144,11 @@ export function parseManifest(input: unknown): PluginManifest | null {
   const admin_url = typeof m["admin_url"] === "string" && /^https:\/\//.test(m["admin_url"]) ? m["admin_url"] : undefined;
   const app = typeof m["app"] === "string" && APP_HANDLE_RE.test(m["app"]) ? m["app"] : undefined;
   const blocks = parseBlocks(m["blocks"]);
+  const more: Record<string, string> = {};
+  if (m["more"] && typeof m["more"] === "object" && !Array.isArray(m["more"])) {
+    const v = (m["more"] as Record<string, unknown>)["reviews.v1"];
+    if (typeof v === "string" && v.length <= 500 && MORE_URL_RE.test(v)) more["reviews.v1"] = v;
+  }
   return {
     name: m["name"].trim().slice(0, 200),
     ...(typeof m["version"] === "string" ? { version: m["version"].slice(0, 50) } : {}),
@@ -148,6 +158,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     ...(admin_url ? { admin_url } : {}),
     ...(app ? { app } : {}),
     ...(blocks.length > 0 ? { blocks } : {}),
+    ...(Object.keys(more).length > 0 ? { more } : {}),
   };
 }
 
