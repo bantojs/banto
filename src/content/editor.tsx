@@ -17,7 +17,7 @@ import { PAGE_LIMITS, PAGE_NAVS, PAGE_MEDIA_THUMB_MIGRATION, PAGES_PUBLISHING_MI
 import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
-import { ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
+import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
 import { PRODUCT_SORTS, toPublicShop, type ProductSort } from "../storefront/data";
 import { storefrontData } from "../routes/storefront/domain";
 import { tagCounts } from "../products/tags";
@@ -27,6 +27,8 @@ import { PATTERNS_FILE, STYLES_FILE, bantoPatterns, parseBlockStyles, parsePatte
 import { readThemeBundle, themeStorage } from "../themes/liquid/versions";
 import type { CacheAdapter, StorageAdapter } from "../adapters/types";
 import { BLOG_MIGRATION } from "../blog";
+import { APP_BLOCKS_MIGRATION } from "../apps/app-data";
+import { parseManifest, type ManifestBlock } from "../hooks/manifest";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, layoutDefault } from "../pages/layout";
@@ -95,19 +97,46 @@ export interface EditorExtras {
   patterns: EditorPattern[];
   /** 公開中のテーマのブロックのスタイル */
   styles: BlockStyles;
+  /** 外部プラグインが提案するブロック（0086。有効・名前のある連携のマニフェストの blocks） */
+  apps?: EditorAppBlocks[];
+}
+
+export interface EditorAppBlocks {
+  /** 連携の名前（app_handle） */
+  app: string;
+  /** 連携の表示名 */
+  name: string;
+  blocks: ManifestBlock[];
+}
+
+/** 編集の画面に出すプラグインのブロック（shop_app_blocks、0086。形はマニフェストと同じ規則で確かめ直す） */
+async function editorAppBlocks(c: AdminContext, shop: ShopRow): Promise<EditorAppBlocks[]> {
+  const db = owner(c).db;
+  if (!(await migrated({ db, cache: c.get("adapters").cache }, APP_BLOCKS_MIGRATION))) return [];
+  try {
+    const rows = await db.rpc<{ app: string; name: string; blocks: unknown }[]>("shop_app_blocks", { p_shop_id: shop.id });
+    return (Array.isArray(rows) ? rows : []).flatMap((r) => {
+      const m = parseManifest({ name: r.name || r.app, blocks: r.blocks });
+      return m?.blocks?.length ? [{ app: r.app, name: String(r.name || r.app).slice(0, 200), blocks: m.blocks }] : [];
+    });
+  } catch (e) {
+    console.error("[banto] editor app blocks:", e instanceof Error ? e.message : e);
+    return [];
+  }
 }
 
 export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] } & EditorExtras> {
   const db = owner(c).db;
   const deps = { db, cache: c.get("adapters").cache };
-  const [categories, rows, blogs, theme] = await Promise.all([
+  const [categories, rows, blogs, theme, apps] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
     migrated(deps, BLOG_MIGRATION).then((ok) => (ok ? db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }) : [])).catch(() => []),
     editorTheme(c, shop),
+    editorAppBlocks(c, shop),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles };
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps };
 }
 
 /** 公開中の Liquid のテーマのパターンとスタイル（公開中の版があるときだけ） */
@@ -124,7 +153,8 @@ async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: 
 }
 
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
-export const editorHtml = (c: AdminContext, body: string) => markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), editor: true });
+export const editorHtml = (c: AdminContext, body: string) =>
+  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), editor: true });
 
 /**
  * 本文の入力の手助け（見出し・太字・リンク・箇条書き…のボタンと、画像を縮小して置いて ![](URL) を入れる）。
@@ -238,7 +268,7 @@ export const EDITOR_CSS = `
 .blk-opt small{display:block;color:var(--fg-muted);font-size:.75rem}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
 #md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
-.page-preview .banto-articles{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
+.page-preview .banto-app,.page-preview .banto-articles{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-products{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-products .bp-items{display:flex;gap:.5rem;margin-top:.5rem;overflow:hidden}
 .page-preview .banto-products .bp-item{flex:0 0 4.75rem;font-size:.7rem;line-height:1.3;overflow:hidden}
@@ -250,8 +280,8 @@ export const EDITOR_CSS = `
 .bp-preview:empty{display:none}
 .page-preview .banto-button__link{display:inline-block;padding:.5rem 1.25rem;border-radius:6px;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600}
 @media (max-width:600px){#body-visual{padding:.5rem .25rem 3rem 2rem}.blk-grid{grid-template-columns:repeat(3,1fr)}}
-#blk-products,#blk-button,#blk-articles{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
-#blk-products::backdrop,#blk-button::backdrop,#blk-articles::backdrop{background:rgba(0,0,0,.35)}
+#blk-products,#blk-button,#blk-articles,#blk-app{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
+#blk-products::backdrop,#blk-button::backdrop,#blk-articles::backdrop,#blk-app::backdrop{background:rgba(0,0,0,.35)}
 @media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
 html.pe-lock,html.pe-lock body{overflow:hidden}
 .pe-full{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column}
@@ -405,6 +435,16 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-articles-max": tf("pages.articles_max", { n: ARTICLE_BLOCKS_MAX }),
     "data-t-articles-none": t("pages.articles_none"),
     "data-t-articles-label": t("pages.articles_label"),
+    // 外部プラグインのブロック（0086）
+    "data-apps": JSON.stringify(props.extras?.apps ?? []),
+    "data-t-g-apps": t("pages.block_group_apps"),
+    "data-t-app": t("pages.block_app"),
+    "data-t-app-max": tf("pages.app_max", { n: APP_BLOCKS_MAX }),
+    "data-t-app-label": t("pages.app_label"),
+    "data-t-app-rlayout": t("pages.app_reviews_layout"),
+    "data-t-app-rlist": t("pages.app_reviews_layout_list"),
+    "data-t-app-rsummary": t("pages.app_reviews_layout_summary"),
+    "data-t-app-rlimit": t("pages.app_reviews_limit"),
     "data-t-back": t("pages.editor_back"),
     "data-t-lib": t("pages.editor_library"),
     "data-t-outline": t("pages.editor_outline"),
@@ -750,6 +790,32 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
           </p>
         </form>
       </dialog>
+      {/* 外部プラグインのブロックの設定（0086。PAGE_BLOCKS_SCRIPT が設定の欄をマニフェストから作る） */}
+      {props.extras?.apps?.length ? (
+        <dialog id="blk-app" aria-labelledby="blk-app-title">
+          <form method="dialog">
+            <h2 id="blk-app-title"></h2>
+            <p class="muted" id="bapp-desc"></p>
+            <label for="bapp-product">{t("pages.app_product")}</label>
+            <input id="bapp-product" name="product" required pattern="[a-z0-9][a-z0-9\-]{0,62}" maxlength={63} placeholder="tee" />
+            <div class="muted">{t("pages.app_product_help")}</div>
+            <div id="bapp-fields"></div>
+            <label for="bapp-style" hidden>
+              {t("pages.block_style")}
+            </label>
+            <select id="bapp-style" name="style" hidden></select>
+            <p class="muted">{tf("pages.app_help", { n: APP_BLOCKS_MAX })}</p>
+            <p>
+              <button type="submit" value="ok">
+                {t("pages.insert")}
+              </button>{" "}
+              <button type="submit" value="cancel" class="secondary" formnovalidate>
+                {t("pages.cancel")}
+              </button>
+            </p>
+          </form>
+        </dialog>
+      ) : null}
       {/* 記事を並べるブロックの設定（PAGE_BLOCKS_SCRIPT が開く。ブログのあるショップだけ） */}
       {props.extras?.blogs.length ? (
         <dialog id="blk-articles" aria-labelledby="blk-articles-title">

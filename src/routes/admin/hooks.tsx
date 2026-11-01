@@ -425,9 +425,12 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const events = await eventsFromBody(c);
   const f = await formFields(c);
   const bundled = bundledPluginIdFromUrl(endpoint.url) !== null;
-  const values = endpointValues(f, events, endpoint.manifest, !bundled && (await appsReady(c)));
+  // 外部プラグインはマニフェストを読み直す（ブロックの提案などが増えたとき。取れなければ前のまま）
+  const fresh = !bundled ? await fetchManifest(endpoint.url, c.get("deps").fetch) : null;
+  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled && (await appsReady(c)));
   if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
   if (bundled) values.url = endpoint.url;
+  if (fresh) values.manifest = fresh;
   try {
     await db.from<EndpointRow>("hook_endpoints").update(values, { id: endpoint.id, shop_id: shop.id });
   } catch (e) {

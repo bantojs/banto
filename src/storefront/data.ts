@@ -412,6 +412,19 @@ export class StorefrontData {
     return { blogs, articles };
   }
 
+  /**
+   * 本文のプラグインのブロック（0086）が使う商品と拡張データ（product_public_get の 1 回だけ。画像・SKU は読まない）。短時間キャッシュ
+   */
+  async productAppData(shop: PublicShop, slug: string): Promise<ProductRow | null> {
+    const key = `app-product:${shop.id}:${slug}`;
+    const hit = await this.cache.get<{ product: ProductRow | null }>(key);
+    if (hit) return hit.product;
+    const raw = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
+    const product = raw && typeof raw === "object" ? raw : null;
+    await this.cache.set(key, { product }, STOREFRONT_CACHE_TTL);
+    return product;
+  }
+
   async productBySlug(shop: PublicShop, slug: string): Promise<ProductDetail | null> {
     // product_public_get（0055。attributes は公開の項目だけ）
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });

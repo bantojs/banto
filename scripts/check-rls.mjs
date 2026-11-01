@@ -67,6 +67,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   // 0071: テーマの版（中で design の項目を確かめる）
   "theme_preview_audit", "theme_publish", "theme_version_complete", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
   "banto_page_handle_ok", // 0079: pages.handle の CHECK（値の形を見るだけ）
+  "shop_app_blocks", // 0086: 編集の画面に出すプラグインのブロックの一覧（中で content の項目を確かめる。連携の URL・設定は返さない）
   "product_image_hints_set", // 0063: WooCommerce の取り込みで画像の URL の目印に SKU の options を結ぶ（中で catalog の項目を確かめる）
 ]);
 

@@ -103,10 +103,13 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function LT(k){ return LTX[k]||""; }
   var CONT={group:1,columns:1,column:1,cover:1,media:1,gallery:1,accordion:1};
   // 文字を書けない箱（押すと選ぶ）
-  var BOXES={products:1,button:1,spacer:1,gallery:1,articles:1};
+  var BOXES={products:1,button:1,spacer:1,gallery:1,articles:1,app:1};
   // テーマのパターン・スタイル（サーバーが data-* の JSON で渡す。パターンの本文は選んだときに受け取る）
   var PATTERNS=[], STYLES={}; try{ PATTERNS=JSON.parse(form.getAttribute("data-patterns")||"[]"); STYLES=JSON.parse(form.getAttribute("data-styles")||"{}"); }catch(_){}
   var HAS_ARTICLES=!!document.getElementById("blk-articles");
+  // 外部プラグインが提案するブロック（0086。サーバーが data-apps の JSON で渡す。見た目はテーマか Banto が描く）
+  var APPS=[]; try{ APPS=JSON.parse(form.getAttribute("data-apps")||"[]"); }catch(_){}
+  function appDef(app,id){ var p=null,b=null; APPS.forEach(function(x){ if(x.app===app){ p=x; (x.blocks||[]).forEach(function(y){ if(y.id===id) b=y; }); } }); return {p:p,b:b}; }
   // ブロックの一覧（一覧の順・まとまり）
   var BLOCKS=[
     ["p","text"],["h2","text"],["h3","text"],["ul","text"],["ol","text"],["q","text"],["table","text"],["accordion","text"],
@@ -114,13 +117,14 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     ["group","design"],["columns","design"],["spacer","design"],["hr","design"],
     ["products","shop"],["articles","shop"],["button","shop"]
   ].filter(function(x){ return (!(CONT[x[0]]||x[0]==="spacer")||LS[x[0]])&&(x[0]!=="articles"||HAS_ARTICLES); }).map(function(x){ var lay=!!LS[x[0]]; return {k:x[0],g:x[1],label:lay?LT("kind."+x[0]):T(x[0]),desc:lay?LT("desc."+x[0]):T("d-"+x[0])}; })
-   .concat(PATTERNS.map(function(p){ return {k:"pattern:"+p.name,g:p.source==="theme"?"theme":"patterns",label:p.title,desc:p.description||"",pattern:p.name}; }));
+   .concat(PATTERNS.map(function(p){ return {k:"pattern:"+p.name,g:p.source==="theme"?"theme":"patterns",label:p.title,desc:p.description||"",pattern:p.name}; }))
+   .concat(APPS.reduce(function(a,p){ (p.blocks||[]).forEach(function(b){ a.push({k:"app:"+p.app+":"+b.id,g:"apps",label:b.label,desc:p.name+(b.description?" — "+b.description:"")}); }); return a; },[]));
   function nameOf(k){ return LS[k]?LT("kind."+k):T(k); }
   var TEXTY={p:1,h2:1,h3:1,ul:1,ol:1,q:1};
   function kindOf(el){
     if(!el||el.nodeType!==1) return "";
     var n=el.nodeName, bk=el.getAttribute("data-banto-block");
-    if(bk&&(CONT[bk]||bk==="spacer"||bk==="products"||bk==="articles")) return bk;
+    if(bk&&(CONT[bk]||bk==="spacer"||bk==="products"||bk==="articles"||bk==="app")) return bk;
     if(n==="P"&&/(^|\s)banto-button(\s|$)/.test(el.className)) return "button";
     if(n==="H1"||n==="H2") return "h2";
     if(/^H[3-6]$/.test(n)) return "h3";
@@ -272,7 +276,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(nested){ add(btn("","parent","parent",LT("parent"))); }
     add(btn("","drag","drag",T("drag"))); add(btn("","up","up",T("up"))); add(btn("","down","down",T("down")));
     if(TEXTY[k]){ sep(); var bb=add(btn("","bold","",T("bold"),"B")); bb.style.fontWeight="700"; var ib=add(btn("","italic","",T("italic"),"I")); ib.style.fontStyle="italic"; add(btn("","link","link",T("link"))); }
-    if(k==="products"||k==="articles"||k==="button"||LS[k]&&k!=="column"){ sep(); add(btn("","edit","edit",T("edit"),T("edit"))); }
+    if(k==="products"||k==="articles"||k==="app"||k==="button"||LS[k]&&k!=="column"){ sep(); add(btn("","edit","edit",T("edit"),T("edit"))); }
     sep(); add(btn("","more","more",T("more"))).setAttribute("aria-haspopup","true");
   }
   tb.addEventListener("click",function(e){
@@ -287,7 +291,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     else if(k==="link"){ var u=window.prompt(T("link-ask"),"https://"); if(u){ restore(); document.execCommand("createLink",false,u.replace(/[\s()<>"]/g,"")); mark(); } }
     else if(k==="edit") editBlock(blk);
   });
-  function editBlock(b){ var k=kindOf(b); if(k==="products") openProducts(b,null); else if(k==="articles") openArticles(b,null); else if(k==="button") openButton(b,null); else if(LS[k]) openSettings(); }
+  function editBlock(b){ var k=kindOf(b); if(k==="products") openProducts(b,null); else if(k==="articles") openArticles(b,null); else if(k==="app") openApp(b,null,""); else if(k==="button") openButton(b,null); else if(LS[k]) openSettings(); }
   // 前後に足す（列の並びの中なら列を足す。4 列まで）
   function addNear(blk,where){
     if(kindOf(blk)==="column"){ var cols=blk.parentNode; if(cols.children.length>=4) return; var c=mk("column"); cols.insertBefore(c,where==="before"?blk:blk.nextSibling); fixCols(cols); mark(); caretIn(c.firstElementChild); select(c.firstElementChild); return; }
@@ -349,7 +353,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function tiles(box,list,cur,onPick,onDrag){
     box.innerHTML="";
     if(!list.length){ var p=el("p","muted"); p.textContent=T("none"); box.appendChild(p); return; }
-    ["theme","text","media","design","shop","patterns"].forEach(function(g){
+    ["theme","text","media","design","shop","apps","patterns"].forEach(function(g){
       var xs=list.filter(function(b){ return b.g===g; }); if(!xs.length) return;
       var h=el("div","blk-grp"); h.textContent=g==="design"?LT("group_design"):g==="theme"?T("patterns-theme"):g==="patterns"?T("patterns"):T("g-"+g); box.appendChild(h);
       var grid=el("div","blk-grid"); box.appendChild(grid);
@@ -586,6 +590,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     ed.focus({preventScroll:true});
     if(kind.indexOf("pattern:")===0){ insertPattern(kind.slice(8),blk); return; }
     if(kind==="articles"){ openArticles(null,blk); return; }
+    if(kind.indexOf("app:")===0){ openApp(null,blk,kind.slice(4)); return; }
     if(kind==="img"){ caretIn(blk); select(blk); if(window.bantoOpenMedia){ window.bantoOpenMedia("body"); return; } var inp=document.getElementById("page-image"); if(inp) inp.click(); return; }
     if(kind==="products"){ openProducts(null,blk); return; }
     if(kind==="button"){ openButton(null,blk); return; }
@@ -669,6 +674,71 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       tidy(); mark();
       var first=nodes[0].querySelector("[data-slot] > *")||nodes[0]; if(first&&!BOXES[kindOf(first)]&&!CONT[kindOf(first)]){ caretIn(first); select(first); } else { pin=nodes[0]; select(nodes[0]); }
     }).catch(function(){});
+  }
+
+  // ---------- 外部プラグインのブロック（0086。1 ページに 2 つまで。設定の欄はマニフェストの fields と、reviews.v1 の見せ方・件数） ----------
+  var pdlg=document.getElementById("blk-app");
+  var SLUG=/^[a-z0-9][a-z0-9-]{0,62}$/, VAL=/^[a-z0-9][a-z0-9_-]{0,39}$/, FKEY=/^[a-z][a-z0-9_]{0,30}$/;
+  function appFields(b){
+    var fs=[];
+    if(b&&b.kind==="reviews.v1"){
+      fs.push({key:"layout",label:T("app-rlayout"),type:"select",options:[{value:"list",label:T("app-rlist")},{value:"summary",label:T("app-rsummary")}],"default":"list"});
+      fs.push({key:"limit",label:T("app-rlimit"),type:"number",min:1,max:20,"default":"20"});
+    }
+    ((b&&b.fields)||[]).forEach(function(f){ if(FKEY.test(f.key)&&!fs.some(function(x){ return x.key===f.key; })) fs.push(f); });
+    return fs;
+  }
+  function settingsOf(box){ try{ var o=JSON.parse(box.getAttribute("data-settings")||"{}"); return o&&typeof o==="object"?o:{}; }catch(_){ return {}; } }
+  function appText(d){ var def=appDef(d.app,d.block); return T("app-label").replace("{app}",def.p?def.p.name:d.app).replace("{block}",def.b?def.b.label:d.block).replace("{product}",d.product); }
+  function setAppBox(box,d){
+    box.className="banto-app banto-app--"+d.app+"-"+d.block+(d.style?" banto-style-"+d.style:"")+(sel===box?" is-sel":""); box.setAttribute("data-banto-block","app"); box.setAttribute("contenteditable","false");
+    box.setAttribute("data-app",d.app); box.setAttribute("data-block",d.block); box.setAttribute("data-product",d.product); box.setAttribute("data-settings",JSON.stringify(d.settings||{}));
+    if(d.style) box.setAttribute("data-style",d.style); else box.removeAttribute("data-style");
+    box.textContent=appText(d);
+  }
+  Array.prototype.forEach.call(ed.querySelectorAll("[data-banto-block=app]"),function(b){ setAppBox(b,{app:b.getAttribute("data-app")||"",block:b.getAttribute("data-block")||"",product:b.getAttribute("data-product")||"",settings:settingsOf(b),style:b.getAttribute("data-style")||""}); });
+  function openApp(box,blk,ref){
+    if(!pdlg||!pdlg.showModal) return;
+    if(!box&&ed.querySelectorAll("[data-banto-block=app]").length>=2){ window.alert(T("app-max")); if(blk){ caretIn(blk); select(blk); } return; }
+    var app=box?box.getAttribute("data-app")||"":ref.split(":")[0], id=box?box.getAttribute("data-block")||"":ref.split(":")[1]||"";
+    var def=appDef(app,id), cur=box?settingsOf(box):{};
+    var f=pdlg.querySelector("form");
+    document.getElementById("blk-app-title").textContent=def.b?def.b.label:id;
+    document.getElementById("bapp-desc").textContent=(def.p?def.p.name:app)+(def.b&&def.b.description?" — "+def.b.description:"");
+    f.elements.product.value=box?box.getAttribute("data-product")||"":"";
+    var wrap=document.getElementById("bapp-fields"); wrap.innerHTML="";
+    var fs=appFields(def.b);
+    fs.forEach(function(x){
+      var lab=document.createElement("label"); lab.setAttribute("for","bapp-f-"+x.key); lab.textContent=x.label; wrap.appendChild(lab);
+      var v=cur[x.key]!==undefined?String(cur[x.key]):(x["default"]||"");
+      if(x.type==="select"){
+        var se=document.createElement("select"); se.id="bapp-f-"+x.key; se.name="f_"+x.key;
+        (x.options||[]).forEach(function(o){ var op=document.createElement("option"); op.value=o.value; op.textContent=o.label; if(o.value===v) op.selected=true; se.appendChild(op); });
+        wrap.appendChild(se);
+      } else {
+        var inp=document.createElement("input"); inp.id="bapp-f-"+x.key; inp.name="f_"+x.key; inp.type="number"; inp.style.width="8rem";
+        if(x.min!==undefined) inp.min=String(x.min); if(x.max!==undefined) inp.max=String(x.max); inp.value=v; wrap.appendChild(inp);
+      }
+    });
+    fillStyle(f.elements.style,"app",box?box.getAttribute("data-style")||"":"");
+    pdlg.returnValue="";
+    var done=function(){
+      pdlg.removeEventListener("close",done);
+      if(pdlg.returnValue!=="ok"){ if(blk){ caretIn(blk); select(blk); } return; }
+      var product=String(f.elements.product.value||"").trim().toLowerCase();
+      if(!SLUG.test(product)) return;
+      var settings={};
+      fs.forEach(function(x){
+        var el2=f.elements["f_"+x.key]; if(!el2) return; var v=String(el2.value||"").trim();
+        if(x.type==="number"){ var n=parseInt(v,10); if(String(n)!==v) return; if(x.min!==undefined&&n<x.min) return; if(x.max!==undefined&&n>x.max) return; settings[x.key]=String(n); }
+        else if((x.options||[]).some(function(o){ return o.value===v; })&&VAL.test(v)) settings[x.key]=v;
+      });
+      var d={app:app,block:id,product:product,settings:settings,style:styleVal(f.elements.style)};
+      if(box){ setAppBox(box,d); mark(); select(box); }
+      else { var nb=document.createElement("div"); setAppBox(nb,d); place2(nb,blk); }
+    };
+    pdlg.addEventListener("close",done);
+    pdlg.showModal();
   }
 
   // ---------- 記事を並べるブロック（ブログの新しい記事。1 ページに 2 つまで） ----------

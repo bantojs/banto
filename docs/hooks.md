@@ -104,7 +104,8 @@ export default {
     { "key": "lang", "label": "言語", "type": "select", "options": [{ "value": "ja", "label": "日本語" }] }
   ],
   "admin_url": "https://plugin.example/admin",
-  "app": "line-notify"
+  "app": "line-notify",
+  "blocks": [{ "id": "notice", "label": "お知らせ", "kind": "custom.v1", "fields": [] }]
 }
 ```
 
@@ -114,6 +115,7 @@ export default {
 | `events` | 購読したいイベント。登録画面で変更可 |
 | `settings[]` | `key` は `^[a-z][a-z0-9_]{0,63}$`。`type` は `text` / `boolean` / `select`。**`secret` 型は受け付けません**（API キー等はプラグイン側の環境変数に置く。CLAUDE.md §1-5） |
 | `admin_url` | `https://` のみ。管理画面に iframe で埋め込み、`?shop_id=&endpoint_id=` を付けて開きます |
+| `blocks` | 任意。ページ・記事の本文に置けるブロックの提案（名前・データの種類・設定の欄だけ。見た目は渡せない）。形は docs/app-data.md §6 |
 | `app` | 任意。商品に付くデータ（レビューなど）を Banto に置くプラグインの、名前の空間の候補（`^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$`）。登録の画面の初めの値になるだけで、決めるのは運営者です（0084、docs/app-data.md） |
 
 設定値は `hook_endpoints.settings` に保存され、テスト送信（`banto.ping`）のボディに `settings` として含まれます。

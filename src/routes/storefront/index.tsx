@@ -19,7 +19,7 @@ import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
 import { formatDateTime } from "../../i18n/time";
-import { fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
+import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
@@ -381,14 +381,14 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return notFoundPage(c, s);
   const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
-  const { blocks, cards, ablocks, acards } = await bodyProducts(s, page.body, categories);
+  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, page.body, categories);
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards });
+    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards });
     if (res) return res;
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
-  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillArticleBlocks(fillProductBlocks(html, cards), acards) }));
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards) }));
 });
 
 // ---------- ブログ（同梱モジュール blog、0081、docs/blog.md） ----------
@@ -453,15 +453,15 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return notFoundPage(c, s);
   const html = pageBodyHtml(article, s.ctx.mediaBaseUrl);
-  const { blocks, cards, ablocks, acards } = await bodyProducts(s, article.body, categories);
+  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, article.body, categories);
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards });
+    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards });
     if (res) return res;
   }
   if (!s.theme.ArticlePage) return notFoundPage(c, s);
-  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillArticleBlocks(fillProductBlocks(html, cards), acards), feedUrl }));
+  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl }));
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

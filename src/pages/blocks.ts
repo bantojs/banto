@@ -198,3 +198,80 @@ export function defaultProductsHtml(items: readonly ProductSummary[], b: Product
   });
   return `<ul class="banto-products__list grid" style="${listStyle}">${cards.join("")}</ul>`;
 }
+
+// ---------- 外部プラグインのブロック（0086、docs/app-data.md §6。1 行のブロック） ----------
+//   ::: app reviews reviews product=tee layout=list limit=10 style=card
+// - 1 つ目は連携の名前（hook_endpoints.app_handle）、2 つ目はプラグインがマニフェストで提案したブロックの id
+// - product は Banto が使う（どの商品のデータか）。そのほかの key=value はプラグインの設定の欄の値で、テーマの snippet に渡す
+// - データは product の拡張データ（公開の分）だけ。描くのはテーマの snippet（app-<プラグイン>-<ブロック> → app-<ブロック>）か、
+//   reviews.v1 の既定の見た目。プラグインの HTML・スクリプトは受けない
+export interface AppBlock {
+  app: string;
+  block: string;
+  /** 商品の slug */
+  product: string;
+  /** プラグインの設定の欄の値（値は決まった形の文字だけ） */
+  settings: Record<string, string>;
+  style: string | null;
+}
+/** 1 ページに置けるプラグインのブロック（これより後のものは描かない） */
+export const APP_BLOCKS_MAX = 2;
+const APP_LINE = /^\s{0,3}:::\s*app\s+([a-z](?:[a-z0-9-]{0,38}[a-z0-9])?)\s+([a-z](?:[a-z0-9-]{0,38}[a-z0-9])?)(?:\s+(.*))?$/;
+const APP_KEY = /^[a-z][a-z0-9_]{0,30}$/;
+const APP_VALUE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+const PRODUCT_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/** 「::: app …」の 1 行を読む。形が違えば null（その行はただの文字として出る） */
+export function parseAppLine(line: string): AppBlock | null {
+  const m = APP_LINE.exec(line);
+  if (!m) return null;
+  const settings: Record<string, string> = {};
+  let product = "";
+  let style: string | null = null;
+  const rest = (m[3] ?? "").trim();
+  if (rest) {
+    let n = 0;
+    for (const part of rest.split(/\s+/)) {
+      const kv = /^([a-z][a-z0-9_]*)=(.*)$/.exec(part);
+      if (!kv || !APP_KEY.test(kv[1]!)) return null;
+      const [, k, v] = kv as unknown as [string, string, string];
+      if (k === "product") {
+        if (!PRODUCT_SLUG.test(v)) return null;
+        product = v;
+      } else if (k === "style") {
+        style = styleOf(v);
+      } else {
+        if (!APP_VALUE.test(v) && !/^-?[0-9]{1,7}$/.test(v)) return null;
+        if (++n > 8) return null;
+        settings[k] = v;
+      }
+    }
+  }
+  if (!product) return null;
+  return { app: m[1]!, block: m[2]!, product, settings, style };
+}
+
+export function appLine(b: AppBlock): string {
+  const parts = ["::: app", b.app, b.block, `product=${b.product}`];
+  for (const [k, v] of Object.entries(b.settings)) parts.push(`${k}=${v}`);
+  if (b.style) parts.push(`style=${b.style}`);
+  return parts.join(" ");
+}
+
+/** 本文の中のプラグインのブロック（先頭から APP_BLOCKS_MAX 個。変換が印を付けるのと同じ順） */
+export function appBlocksOf(body: string): AppBlock[] {
+  const out: AppBlock[] = [];
+  for (const line of body.replace(/\r\n?/g, "\n").split("\n")) {
+    if (!BLOCK_LINE.test(line)) continue;
+    const b = parseAppLine(line);
+    if (b) out.push(b);
+    if (out.length >= APP_BLOCKS_MAX) break;
+  }
+  return out;
+}
+
+export const appMarker = (i: number) => `<!--banto:app:${i}-->`;
+
+export function fillAppBlocks(html: string, rendered: readonly string[]): string {
+  return html.replace(/<!--banto:app:(\d)-->/g, (_, i: string) => rendered[Number(i)] ?? "");
+}

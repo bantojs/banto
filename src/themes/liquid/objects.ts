@@ -11,7 +11,7 @@ import type { CartLine } from "../types";
 import type { CategoryNode } from "../../products/categories";
 import { firstImageForSku, orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
-import { appDataOf, customAppData, productReviews } from "../../apps/app-data";
+import { appDataOf, customAppData, productReviews, type ProductReviews } from "../../apps/app-data";
 import { escapeHtml, SafeHtml } from "./engine";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -154,7 +154,11 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
 
 /** product.reviews（レビューのプラグインが置いた要約。無ければ null） */
 function reviewsObject(p: ProductDetail["product"]) {
-  const r = productReviews(p);
+  return reviewsLiquid(productReviews(p));
+}
+
+/** レビューの要約の Liquid の形（product.reviews と、本文のプラグインのブロックの reviews で同じ） */
+export function reviewsLiquid(r: ProductReviews | null) {
   if (!r) return null;
   return {
     app: r.app,

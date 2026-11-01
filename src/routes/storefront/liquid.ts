@@ -28,10 +28,11 @@ import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { CONFIRMATION_MARK, extendShopify, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
-import { fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
+import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
+import type { AppBlockData } from "../../content/body-blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
-import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
+import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
 import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
@@ -506,10 +507,36 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     categories: p.categories,
     currentPage: pg.handle,
   });
-  return render(c, s, choice, parts(withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p)));
+  return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
 }
 
-type ArticleBlocks = { ablocks?: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards?: string[] };
+type ArticleBlocks = { ablocks?: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards?: string[]; apps?: (AppBlockData | null)[]; appCards?: string[] };
+
+/**
+ * 本文の外部プラグインのブロック（0086）の場所に中身を入れる: snippets/app-<プラグイン>-<ブロック> → app-<ブロック> の順に探して描き
+ * （block・product・reviews・data を渡す）、どちらも無ければ既定の見た目（reviews.v1 だけ。custom.v1 は空）
+ */
+function withAppBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, p: ArticleBlocks): string {
+  const cards = p.appCards ?? [];
+  const names = (p.apps ?? []).map((b) => (b ? [`app-${b.block.app}-${b.block.block}`, `app-${b.block.block}`].find((n) => themeHasSnippet(choice.lt, n)) ?? null : null));
+  if (!names.some(Boolean)) return fillAppBlocks(html, cards);
+  let rendered = cards;
+  try {
+    const input = pageInput(c, s, choice, parts(html));
+    const sp = s.ctx.shopPath;
+    rendered = cards.map((card, i) => {
+      const b = p.apps?.[i];
+      const name = names[i];
+      if (!b || !name) return card;
+      const product = { id: b.product.id, handle: b.product.slug, title: b.product.name, url: `${sp}/p/${encodeURIComponent(b.product.slug)}` };
+      const block = { app: b.block.app, id: b.block.block, settings: b.block.settings, style: b.block.style, index: i };
+      return renderThemeSnippet(choice.lt, input, name, { block, product, reviews: reviewsLiquid(b.reviews), data: b.data }) ?? card;
+    });
+  } catch (e) {
+    console.error("[banto] theme app block:", e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
+  }
+  return fillAppBlocks(html, rendered);
+}
 
 /**
  * 本文の「記事を並べる」の場所に中身を入れる: テーマに snippets/page-articles があればそれで描き（articles・block・blog を渡す）、
@@ -636,7 +663,7 @@ export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
       categories: p.categories,
     };
   };
-  return render(c, s, choice, parts(withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p)));
+  return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

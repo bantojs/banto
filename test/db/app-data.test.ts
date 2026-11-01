@@ -199,3 +199,27 @@ describe.skipIf(!dbAvailable)("拡張データの custom.v1（0085）", () => {
     expect(await set(tok, "ok", { url: "https://size.example/a?b=1", label: "<b>文字</b>", n: 1.5, f: false, z: null })).toMatchObject({ key: "ok" });
   });
 });
+
+/** 0086_app_blocks: 編集の画面に出すプラグインのブロックの一覧（項目 content の人。URL・設定は返さない） */
+describe.skipIf(!dbAvailable)("プラグインのブロックの一覧（0086）", () => {
+  it("有効・名前のある連携のマニフェストの blocks だけ。content の無い人と anon は呼べない", async () => {
+    await resetDatabase();
+    const f = await createShopFixture({ email: "ab-owner@example.com", slug: "ab-shop", publish: true });
+    const blocks = [{ id: "reviews", label: "レビュー", kind: "reviews.v1", fields: [] }];
+    await asUser(f.ownerId, (c) =>
+      c.query(
+        `insert into hook_endpoints (shop_id, name, url, events, app_handle, manifest, settings, enabled) values
+           ($1, 'レビュー', 'https://r.example/secret-path', '{}', 'reviews', $2, '{"token":"x"}', true),
+           ($1, '無名', 'https://n.example/', '{}', null, $2, '{}', true),
+           ($1, '止めた', 'https://o.example/', '{}', 'off', $2, '{}', false)`,
+        [f.shopId, JSON.stringify({ name: "レビュー", blocks })],
+      ),
+    );
+    const r = (await asUser(f.ownerId, (c) => c.query<{ r: unknown }>("select shop_app_blocks($1) as r", [f.shopId]))).rows[0]!.r;
+    expect(r).toEqual([{ app: "reviews", name: "レビュー", blocks }]);
+    expect(JSON.stringify(r)).not.toContain("secret-path");
+    const other = await createAuthUser("ab-other@example.com");
+    expect(await expectDbError(() => asUser(other, (c) => c.query("select shop_app_blocks($1)", [f.shopId])))).toMatch(/forbidden/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select shop_app_blocks($1)", [f.shopId])))).toMatch(/permission/);
+  });
+});

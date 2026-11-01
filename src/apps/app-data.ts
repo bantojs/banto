@@ -7,6 +7,8 @@
 export const APP_DATA_MIGRATION = "0084_app_data";
 /** 形を決めない custom.v1 と名前（key）。0085 */
 export const APP_DATA_CUSTOM_MIGRATION = "0085_app_data_custom";
+/** プラグインが提案するブロック（`::: app`）の編集の画面の一覧。0086 */
+export const APP_BLOCKS_MIGRATION = "0086_app_blocks";
 
 /** 知っている形。custom.v1 は形を決めない種類で、Banto 自身は描かない（Liquid のテーマとヘッドレスだけが読む） */
 export const APP_DATA_KINDS = ["reviews.v1", "custom.v1"] as const;

@@ -7,7 +7,7 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { PAGES_MODULE, PAGES_PUBLISHING_MIGRATION, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSummary, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
-import { fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
+import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
 import { mediaBaseUrl, migrationStateFor, param, publicBaseUrl, type Ctx } from "../common";
 
@@ -50,8 +50,8 @@ const absImage = (s: Scope, url: string | null | undefined) => (url ? (url.start
 async function bodyHtml(s: Scope, row: Pick<PageRow, "id" | "updated_at" | "body">): Promise<string> {
   const html = pageBodyHtml(row, s.mediaBaseUrl, s.origin);
   const categories = await s.sf.listCategories(s.shop);
-  const { cards, acards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, row.body, categories);
-  return fillArticleBlocks(fillProductBlocks(html, cards), acards);
+  const { cards, acards, appCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, row.body, categories);
+  return fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards);
 }
 
 function pageSummary(s: Scope, p: Omit<PageRow, "body">) {

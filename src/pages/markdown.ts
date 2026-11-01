@@ -11,7 +11,7 @@
  * 1 行のブロック（::: products … で商品を並べる・::: button [文字](URL) でボタン・::: spacer。src/pages/blocks.ts）・
  * レイアウトの囲み（::: group … ::: のグループ・カラム・カバー・画像と文・ギャラリー・アコーディオン。入れ子 4 段まで。src/pages/layout.ts）
  */
-import { ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, articlesMarker, parseArticlesLine, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
+import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, isLayoutClose, layoutEnd, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
@@ -29,6 +29,8 @@ export interface MarkdownOptions {
   productsLabel?: (b: ProductBlock) => string;
   /** 管理画面の見たままの編集: 記事のブロックの説明の文字（お店の画面では渡さない） */
   articlesLabel?: (b: ArticlesBlock) => string;
+  /** 管理画面の見たままの編集: プラグインのブロック（0086）の説明の文字（お店の画面では渡さない） */
+  appLabel?: (b: AppBlock) => string;
   /**
    * 管理画面の見たままの編集の形で描く（囲みに data-slot、アコーディオンは開け閉めしない箱、画像は書き換えられない箱）。
    * レイアウトの CSS は添えない（管理画面が持つ）
@@ -221,6 +223,8 @@ interface RenderState {
   products: number;
   /** 記事のブロックの数 */
   articles: number;
+  /** プラグインのブロックの数 */
+  apps: number;
   /** レイアウトのブロックを描いたか（CSS を添えるため） */
   layout: boolean;
 }
@@ -230,7 +234,7 @@ const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE
 
 export function markdownToHtml(source: string, opts: MarkdownOptions = {}): string {
   const rows = source.replace(/\r\n?/g, "\n").split("\n");
-  const st: RenderState = { opts, products: 0, articles: 0, layout: false };
+  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false };
   const html = render(rows, 0, st).join("\n");
   return st.layout && !opts.editor && opts.layoutCss !== false ? `<style>${LAYOUT_CSS}</style>\n${html}` : html;
 }
@@ -319,6 +323,17 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       if (sp) {
         st.layout = true;
         out.push(`<div class="banto-spacer banto-spacer--${sp.size}" data-banto-block="spacer" data-size="${sp.size}" aria-hidden="true"${opts.editor ? ' contenteditable="false"' : ""}></div>`);
+        i++;
+        continue;
+      }
+      // 外部プラグインのブロック（0086）。class はテーマが合わせるための目印（名前は連携とブロックの決まった形だけ）
+      const pb = parseAppLine(row);
+      if (pb) {
+        const data = `data-banto-block="app" data-app="${pb.app}" data-block="${pb.block}" data-product="${pb.product}" data-settings="${esc(JSON.stringify(pb.settings))}"${pb.style ? ` data-style="${pb.style}"` : ""}`;
+        const cls = `banto-app banto-app--${pb.app}-${pb.block}${pb.style ? ` banto-style-${pb.style}` : ""}`;
+        if (opts.appLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.appLabel(pb))}</div>`);
+        else out.push(`<div class="${cls}" ${data}>${st.apps < APP_BLOCKS_MAX ? appMarker(st.apps) : ""}</div>`);
+        st.apps++;
         i++;
         continue;
       }

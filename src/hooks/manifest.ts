@@ -13,6 +13,26 @@ export interface ManifestSetting {
   description?: string;
 }
 
+/** ブロックの設定の欄（0086）。数か決まった選択肢だけ（本文の 1 行に書ける値） */
+export interface ManifestBlockField {
+  key: string;
+  label: string;
+  type: "number" | "select";
+  min?: number;
+  max?: number;
+  options?: { value: string; label: string }[];
+  default?: string;
+}
+
+/** プラグインが提案するブロック（0086、docs/app-data.md §6）。見た目は Banto かテーマが決める */
+export interface ManifestBlock {
+  id: string;
+  label: string;
+  kind: "reviews.v1" | "custom.v1";
+  description?: string;
+  fields: ManifestBlockField[];
+}
+
 export interface PluginManifest {
   name: string;
   version?: string;
@@ -24,6 +44,62 @@ export interface PluginManifest {
   admin_url?: string;
   /** 拡張データの名前の空間の候補（0084。決めるのは運営者で、登録の画面の初めの値に使うだけ） */
   app?: string;
+  /** 提案するブロック（0086） */
+  blocks?: ManifestBlock[];
+}
+
+/** ブロックの id（`::: app <プラグイン> <ブロック>` の 2 つ目） */
+export const APP_BLOCK_ID_RE = /^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+/** ブロックの設定の鍵（本文の key=value。product と style は Banto が使う） */
+export const APP_BLOCK_FIELD_RE = /^[a-z][a-z0-9_]{0,30}$/;
+export const APP_BLOCK_RESERVED = new Set(["product", "style"]);
+/** 選択肢の値（本文に引用なしで書ける形） */
+export const APP_BLOCK_VALUE_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+
+function parseBlocks(raw: unknown): ManifestBlock[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ManifestBlock[] = [];
+  const seen = new Set<string>();
+  for (const r of raw) {
+    if (out.length >= 10) break;
+    if (!r || typeof r !== "object") continue;
+    const b = r as Record<string, unknown>;
+    if (typeof b["id"] !== "string" || !APP_BLOCK_ID_RE.test(b["id"]) || seen.has(b["id"])) continue;
+    if (b["kind"] !== "reviews.v1" && b["kind"] !== "custom.v1") continue;
+    const fields: ManifestBlockField[] = [];
+    for (const fr of Array.isArray(b["fields"]) ? b["fields"] : []) {
+      if (fields.length >= 8) break;
+      if (!fr || typeof fr !== "object") continue;
+      const f = fr as Record<string, unknown>;
+      const key = f["key"];
+      if (typeof key !== "string" || !APP_BLOCK_FIELD_RE.test(key) || APP_BLOCK_RESERVED.has(key) || fields.some((x) => x.key === key)) continue;
+      const label = typeof f["label"] === "string" && f["label"].trim() ? f["label"].trim().slice(0, 100) : key;
+      if (f["type"] === "number") {
+        const min = Number.isInteger(f["min"]) ? (f["min"] as number) : 0;
+        const max = Number.isInteger(f["max"]) ? (f["max"] as number) : 100;
+        if (min > max || Math.abs(min) > 1_000_000 || Math.abs(max) > 1_000_000) continue;
+        const def = Number.isInteger(f["default"]) && (f["default"] as number) >= min && (f["default"] as number) <= max ? String(f["default"]) : undefined;
+        fields.push({ key, label, type: "number", min, max, ...(def ? { default: def } : {}) });
+      } else if (f["type"] === "select" && Array.isArray(f["options"])) {
+        const options = f["options"]
+          .filter((o): o is Record<string, unknown> => Boolean(o) && typeof o === "object" && typeof (o as Record<string, unknown>)["value"] === "string" && APP_BLOCK_VALUE_RE.test(String((o as Record<string, unknown>)["value"])))
+          .slice(0, 20)
+          .map((o) => ({ value: String(o["value"]), label: typeof o["label"] === "string" && o["label"].trim() ? o["label"].trim().slice(0, 100) : String(o["value"]) }));
+        if (options.length === 0) continue;
+        const def = typeof f["default"] === "string" && options.some((o) => o.value === f["default"]) ? (f["default"] as string) : undefined;
+        fields.push({ key, label, type: "select", options, ...(def ? { default: def } : {}) });
+      }
+    }
+    seen.add(b["id"]);
+    out.push({
+      id: b["id"],
+      label: typeof b["label"] === "string" && b["label"].trim() ? b["label"].trim().slice(0, 100) : b["id"],
+      kind: b["kind"],
+      ...(typeof b["description"] === "string" && b["description"].trim() ? { description: b["description"].trim().slice(0, 300) } : {}),
+      fields,
+    });
+  }
+  return out;
 }
 
 /** 拡張データの名前の空間（hook_endpoints.app_handle、0084 の CHECK と同じ） */
@@ -62,6 +138,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
   }
   const admin_url = typeof m["admin_url"] === "string" && /^https:\/\//.test(m["admin_url"]) ? m["admin_url"] : undefined;
   const app = typeof m["app"] === "string" && APP_HANDLE_RE.test(m["app"]) ? m["app"] : undefined;
+  const blocks = parseBlocks(m["blocks"]);
   return {
     name: m["name"].trim().slice(0, 200),
     ...(typeof m["version"] === "string" ? { version: m["version"].slice(0, 50) } : {}),
@@ -70,6 +147,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     settings,
     ...(admin_url ? { admin_url } : {}),
     ...(app ? { app } : {}),
+    ...(blocks.length > 0 ? { blocks } : {}),
   };
 }
 

@@ -937,6 +937,13 @@ export class FakeSupabase {
       return null;
     };
     switch (fn) {
+      // 0086: 編集の画面に出すプラグインのブロック（有効・名前のある連携のマニフェストの blocks だけ）
+      case "shop_app_blocks":
+        return json(
+          this.tables.hook_endpoints
+            .filter((e) => e["shop_id"] === args["p_shop_id"] && e["enabled"] !== false && e["app_handle"] && Array.isArray((e["manifest"] as Row | null)?.["blocks"]) && ((e["manifest"] as Row)["blocks"] as unknown[]).length > 0)
+            .map((e) => ({ app: e["app_handle"], name: e["name"], blocks: (e["manifest"] as Row)["blocks"] })),
+        );
       case "banto_admin_shop": {
         const s = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
         if (!s) return json(null);

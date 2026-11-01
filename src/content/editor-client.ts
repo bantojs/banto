@@ -162,6 +162,34 @@ export function pageEditorClient() {
     return parts.join(" ");
   }
 
+  /** プラグインのブロックの箱 → 「::: app <連携> <ブロック> product=… key=value…」の 1 行（blocks.ts の parseAppLine が受ける形だけ） */
+  function appLine(n: MdNode): string {
+    const name = /^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+    const app = attr(n, "data-app");
+    const block = attr(n, "data-block");
+    const product = attr(n, "data-product");
+    if (!name.test(app) || !name.test(block) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(product)) return "";
+    const parts = ["::: app", app, block, `product=${product}`];
+    let settings: Record<string, unknown> = {};
+    try {
+      const v: unknown = JSON.parse(attr(n, "data-settings") || "{}");
+      if (v && typeof v === "object" && !Array.isArray(v)) settings = v as Record<string, unknown>;
+    } catch {
+      settings = {};
+    }
+    let count = 0;
+    for (const [k, v] of Object.entries(settings)) {
+      const val = String(v);
+      if (count >= 8 || !/^[a-z][a-z0-9_]{0,30}$/.test(k) || k === "product" || k === "style") continue;
+      if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(val) && !/^-?[0-9]{1,7}$/.test(val)) continue;
+      parts.push(`${k}=${val}`);
+      count++;
+    }
+    const st = styleName(attr(n, "data-style"));
+    if (st) parts.push(`style=${st}`);
+    return parts.join(" ");
+  }
+
   /** 囲みの値に使える文字（選択肢は英小文字・数字・ハイフン。説明・題は " と改行を外す） */
   const word = (v: string) => (/^[a-z0-9-]{1,30}$/.test(v) ? v : "");
   const quoted = (v: string) => v.replace(/["\n\r]/g, "").replace(/\s+/g, " ").trim().slice(0, 200);
@@ -241,6 +269,11 @@ export function pageEditorClient() {
         continue;
       }
       // 商品を並べる・ボタンのブロック（src/pages/blocks.ts と同じ 1 行の形に戻す）
+      if (tag === "DIV" && attr(c, "data-banto-block") === "app") {
+        const line = appLine(c);
+        if (line) out.push(line);
+        continue;
+      }
       if (tag === "DIV" && attr(c, "data-banto-block") === "articles") {
         const line = articlesLine(c);
         if (line) out.push(line);
