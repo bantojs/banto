@@ -49,6 +49,8 @@ export interface PublicShop {
   pages_nav?: PageNavItem[];
   /** メニューに出すブログ（0081、同梱モジュール blog が ON のときだけ。src/blog/index.ts の blogsNav）。当たる前は無い */
   blogs_nav?: BlogNavItem[];
+  /** SKU の選択肢の key → 表示名（0094。src/products/option-names.ts）。当たる前は無い */
+  option_names?: Record<string, string>;
 }
 
 /** anon で products を読むときの列（0055 から anon は products.attributes を読めない。商品詳細は product_public_get が公開の項目だけを返す） */

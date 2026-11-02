@@ -88,7 +88,8 @@ describe.skipIf(!dbAvailable)("商品マスタの拡張（0008_catalog）", () =
       created.id,
       { code: "RUN-26", price_jpy: 9000, compare_at_price_jpy: 12000, gtin: "4901234567894", options: { サイズ: "26cm", 色: "白" } },
     ]);
-    expect(withSku.skus[0]).toMatchObject({ options: { サイズ: "26cm", 色: "白" }, gtin: "4901234567894", compare_at_price_jpy: 12000 });
+    // 名前で送っても key で置く（0094。サイズ → size、色 → color）
+    expect(withSku.skus[0]).toMatchObject({ options: { size: "26cm", color: "白" }, gtin: "4901234567894", compare_at_price_jpy: 12000 });
   });
 
   it("restore_catalog はカテゴリー（親子）と拡張列を slug / code で戻す。service_role だけが呼べる", async () => {
@@ -111,7 +112,7 @@ describe.skipIf(!dbAvailable)("商品マスタの拡張（0008_catalog）", () =
     );
     expect(sneakers.parent).toBe("shoes");
     const sku = await asUser(a.ownerId, async (c) => (await c.query<{ gtin: string; compare_at_price_jpy: number; options: Record<string, unknown> }>("select gtin, compare_at_price_jpy, options from skus where shop_id = $1 and code = 'RUN-26'", [dst])).rows[0]!);
-    expect(sku).toMatchObject({ gtin: "4901234567894", compare_at_price_jpy: 12000, options: { サイズ: "26cm" } });
+    expect(sku).toMatchObject({ gtin: "4901234567894", compare_at_price_jpy: 12000, options: { size: "26cm" } });
 
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select restore_catalog($1, '{}'::jsonb)", [dst])))).toMatch(/permission denied/);
     expect(await expectDbError(() => asAnon((c) => c.query("select api_categories_list('x')")))).toMatch(/permission denied/);

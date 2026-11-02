@@ -5,6 +5,7 @@
  *   - 守る（鍵がちょうど同じ・組み合わせが重ならない）のは DB。ここは画面とお店の表示のための判定だけ
  */
 import type { CategoryRow } from "../db/types";
+import { optionLabel, type OptionNames } from "./option-names";
 
 export const MAX_AXES = 3;
 export const MAX_AXIS_VALUES = 100;
@@ -110,9 +111,9 @@ export function optionAxesFromForm(f: Record<string, string>): OptionAxes | null
 }
 
 /** 軸を表示する短い文（「カラー × サイズ」・「品番だけ」） */
-export function axesLabel(axes: OptionAxes | null, onlyCode: string, none: string): string {
+export function axesLabel(axes: OptionAxes | null, onlyCode: string, none: string, names: OptionNames = {}): string {
   if (!axes) return none;
-  return axes.length === 0 ? onlyCode : axes.map((a) => a.key).join(" × ");
+  return axes.length === 0 ? onlyCode : axes.map((a) => optionLabel(names, a.key)).join(" × ");
 }
 
 /** 選んだ値（軸ごと）の組み合わせを全部。上限を超えたら null */
@@ -129,9 +130,11 @@ export function combinations(axes: OptionAxes, chosen: Record<string, string[]>)
   return out;
 }
 
-/** 品番のひな形（{カラー} などを値に置き換える）。SKU の code は 100 文字まで */
-export function codeFromPattern(pattern: string, options: Record<string, string>): string {
-  return pattern.replace(/\{([^{}]{1,40})\}/g, (m, k: string) => (k in options ? options[k]! : m)).trim().slice(0, 100);
+/** 品番のひな形（{カラー} や {color} を値に置き換える。options は key → 値、名前でも key でも書ける）。SKU の code は 100 文字まで */
+export function codeFromPattern(pattern: string, options: Record<string, string>, names: OptionNames = {}): string {
+  const byLabel: Record<string, string> = { ...options };
+  for (const [k, v] of Object.entries(options)) byLabel[optionLabel(names, k)] = v;
+  return pattern.replace(/\{([^{}]{1,40})\}/g, (m, k: string) => (k in byLabel ? byLabel[k]! : m)).trim().slice(0, 100);
 }
 
 /**
@@ -149,7 +152,7 @@ export const OPTION_AXES_SCRIPT = `(function(){
   var cur=(skus.filter(function(s){return s.o.selected;})[0]||skus[0]||{v:{}}).v,wrap=document.createElement("div"),pickers=[];
   axes.forEach(function(a,i){
     var id="axis_"+i,l=document.createElement("label"),s=document.createElement("select");
-    l.setAttribute("for",id);l.textContent=a.key;s.id=id;
+    l.setAttribute("for",id);l.textContent=a.name||a.key;s.id=id;
     var vals=[];skus.forEach(function(k){var v=String(k.v[a.key]==null?"":k.v[a.key]);if(v&&vals.indexOf(v)<0)vals.push(v);});
     vals.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;if(String(cur[a.key])===v)o.selected=true;s.appendChild(o);});
     s.addEventListener("change",apply);wrap.appendChild(l);wrap.appendChild(s);pickers.push({a:a,s:s});

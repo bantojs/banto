@@ -43,6 +43,9 @@ export interface FeedItem {
   gtin?: string;
   identifier_exists?: "no";
   product_type?: string;
+  /** SKU の選択肢の key が size / color のときの値（0094。Google の g:size / g:color） */
+  size?: string;
+  color?: string;
 }
 
 export interface FeedResult {
@@ -108,6 +111,9 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
         ...(p.brand ? { brand: clip(p.brand, 70) } : {}),
         ...(GTIN_RE.test(gtin) ? { gtin } : { identifier_exists: "no" as const }),
         ...(path.length > 0 ? { product_type: clip(path.join(" > "), 750) } : {}),
+        // 選択肢の key が決まった意味のもの（0094）だけ。名前の鍵（0094 の前）は意味が分からないので載せない
+        ...(typeof s.options?.["size"] === "string" && s.options["size"] ? { size: clip(String(s.options["size"]), 100) } : {}),
+        ...(typeof s.options?.["color"] === "string" && s.options["color"] ? { color: clip(String(s.options["color"]), 100) } : {}),
       });
     }
   }
@@ -138,7 +144,7 @@ export function feedItemsXml(r: FeedResult): string {
   const el = (k: string, v: string | undefined) => (v === undefined ? "" : `<g:${k}>${esc(v)}</g:${k}>`);
   const items = r.items.map(
     (i) =>
-      `<item>${el("id", i.id)}${el("item_group_id", i.item_group_id)}${el("title", i.title)}${el("description", i.description)}${el("link", i.link)}${el("image_link", i.image_link)}${i.additional_image_link.map((u) => el("additional_image_link", u)).join("")}${el("availability", i.availability)}${el("price", i.price)}${el("sale_price", i.sale_price)}${el("condition", i.condition)}${el("brand", i.brand)}${el("gtin", i.gtin)}${el("identifier_exists", i.identifier_exists)}${el("product_type", i.product_type)}</item>`,
+      `<item>${el("id", i.id)}${el("item_group_id", i.item_group_id)}${el("title", i.title)}${el("description", i.description)}${el("link", i.link)}${el("image_link", i.image_link)}${i.additional_image_link.map((u) => el("additional_image_link", u)).join("")}${el("availability", i.availability)}${el("price", i.price)}${el("sale_price", i.sale_price)}${el("condition", i.condition)}${el("brand", i.brand)}${el("gtin", i.gtin)}${el("identifier_exists", i.identifier_exists)}${el("product_type", i.product_type)}${el("size", i.size)}${el("color", i.color)}</item>`,
   );
   return items.map((x) => `${x}\n`).join("");
 }

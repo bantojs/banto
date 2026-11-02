@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { optionNamesOf } from "../../products/option-names";
 import { blockedTarget, storefrontSettings } from "../../storefront/mode";
 import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../storefront/events";
 import { injectHead, renderHeadTags } from "../../storefront/head";
@@ -804,7 +805,7 @@ async function cartJson(c: Ctx, s: ShopScope, cart: Cart, sectionsRaw?: unknown)
   // 値引きはカートのページ（cart.total_price）と同じ。コードが無ければ DB に問い合わせない
   const coupons = cart.coupons?.length ? await cartCoupons(c, { ...s, cart }, lines, subtotal) : null;
   const discounts = coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null;
-  const json = cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) }, lines, discounts, await cartImagesFor(s.sf, s.shop, lines));
+  const json = cartObject({ shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) }, lines, discounts, await cartImagesFor(s.sf, s.shop, lines));
   const sections = sectionsRaw === undefined ? null : await cartSections(c, { ...s, cart }, sectionsRaw, lines, discounts);
   return sections ? { ...json, sections } : json;
 }

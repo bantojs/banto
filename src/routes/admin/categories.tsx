@@ -9,6 +9,7 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { optionAxesFromForm } from "../../products/option-axes";
+import { optionNamesOf } from "../../products/option-names";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
 
@@ -45,9 +46,11 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     axes_saved: "axes.saved",
     axes_invalid: "axes.invalid",
     axes_mismatch: "axes.mismatch",
+    names_saved: "axes.names_saved",
+    names_invalid: "axes.names_invalid",
   };
   const key = code ? map[code] : undefined;
-  return key ? { kind: code === "saved" || code === "axes_saved" ? "ok" : "error", text: t(key) } : null;
+  return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" ? "ok" : "error", text: t(key) } : null;
 }
 
 function errorCode(e: unknown): string {
@@ -60,7 +63,9 @@ function errorCode(e: unknown): string {
 categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shop = await loadShop(c, param(c, "shopId"), "catalog");
+  // SKU の選択肢の表示名（0094）。軸の鍵は key で置かれる
   if (!shop) return c.text(t("shop.not_found"), 404);
+  const names = optionNamesOf(shop.option_names);
   const rows = await loadCategories(db, shop.id);
   const f = flash(c.req.query("flash"));
   const applied = appliedText((k) => c.req.query(k));
@@ -105,10 +110,10 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
           <td>
             <details>
               <summary>
-                {t("axes.title")}: {row.option_axes === null || row.option_axes === undefined ? t("axes.mode_inherit") : axesText(row.option_axes)}
+                {t("axes.title")}: {row.option_axes === null || row.option_axes === undefined ? t("axes.mode_inherit") : axesText(row.option_axes, names)}
               </summary>
               <form method="post" action={`${axesBase}/categories/${n.id}`}>
-                <AxesEditor name={row.name} axes={row.option_axes ?? null} modes={["inherit", "only_code", "axes"]} />
+                <AxesEditor name={row.name} axes={row.option_axes ?? null} modes={["inherit", "only_code", "axes"]} names={names} />
                 <button type="submit" class="secondary small">
                   {t("shop.save")}
                 </button>
@@ -141,18 +146,49 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
         <p class="muted">{t("axes.intro")}</p>
         <p class="muted">{t("axes.apply_hint")}</p>
         <h3>
-          {t("axes.shop")}: {axesText(shop.option_axes ?? null)}
+          {t("axes.shop")}: {axesText(shop.option_axes ?? null, names)}
         </h3>
         {can(c.get("shopAccess"), "settings") ? (
           <form method="post" action={`${axesBase}/shop`}>
             <p class="muted">{t("axes.shop_hint")}</p>
-            <AxesEditor name={t("axes.shop")} axes={shop.option_axes ?? null} modes={["none", "only_code", "axes"]} />
+            <AxesEditor name={t("axes.shop")} axes={shop.option_axes ?? null} modes={["none", "only_code", "axes"]} names={names} />
             <button type="submit" class="secondary">
               {t("shop.save")}
             </button>
           </form>
         ) : null}
         <p>{applyButton(null, t("axes.apply_shop"))}</p>
+        {Object.keys(names).length > 0 ? (
+          <div id="option-names">
+            <h3>{t("axes.names_title")}</h3>
+            <p class="muted">{t("axes.names_hint")}</p>
+            <form method="post" action={`/admin/shops/${shop.id}/option-names`}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("axes.names_key")}</th>
+                    <th>{t("axes.names_name")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(names).map(([k, n]) => (
+                    <tr>
+                      <td>
+                        <code>{k}</code>
+                      </td>
+                      <td>
+                        <input type="text" name={`name.${k}`} value={n} required maxlength={40} aria-label={`${k} ${t("axes.names_name")}`} style="width:12rem" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button type="submit" class="secondary">
+                {t("shop.save")}
+              </button>
+            </form>
+          </div>
+        ) : null}
       </section>
         <div>
           {rows.length === 0 ? (
@@ -253,6 +289,24 @@ categories.post("/:shopId/option-axes/categories/:categoryId", requireOwner, asy
     throw e;
   }
   return c.redirect(`${back}?flash=axes_saved`);
+});
+
+/** SKU の選択肢の表示名を変える（0094。key は変わらない。項目 catalog、判定は option_names_set） */
+categories.post("/:shopId/option-names", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const back = `/admin/shops/${shopId}/categories`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const f = await formFields(c);
+  const names: Record<string, string> = {};
+  for (const [k, v] of Object.entries(f)) if (k.startsWith("name.")) names[k.slice(5)] = v.trim();
+  try {
+    await db.rpc("option_names_set", { p_shop_id: shopId, p_names: names });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${back}?flash=names_invalid#option-names`);
+    throw e;
+  }
+  return c.redirect(`${back}?flash=names_saved#option-names`);
 });
 
 /** ショップの既定（settings の項目。ショップの行を書くため） */

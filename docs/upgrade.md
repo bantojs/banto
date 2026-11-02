@@ -138,6 +138,10 @@ npm run deploy
 
 - **0073_plan_theme_limit（プランの上限にテーマの版の数）**: `plan_limits` に `theme_versions` を置けるようになります（この Banto 全体で置けるテーマの版の数。0 なら Liquid のテーマを取り込めません）。Banto をホスティングして貸す人向けで、セルフホストでは置かなくてかまいません。
 - **0074_theme_preview（テーマのプレビューと描く条件）**: テーマのプレビューに、版に保存した設定の値が効くようになります。`plan_limits.theme_versions` が 0 のときは、公開中の版も描かなくなります。当てるまでは、プレビューはテーマのファイルの値で描き、描く条件は Workers のプランだけです。
+- **0094_option_keys（SKU の選択肢の key と表示名）**: SKU の選択肢・画像の結び付け・SKU を分ける軸の鍵が、英字の key（`size`・`color`・`opt1`…）になり、表示名はショップの「選択肢の名前」の表（`shops.option_names`）に移ります。当てるときに今の名前の鍵を key に書き換えます（よくある名前は決まった key: サイズ → `size`、カラー・色 → `color` など。同じ意味の別の名前は `color_2` のように分けます）。**お店の画面・テーマ（`product.options` は表示名）の見た目は変わりません。** 管理画面のカテゴリーの画面で表示名を変えられます（key は変わらないので、SKU・画像の結び付けは切れません）。**連携サイト（ヘッドレス・AI 用 API）への影響**: `skus[].options` と `option_axes[].key` が英字の key になります。照らし合わせ（軸の key と options の鍵が同じ）はそのままですが、軸の見出しを `key` から出していた連携サイトは、新しい `option_axes[].name`（公開 API・AI 用 API）か商品の `option_names` を使うよう直してください。書き込み（AI 用 API・CSV・取り込み）は名前のままでも受け付けます。商品フィードは key が `size` / `color` の値を `g:size` / `g:color` に載せます。
+- **0093_api_volatile（AI 用 API の画像の設定とカテゴリーの一覧）**: `GET /api/v1/image-settings`・`GET /api/v1/categories`（MCP のカテゴリーの一覧も）が、前の利用から 1 分あくと失敗していたのを直します。
+- **0092_image_processing（商品画像の変換を外部プラグインに任せる）**: ショップの設定に「商品画像の変換」が出ます（docs/images.md）。AI 用 API の画像の差し替えが中間の段も受け、`GET /api/v1/image-settings` が増えます。当てるまでは今までどおりブラウザで変換します。
+- **0091_image_variants（商品画像の大きさの段）**: 商品画像を横幅の段（400 / 800 / … / 本画像）で作り、本画像の横幅をショップの設定で選べます（docs/images.md）。当てるまでは本画像とサムネイルの 2 段です。
 - **0090_security_hardening_4（守りの締め直し 4）**: 次のリリースに入るデータベースの変更です。当てると次が変わります。
   - **会員の「ログインしてから 15 分以内」の起点**を `member_sessions.authenticated_at`（ログインを確かめた時刻）で数えます。パスワードの変更などでセッションを作り直しても起点は若返りません（`member_session_start` の `p_authenticated_at`。既存の行はセッションを作った時刻で埋めます）。
   - **退会・LINE / Google の連携の解除・パスキーの削除・全端末ログアウト**は、ログインしてから 15 分以内のセッションだけになります（`member_withdraw` / `member_unlink_identity` / `member_passkey_delete` / `member_logout_all` の `p_session_id`。過ぎていれば `reauth_required` で、入り直してからやり直します）。退会したときは本人に知らせのメールが届きます（送信元はメール通知プラグインの設定。無ければ送りません）。**このリリースの Worker に更新すると `p_session_id` を必ず渡します**（当てるまでの古いデータベースでは今までどおり世代だけで確かめます）。

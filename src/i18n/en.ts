@@ -2424,4 +2424,10 @@ export const en: Record<MessageKey, string> = {
   "shop.image_processing_hint": "When left to a plugin, uploads send only the original photo and a thumbnail (400px wide); an external plugin that can convert images (e.g. banto-plugin-webp) makes the main image and the steps and replaces them. For a few minutes until it finishes, the storefront shows the original photo. Originals up to 20MB are accepted.",
   "shop.image_processing_no_plugin": "No plugin that can convert images is connected. The original photos will be shown in the storefront as is. Connect one in the integrations screen, or switch back to “Convert in the browser”.",
   "image.plugin_note": "The original photo is sent as is (up to 20MB) and your browser only makes a thumbnail (400px wide). An external conversion plugin makes the main image and the steps within a few minutes and replaces them (shop setting “Product image conversion”).",
+  "axes.names_title": "Option names",
+  "axes.names_hint": "Display names of SKU options (size, color, …). Renaming does not change SKUs, image links or axes (they are linked by the key on the left). The names shown in the storefront, themes and API change.",
+  "axes.names_key": "key",
+  "axes.names_name": "Display name",
+  "axes.names_saved": "Option names saved.",
+  "axes.names_invalid": "Could not save option names. Names must be 1–40 characters and different from other options.",
 };

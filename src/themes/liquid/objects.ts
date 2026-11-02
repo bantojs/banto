@@ -5,6 +5,7 @@
  * - 作るのはただのオブジェクト（テーマは自前のプロパティだけを読める）。テーマに渡すのは公開してよい値だけ
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
+import { optionLabel, type OptionNames } from "../../products/option-names";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
 import type { CartLine } from "../types";
@@ -21,6 +22,8 @@ export interface UrlBase {
   /** ドメインの上でのパス（""）。商品は `${shopPath}/p/<slug>` */
   shopPath: string;
   mediaBaseUrl: string;
+  /** SKU の選択肢の key → 表示名（0094）。product.options・options_with_values の name に出す */
+  optionNames?: OptionNames;
 }
 
 const mediaUrl = (u: UrlBase, key: string) => `${u.mediaBaseUrl.replace(/\/+$/, "")}/${key}`;
@@ -86,10 +89,12 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
   const p = d.product;
   const selected = d.skus.find((s) => s.code === selectedSku) ?? null;
   const images = orderImagesForSku(d.images, selected?.options ?? null).map((img) => imageObject(u, img, p.name));
-  const optionNames: string[] = [];
-  for (const s of d.skus) for (const k of Object.keys(s.options ?? {})) if (!optionNames.includes(k)) optionNames.push(k);
+  // 選択肢の key（並びは SKU に出てくる順）。テーマに出す名前は表示名（Shopify の product.options と同じく名前の並び）
+  const optionKeys: string[] = [];
+  for (const s of d.skus) for (const k of Object.keys(s.options ?? {})) if (!optionKeys.includes(k)) optionKeys.push(k);
+  const optionNames = optionKeys.map((k) => optionLabel(u.optionNames ?? {}, k));
   // 選択肢の値は、選択肢の名前の並びと同じ位置で持つ（SKU ごとに鍵が違っても、位置がずれないように）
-  const optsBySku = d.skus.map((s) => optionNames.map((k) => (s.options?.[k] === undefined ? null : String(s.options[k]))));
+  const optsBySku = d.skus.map((s) => optionKeys.map((k) => (s.options?.[k] === undefined ? null : String(s.options[k]))));
   const variants = d.skus.map((s, si) => {
     const opts = optsBySku[si]!;
     return {
@@ -271,7 +276,7 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
   const items = lines.map((l, i) => {
     const imgRow = firstImageForSku(images.get(l.product.id) ?? [], l.sku.options ?? null);
     const image = imgRow ? imageObject(u, imgRow, l.product.name) : null;
-    const opts = Object.entries(l.sku.options ?? {}).map(([name, value]) => ({ name, value: String(value) }));
+    const opts = Object.entries(l.sku.options ?? {}).map(([key, value]) => ({ name: optionLabel(u.optionNames ?? {}, key), value: String(value) }));
     const variantTitle = l.sku.name || opts.map((o) => o.value).join(" / ") || null;
     const price = money(l.sku.price_jpy)!;
     const url = `${u.shopPath}/p/${encodeURIComponent(l.product.slug)}?sku=${encodeURIComponent(l.sku.code)}`;

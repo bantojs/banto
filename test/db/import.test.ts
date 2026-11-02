@@ -50,7 +50,8 @@ describe.skipIf(!dbAvailable)("一括取り込み import_catalog（0009）", () 
     const skus = (await getPool().query("select code, compare_at_price_jpy, gtin, options from skus where code like 'HCCBD%' order by code")).rows;
     // 通常価格が販売価格以下、JAN の形が違うものは捨てる（取り込み自体は止めない）
     expect(skus).toEqual([
-      { code: "HCCBD-S5501", compare_at_price_jpy: 9990, gtin: "2000005221484", options: { Color: "Blue", Size: "01(S)" } },
+      // WooCommerce の属性の名前は key に直して置く（0094。Color → color、Size → size）
+      { code: "HCCBD-S5501", compare_at_price_jpy: 9990, gtin: "2000005221484", options: { color: "Blue", size: "01(S)" } },
       { code: "HCCBD-S5502", compare_at_price_jpy: null, gtin: null, options: {} },
     ]);
     expect(await stockOf("HCCBD-S5501")).toBe(2);

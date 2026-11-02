@@ -23,6 +23,7 @@ function PasskeyButton({ ctx, kind, returnTo }: { ctx: ThemeContext; kind: "logi
 
 const PROVIDER_LABELS = { line: "LINE", google: "Google" } as const;
 import { imageUrl, responsiveImage } from "../../media/images";
+import { optionLabel, optionNamesOf } from "../../products/option-names";
 import { jsonLdText, productJsonLd } from "../../storefront/structured-data";
 import { yen } from "../../routes/common";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
@@ -640,7 +641,7 @@ export const defaultTheme: Theme = {
             ) : null}
             {skus.length === 0 ? <p class="muted">{t("store.unavailable")}</p> : null}
             {skus.length > 0 ? (
-              <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axes.map((a) => ({ key: a.key }))) } : {})}>
+              <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axes.map((a) => ({ key: a.key, name: optionLabel(optionNamesOf(ctx.shop.option_names), a.key) }))) } : {})}>
                 <label for="sku_id">{t("store.variant")}</label>
                 <select id="sku_id" name="sku_id" required>
                   {skus.map((s) => (

@@ -439,7 +439,7 @@ export interface PrivilegedDb {
   /** 画像を SKU に結んだもの（0063）を、復元した画像に写す（キーで結ぶ） */
   restoreProductImageOptions(shopId: string, items: { storage_key: unknown; options: unknown }[]): Promise<Record<string, number>>;
   /** SKU を分ける軸（0065）。ショップ・カテゴリー・商品の軸を戻す（商品は SKU に合うものだけ）。{ shop: null } だけで呼ぶと既定を外す */
-  restoreOptionAxes(shopId: string, data: { shop?: unknown; categories?: unknown[]; products?: unknown[] }): Promise<Record<string, number>>;
+  restoreOptionAxes(shopId: string, data: { shop?: unknown; categories?: unknown[]; products?: unknown[]; option_names?: unknown }): Promise<Record<string, number>>;
   /**
    * AI 用トークン経由の操作（docs/ai-access.md）。呼べるのは api_* だけで、各 RPC が SQL 側で
    * トークン・スコープ・ショップ所有を検証する。p_token_hash は Worker で SHA-256 にした値。

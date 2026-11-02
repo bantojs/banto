@@ -21,6 +21,7 @@ import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
 import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices } from "../../products/images";
 import { MAX_COMBINATIONS, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
 import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./option-axes";
+import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 
 export const products = new Hono<AppEnv>();
 
@@ -379,6 +380,8 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const data = await loadProduct(c, shopId, productId);
   if (!data) return c.text(t("product.not_found"), 404);
   const { shop, product, skus, images } = data;
+  // SKU の選択肢の表示名（0094。鍵は key で置かれる）
+  const names = optionNamesOf(shop.option_names);
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const mediaBase = mediaBaseUrl(c);
   const [catalog, variantsReady, pluginMode] = await Promise.all([catalogContext(c, shop), imageVariantsReady(c), imagePluginMode(c, shop)]);
@@ -415,16 +418,16 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         <section class="card" id="option-axes">
           <h2>{t("axes.title")}</h2>
           <p>
-            {t("axes.current")}: <strong>{axesText(product.option_axes ?? null)}</strong>
+            {t("axes.current")}: <strong>{axesText(product.option_axes ?? null, names)}</strong>
             {product.option_axes_custom ? <span class="muted"> （{t("axes.custom")}）</span> : null}
           </p>
           <p class="muted">
-            {tf("axes.upper", { label: axesText(upper.axes), from: upper.from ? (upper.from.kind === "category" ? tf("axes.from_category", { name: upper.from.name }) : t("axes.from_shop")) : t("axes.from_none") })}
+            {tf("axes.upper", { label: axesText(upper.axes, names), from: upper.from ? (upper.from.kind === "category" ? tf("axes.from_category", { name: upper.from.name }) : t("axes.from_shop")) : t("axes.from_none") })}
           </p>
           <details>
             <summary>{t("product.edit")}</summary>
             <form method="post" action={`${base}/option-axes`}>
-              <AxesEditor name={product.name} axes={product.option_axes ?? null} modes={["none", "only_code", "axes"]} />
+              <AxesEditor name={product.name} axes={product.option_axes ?? null} modes={["none", "only_code", "axes"]} names={names} />
               <button type="submit" class="secondary">
                 {t("shop.save")}
               </button>
@@ -475,7 +478,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
                 </td>
                 <td>
                   {s.name ?? ""}
-                  {Object.keys(s.options ?? {}).length > 0 ? <div class="muted">{formatOptions(s.options ?? {})}</div> : null}
+                  {Object.keys(s.options ?? {}).length > 0 ? <div class="muted">{formatOptions(s.options ?? {}, ", ", names)}</div> : null}
                 </td>
                 <td>
                   ¥{s.price_jpy.toLocaleString("ja-JP")}
@@ -483,7 +486,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
                   <details>
                     <summary>{t("sku.edit")}</summary>
                     <form method="post" action={`${base}/skus/${s.id}`}>
-                      <SkuFields sku={s} axes={axes} />
+                      <SkuFields sku={s} axes={axes} names={names} />
                       <button type="submit">{t("shop.save")}</button>
                     </form>
                   </details>
@@ -516,14 +519,14 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         <input id="sku_name" type="text" name="name" maxlength={200} />
         <label for="price_jpy">{t("sku.price")}</label>
         <input id="price_jpy" type="number" name="price_jpy" min={0} step={1} required />
-        <SkuExtraFields axes={axes} />
+        <SkuExtraFields axes={axes} names={names} />
         <label for="available">{t("sku.stock")}</label>
         <input id="available" type="number" name="available" min={0} step={1} value="0" />
         <p>
           <button type="submit">{t("sku.add")}</button>
         </p>
       </form>
-      {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} /> : null}
+      {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} names={names} /> : null}
       <ChipsScript />
 
       <h2 id="images">{t("image.list")}</h2>
@@ -562,7 +565,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
                     <form method="post" action={`${base}/images/${img.id}/options`} style="display:inline">
                       {optionChoices.map((ch) => (
                         <label style="display:inline-block;margin-right:.5rem">
-                          {ch.key}{" "}
+                          {optionLabel(names, ch.key)}{" "}
                           <select name={`options.${ch.key}`}>
                             <option value="">{t("image.options_any")}</option>
                             {ch.values.map((v) => (
@@ -660,15 +663,16 @@ export function parseOptions(input: string): Record<string, string> {
   return out;
 }
 
-function formatOptions(options: Record<string, string | number>, separator = ", "): string {
+function formatOptions(options: Record<string, string | number>, separator = ", ", names: OptionNames = {}): string {
   return Object.entries(options)
-    .map(([k, v]) => `${k}=${v}`)
+    .map(([k, v]) => `${optionLabel(names, k)}=${v}`)
     .join(separator);
 }
 
 /** SKU の選択肢の欄。軸を決めた商品は軸ごとの欄（値の候補つき）、品番だけの商品は欄なし、決めていなければ自由入力（0065） */
-function SkuOptionFields(props: { sku?: SkuRow; axes: OptionAxes | null | undefined; suffix: string }) {
+function SkuOptionFields(props: { sku?: SkuRow; axes: OptionAxes | null | undefined; suffix: string; names?: OptionNames }) {
   const { sku: s, axes, suffix } = props;
+  const names = props.names ?? {};
   if (axes && axes.length === 0) return <input type="hidden" name="options_mode" value="none" />;
   if (axes) {
     return (
@@ -677,7 +681,7 @@ function SkuOptionFields(props: { sku?: SkuRow; axes: OptionAxes | null | undefi
         <input type="hidden" name="options_mode" value="axes" />
         {axes.map((a, i) => (
           <span style="display:inline-block;margin-right:.75rem">
-            <label for={`opt${suffix}_${i}`}>{a.key}</label>
+            <label for={`opt${suffix}_${i}`}>{optionLabel(names, a.key)}</label>
             <input id={`opt${suffix}_${i}`} type="text" name={`opt.${i}`} value={s ? String((s.options ?? {})[a.key] ?? "") : ""} required maxlength={60} list={`axis${suffix}_${i}`} style="width:9rem" />
             <datalist id={`axis${suffix}_${i}`}>
               {(a.values ?? []).map((v) => (
@@ -693,18 +697,18 @@ function SkuOptionFields(props: { sku?: SkuRow; axes: OptionAxes | null | undefi
     <>
       <label for={`options${suffix}`}>{t("sku.options")}</label>
       <textarea id={`options${suffix}`} name="options" rows={3} placeholder={t("sku.options_placeholder")}>
-        {s ? formatOptions(s.options ?? {}, "\n") : ""}
+        {s ? formatOptions(s.options ?? {}, "\n", names) : ""}
       </textarea>
     </>
   );
 }
 
-function SkuExtraFields(props: { sku?: SkuRow; axes?: OptionAxes | null }) {
+function SkuExtraFields(props: { sku?: SkuRow; axes?: OptionAxes | null; names?: OptionNames }) {
   const s = props.sku;
   const suffix = s ? `_${s.id}` : "";
   return (
     <div>
-      <SkuOptionFields sku={s} axes={props.axes} suffix={suffix} />
+      <SkuOptionFields sku={s} axes={props.axes} suffix={suffix} names={props.names} />
       <label for={`compare_at${suffix}`}>{t("sku.compare_at")}</label>
       <input id={`compare_at${suffix}`} type="number" name="compare_at_price_jpy" min={0} step={1} value={s?.compare_at_price_jpy ? String(s.compare_at_price_jpy) : ""} />
       <label for={`gtin${suffix}`}>{t("sku.gtin")}</label>
@@ -713,7 +717,7 @@ function SkuExtraFields(props: { sku?: SkuRow; axes?: OptionAxes | null }) {
   );
 }
 
-function SkuFields(props: { sku: SkuRow; axes?: OptionAxes | null }) {
+function SkuFields(props: { sku: SkuRow; axes?: OptionAxes | null; names?: OptionNames }) {
   const s = props.sku;
   return (
     <div>
@@ -721,28 +725,29 @@ function SkuFields(props: { sku: SkuRow; axes?: OptionAxes | null }) {
       <input id={`name_${s.id}`} type="text" name="name" value={s.name ?? ""} maxlength={200} />
       <label for={`price_${s.id}`}>{t("sku.price")}</label>
       <input id={`price_${s.id}`} type="number" name="price_jpy" min={0} step={1} required value={String(s.price_jpy)} />
-      <SkuExtraFields sku={s} axes={props.axes} />
+      <SkuExtraFields sku={s} axes={props.axes} names={props.names} />
     </div>
   );
 }
 
 /** 組み合わせの一括作成（0065）。値の候補にチェック・ほかの値を足す → 組み合わせの数だけ SKU */
-function MatrixForm(props: { action: string; axes: OptionAxes; slug: string }) {
-  const pattern = [props.slug.toUpperCase(), ...props.axes.map((a) => `{${a.key}}`)].join("-");
+function MatrixForm(props: { action: string; axes: OptionAxes; slug: string; names?: OptionNames }) {
+  const names = props.names ?? {};
+  const pattern = [props.slug.toUpperCase(), ...props.axes.map((a) => `{${optionLabel(names, a.key)}}`)].join("-");
   return (
     <form method="post" action={props.action} class="card">
       <h3>{t("axes.matrix")}</h3>
       <p class="muted">{tf("axes.matrix_hint", { max: MAX_COMBINATIONS })}</p>
       {props.axes.map((a, i) => (
         <fieldset>
-          <legend>{a.key}</legend>
+          <legend>{optionLabel(names, a.key)}</legend>
           {(a.values ?? []).map((v) => (
             <label style="display:inline-block;margin-right:.75rem">
               <input type="checkbox" name={`mx.${i}`} value={v} checked /> {v}
             </label>
           ))}
           <label for={`mx_other_${i}`}>{t("axes.matrix_other")}</label>
-          <ChipsInput id={`mx_other_${i}`} name={`mx_other.${i}`} values={[]} label={`${a.key} ${t("axes.matrix_other")}`} />
+          <ChipsInput id={`mx_other_${i}`} name={`mx_other.${i}`} values={[]} label={`${optionLabel(names, a.key)} ${t("axes.matrix_other")}`} />
         </fieldset>
       ))}
       <label for="mx_code">{t("axes.matrix_code")}</label>
@@ -892,7 +897,8 @@ products.post("/:shopId/products/:productId/sku-matrix", requireOwner, async (c:
   const { db } = owner(c);
   const { shopId, productId } = params(c);
   const base = `/admin/shops/${shopId}/products/${productId}`;
-  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const matrixShop = await loadShop(c, shopId, "catalog");
+  if (!matrixShop) return c.text(t("shop.not_found"), 404);
   const axes = await productAxes(c, shopId, productId);
   if (!axes || axes.length === 0) return c.redirect(`${base}?flash=generic`);
   const raw = await c.req.parseBody({ all: true });
@@ -923,7 +929,7 @@ products.post("/:shopId/products/:productId/sku-matrix", requireOwner, async (c:
       continue;
     }
     try {
-      const [sku] = await db.from<SkuRow>("skus").insert({ shop_id: shopId, product_id: productId, code: codeFromPattern(pattern, options), name: null, price_jpy: price, options });
+      const [sku] = await db.from<SkuRow>("skus").insert({ shop_id: shopId, product_id: productId, code: codeFromPattern(pattern, options, optionNamesOf(matrixShop.option_names)), name: null, price_jpy: price, options });
       if (available > 0) await db.rpc("set_stock", { p_sku_id: sku!.id, p_available: available });
       created++;
     } catch (e) {

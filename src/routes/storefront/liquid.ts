@@ -7,6 +7,7 @@
  *   - CPU の上限を気にしなくてよい（Workers の有料プラン = サイトの設定 workers_plan が paid、か Node）
  * テーマが壊れている・上限を超えた・その種類のテンプレートが無いときも既定のテーマで描く（お店を止めない）。
  */
+import { optionNamesOf } from "../../products/option-names";
 import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
@@ -182,7 +183,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
   const home = shopHome(publicBaseUrl(c), s.shop);
   const origin = shopOrigin(publicBaseUrl(c), s.shop);
   const shopPath = s.ctx.shopPath;
-  const u = { shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const tree: CategoryNode[] = categoryTree(page.categories);
   const canonical = `${home}${page.path}`;
   const head = [
@@ -252,7 +253,7 @@ export async function cartSections(c: Ctx, s: LiquidScope, raw: unknown, lines: 
   if (ids.length === 0) return null;
   const choice = await liquidThemeFor(c, s, { cartLines: lines });
   if (!choice) return null;
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const [categories, setup] = await Promise.all([s.sf.listCategories(s.shop), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
   const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel) };
   const input = pageInput(c, s, choice, { template: "cart", values: { cart }, title: t("store.cart"), path: "/cart", noindex: true, categories });
@@ -330,7 +331,7 @@ export function renderListing(
   choice: LiquidChoice,
   p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; path: string },
 ): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
   const filtered = Boolean(p.category || p.tag);
   const collection = collectionObject(u, {
@@ -356,7 +357,7 @@ export function renderListing(
 }
 
 export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { detail: ProductDetail; categories: CategoryRow[]; categoryNames: string[]; selectedSku: string | null }): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const product = productFromDetail(u, p.detail, p.selectedSku);
   const home = shopHome(publicBaseUrl(c), s.shop);
   const path = `/p/${encodeURIComponent(p.detail.product.slug)}`;
@@ -384,14 +385,14 @@ const paymentLabel = (p: "stripe" | "komoju"): string => t(p === "stripe" ? "sto
 
 /** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く）。payments は使える決済手段（cart.banto_payment_methods） */
 export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean }; error?: string; categories: CategoryRow[] }): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel) };
   return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
 }
 
 /** 検索（templates/search）。search.results は商品だけ */
 export function renderSearch(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { q: string; page: ProductListPage | null; categories: CategoryRow[]; link: (cursor: string | null) => string; after?: string }): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const results = (p.page?.items ?? []).map((x) => ({ ...productFromSummary(u, x), object_type: "product" }));
   // 短すぎる語（3 文字未満）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
   const search = { performed: p.page !== null, terms: p.q, too_short: p.q !== "" && p.page === null, results, results_count: p.page?.total ?? results.length, types: ["product"], filters: [], sort_by: null, sort_options: [] };
@@ -578,7 +579,7 @@ type BodyBlocks = { block: ProductBlock; items: ProductSummary[] }[];
  */
 function withProductBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, blocks?: BodyBlocks, cards?: string[]): string {
   if (!blocks?.length) return fillProductBlocks(html, []);
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   let rendered = cards ?? [];
   if (themeHasSnippet(choice.lt, "page-products")) {
     try {

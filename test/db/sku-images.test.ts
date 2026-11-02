@@ -40,7 +40,8 @@ describe.skipIf(!dbAvailable)("SKU ごとの画像（0063）", () => {
     expect((await insertImage(a, "shops/a/whole.webp")).options).toEqual({});
     expect((await insertImage(a, "shops/a/red.webp", { color: "レッド" })).options).toEqual({ color: "レッド" });
     for (const bad of [{ color: 1 }, { color: "" }, { "": "x" }, { color: "x".repeat(61) }, { a: "1", b: "1", c: "1", d: "1", e: "1", f: "1" }]) {
-      expect(await expectDbError(() => insertImage(a, "shops/a/bad.webp", bad))).toMatch(/product_images_options_check/);
+      // 空の鍵は名前を key に直すところ（0094）で、ほかは CHECK で弾く
+      expect(await expectDbError(() => insertImage(a, "shops/a/bad.webp", bad))).toMatch(/product_images_options_check|invalid_option_key/);
     }
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("update product_images set options = '[]'::jsonb where shop_id = $1", [a.shopId])))).toMatch(/product_images_options_check/);
   });

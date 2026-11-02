@@ -68,6 +68,8 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "banto_image_options_ok", // 0063: product_images.options の CHECK（値の形を見るだけ）
   "banto_option_axes_ok", // 0065: shops / categories / products の option_axes の CHECK（値の形を見るだけ）
   "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
+  "banto_option_names_ok", // 0094: shops.option_names の CHECK（値の形を見るだけ）
+  "option_names_set", // 0094: SKU の選択肢の表示名を変える（中で catalog の項目を確かめる）
   // 0071: テーマの版（中で design の項目を確かめる）
   "theme_preview_audit", "theme_publish", "theme_version_complete", "theme_version_create", "theme_version_delete", "theme_version_set_settings",
   "banto_page_handle_ok", // 0079: pages.handle の CHECK（値の形を見るだけ）

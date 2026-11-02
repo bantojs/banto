@@ -1400,6 +1400,19 @@ export class FakeSupabase {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json({ code: "42501", message: "shop_not_found" }, 403);
       return json(this.salesSummary(args["p_shop_id"] as string, String(args["p_from"]), String(args["p_to"]), String(args["p_group_by"] ?? "day")));
     }
+    if (fn === "option_names_set") {
+      // 0094: 本物の SQL（名前の重なり・知らない key）は test/db/option-keys.test.ts
+      const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      if (!shop) return json({ code: "P0001", message: "forbidden" }, 403);
+      const cur = { ...((shop["option_names"] ?? {}) as Record<string, string>) };
+      for (const [k, v] of Object.entries(args["p_names"] as Record<string, string>)) {
+        if (!(k in cur) || !v) return json({ code: "P0001", message: "invalid_option_names" }, 400);
+        cur[k] = v;
+      }
+      if (new Set(Object.values(cur).map((v) => v.toLowerCase())).size !== Object.keys(cur).length) return json({ code: "P0001", message: "invalid_option_names" }, 400);
+      shop["option_names"] = cur;
+      return json(cur);
+    }
     if (fn === "option_axes_apply") {
       const shopId = args["p_shop_id"] as string;
       if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "forbidden" }, 403);
@@ -1843,6 +1856,8 @@ export class FakeSupabase {
       legal_notice: s["legal_notice"] ?? null, privacy_policy: s["privacy_policy"] ?? null, return_policy: s["return_policy"] ?? null,
       domain: s["domain"] ?? null, stripe_connected: Boolean(s["stripe_account_id"]),
       settings: publicShopSettings((s["settings"] ?? {}) as Record<string, unknown>),
+      // 0094: SKU の選択肢の key → 表示名（テストは shops の行に option_names を置く）
+      option_names: (s["option_names"] ?? {}) as Row,
       legal_links: this.legalLinksLive(s),
       // 0071: 公開中のテーマの版（独自ドメインのあるショップだけ）。テストは shops の行に theme_public を置く
       theme: s["domain"] && s["theme_public"] ? s["theme_public"] : null,

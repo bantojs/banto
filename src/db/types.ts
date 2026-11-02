@@ -19,6 +19,8 @@ export interface ShopRow {
   legal_links_state?: Record<string, unknown>;
   /** 0065。SKU を分ける軸のショップの既定（ひな形）。src/products/option-axes.ts */
   option_axes?: unknown;
+  /** 0094。SKU の選択肢の key → 表示名（src/products/option-names.ts）。0094 の前は無い */
+  option_names?: unknown;
   created_at: string;
   updated_at: string;
 }

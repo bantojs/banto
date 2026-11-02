@@ -177,7 +177,8 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     sb.addSku(shop.id, p.id, { code: "B-S", price_jpy: 1000, available: 0, options: { カラー: "ブルー", サイズ: "S" } });
     const b = new Browser(app);
     let html = await (await b.get("/my-shop/p/tee")).text();
-    expect(html).toContain('data-axes="[{&quot;key&quot;:&quot;カラー&quot;},{&quot;key&quot;:&quot;サイズ&quot;}]"');
+    // 軸の見出しは表示名（0094。名前の表に無い key はそのまま）
+    expect(html).toContain('data-axes="[{&quot;key&quot;:&quot;カラー&quot;,&quot;name&quot;:&quot;カラー&quot;},{&quot;key&quot;:&quot;サイズ&quot;,&quot;name&quot;:&quot;サイズ&quot;}]"');
     expect(html).toContain('data-options="{&quot;カラー&quot;:&quot;レッド&quot;,&quot;サイズ&quot;:&quot;S&quot;}"');
     expect(html).toContain("data-axes-price");
     expect(html).toContain('closest("[data-axes]")');
@@ -188,7 +189,8 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     expect(html).not.toContain("data-axes");
     // 公開 API は軸と SKU に出てくる値を返す
     const r = (await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: { option_axes: unknown } };
-    expect(r.product.option_axes).toEqual([{ key: "カラー", values: ["レッド", "ブルー"] }, { key: "サイズ", values: ["S"] }]);
+    // 公開 API の軸は表示名（name）も返す（0094）
+    expect(r.product.option_axes).toEqual([{ key: "カラー", name: "カラー", values: ["レッド", "ブルー"] }, { key: "サイズ", name: "サイズ", values: ["S"] }]);
   });
 
   it("AI 用 API: PUT /products/{id}/option-axes と MCP。SKU が合わない軸は 400、重なる SKU の作成は 409", async () => {
@@ -224,7 +226,7 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     expect(res.status).toBe(201);
     await call("POST", `/products/${p.id}/skus`, { code: "C-2", price_jpy: 1200, available: 1, options: { 長さ: "2,000mm", 柄: "赤、白のボーダー" } });
     const detail = (await (await app.request(`${BASE}/api/shops/my-shop/products/cable`)).json()) as { product: { option_axes: unknown; skus: { options: unknown }[] } };
-    expect(detail.product.option_axes).toEqual([{ key: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", values: ["赤、白のボーダー"] }]);
+    expect(detail.product.option_axes).toEqual([{ key: "長さ", name: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", name: "柄", values: ["赤、白のボーダー"] }]);
     expect(detail.product.skus[0]!.options).toEqual({ 長さ: "1,000mm", 柄: "赤、白のボーダー" });
     // お店の画面の軸ごとの選択欄にも、値はそのまま載る
     const html = await (await new Browser(app).get("/my-shop/p/cable")).text();

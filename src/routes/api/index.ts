@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 import { connectApi } from "./connect";
 import { appDataOf, productReviews } from "../../apps/app-data";
 import type { AppEnv } from "../../app";
@@ -194,7 +195,9 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height, options: imageOptionsOf(i.options) })),
       skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
       /** SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値（出てくる順）。軸の無い商品は [] */
-      option_axes: optionAxesForSelect(p.option_axes, detail.skus),
+      option_axes: optionAxesForSelect(p.option_axes, detail.skus, optionNamesOf(shop.option_names)),
+      /** SKU の options の key → 表示名（0094） */
+      option_names: optionNamesOf(shop.option_names),
       /** 外部プラグインの拡張データ（0084、公開の分だけ）。reviews はレビューの要約（無ければ null） */
       app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, key: x.key ?? "", data: x.data })),
       reviews: productReviews(p),
@@ -215,9 +218,11 @@ api.get("/shops/:shop/categories", async (c: Ctx) => {
   return c.json({ categories: walk(categoryTree(categories)) });
 });
 
-function optionAxesForSelect(axes: unknown, skus: readonly { options?: Record<string, string | number> }[]): { key: string; values: string[] }[] {
+function optionAxesForSelect(axes: unknown, skus: readonly { options?: Record<string, string | number> }[], names: OptionNames = {}): { key: string; name: string; values: string[] }[] {
   return displayOptionAxes(axes, skus).map((a) => ({
     key: a.key,
+    /** 表示名（0094。key は英字で変わらない。選択欄の見出しはこちら） */
+    name: optionLabel(names, a.key),
     values: [...new Set(skus.map((k) => String((k.options ?? {})[a.key] ?? "").trim()).filter(Boolean))],
   }));
 }

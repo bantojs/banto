@@ -146,13 +146,15 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
       Object.assign(counts, await privileged.restoreProductImageOptions(shopId, imageOptions));
     }
     {
-      const backupShop = (parsed as { shop?: { option_axes?: unknown } }).shop;
+      const backupShop = (parsed as { shop?: { option_axes?: unknown; option_names?: unknown } }).shop;
       const shopAxes = backupShop && "option_axes" in backupShop ? backupShop.option_axes : (shop.option_axes ?? null);
       const rows = (name: string) => pick(name).filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && Array.isArray((r as Record<string, unknown>)["option_axes"]));
       Object.assign(
         counts,
         await privileged.restoreOptionAxes(shopId, {
           shop: shopAxes ?? null,
+          // SKU の選択肢の表示名（0094。0094 の前の DB は読まない）
+          ...(backupShop && backupShop.option_names && typeof backupShop.option_names === "object" ? { option_names: backupShop.option_names } : {}),
           categories: rows("categories").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"] })),
           products: rows("products").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"], option_axes_custom: r["option_axes_custom"] === true })),
         }),

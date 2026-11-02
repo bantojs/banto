@@ -1,13 +1,14 @@
 import { DbError } from "../../db/client";
 import { t, tf } from "../../i18n";
 import { MAX_AXES, axesLabel, optionAxesOf, type OptionAxes } from "../../products/option-axes";
+import { optionLabel, type OptionNames } from "../../products/option-names";
 
 /**
  * SKU を分ける軸（0065）の入力欄。ショップの既定・カテゴリー・商品の 3 か所で使う。
  *   mode: inherit（カテゴリー: 上の段を引き継ぐ）/ none（決めない）/ only_code（品番だけ）/ axes（軸で分ける）
  * 値は src/products/option-axes.ts の optionAxesFromForm で読む
  */
-export function AxesEditor(props: { name: string; axes: unknown; modes: ("inherit" | "none" | "only_code" | "axes")[] }) {
+export function AxesEditor(props: { name: string; axes: unknown; modes: ("inherit" | "none" | "only_code" | "axes")[]; names?: OptionNames }) {
   const axes = optionAxesOf(props.axes);
   const current = props.axes === null || props.axes === undefined ? props.modes[0]! : axes && axes.length === 0 ? "only_code" : "axes";
   const rows: (OptionAxes[number] | null)[] = [...(axes ?? []), ...Array<null>(MAX_AXES).fill(null)].slice(0, MAX_AXES);
@@ -32,7 +33,7 @@ export function AxesEditor(props: { name: string; axes: unknown; modes: ("inheri
           {rows.map((a, i) => (
             <tr>
               <td>
-                <input type="text" name={`axis.${i}.key`} value={a?.key ?? ""} maxlength={40} aria-label={`${props.name} ${t("axes.key")} ${i + 1}`} style="width:10rem" />
+                <input type="text" name={`axis.${i}.key`} value={a ? optionLabel(props.names ?? {}, a.key) : ""} maxlength={40} aria-label={`${props.name} ${t("axes.key")} ${i + 1}`} style="width:10rem" />
               </td>
               <td>
                 <ChipsInput name={`axis.${i}.values`} values={a?.values ?? []} label={`${props.name} ${t("axes.values")} ${i + 1}`} />
@@ -96,7 +97,7 @@ export const CHIPS_SCRIPT = `(function(){
 })();`;
 
 /** 軸の短い表示（「カラー × サイズ」・「品番だけ」・「決めていない」） */
-export const axesText = (v: unknown) => axesLabel(v === null || v === undefined ? null : optionAxesOf(v), t("axes.label_only_code"), t("axes.label_none"));
+export const axesText = (v: unknown, names: OptionNames = {}) => axesLabel(v === null || v === undefined ? null : optionAxesOf(v), t("axes.label_only_code"), t("axes.label_none"), names);
 
 /** DB の守り（0065 のトリガー）のエラー → 画面のお知らせの種類 */
 export function axesErrorCode(e: unknown): "axes_mismatch" | "axes_duplicate" | "axes_invalid" | null {

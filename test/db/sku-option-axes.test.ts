@@ -4,6 +4,8 @@ import { asService, asUser, closePool, createAuthUser, createShopFixture, dbAvai
 
 const sha = (t: string) => createHash("sha256").update(t).digest("hex");
 const COLOR_SIZE = [{ key: "カラー", values: ["レッド", "ブルー"] }, { key: "サイズ", values: ["S", "M", "L"] }];
+/** 0094 から、鍵は名前の表の key で置かれる（カラー → color、サイズ → size） */
+const COLOR_SIZE_KEYS = [{ key: "color", values: ["レッド", "ブルー"] }, { key: "size", values: ["S", "M", "L"] }];
 
 /**
  * 0065_sku_option_axes: SKU を分ける軸。ショップ → カテゴリー（親から子へ）→ 商品のひな形を写す・SKU の守り・一括で当てる・
@@ -47,12 +49,13 @@ describe.skipIf(!dbAvailable)("SKU を分ける軸（0065）", () => {
   });
 
   it("ひな形を写す: 子のカテゴリーは親を引き継ぎ、カテゴリーが無ければショップ。あとで上の段を変えても商品は変わらない", async () => {
-    expect((await newProduct("shirt", tops)).option_axes).toEqual(COLOR_SIZE);
+    expect((await newProduct("shirt", tops)).option_axes).toEqual(COLOR_SIZE_KEYS);
     expect((await newProduct("ring", null)).option_axes).toEqual([]);
     const usb = await newProduct("usb", cable);
-    expect(usb.option_axes).toEqual([{ key: "型番" }, { key: "長さ", values: ["1m", "3m"] }]);
+    // 決まった key の無い名前は opt1…（型番）、長さ → length
+    expect(usb.option_axes).toEqual([{ key: "opt1" }, { key: "length", values: ["1m", "3m"] }]);
     await as("update categories set option_axes = $2 where id = $1", [cable, JSON.stringify([{ key: "長さ" }])]);
-    expect((await axesOf(usb.id)).a).toEqual([{ key: "型番" }, { key: "長さ", values: ["1m", "3m"] }]);
+    expect((await axesOf(usb.id)).a).toEqual([{ key: "opt1" }, { key: "length", values: ["1m", "3m"] }]);
   });
 
   it("SKU の守り: 鍵が軸とちょうど同じ・値が空でない・同じ組み合わせは 1 つ。品番だけの商品は options が空で、複数の SKU を置ける", async () => {
@@ -80,17 +83,18 @@ describe.skipIf(!dbAvailable)("SKU を分ける軸（0065）", () => {
     expect(await expectDbError(() => as("update products set option_axes = $2 where id = $1", [p.id, JSON.stringify([{ key: "サイズ" }])]))).toMatch(/option_axes_mismatch/);
     await as("update skus set options = '{\"色\":\"黒\"}' where code = 'F-2' and shop_id = $1", [a.shopId]);
     await as("update products set option_axes = $2, option_axes_custom = true where id = $1", [p.id, JSON.stringify([{ key: "色" }])]);
-    expect((await axesOf(p.id)).a).toEqual([{ key: "色" }]);
+    // 「色」は「カラー」とは別の名前なので、color がもう使われていて color_2
+    expect((await axesOf(p.id)).a).toEqual([{ key: "color_2" }]);
   });
 
   it("主カテゴリーを決めたとき: SKU がまだ無く上書きしていなければ写し直す。SKU があれば変えない", async () => {
     const p = await newProduct("later", null);
     expect((await axesOf(p.id)).a).toEqual([]);
     await as("update products set category_id = $2 where id = $1", [p.id, wear]);
-    expect((await axesOf(p.id)).a).toEqual(COLOR_SIZE);
+    expect((await axesOf(p.id)).a).toEqual(COLOR_SIZE_KEYS);
     await addSku(p.id, "L-R-S", { カラー: "レッド", サイズ: "S" });
     await as("update products set category_id = $2 where id = $1", [p.id, cable]);
-    expect((await axesOf(p.id)).a).toEqual(COLOR_SIZE);
+    expect((await axesOf(p.id)).a).toEqual(COLOR_SIZE_KEYS);
   });
 
   it("一括で当てる: 上書きしていない商品だけ、SKU が合うものだけ。合わない商品は理由つきで返す。catalog の項目が要る", async () => {
@@ -105,7 +109,8 @@ describe.skipIf(!dbAvailable)("SKU を分ける軸（0065）", () => {
     expect(r.applied).toBe(2);
     expect(r.skipped.map((x) => x.slug)).toEqual(["hoodie"]);
     expect(r.skipped.every((x) => /option_axes_mismatch/.test(x.reason))).toBe(true);
-    expect((await axesOf(fits.id)).a).toEqual([{ key: "カラー" }, { key: "サイズ" }, { key: "丈" }]);
+    // 丈 → length はもう「長さ」が使っているので length_2
+    expect((await axesOf(fits.id)).a).toEqual([{ key: "color" }, { key: "size" }, { key: "length_2" }]);
     expect((await axesOf(custom.id)).a).toEqual([]);
     expect(await expectDbError(() => asUser(stranger, (c) => c.query("select option_axes_apply($1, $2)", [a.shopId, wear])))).toMatch(/forbidden/);
   });
@@ -126,7 +131,8 @@ describe.skipIf(!dbAvailable)("SKU を分ける軸（0065）", () => {
   it("AI 用 API: api_product_set_option_axes で決め、商品の JSON に option_axes が出る。形が違えば invalid_option_axes", async () => {
     const p = await newProduct("api-tee", null);
     const r = await asService(async (c) => (await c.query<{ r: { option_axes: unknown } }>("select api_product_set_option_axes($1, $2, $3) as r", [token, p.id, JSON.stringify([{ key: "サイズ" }])])).rows[0]!.r);
-    expect(r.option_axes).toEqual([{ key: "サイズ" }]);
+    // 名前で送っても key で置き、AI 用 API の JSON には表示名（name）も付く
+    expect(r.option_axes).toEqual([{ key: "size", name: "サイズ" }]);
     expect((await axesOf(p.id)).c).toBe(true);
     expect(await expectDbError(() => asService((c) => c.query("select api_product_set_option_axes($1, $2, $3)", [token, p.id, JSON.stringify([{ key: "" }])])))).toMatch(/invalid_option_axes/);
     await asService((c) => c.query("select api_product_set_option_axes($1, $2, null)", [token, p.id]));
