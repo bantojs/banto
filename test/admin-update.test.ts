@@ -117,6 +117,9 @@ describe("マイグレーション適用フォーム", () => {
     expect(html).toContain('action="/admin/setup/migrate"');
     expect(html).toContain("Session pooler");
     expect(html).toContain(`適用する (${BUNDLED_MIGRATIONS.join(", ")})`);
+    // 何件中何件まで進んだかを出す材料（スクリプトは応答の残りの数で確かめ直す）
+    expect(html).toContain(`data-total="${BUNDLED_MIGRATIONS.length}"`);
+    expect(html).toContain("data-migrate-bar");
     expect(html).not.toContain("supabase db push");
 
     let res = await b.post("/admin/setup/migrate", { connection_string: "not-a-url" });

@@ -13,17 +13,23 @@ import { t } from "../../i18n";
  */
 const MIGRATE_STEP_SCRIPT = `(function(){
   var f=document.currentScript.previousElementSibling; if(!f||!window.fetch||!window.FormData) return;
-  var out=f.querySelector("[data-migrate-progress]"), btn=f.querySelector("button[type=submit]"), busy=false;
+  var out=f.querySelector("[data-migrate-progress]"), bar=f.querySelector("progress[data-migrate-bar]"), btn=f.querySelector("button[type=submit]"), busy=false;
+  var total=Number(out.getAttribute("data-total"))||0;
   function say(t,err){ out.textContent=t; out.className=err?"error":"muted"; }
   f.addEventListener("submit",function(ev){
     ev.preventDefault(); if(busy) return; busy=true; btn.disabled=true; var done=[];
     function step(){
-      say(out.getAttribute("data-running")+(done.length?" ("+done.length+")":""));
+      // 何件中何件か（total は応答の残りの数で毎回確かめ直す）と、最後に当てた版
+      var count=total?" "+done.length+" / "+total:(done.length?" ("+done.length+")":"");
+      var last=done.length?" "+out.getAttribute("data-last").replace("{version}",done[done.length-1]):"";
+      say(out.getAttribute("data-running")+count+last);
+      if(bar&&total){ bar.hidden=false; bar.max=total; bar.value=done.length; }
       fetch(f.action,{method:"POST",body:new FormData(f),headers:{"X-Banto-Migrate":"step"},credentials:"same-origin"})
         .then(function(r){ return r.json(); })
         .then(function(j){
           if(!j.ok){ busy=false; btn.disabled=false; say(j.message||out.getAttribute("data-failed"),true); return; }
           done=done.concat(j.applied||[]);
+          if(j.remaining) total=done.length+j.remaining.length;
           if(j.remaining&&j.remaining.length) step(); else location.href=j.next+encodeURIComponent(done.join(","));
         })
         .catch(function(){ busy=false; btn.disabled=false; say(out.getAttribute("data-failed"),true); });
@@ -72,7 +78,8 @@ function MigrateFormOnly(props: { action: string; pending: string[]; error?: str
           {t("migrate.submit")} ({props.pending.join(", ")})
         </button>
       </p>
-      <p data-migrate-progress="" data-running={t("migrate.running")} data-failed={t("migrate.error_step")} aria-live="polite"></p>
+      <progress data-migrate-bar="" max={props.pending.length || 1} value={0} hidden style="width:100%;max-width:40rem"></progress>
+      <p data-migrate-progress="" data-total={String(props.pending.length)} data-running={t("migrate.running")} data-last={t("migrate.last")} data-failed={t("migrate.error_step")} aria-live="polite"></p>
     </form>
   );
 }
