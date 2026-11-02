@@ -37,7 +37,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -126,6 +126,7 @@ export class FakeSupabase {
   readonly imageHints: { shop_id: string; product_id: string; tag: string; options: Row }[] = [];
   readonly tables: Record<TableName, Row[]> = {
     size_charts: [],
+    audiences: [],
     shops: [],
     categories: [],
     products: [],
@@ -1947,6 +1948,22 @@ export class FakeSupabase {
   }
 
   /** api_*: トークン検証 → shop 限定。本物の SQL は test/db/api.test.ts で検証 */
+  /** 0097: 会員の独自項目のうち、どこかの条件（audiences）で使っている鍵だけ */
+  memberAudienceAttrs(shopId: string, customerId: string): Record<string, unknown> {
+    const keys = new Set<string>();
+    const walk = (c: unknown): void => {
+      if (!c || typeof c !== "object") return;
+      const o = c as Row;
+      for (const k of ["all", "any"]) if (Array.isArray(o[k])) (o[k] as unknown[]).forEach(walk);
+      if (o["not"]) walk(o["not"]);
+      if (typeof o["attr"] === "string") keys.add(o["attr"]);
+    };
+    for (const a of this.tables.audiences) if (a["shop_id"] === shopId) walk(a["condition"]);
+    const cust = this.tables.customers.find((c) => c["id"] === customerId && c["shop_id"] === shopId);
+    const attrs = (cust?.["attributes"] ?? {}) as Row;
+    return Object.fromEntries(Object.entries(attrs).filter(([k, v]) => keys.has(k) && ["string", "number", "boolean"].includes(typeof v)));
+  }
+
   private sizeChartRow(shopId: string, cat: string | null, prod: string | null): Row | undefined {
     return this.tables.size_charts.find((r) => r["shop_id"] === shopId && (r["category_id"] ?? null) === cat && (r["product_id"] ?? null) === prod);
   }
@@ -3050,11 +3067,19 @@ export class FakeSupabase {
         return json(id);
       }
       case "member_session_check":
+      case "member_session_check_attrs":
       case "member_session_refresh": {
         const ms = this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
         if (fn === "member_session_check") {
           if (ms) ms["last_seen_at"] = new Date(now).toISOString();
           return json(Boolean(ms));
+        }
+        // 0097: 会員の条件で使っている独自項目の値（本物は banto_member_audience_attrs）
+        const attrsNow = () => this.memberAudienceAttrs(String(shopId), String(args["p_customer_id"]));
+        if (fn === "member_session_check_attrs") {
+          if (!ms) return json({ ok: false });
+          ms["last_seen_at"] = new Date(now).toISOString();
+          return json({ ok: true, attrs: attrsNow() });
         }
         if (!ms || ms["kind"] !== "api") return json({ ok: false, reason: "invalid" });
         const gen = Number(args["p_gen"]);
@@ -3062,9 +3087,9 @@ export class FakeSupabase {
         if (gen === cur) {
           ms["refresh_gen"] = cur + 1;
           ms["rotated_at"] = now;
-          return json({ ok: true, gen: cur + 1, expires_at: new Date(Number(ms["expires_at"])).toISOString() });
+          return json({ ok: true, gen: cur + 1, expires_at: new Date(Number(ms["expires_at"])).toISOString(), attrs: attrsNow() });
         }
-        if (gen === cur - 1 && now - Number(ms["rotated_at"]) < 30_000) return json({ ok: true, gen: cur, expires_at: new Date(Number(ms["expires_at"])).toISOString() });
+        if (gen === cur - 1 && now - Number(ms["rotated_at"]) < 30_000) return json({ ok: true, gen: cur, expires_at: new Date(Number(ms["expires_at"])).toISOString(), attrs: attrsNow() });
         ms["revoked_at"] = now;
         ms["revoked_reason"] = "reuse";
         return json({ ok: false, reason: "reuse" });

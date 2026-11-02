@@ -1,0 +1,55 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { asAnon, asService, asUser, closePool, createAuthUser, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { AUDIENCE_CASES } from "../fixtures/audience-cases";
+
+/** 0097_audiences: 会員の条件（見せる相手）の判定・登録・会員のセッションに載る値 */
+describe.skipIf(!dbAvailable)("会員の条件（0097）", () => {
+  let a: Fixture;
+  let stranger: string;
+  const as = <T>(sql: string, args: unknown[] = []) => asUser(a.ownerId, async (c) => (await c.query<{ r: T }>(sql, args)).rows[0]?.r as T);
+
+  beforeAll(async () => {
+    await resetDatabase();
+    a = await createShopFixture({ email: "au-a@example.com", slug: "au-a", publish: true });
+    stranger = await createAuthUser("au-x@example.com");
+    await getPool().query("update shops set settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{customer_fields}', $2::jsonb) where id = $1", [
+      a.shopId,
+      JSON.stringify([{ key: "rank", label: "ランク", type: "select", options: ["gold", "silver"] }, { key: "points", label: "ポイント", type: "number" }, { key: "region", label: "地域", type: "text" }, { key: "secret", label: "社内メモ", type: "text" }]),
+    ]);
+  });
+  afterAll(closePool);
+
+  it("答え合わせの表（TS と同じ）", async () => {
+    for (const c of AUDIENCE_CASES) {
+      const r = (await getPool().query<{ ok: boolean }>("select banto_audience_ok($1::jsonb, $2, $3::jsonb) as ok", [c.cond === null ? null : JSON.stringify(c.cond), c.member, JSON.stringify(c.attrs)])).rows[0]!.ok;
+      expect({ name: c.name, ok: r }).toEqual({ name: c.name, ok: c.ok });
+    }
+  });
+
+  it("登録: 形を組み直す。定義に無い鍵・深すぎる・形の違うものは断る。名前はショップの中で重ならない", async () => {
+    const cond = await as<unknown>("insert into audiences (shop_id, name, condition) values ($1, ' ゴールド ', $2) returning condition as r", [a.shopId, JSON.stringify({ all: [{ member: true }, { attr: "rank", in: [" gold ", 1] }] })]);
+    expect(cond).toEqual({ all: [{ member: true }, { attr: "rank", in: ["gold", "1"] }] });
+    expect(await as<string>("select name as r from audiences where shop_id = $1", [a.shopId])).toBe("ゴールド");
+    for (const bad of [{ attr: "nope", in: ["x"] }, { member: false }, { all: [] }, { attr: "rank", in: ["x"], extra: 1 }, { all: [{ all: [{ all: [{ all: [{ member: true }] }] }] }] }, { attr: "points", gte: "10" }, { any: Array.from({ length: 21 }, () => ({ member: true })) }]) {
+      expect(await expectDbError(() => as("insert into audiences (shop_id, name, condition) values ($1, $2, $3) returning id as r", [a.shopId, `x${Math.random()}`, JSON.stringify(bad)]))).toMatch(/invalid_audience/);
+    }
+    expect(await expectDbError(() => as("insert into audiences (shop_id, name, condition) values ($1, 'ゴールド', '{\"member\": true}') returning id as r", [a.shopId]))).toMatch(/duplicate|unique/);
+  });
+
+  it("権限: 書けるのは marketing、他人と anon は読めない", async () => {
+    expect(await expectDbError(() => asUser(stranger, (c) => c.query("insert into audiences (shop_id, name, condition) values ($1, 'x', '{\"member\": true}')", [a.shopId])))).toMatch(/row-level security|permission/);
+    expect((await asUser(stranger, (c) => c.query("select * from audiences"))).rowCount).toBe(0);
+    expect(await expectDbError(() => asAnon((c) => c.query("select * from audiences")))).toMatch(/permission denied/);
+  });
+
+  it("会員のセッション: 確かめ直すときに、条件で使っている独自項目の値だけを返す", async () => {
+    await as("insert into audiences (shop_id, name, condition) values ($1, '1万ポイント', '{\"attr\": \"points\", \"gte\": 10000}') returning id as r", [a.shopId]);
+    const cid = (await getPool().query<{ id: string }>("insert into customers (shop_id, email, attributes) values ($1, 'm@example.com', $2) returning id", [a.shopId, JSON.stringify({ rank: "gold", points: 12000, secret: "x", region: "jp" })])).rows[0]!.id;
+    const sid = await asService(async (c) => (await c.query<{ r: string }>("select member_session_start($1, $2, 0, 'web', 'x', 3600) as r", [a.shopId, cid])).rows[0]!.r);
+    const r = await asService(async (c) => (await c.query<{ r: { ok: boolean; attrs: Record<string, unknown> } }>("select member_session_check_attrs($1, $2, 0, $3) as r", [a.shopId, cid, sid])).rows[0]!.r);
+    expect(r).toEqual({ ok: true, attrs: { rank: "gold", points: 12000 } });
+    const bad = await asService(async (c) => (await c.query<{ r: { ok: boolean } }>("select member_session_check_attrs($1, $2, 1, $3) as r", [a.shopId, cid, sid])).rows[0]!.r);
+    expect(bad).toEqual({ ok: false });
+    expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select member_session_check_attrs($1, $2, 0, $3)", [a.shopId, cid, sid])))).toMatch(/service_role only|permission denied/);
+  });
+});

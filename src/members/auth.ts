@@ -9,6 +9,7 @@
  *   端末ごとの取り消しはセッションの行（0045）で行う。
  */
 import { openJson, randomToken, sealJson } from "../util/signed";
+import { audienceAttrsOf } from "./audience";
 
 const enc = new TextEncoder();
 
@@ -111,6 +112,11 @@ export interface MemberSession {
    * パスキーの登録とログアウトだけに通す（券を使っただけで登録をやめた端末に、長いログインを残さない）
    */
   add?: true;
+  /**
+   * 会員の条件（0097）で使っている独自項目の値。DB で確かめ直すたびに入れ直す（最大 SESSION_CHECK_SECONDS 遅れる）。
+   * 画面の出し分けだけに使う。買える・単価・見せない行の判定は DB が最新の値でする
+   */
+  at?: Record<string, string | number | boolean>;
 }
 
 /** Cookie の期限（開くたびに延ばす） */
@@ -142,6 +148,7 @@ export async function openSession(secret: string, shopId: string, raw: string | 
     ...(typeof v.chk === "number" ? { chk: v.chk } : {}),
     ...(typeof v.iat === "number" ? { iat: v.iat } : {}),
     ...(v.add === true ? { add: true as const } : {}),
+    ...(v.at && typeof v.at === "object" ? { at: audienceAttrsOf(v.at) } : {}),
   };
 }
 
@@ -180,6 +187,8 @@ export interface MemberToken {
   sid?: string;
   /** refresh の世代（0045 から。refresh だけ） */
   gen?: number;
+  /** 会員の条件（0097）で使っている独自項目の値（access だけ。refresh のたびに入れ直す。画面の出し分けだけに使う） */
+  at?: Record<string, string | number | boolean>;
 }
 
 /** access は DB で確かめない（署名と期限と世代だけ）。取り消しが効くまで最大この秒数かかる */
@@ -195,11 +204,12 @@ export async function issueTokens(
   ep: number,
   session: { sid: string; gen: number; expiresAt: number } | null,
   now = Math.floor(Date.now() / 1000),
+  attrs?: Record<string, string | number | boolean>,
 ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
   const base = { shop: shopId, cid, ep, ...(session ? { sid: session.sid } : {}) };
   const refreshExp = session ? Math.min(now + REFRESH_SECONDS, session.expiresAt) : now + REFRESH_SECONDS;
   return {
-    access_token: `bm1.${await sealJson(tokenSecret(secret), { ...base, typ: "a", exp: Math.min(now + ACCESS_SECONDS, refreshExp) })}`,
+    access_token: `bm1.${await sealJson(tokenSecret(secret), { ...base, typ: "a", exp: Math.min(now + ACCESS_SECONDS, refreshExp), ...(attrs && Object.keys(attrs).length > 0 ? { at: attrs } : {}) })}`,
     refresh_token: `bm1.${await sealJson(tokenSecret(secret), { ...base, typ: "r", exp: refreshExp, ...(session ? { gen: session.gen } : {}) })}`,
     expires_in: Math.min(ACCESS_SECONDS, refreshExp - now),
   };
@@ -210,7 +220,7 @@ export async function openToken(secret: string, shopId: string, token: string, t
   if (!token.startsWith("bm1.")) return null;
   const v = (await openJson(tokenSecret(secret), token.slice(4))) as Partial<MemberToken> | null;
   if (!v || v.typ !== typ || v.shop !== shopId || typeof v.cid !== "string" || typeof v.ep !== "number" || typeof v.exp !== "number" || v.exp <= now) return null;
-  return { typ, shop: v.shop, cid: v.cid, ep: v.ep, exp: v.exp, ...(typeof v.sid === "string" ? { sid: v.sid } : {}), ...(typeof v.gen === "number" ? { gen: v.gen } : {}) };
+  return { typ, shop: v.shop, cid: v.cid, ep: v.ep, exp: v.exp, ...(typeof v.sid === "string" ? { sid: v.sid } : {}), ...(typeof v.gen === "number" ? { gen: v.gen } : {}), ...(v.at && typeof v.at === "object" ? { at: audienceAttrsOf(v.at) } : {}) };
 }
 
 // ---------- 照合中のチャレンジ（コードを入れる画面まで持ち回る） ----------

@@ -46,7 +46,8 @@ import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, pr
 import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, yen, type Ctx } from "../common";
+import { afterResponse, audiencesReady, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, yen, type Ctx } from "../common";
+import { GUEST, audienceAttrsOf, type AudienceContext } from "../../members/audience";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
@@ -124,6 +125,12 @@ export function customerSession(c: Ctx, s: { shop: { id: string; slug: string; d
   return p;
 }
 
+/** 会員の条件（0097）の判定の材料。ゲストは GUEST。値は Cookie に入れたもの（最大数分遅れる。画面の出し分けだけに使う） */
+export async function memberAudience(c: Ctx, s: { shop: { id: string; slug: string; domain?: string | null; settings?: Record<string, unknown> } }): Promise<AudienceContext> {
+  const session = await customerSession(c, s);
+  return session ? { member: true, attrs: session.at ?? {} } : GUEST;
+}
+
 /** `add` のセッションで通してよい場所: パスキーの登録（options・register）とログアウトだけ */
 function passkeyAddPath(c: Ctx): boolean {
   return /\/account\/(?:passkey\/register(?:\/options)?|logout)$/.test(new URL(c.req.url).pathname);
@@ -142,15 +149,20 @@ async function verifySession(c: Ctx, shop: { id: string; slug: string; domain?: 
   if (v.chk !== undefined && v.chk <= now && now - v.chk < SESSION_CHECK_SECONDS) return v;
   const db = privilegedFor(c);
   if (!db) return null;
-  const ok = await db.memberSessionCheck(shop.id, v.cid, v.ep, v.sid).catch(() => null);
+  // 0097 からは、会員の条件で使っている独自項目の値も一緒に受け取って Cookie に入れる（画面のたびに取りに行かない）
+  const checked = (await audiencesReady(c))
+    ? await db.memberSessionCheckAttrs(shop.id, v.cid, v.ep, v.sid).catch(() => null)
+    : await db.memberSessionCheck(shop.id, v.cid, v.ep, v.sid).then((ok) => ({ ok, attrs: null })).catch(() => null);
   // 確かめられなかった（DB の一時的な失敗）: このリクエストはゲスト扱いにして、Cookie は残す
-  if (ok === null) return null;
-  if (!ok) {
+  if (checked === null) return null;
+  if (!checked.ok) {
     await writeSession(c, target, null);
     return null;
   }
   // 追加のためだけのセッションの期限は延ばさない
-  const next = { ...v, chk: now, exp: v.add ? v.exp : now + SESSION_SECONDS };
+  const { at: _old, ...rest } = v;
+  const at = checked.attrs ? audienceAttrsOf(checked.attrs) : {};
+  const next: MemberSession = { ...rest, chk: now, exp: v.add ? v.exp : now + SESSION_SECONDS, ...(Object.keys(at).length > 0 ? { at } : {}) };
   await writeSession(c, target, next);
   return next;
 }

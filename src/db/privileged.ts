@@ -154,7 +154,7 @@ export interface PasskeyRow {
   /** ショップの今のドメインで使えるか（ドメインを変えると使えなくなる） */
   usable: boolean;
 }
-export type MemberSessionRefresh = { ok: true; gen: number; expires_at: string } | { ok: false; reason: "invalid" | "reuse" };
+export type MemberSessionRefresh = { ok: true; gen: number; expires_at: string; attrs?: Record<string, unknown> } | { ok: false; reason: "invalid" | "reuse" };
 export interface MemberRecord {
   customer: {
     id: string;
@@ -357,6 +357,8 @@ export interface PrivilegedDb {
   memberSessionStart(shopId: string, customerId: string, epoch: number, kind: "web" | "api", label: string | null, ttlSeconds: number, authenticatedAt?: string | null): Promise<string | null>;
   /** Cookie のセッションが生きているか（最後に使った日時も更新する） */
   memberSessionCheck(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<boolean>;
+  /** 0097: 同じ確かめと、会員の条件で使っている独自項目の値 */
+  memberSessionCheckAttrs(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ ok: boolean; attrs: Record<string, unknown> }>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
   memberSessionRefresh(shopId: string, customerId: string, epoch: number, sessionId: string, gen: number): Promise<MemberSessionRefresh>;
   /** 取り消す（logout: 自分の端末 / revoked: 一覧から別の端末） */
@@ -604,6 +606,10 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
         ...(authenticatedAt !== undefined ? { p_authenticated_at: authenticatedAt } : {}),
       }),
     memberSessionCheck: (shopId, customerId, epoch, sessionId) => rpc("member_session_check", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
+    memberSessionCheckAttrs: async (shopId, customerId, epoch, sessionId) => {
+      const r = await rpc<{ ok?: boolean; attrs?: Record<string, unknown> } | null>("member_session_check_attrs", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId });
+      return { ok: r?.ok === true, attrs: r?.attrs && typeof r.attrs === "object" ? r.attrs : {} };
+    },
     memberSessionRefresh: (shopId, customerId, epoch, sessionId, gen) =>
       rpc("member_session_refresh", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_gen: gen }),
     memberSessionRevoke: (shopId, customerId, epoch, sessionId, reason) =>

@@ -8,7 +8,8 @@ import { SECURITY_HARDENING_4_MIGRATION, StorefrontData, type PublicShop } from 
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, audiencesReady, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
@@ -88,6 +89,8 @@ export interface ApiMember {
   epoch: number;
   /** セッションの行（0045）。それより前に発行したトークンには無い */
   sid?: string;
+  /** 会員の条件（0097）で使っている独自項目の値（access に入れたもの。画面の出し分けだけに使う） */
+  attrs?: Record<string, string | number | boolean>;
 }
 
 /**
@@ -102,7 +105,7 @@ export async function memberFromRequest(c: Ctx, shop: PublicShop): Promise<{ ok:
   const secret = c.get("sessionSecret");
   if (!token || token === header || !secret) return { ok: false };
   const t = await openToken(secret, shop.id, token, "a");
-  return t ? { ok: true, member: { id: t.cid, epoch: t.ep, ...(t.sid ? { sid: t.sid } : {}) } } : { ok: false };
+  return t ? { ok: true, member: { id: t.cid, epoch: t.ep, ...(t.sid ? { sid: t.sid } : {}), attrs: t.at ?? {} } } : { ok: false };
 }
 
 /**
@@ -113,7 +116,9 @@ export async function memberFromRequest(c: Ctx, shop: PublicShop): Promise<{ ok:
 async function grant(c: Ctx, db: PrivilegedDb, secret: string, shopId: string, customerId: string, epoch: number, authenticatedAt?: string | null) {
   const sid = await db.memberSessionStart(shopId, customerId, epoch, "api", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS, authenticatedAt);
   if (!sid) return null;
-  return issueTokens(secret, shopId, customerId, epoch, { sid, gen: 0, expiresAt: Math.floor(Date.now() / 1000) + SESSION_ABSOLUTE_SECONDS });
+  // 会員の条件（0097）で使っている独自項目の値を access に入れる（ログインのときだけ 1 回多く問い合わせる。以後は refresh で入れ直す）
+  const attrs = (await audiencesReady(c)) ? audienceAttrsOf((await db.memberSessionCheckAttrs(shopId, customerId, epoch, sid).catch(() => null))?.attrs) : undefined;
+  return issueTokens(secret, shopId, customerId, epoch, { sid, gen: 0, expiresAt: Math.floor(Date.now() / 1000) + SESSION_ABSOLUTE_SECONDS }, undefined, attrs);
 }
 
 /** 0090 が当たっているか（会員の再認証・セッションの authenticated_at）。anon キーが無ければ false（古い関数の形で呼ぶ） */
@@ -218,7 +223,7 @@ membersApi.post("/shops/:shop/members/refresh", async (c: Ctx) => {
   const rot = await db.memberSessionRefresh(shop.id, r.cid, r.ep, r.sid, r.gen);
   // reuse: 使い回し。セッションごと取り消した（連携側はログインからやり直す）
   if (!rot.ok) return c.json({ error: rot.reason === "reuse" ? "refresh_token_reused" : "invalid_refresh_token" }, 401);
-  return c.json(await issueTokens(secret, shop.id, r.cid, r.ep, { sid: r.sid, gen: rot.gen, expiresAt: Math.floor(Date.parse(rot.expires_at) / 1000) }));
+  return c.json(await issueTokens(secret, shop.id, r.cid, r.ep, { sid: r.sid, gen: rot.gen, expiresAt: Math.floor(Date.parse(rot.expires_at) / 1000) }, undefined, audienceAttrsOf(rot.attrs)));
 });
 
 /** この端末をログアウト。Bearer の access か、本文の refresh_token のセッションを取り消す */

@@ -5,6 +5,7 @@
  */
 import type { MessageKey } from "../i18n";
 import { SIZE_CHARTS_MIGRATION } from "../size-charts/chart";
+import { AUDIENCES_MIGRATION } from "../members/audience";
 
 export interface ModuleDef {
   id: string;
@@ -46,6 +47,8 @@ export const MODULES: readonly ModuleDef[] = [
   // スクリプト（/api/embed/v1.js）は公開 API を呼ぶだけの静的なファイルなので ON/OFF に関係なく配り、ON で貼るコードの画面を出す（docs/embed.md）
   { id: "embed", name: "mod.embed.name", description: "mod.embed.description", adminPath: "embed" },
   // 採寸表（ショップ全体・カテゴリー・商品の段。表示するときに近い段から決める。0095_mod_size_charts、docs/size-charts.md）
+  // 会員の条件（会員の独自項目の組み合わせ。ブロック・商品・ページ・会員価格で使う。0097_audiences、docs/audiences.md）
+  { id: "audiences", name: "mod.audiences.name", description: "mod.audiences.description", adminPath: "audiences", migration: AUDIENCES_MIGRATION },
   { id: "size_charts", name: "mod.size_charts.name", description: "mod.size_charts.description", adminPath: "size-charts", migration: SIZE_CHARTS_MIGRATION },
 ];
 

@@ -8,6 +8,7 @@
  */
 
 import { productCategoryIds } from "../products/categories";
+import { audienceOk } from "../members/audience";
 
 export type CouponKind = "percent" | "fixed" | "free_shipping";
 
@@ -178,21 +179,15 @@ export interface EvaluateContext {
   attributes?: Record<string, unknown> | null;
 }
 
-const attrKey = (v: unknown) => String(v).trim().toLowerCase();
 
 /** 会員の独自項目の条件（0049）。条件が無ければ通す。あればログイン中の会員で、鍵ごとにどれかの値に合うこと */
 function attributesAllowed(cond: CouponConditions["attributes"] | undefined, ctx: EvaluateContext): boolean {
   if (!cond || typeof cond !== "object") return true;
   const keys = Object.keys(cond).filter((k) => Array.isArray(cond[k]) && cond[k]!.length > 0);
   if (keys.length === 0) return true;
-  if (!ctx.member) return false;
+  // 会員の条件（0097）の判定に読み替える: 会員 かつ 鍵ごとにどれかの値（判定の規則は src/members/audience.ts と DB の banto_audience_ok で共通）
   const attrs = ctx.attributes && typeof ctx.attributes === "object" ? ctx.attributes : {};
-  return keys.every((k) => {
-    const v = attrs[k];
-    if (typeof v !== "string" && typeof v !== "number") return false;
-    const have = attrKey(v);
-    return cond[k]!.some((a) => (typeof a === "string" || typeof a === "number") && attrKey(a) === have);
-  });
+  return audienceOk({ all: [{ member: true }, ...keys.map((k) => ({ attr: k, in: cond[k]!.filter((a) => typeof a === "string" || typeof a === "number").map(String) }))] }, { member: ctx.member, attrs });
 }
 
 /** coupon_lookup の行に載るログイン中の会員の独自項目（0049）。無ければ null */

@@ -8,6 +8,8 @@ import { STOREFRONT_CACHE_TTL } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
+import { migrated } from "../db/migration-state";
+import { AUDIENCES_MIGRATION } from "../members/audience";
 
 export type Ctx = Context<AppEnv>;
 
@@ -227,6 +229,13 @@ export function mediaBaseUrl(c: Ctx): string {
 export function migrationStateFor(c: Ctx, url: string): MigrationStateDeps | null {
   const anonKey = c.get("adapters").config.get("SUPABASE_ANON_KEY");
   return anonKey ? { db: createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), cache: c.get("adapters").cache } : null;
+}
+
+/** 会員の条件（0097）が当たっているか。会員の Cookie・トークンに条件で使う値を入れるかの判定 */
+export async function audiencesReady(c: Ctx): Promise<boolean> {
+  const url = c.get("adapters").config.get("SUPABASE_URL");
+  const deps = url ? migrationStateFor(c, url) : null;
+  return deps ? migrated(deps, AUDIENCES_MIGRATION) : false;
 }
 
 /** AI 用 API がお問い合わせの返事を知らせるための材料（0061。サイトの秘密が無ければ null = 返事の操作は 503） */
