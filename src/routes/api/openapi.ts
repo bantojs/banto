@@ -117,16 +117,23 @@ export function openapiDocument(origin: string, version: string): Record<string,
           responses: { 200: resp("product", product), ...errors, 409: resp("データベースの更新（0078）が要る") },
         },
       },
+      "/image-settings": {
+        get: {
+          summary: "商品画像の大きさの設定（products:read、0092）。外部の変換プラグインが作る段: 本画像の横幅 max_width（1600 / 2048 / 2560 / 3200）・高さの上限 max_height（4096）・サムネイルの横幅 thumb_width（400）・中間の段 variant_widths（本画像より狭いものだけ作る）・processing（browser = 管理画面のブラウザが作る / plugin = プラグインに任せる）。docs/images.md",
+          security: bearer,
+          responses: { 200: resp("settings", obj({ max_width: { type: "integer" }, max_height: { type: "integer" }, thumb_width: { type: "integer" }, variant_widths: { type: "array", items: { type: "integer" } }, processing: { type: "string", enum: ["browser", "plugin"] } })), ...errors, 409: resp("データベースの更新（0092）が要る") },
+        },
+      },
       "/images/{id}/file": {
         put: {
-          summary: "画像のファイルだけを差し替える（products:write、0077）。並び順・SKU への結び付け・id はそのまま（WebP にするプラグインなど）。本文の形と上限は /products/{id}/images/upload と同じ（options は受けない）。前のファイルは消す",
+          summary: "画像のファイルだけを差し替える（products:write、0077）。並び順・SKU への結び付け・id はそのまま（WebP にするプラグインなど）。本文の形と上限は /products/{id}/images/upload と同じ（options は受けない）。multipart では中間の段 variant_<横幅>（800 / 1600 / 2048 / 2560、本画像より狭い・WebP・高さ 4096 まで。0092）も一緒に差し替えられる。前のファイルは消す",
           security: bearer,
           parameters: [{ name: "id", in: "path", required: true, schema: str }],
           requestBody: {
             required: true,
             content: {
               "image/*": { schema: { type: "string", format: "binary" } },
-              "multipart/form-data": { schema: obj({ image: { type: "string", format: "binary" }, thumbnail: { type: "string", format: "binary", description: "長辺 400px 程度（任意）" } }, ["image"]) },
+              "multipart/form-data": { schema: obj({ image: { type: "string", format: "binary" }, thumbnail: { type: "string", format: "binary", description: "横幅 400px（任意。0092 からは横幅を記録する）" }, variant_800: { type: "string", format: "binary", description: "中間の段（任意、0092）。variant_1600・variant_2048・variant_2560 も同じ" } }, ["image"]) },
             },
           },
           responses: { 200: resp("replaced", obj({ image_id: str, product })), ...errors, 409: resp("データベースの更新（0077）が要る"), 411: resp("Content-Length がない"), 413: resp("大きすぎる"), 415: resp("本文の形が違う") },

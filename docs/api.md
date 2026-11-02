@@ -128,7 +128,8 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `PUT /products/{id}/images/order` | products:write | `image_ids`（その商品の画像の id を **すべて**、並べたい順に。1 枚目がメインの画像）。足りない・余計・重なりは 400 `image_ids_mismatch` で何も変えない。SKU への結び付けはそのまま。返すのは商品。0078 |
 | `PUT /products/{id}/option-axes` | products:write | `option_axes`（`[{ "key": "カラー", "values": ["レッド"] }, { "key": "サイズ" }]`、3 つまで。`[]` は品番だけ、`null` は決めない）。今の SKU の options の鍵が軸とちょうど同じでないと 400 `option_axes_mismatch`。軸を決めた商品の SKU は、options の鍵を軸に合わせて作る（合わなければ 400、同じ組み合わせは 409 `option_combination_exists`）。商品の JSON の `option_axes` で読める。0065 |
 | `PATCH /images/{id}` | products:write | `options`（SKU の `options` の一部。`{ "color": "レッド" }` でそのカラーの全 SKU、`{ "color": "レッド", "size": "M" }` でその SKU だけ、`{}` で商品全体。鍵 5 つまで・値は 60 文字までの文字列）。返すのは商品。0063 |
-| `PUT /images/{id}/file` | products:write | 画像のファイルだけを差し替える（0077）。並び順・SKU への結び付け・id はそのまま。本文の形は `images/upload` と同じ（`options` は受けない）。前のファイルは消す |
+| `PUT /images/{id}/file` | products:write | 画像のファイルだけを差し替える（0077）。並び順・SKU への結び付け・id はそのまま。本文の形は `images/upload` と同じ（`options` は受けない）。multipart では中間の段 `variant_<横幅>` も一緒に（0092）。前のファイルは消す |
+| `GET /image-settings` | products:read | 商品画像の大きさの設定（0092）。本画像の横幅・高さの上限・サムネイルと中間の段の横幅・変換を任せるか（docs/images.md） |
 | `DELETE /images/{id}` | products:write | |
 | `GET /categories` | products:read | |
 | `POST /categories` | products:write | `slug` `name` `parent`（親の slug） `sort_order`。slug が同じなら更新 |
@@ -171,6 +172,7 @@ Banto は画像を縮小しないので（Worker の CPU の制限）、**長辺
 
 **画像のファイルを差し替える**（`PUT /images/{id}/file`、0077）: 本文の形・種類・大きさの決まりは上と同じです（`options` は受けません。SKU への結び付けは `PATCH /images/{id}`）。
 並び順・SKU への結び付け・画像の id はそのままで、本画像とサムネイル（送らなければ無しになります）と寸法だけを入れ替え、前のファイルを消します。応答は `{ "image_id", "product" }`。
+multipart では、本画像（`image`）・サムネイル（`thumbnail`、横幅 400px）と一緒に**中間の段** `variant_800`・`variant_1600`・`variant_2048`・`variant_2560` も送れます（0092。WebP・本画像より狭いものだけ・横幅がその値を超えず高さ 4096px まで。形が違えば 400 で何も置きません）。どの段を作るかは `GET /image-settings`（products:read）の `max_width`・`variant_widths` で決めます（docs/images.md）。段を送らずに差し替えると、前の段は消えて本画像とサムネイルだけになります。
 画像を WebP にする外部プラグインのように、取り込んだ画像を外で作り直して戻すときに使います。差し替えると `product.updated` が届くので（0075）、受けて差し替える側は、もう直した画像を飛ばしてください。使う例は [bantojs/banto-plugin-webp](https://github.com/bantojs/banto-plugin-webp)（画像を WebP にしてサムネイルを作る外部プラグイン）。DB が 0077 より前なら 409 `migration_required` です。
 
 ```bash

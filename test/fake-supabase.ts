@@ -2450,6 +2450,14 @@ export class FakeSupabase {
         i["options"] = o;
         return json(product(this.tables.products.find((x) => x["id"] === i["product_id"])!));
       }
+      case "api_image_settings": {
+        // 0092
+        if (!need("products:read")) return unauthorized();
+        const st = (this.tables.shops.find((x) => x["id"] === shopId)?.["settings"] ?? {}) as Record<string, unknown>;
+        const im = (st["images"] ?? {}) as Record<string, unknown>;
+        const max = [1600, 2048, 2560, 3200].includes(Number(im["max_width"])) ? Number(im["max_width"]) : 1600;
+        return json({ max_width: max, max_height: 4096, thumb_width: 400, variant_widths: [800, 1600, 2048, 2560], processing: im["processing"] === "plugin" ? "plugin" : "browser" });
+      }
       case "api_image_target": {
         // 0077: 本物の SQL は test/db/api-image-replace.test.ts
         if (!need("products:write")) return unauthorized();
@@ -2462,8 +2470,11 @@ export class FakeSupabase {
         const i = mine(this.tables.product_images.find((x) => x["id"] === args["p_image_id"]));
         if (!i) return notFound();
         if (!String(args["p_storage_key"]).startsWith(`shops/${shopId}/products/${i["product_id"]}/`) || args["p_storage_key"] === i["storage_key"]) return json({ code: "P0001", message: "invalid_storage_key" }, 400);
-        const previous = { storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null };
-        Object.assign(i, { storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null });
+        const previous = { storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, variants: i["variants"] ?? [] };
+        // 0092: 中間の段とサムネイルの横幅も差し替える（本物の SQL は test/db/image-processing.test.ts）
+        const variants = (args["p_variants"] as number[] | undefined) ?? [];
+        if (variants.some((v) => args["p_width"] == null || v >= Number(args["p_width"]))) return json({ code: "P0001", message: "invalid_variants" }, 400);
+        Object.assign(i, { storage_key: args["p_storage_key"], thumb_key: args["p_thumb_key"] ?? null, width: args["p_width"] ?? null, height: args["p_height"] ?? null }, "p_variants" in args ? { variants, thumb_width: args["p_thumb_width"] ?? null } : {});
         return json({ image_id: i["id"], previous, product: product(this.tables.products.find((x) => x["id"] === i["product_id"])!) });
       }
       case "api_images_reorder": {

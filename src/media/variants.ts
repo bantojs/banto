@@ -15,6 +15,27 @@ import { MAX_IMAGE_BYTES, imageSize, sniffImage } from "./images";
 /** 中間の段の列のマイグレーション（当たるまで中間の段を作らない・送らない。CLAUDE.md §11「コードと DB の版のずれ」） */
 export const IMAGE_VARIANTS_MIGRATION = "0091_image_variants";
 
+/** 外部の変換プラグインに任せるモード・段を書き戻す API（0092） */
+export const IMAGE_PROCESSING_MIGRATION = "0092_image_processing";
+
+/** 任せるモードで受け取る元の写真の上限（スマホの写真をそのまま。縮小した本画像は MAX_IMAGE_BYTES まで） */
+export const ORIGINAL_MAX_BYTES = 20 * 1024 * 1024;
+
+export type ImageProcessing = "browser" | "plugin";
+
+/**
+ * 段を誰が作るか（ショップの設定 settings.images.processing、メンテナの決定 2026-11-02）。
+ * browser（既定）= 管理画面のブラウザが全部の段を作る（費用 0、待ちあり）。
+ * plugin = ブラウザはサムネイルだけを作り、元の写真をそのまま送る。本画像と中間の段は外部の変換プラグインが作って差し替える（待ちなし、変換の費用はプラグインの側）
+ */
+export function imageProcessing(settings: Record<string, unknown> | null | undefined): ImageProcessing {
+  const images = settings?.["images"];
+  return images && typeof images === "object" && !Array.isArray(images) && (images as Record<string, unknown>)["processing"] === "plugin" ? "plugin" : "browser";
+}
+
+/** プラグインのマニフェストの capabilities に、画像を変換できると書いてあるか（docs/hooks.md） */
+export const IMAGE_CAPABILITY = "images";
+
 export const THUMB_WIDTH = 400;
 /** どの段も高さはここまで（超えるなら高さで縮める） */
 export const MAX_HEIGHT = 4096;
@@ -128,5 +149,14 @@ export function resizeScript(): string {
   return Promise.all([draw(max,0.82),draw(${THUMB_WIDTH},0.8)].concat(sizes.map(function(s){return draw(s,0.82)}))).then(function(r){
     return {main:r[0].blob,w:r[0].w,h:r[0].h,thumb:r[1].blob,variants:sizes.map(function(s,i){return {size:s,blob:r[2+i].blob}})};
   });
+}`;
+}
+
+/** サムネイルだけを作る関数（文字列。任せるモードの管理画面のスクリプトに埋め込む）。bantoThumb(source) → { blob, w, h } */
+export function thumbScript(): string {
+  return `function bantoThumb(src){
+  var W=src.naturalWidth||src.width,H=src.naturalHeight||src.height;var r=Math.min(1,${THUMB_WIDTH}/W,${MAX_HEIGHT}/H);
+  var w=Math.max(1,Math.round(W*r)),h=Math.max(1,Math.round(H*r));var c=document.createElement("canvas");c.width=w;c.height=h;var x=c.getContext("2d");if(!x)return Promise.reject(new Error("resize"));x.drawImage(src,0,0,w,h);
+  return new Promise(function(ok,ng){c.toBlob(function(b){if(b&&b.type==="image/webp")ok({blob:b,w:w,h:h});else ng(new Error("webp"))},"image/webp",0.8)});
 }`;
 }

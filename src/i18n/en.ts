@@ -2418,4 +2418,10 @@ export const en: Record<MessageKey, string> = {
   "shop.image_max": "Product image size (width)",
   "shop.image_max_option": "{n}px",
   "shop.image_max_hint": "On upload, your browser makes the main image at this width plus smaller steps (400px, 800px wide, …) for listings and screen widths. Portrait photos get the same widths (very tall images are capped at 4096px high). The storefront picks the step that fits each device, so a larger size doesn't slow down listings. Choose 2048px or more to let customers zoom into fabric or detail. Applies to images uploaded from now on.",
+  "shop.image_processing": "Product image conversion",
+  "shop.image_processing_browser": "Convert in the browser (free; wait while uploading)",
+  "shop.image_processing_plugin": "Leave it to an external conversion plugin (no wait; conversion is billed on the plugin's side)",
+  "shop.image_processing_hint": "When left to a plugin, uploads send only the original photo and a thumbnail (400px wide); an external plugin that can convert images (e.g. banto-plugin-webp) makes the main image and the steps and replaces them. For a few minutes until it finishes, the storefront shows the original photo. Originals up to 20MB are accepted.",
+  "shop.image_processing_no_plugin": "No plugin that can convert images is connected. The original photos will be shown in the storefront as is. Connect one in the integrations screen, or switch back to “Convert in the browser”.",
+  "image.plugin_note": "The original photo is sent as is (up to 20MB) and your browser only makes a thumbnail (400px wide). An external conversion plugin makes the main image and the steps within a few minutes and replaces them (shop setting “Product image conversion”).",
 };

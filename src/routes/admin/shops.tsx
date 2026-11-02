@@ -1,7 +1,10 @@
 import { Hono } from "hono";
-import { IMAGE_MAX_CHOICES, imageMaxWidth } from "../../media/variants";
+import { IMAGE_CAPABILITY, IMAGE_MAX_CHOICES, IMAGE_PROCESSING_MIGRATION, imageMaxWidth, imageProcessing } from "../../media/variants";
+import { migrated } from "../../db/migration-state";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+/** 連携のマニフェストが、商品画像を変換できると宣言しているか（docs/hooks.md の capabilities） */
+const hasImageCapability = (m: unknown): boolean => isRecord(m) && Array.isArray(m["capabilities"]) && m["capabilities"].includes(IMAGE_CAPABILITY);
 import { STOREFRONT_MODES, safeHttpsUrl, storefrontSettings } from "../../storefront/mode";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
@@ -177,7 +180,7 @@ function LegalLinksSection(props: { shop: ShopRow }) {
   );
 }
 
-function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; integrations: boolean }) {
+function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined; flash: ReturnType<typeof flash>; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; stripeKeySet: boolean; domain: { provider: boolean; state: DomainState | null }; integrations: boolean; imageConverter: boolean | null; imageProcessingReady: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const themeSettings = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
@@ -302,6 +305,21 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
               ))}
             </select>
             <p class="muted">{t("shop.image_max_hint")}</p>
+            {props.imageProcessingReady ? (
+              <>
+                <label for="image_processing">{t("shop.image_processing")}</label>
+                <select id="image_processing" name="image_processing">
+                  <option value="browser" selected={imageProcessing(shop.settings) === "browser"}>
+                    {t("shop.image_processing_browser")}
+                  </option>
+                  <option value="plugin" selected={imageProcessing(shop.settings) === "plugin"}>
+                    {t("shop.image_processing_plugin")}
+                  </option>
+                </select>
+                <p class="muted">{t("shop.image_processing_hint")}</p>
+                {imageProcessing(shop.settings) === "plugin" && props.imageConverter === false ? <p class="error">{t("shop.image_processing_no_plugin")}</p> : null}
+              </>
+            ) : null}
             <p>
               <button type="submit">{t("shop.save")}</button>
             </p>
@@ -586,6 +604,13 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
   // 独自ドメインの提供元（ホスティングの提供者）。状態は提供元に 1 回だけ聞く。失敗しても画面は出す
   const provider = c.get("adapters").domain;
   const domainState = provider && shop.domain ? await provider.status(shop.domain, { id: shop.id, slug: shop.slug }).catch(() => null) : null;
+  // 画像の変換を外部プラグインに任せる設定（0092）。任せているのに、画像を変換できるプラグイン（マニフェストの capabilities に images）がつながっていなければ知らせる。
+  // 連携の一覧を読めない人（integrations の項目が無い）には判定しない（null）
+  const imageProcessingReady = await migrated({ db, cache: c.get("adapters").cache }, IMAGE_PROCESSING_MIGRATION);
+  const imageConverter =
+    imageProcessingReady && imageProcessing(shop.settings) === "plugin" && can(c.get("shopAccess"), "integrations")
+      ? (await db.from<{ enabled: boolean; manifest: unknown }>("hook_endpoints").select("enabled,manifest", { eq: { shop_id: shop.id } })).some((e) => e.enabled && hasImageCapability(e.manifest))
+      : null;
   return c.html(
     <ShopSettingsPage
       domain={{ provider: Boolean(provider), state: domainState }}
@@ -597,6 +622,8 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
       stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet}
       stripeKeySet={stripeKeySet}
       integrations={can(c.get("shopAccess"), "integrations")}
+      imageConverter={imageConverter}
+      imageProcessingReady={imageProcessingReady}
     />,
   );
 });
@@ -666,7 +693,12 @@ shops.post("/:shopId/shipping", requireOwner, async (c: AdminContext) => {
     members_password: f.members_password === "on",
     marketing_consent: f.marketing_consent === "on",
     // 商品画像の本画像の横幅（これから上げる画像から。src/media/variants.ts）
-    images: { ...(isRecord((shop.settings ?? {})["images"]) ? ((shop.settings ?? {})["images"] as Record<string, unknown>) : {}), max_width: imageMaxWidth({ images: { max_width: Number(f.image_max) } }) },
+    images: {
+      ...(isRecord((shop.settings ?? {})["images"]) ? ((shop.settings ?? {})["images"] as Record<string, unknown>) : {}),
+      max_width: imageMaxWidth({ images: { max_width: Number(f.image_max) } }),
+      // 欄が無い（0092 の前）ときは前の値のまま
+      ...(f.image_processing !== undefined ? { processing: f.image_processing === "plugin" ? "plugin" : "browser" } : {}),
+    },
     ...(contact && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact) ? { contact_email: contact } : { contact_email: null }),
   };
   try {

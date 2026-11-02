@@ -54,7 +54,12 @@ export interface PluginManifest {
   connect_url?: string;
   /** つなぐ（0088）: 求める AI 用トークンのスコープ（運営者が画面で絞れる） */
   scopes?: ApiScope[];
+  /** できること（0092）。"images" = 商品画像の段を作って差し替える（ショップの設定「外部の変換プラグインに任せる」の相手） */
+  capabilities?: string[];
 }
+
+/** マニフェストの capabilities に書いてよい値 */
+export const MANIFEST_CAPABILITIES = ["images"] as const;
 
 /** 「もっと見る」の URL（0087 の banto_app_more_url と同じ形） */
 export const MORE_URL_RE = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)?(\?[A-Za-z0-9._~!$&'()*+,;=:@%/?-]*)?$/;
@@ -152,6 +157,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
   const blocks = parseBlocks(m["blocks"]);
   const connect_url = typeof m["connect_url"] === "string" && m["connect_url"].length <= 500 && MORE_URL_RE.test(m["connect_url"]) ? m["connect_url"] : undefined;
   const scopes = Array.isArray(m["scopes"]) ? [...new Set(m["scopes"].filter((x): x is ApiScope => typeof x === "string" && isApiScope(x)))] : [];
+  const capabilities = Array.isArray(m["capabilities"]) ? [...new Set(m["capabilities"].filter((x): x is string => typeof x === "string" && (MANIFEST_CAPABILITIES as readonly string[]).includes(x)))] : [];
   const more: Record<string, string> = {};
   if (m["more"] && typeof m["more"] === "object" && !Array.isArray(m["more"])) {
     const v = (m["more"] as Record<string, unknown>)["reviews.v1"];
@@ -169,6 +175,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     ...(Object.keys(more).length > 0 ? { more } : {}),
     ...(connect_url ? { connect_url } : {}),
     ...(scopes.length > 0 ? { scopes } : {}),
+    ...(capabilities.length > 0 ? { capabilities } : {}),
   };
 }
 

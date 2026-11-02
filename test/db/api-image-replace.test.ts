@@ -38,9 +38,9 @@ describe.skipIf(!dbAvailable)("商品画像のファイルの差し替え（0077
     await getPool().query("update product_images set options = '{\"color\":\"レッド\"}' where id = $1", [added.image_id]);
     const target = await rpc<{ product_id: string; shop_id: string }>("api_image_target", [write, added.image_id]);
     expect(target).toEqual({ product_id: a.productId, shop_id: a.shopId });
-    const r = await rpc<{ image_id: string; previous: { storage_key: string; thumb_key: string | null } }>("api_image_replace_file", [write, added.image_id, key(a, `${NEW}.webp`), key(a, `${NEW}.thumb.webp`), 1600, 1200]);
+    const r = await rpc<{ image_id: string; previous: { storage_key: string; thumb_key: string | null; variants: number[] } }>("api_image_replace_file", [write, added.image_id, key(a, `${NEW}.webp`), key(a, `${NEW}.thumb.webp`), 1600, 1200]);
     expect(r.image_id).toBe(added.image_id);
-    expect(r.previous).toEqual({ storage_key: key(a, `${OLD}.png`), thumb_key: null });
+    expect(r.previous).toEqual({ storage_key: key(a, `${OLD}.png`), thumb_key: null, variants: [] }); // variants は 0092 から
     const row = (await getPool().query("select storage_key, thumb_key, width, height, sort_order, options from product_images where id = $1", [added.image_id])).rows[0];
     expect(row).toEqual({ storage_key: key(a, `${NEW}.webp`), thumb_key: key(a, `${NEW}.thumb.webp`), width: 1600, height: 1200, sort_order: 1, options: { color: "レッド" } });
   });

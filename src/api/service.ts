@@ -2,7 +2,7 @@
  * AI 用トークンでの操作をまとめる層（docs/ai-access.md）。REST（/api/v1）と MCP（/mcp）の両方がここを使う。
  * 権限の判定は SQL（api_*）側。ここはトークンのハッシュ化、エラーの分類、画像の取り込みだけを担う。
  */
-import { VARIANT_SIZES, imageKeys } from "../media/variants";
+import { IMAGE_PROCESSING_MIGRATION, VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } from "../media/variants";
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
@@ -107,7 +107,7 @@ function mapRpcError(e: unknown): never {
     // 顧客マスタの外部連携（0047）
     if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another member already has this external_ref (provider + id)", 409);
     if (e.is("consent_requires_person")) throw new ApiError("invalid", "consent_requires_person: marketing_consent can only be set to true by the customer (checkout / account page); the API may only withdraw it (false)", 400);
-    if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
+    if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions") || e.is("invalid_variants") || e.is("invalid_thumb_width")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
     if (e.is("image_ids_mismatch")) throw new ApiError("invalid", "image_ids_mismatch: send every image id of the product exactly once, in the new order (GET /products/{id} lists them)", 400);
     if (e.is("email_change_not_allowed")) throw new ApiError("invalid", "email_change_not_allowed: email addresses can only be changed from the admin screen", 400);
     if (/invalid_transition|hold_until_required|not_restockable/.test(e.dbMessage)) throw new ApiError("conflict", e.dbMessage.replace(/^.*?(invalid_transition|hold_until_required|not_restockable).*$/s, "$1"), 409);
@@ -335,8 +335,15 @@ export class ApiService {
    * 画像のファイルだけを差し替える（0077）。行・並び順・SKU への結び付けはそのまま。WebP にする外部プラグインなどが使う。
    * 検査は imageUpload と同じ。新しいファイルを置いてから行を差し替え、前のファイルを消す（差し替えに失敗したら新しいほうを消す）
    */
-  async imageReplaceFile(imageId: string, image: Uint8Array, thumbnail: Uint8Array | null): Promise<Record<string, unknown>> {
+  async imageReplaceFile(imageId: string, image: Uint8Array, thumbnail: Uint8Array | null, variantForm?: Record<string, unknown>): Promise<Record<string, unknown>> {
     uuidOr404(imageId);
+    // 中間の段（variant_<横幅>）とサムネイルの横幅は 0092 から（外部の変換プラグインが本画像と一緒に差し替える）
+    const withVariants = variantForm !== undefined && Object.keys(variantForm).some((k) => k.startsWith("variant_"));
+    const ready = await this.migratedTo(IMAGE_PROCESSING_MIGRATION);
+    if (withVariants && !ready) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `variant_* needs the database update ${IMAGE_PROCESSING_MIGRATION}; apply it from /admin/update`, 409);
+    }
     const main = sniffImage(image.subarray(0, 256));
     if (!main) throw new ApiError("invalid", "image must be JPEG, PNG, WebP, GIF or AVIF", 400);
     if (image.byteLength > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 400);
@@ -348,19 +355,37 @@ export class ApiService {
     const key = productImageKey(target.shop_id, target.product_id, main.ext);
     const tkey = thumbnail && thumb ? thumbKey(key, thumb.ext) : null;
     const size = imageSize(image, main.contentType);
+    const variants = withVariants ? await readVariantFiles(variantForm!, size?.width ?? 0) : [];
+    if (variants === null) throw new ApiError("invalid", "variant_<width> must be WebP, one of 800 / 1600 / 2048 / 2560, narrower than the image, at most that wide and 4096px high", 400);
+    const vkeys = variants.map((v) => variantKey(key, v.size));
+    const thumbWidth = ready && thumbnail && thumb ? thumbWidthOf(thumbnail, thumb.contentType) : null;
     const copy = (b: Uint8Array) => b.slice().buffer;
     await this.storage.put(key, copy(image), main.contentType);
     let r: { image_id: string; previous: { storage_key: string; thumb_key: string | null }; product: Record<string, unknown> };
     try {
       if (tkey && thumbnail && thumb) await this.storage.put(tkey, copy(thumbnail), thumb.contentType);
-      r = await this.call("api_image_replace_file", { p_image_id: imageId, p_storage_key: key, p_thumb_key: tkey, p_width: size?.width ?? null, p_height: size?.height ?? null });
+      await Promise.all(variants.map((v, i) => this.storage.put(vkeys[i]!, copy(v.bytes), "image/webp")));
+      r = await this.call("api_image_replace_file", {
+        p_image_id: imageId, p_storage_key: key, p_thumb_key: tkey, p_width: size?.width ?? null, p_height: size?.height ?? null,
+        // 0092 の前は引数の数が違う（渡すと関数が見つからない）
+        ...(ready ? { p_variants: variants.map((v) => v.size), p_thumb_width: thumbWidth } : {}),
+      });
     } catch (e) {
-      await Promise.all([key, tkey].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
+      await Promise.all([key, tkey, ...vkeys].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
       throw e;
     }
     // 中間の段（0091）は行から分からないので、あり得る段をすべて消す（無いキーの削除は何もしない）
     await Promise.all(withVariantKeys(r.previous.storage_key, r.previous.thumb_key).map((k) => this.storage.delete(k).catch(() => undefined)));
     return { image_id: r.image_id, product: r.product };
+  }
+
+  /** 商品画像の大きさの設定（0092、products:read）。外部の変換プラグインが作る段を決めるのに使う */
+  async imageSettings(): Promise<Record<string, unknown>> {
+    if (!(await this.migratedTo(IMAGE_PROCESSING_MIGRATION))) {
+      await this.call("api_token_shop", {});
+      throw new ApiError("migration_required", `image settings need the database update ${IMAGE_PROCESSING_MIGRATION}; apply it from /admin/update`, 409);
+    }
+    return this.call<Record<string, unknown>>("api_image_settings", {});
   }
 
   async imageDelete(imageId: string): Promise<void> {
