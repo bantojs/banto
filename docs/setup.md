@@ -182,6 +182,28 @@ Banto は、決済ページを作れなかった・Webhook の金額が合わな
 - リクエストのログには、開いたページの URL などが入ります。要らなければ、§8 と同じ **ビルドの変数** に `BANTO_OBSERVABILITY` = `off` を追加し、Deploy command を `npm run deploy` にします。
 - Cloudflare の画面で直接 ON / OFF を変えても、次のデプロイで `wrangler.jsonc`（と `BANTO_OBSERVABILITY`）のとおりに戻ります。
 
+## 10. 同じアカウントに Banto を 2 つ以上立てる
+
+お店ごとに分けたい、公開前に新しい版を確かめる場所（確認用）がほしい、といったときは、同じ Cloudflare アカウントに Banto をもう 1 つ立てられます。
+データベース（Supabase のプロジェクト）は **立てる Banto ごとに別** にしてください（同じデータベースを 2 つの Banto で使うと、片方のアップデートがもう片方に効いてしまいます）。
+
+1. Supabase で新しいプロジェクトを作ります（§2 と同じ）。
+2. Cloudflare で **リポジトリをインポート** をもう一度行い、別の Worker 名（例: `banto-shop2`）で作ります。
+3. その Worker の **設定 → ビルド → ビルドの変数** に次を追加し、**Deploy command** を `npm run deploy` にします（§8 と同じ）。
+
+   | 変数 | 値の例 | 中身 |
+   | --- | --- | --- |
+   | `BANTO_WORKER_NAME` | `banto-shop2` | Worker 名（手順 2 で付けた名前と同じにする） |
+   | `BANTO_MEDIA_BUCKET` | `banto-shop2-media` | 画像を置く R2 のバケット |
+   | `BANTO_PRIVATE_BUCKET` | `banto-shop2-private` | 公開しないファイル（お問い合わせの添付・テーマ）を置く R2 のバケット |
+
+   使える文字は英小文字・数字・ハイフンです。バケットは無ければデプロイのときに作られます。1 つ目の Banto のバケットと **同じ名前にしないでください**（画像が混ざります）。
+4. **変数とシークレット** に、手順 1 のプロジェクトの `SUPABASE_URL`・`SUPABASE_ANON_KEY`・`SUPABASE_SERVICE_ROLE_KEY` と、新しく作った `SESSION_SECRET` を入れます（§3 と同じ。1 つ目の Banto の値を写さない）。
+5. 再デプロイし、ビルドのログに `deploy: Worker 名 banto-shop2` と `deploy: R2 のバケット MEDIA=banto-shop2-media …` が出ていれば設定できています。`/admin` を開いてセットアップします。
+
+- リポジトリの `wrangler.jsonc` は書き換えません（アップデートで競合しないように、デプロイのときに写しを作って使います）。
+- 確認用として立てるなら、ビルドする Git のブランチ（Settings → Builds の本番のブランチ）を確認用のブランチにします。
+
 ## うまくいかないとき
 
 | 症状 | 確認すること |
