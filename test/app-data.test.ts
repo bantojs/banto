@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
-import { APP_DATA_CUSTOM_MIGRATION, APP_DATA_MIGRATION, productReviews, reviewsJsonLd } from "../src/apps/app-data";
+import { productReviews, reviewsJsonLd } from "../src/apps/app-data";
 import { MCP_TOOLS } from "../src/mcp/tools";
 import { productFromDetail } from "../src/themes/liquid/objects";
 
@@ -54,7 +54,7 @@ describe("拡張データ（0084）: REST", () => {
     expect(MCP_TOOLS.some((x) => /app_data/.test(x.name))).toBe(false);
   });
 
-  it("スコープが無ければ 401、名前の無い送信先は 409 app_handle_required、0084 の前は 409 migration_required", async () => {
+  it("スコープが無ければ 401、名前の無い送信先は 409 app_handle_required", async () => {
     const s = setup();
     const ro = await s.issue(["products:read"], null);
     expect((await s.rest(ro, "PUT", `/products/${s.product.id}/app-data/reviews.v1`, { data: reviews })).status).toBe(401);
@@ -63,12 +63,6 @@ describe("拡張データ（0084）: REST", () => {
     const r = await s.rest(tok, "PUT", `/products/${s.product.id}/app-data/reviews.v1`, { data: reviews });
     expect(r.status).toBe(409);
     expect(r.json.error?.message).toMatch(/^app_handle_required/);
-    const old = setup();
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== APP_DATA_MIGRATION);
-    const t2 = await old.issue(["app_data:write"]);
-    const m = await old.rest(t2, "PUT", `/products/${old.product.id}/app-data/reviews.v1`, { data: reviews });
-    expect(m.status).toBe(409);
-    expect(m.json.error?.code).toBe("migration_required");
   });
 });
 
@@ -177,15 +171,5 @@ describe("拡張データの custom.v1（0085）", () => {
     expect(o.apps).toEqual({ "size-guide": { "size-table": { note: "平置き" } } });
     expect(o.app_data[0]).toMatchObject({ app: "size-guide", key: "size-table" });
     expect(o.reviews).toMatchObject({ app: "reviews" });
-  });
-
-  it("0085 の前は custom.v1 だけ 409 migration_required（reviews.v1 は今までどおり）", async () => {
-    const old = setup();
-    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((v) => v !== APP_DATA_CUSTOM_MIGRATION);
-    const tok = await old.issue(["app_data:write"]);
-    const m = await old.rest(tok, "PUT", `/products/${old.product.id}/app-data/custom.v1/size-table`, { data: { a: 1 } });
-    expect(m.status).toBe(409);
-    expect(m.json.error?.code).toBe("migration_required");
-    expect((await old.rest(tok, "PUT", `/products/${old.product.id}/app-data/reviews.v1`, { data: reviews })).status).toBe(200);
   });
 });

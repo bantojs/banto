@@ -3,11 +3,9 @@ import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
 import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
-import { migrated } from "../../db/migration-state";
-import { APP_DATA_MIGRATION } from "../../apps/app-data";
 import { endpointSecret, signHookPayload, signPluginTicket } from "../../hooks/signing";
 import { blockedHookTarget, externalHookUrl } from "../../hooks/target";
-import { ConnectConfirm, ConnectionCard, connectReady, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
+import { ConnectConfirm, ConnectionCard, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -37,9 +35,7 @@ interface EndpointRow {
 }
 
 /** 拡張データ（0084）が DB に入ったか。入る前は app_handle の列が無い */
-function appsReady(c: AdminContext): Promise<boolean> {
-  return migrated({ db: owner(c).db, cache: c.get("adapters").cache }, APP_DATA_MIGRATION);
-}
+
 
 interface DeliveryRow {
   id: string;
@@ -288,7 +284,7 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   const manifest = await fetchManifest(url, outboundFetch(c));
   // つなぐ手順に対応したプラグイン（0088）は、許す画面を出す（秘密を手で写さない）
-  if (connectable(manifest) && (await connectReady(c))) {
+  if (connectable(manifest)) {
     return c.html(
       <AdminLayout title={t("connect.title")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
         <PageHead title={t("connect.title")} />
@@ -307,7 +303,7 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
       ) : (
         <p class="muted">{t("hooks.manifest_missing")}</p>
       )}
-      <EndpointForm action={`/admin/shops/${shop.id}/hooks`} apps={await appsReady(c)} manifest={manifest} endpoint={{ id: "", shop_id: shopId, name: manifest?.name ?? "", url, events: manifest?.events ?? [], enabled: true, manifest, settings: {}, created_at: "" }} />
+      <EndpointForm action={`/admin/shops/${shop.id}/hooks`} apps manifest={manifest} endpoint={{ id: "", shop_id: shopId, name: manifest?.name ?? "", url, events: manifest?.events ?? [], enabled: true, manifest, settings: {}, created_at: "" }} />
     </AdminLayout>,
   );
 });
@@ -356,7 +352,7 @@ hooks.post("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   // マニフェストは登録時に再取得する（フォームの値を信用しない）
   const manifest = await fetchManifest(url, outboundFetch(c));
-  const values = endpointValues(f, events, manifest, await appsReady(c));
+  const values = endpointValues(f, events, manifest, true);
   if (typeof values === "string") return c.redirect(`/admin/shops/${shopId}/hooks?flash=${values}`);
   try {
     const [created] = await db.from<EndpointRow>("hook_endpoints").insert({ ...values, shop_id: shopId, manifest });
@@ -401,7 +397,7 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
       />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
-      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps={await appsReady(c)} />
+      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps />
 
       {bundledPluginIdFromUrl(endpoint.url) === null ? (
         <div>
@@ -443,7 +439,7 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const bundled = bundledPluginIdFromUrl(endpoint.url) !== null;
   // 外部プラグインはマニフェストを読み直す（ブロックの提案などが増えたとき。取れなければ前のまま）
   const fresh = !bundled ? await fetchManifest(endpoint.url, outboundFetch(c)) : null;
-  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled && (await appsReady(c)), bundled);
+  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled, bundled);
   if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
   if (bundled) values.url = endpoint.url;
   if (fresh) values.manifest = fresh;

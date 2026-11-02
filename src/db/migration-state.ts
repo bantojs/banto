@@ -13,7 +13,7 @@ import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "./client";
 
 /** v0.6.0 の土台（v0.5 系のセットアップで当たる 0001〜0083）。これ以前のマイグレーションは適用済みとみなす */
-export const BASELINE_MIGRATION = "0083_api_content";
+export const BASELINE_MIGRATION = "0088_app_connect";
 
 export const APPLIED_MIGRATIONS_CACHE_KEY = "migrations:applied";
 /** isolate ごとに覚える秒数。適用した isolate では即座に消すが、ほかの isolate は最大この秒数だけ古い一覧を使う */

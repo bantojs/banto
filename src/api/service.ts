@@ -26,7 +26,7 @@ import type { InquiryMailShop } from "../modules/inquiries/mail";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
 import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview";
 import { getLocale } from "../i18n";
-import { APP_DATA_CUSTOM_MIGRATION, APP_DATA_KEY_RE, APP_DATA_MIGRATION, isAppDataKind } from "../apps/app-data";
+import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone } from "../i18n/time";
 
@@ -656,17 +656,8 @@ export class ApiService {
 
   // ---- 拡張データ（app_data:write、0084。docs/app-data.md）。トークンに結んだ送信先（プラグイン）の名前の空間だけ ----
   private async appDataReady(kind?: string, key?: string): Promise<void> {
-    if (!(await this.migratedTo(APP_DATA_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `app data needs the database update ${APP_DATA_MIGRATION}; apply it from /admin/update`, 409);
-    }
     if (kind === undefined) return;
     if (!isAppDataKind(kind)) throw new ApiError("invalid", "invalid_app_data_kind: the kind must be reviews.v1 or custom.v1", 400);
-    // custom.v1 と名前（0085）
-    if (kind === "custom.v1" && !(await this.migratedTo(APP_DATA_CUSTOM_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `custom.v1 needs the database update ${APP_DATA_CUSTOM_MIGRATION}; apply it from /admin/update`, 409);
-    }
     if (key !== undefined && kind !== "custom.v1") throw new ApiError("invalid", "invalid_app_data_key: only custom.v1 takes a key", 400);
     if (key !== undefined && !APP_DATA_KEY_RE.test(key)) throw new ApiError("invalid", "invalid_app_data_key: lowercase letters, digits and hyphens, up to 40 characters, starting with a letter", 400);
   }

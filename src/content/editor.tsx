@@ -14,7 +14,6 @@ import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
 import { mediaBaseUrl } from "../routes/common";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
-import { migrated } from "../db/migration-state";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
@@ -26,7 +25,6 @@ import { CLIENT_PRELUDE } from "../modules/woo-import/admin";
 import { PATTERNS_FILE, STYLES_FILE, bantoPatterns, parseBlockStyles, parsePatterns, type BlockStyles, type EditorPattern, type PatternBody } from "./theme-blocks";
 import { readThemeBundle, themeStorage } from "../themes/liquid/versions";
 import type { CacheAdapter, StorageAdapter } from "../adapters/types";
-import { APP_BLOCKS_MIGRATION } from "../apps/app-data";
 import { parseManifest, type ManifestBlock } from "../hooks/manifest";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
@@ -111,7 +109,6 @@ export interface EditorAppBlocks {
 /** 編集の画面に出すプラグインのブロック（shop_app_blocks、0086。形はマニフェストと同じ規則で確かめ直す） */
 async function editorAppBlocks(c: AdminContext, shop: ShopRow): Promise<EditorAppBlocks[]> {
   const db = owner(c).db;
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, APP_BLOCKS_MIGRATION))) return [];
   try {
     const rows = await db.rpc<{ app: string; name: string; blocks: unknown }[]>("shop_app_blocks", { p_shop_id: shop.id });
     return (Array.isArray(rows) ? rows : []).flatMap((r) => {

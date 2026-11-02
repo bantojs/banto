@@ -13,8 +13,8 @@ function deps(applied: string[]) {
 }
 
 describe("新しい機能を出すかどうか（migrated）", () => {
-  it("土台（v0.6.0 の前提 = v0.5 系のセットアップで当たる 0083 まで）は同梱のマイグレーションのひとつ", () => {
-    expect(BASELINE_MIGRATION).toBe("0083_api_content");
+  it("土台（v0.7.0 の前提 = v0.6 系のセットアップで当たる 0088 まで）は同梱のマイグレーションのひとつ", () => {
+    expect(BASELINE_MIGRATION).toBe("0088_app_connect");
     expect(BUNDLED_MIGRATIONS).toContain(BASELINE_MIGRATION);
   });
 

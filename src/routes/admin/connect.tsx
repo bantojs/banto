@@ -9,7 +9,6 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { createPrivilegedDb } from "../../db/privileged";
-import { migrated } from "../../db/migration-state";
 import { API_SCOPES, SCOPE_PERM, hashApiToken, isApiScope, type ApiScope } from "../../api/tokens";
 import { APP_HANDLE_RE, fetchManifest, type PluginManifest } from "../../hooks/manifest";
 import { isHookEvent } from "../../hooks/events";
@@ -25,7 +24,6 @@ import { loadShop } from "./shops";
 import { can, type ShopAccess } from "./access";
 import type { ShopRow } from "../../db/types";
 
-export const APP_CONNECT_MIGRATION = "0088_app_connect";
 
 export interface ConnectionRow {
   endpoint_id: string;
@@ -34,14 +32,12 @@ export interface ConnectionRow {
   ticket_expires_at: string | null;
 }
 
-export const connectReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, APP_CONNECT_MIGRATION);
 
 /** つなげるマニフェスト（connect_url がある） */
 export const connectable = (m: PluginManifest | null): m is PluginManifest & { connect_url: string } => Boolean(m?.connect_url);
 
-/** その連携の接続（無ければ null。0088 の前も null） */
+/** その連携の接続（無ければ null） */
 export async function connectionOf(c: AdminContext, endpointId: string): Promise<ConnectionRow | null> {
-  if (!(await connectReady(c))) return null;
   return owner(c).db.from<ConnectionRow>("app_connections").selectOne("endpoint_id,scopes,connected_at,ticket_expires_at", { eq: { endpoint_id: endpointId } });
 }
 
@@ -186,7 +182,6 @@ export function registerConnectRoutes(hooks: Hono<AppEnv>, externalHookUrl: (url
     const shopId = param(c, "shopId");
     const shop = await loadShop(c, shopId, "integrations");
     if (!shop) return c.text(t("shop.not_found"), 404);
-    if (!(await connectReady(c))) return c.redirect(`/admin/shops/${shopId}/hooks?flash=generic`);
     const picked = await scopesFrom(c);
     const f = await formFields(c);
     const url = (f.url ?? "").trim();

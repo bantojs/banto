@@ -1,9 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_SCOPES, APP_DATA_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
-import { migrated } from "../../db/migration-state";
-import { APP_DATA_MIGRATION } from "../../apps/app-data";
+import { API_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
@@ -61,12 +59,6 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
 
-/** 発行できるスコープ（拡張データは 0084 が当たってから） */
-async function issuableScopes(c: AdminContext): Promise<readonly ApiScope[]> {
-  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const apps = await migrated(deps, APP_DATA_MIGRATION);
-  return API_SCOPES.filter((sc) => apps || !APP_DATA_SCOPES.includes(sc));
-}
 
 /** app_data:write のトークンを結べる連携（名前のあるもの） */
 async function appEndpoints(c: AdminContext, shopId: string): Promise<AppEndpoint[]> {
@@ -82,7 +74,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const shop = sa.shop;
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
-  const scopeList = await issuableScopes(c);
+  const scopeList = API_SCOPES;
   const withApps = scopeList.includes("app_data:write");
   const [rows, apps] = await Promise.all([
     db.from<TokenRow>("api_tokens").select(`id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at${withApps ? ",endpoint_id" : ""}`, { eq: { shop_id: shopId }, order: "created_at.desc" }),
@@ -213,7 +205,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const body = await c.req.parseBody({ all: true });
   const rawScopes = body["scopes"];
   const scopes = (Array.isArray(rawScopes) ? rawScopes : typeof rawScopes === "string" ? [rawScopes] : []).filter((v): v is ApiScope => typeof v === "string" && isApiScope(v));
-  const issuable = await issuableScopes(c);
+  const issuable = API_SCOPES;
   if (scopes.some((sc) => !issuable.includes(sc))) return c.redirect(`/admin/shops/${shopId}/tokens?flash=generic`);
   const f = await formFields(c);
   const name = (f.name ?? "").trim().slice(0, 100);
