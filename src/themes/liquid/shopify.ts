@@ -181,8 +181,10 @@ export class ImageUrl {
 interface ImageLike {
   key?: string;
   thumb_key?: string | null;
-  /** 中間の段の長辺（0091） */
+  /** 中間の段の横幅（0091） */
   variants?: number[] | null;
+  /** サムネイルの横幅（0091。null は長辺 400） */
+  thumb_width?: number | null;
   width?: number | null;
   height?: number | null;
   alt?: string | null;
@@ -207,7 +209,7 @@ function imageUrlOf(input: unknown, width?: number, height?: number): ImageUrl |
   if (!img) return typeof input === "string" ? input : "";
   if (typeof img.asset === "string") return new ImageUrl(themeAssetUrl(img.asset), null, null, String(img.alt ?? ""));
   if (!img.key) return typeof img.src === "string" ? img.src : "";
-  const sized = { storage_key: img.key, thumb_key: img.thumb_key ?? null, width: img.width ?? null, height: img.height ?? null, variants: Array.isArray(img.variants) ? img.variants : [] };
+  const sized = { storage_key: img.key, thumb_key: img.thumb_key ?? null, thumb_width: typeof img.thumb_width === "number" ? img.thumb_width : null, width: img.width ?? null, height: img.height ?? null, variants: Array.isArray(img.variants) ? img.variants : [] };
   const key = width ? keyForWidth(sized, width) : img.key;
   const w = img.width ?? null;
   const h = img.height ?? null;

@@ -1,4 +1,4 @@
-import { DEFAULT_IMAGE_MAX, THUMB_LONG_SIDE, imageLadder, type SizedImage } from "./variants";
+import { DEFAULT_IMAGE_MAX, THUMB_WIDTH, imageLadder, type SizedImage } from "./variants";
 
 /** 商品画像のアップロード規則（StorageAdapter に渡す前の検証） */
 export const IMAGE_TYPES: Record<string, string> = {
@@ -92,7 +92,7 @@ export function imageUrl(mediaBaseUrl: string, key: string): string {
   return `${mediaBaseUrl.replace(/\/+$/, "")}/${key}`;
 }
 
-/** サムネイルの上限（ブラウザ側で長辺 400px の WebP に縮小したもの。念のため 1MB） */
+/** サムネイルの上限（ブラウザ側で横幅 400px の WebP に縮小したもの。0091 より前は長辺 400px。念のため 1MB） */
 export const MAX_THUMB_BYTES = 1024 * 1024;
 
 /** 本画像のキーからサムネイルのキーを作る（同じディレクトリ、拡張子の前に .thumb） */
@@ -130,7 +130,7 @@ export function responsiveImage(mediaBaseUrl: string, img: SizedImage, opts: { s
     const ladder = imageLadder(img);
     out.src = imageUrl(mediaBaseUrl, img.thumb_key);
     // 寸法が分からない画像（前からある一部）は、サムネイル 400w と本画像（1600 とみなす）
-    out.srcset = ladder.length ? ladder.map((x) => `${imageUrl(mediaBaseUrl, x.key)} ${x.width}w`).join(", ") : `${out.src} ${THUMB_LONG_SIDE}w, ${full} ${DEFAULT_IMAGE_MAX}w`;
+    out.srcset = ladder.length ? ladder.map((x) => `${imageUrl(mediaBaseUrl, x.key)} ${x.width}w`).join(", ") : `${out.src} ${THUMB_WIDTH}w, ${full} ${DEFAULT_IMAGE_MAX}w`;
     out.sizes = opts.sizes ?? "(max-width: 40rem) 50vw, 14rem";
   }
   return out;

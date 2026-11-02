@@ -25,13 +25,14 @@ export interface UrlBase {
 
 const mediaUrl = (u: UrlBase, key: string) => `${u.mediaBaseUrl.replace(/\/+$/, "")}/${key}`;
 
-export function imageObject(u: UrlBase, img: Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height" | "variants"> & { id?: string }, alt: string) {
+export function imageObject(u: UrlBase, img: Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height" | "variants" | "thumb_width"> & { id?: string }, alt: string) {
   const src = mediaUrl(u, img.storage_key);
   const o: Record<string, unknown> = {
     id: img.id ?? img.storage_key,
     key: img.storage_key,
     thumb_key: img.thumb_key,
     variants: img.variants ?? [],
+    thumb_width: img.thumb_width ?? null,
     src,
     url: src,
     width: img.width,

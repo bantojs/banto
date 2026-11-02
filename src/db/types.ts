@@ -96,8 +96,10 @@ export interface ProductImageRow {
   width: number | null;
   height: number | null;
   sort_order: number;
-  /** 0091。サムネイルと本画像のあいだに作った段の長辺（800 / 1600 / 2048 / 2560）。キーは src/media/variants.ts の variantKey。0091 の前と前からある画像は無いか空 */
+  /** 0091。サムネイルと本画像のあいだに作った段の横幅（800 / 1600 / 2048 / 2560）。キーは src/media/variants.ts の variantKey。0091 の前と前からある画像は無いか空 */
   variants?: number[];
+  /** 0091。サムネイルの横幅。null・無しは長辺 400 で作ったもの（0091 より前・AI 用 API） */
+  thumb_width?: number | null;
   /** 0063。どの SKU の画像か（SKU の options の一部。{} なら商品全体）。src/products/images.ts */
   options?: Record<string, string>;
   created_at: string;

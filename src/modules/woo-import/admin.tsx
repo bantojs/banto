@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { IMAGE_VARIANTS_MIGRATION, VARIANT_SIZES, imageMaxLongSide, readVariantFiles, variantKey } from "../../media/variants";
+import { IMAGE_VARIANTS_MIGRATION, VARIANT_SIZES, imageMaxWidth, readVariantFiles, thumbWidthOf, variantKey } from "../../media/variants";
 import { migrated } from "../../db/migration-state";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -90,7 +90,7 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
   // 要確認のクーポンを直して入れる画面（0043）
   const couponImport = `/admin/shops/${shop.id}/modules/coupons/import`;
   // 画像の大きさ（ショップの設定）と中間の段（0091 が当たってから）
-  const imageMax = imageMaxLongSide(shop.settings);
+  const imageMax = imageMaxWidth(shop.settings);
   const variantSizes = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION)) ? [...VARIANT_SIZES] : [];
   const cfg = { base: `/admin/shops/${shop.id}/modules/woo-import`, shopUrl: shopHome(publicBaseUrl(c), shop), t: dict, large, couponImport, imageMax, variantSizes };
   // </script> を閉じさせない（< をエスケープ）
@@ -417,7 +417,7 @@ wooImport.get("/images/original", requireOwner, async (c: AdminContext) => {
 });
 
 /**
- * このページのブラウザで縮小した画像（長辺はショップの設定、既定 1600px）とサムネイル（400px）・中間の段（0091）を受け取り、元の URL の置き場所のキーで登録する
+ * このページのブラウザで縮小した画像（横幅はショップの設定、既定 1600px）とサムネイル（横幅 400px）・中間の段（0091）を受け取り、元の URL の置き場所のキーで登録する
  * （次に取り込みを押しても、この画像は取り込み済みとして飛ばす）。multipart: slug・url・image・thumbnail（任意）
  */
 wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
@@ -452,7 +452,8 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
     return c.json({ added: 0, skipped: 1 });
   }
   const size = imageSize(image, kind.contentType);
-  const variants = (await migrated({ db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION)) ? await readVariantFiles(form, size ? Math.max(size.width, size.height) : 0) : [];
+  const variantsOn = await migrated({ db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION);
+  const variants = variantsOn ? await readVariantFiles(form, size?.width ?? 0) : [];
   if (variants === null) return c.json({ error: "invalid_image" }, 400);
   const storage = c.get("adapters").storage;
   const key = wcImageKey(shop.id, product.id, url, kind.ext);
@@ -470,7 +471,7 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
       width: size?.width ?? null,
       height: size?.height ?? null,
       sort_order: existing.reduce((n, i) => Math.max(n, i.sort_order + 1), 0),
-      ...(variants.length ? { variants: variants.map((v) => v.size) } : {}),
+      ...(variantsOn ? { variants: variants.map((v) => v.size), thumb_width: thumb && thumbKind ? thumbWidthOf(thumb, thumbKind.contentType) : null } : {}),
     });
   } catch (e) {
     await Promise.all([key, tKey, ...vKeys].filter((k): k is string => !!k).map((k) => storage.delete(k).catch(() => undefined)));

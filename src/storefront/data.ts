@@ -111,7 +111,7 @@ export interface CouponClaimInfo {
 
 /** 一覧に出す商品の列（0058 の product_public_list が返すもの。説明・独自項目は含まない） */
 export type ProductListRow = Pick<ProductRow, "id" | "slug" | "name" | "tags" | "category_id" | "extra_category_ids" | "brand" | "created_at" | "updated_at">;
-export type ProductListImage = Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height" | "variants">;
+export type ProductListImage = Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height" | "variants" | "thumb_width">;
 
 export interface ProductSummary {
   product: ProductListRow;

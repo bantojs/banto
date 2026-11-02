@@ -7,7 +7,7 @@ import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, imageUrl, productImageKey, thumbKey } from "../../media/images";
-import { IMAGE_VARIANTS_MIGRATION, imageKeys, imageMaxLongSide, readVariantFiles, resizeScript, variantKey } from "../../media/variants";
+import { IMAGE_VARIANTS_MIGRATION, imageKeys, imageMaxWidth, readVariantFiles, resizeScript, thumbWidthOf, variantKey } from "../../media/variants";
 import { migrated } from "../../db/migration-state";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
@@ -60,7 +60,7 @@ const Flash = (props: { flash: ReturnType<typeof flash> }) =>
 // ---------- 一覧 ----------
 /**
  * ブラウザ側で縮小してからアップロードする（サーバーでは画像処理をしない: Workers の CPU 制限と可搬性のため）。
- * 本画像は長辺がショップの設定（既定 1600px）、サムネイルは長辺 400px、そのあいだの段（800 など、0091）も作る。どれも WebP（src/media/variants.ts）。
+ * 基準は横幅（高さは 4096px まで）。本画像の横幅がショップの設定（既定 1600px）、サムネイルは横幅 400px、そのあいだの段（800 など、0091）も作る。どれも WebP（src/media/variants.ts）。
  * GIF（アニメーションの可能性）と SVG は触らない。canvas / WebP が使えない環境では通常のフォーム送信にフォールバックする（サムネイルなし）。
  * 中間の段は 0091 が当たるまで送らない（data-variants）。
  */
@@ -583,10 +583,10 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
           </tbody>
         </table>
       ) : null}
-      <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxLongSide(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
+      <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
         <label for="file">{t("image.file")}</label>
         <input id="file" type="file" name="file" accept="image/*" required />
-        <p class="muted">{tf("image.resize_note", { max: imageMaxLongSide(shop.settings) })}</p>
+        <p class="muted">{tf("image.resize_note", { max: imageMaxWidth(shop.settings) })}</p>
         <p>
           <button type="submit">{t("image.upload")}</button> <span id="image-status" aria-live="polite"></span>
         </p>
@@ -978,10 +978,11 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   const width = imageDimension(typeof body.width === "string" ? body.width : undefined);
   const height = imageDimension(typeof body.height === "string" ? body.height : undefined);
 
-  // 中間の段（0091 が当たってから。本画像の実際の長辺より小さいものだけ）
+  // 中間の段（0091 が当たってから。本画像の実際の横幅より狭いものだけ）
   const mainBytes = new Uint8Array(await file.arrayBuffer());
   const mainDim = imageSize(mainBytes, file.type);
-  const variants = (await imageVariantsReady(c)) ? await readVariantFiles(body, mainDim ? Math.max(mainDim.width, mainDim.height) : 0) : [];
+  const variantsOn = await imageVariantsReady(c);
+  const variants = variantsOn ? await readVariantFiles(body, mainDim?.width ?? 0) : [];
   if (variants === null) return c.redirect(`${base}?flash=image_type`);
 
   const storage = c.get("adapters").storage;
@@ -989,7 +990,9 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   const tKey = thumb && thumbExt ? thumbKey(key, thumbExt) : null;
   const vKeys = variants.map((v) => variantKey(key, v.size));
   await storage.put(key, mainBytes.slice().buffer, file.type);
-  if (thumb && tKey) await storage.put(tKey, await thumb.arrayBuffer(), thumb.type);
+  const thumbBytes = thumb ? new Uint8Array(await thumb.arrayBuffer()) : null;
+  const thumbWidth = thumbBytes && thumb ? thumbWidthOf(thumbBytes, thumb.type) : null;
+  if (thumbBytes && thumb && tKey) await storage.put(tKey, thumbBytes.slice().buffer, thumb.type);
   await Promise.all(variants.map((v, i) => storage.put(vKeys[i]!, v.bytes.slice().buffer, "image/webp")));
   const sortOrder = data.images.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
   try {
@@ -1001,7 +1004,7 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
       width: width && height ? width : null,
       height: width && height ? height : null,
       sort_order: sortOrder,
-      ...(variants.length ? { variants: variants.map((v) => v.size) } : {}),
+      ...(variantsOn ? { variants: variants.map((v) => v.size), thumb_width: thumbWidth } : {}),
     });
   } catch (e) {
     await Promise.all([key, ...(tKey ? [tKey] : []), ...vKeys].map((k) => storage.delete(k)));

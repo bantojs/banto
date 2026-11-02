@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { IMAGE_MAX_CHOICES, imageMaxLongSide } from "../../media/variants";
+import { IMAGE_MAX_CHOICES, imageMaxWidth } from "../../media/variants";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 import { STOREFRONT_MODES, safeHttpsUrl, storefrontSettings } from "../../storefront/mode";
@@ -296,7 +296,7 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
             <label for="image_max">{t("shop.image_max")}</label>
             <select id="image_max" name="image_max">
               {IMAGE_MAX_CHOICES.map((n) => (
-                <option value={String(n)} selected={imageMaxLongSide(shop.settings) === n}>
+                <option value={String(n)} selected={imageMaxWidth(shop.settings) === n}>
                   {tf("shop.image_max_option", { n })}
                 </option>
               ))}
@@ -665,8 +665,8 @@ shops.post("/:shopId/shipping", requireOwner, async (c: AdminContext) => {
     members_enabled: f.members_enabled === "on",
     members_password: f.members_password === "on",
     marketing_consent: f.marketing_consent === "on",
-    // 商品画像の本画像の長辺（これから上げる画像から。src/media/variants.ts）
-    images: { ...(isRecord((shop.settings ?? {})["images"]) ? ((shop.settings ?? {})["images"] as Record<string, unknown>) : {}), max_long_side: imageMaxLongSide({ images: { max_long_side: Number(f.image_max) } }) },
+    // 商品画像の本画像の横幅（これから上げる画像から。src/media/variants.ts）
+    images: { ...(isRecord((shop.settings ?? {})["images"]) ? ((shop.settings ?? {})["images"] as Record<string, unknown>) : {}), max_width: imageMaxWidth({ images: { max_width: Number(f.image_max) } }) },
     ...(contact && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact) ? { contact_email: contact } : { contact_email: null }),
   };
   try {

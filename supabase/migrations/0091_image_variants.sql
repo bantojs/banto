@@ -1,14 +1,18 @@
--- 商品画像の中間の大きさ（メンテナの決定 2026-11-01、docs/images.md）。
--- 縮小は管理画面のブラウザで行う（サーバーでは画像処理をしない）。本画像（storage_key、長辺はショップの設定 1600 / 2048 / 2560 / 3200）と
--- サムネイル（thumb_key、長辺 400）のあいだの大きさ（長辺 800 / 1600 / 2048 / 2560）を作り、作った長辺をこの列に残す。
--- ファイルのキーは本画像のキーから決まる（拡張子の前に .<長辺>、WebP。src/media/variants.ts の variantKey）ので、キーは持たない。
+-- 商品画像の中間の大きさ（メンテナの決定 2026-11-01・2026-11-02、docs/images.md）。
+-- 縮小は管理画面のブラウザで行う（サーバーでは画像処理をしない）。基準は横幅（どの段も高さは 4096px まで）。
+-- 本画像（storage_key、横幅はショップの設定 1600 / 2048 / 2560 / 3200）とサムネイル（thumb_key、横幅 400）のあいだの段
+-- （横幅 800 / 1600 / 2048 / 2560）を作り、作った横幅を variants に残す。
+-- ファイルのキーは本画像のキーから決まる（拡張子の前に .<横幅>、WebP。src/media/variants.ts の variantKey）ので、キーは持たない。
+-- thumb_width はサムネイルの横幅。null は 0091 より前（長辺 400 で作っていた）か、AI 用 API で受け取ったサムネイル。
 -- 前からある画像は空のまま（本画像とサムネイルだけで描く）。
 
 alter table product_images
   add column variants smallint[] not null default '{}'
-    check (variants <@ array[800, 1600, 2048, 2560]::smallint[] and cardinality(variants) <= 4);
+    check (variants <@ array[800, 1600, 2048, 2560]::smallint[] and cardinality(variants) <= 4),
+  add column thumb_width smallint
+    check (thumb_width is null or (thumb_width between 1 and 400));
 
--- 一覧（0058）の画像にも variants を足す（お客様の画面の一覧で、端末に合う大きさを選べるように）。ほかは 0058 と同じ
+-- 一覧（0058）の画像にも variants と thumb_width を足す（お客様の画面の一覧で、端末に合う大きさを選べるように）。ほかは 0058 と同じ
 create or replace function product_public_list(
   p_shop_id uuid,
   p_sort text default 'new',
@@ -86,7 +90,7 @@ begin
     || '''id'', p.id, ''slug'', p.slug, ''name'', p.name, ''brand'', p.brand, ''category_id'', p.category_id,'
     || '''extra_category_ids'', p.extra_category_ids, ''tags'', p.tags, ''created_at'', p.created_at, ''updated_at'', p.updated_at,'
     || '''min_price_jpy'', p.list_price_jpy, ''compare_at_price_jpy'', p.list_compare_at_jpy, ''k'', %s,'
-    || '''image'', (select jsonb_build_object(''storage_key'', i.storage_key, ''thumb_key'', i.thumb_key, ''width'', i.width, ''height'', i.height, ''variants'', i.variants)'
+    || '''image'', (select jsonb_build_object(''storage_key'', i.storage_key, ''thumb_key'', i.thumb_key, ''width'', i.width, ''height'', i.height, ''variants'', i.variants, ''thumb_width'', i.thumb_width)'
     || '            from product_images i where i.product_id = p.id order by i.sort_order, i.created_at limit 1)'
     || ') as r from products p where %s %s order by %s limit %s offset %s) t',
     v_order, v_key, v_where,
