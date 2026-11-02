@@ -3,6 +3,7 @@
  * ブログは記事の入れ物（/blogs/<handle> が一覧）、記事はその中の 1 本（/blogs/<ブログ>/<handle>）。
  * 本文はページと同じ決まった書式（src/pages/markdown.ts）で、HTML にするのは描くとき。
  */
+import { stripAudienceBlocks } from "../content/audience-blocks";
 import type { PageNav } from "../pages";
 
 export const BLOG_MODULE = "blog";
@@ -88,7 +89,8 @@ export function parseTags(s: string): string[] {
  */
 export function articleSummary(a: { excerpt?: string | null; body?: string | null }, max = 120): string {
   if (a.excerpt) return a.excerpt;
-  const text = (a.body ?? "")
+  // 見せる相手の囲み（0097）の中身は抜粋に使わない（一覧・RSS はだれが見るか決めない）
+  const text = stripAudienceBlocks(a.body ?? "")
     .split("\n")
     .filter((l) => !/^\s{0,3}(:::|\||---)/.test(l))
     .join(" ")

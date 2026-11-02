@@ -69,6 +69,8 @@ export interface LayoutOpen {
 
 const OPEN = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion)(?:\s+(.*?))?\s*$/;
 const CLOSE = /^\s{0,3}:{3,}\s*$/;
+/** 見せる相手の囲み（同梱モジュール audiences、0097。src/content/audience-blocks.ts） */
+const AUDIENCE_OPEN = /^\s{0,3}:{3,}\s*audience(?:\s+(.*?))?\s*$/;
 const SPACER_LINE = /^\s{0,3}:{3,}\s*spacer(?:\s+(.*?))?\s*$/;
 
 /** key=value / key="値"（値に " と改行は入らない。title は 200 字、URL は 2000 字まで） */
@@ -106,6 +108,18 @@ export function parseLayoutOpen(line: string): LayoutOpen | null {
 
 export const isLayoutClose = (line: string) => CLOSE.test(line);
 
+/**
+ * 「::: audience id=<条件の id> title="ゴールド会員"」（見せる相手の囲み）。id が形に合わなければ id は null（だれにも見せない）。
+ * title は編集の画面の目印だけで、お客様には出さない
+ */
+export function parseAudienceOpen(line: string): { id: string | null; title: string } | null {
+  const m = AUDIENCE_OPEN.exec(line);
+  if (!m) return null;
+  const a = readAttrs(m[1] ?? "");
+  const id = (a.get("id") ?? "").toLowerCase();
+  return { id: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : null, title: (a.get("title") ?? "").trim().slice(0, 200) };
+}
+
 /** 「::: spacer size=m」の 1 行 */
 export function parseSpacerLine(line: string): { size: string } | null {
   const m = SPACER_LINE.exec(line);
@@ -117,7 +131,7 @@ export function layoutEnd(rows: readonly string[], from: number): number {
   let depth = 0;
   for (let i = from; i < rows.length; i++) {
     const r = rows[i]!;
-    if (OPEN.test(r)) depth++;
+    if (OPEN.test(r) || AUDIENCE_OPEN.test(r)) depth++;
     else if (CLOSE.test(r)) {
       depth--;
       if (depth === 0) return i;

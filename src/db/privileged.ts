@@ -359,6 +359,8 @@ export interface PrivilegedDb {
   memberSessionCheck(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<boolean>;
   /** 0097: 同じ確かめと、会員の条件で使っている独自項目の値 */
   memberSessionCheckAttrs(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ ok: boolean; attrs: Record<string, unknown> }>;
+  /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
+  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
   memberSessionRefresh(shopId: string, customerId: string, epoch: number, sessionId: string, gen: number): Promise<MemberSessionRefresh>;
   /** 取り消す（logout: 自分の端末 / revoked: 一覧から別の端末） */
@@ -609,6 +611,10 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberSessionCheckAttrs: async (shopId, customerId, epoch, sessionId) => {
       const r = await rpc<{ ok?: boolean; attrs?: Record<string, unknown> } | null>("member_session_check_attrs", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId });
       return { ok: r?.ok === true, attrs: r?.attrs && typeof r.attrs === "object" ? r.attrs : {} };
+    },
+    shopAudiencesRender: async (shopId) => {
+      const r = await rpc<unknown>("shop_audiences_render", { p_shop_id: shopId });
+      return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown }[]) : [];
     },
     memberSessionRefresh: (shopId, customerId, epoch, sessionId, gen) =>
       rpc("member_session_refresh", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_gen: gen }),

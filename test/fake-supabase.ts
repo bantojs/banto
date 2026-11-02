@@ -3058,6 +3058,12 @@ export class FakeSupabase {
       }
       case "member_login_cleanup":
         return json(0);
+      case "shop_audiences_render": {
+        const shop = this.tables.shops.find((x) => x["id"] === shopId);
+        const mods = ((shop?.["settings"] as Record<string, unknown> | undefined)?.["modules"] ?? {}) as Record<string, unknown>;
+        if (mods["audiences"] !== true) return json([]);
+        return json(this.tables.audiences.filter((a) => a["shop_id"] === shopId).map((a) => ({ id: a["id"], name: a["name"], condition: a["condition"] })));
+      }
       case "member_session_start": {
         if (!findCustomer(args["p_customer_id"], args["p_epoch"])) return json(null);
         const id = crypto.randomUUID();
@@ -3317,7 +3323,7 @@ export class FakeSupabase {
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
-    if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_")) || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client") {
+    if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_")) || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client" || fn === "shop_audiences_render") {
       return this.memberRpc(fn, args);
     }
     if (fn === "attach_reservation_customer") {

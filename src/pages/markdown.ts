@@ -13,7 +13,7 @@
  */
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { t } from "../i18n";
-import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, isLayoutClose, layoutEnd, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
+import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
   /** 画像として受け付ける URL の起点（MEDIA_BASE_URL。無ければ /media/ だけ） */
@@ -32,6 +32,8 @@ export interface MarkdownOptions {
   articlesLabel?: (b: ArticlesBlock) => string;
   /** 管理画面の見たままの編集: プラグインのブロック（0086）の説明の文字（お店の画面では渡さない） */
   appLabel?: (b: AppBlock) => string;
+  /** 見せる相手の囲み（0097）の目印の文字（編集の画面だけ。お客様の画面は描く前に src/content/audience-blocks.ts で外す） */
+  audienceLabel?: (title: string, id: string | null) => string;
   /**
    * 管理画面の見たままの編集の形で描く（囲みに data-slot、アコーディオンは開け閉めしない箱、画像は書き換えられない箱）。
    * レイアウトの CSS は添えない（管理画面が持つ）
@@ -311,6 +313,18 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       continue;
     }
     if (BLOCK_LINE.test(row)) {
+      // 見せる相手の囲み（0097）。編集の画面は枠と目印で描く。お客様の画面では描く前に外してあるので、
+      // ここまで来たもの（外す道を通らない使い方）はだれにも見せない（閉じまで飛ばす）
+      const ao = parseAudienceOpen(row);
+      if (ao) {
+        const end = layoutEnd(rows, i);
+        if (opts.editor && depth < LAYOUT_DEPTH_MAX) {
+          const label = opts.audienceLabel ? opts.audienceLabel(ao.title, ao.id) : ao.title;
+          out.push(`<div class="banto-audience" data-banto-block="audience"${ao.id ? ` data-id="${ao.id}"` : ""}${ao.title ? ` data-title="${esc(ao.title)}"` : ""}><div class="banto-audience__label" contenteditable="false">${esc(label)}</div><div class="banto-audience__body" data-slot>${render(rows.slice(i + 1, end), depth + 1, st).join("\n")}</div></div>`);
+        }
+        i = end + 1;
+        continue;
+      }
       // レイアウトの囲み（入れ子は LAYOUT_DEPTH_MAX 段まで。深すぎる囲みは行を外して中身だけ描く）
       const lo = parseLayoutOpen(row);
       if (lo) {

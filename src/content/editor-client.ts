@@ -259,6 +259,21 @@ export function pageEditorClient() {
       flush();
       // レイアウトの囲みとスペーサー（src/pages/layout.ts）
       const kind = attr(c, "data-banto-block");
+      // 見せる相手の囲み（0097）: 「::: audience id=… title="…"」・中身・「:::」
+      if (kind === "audience") {
+        const body = Array.from(c.childNodes).find((x) => x.nodeType === 1 && (" " + attr(x, "class") + " ").includes(" banto-audience__body ")) ?? { nodeType: 1, nodeName: "DIV", childNodes: [], textContent: "" };
+        const inner: string[] = [];
+        const hs: number[] = [];
+        blocks(body, inner, hs);
+        const h = 1 + Math.max(0, ...hs);
+        heights.push(h);
+        const fence = ":".repeat(2 + h);
+        const id = attr(c, "data-id").trim().toLowerCase();
+        const title = quoted(attr(c, "data-title"));
+        const open = `${fence} audience${/^[0-9a-f-]{36}$/.test(id) ? ` id=${id}` : ""}${title ? ` title="${title}"` : ""}`;
+        out.push([open, ...(inner.length ? [inner.join("\n\n")] : []), fence].join("\n"));
+        continue;
+      }
       if (LAYOUT.test(kind)) {
         layout(c, kind, out, heights);
         continue;

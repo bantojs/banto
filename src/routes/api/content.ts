@@ -9,6 +9,10 @@ import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, a
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
+import { hasAudienceBlocks } from "../../content/audience-blocks";
+import { viewerBody } from "../audience-render";
+import { GUEST } from "../../members/audience";
+import { memberFromRequest } from "./members";
 
 /**
  * ヘッドレスの公開 API: ショップのページ（同梱モジュール pages、0079）とブログ・記事（blog、0081）。docs/headless.md「ページ・ブログ」。
@@ -45,12 +49,23 @@ async function scope(c: Ctx, module: string): Promise<Scope | Response> {
 /** アイキャッチ（保存した URL。/media/ から始まるものは絶対 URL に） */
 const absImage = (s: Scope, url: string | null | undefined) => (url ? (url.startsWith("/") ? `${s.origin}${url}` : url) : null);
 
-/** 本文の HTML（書式 → HTML、商品・記事のブロックに既定のカード） */
-async function bodyHtml(s: Scope, row: Pick<PageRow, "id" | "updated_at" | "body">): Promise<string> {
-  const html = pageBodyHtml(row, s.mediaBaseUrl, s.origin);
+/**
+ * 見る人に合わせた本文の書式と HTML（書式 → HTML、商品・記事のブロックに既定のカード）。
+ * 見せる相手の囲み（0097）は、会員トークン（Authorization: Bearer bm1.…）の会員に合わせて、書式からも HTML からも外す。
+ * トークンが無ければゲスト、壊れていれば 401
+ */
+async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at" | "body">): Promise<{ body: string; html: string } | Response> {
+  let view = { body: row.body, key: "" };
+  if (hasAudienceBlocks(row.body)) {
+    const m = await memberFromRequest(c, s.shop);
+    if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
+    view = await viewerBody(c, s.shop, row.body, m.member ? { member: true, attrs: m.member.attrs ?? {} } : GUEST);
+    c.header("Vary", "Authorization");
+  }
+  const html = pageBodyHtml({ ...row, body: view.body }, s.mediaBaseUrl, s.origin, view.key);
   const categories = await s.sf.listCategories(s.shop);
-  const { cards, acards, appCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, row.body, categories);
-  return fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards);
+  const { cards, acards, appCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, view.body, categories);
+  return { body: view.body, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards) };
 }
 
 function pageSummary(s: Scope, p: Omit<PageRow, "body">) {
@@ -85,7 +100,9 @@ contentApi.get("/shops/:shop/pages/:handle", async (c: Ctx) => {
   if (s instanceof Response) return s;
   const page = await s.sf.pageByHandle(s.shop, handle);
   if (!page) return c.json({ error: "not_found" }, 404);
-  return c.json({ page: { ...pageSummary(s, page), body: page.body, html: await bodyHtml(s, page) } });
+  const v = await viewBody(c, s, page);
+  if (v instanceof Response) return v;
+  return c.json({ page: { ...pageSummary(s, page), body: v.body, html: v.html } });
 });
 
 function blogSummary(s: Scope, b: BlogRow) {
@@ -142,5 +159,7 @@ contentApi.get("/shops/:shop/blogs/:blog/articles/:article", async (c: Ctx) => {
   if (!blog) return c.json({ error: "not_found" }, 404);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return c.json({ error: "not_found" }, 404);
-  return c.json({ blog: blogSummary(s, blog), article: { ...articleSummaryJson(s, blog, article), seo_title: article.seo_title, seo_description: article.seo_description, template_suffix: article.template_suffix, body: article.body, html: await bodyHtml(s, article) } });
+  const v = await viewBody(c, s, article);
+  if (v instanceof Response) return v;
+  return c.json({ blog: blogSummary(s, blog), article: { ...articleSummaryJson(s, blog, article), seo_title: article.seo_title, seo_description: article.seo_description, template_suffix: article.template_suffix, body: v.body, html: v.html } });
 });

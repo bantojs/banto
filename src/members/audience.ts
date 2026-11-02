@@ -6,6 +6,8 @@
  */
 /** 会員の条件のマイグレーション。当たるまで条件の機能は出さない（会員の Cookie にも値を入れない） */
 export const AUDIENCES_MIGRATION = "0097_audiences";
+/** 同梱モジュールの id（既定 OFF） */
+export const AUDIENCES_MODULE = "audiences";
 
 export type AudienceCondition =
   | { all: AudienceCondition[] }

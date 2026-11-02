@@ -256,4 +256,26 @@ $$;
 revoke execute on function member_session_refresh(uuid, uuid, integer, uuid, integer, integer) from public, anon, authenticated;
 grant execute on function member_session_refresh(uuid, uuid, integer, uuid, integer, integer) to service_role;
 
+-- ---------- お店の画面で本文のブロックを出し分けるための条件の一覧（Worker が短くキャッシュする） ----------
+-- 条件の中身（独自項目の鍵）はお客様に見せないので anon には読ませない。モジュールが OFF なら空
+create or replace function shop_audiences_render(p_shop_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'shop_audiences_render: service_role only' using errcode = '42501';
+  end if;
+  if not exists (select 1 from shops s where s.id = p_shop_id and coalesce(s.settings->'modules'->>'audiences', 'false') = 'true') then
+    return '[]'::jsonb;
+  end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name, 'condition', a.condition) order by a.name) from audiences a where a.shop_id = p_shop_id), '[]'::jsonb);
+end;
+$$;
+revoke execute on function shop_audiences_render(uuid) from public, anon, authenticated;
+grant execute on function shop_audiences_render(uuid) to service_role;
+
 insert into banto_migrations (version) values ('0097_audiences');

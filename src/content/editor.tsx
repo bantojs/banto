@@ -150,7 +150,7 @@ async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: 
 
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
 export const editorHtml = (c: AdminContext, body: string) =>
-  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), editor: true });
+  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), audienceLabel: (title) => tf("pages.audience_label", { name: title || t("pages.audience_unnamed") }), editor: true });
 
 /**
  * 本文の入力の手助け（見出し・太字・リンク・箇条書き…のボタンと、画像を縮小して置いて ![](URL) を入れる）。
@@ -264,6 +264,8 @@ export const EDITOR_CSS = `
 .blk-opt small{display:block;color:var(--fg-muted);font-size:.75rem}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
 #md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
+.page-preview .banto-audience{border:2px dashed var(--accent,#1f6feb);border-radius:6px;padding:.5rem .75rem;margin:.75rem 0}
+.page-preview .banto-audience__label{font-size:.8rem;color:var(--accent,#1f6feb);margin-bottom:.25rem;user-select:none}
 .page-preview .banto-app,.page-preview .banto-articles{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-products{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-products .bp-items{display:flex;gap:.5rem;margin-top:.5rem;overflow:hidden}

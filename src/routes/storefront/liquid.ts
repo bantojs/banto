@@ -39,6 +39,8 @@ import { readCookie } from "../../util/signed";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
 import { themeStorage } from "../../themes/liquid/versions";
+import { shopAudiences } from "../audience-render";
+import { matchedAudienceNames } from "../../content/audience-blocks";
 
 export interface LiquidScope {
   shop: PublicShop;
@@ -59,6 +61,8 @@ export interface LiquidChoice {
   sandboxed: boolean;
   /** カートの行の商品の画像（商品の id → 並び順の画像。カートが空なら空。item.image に使う） */
   cartImages: CartImages;
+  /** ログイン中の会員が合う会員の条件の名前（同梱モジュール audiences、0097。customer.audiences） */
+  audiences?: string[];
 }
 
 /** プレビューの版（?preview_theme=<版>&preview_token=… で始め、Cookie で続ける。?preview_theme=off で終わる） */
@@ -98,7 +102,10 @@ export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines
     // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
     const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
     const cartImages = await cartImagesFor(s.sf, s.shop, cartLines);
-    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed), cartImages };
+    // 会員が合う条件の名前（モジュールが OFF・ゲストなら引かない）
+    const member = s.ctx.member;
+    const audiences = member ? matchedAudienceNames(await shopAudiences(c, s.shop), { member: true, attrs: member.attrs ?? {} }) : [];
+    return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed), cartImages, audiences };
   } catch (e) {
     console.error("[banto] theme load:", e instanceof Error ? e.message : e);
     return null;
@@ -200,7 +207,8 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
     routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null }),
     request: { host: new URL(origin).host, path, page_type: page.template.split(".")[0]!, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
     cart: cartObject(u, choice.cartLines, null, choice.cartImages),
-    customer: s.ctx.member ? { email: s.ctx.member.email } : null,
+    // attributes は会員の条件で使っている独自項目の値だけ（Cookie に入れたもの、0097）。audiences は合う条件の名前
+    customer: s.ctx.member ? { email: s.ctx.member.email, logged_in: true, attributes: s.ctx.member.attrs ?? {}, audiences: choice.audiences ?? [] } : null,
     linklists: withPageLinks(
       {
         "main-menu": menuFromCategories(u, tree, page.currentCategory),

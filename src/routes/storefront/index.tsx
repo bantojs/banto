@@ -22,6 +22,8 @@ import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, para
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
+import { viewerBody } from "../audience-render";
+import { GUEST, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
@@ -132,7 +134,7 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   if (moduleEnabled(shop.settings, INQUIRIES_MODULE) && theme.InquiryPage) ctx.inquiries = true;
   if (ctx.membersEnabled) {
     const member = await customerSession(c, { shop });
-    ctx.member = member ? { email: member.email } : null;
+    ctx.member = member ? { email: member.email, attrs: member.at ?? {} } : null;
   }
   return { shop, sf, cart, ctx, theme };
 }
@@ -378,6 +380,9 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
 });
 
 // ---------- ショップのページ（同梱モジュール pages、0079、docs/pages.md） ----------
+/** 見る人（ログイン中の会員なら独自項目の値も）。見せる相手の囲み（0097）の判定に使う */
+const viewerOf = (s: ShopScope): AudienceContext => (s.ctx.member ? { member: true, attrs: s.ctx.member.attrs ?? {} } : GUEST);
+
 /** 本文の中の「商品を並べる」「記事を並べる」（src/content/body-blocks.ts。ヘッドレスの API と共通） */
 function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {
   return bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl }, body, categories);
@@ -391,8 +396,9 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return notFoundPage(c, s);
-  const html = pageBodyHtml(page, s.ctx.mediaBaseUrl);
-  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, page.body, categories);
+  const view = await viewerBody(c, s.shop, page.body, viewerOf(s));
+  const html = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, view.body, categories);
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards });
@@ -463,8 +469,9 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   if (!blog) return notFoundPage(c, s);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return notFoundPage(c, s);
-  const html = pageBodyHtml(article, s.ctx.mediaBaseUrl);
-  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, article.body, categories);
+  const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
+  const html = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, view.body, categories);
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const lt = await liquidThemeFor(c, s);
   if (lt) {

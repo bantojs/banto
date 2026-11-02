@@ -10,6 +10,7 @@ import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
 import { customerFields, type CustomerField } from "../../customers/fields";
 import { describeAudience } from "../../members/audience";
+import { audiencesCacheKey } from "../../routes/audience-render";
 
 /**
  * 同梱モジュール「会員の条件」（0097_audiences、docs/audiences.md）。項目 marketing。
@@ -23,7 +24,8 @@ import { describeAudience } from "../../members/audience";
  */
 export const audiencesAdmin = new Hono<AppEnv>();
 
-export const AUDIENCES_MODULE = "audiences";
+import { AUDIENCES_MODULE } from "../../members/audience";
+export { AUDIENCES_MODULE };
 const MAX_ROWS = 10;
 type Op = "in" | "not_in" | "gte" | "lte" | "set";
 const OPS: Op[] = ["in", "not_in", "gte", "lte", "set"];
@@ -146,6 +148,7 @@ audiencesAdmin.get("/", requireOwner, async (c: AdminContext) => {
             <tr>
               <th>{t("aud.name")}</th>
               <th>{t("aud.condition")}</th>
+              <th>{t("aud.snippet")}</th>
             </tr>
           </thead>
           <tbody>
@@ -155,15 +158,22 @@ audiencesAdmin.get("/", requireOwner, async (c: AdminContext) => {
                   <a href={`${base(shop)}/${r.id}`}>{r.name}</a>
                 </td>
                 <td>{describeAudience(r.condition, labels, audienceWords())}</td>
+                <td>
+                  <code style="user-select:all;white-space:nowrap">{audienceSnippet(r)}</code>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {rows.length > 0 ? <p class="muted">{t("aud.snippet_hint")}</p> : null}
       <p class="muted">{t("aud.cookie_hint")}</p>
     </AdminLayout>,
   );
 });
+
+/** ページ・記事の本文に貼る囲みの始まりの行（src/content/audience-blocks.ts。title は編集の画面の目印だけ） */
+export const audienceSnippet = (r: { id: string; name: string }) => `::: audience id=${r.id} title="${r.name.replace(/["\n\r]/g, "").slice(0, 200)}"`;
 
 function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: CustomerField[]; access: { role: string; perms: readonly string[] } | undefined; flash?: { kind: "ok" | "error"; key: MessageKey } }) {
   const { shop, row, fields } = props;
@@ -309,6 +319,8 @@ async function save(c: AdminContext, id: string | null) {
     }
     throw e;
   }
+  // お店の画面が覚えている条件の一覧を捨てる（この isolate の分。ほかは AUDIENCES_CACHE_TTL で入れ替わる）
+  await c.get("adapters").cache.delete(audiencesCacheKey(shop.id));
   return c.redirect(`${base(shop)}?flash=saved`);
 }
 
@@ -324,5 +336,6 @@ audiencesAdmin.post("/:id/delete", requireOwner, async (c: AdminContext) => {
     if (e instanceof DbError) return c.redirect(`${base(shop)}/${param(c, "id")}?flash=in_use`);
     throw e;
   }
+  await c.get("adapters").cache.delete(audiencesCacheKey(shop.id));
   return c.redirect(`${base(shop)}?flash=deleted`);
 });

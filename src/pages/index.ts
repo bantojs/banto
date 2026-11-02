@@ -95,8 +95,9 @@ const HTML_CACHE_MAX = 200;
 /** 覚える HTML の合計（文字）。数だけでなく大きさでも抑える（isolate のメモリ） */
 const HTML_CACHE_CHARS_MAX = 4_000_000;
 let htmlCacheChars = 0;
-export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string, origin?: string): string {
-  const key = `${page.id}|${page.updated_at}|${mediaBase}|${origin ?? ""}`;
+/** segment: 見せる相手の囲み（0097）を外した組み合わせ（src/content/audience-blocks.ts の key）。body はその組み合わせで外した本文 */
+export function pageBodyHtml(page: Pick<PageRow, "id" | "updated_at" | "body">, mediaBase: string, origin?: string, segment = ""): string {
+  const key = `${page.id}|${page.updated_at}|${mediaBase}|${origin ?? ""}|${segment}`;
   const hit = htmlCache.get(key);
   if (hit !== undefined) return hit;
   const html = markdownToHtml(page.body, { mediaBase, ...(origin ? { origin } : {}) });

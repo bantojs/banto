@@ -20,7 +20,7 @@ export interface ThemeContext {
   mediaBaseUrl: string;
   cartCount: number;
   /** 会員機能が有効で、ログイン中なら入る */
-  member?: { email: string } | null;
+  member?: { email: string; attrs?: Record<string, unknown> } | null;
   /** 会員機能が有効か（ヘッダにログイン導線を出す） */
   membersEnabled?: boolean;
   /** 外から見た URL（canonical / OG 用） */

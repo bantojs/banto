@@ -486,7 +486,9 @@ async function startWebSession(c: Ctx, s: { shop: { id: string }; shopPath: stri
   const label = opts.add ? [PASSKEY_ADD_LABEL, device].filter(Boolean).join(" / ") : device;
   const sid = db ? await db.memberSessionStart(s.shop.id, v.customer_id, v.session_epoch, "web", label, ttl) : null;
   if (!sid) return false;
-  await writeSession(c, s, { cid: v.customer_id, ep: v.session_epoch, email: v.email, exp: now + (opts.add ? ttl : SESSION_SECONDS), iat: now, sid, chk: now, ...(opts.add ? { add: true as const } : {}) });
+  // 会員の条件（0097）で使っている独自項目の値も最初から入れる（ログインした直後の画面から出し分けが効くように）
+  const at = !opts.add && db && (await audiencesReady(c)) ? audienceAttrsOf((await db.memberSessionCheckAttrs(s.shop.id, v.customer_id, v.session_epoch, sid).catch(() => null))?.attrs) : {};
+  await writeSession(c, s, { cid: v.customer_id, ep: v.session_epoch, email: v.email, exp: now + (opts.add ? ttl : SESSION_SECONDS), iat: now, sid, chk: now, ...(opts.add ? { add: true as const } : {}), ...(Object.keys(at).length > 0 ? { at } : {}) });
   return true;
 }
 

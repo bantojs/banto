@@ -52,4 +52,17 @@ describe.skipIf(!dbAvailable)("会員の条件（0097）", () => {
     expect(bad).toEqual({ ok: false });
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select member_session_check_attrs($1, $2, 0, $3)", [a.shopId, cid, sid])))).toMatch(/service_role only|permission denied/);
   });
+
+  it("お店の画面の条件の一覧: モジュールが ON のショップだけ、service_role だけ", async () => {
+    const list = () => asService(async (c) => (await c.query<{ r: { id: string; name: string; condition: unknown }[] }>("select shop_audiences_render($1) as r", [a.shopId])).rows[0]!.r);
+    const pool = getPool();
+    await pool.query("update shops set settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{modules}', '{\"audiences\": false}') where id = $1", [a.shopId]);
+    expect(await list()).toEqual([]);
+    await pool.query("update shops set settings = jsonb_set(settings, '{modules}', '{\"audiences\": true}') where id = $1", [a.shopId]);
+    const rows = await list();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0]).toHaveProperty("condition");
+    expect(await expectDbError(() => asAnon((c) => c.query("select shop_audiences_render($1)", [a.shopId])))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select shop_audiences_render($1)", [a.shopId])))).toMatch(/permission denied|service_role only/);
+  });
 });
