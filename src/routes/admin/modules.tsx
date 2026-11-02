@@ -23,6 +23,7 @@ import { inquiriesAdmin } from "../../modules/inquiries/admin";
 import { pagesAdmin } from "../../modules/pages/admin";
 import { blogAdmin } from "../../modules/blog/admin";
 import { embedAdmin } from "../../modules/embed/admin";
+import { sizeChartsAdmin } from "../../modules/size-charts/admin";
 
 /**
  * 同梱モジュールの ON/OFF（shops.settings.modules）。/admin/shops/:shopId/modules
@@ -115,3 +116,4 @@ modules.route("/:shopId/modules/inquiries", inquiriesAdmin);
 modules.route("/:shopId/modules/pages", pagesAdmin);
 modules.route("/:shopId/modules/blog", blogAdmin);
 modules.route("/:shopId/modules/embed", embedAdmin);
+modules.route("/:shopId/modules/size-charts", sizeChartsAdmin);

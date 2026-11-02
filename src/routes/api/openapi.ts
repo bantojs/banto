@@ -117,6 +117,21 @@ export function openapiDocument(origin: string, version: string): Record<string,
           responses: { 200: resp("product", product), ...errors, 409: resp("データベースの更新（0078）が要る") },
         },
       },
+      "/size-chart": {
+        get: {
+          summary: "採寸表を読む（products:read、0095、同梱モジュール size_charts）。?product_id= か ?category_id=（どちらも無ければショップ全体の段）。own はその段に置いたもの、effective は上の段を含めて決めた表示される表（列・図・軸は列を決めた近い段、行・注記はそこから近い段）。docs/size-charts.md",
+          security: bearer,
+          parameters: [{ name: "product_id", in: "query", schema: str }, { name: "category_id", in: "query", schema: str }],
+          responses: { 200: resp("size chart", obj({ own: { type: "object", nullable: true }, effective: { type: "object", nullable: true } })), ...errors, 409: resp("データベースの更新（0095）が要る") },
+        },
+        put: {
+          summary: "採寸表の 1 つの段を置き換える（products:write、0095）。columns: [{ key?, label, unit? }]（12 まで、key は英小文字で省略すると c1・c2…）、rows: [{ value, cells: { <列の key>: 文字 } }]（60 まで、value は重ならない）、note（2,000 文字まで）。null の項目はその段では決めない。axis は SKU の軸の key か表示名。hidden は商品の段だけ。図（image）は管理画面だけで、API では今の図のまま。中身がすべて空なら段を消す",
+          security: bearer,
+          parameters: [{ name: "product_id", in: "query", schema: str }, { name: "category_id", in: "query", schema: str }],
+          requestBody: { required: true, content: { "application/json": { schema: obj({ hidden: { type: "boolean" }, axis: { type: "string", nullable: true }, columns: { type: "array", nullable: true, items: obj({ key: str, label: str, unit: str }, ["label"]) }, rows: { type: "array", nullable: true, items: obj({ value: str, cells: { type: "object", additionalProperties: str } }, ["value"]) }, note: { type: "string", nullable: true } }) } } },
+          responses: { 200: resp("size chart level", { type: "object" }), ...errors, 409: resp("データベースの更新（0095）が要る") },
+        },
+      },
       "/image-settings": {
         get: {
           summary: "商品画像の大きさの設定（products:read、0092）。外部の変換プラグインが作る段: 本画像の横幅 max_width（1600 / 2048 / 2560 / 3200）・高さの上限 max_height（4096）・サムネイルの横幅 thumb_width（400）・中間の段 variant_widths（本画像より狭いものだけ作る）・processing（browser = 管理画面のブラウザが作る / plugin = プラグインに任せる）。docs/images.md",

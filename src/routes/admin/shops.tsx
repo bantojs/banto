@@ -28,6 +28,7 @@ import { customerFields, parseCustomerFieldDefinitions } from "../../customers/f
 import { enabledModules } from "../../modules/registry";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
 import { TAX_ROUNDINGS, shopTaxRates, taxRoundingOf } from "../../commerce/tax";
+import { AutocheckHint, AutocheckScript, autocheckAttrs } from "./autocheck";
 
 export const shops = new Hono<AppEnv>();
 
@@ -256,7 +257,8 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
             <input id="free_over_jpy" type="number" name="free_over_jpy" min={0} value={shippingCfg.free_over_jpy === null ? "" : String(shippingCfg.free_over_jpy)} style="width:8rem" placeholder="なし" />
             <details>
               <summary>{t("shipping.table")}</summary>
-              <table>
+              <AutocheckHint label={t("shipping.by_prefecture")} />
+              <table {...autocheckAttrs("mode", "by_prefecture")}>
                 <tbody>
                   {PREFECTURES.map((p) => (
                     <tr>
@@ -580,6 +582,7 @@ function ShopSettingsPage(props: { shop: ShopRow; access: ShopAccess | undefined
         </section>
         </div>
       </div>
+      <AutocheckScript />
     </AdminLayout>
   );
 }

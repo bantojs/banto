@@ -201,6 +201,12 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
                   skus: arr(obj({ id: str, code: str, name: nStr, options: { type: "object", additionalProperties: str }, gtin: nStr, price_jpy: int, compare_at_price_jpy: nInt, in_stock: bool })),
                   option_axes: arr(obj({ key: str, name: str, values: arr(str) }), "SKU を分ける軸（0065）。軸ごとの選択欄に使う。key は英字で変わらない（skus[].options の鍵と同じ）、name は表示名（0094）。values は SKU に出てくる値。軸の無い商品は []"),
                   option_names: { type: "object", additionalProperties: str, description: "SKU の options の key → 表示名（0094）" },
+                  size_chart: {
+                    type: "object",
+                    nullable: true,
+                    description: "採寸表（同梱モジュール size_charts、0095）。どの段（商品・カテゴリー・ショップ全体）の表かは Banto が決めたもの。モジュールが OFF・表が無ければ null。rows[].cells は列の key → 値。axis は結んだ SKU の軸の key（選んだ SKU の options[axis] と rows[].value が同じ行を目立たせる）",
+                    properties: { axis: { type: "string", nullable: true }, axis_name: { type: "string", nullable: true }, columns: { type: "array", items: { type: "object", properties: { key: str, label: str, unit: { type: "string", nullable: true } } } }, rows: { type: "array", items: { type: "object", properties: { value: str, cells: { type: "object", additionalProperties: str } } } }, note: { type: "string", nullable: true }, image: { type: "object", nullable: true, properties: { url: str, width: { type: "integer" }, height: { type: "integer" } } } },
+                  },
                 }),
               }),
             ),

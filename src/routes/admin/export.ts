@@ -7,6 +7,8 @@ import { BANTO_VERSION } from "../../version";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { migrated } from "../../db/migration-state";
+import { SIZE_CHARTS_MIGRATION } from "../../size-charts/chart";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -46,6 +48,8 @@ const INQUIRY_TABLES: typeof TABLES = [
 const PAGE_TABLES: typeof TABLES = [{ name: "pages", order: "created_at.asc" }];
 /** ブログと記事（同梱モジュール blog、0081）。当たっているときだけ */
 const BLOG_TABLES: typeof TABLES = [{ name: "blogs", order: "created_at.asc" }, { name: "articles", order: "created_at.asc" }];
+/** 採寸表（同梱モジュール size_charts、0095）。当たっているときだけ（図の実体は画像と同じく含まない） */
+const SIZE_CHART_TABLES: typeof TABLES = [{ name: "size_charts", order: "updated_at.asc" }];
 
 /** PostgREST の 1 回あたりの上限（既定 1,000 行）を offset で回して全件読む */
 export async function readAll(db: DbClient, table: string, shopId: string, order: string, eq: Record<string, string> = {}, columns = "*"): Promise<Row[]> {
@@ -64,7 +68,8 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  const sizeCharts = (await migrated({ db, cache: c.get("adapters").cache }, SIZE_CHARTS_MIGRATION)) ? SIZE_CHART_TABLES : [];
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...sizeCharts]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,

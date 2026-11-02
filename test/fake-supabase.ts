@@ -37,7 +37,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -125,6 +125,7 @@ export class FakeSupabase {
   /** 画像の URL の目印 → SKU の options（0063。product_image_hints の代わり。中身は test/db/sku-images.test.ts） */
   readonly imageHints: { shop_id: string; product_id: string; tag: string; options: Row }[] = [];
   readonly tables: Record<TableName, Row[]> = {
+    size_charts: [],
     shops: [],
     categories: [],
     products: [],
@@ -1333,7 +1334,10 @@ export class FakeSupabase {
           return { app: e["app_handle"], kind: d["kind"], key: d["key"] ?? "", data: d["data"], updated_at: d["updated_at"], ...(typeof more === "string" && /^https:\/\/[A-Za-z0-9.-]+(\/[^\s"'<>`]*)?$/.test(more) ? { more_url: more } : {}) };
         }))
         .sort((a, b) => `${String(a.app)}/${a.kind}/${a.key}`.localeCompare(`${String(b.app)}/${b.kind}/${b.key}`));
-      return json({ ...p, attributes: pub, app_data: appData });
+      // 0095: 採寸表（モジュールが ON のときだけ）
+      const mods = ((shop?.["settings"] ?? {}) as Record<string, unknown>)["modules"] as Record<string, unknown> | undefined;
+      const sizeChart = mods?.["size_charts"] === true ? this.sizeChartResolve(String(p["shop_id"]), (p["category_id"] as string | null) ?? null, String(p["id"])) : null;
+      return json({ ...p, attributes: pub, app_data: appData, size_chart: sizeChart });
     }
     // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
     if (fn === "product_public_list") return this.productPublicList(args);
@@ -1399,6 +1403,18 @@ export class FakeSupabase {
     if (fn === "sales_summary") {
       if (!uid || !this.ownedShopIds(uid).has(args["p_shop_id"] as string)) return json({ code: "42501", message: "shop_not_found" }, 403);
       return json(this.salesSummary(args["p_shop_id"] as string, String(args["p_from"]), String(args["p_to"]), String(args["p_group_by"] ?? "day")));
+    }
+    // 0095: 採寸表。本物の SQL（形の確かめ・権限）は test/db/size-charts.test.ts。ここは近い段から決める規則だけ同じ
+    if (fn === "size_chart_get" || fn === "size_chart_set") {
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const cat = (args["p_category_id"] as string | null) ?? null;
+      const prod = (args["p_product_id"] as string | null) ?? null;
+      if (fn === "size_chart_set") {
+        const r = this.sizeChartWrite(shopId, cat, prod, args["p_data"] as Row);
+        return "error" in r ? json({ code: "P0001", message: r.error }, 400) : json(r);
+      }
+      return json(this.sizeChartGet(shopId, cat, prod, true));
     }
     if (fn === "option_names_set") {
       // 0094: 本物の SQL（名前の重なり・知らない key）は test/db/option-keys.test.ts
@@ -1931,6 +1947,92 @@ export class FakeSupabase {
   }
 
   /** api_*: トークン検証 → shop 限定。本物の SQL は test/db/api.test.ts で検証 */
+  private sizeChartRow(shopId: string, cat: string | null, prod: string | null): Row | undefined {
+    return this.tables.size_charts.find((r) => r["shop_id"] === shopId && (r["category_id"] ?? null) === cat && (r["product_id"] ?? null) === prod);
+  }
+  private sizeChartJson(r: Row): Row {
+    return { level: r["product_id"] ? "product" : r["category_id"] ? "category" : "shop", category_id: r["category_id"] ?? null, product_id: r["product_id"] ?? null, hidden: r["hidden"] === true, axis: r["axis"] ?? null, columns: r["columns"] ?? null, rows: r["rows"] ?? null, note: r["note"] ?? null, image: r["image_key"] ? { key: r["image_key"], width: r["image_width"], height: r["image_height"] } : null };
+  }
+  /** 0095 の banto_size_chart_resolve と同じ規則（列・図・軸は列を持つ近い段、行・注記は商品からその段までの近い段） */
+  sizeChartResolve(shopId: string, categoryId: string | null, productId: string | null): Row | null {
+    const levels: { kind: string; r: Row }[] = [];
+    if (productId) {
+      const r = this.sizeChartRow(shopId, null, productId);
+      if (r?.["hidden"] === true) return null;
+      if (r) levels.push({ kind: "product", r });
+    }
+    for (let cur = categoryId, d = 0; cur && d < 4; d++) {
+      const r = this.sizeChartRow(shopId, cur, null);
+      if (r) levels.push({ kind: "category", r });
+      cur = (this.tables.categories.find((c) => c["id"] === cur)?.["parent_id"] as string | null) ?? null;
+    }
+    const top = this.sizeChartRow(shopId, null, null);
+    if (top) levels.push({ kind: "shop", r: top });
+    const c = levels.findIndex((l) => l.r["columns"]);
+    if (c < 0) return null;
+    const within = levels.slice(0, c + 1);
+    const rows = within.find((l) => l.r["rows"]);
+    const note = within.find((l) => l.r["note"]);
+    const col = levels[c]!.r;
+    const names = (this.tables.shops.find((x) => x["id"] === shopId)?.["option_names"] ?? {}) as Record<string, string>;
+    const axis = (col["axis"] as string | null) ?? null;
+    return {
+      axis,
+      axis_name: axis ? (names[axis] ?? axis) : null,
+      columns: col["columns"],
+      rows: rows?.r["rows"] ?? [],
+      note: note?.r["note"] ?? null,
+      image: col["image_key"] ? { key: col["image_key"], width: col["image_width"], height: col["image_height"] } : null,
+      sources: { columns: levels[c]!.kind, rows: rows?.kind ?? null },
+    };
+  }
+  private sizeChartGet(shopId: string, cat: string | null, prod: string | null, withInherited: boolean): Row {
+    const own = this.sizeChartRow(shopId, cat, prod);
+    const pcat = prod ? ((this.tables.products.find((x) => x["id"] === prod)?.["category_id"] as string | null) ?? null) : cat;
+    const out: Row = { own: own ? this.sizeChartJson(own) : null, effective: this.sizeChartResolve(shopId, pcat, prod) };
+    if (withInherited) {
+      out["inherited"] = prod ? this.sizeChartResolve(shopId, pcat, null) : cat ? this.sizeChartResolve(shopId, (this.tables.categories.find((c) => c["id"] === cat)?.["parent_id"] as string | null) ?? null, null) : null;
+    }
+    return out;
+  }
+  /** 形の確かめは最小限（列の key を振る・空を null に）。本物は banto_size_chart_normalize */
+  private sizeChartWrite(shopId: string, cat: string | null, prod: string | null, data: Row): Row | { error: string } {
+    const names = (this.tables.shops.find((x) => x["id"] === shopId)?.["option_names"] ?? {}) as Record<string, string>;
+    let axis: string | null = null;
+    if (typeof data["axis"] === "string" && data["axis"]) {
+      axis = data["axis"] in names ? data["axis"] : (Object.entries(names).find(([, n]) => n.toLowerCase() === String(data["axis"]).toLowerCase())?.[0] ?? null);
+      if (!axis) return { error: "invalid_size_chart_axis" };
+    }
+    const colsIn = Array.isArray(data["columns"]) ? (data["columns"] as Row[]) : [];
+    const used = new Set<string>();
+    const columns = colsIn.map((c, i) => {
+      let key = typeof c["key"] === "string" && c["key"] ? c["key"] : `c${i + 1}`;
+      while (used.has(key)) key = `c${Number(key.slice(1)) + 1}`;
+      used.add(key);
+      return { key, label: String(c["label"]).trim(), unit: typeof c["unit"] === "string" && c["unit"].trim() ? c["unit"].trim() : null };
+    });
+    if (columns.some((c) => !c.label || c.label.length > 40)) return { error: "invalid_size_chart_column_label" };
+    const rowsIn = Array.isArray(data["rows"]) ? (data["rows"] as Row[]) : [];
+    const values = rowsIn.map((r) => String(r["value"] ?? "").trim().toLowerCase());
+    if (values.some((v) => !v) || new Set(values).size !== values.length) return { error: "invalid_size_chart_row_value" };
+    const rows = rowsIn.map((r) => ({ value: String(r["value"]).trim(), cells: Object.fromEntries(Object.entries((r["cells"] ?? {}) as Row).filter(([, v]) => v !== null && String(v).trim() !== "").map(([k, v]) => [k, String(v).trim()])) }));
+    const hidden = data["hidden"] === true;
+    if (hidden && !prod) return { error: "invalid_size_chart_hidden" };
+    const note = typeof data["note"] === "string" && data["note"].trim() ? data["note"].trim() : null;
+    const image = data["image"] as Row | null | undefined;
+    const prev = this.sizeChartRow(shopId, cat, prod);
+    const old = (prev?.["image_key"] as string | undefined) ?? null;
+    const next: Row = { shop_id: shopId, category_id: cat, product_id: prod, hidden, axis, columns: columns.length ? columns : null, rows: rows.length ? rows : null, note, image_key: image?.["key"] ?? null, image_width: image?.["width"] ?? null, image_height: image?.["height"] ?? null };
+    const idx = prev ? this.tables.size_charts.indexOf(prev) : -1;
+    if (!hidden && !axis && !next["columns"] && !next["rows"] && !note && !next["image_key"]) {
+      if (idx >= 0) this.tables.size_charts.splice(idx, 1);
+      return { deleted: true, old_image_key: old };
+    }
+    if (idx >= 0) this.tables.size_charts[idx] = { ...prev, ...next };
+    else this.tables.size_charts.push({ id: crypto.randomUUID(), ...next });
+    return { ...this.sizeChartJson(next), old_image_key: old !== next["image_key"] ? old : null };
+  }
+
   private apiRpc(fn: string, args: Record<string, unknown>): Response {
     const hash = args["p_token_hash"];
     const tok = this.tables.api_tokens.find((t) => t["token_hash"] === hash && t["revoked_at"] == null && (t["expires_at"] == null || String(t["expires_at"]) > new Date().toISOString()));
@@ -2464,6 +2566,22 @@ export class FakeSupabase {
         if (!i) return notFound();
         i["options"] = o;
         return json(product(this.tables.products.find((x) => x["id"] === i["product_id"])!));
+      }
+      case "api_size_chart_get":
+      case "api_size_chart_set": {
+        // 0095
+        if (!need(fn === "api_size_chart_get" ? "products:read" : "products:write")) return unauthorized();
+        const cat = (args["p_category_id"] as string | null) ?? null;
+        const prod = (args["p_product_id"] as string | null) ?? null;
+        if (prod && !this.tables.products.some((x) => x["id"] === prod && x["shop_id"] === shopId)) return notFound();
+        if (cat && !this.tables.categories.some((x) => x["id"] === cat && x["shop_id"] === shopId)) return notFound();
+        if (fn === "api_size_chart_get") return json(this.sizeChartGet(String(shopId), cat, prod, false));
+        const own = this.sizeChartRow(String(shopId), cat, prod);
+        const data = { ...(args["p_data"] as Row), image: own?.["image_key"] ? { key: own["image_key"], width: own["image_width"], height: own["image_height"] } : null };
+        const r = this.sizeChartWrite(String(shopId), cat, prod, data);
+        if ("error" in r) return json({ code: "P0001", message: r.error }, 400);
+        const { old_image_key: _o, ...rest } = r;
+        return json(rest);
       }
       case "api_image_settings": {
         // 0092

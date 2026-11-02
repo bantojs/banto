@@ -14,6 +14,7 @@ import { firstImageForSku, orderImagesForSku } from "../../products/images";
 import { getLocale } from "../../i18n";
 import { appDataOf, customAppData, productReviews, type ProductReviews } from "../../apps/app-data";
 import { reviewsMoreHtml } from "../../apps/reviews-html";
+import { selectedRowValue, sizeChartLiquid, sizeChartOf } from "../../size-charts/chart";
 import { escapeHtml, SafeHtml } from "./engine";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -157,6 +158,11 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, key: x.key ?? "", data: x.data })),
     // custom.v1 をプラグインの名前 → 名前（key）で（0085）。{{ product.apps['size-guide']['size-table'].note }}
     apps: customAppData(p),
+    // 採寸表（同梱モジュール size_charts、0095。モジュールが OFF・表が無ければ null）。docs/size-charts.md
+    size_chart: (() => {
+      const chart = sizeChartOf(p.size_chart);
+      return sizeChartLiquid(chart, (k) => mediaUrl(u, k), chart ? selectedRowValue(chart, selected?.options) : null);
+    })(),
   };
 }
 

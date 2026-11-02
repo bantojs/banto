@@ -161,6 +161,16 @@ v1.put("/products/:id/images/order", async (c) => {
     return errorJson(c, e);
   }
 });
+// 採寸表（0095、同梱モジュール size_charts）。?product_id= / ?category_id= / どちらも無ければショップ全体。GET は products:read、PUT は products:write
+const sizeChartLevel = (c: Ctx) => ({ product_id: c.req.query("product_id") ?? null, category_id: c.req.query("category_id") ?? null });
+v1.get("/size-chart", async (c) => api(c).sizeChartGet(sizeChartLevel(c)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.put("/size-chart", async (c) => {
+  try {
+    return c.json(await api(c).sizeChartSet(sizeChartLevel(c), await body(c)));
+  } catch (e) {
+    return errorJson(c, e);
+  }
+});
 // 商品画像の大きさの設定（0092、products:read）。外部の変換プラグインが作る段（横幅・高さの上限・任せるモードか）
 v1.get("/image-settings", async (c) => api(c).imageSettings().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 // 画像のファイルだけを差し替える（0077、products:write）。行・並び順・SKU への結び付けはそのまま（WebP にするプラグインなど）

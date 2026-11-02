@@ -29,6 +29,8 @@ import { yen } from "../../routes/common";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
 import { ConfirmationBlock } from "./confirmation";
 import { REVIEWS_CSS, ReviewsList, ReviewsSummary } from "./reviews";
+import { SIZE_CHART_SCRIPT, selectedRowValue, sizeChartOf } from "../../size-charts/chart";
+import { SIZE_CHART_CSS, SizeChartView } from "../../size-charts/html";
 import { productReviews } from "../../apps/app-data";
 import { absoluteMedia, pagePath, pagesNav } from "../../pages";
 import { articlePath, blogPath, blogsNav } from "../../blog";
@@ -72,6 +74,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 table.attributes th{width:30%;font-weight:600}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
 ${REVIEWS_CSS}
+${SIZE_CHART_CSS}
 .pager{display:flex;justify-content:space-between;gap:1rem;margin:2rem 0}
 .thumbs{display:flex;gap:.5rem;flex-wrap:wrap}.thumbs img{width:4.5rem;height:4.5rem;object-fit:cover;border-radius:.25rem;border:1px solid color-mix(in srgb,CanvasText 15%,transparent)}
 `;
@@ -562,6 +565,9 @@ export const defaultTheme: Theme = {
     const mainImage = (img: (typeof images)[number]) => responsiveImage(ctx.mediaBaseUrl, img, { sizes: "(max-width: 40rem) 100vw, 50vw" });
     // 外部プラグインのレビュー（0084）。星と件数は名前の下、一覧は商品の下。構造化データにも同じものだけ
     const reviews = productReviews(product);
+    // 採寸表（同梱モジュール size_charts、0095）。どの段の表かは DB が決めて product.size_chart に入れて返す（モジュールが OFF なら無い）
+    const sizeChart = sizeChartOf(product.size_chart);
+    const chartAxis = Boolean(sizeChart?.axis) && skus.length > 1;
     return (
       <Layout
         title={product.name}
@@ -645,7 +651,7 @@ export const defaultTheme: Theme = {
                 <label for="sku_id">{t("store.variant")}</label>
                 <select id="sku_id" name="sku_id" required>
                   {skus.map((s) => (
-                    <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages || axesOn ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
+                    <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages || axesOn || chartAxis ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
                       {skuLabel(s)} — {s.compare_at_price_jpy ? `${t("store.regular_price")} ${yen(s.compare_at_price_jpy)} → ` : ""}
                       {yen(s.price_jpy)}
                       {s.available <= 0 ? ` (${t("store.sold_out")})` : s.available <= 5 ? ` (${t("store.low_stock")})` : ""}
@@ -666,6 +672,8 @@ export const defaultTheme: Theme = {
             {axesOn ? <script dangerouslySetInnerHTML={{ __html: OPTION_AXES_SCRIPT }} /> : null}
           </div>
         </div>
+        {sizeChart ? <SizeChartView chart={sizeChart} mediaBaseUrl={ctx.mediaBaseUrl} selected={selectedRowValue(sizeChart, chosen?.options)} /> : null}
+        {sizeChart && chartAxis ? <script dangerouslySetInnerHTML={{ __html: SIZE_CHART_SCRIPT }} /> : null}
         {reviews ? <ReviewsList reviews={reviews} id="reviews" /> : null}
       </Layout>
     );

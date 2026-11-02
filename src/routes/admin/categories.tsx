@@ -10,6 +10,7 @@ import { loadShop } from "./shops";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { optionAxesFromForm } from "../../products/option-axes";
 import { optionNamesOf } from "../../products/option-names";
+import { sizeChartHref } from "../../modules/size-charts/admin";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
 
@@ -122,6 +123,11 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
             </details>
           </td>
           <td>
+            {sizeChartHref(shop, { category: n.id }) ? (
+              <p>
+                <a href={sizeChartHref(shop, { category: n.id })!}>{t("sizechart.link")}</a>
+              </p>
+            ) : null}
             <form method="post" action={`${base}/${n.id}/delete`}>
               <button type="submit" class="small">
                 {t("category.delete")}

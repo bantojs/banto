@@ -95,6 +95,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `product_image_set_options`【書き込み】 | products:write | `PATCH /images/{id}`（画像を SKU の選択肢に結ぶ。0063） |
 | `product_images_reorder`【書き込み】 | products:write | `PUT /products/{id}/images/order`（画像の並び順。0078） |
 | `product_set_option_axes`【書き込み】 | products:write | `PUT /products/{id}/option-axes`（SKU を分ける軸。0065） |
+| `size_chart_get` / `size_chart_set`【書き込み】 | products:read / products:write | `GET /size-chart`、`PUT /size-chart`（採寸表。0095） |
 | `orders_list` / `order_get` | orders:read（個人情報は orders:pii） | `GET /orders`、`GET /orders/{id}` |
 | `order_update_status`【書き込み】 | orders:write（キャンセルは発行者の orders_cancel も） | `POST /orders/{id}/status` |
 | `stores_list` | shop:read | `GET /stores` |
@@ -130,6 +131,8 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `PATCH /images/{id}` | products:write | `options`（SKU の `options` の一部。`{ "color": "レッド" }` でそのカラーの全 SKU、`{ "color": "レッド", "size": "M" }` でその SKU だけ、`{}` で商品全体。鍵 5 つまで・値は 60 文字までの文字列）。返すのは商品。0063 |
 | `PUT /images/{id}/file` | products:write | 画像のファイルだけを差し替える（0077）。並び順・SKU への結び付け・id はそのまま。本文の形は `images/upload` と同じ（`options` は受けない）。multipart では中間の段 `variant_<横幅>` も一緒に（0092）。前のファイルは消す |
 | `GET /image-settings` | products:read | 商品画像の大きさの設定（0092）。本画像の横幅・高さの上限・サムネイルと中間の段の横幅・変換を任せるか（docs/images.md） |
+| `GET /size-chart` | products:read | 採寸表（同梱モジュール size_charts、0095）。`?product_id=` / `?category_id=` / どちらも無ければショップ全体の段。`own` はその段、`effective` は上の段を含めて決めた表示される表（docs/size-charts.md） |
+| `PUT /size-chart` | products:write | 採寸表の 1 つの段を置き換える。`columns`（`[{ key?, label, unit? }]`、12 まで）・`rows`（`[{ value, cells: { <列の key>: 値 } }]`、60 まで）・`note`・`axis`（SKU の軸の key か表示名）・`hidden`（商品の段だけ）。`null` の項目はその段では決めない。図は管理画面だけ（0095） |
 | `DELETE /images/{id}` | products:write | |
 | `GET /categories` | products:read | |
 | `POST /categories` | products:write | `slug` `name` `parent`（親の slug） `sort_order`。slug が同じなら更新 |

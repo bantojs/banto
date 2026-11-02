@@ -2,6 +2,7 @@
  * AI 用トークンでの操作をまとめる層（docs/ai-access.md）。REST（/api/v1）と MCP（/mcp）の両方がここを使う。
  * 権限の判定は SQL（api_*）側。ここはトークンのハッシュ化、エラーの分類、画像の取り込みだけを担う。
  */
+import { SIZE_CHARTS_MIGRATION } from "../size-charts/chart";
 import { IMAGE_PROCESSING_MIGRATION, VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } from "../media/variants";
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
@@ -138,6 +139,16 @@ function mapRpcError(e: unknown): never {
     throw new ApiError("upstream", "database error", 502);
   }
   throw e;
+}
+
+/** 採寸表の段（0095）。両方を渡すのは誤り */
+export interface SizeChartLevel {
+  product_id?: string | null;
+  category_id?: string | null;
+}
+function sizeChartArgs(level: SizeChartLevel): { p_category_id: string | null; p_product_id: string | null } {
+  if (level.product_id && level.category_id) throw new ApiError("invalid", "invalid_size_chart_level: pass product_id or category_id, not both", 400);
+  return { p_category_id: level.category_id ? uuidOr404(level.category_id) : null, p_product_id: level.product_id ? uuidOr404(level.product_id) : null };
 }
 
 const isUuid = (v: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -377,6 +388,26 @@ export class ApiService {
     // 中間の段（0091）は行から分からないので、あり得る段をすべて消す（無いキーの削除は何もしない）
     await Promise.all(withVariantKeys(r.previous.storage_key, r.previous.thumb_key).map((k) => this.storage.delete(k).catch(() => undefined)));
     return { image_id: r.image_id, product: r.product };
+  }
+
+  /**
+   * 採寸表（同梱モジュール size_charts、0095）。段は商品（product_id）・カテゴリー（category_id）・どちらも無ければショップ全体。
+   * own はその段に置いたもの、effective は上の段を含めて決めた表示される表。表示はモジュールが ON のショップだけ
+   */
+  async sizeChartGet(level: SizeChartLevel): Promise<Record<string, unknown>> {
+    await this.requireSizeCharts();
+    return this.call<Record<string, unknown>>("api_size_chart_get", sizeChartArgs(level));
+  }
+  /** 1 つの段を置き換える（products:write）。columns・rows・note を null にするとその段では決めない（上の段を使う）。図は管理画面だけ */
+  async sizeChartSet(level: SizeChartLevel, data: unknown): Promise<Record<string, unknown>> {
+    await this.requireSizeCharts();
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new ApiError("invalid", "invalid_size_chart: send an object { hidden?, axis?, columns?, rows?, note? }", 400);
+    return this.call<Record<string, unknown>>("api_size_chart_set", { ...sizeChartArgs(level), p_data: data });
+  }
+  private async requireSizeCharts(): Promise<void> {
+    if (await this.migratedTo(SIZE_CHARTS_MIGRATION)) return;
+    await this.call("api_token_shop", {});
+    throw new ApiError("migration_required", `size charts need the database update ${SIZE_CHARTS_MIGRATION}; apply it from /admin/update`, 409);
   }
 
   /** 商品画像の大きさの設定（0092、products:read）。外部の変換プラグインが作る段を決めるのに使う */

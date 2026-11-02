@@ -4,6 +4,7 @@
  * ON/OFF はキャッシュ済み / 読み込み済みのショップ行で判定し、そのために DB に問い合わせない。OFF のモジュールはルートもメニューも出さない。
  */
 import type { MessageKey } from "../i18n";
+import { SIZE_CHARTS_MIGRATION } from "../size-charts/chart";
 
 export interface ModuleDef {
   id: string;
@@ -44,6 +45,8 @@ export const MODULES: readonly ModuleDef[] = [
   // 貼れるタグ（Web Component。STUDIO・Wix・ペライチなど HTML を貼れるサイトに商品とカートを置く。レジは Banto の画面）。
   // スクリプト（/api/embed/v1.js）は公開 API を呼ぶだけの静的なファイルなので ON/OFF に関係なく配り、ON で貼るコードの画面を出す（docs/embed.md）
   { id: "embed", name: "mod.embed.name", description: "mod.embed.description", adminPath: "embed" },
+  // 採寸表（ショップ全体・カテゴリー・商品の段。表示するときに近い段から決める。0095_mod_size_charts、docs/size-charts.md）
+  { id: "size_charts", name: "mod.size_charts.name", description: "mod.size_charts.description", adminPath: "size-charts", migration: SIZE_CHARTS_MIGRATION },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

@@ -158,6 +158,31 @@ export const MCP_TOOLS: McpTool[] = [
     run: (api, a) => api.categorySave(pick(a, ["slug", "name", "parent", "sort_order"])),
   },
   {
+    name: "size_chart_get",
+    description:
+      "採寸表を読む（同梱モジュール size_charts）。product_id か category_id（どちらも無ければショップ全体）の段。own はその段に置いたもの、effective は上の段（親のカテゴリー・ショップ全体）を含めて決めたお店の画面に出る表。スコープ products:read。" +
+      DATA_NOTE,
+    inputSchema: obj({ product_id: s("string", "商品 ID"), category_id: s("string", "カテゴリー ID（categories_list）") }),
+    readOnly: true,
+    run: (api, a) => api.sizeChartGet({ product_id: str(a, "product_id") ?? null, category_id: str(a, "category_id") ?? null }),
+  },
+  {
+    name: "size_chart_set",
+    description:
+      "【書き込み】採寸表の 1 つの段を置き換える。列（columns: [{ key?, label, unit? }]、12 まで。key は英小文字で、省略すると c1・c2…）を決めた近い段の列・測り方の図・軸を使い、行（rows: [{ value: \"M\", cells: { <列の key>: \"70\" } }]、60 まで）と注記はそこから商品までの近い段のもの。null の項目はその段では決めない。axis は SKU の軸の key か表示名。商品の段だけ hidden: true で出さない。図は管理画面で置く。スコープ products:write。",
+    inputSchema: obj({
+      product_id: s("string", "商品 ID"),
+      category_id: s("string", "カテゴリー ID"),
+      hidden: s("boolean", "この商品には出さない（商品の段だけ）"),
+      axis: s("string", "結ぶ SKU の軸（key か表示名。null で結ばない）"),
+      columns: s("array", "列。null でこの段では決めない", { items: { type: "object" } }),
+      rows: s("array", "行。null でこの段では決めない", { items: { type: "object" } }),
+      note: s("string", "注記（2,000 文字まで）"),
+    }),
+    readOnly: false,
+    run: (api, a) => api.sizeChartSet({ product_id: str(a, "product_id") ?? null, category_id: str(a, "category_id") ?? null }, pick(a, ["hidden", "axis", "columns", "rows", "note"])),
+  },
+  {
     name: "product_get",
     description: "商品を 1 件取得する（id または slug）。スコープ products:read。" + DATA_NOTE,
     inputSchema: obj({ id: s("string", "商品 ID"), slug: s("string", "商品スラッグ") }),

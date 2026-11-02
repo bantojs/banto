@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 import { connectApi } from "./connect";
 import { appDataOf, productReviews } from "../../apps/app-data";
+import { sizeChartJson, sizeChartOf } from "../../size-charts/chart";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
@@ -201,6 +202,8 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       /** 外部プラグインの拡張データ（0084、公開の分だけ）。reviews はレビューの要約（無ければ null） */
       app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, key: x.key ?? "", data: x.data })),
       reviews: productReviews(p),
+      /** 採寸表（同梱モジュール size_charts、0095。どの段の表かは Banto が決めたもの。モジュールが OFF・表が無ければ null） */
+      size_chart: sizeChartJson(sizeChartOf(p.size_chart), (k) => imageUrl(d.mediaBaseUrl, k)),
     },
   });
 });

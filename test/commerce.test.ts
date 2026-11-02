@@ -70,6 +70,8 @@ describe("送料・税（ストアフロント）", () => {
     let html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
     expect(html).toContain("送料・税・連絡先");
     expect(html).toContain('name="pref_北海道"');
+    // 「全国一律」のまま都道府県別の表に入れて使われない、を防ぐ: 表に入力すると「都道府県別」が選ばれる
+    expect(html).toContain('data-autocheck="mode" data-autocheck-value="by_prefecture"');
     const res = await admin.post(`/admin/shops/${shop.id}/shipping`, { mode: "flat", flat_fee_jpy: "600", free_over_jpy: "", pref_北海道: "1200", tax_rate: "8", contact_email: "shop@example.com" });
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=shipping_saved`);
     const settings = sb.shops[0]!["settings"] as Record<string, unknown>;

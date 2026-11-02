@@ -42,6 +42,8 @@ export interface ProductRow {
   attributes?: Record<string, string | number>;
   /** 0084。外部プラグインの拡張データ（product_public_get が公開の分だけ返す。src/apps/app-data.ts） */
   app_data?: unknown;
+  /** 0095。採寸表（同梱モジュール size_charts。product_public_get がモジュールが ON のときだけ、上の段を含めて決めたものを返す。src/size-charts/chart.ts） */
+  size_chart?: unknown;
   /** 0017_tax。税の区分（standard 標準 / reduced 軽減 / exempt 非課税）。src/commerce/tax.ts */
   tax_class?: "standard" | "reduced" | "exempt";
   /** 0065。SKU を分ける軸（null = 決めていない）と、商品で上書きしたか。src/products/option-axes.ts */
