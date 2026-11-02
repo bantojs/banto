@@ -11,7 +11,9 @@ import { getLocale, t, tf, type MessageKey } from "../i18n";
 import { formFields, owner, type AdminContext } from "../routes/admin/context";
 import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
-import { mediaBaseUrl } from "../routes/common";
+import { audiencesReady, mediaBaseUrl } from "../routes/common";
+import { moduleEnabled } from "../modules/registry";
+import { AUDIENCES_MODULE } from "../members/audience";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
@@ -31,7 +33,7 @@ import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, layoutDefault } from "../pages/layout";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
-function layoutConfig(): string {
+function layoutConfig(audiences: { id: string; name: string }[] = []): string {
   const kinds = Object.keys(LAYOUT_ATTRS) as (keyof typeof LAYOUT_ATTRS)[];
   const schema: Record<string, Record<string, { values: readonly string[]; def: string }>> = {};
   const L: Record<string, string> = {};
@@ -46,6 +48,15 @@ function layoutConfig(): string {
     }
   }
   for (const k of ["image", "alt"]) L[`field.${k}`] = t(`layout.field_${k}` as MessageKey);
+  // 見せる相手の囲み（同梱モジュール audiences、0097）: 条件があるショップだけ一覧に出す。選ぶのは条件の名前
+  if (audiences.length > 0) {
+    schema["audience"] = { id: { values: audiences.map((a) => a.id), def: audiences[0]!.id } };
+    L["kind.audience"] = t("layout.kind_audience");
+    L["desc.audience"] = t("layout.desc_audience");
+    L["field.id"] = t("layout.field_audience");
+    L["audience_label"] = t("pages.audience_label");
+    for (const a of audiences) L[`opt.id.${a.id}`] = a.name;
+  }
   for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
   return JSON.stringify({ schema, depth: LAYOUT_DEPTH_MAX, t: L });
 }
@@ -96,6 +107,8 @@ export interface EditorExtras {
   styles: BlockStyles;
   /** 外部プラグインが提案するブロック（0086。有効・名前のある連携のマニフェストの blocks） */
   apps?: EditorAppBlocks[];
+  /** 見せる相手の囲みで選ぶ会員の条件（同梱モジュール audiences が ON で 0097 が当たっていれば） */
+  audiences?: { id: string; name: string }[];
 }
 
 export interface EditorAppBlocks {
@@ -124,15 +137,25 @@ async function editorAppBlocks(c: AdminContext, shop: ShopRow): Promise<EditorAp
 export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] } & EditorExtras> {
   const db = owner(c).db;
   const deps = { db, cache: c.get("adapters").cache };
-  const [categories, rows, blogs, theme, apps] = await Promise.all([
+  const [categories, rows, blogs, theme, apps, audiences] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
     db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }).catch(() => []),
     editorTheme(c, shop),
     editorAppBlocks(c, shop),
+    editorAudiences(c, shop),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps };
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences };
+}
+
+/** 見せる相手の囲みで選べる会員の条件（モジュールが OFF・0097 の前は空。読めるのは項目 content を持つ人も） */
+async function editorAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string }[]> {
+  if (!moduleEnabled(shop.settings, AUDIENCES_MODULE) || !(await audiencesReady(c))) return [];
+  return owner(c)
+    .db.from<{ id: string; name: string }>("audiences")
+    .select("id,name", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
+    .catch(() => []);
 }
 
 /** 公開中の Liquid のテーマのパターンとスタイル（公開中の版があるときだけ） */
@@ -420,7 +443,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-pv-unpublished": t("pages.products_preview_unpublished"),
     "data-t-pv-loading": t("pages.products_preview_loading"),
     "data-preview": `${props.kind.base}/products-preview`,
-    "data-layout": layoutConfig(),
+    "data-layout": layoutConfig(props.extras?.audiences ?? []),
     // パターン（一覧に出す名前だけ）とテーマのスタイル、記事を並べるブロックの文言
     "data-patterns": JSON.stringify(props.extras?.patterns ?? []),
     "data-styles": JSON.stringify(props.extras?.styles ?? {}),

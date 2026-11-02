@@ -125,3 +125,18 @@ describe("ヘッドレスの公開 API", () => {
     expect((await get("/pages/about", "bm1.broken")).status).toBe(401);
   });
 });
+
+describe("編集の画面", () => {
+  it("条件があるショップだけ、ブロックの一覧に「見せる相手」と条件の名前が出る（OFF なら出ない）", async () => {
+    const { app, shop } = setup();
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await b.get(`/admin/shops/${shop.id}/modules/pages/new`)).text();
+    const layout = JSON.parse(/data-layout="([^"]*)"/.exec(html)![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&")) as { schema: Record<string, unknown>; t: Record<string, string> };
+    expect(layout.schema["audience"]).toEqual({ id: { values: [GOLD], def: GOLD } });
+    expect(layout.t[`opt.id.${GOLD}`]).toBe("ゴールド");
+    if (process.env["BANTO_DUMP_EDITOR"]) (await import("node:fs")).writeFileSync(process.env["BANTO_DUMP_EDITOR"], html);
+    const off = setup({ modules: { pages: true } });
+    const b2 = await Browser.loggedIn(off.app, "owner@example.com", "password-123");
+    expect(await (await b2.get(`/admin/shops/${off.shop.id}/modules/pages/new`)).text()).not.toContain(GOLD);
+  });
+});
