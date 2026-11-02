@@ -681,6 +681,7 @@ export const en: Record<MessageKey, string> = {
   "migrate.done": "Applied:",
   "migrate.more": "Some migrations are still pending. Press \"Apply\" again to continue where it stopped.",
   "migrate.running": "Applying. Keep this page open…",
+  "migrate.last": "(up to {version})",
   "migrate.error_step": "The connection dropped while applying. Press \"Apply\" again to continue where it stopped.",
   "migrate.error_invalid": "The connection string is malformed. Paste the string starting with postgresql:// as is.",
   "migrate.error_host": "This database host is not allowed. To use your own PostgreSQL, add the host name to the DB_MIGRATION_HOSTS setting of your deployment (docs/self-hosted-db.md).",
