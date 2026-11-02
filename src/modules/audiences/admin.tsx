@@ -30,10 +30,16 @@ const MAX_ROWS = 10;
 type Op = "in" | "not_in" | "gte" | "lte" | "set";
 const OPS: Op[] = ["in", "not_in", "gte", "lte", "set"];
 interface Row {
+  /** 独自項目の鍵か、PARAM（URL のパラメータ） */
   attr: string;
   op: Op;
   value: string;
+  /** URL のパラメータの名前と、同じ訪問のあいだ覚えるか */
+  param?: string;
+  remember?: boolean;
 }
+/** 組み立ての「独自項目」の欄で URL のパラメータを選んだ印 */
+const PARAM = "__param";
 interface AudienceRow {
   id: string;
   name: string;
@@ -49,7 +55,7 @@ async function scope(c: AdminContext): Promise<ShopRow | null> {
 const base = (shop: ShopRow) => `/admin/shops/${shop.id}/modules/audiences`;
 
 export function audienceWords() {
-  return { member: t("aud.member"), and: t("aud.and"), or: t("aud.or"), not: t("aud.not"), set: t("aud.set"), anyone: t("aud.anyone") };
+  return { member: t("aud.member"), and: t("aud.and"), or: t("aud.or"), not: t("aud.not"), set: t("aud.set"), anyone: t("aud.anyone"), param: t("aud.param_prefix"), remember: t("aud.remember_mark") };
 }
 
 /** 保存してある条件を画面の組み立ての形に戻す（戻せなければ null = JSON の欄で直す） */
@@ -59,7 +65,16 @@ function toBuilder(cond: unknown): { member: boolean; join: "all" | "any"; rows:
     const o = x as Record<string, unknown>;
     if (o["not"] && typeof o["not"] === "object") {
       const n = o["not"] as Record<string, unknown>;
+      if (typeof n["param"] === "string" && Array.isArray(n["in"])) return { attr: PARAM, param: n["param"], remember: n["remember"] === true, op: "not_in", value: (n["in"] as unknown[]).map(String).join(", ") };
       return typeof n["attr"] === "string" && Array.isArray(n["in"]) ? { attr: n["attr"], op: "not_in", value: (n["in"] as unknown[]).map(String).join(", ") } : null;
+    }
+    if (typeof o["param"] === "string") {
+      const p = { attr: PARAM, param: o["param"], remember: o["remember"] === true };
+      if (Array.isArray(o["in"])) return { ...p, op: "in", value: (o["in"] as unknown[]).map(String).join(", ") };
+      if (typeof o["gte"] === "number") return { ...p, op: "gte", value: String(o["gte"]) };
+      if (typeof o["lte"] === "number") return { ...p, op: "lte", value: String(o["lte"]) };
+      if (o["set"] === true) return { ...p, op: "set", value: "" };
+      return null;
     }
     if (typeof o["attr"] !== "string") return null;
     if (Array.isArray(o["in"])) return { attr: o["attr"], op: "in", value: (o["in"] as unknown[]).map(String).join(", ") };
@@ -105,10 +120,11 @@ function toBuilder(cond: unknown): { member: boolean; join: "all" | "any"; rows:
 function fromBuilder(member: boolean, join: "all" | "any", rows: Row[]): unknown {
   const leaves = rows.map((r) => {
     const vals = r.value.split(/[,、\n]/).map((v) => v.trim()).filter(Boolean);
-    if (r.op === "in") return { attr: r.attr, in: vals };
-    if (r.op === "not_in") return { not: { attr: r.attr, in: vals } };
-    if (r.op === "set") return { attr: r.attr, set: true };
-    return { attr: r.attr, [r.op]: Number(r.value) };
+    const who: Record<string, unknown> = r.attr === PARAM ? { param: r.param ?? "", ...(r.remember ? { remember: true } : {}) } : { attr: r.attr };
+    if (r.op === "in") return { ...who, in: vals };
+    if (r.op === "not_in") return { not: { ...who, in: vals } };
+    if (r.op === "set") return { ...who, set: true };
+    return { ...who, [r.op]: Number(r.value) };
   });
   const body = leaves.length === 0 ? null : leaves.length === 1 ? leaves[0] : { [join]: leaves };
   if (member) return body ? { all: [{ member: true }, body] } : { member: true };
@@ -120,6 +136,7 @@ const FLASH: Record<string, { kind: "ok" | "error"; key: MessageKey }> = {
   deleted: { kind: "ok", key: "aud.deleted" },
   invalid: { kind: "error", key: "aud.invalid" },
   invalid_attr: { kind: "error", key: "aud.invalid_attr" },
+  invalid_param: { kind: "error", key: "aud.invalid_param" },
   empty: { kind: "error", key: "aud.empty" },
   duplicate: { kind: "error", key: "aud.duplicate" },
   in_use: { kind: "error", key: "aud.in_use" },
@@ -222,7 +239,16 @@ function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: Custo
                             {f.label}
                           </option>
                         ))}
+                        <option value={PARAM} selected={r?.attr === PARAM}>
+                          {t("aud.param_option")}
+                        </option>
                       </select>
+                      <span style="display:block;margin-top:.25rem;font-size:.85rem">
+                        <input name={`param_${i}`} value={r?.param ?? ""} maxlength={40} pattern="[A-Za-z0-9_]{1,40}" placeholder={t("aud.param_name")} aria-label={t("aud.param_name")} style="width:9rem" />{" "}
+                        <label style="display:inline">
+                          <input type="checkbox" name={`remember_${i}`} value="on" checked={r?.remember === true} /> {t("aud.remember")}
+                        </label>
+                      </span>
                     </td>
                     <td>
                       <select name={`op_${i}`} aria-label={t("aud.op")}>
@@ -242,6 +268,7 @@ function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: Custo
             </tbody>
           </table>
           <p class="muted">{t("aud.value_hint")}</p>
+          <p class="muted">{t("aud.param_hint")}</p>
         </fieldset>
         <details open={row !== null && b === null}>
           <summary>{t("aud.json")}</summary>
@@ -298,12 +325,16 @@ async function save(c: AdminContext, id: string | null) {
   } else {
     const rows: Row[] = [];
     for (let i = 0; i < MAX_ROWS; i++) {
-      const attr = s(`attr_${i}`);
+      // パラメータの名前を入れていれば、欄で「URL のパラメータ」を選び忘れていても URL の条件として扱う（入れたものを捨てない）
+      const paramName = s(`param_${i}`);
+      const picked = s(`attr_${i}`);
+      const attr = picked === PARAM || (!picked && paramName) ? PARAM : picked;
       const op = s(`op_${i}`) as Op;
       if (!attr || !OPS.includes(op)) continue;
+      if (attr === PARAM && !paramName) continue;
       const value = s(`value_${i}`);
       if (op !== "set" && !value) continue;
-      rows.push({ attr, op, value });
+      rows.push({ attr, op, value, ...(attr === PARAM ? { param: paramName, remember: s(`remember_${i}`) === "on" } : {}) });
     }
     condition = fromBuilder(s("member") === "on", s("join") === "any" ? "any" : "all", rows);
     if (condition === null) return c.redirect(`${back}?flash=empty`);
@@ -314,7 +345,7 @@ async function save(c: AdminContext, id: string | null) {
     else id = String((await db.from<{ id: string; shop_id: string; name: string; condition: unknown }>("audiences").insert({ shop_id: shop.id, name: s("name"), condition }))[0]?.id ?? "");
   } catch (e) {
     if (e instanceof DbError) {
-      const code = /invalid_audience_attr/.test(e.message) ? "invalid_attr" : /duplicate|unique/.test(e.message) ? "duplicate" : "invalid";
+      const code = /invalid_audience_attr/.test(e.message) ? "invalid_attr" : /invalid_audience_param/.test(e.message) ? "invalid_param" : /duplicate|unique/.test(e.message) ? "duplicate" : "invalid";
       return c.redirect(`${back}?flash=${code}`);
     }
     throw e;

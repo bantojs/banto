@@ -20,8 +20,9 @@ describe.skipIf(!dbAvailable)("会員の条件（0097）", () => {
   afterAll(closePool);
 
   it("答え合わせの表（TS と同じ）", async () => {
-    for (const c of AUDIENCE_CASES) {
-      const r = (await getPool().query<{ ok: boolean }>("select banto_audience_ok($1::jsonb, $2, $3::jsonb) as ok", [c.cond === null ? null : JSON.stringify(c.cond), c.member, JSON.stringify(c.attrs)])).rows[0]!.ok;
+    // 覚えた値（remember）は画面の Cookie の話なので DB には流さない
+    for (const c of AUDIENCE_CASES.filter((x) => !x.remembered)) {
+      const r = (await getPool().query<{ ok: boolean }>("select banto_audience_ok($1::jsonb, $2, $3::jsonb, $4::jsonb) as ok", [c.cond === null ? null : JSON.stringify(c.cond), c.member, JSON.stringify(c.attrs), JSON.stringify(c.params ?? {})])).rows[0]!.ok;
       expect({ name: c.name, ok: r }).toEqual({ name: c.name, ok: c.ok });
     }
   });
@@ -51,6 +52,16 @@ describe.skipIf(!dbAvailable)("会員の条件（0097）", () => {
     const bad = await asService(async (c) => (await c.query<{ r: { ok: boolean } }>("select member_session_check_attrs($1, $2, 1, $3) as r", [a.shopId, cid, sid])).rows[0]!.r);
     expect(bad).toEqual({ ok: false });
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select member_session_check_attrs($1, $2, 0, $3)", [a.shopId, cid, sid])))).toMatch(/service_role only|permission denied/);
+  });
+
+  it("URL のパラメータの条件: 名前は小文字に、形の違う名前は断る。表示用かどうか", async () => {
+    const cond = await as<unknown>("insert into audiences (shop_id, name, condition) values ($1, 'インスタ', $2) returning condition as r", [a.shopId, JSON.stringify({ any: [{ param: "Ref", in: [" insta "], remember: true }, { param: "tag", set: true }] })]);
+    expect(cond).toEqual({ any: [{ param: "ref", in: ["insta"], remember: true }, { param: "tag", set: true }] });
+    expect(await expectDbError(() => as("insert into audiences (shop_id, name, condition) values ($1, 'x1', $2) returning 1 as r", [a.shopId, JSON.stringify({ param: "bad-name", set: true })]))).toMatch(/invalid_audience_param/);
+    expect(await expectDbError(() => as("insert into audiences (shop_id, name, condition) values ($1, 'x2', $2) returning 1 as r", [a.shopId, JSON.stringify({ param: "ref", set: true, remember: false })]))).toMatch(/invalid_audience/);
+    const only = async (c: unknown) => (await getPool().query<{ r: boolean }>("select banto_audience_display_only($1::jsonb) as r", [JSON.stringify(c)])).rows[0]!.r;
+    expect(await only({ all: [{ member: true }, { not: { param: "ref", set: true } }] })).toBe(true);
+    expect(await only({ all: [{ member: true }, { attr: "rank", in: ["gold"] }] })).toBe(false);
   });
 
   it("お店の画面の条件の一覧: モジュールが ON のショップだけ、service_role だけ", async () => {

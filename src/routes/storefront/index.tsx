@@ -22,7 +22,7 @@ import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, para
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
-import { viewerBody } from "../audience-render";
+import { storefrontQueryContext, viewerBody } from "../audience-render";
 import { GUEST, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
@@ -108,6 +108,8 @@ interface ShopScope {
   cart: Cart;
   ctx: ThemeContext;
   theme: ReturnType<typeof resolveTheme>;
+  /** URL のクエリと覚えた値（同梱モジュール audiences。見せる相手の囲みの判定に使う） */
+  query: Pick<AudienceContext, "params" | "remembered">;
 }
 
 async function scope(c: Ctx): Promise<ShopScope | null> {
@@ -136,7 +138,8 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
     const member = await customerSession(c, { shop });
     ctx.member = member ? { email: member.email, attrs: member.at ?? {} } : null;
   }
-  return { shop, sf, cart, ctx, theme };
+  const query = await storefrontQueryContext(c, shop, ctx.shopPath || "/");
+  return { shop, sf, cart, ctx, theme, query };
 }
 
 // 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
@@ -381,7 +384,7 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
 
 // ---------- ショップのページ（同梱モジュール pages、0079、docs/pages.md） ----------
 /** 見る人（ログイン中の会員なら独自項目の値も）。見せる相手の囲み（0097）の判定に使う */
-const viewerOf = (s: ShopScope): AudienceContext => (s.ctx.member ? { member: true, attrs: s.ctx.member.attrs ?? {} } : GUEST);
+const viewerOf = (s: ShopScope): AudienceContext => ({ ...(s.ctx.member ? { member: true, attrs: s.ctx.member.attrs ?? {} } : GUEST), ...s.query });
 
 /** 本文の中の「商品を並べる」「記事を並べる」（src/content/body-blocks.ts。ヘッドレスの API と共通） */
 function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {

@@ -140,3 +140,56 @@ describe("編集の画面", () => {
     expect(await (await b2.get(`/admin/shops/${off.shop.id}/modules/pages/new`)).text()).not.toContain(GOLD);
   });
 });
+
+describe("URL のパラメータの条件", () => {
+  const INSTA = "33333333-3333-4333-8333-333333333333";
+  const TAG = "44444444-4444-4444-8444-444444444444";
+  const BODY2 = `前\n\n::: audience id=${INSTA}\nインスタから来た方へ\n:::\n\n::: audience id=${TAG}\nセールのお知らせ\n:::\n\n後`;
+  function setup2() {
+    const r = setup();
+    r.sb.tables.audiences.push({ id: INSTA, shop_id: r.shop.id, name: "インスタ", condition: { param: "ref", in: ["insta"], remember: true } });
+    r.sb.tables.audiences.push({ id: TAG, shop_id: r.shop.id, name: "セール", condition: { param: "tag", in: ["sale"] } });
+    r.sb.addPage(r.shop.id, { handle: "lp", title: "LP", body: BODY2 });
+    return r;
+  }
+
+  it("クエリが合えばゲストにも出す。remember の値は Cookie に覚えて、ほかのページでも合う。覚えないものは消える", async () => {
+    const { app } = setup2();
+    const b = new Browser(app, BASE);
+    expect(await (await b.get("/my-shop/pages/lp")).text()).not.toContain("インスタから");
+    const first = await (await b.get("/my-shop/pages/lp?REF=Insta&tag=sale")).text();
+    expect(first).toContain("インスタから来た方へ");
+    expect(first).toContain("セールのお知らせ");
+    expect([...b.cookies.keys()].some((k) => k.startsWith("banto_ap_"))).toBe(true);
+    const next = await (await b.get("/my-shop/pages/lp")).text();
+    expect(next).toContain("インスタから来た方へ");
+    expect(next).not.toContain("セールのお知らせ");
+    // 覚えた値は別の値の URL で上書きされる
+    expect(await (await b.get("/my-shop/pages/lp?ref=line")).text()).not.toContain("インスタから");
+    expect(await (await b.get("/my-shop/pages/lp")).text()).not.toContain("インスタから");
+    // Cookie を書き換えても見えるのは表示だけ（覚えた値はだれでも作れる。お金と在庫には使わない）
+    const other = new Browser(app, BASE);
+    expect(await (await other.get("/my-shop/pages/lp")).text()).not.toContain("インスタから");
+  });
+
+  it("ヘッドレス: 連携サイトは見る人のクエリを p.<名前> で渡す", async () => {
+    const { app } = setup2();
+    const get = async (q: string) => ((await (await app.request(`${BASE}/api/shops/my-shop/pages/lp${q}`)).json()) as { page: { body: string } }).page.body;
+    expect(await get("")).not.toContain("セール");
+    expect(await get("?p.tag=sale")).toContain("セールのお知らせ");
+    expect(await get("?tag=sale")).not.toContain("セール");
+  });
+
+  it("管理画面: 「URL のパラメータ」の行（選び忘れても名前を入れていれば URL の条件に）・覚える・説明", async () => {
+    const { app, shop, sb } = setup();
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/audiences`;
+    await b.post(base, { name: "LP", join: "any", attr_0: "__param", param_0: "ref", remember_0: "on", op_0: "in", value_0: "insta, line", attr_1: "", param_1: "tag", op_1: "set", value_1: "" });
+    const row = sb.tables.audiences.find((a) => a["name"] === "LP")!;
+    expect(row["condition"]).toEqual({ any: [{ param: "ref", remember: true, in: ["insta", "line"] }, { param: "tag", set: true }] });
+    expect(await (await b.get(base)).text()).toContain("URL の ref（覚える） = insta / line または URL の tag が入っている");
+    const edit = await (await b.get(`${base}/${row["id"]}`)).text();
+    expect(edit).toMatch(/name="param_0" value="ref"/);
+    expect(edit).toMatch(/name="remember_0" value="on" checked/);
+  });
+});

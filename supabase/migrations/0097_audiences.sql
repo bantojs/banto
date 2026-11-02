@@ -64,6 +64,31 @@ begin
       return jsonb_build_object('attr', p->>'attr', 'set', true);
     end if;
   end if;
+  -- URL のクエリのパラメータ（表示の出し分けだけ。商品・価格の条件には使えない: banto_audience_display_only）。
+  -- remember: 同じ訪問のあいだ覚えた値でも合う（覚えるのは画面の Cookie。DB は渡された値で判定する）
+  if p ? 'param' then
+    if jsonb_typeof(p->'param') <> 'string' or lower(p->>'param') !~ '^[a-z0-9_]{1,40}$' then raise exception 'invalid_audience_param'; end if;
+    if p ? 'remember' and p->'remember' <> 'true'::jsonb then raise exception 'invalid_audience'; end if;
+    if (select count(*) from jsonb_object_keys(p)) <> 2 + (case when p ? 'remember' then 1 else 0 end) then raise exception 'invalid_audience'; end if;
+    v_out := jsonb_build_object('param', lower(p->>'param')) || case when p ? 'remember' then '{"remember": true}'::jsonb else '{}'::jsonb end;
+    if p ? 'in' then
+      if jsonb_typeof(p->'in') <> 'array' or jsonb_array_length(p->'in') not between 1 and 100 then raise exception 'invalid_audience'; end if;
+      for v_v in select e from jsonb_array_elements(p->'in') e loop
+        if jsonb_typeof(v_v) not in ('string', 'number') or char_length(btrim(v_v #>> '{}')) not between 1 and 200 then raise exception 'invalid_audience'; end if;
+        v_vals := v_vals || to_jsonb(btrim(v_v #>> '{}'));
+      end loop;
+      return v_out || jsonb_build_object('in', v_vals);
+    end if;
+    if p ? 'gte' or p ? 'lte' then
+      v_op := case when p ? 'gte' then 'gte' else 'lte' end;
+      if jsonb_typeof(p->v_op) <> 'number' then raise exception 'invalid_audience'; end if;
+      return v_out || jsonb_build_object(v_op, p->v_op);
+    end if;
+    if p ? 'set' then
+      if p->'set' <> 'true'::jsonb then raise exception 'invalid_audience'; end if;
+      return v_out || '{"set": true}'::jsonb;
+    end if;
+  end if;
   raise exception 'invalid_audience';
 end;
 $$;
@@ -73,9 +98,16 @@ revoke execute on function banto_audience_normalize(jsonb, text[], integer) from
 create or replace function banto_audience_leaves(p jsonb)
 returns integer language sql immutable as $$
   select count(*)::integer from jsonb_path_query(p, 'strict $.**') x(v)
-   where jsonb_typeof(x.v) = 'object' and (x.v ? 'attr' or x.v ? 'member');
+   where jsonb_typeof(x.v) = 'object' and (x.v ? 'attr' or x.v ? 'member' or x.v ? 'param');
 $$;
 revoke execute on function banto_audience_leaves(jsonb) from public, anon, authenticated;
+
+-- URL のパラメータを含む条件（表示の出し分けだけに使う。買える・単価・見せない行の条件にはしない。URL はだれでも付けられるため）
+create or replace function banto_audience_display_only(p jsonb)
+returns boolean language sql immutable as $$
+  select exists (select 1 from jsonb_path_query(p, 'strict $.**') x(v) where jsonb_typeof(x.v) = 'object' and x.v ? 'param');
+$$;
+revoke execute on function banto_audience_display_only(jsonb) from public, anon, authenticated;
 
 -- ショップの会員の独自項目の鍵
 create or replace function banto_customer_field_keys(p_settings jsonb)
@@ -87,8 +119,10 @@ $$;
 revoke execute on function banto_customer_field_keys(jsonb) from public, anon, authenticated;
 
 -- ---------- 判定（正） ----------
--- p_member: ログイン中の会員か。p_attrs: 会員の独自項目（ゲストは {}）
-create or replace function banto_audience_ok(p jsonb, p_member boolean, p_attrs jsonb)
+-- p_member: ログイン中の会員か。p_attrs: 会員の独自項目（ゲストは {}）。
+-- p_params: URL のクエリ（名前 → 値の配列、名前は小文字）。お店の画面のブロックだけが渡す（商品・価格の判定では空）
+drop function if exists banto_audience_ok(jsonb, boolean, jsonb);
+create or replace function banto_audience_ok(p jsonb, p_member boolean, p_attrs jsonb, p_params jsonb default '{}'::jsonb)
 returns boolean
 language plpgsql
 immutable
@@ -96,23 +130,39 @@ as $$
 declare
   v_child jsonb;
   v_val jsonb;
+  v_vals jsonb;
   v_num numeric;
 begin
   if p is null then return true; end if;
   if p ? 'all' then
     for v_child in select e from jsonb_array_elements(p->'all') e loop
-      if not banto_audience_ok(v_child, p_member, p_attrs) then return false; end if;
+      if not banto_audience_ok(v_child, p_member, p_attrs, p_params) then return false; end if;
     end loop;
     return true;
   end if;
   if p ? 'any' then
     for v_child in select e from jsonb_array_elements(p->'any') e loop
-      if banto_audience_ok(v_child, p_member, p_attrs) then return true; end if;
+      if banto_audience_ok(v_child, p_member, p_attrs, p_params) then return true; end if;
     end loop;
     return false;
   end if;
-  if p ? 'not' then return not banto_audience_ok(p->'not', p_member, p_attrs); end if;
+  if p ? 'not' then return not banto_audience_ok(p->'not', p_member, p_attrs, p_params); end if;
   if p ? 'member' then return coalesce(p_member, false); end if;
+  if p ? 'param' then
+    v_vals := case when jsonb_typeof(p_params) = 'object' and jsonb_typeof(p_params->(p->>'param')) = 'array' then p_params->(p->>'param') else '[]'::jsonb end;
+    if p ? 'set' then return exists (select 1 from jsonb_array_elements(v_vals) e where jsonb_typeof(e) = 'string' and btrim(e #>> '{}') <> ''); end if;
+    if p ? 'in' then
+      return exists (select 1 from jsonb_array_elements(v_vals) e, jsonb_array_elements(p->'in') w
+                      where jsonb_typeof(e) = 'string' and btrim(e #>> '{}') <> '' and lower(btrim(e #>> '{}')) = lower(btrim(w #>> '{}')));
+    end if;
+    -- 数は最初の値だけ（数として読めなければ合わない）
+    v_val := v_vals->0;
+    if v_val is null or jsonb_typeof(v_val) <> 'string' or btrim(v_val #>> '{}') !~* '^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)(e[+-]?[0-9]+)?$' then return false; end if;
+    v_num := btrim(v_val #>> '{}')::numeric;
+    if p ? 'gte' then return v_num >= (p->>'gte')::numeric; end if;
+    if p ? 'lte' then return v_num <= (p->>'lte')::numeric; end if;
+    return false;
+  end if;
   if p ? 'attr' then
     if not coalesce(p_member, false) then return false; end if;
     v_val := case when jsonb_typeof(p_attrs) = 'object' then p_attrs->(p->>'attr') end;
@@ -132,7 +182,7 @@ begin
   return false;
 end;
 $$;
-revoke execute on function banto_audience_ok(jsonb, boolean, jsonb) from public, anon, authenticated;
+revoke execute on function banto_audience_ok(jsonb, boolean, jsonb, jsonb) from public, anon, authenticated;
 
 -- ---------- 名前を付けた条件 ----------
 create table if not exists audiences (

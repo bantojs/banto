@@ -8,6 +8,10 @@ export interface AudienceCase {
   cond: unknown;
   member: boolean;
   attrs: Record<string, unknown>;
+  /** URL のクエリ（名前は小文字 → 値の並び） */
+  params?: Record<string, string[]>;
+  /** 覚えた値（remember。画面の Cookie なので TS だけで確かめる） */
+  remembered?: Record<string, string>;
   ok: boolean;
 }
 
@@ -38,4 +42,14 @@ export const AUDIENCE_CASES: AudienceCase[] = [
   { name: "not だけ: ゲストは真（独自項目が無いので）", cond: { not: { attr: "region", in: ["overseas"] } }, member: false, attrs: {}, ok: true },
   { name: "入れ子", cond: { all: [{ member: true }, { any: [gold, { all: [{ attr: "points", gte: 100 }, { not: { attr: "rank", in: ["banned"] } }] }] }] }, member: true, attrs: { rank: "silver", points: 150 }, ok: true },
   { name: "入れ子: 除外", cond: { all: [{ member: true }, { any: [gold, { all: [{ attr: "points", gte: 100 }, { not: { attr: "rank", in: ["banned"] } }] }] }] }, member: true, attrs: { rank: "banned", points: 150 }, ok: false },
+  { name: "param in: 合う（大文字小文字を区別しない）", cond: { param: "ref", in: ["insta"] }, member: false, attrs: {}, params: { ref: ["INSTA"] }, ok: true },
+  { name: "param in: 値のどれかが合えば", cond: { param: "tag", in: ["sale"] }, member: false, attrs: {}, params: { tag: ["new", "sale"] }, ok: true },
+  { name: "param in: 無い", cond: { param: "ref", in: ["insta"] }, member: true, attrs: {}, params: {}, ok: false },
+  { name: "param set: 空の値は入っていない", cond: { param: "ref", set: true }, member: false, attrs: {}, params: { ref: [" "] }, ok: false },
+  { name: "param gte: 最初の値を数として", cond: { param: "n", gte: 1000 }, member: false, attrs: {}, params: { n: ["+1.5e3", "1"] }, ok: true },
+  { name: "param gte: 数でない", cond: { param: "n", gte: 1 }, member: false, attrs: {}, params: { n: ["abc"] }, ok: false },
+  { name: "param と会員の組み合わせ", cond: { all: [gold, { param: "ref", in: ["line"] }] }, member: true, attrs: { rank: "gold" }, params: { ref: ["line"] }, ok: true },
+  { name: "param remember: 覚えた値でも合う", cond: { param: "ref", in: ["insta"], remember: true }, member: false, attrs: {}, params: {}, remembered: { ref: "insta" }, ok: true },
+  { name: "param remember なし: 覚えた値は見ない", cond: { param: "ref", in: ["insta"] }, member: false, attrs: {}, params: {}, remembered: { ref: "insta" }, ok: false },
+  { name: "param remember: URL の値が優先", cond: { param: "ref", in: ["insta"], remember: true }, member: false, attrs: {}, params: { ref: ["line"] }, remembered: { ref: "insta" }, ok: false },
 ];

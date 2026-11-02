@@ -5,7 +5,7 @@ import { audienceAttrsOf, audienceKeys, audienceOk, describeAudience } from "../
 /** 会員の条件の TS の写し（0097）。正は DB の banto_audience_ok で、同じ表を test/db/audiences.test.ts が流す */
 describe("audienceOk", () => {
   it("答え合わせの表（DB と同じ）", () => {
-    for (const c of AUDIENCE_CASES) expect({ name: c.name, ok: audienceOk(c.cond, { member: c.member, attrs: c.attrs }) }).toEqual({ name: c.name, ok: c.ok });
+    for (const c of AUDIENCE_CASES) expect({ name: c.name, ok: audienceOk(c.cond, { member: c.member, attrs: c.attrs, ...(c.params ? { params: c.params } : {}), ...(c.remembered ? { remembered: c.remembered } : {}) }) }).toEqual({ name: c.name, ok: c.ok });
   });
 
   it("鍵の一覧・説明・Cookie の値の読み取り", () => {

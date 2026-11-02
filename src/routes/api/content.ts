@@ -11,7 +11,7 @@ import { bodyBlocks } from "../../content/body-blocks";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 import { hasAudienceBlocks } from "../../content/audience-blocks";
 import { viewerBody } from "../audience-render";
-import { GUEST } from "../../members/audience";
+import { GUEST, queryParamsOf } from "../../members/audience";
 import { memberFromRequest } from "./members";
 
 /**
@@ -59,7 +59,9 @@ async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at"
   if (hasAudienceBlocks(row.body)) {
     const m = await memberFromRequest(c, s.shop);
     if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
-    view = await viewerBody(c, s.shop, row.body, m.member ? { member: true, attrs: m.member.attrs ?? {} } : GUEST);
+    // 連携サイトの見る人の URL のクエリは p.<名前> で受け取る（覚えた値も連携サイトが同じ形で渡す）
+    const params = queryParamsOf([...new URL(c.req.url).searchParams.entries()].filter(([k]) => k.startsWith("p.")).map(([k, v]): [string, string] => [k.slice(2), v]));
+    view = await viewerBody(c, s.shop, row.body, { ...(m.member ? { member: true, attrs: m.member.attrs ?? {} } : GUEST), params });
     c.header("Vary", "Authorization");
   }
   const html = pageBodyHtml({ ...row, body: view.body }, s.mediaBaseUrl, s.origin, view.key);
