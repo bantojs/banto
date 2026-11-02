@@ -3273,6 +3273,22 @@ export class FakeSupabase {
     if (fn === "app_connection_secret_box") return json(this.tables.app_connections.find((x) => x["endpoint_id"] === args["p_endpoint_id"])?.["secret_box"] ?? null);
     if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, null, true);
     if (fn === "legal_links_due") return json(this.legalLinksDue(Number(args["p_limit"] ?? 1)));
+    // 0096: マニフェストの取り直し（本物の SQL は test/db/hook-manifest-refresh.test.ts）
+    if (fn === "hook_manifests_due") {
+      const day = Date.now() - 86400_000;
+      const due = this.tables.hook_endpoints
+        .filter((e) => e["enabled"] !== false && !String(e["url"]).startsWith("https://banto.invalid/plugins/") && (!e["manifest_checked_at"] || Date.parse(String(e["manifest_checked_at"])) < day))
+        .sort((a, b) => (a["manifest_checked_at"] ? 1 : 0) - (b["manifest_checked_at"] ? 1 : 0))
+        .slice(0, Math.max(1, Math.min(Number(args["p_limit"] ?? 2), 10)));
+      return json(due.map((e) => ({ id: e["id"], url: e["url"] })));
+    }
+    if (fn === "hook_manifest_record") {
+      const e = this.tables.hook_endpoints.find((x) => x["id"] === args["p_endpoint_id"] && x["url"] === args["p_url"]);
+      if (!e) return json(false);
+      if (args["p_manifest"]) e["manifest"] = args["p_manifest"];
+      e["manifest_checked_at"] = this.now();
+      return json(true);
+    }
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));

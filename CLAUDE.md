@@ -131,7 +131,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 - **同梱プラグイン**（hooks の受け手として同梱するモジュール）: コアにバンドルし DB フラグで有効/無効（管理画面トグル）。実装は `src/plugins/`。有効化 = URL が `https://banto.invalid/plugins/<id>` の hooks 送信先行を作ること。配信ワーカーはこの URL をプロセス内呼び出しに振り分ける（HTTP は使わない）。Secret は Workers Secret から `config.secret()` で読む。
 - **外部プラグイン**: hooks とヘッドレス API だけを接点とする外部サービス（別 Worker / 任意サーバー）。管理画面で URL 登録。コアは誰がホストしているか知らない。コア内に第三者のコードを読み込む方式は採らない。
 - 同梱モジュールの拡張点に「お店の画面の `<head>`」（メンテナの決定 2026-10-19、`src/storefront/head.ts`）: 決まった形のタグだけ（https の外部スクリプト・モジュールが作るインライン）。コアはお店の画面の出来事を中立の形で積むだけ（`src/storefront/events.ts`）で、分析サービスの仕様を持たない（§2「分析はコアに入れない」）。GA4 は同梱モジュール `ga4`（docs/ga4.md）。
-- 管理画面の拡張はマニフェスト（JSON）で設定項目を宣言 → コアがフォーム描画。独自画面は iframe。実装は `src/hooks/manifest.ts` と `src/routes/admin/hooks.tsx`、仕様は docs/hooks.md。`secret` 型の設定項目は受け付けない。
+- 管理画面の拡張はマニフェスト（JSON）で設定項目を宣言 → コアがフォーム描画。独自画面は iframe。実装は `src/hooks/manifest.ts` と `src/routes/admin/hooks.tsx`、仕様は docs/hooks.md。`secret` 型の設定項目は受け付けない。マニフェストは保存したとき・Cron で 1 日 1 回（`hook_manifests_due` / `hook_manifest_record`、0096、メンテナの決定 2026-11-02）に取り直す。取り直しで権限（スコープ）は変えない。
 
 ---
 

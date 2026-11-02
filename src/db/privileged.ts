@@ -305,6 +305,10 @@ export interface PrivilegedDb {
   maskInquiries(days: number): Promise<number>;
   /** 法務のページの外の URL を確かめる時期の来たショップ（0062。古い順に limit 件） */
   legalLinksDue(limit: number): Promise<{ shop_id: string; urls: Record<string, string> }[]>;
+  /** マニフェストを取り直す期限の来た外部の連携（0096） */
+  hookManifestsDue(limit: number): Promise<{ id: string; url: string }[]>;
+  /** 取り直したマニフェストを書く（0096。null なら前のまま時刻だけ。URL が変わっていたら書かない） */
+  hookManifestRecord(endpointId: string, url: string, manifest: unknown): Promise<boolean>;
   /** 外の URL を確かめた結果を書く（0062。設定と違う URL の結果は DB が捨てる） */
   legalLinksRecord(shopId: string, results: Record<string, { url: string; ok: boolean }>): Promise<unknown>;
   /** 組織への招待のリンクを開いたとき（0024）。token_hash は SHA-256。無ければ null */
@@ -547,6 +551,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     maskInquiries: (days) => rpc("mask_inquiries", { p_days: days }),
     legalLinksDue: async (limit) => (await rpc<{ shop_id: string; urls: Record<string, string> }[] | null>("legal_links_due", { p_limit: limit })) ?? [],
     legalLinksRecord: (shopId, results) => rpc("legal_links_record", { p_shop_id: shopId, p_results: results }),
+    hookManifestsDue: async (limit) => (await rpc<{ id: string; url: string }[] | null>("hook_manifests_due", { p_limit: limit })) ?? [],
+    hookManifestRecord: async (endpointId, url, manifest) => (await rpc<boolean>("hook_manifest_record", { p_endpoint_id: endpointId, p_url: url, p_manifest: manifest ?? null })) === true,
     memberClaimCoupon: (shopId, customerId, epoch, campaignId) => rpc("member_claim_coupon", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_campaign_id: campaignId }),
     memberCoupons: (shopId, customerId, epoch) => rpc("member_coupons", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
     orderLookup: (shopId, number, email, ipHash, emailHash) =>

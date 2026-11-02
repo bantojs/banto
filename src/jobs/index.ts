@@ -6,6 +6,7 @@
  *   - product_feeds: 商品フィードを 1 時間ごとに作り直す（同梱モジュール product_feed）
  *   - tryon: お店で試着の取り置きの期限切れと、終わった申し込みの個人情報のマスキング（同梱モジュール store_tryon、0025）
  *   - legal_links: 法務のページを向けた外の URL が生きているか（0062）
+ *   - hook_manifests: 外部プラグインのマニフェストを 1 日 1 回取り直す（0096）
  */
 import { removeAttachments } from "../modules/inquiries/attachments";
 import type { Adapters } from "../adapters/types";
@@ -20,6 +21,14 @@ import { todayHere } from "../modules/store-tryon";
 import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
 import { PAGES_TRASH_DAYS } from "../pages";
+import { createDbClient } from "../db/client";
+import { migrated } from "../db/migration-state";
+import { fetchManifest } from "../hooks/manifest";
+
+/** マニフェストの取り直し（0096）: 1 回に取り直す数と、1 件の待ち時間。5 分ごとなら 1 日に 576 件 */
+export const MANIFEST_REFRESH_PER_RUN = 2;
+const MANIFEST_REFRESH_TIMEOUT_MS = 5000;
+export const MANIFEST_REFRESH_MIGRATION = "0096_hook_manifest_refresh";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -99,6 +108,17 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const outbound = adapters.publicFetch ?? doFetch;
     for (const due of await db.legalLinksDue(1)) {
       await db.legalLinksRecord(due.shop_id, await checkLegalLinks(due.urls, outbound));
+    }
+  });
+
+  // 外部プラグインのマニフェストを取り直す（0096）。プラグインを上げたのに前のマニフェスト（capabilities・ブロック・設定の項目）のまま、を防ぐ。
+  // 当たる前の DB では何もしない（版の判定は anon の banto_setup_state）。取れなければ前のまま時刻だけ進める
+  adapters.scheduler.register("hook_manifests", async () => {
+    const anonKey = cfg.get("SUPABASE_ANON_KEY");
+    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, MANIFEST_REFRESH_MIGRATION))) return;
+    const outbound = adapters.publicFetch ?? doFetch;
+    for (const due of await db.hookManifestsDue(MANIFEST_REFRESH_PER_RUN)) {
+      await db.hookManifestRecord(due.id, due.url, await fetchManifest(due.url, outbound, MANIFEST_REFRESH_TIMEOUT_MS));
     }
   });
 

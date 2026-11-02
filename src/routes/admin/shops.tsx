@@ -21,6 +21,8 @@ import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./co
 import { requireOwner } from "./auth";
 import { can, shopAccess, type ShopAccess, type ShopPerm } from "./access";
 import { bundledPluginUrl } from "../../plugins";
+import { bundledPluginIdFromUrl } from "../../plugins/types";
+import { fetchManifest } from "../../hooks/manifest";
 import { PREFECTURES, parseShippingSettings, taxRate } from "../../commerce/shipping";
 import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, returnOrigins, shopLimit } from "../../commerce/checkout";
 import { formatFieldDefinitions, parseFieldDefinitions, productFields } from "../../products/fields";
@@ -611,9 +613,7 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
   // 連携の一覧を読めない人（integrations の項目が無い）には判定しない（null）
   const imageProcessingReady = await migrated({ db, cache: c.get("adapters").cache }, IMAGE_PROCESSING_MIGRATION);
   const imageConverter =
-    imageProcessingReady && imageProcessing(shop.settings) === "plugin" && can(c.get("shopAccess"), "integrations")
-      ? (await db.from<{ enabled: boolean; manifest: unknown }>("hook_endpoints").select("enabled,manifest", { eq: { shop_id: shop.id } })).some((e) => e.enabled && hasImageCapability(e.manifest))
-      : null;
+    imageProcessingReady && imageProcessing(shop.settings) === "plugin" && can(c.get("shopAccess"), "integrations") ? await imageConverterConnected(c, shop.id) : null;
   return c.html(
     <ShopSettingsPage
       domain={{ provider: Boolean(provider), state: domainState }}
@@ -630,6 +630,35 @@ shops.get("/:shopId", requireOwner, async (c: AdminContext) => {
     />,
   );
 });
+
+/**
+ * 画像を変換できるプラグイン（capabilities に images）がつながっているか。
+ * 見つからなければ、知らせる前に有効な外部の連携のマニフェストを取り直してから判定し直す（プラグインを上げても、Banto が前のマニフェストを
+ * 覚えたままのことがあるため。取り直すのはこの「知らせそうなとき」だけで、数件・短い待ち時間。ふだんの取り直しは Cron、0096）
+ */
+const MANIFEST_RECHECK_MAX = 5;
+const MANIFEST_RECHECK_TIMEOUT_MS = 3000;
+async function imageConverterConnected(c: AdminContext, shopId: string): Promise<boolean> {
+  const { db } = owner(c);
+  const rows = await db.from<{ id: string; url: string; enabled: boolean; manifest: unknown }>("hook_endpoints").select("id,url,enabled,manifest", { eq: { shop_id: shopId } });
+  if (rows.some((e) => e.enabled && hasImageCapability(e.manifest))) return true;
+  const external = rows.filter((e) => e.enabled && bundledPluginIdFromUrl(e.url) === null).slice(0, MANIFEST_RECHECK_MAX);
+  if (external.length === 0) return false;
+  const doFetch = c.get("adapters").publicFetch ?? c.get("deps").fetch;
+  const fresh = await Promise.all(external.map((e) => fetchManifest(e.url, doFetch, MANIFEST_RECHECK_TIMEOUT_MS)));
+  let found = false;
+  await Promise.all(
+    external.map(async (e, i) => {
+      const m = fresh[i];
+      if (!m) return;
+      if (hasImageCapability(m)) found = true;
+      if (JSON.stringify(m) === JSON.stringify(e.manifest)) return;
+      // URL が変わっていたら書かない（連携の画面で同時に直された場合）
+      await db.from("hook_endpoints").update({ manifest: m }, { id: e.id, shop_id: shopId, url: e.url }).catch((err: unknown) => console.error("[banto] manifest recheck:", err));
+    }),
+  );
+  return found;
+}
 
 shops.post("/:shopId", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
