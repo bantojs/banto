@@ -373,6 +373,7 @@ export const ja = {
   "axes.mode_none": "決めない（SKU の選択肢は自由）",
   "axes.mode_only_code": "品番だけ（選択肢なし）",
   "axes.mode_axes": "軸で分ける",
+  "axes.fields_hint": "軸の欄に入力すると「軸で分ける」に切り替わります。ほかを選んでいるあいだ、欄の中身は保存されません。",
   "axes.key": "項目（例: カラー）",
   "axes.values": "値の候補（Enter で 1 つずつ足す。スクリプトが動かないときは 1 行に 1 つ）",
   "axes.shop": "ショップの既定",

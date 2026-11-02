@@ -374,6 +374,7 @@ export const en: Record<MessageKey, string> = {
   "axes.mode_none": "Not set (SKU options are free-form)",
   "axes.mode_only_code": "SKU code only (no options)",
   "axes.mode_axes": "Split by axes",
+  "axes.fields_hint": "Typing in the axis fields switches to \"Split by axes\". While another option is selected, the fields are not saved.",
   "axes.key": "Option (e.g. Color)",
   "axes.values": "Suggested values (press Enter to add each; one per line without scripts)",
   "axes.shop": "Shop default",

@@ -14,7 +14,7 @@ export function AxesEditor(props: { name: string; axes: unknown; modes: ("inheri
   const rows: (OptionAxes[number] | null)[] = [...(axes ?? []), ...Array<null>(MAX_AXES).fill(null)].slice(0, MAX_AXES);
   const modeLabel = { inherit: t("axes.mode_inherit"), none: t("axes.mode_none"), only_code: t("axes.mode_only_code"), axes: t("axes.mode_axes") } as const;
   return (
-    <div>
+    <div data-axes-editor="">
       <p>
         {props.modes.map((m) => (
           <label style="display:inline-block;margin-right:1rem">
@@ -42,9 +42,27 @@ export function AxesEditor(props: { name: string; axes: unknown; modes: ("inheri
           ))}
         </tbody>
       </table>
+      {props.modes.includes("axes") ? <p class="muted">{t("axes.fields_hint")}</p> : null}
+      <script dangerouslySetInnerHTML={{ __html: AXES_MODE_SCRIPT }} />
     </div>
   );
 }
+
+/**
+ * 軸の欄に入力したら「軸で分ける」に切り替える（「決めない」のまま入れて保存し、入れた軸が消えるのを防ぐ）。
+ * 「軸で分ける」以外のあいだは欄を薄くして、使われないことを見せる（入力はできる。入れたら切り替わる）。
+ * 直前の要素（この script を含む div[data-axes-editor]）だけを相手にするので、1 画面に何個あってもよい
+ */
+const AXES_MODE_SCRIPT = `(function(){
+  var box=document.currentScript&&document.currentScript.parentNode;if(!box)return;
+  var axes=box.querySelector('input[name=axes_mode][value=axes]'),table=box.querySelector("table");if(!axes||!table)return;
+  function paint(){table.style.opacity=axes.checked?"":"0.55";}
+  function use(){if(!axes.checked){axes.checked=true;paint();}}
+  table.addEventListener("input",use);table.addEventListener("paste",use);
+  table.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key==="Backspace")use();});
+  [].slice.call(box.querySelectorAll("input[name=axes_mode]")).forEach(function(r){r.addEventListener("change",paint);});
+  paint();
+})();`;
 
 /**
  * 値をチップで入れる欄。正体は「1 行に 1 つ」の textarea（スクリプトが無ければそのまま使う）。
