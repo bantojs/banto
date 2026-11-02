@@ -35,7 +35,7 @@ describe("管理画面", () => {
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const base = `/admin/shops/${shop.id}/modules/audiences`;
     expect(await (await b.get(`/admin/shops/${shop.id}/modules`)).text()).toContain('data-module="audiences"');
-    const res = await b.post(base, { name: "VIP", member: "on", join: "any", attr_0: "rank", op_0: "in", value_0: "gold、platinum", attr_1: "points", op_1: "gte", value_1: "10000", attr_2: "memo", op_2: "in", value_2: "" });
+    const res = await b.post(base, { name: "VIP", member: "on", join: "any", attr_0: "rank", op_0: "in", value_0: "gold、platinum", attr_1: "points", op_1: "gte", value_1: "10000" });
     expect(res.headers.get("location")).toContain("flash=saved");
     const row = sb.tables.audiences[0]!;
     expect(row["condition"]).toEqual({ all: [{ member: true }, { any: [{ attr: "rank", in: ["gold", "platinum"] }, { attr: "points", gte: 10000 }] }] });
@@ -49,8 +49,10 @@ describe("管理画面", () => {
     const { app, shop, sb } = setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const base = `/admin/shops/${shop.id}/modules/audiences`;
-    expect((await b.post(base, { name: "x", join: "all" })).headers.get("location")).toContain("flash=empty");
-    expect((await b.post(base, { name: "x", condition_json: "{nope" })).headers.get("location")).toContain("flash=invalid");
+    expect(await (await b.post(base, { name: "x", join: "all" })).text()).toContain("条件が空です");
+    const broken = await b.post(base, { name: "x", condition_json: "{nope" });
+    expect(broken.status).toBe(400);
+    expect(await broken.text()).toContain("{nope");
     const nested = { all: [{ member: true }, { not: { any: [{ attr: "rank", in: ["silver"] }, { attr: "points", lte: 10 }] } }] };
     await b.post(base, { name: "入れ子", condition_json: JSON.stringify(nested) });
     const row = sb.tables.audiences[0]!;
@@ -60,6 +62,28 @@ describe("管理画面", () => {
     const old = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== AUDIENCES_MIGRATION) });
     const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
     expect(await (await b2.get(`/admin/shops/${old.shop.id}/modules`)).text()).not.toContain('data-module="audiences"');
+  });
+});
+
+describe("管理画面: 入れ忘れ", () => {
+  it("値だけ入れてパラメータの名前・項目が無い行は保存せず、入れたものを残して知らせる。キャンセルで一覧へ", async () => {
+    const { app, shop, sb } = setup();
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/audiences`;
+    const form = await (await b.get(`${base}/new`)).text();
+    expect(form).toContain(`<a class="btn secondary" href="${base}">キャンセル</a>`);
+    const r1 = await b.post(base, { name: "LP", member: "on", join: "all", attr_0: "rank", op_0: "in", value_0: "gold", attr_1: "__param", param_1: "", op_1: "in", value_1: "insta" });
+    expect(r1.status).toBe(400);
+    const h1 = await r1.text();
+    expect(h1).toContain("2 行目: URL のパラメータの名前");
+    expect(h1).toMatch(/name="value_1" value="insta"/);
+    expect(h1).toMatch(/name="name"[^>]*value="LP"/);
+    expect(sb.tables.audiences).toHaveLength(0);
+    const r2 = await b.post(base, { name: "LP", join: "all", value_0: "gold" });
+    expect(await r2.text()).toContain("1 行目: 「独自項目」の欄で");
+    expect(await (await b.post(base, { name: "LP", join: "all", attr_0: "rank", op_0: "in", value_0: "" })).text()).toContain("1 行目: 値を入れてください");
+    // 「値が入っている」は値が要らない
+    expect((await b.post(base, { name: "LP", join: "all", attr_0: "rank", op_0: "set", value_0: "" })).headers.get("location")).toContain("flash=saved");
   });
 });
 

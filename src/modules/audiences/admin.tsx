@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
-import { t, type MessageKey } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
 import { owner, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
@@ -192,19 +192,31 @@ audiencesAdmin.get("/", requireOwner, async (c: AdminContext) => {
 /** ページ・記事の本文に貼る囲みの始まりの行（src/content/audience-blocks.ts。title は編集の画面の目印だけ） */
 export const audienceSnippet = (r: { id: string; name: string }) => `::: audience id=${r.id} title="${r.name.replace(/["\n\r]/g, "").slice(0, 200)}"`;
 
-function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: CustomerField[]; access: { role: string; perms: readonly string[] } | undefined; flash?: { kind: "ok" | "error"; key: MessageKey } }) {
-  const { shop, row, fields } = props;
-  const b = row ? toBuilder(row.condition) : { member: true, join: "all" as const, rows: [] };
+/** 保存できなかったときに、入れたものをそのまま描き直すための値 */
+interface Draft {
+  name: string;
+  member: boolean;
+  join: "all" | "any";
+  rows: Row[];
+  json: string;
+  /** 足りない行（0 から） */
+  bad?: number[];
+}
+
+function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: CustomerField[]; access: { role: string; perms: readonly string[] } | undefined; flash?: { kind: "ok" | "error"; key: MessageKey; row?: number }; draft?: Draft }) {
+  const { shop, row, fields, draft } = props;
+  const b = draft ? { member: draft.member, join: draft.join, rows: draft.rows } : row ? toBuilder(row.condition) : { member: true, join: "all" as const, rows: [] };
+  const bad = new Set(draft?.bad ?? []);
   const slots = Math.min(MAX_ROWS, Math.max((b?.rows.length ?? 0) + 2, 3));
   const action = row ? `${base(shop)}/${row.id}` : base(shop);
   const opLabel: Record<Op, MessageKey> = { in: "aud.op_in", not_in: "aud.op_not_in", gte: "aud.op_gte", lte: "aud.op_lte", set: "aud.op_set" };
   return (
     <AdminLayout title={`${shop.name} · ${t("aud.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("aud.title"), href: base(shop) }, { label: row?.name ?? t("aud.add") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules" }}>
       <PageHead title={row?.name ?? t("aud.add")} />
-      {props.flash ? <p class={props.flash.kind === "ok" ? "notice" : "error"}>{t(props.flash.key)}</p> : null}
+      {props.flash ? <p class={props.flash.kind === "ok" ? "notice" : "error"} role={props.flash.kind === "ok" ? undefined : "alert"}>{props.flash.row !== undefined ? tf(props.flash.key, { n: String(props.flash.row + 1) }) : t(props.flash.key)}</p> : null}
       <form method="post" action={action} class="card">
         <label for="name">{t("aud.name")}</label>
-        <input id="name" name="name" required maxlength={60} value={row?.name ?? ""} />
+        <input id="name" name="name" required maxlength={60} value={draft?.name ?? row?.name ?? ""} />
         <fieldset>
           <legend>{t("aud.builder")}</legend>
           <label>
@@ -230,7 +242,7 @@ function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: Custo
               {Array.from({ length: slots }, (_, i) => {
                 const r = b?.rows[i];
                 return (
-                  <tr>
+                  <tr style={bad.has(i) ? "outline:2px solid var(--danger,#c62828);outline-offset:-2px" : undefined}>
                     <td>
                       <select name={`attr_${i}`} aria-label={t("aud.attr")}>
                         <option value="">—</option>
@@ -270,15 +282,18 @@ function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: Custo
           <p class="muted">{t("aud.value_hint")}</p>
           <p class="muted">{t("aud.param_hint")}</p>
         </fieldset>
-        <details open={row !== null && b === null}>
+        <details open={Boolean(draft?.json) || (row !== null && b === null)}>
           <summary>{t("aud.json")}</summary>
           <p class="muted">{t("aud.json_hint")}</p>
           <textarea name="condition_json" rows={8} style="width:100%;font-family:monospace">
-            {row && b === null ? JSON.stringify(row.condition, null, 2) : ""}
+            {draft ? draft.json : row && b === null ? JSON.stringify(row.condition, null, 2) : ""}
           </textarea>
         </details>
         <p>
-          <button type="submit">{t("shop.save")}</button>
+          <button type="submit">{t("shop.save")}</button>{" "}
+          <a class="btn secondary" href={base(shop)}>
+            {t("aud.cancel")}
+          </a>
         </p>
       </form>
       {row ? (
@@ -313,31 +328,60 @@ async function save(c: AdminContext, id: string | null) {
   if (!shop) return c.notFound();
   const f = (await c.req.parseBody()) as Record<string, string | File>;
   const s = (k: string) => (typeof f[k] === "string" ? (f[k] as string).trim() : "");
-  const back = id ? `${base(shop)}/${id}` : `${base(shop)}/new`;
-  let condition: unknown;
   const json = s("condition_json");
+  const draft: Draft = { name: s("name"), member: s("member") === "on", join: s("join") === "any" ? "any" : "all", rows: [], json };
+  // 描き直すときに、入れた行をそのまま（足りない行も）残す。posOf: 画面の行の番号 → draft.rows の位置
+  const posOf = new Map<number, number>();
+  for (let i = 0; i < MAX_ROWS; i++) {
+    const paramName = s(`param_${i}`);
+    const picked = s(`attr_${i}`);
+    const value = s(`value_${i}`);
+    const opRaw = s(`op_${i}`) as Op;
+    if (!picked && !paramName && !value) continue;
+    posOf.set(i, draft.rows.length);
+    draft.rows.push({ attr: picked || (paramName ? PARAM : ""), op: OPS.includes(opRaw) ? opRaw : "in", value, ...(paramName || picked === PARAM ? { param: paramName, remember: s(`remember_${i}`) === "on" } : {}) });
+  }
+  const fail = async (key: MessageKey, bad?: number[]) => {
+    const [row] = id ? await owner(c).db.from<AudienceRow>("audiences").select("id,name,condition,updated_at", { eq: { id, shop_id: shop.id }, limit: 1 }) : [null];
+    const marks = (bad ?? []).map((i) => posOf.get(i) ?? -1).filter((k) => k >= 0);
+    return c.html(<EditPage shop={shop} row={row ?? null} fields={customerFields(shop.settings)} access={c.get("shopAccess")} flash={{ kind: "error", key, ...(marks.length > 0 ? { row: marks[0]! } : {}) }} draft={{ ...draft, bad: marks }} />, 400);
+  };
+  let condition: unknown;
   if (json) {
     try {
       condition = JSON.parse(json);
     } catch {
-      return c.redirect(`${back}?flash=invalid`);
+      return fail("aud.invalid");
     }
   } else {
     const rows: Row[] = [];
+    const incomplete: { i: number; key: MessageKey }[] = [];
     for (let i = 0; i < MAX_ROWS; i++) {
       // パラメータの名前を入れていれば、欄で「URL のパラメータ」を選び忘れていても URL の条件として扱う（入れたものを捨てない）
       const paramName = s(`param_${i}`);
       const picked = s(`attr_${i}`);
+      const value = s(`value_${i}`);
+      // 何か入れた行は、足りなければ保存せずに知らせる（黙って捨てない）
+      if (!picked && !paramName && !value) continue;
       const attr = picked === PARAM || (!picked && paramName) ? PARAM : picked;
       const op = s(`op_${i}`) as Op;
-      if (!attr || !OPS.includes(op)) continue;
-      if (attr === PARAM && !paramName) continue;
-      const value = s(`value_${i}`);
-      if (op !== "set" && !value) continue;
+      if (!attr) {
+        incomplete.push({ i, key: "aud.row_no_attr" });
+        continue;
+      }
+      if (attr === PARAM && !paramName) {
+        incomplete.push({ i, key: "aud.row_no_param" });
+        continue;
+      }
+      if (!OPS.includes(op) || (op !== "set" && !value)) {
+        incomplete.push({ i, key: "aud.row_no_value" });
+        continue;
+      }
       rows.push({ attr, op, value, ...(attr === PARAM ? { param: paramName, remember: s(`remember_${i}`) === "on" } : {}) });
     }
+    if (incomplete.length > 0) return fail(incomplete[0]!.key, incomplete.map((x) => x.i));
     condition = fromBuilder(s("member") === "on", s("join") === "any" ? "any" : "all", rows);
-    if (condition === null) return c.redirect(`${back}?flash=empty`);
+    if (condition === null) return fail("aud.empty");
   }
   const db = owner(c).db;
   try {
@@ -346,7 +390,7 @@ async function save(c: AdminContext, id: string | null) {
   } catch (e) {
     if (e instanceof DbError) {
       const code = /invalid_audience_attr/.test(e.message) ? "invalid_attr" : /invalid_audience_param/.test(e.message) ? "invalid_param" : /duplicate|unique/.test(e.message) ? "duplicate" : "invalid";
-      return c.redirect(`${back}?flash=${code}`);
+      return fail(FLASH[code]!.key);
     }
     throw e;
   }
