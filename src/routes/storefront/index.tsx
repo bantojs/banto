@@ -5,7 +5,7 @@ import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../store
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import type { AppEnv } from "../../app";
-import { type StorefrontData, type PublicShop } from "../../storefront/data";
+import { type StorefrontData, type PublicShop, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -546,6 +546,7 @@ const CART_ERRORS: Record<string, MessageKey> = {
   config: "store.checkout_error_config",
   expired: "confirm.expired",
   quote_used: "confirm.expired",
+  price: "confirm.changed",
   limit: "store.checkout_error_limit",
   coupon: "store.checkout_error_coupon",
   minimum: "store.checkout_error_minimum",
@@ -1098,6 +1099,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
     cancelUrl: `${shopHome(base, s.shop)}/cart`,
     ...(member ? { customerId: member.cid, customerEpoch: member.ep } : {}),
     limits: await reserveLimits(secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
+    memberPrices: await s.sf.migratedTo(MEMBER_PRICES_MIGRATION),
   });
   // 全端末からログアウトした後の古いセッション: ログインし直してもらう
   if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);

@@ -38,7 +38,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -128,6 +128,7 @@ export class FakeSupabase {
   readonly tables: Record<TableName, Row[]> = {
     size_charts: [],
     audiences: [],
+    price_rules: [],
     shops: [],
     categories: [],
     products: [],
@@ -617,9 +618,40 @@ export class FakeSupabase {
     const p = this.tables.products.find((x) => x["id"] === productId);
     return Boolean(p && this.productPublished(productId) && this.productOpen(p));
   }
+  /** 0099: 会員価格（本物は banto_sku_member_price。カテゴリーの子孫は見ない簡略版）。aud が null ならゲスト向けのいちばん安いもの */
+  private memberUnitPrice(skuId: unknown, aud: readonly string[] | null): { price: number; floor: number | null } {
+    const k = this.tables.skus.find((x) => x["id"] === skuId);
+    const base = Number(k?.["price_jpy"] ?? 0);
+    const p = this.tables.products.find((x) => x["id"] === k?.["product_id"]);
+    const shop = this.tables.shops.find((x) => x["id"] === k?.["shop_id"]);
+    const on = (((shop?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["audiences"]) === true;
+    if (!k || !p || !on) return { price: base, floor: null };
+    const now = Date.now();
+    const leafOk = (c: Row): boolean => {
+      if (Array.isArray(c["any"])) return (c["any"] as Row[]).some(leafOk);
+      if (Array.isArray(c["all"])) return (c["all"] as Row[]).every(leafOk);
+      if (Array.isArray(c["category"])) return (c["category"] as string[]).some((x) => x === p["category_id"] || ((p["extra_category_ids"] ?? []) as string[]).includes(x));
+      if (Array.isArray(c["tag"])) return (c["tag"] as string[]).some((x) => ((p["tags"] ?? []) as string[]).includes(x));
+      if (Array.isArray(c["brand"])) return (c["brand"] as string[]).some((x) => String(p["brand"] ?? "").toLowerCase() === x.toLowerCase());
+      return false;
+    };
+    const rules = this.tables.price_rules.filter((r) => r["shop_id"] === k["shop_id"] && r["enabled"] !== false
+      && (!r["starts_at"] || Date.parse(String(r["starts_at"])) <= now) && (!r["ends_at"] || Date.parse(String(r["ends_at"])) > now)
+      && (((r["sku_ids"] ?? []) as string[]).includes(String(k["id"])) || ((r["product_ids"] ?? []) as string[]).includes(String(p["id"])) || (r["product_condition"] ? leafOk(r["product_condition"] as Row) : false)));
+    const cand = (r: Row) => (r["price_jpy"] !== null && r["price_jpy"] !== undefined ? Number(r["price_jpy"]) : Math.floor((base * (100 - Number(r["percent_off"]))) / 100));
+    const mine = aud ? rules.filter((r) => aud.includes(String(r["audience_id"]))).map(cand) : [];
+    const all = rules.map(cand);
+    const floor = all.length ? Math.min(...all) : null;
+    return { price: Math.min(base, ...mine), floor: floor !== null && floor < base ? floor : null };
+  }
+
   /** 0098: 会員の合う条件（セッションが生きていなければ空。表示用の条件は数えない） */
   private memberAudienceIds(args: Record<string, unknown>): string[] {
     if (!this.liveMemberSession(args["p_shop_id"], args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return [];
+    return this.memberAudienceIdsFor(String(args["p_shop_id"]), String(args["p_customer_id"]));
+  }
+  private memberAudienceIdsFor(shopId: string, customerId: string): string[] {
+    const args = { p_shop_id: shopId, p_customer_id: customerId };
     const c = this.tables.customers.find((x) => x["id"] === args["p_customer_id"] && x["shop_id"] === args["p_shop_id"]);
     const attrs = (c?.["attributes"] ?? {}) as Record<string, unknown>;
     return this.tables.audiences.filter((a) => a["shop_id"] === args["p_shop_id"] && !audienceDisplayOnly(a["condition"]) && audienceOk(a["condition"], { member: true, attrs })).map((a) => String(a["id"]));
@@ -1340,6 +1372,10 @@ export class FakeSupabase {
       return json(p && this.shopPublished(args["p_shop_id"]) && p["audience_id"] && p["audience_mode"] !== "buy" && !p["audience_hide"] ? "members" : null);
     }
     if (fn === "product_member_list") return this.productPublicList(args, this.memberAudienceIds(args));
+    if (fn === "product_public_member_prices") {
+      const ids = (args["p_sku_ids"] ?? []) as string[];
+      return json(ids.map((id) => ({ sku_id: id, member_price_jpy: this.memberUnitPrice(id, null).floor })).filter((x) => x.member_price_jpy !== null));
+    }
     if (fn === "product_member_get" || fn === "product_member_skus") {
       const aud = this.memberAudienceIds(args);
       const stock = (skuId: unknown) => Math.min(Math.max(Number(this.tables.inventory.find((i) => i["sku_id"] === skuId)?.["available"] ?? 0), 0), 99);
@@ -1350,7 +1386,7 @@ export class FakeSupabase {
         return json({
           product: { ...p, attributes: {}, app_data: [], size_chart: null },
           images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]),
-          skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ ...k, available: stock(k["id"]) })),
+          skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ ...k, available: stock(k["id"]), price_jpy: this.memberUnitPrice(k["id"], aud).price, regular_price_jpy: k["price_jpy"] })),
           purchasable: can(p),
         });
       }
@@ -1359,7 +1395,7 @@ export class FakeSupabase {
       for (const k of this.tables.skus.filter((x) => x["shop_id"] === args["p_shop_id"] && ids.includes(String(x["id"])))) {
         const p = this.tables.products.find((x) => x["id"] === k["product_id"]);
         if (!p || !this.productPublished(p["id"]) || !this.productOpen(p, aud)) continue;
-        out.push({ sku: { ...k, available: stock(k["id"]) }, product: p, purchasable: can(p) });
+        out.push({ sku: { ...k, available: stock(k["id"]), price_jpy: this.memberUnitPrice(k["id"], aud).price, regular_price_jpy: k["price_jpy"] }, product: p, purchasable: can(p) });
       }
       return json(out);
     }
@@ -3480,6 +3516,14 @@ export class FakeSupabase {
     const inv = (skuId: unknown) => this.tables.inventory.find((i) => i["sku_id"] === skuId);
     const fail = (message: string, status = 400) => json({ code: "P0001", message }, status);
 
+    if (fn === "apply_reservation_member_prices") {
+      const r = this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"] && x["status"] === "pending");
+      if (!r) return fail("reservation_not_found");
+      if (!r["customer_id"]) return json(r["items"]);
+      const aud = this.memberAudienceIdsFor(String(r["shop_id"]), String(r["customer_id"]));
+      r["items"] = (r["items"] as Row[]).map((it) => ({ ...it, unit_price_jpy: this.memberUnitPrice(it["sku_id"], aud).price }));
+      return json(r["items"]);
+    }
     if (fn === "reserve_stock") {
       const items = args["p_items"] as { sku_id: string; qty: number }[];
       if (!Array.isArray(items) || items.length === 0) return fail("empty_items");

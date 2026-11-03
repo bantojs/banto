@@ -259,6 +259,8 @@ export interface PrivilegedDb {
   couponLookup(shopId: string, codes: string[], subject: string | null, customerId?: string | null): Promise<unknown[]>;
   /** 予約に値引きを付け、クーポンの回数（全体・1 人あたり）を原子的に予約する。取れなければ coupon_* で失敗し、何も変えない */
   applyReservationDiscounts(reservationId: string, shopId: string, subject: string, discounts: ReservationDiscounts): Promise<void>;
+  /** 0099: 会員の予約の単価を会員価格に写し直す（クーポンの前）。写した後の品目 */
+  applyReservationMemberPrices(reservationId: string, shopId: string): Promise<{ sku_id: string; qty: number; unit_price_jpy: number }[]>;
   /** 会員の取り込み（0012）: メールアドレスで引いて無ければ作る / 足りない項目だけ埋める。呼び出し側が owner の所有を確かめてから呼ぶ */
   importMembers(shopId: string, rows: { email: string; name: string | null; default_address: Record<string, unknown> | null }[]): Promise<{ created: number; updated: number; skipped: number }>;
   /** 会員のログインを始める（0012）。HMAC の値だけを渡す。回数の上限を超えたら send = false */
@@ -664,6 +666,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberPasskeyDelete: (shopId, customerId, epoch, id, sessionId) =>
       rpc("member_passkey_delete", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_id: id, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     memberPasskeyCleanup: () => rpc<number>("member_passkey_cleanup", {}),
+    applyReservationMemberPrices: (reservationId, shopId) => rpc("apply_reservation_member_prices", { p_reservation_id: reservationId, p_shop_id: shopId }),
     async applyReservationDiscounts(reservationId, shopId, subject, discounts) {
       await rpc("apply_reservation_discounts", { p_reservation_id: reservationId, p_shop_id: shopId, p_subject: subject, p_discounts: discounts });
     },

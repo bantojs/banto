@@ -207,7 +207,9 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       updated_at: p.updated_at,
       images: detail.images.map((i) => imageUrl(d.mediaBaseUrl, i.storage_key)),
       image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height, options: imageOptionsOf(i.options) })),
-      skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
+      // price_jpy はこの見る人の単価（会員トークンの会員なら会員価格。0099）、regular_price_jpy は通常の価格、
+      // member_price_jpy はゲストに見せる会員価格（当てはまる決まりのうちいちばん安いもの。無ければ null）
+      skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, regular_price_jpy: k.regular_price_jpy ?? k.price_jpy, member_price_jpy: k.member_price_jpy ?? null, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
       /** SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値（出てくる順）。軸の無い商品は [] */
       option_axes: optionAxesForSelect(p.option_axes, detail.skus, optionNamesOf(shop.option_names)),
       /** SKU の options の key → 表示名（0094） */

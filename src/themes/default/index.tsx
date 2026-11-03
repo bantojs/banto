@@ -236,6 +236,20 @@ function StoreCard({ store, children }: { store: StoreView; children?: Child }) 
  * 会員ページの中身（注文の一覧・住所・ログインの方法・クーポン・試着・ログアウト・退会）。既定のテーマの AccountPage と、
  * Liquid のテーマの会員ページ（{% banto_account %}、src/routes/storefront/liquid.ts）が同じものを使う。strict はインラインのスクリプトを使わない形
  */
+/** 会員価格（0099）: 会員には「会員価格 ¥8,000（通常 ¥10,000）」、ゲストには「¥10,000（会員価格 ¥8,000）」 */
+function memberPriceLabel(s: { price_jpy: number; regular_price_jpy?: number; member_price_jpy?: number }): string {
+  if (s.regular_price_jpy !== undefined && s.regular_price_jpy > s.price_jpy) return `${t("store.member_price")} ${yen(s.price_jpy)}（${t("store.regular_price")} ${yen(s.regular_price_jpy)}）`;
+  if (s.member_price_jpy !== undefined && s.member_price_jpy < s.price_jpy) return `${yen(s.price_jpy)}（${t("store.member_price")} ${yen(s.member_price_jpy)}）`;
+  return yen(s.price_jpy);
+}
+/** 商品名の下の一言（いちばん安い会員価格） */
+function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?: number; member_price_jpy?: number }[]): string | null {
+  const mine = skus.filter((s) => s.regular_price_jpy !== undefined && s.regular_price_jpy > s.price_jpy).map((s) => s.price_jpy);
+  const guest = skus.filter((s) => s.member_price_jpy !== undefined && s.member_price_jpy < s.price_jpy).map((s) => s.member_price_jpy!);
+  const list = mine.length > 0 ? mine : guest;
+  return list.length > 0 ? `${t("store.member_price")} ${yen(Math.min(...list))}` : null;
+}
+
 export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
@@ -619,6 +633,7 @@ export const defaultTheme: Theme = {
           <div>
             {product.brand ? <p class="muted">{product.brand}</p> : null}
             <h1>{product.name}</h1>
+            {memberPriceNote(skus) ? <p class="member-price">{memberPriceNote(skus)}</p> : null}
             {reviews ? <ReviewsSummary reviews={reviews} href="#reviews" /> : null}
             {added ? (
               <p class="notice">
@@ -653,7 +668,7 @@ export const defaultTheme: Theme = {
                   {skus.map((s) => (
                     <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages || axesOn || chartAxis ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
                       {skuLabel(s)} — {s.compare_at_price_jpy ? `${t("store.regular_price")} ${yen(s.compare_at_price_jpy)} → ` : ""}
-                      {yen(s.price_jpy)}
+                      {memberPriceLabel(s)}
                       {s.available <= 0 ? ` (${t("store.sold_out")})` : s.available <= 5 ? ` (${t("store.low_stock")})` : ""}
                     </option>
                   ))}

@@ -49,6 +49,8 @@ const ANON_FUNCTIONS = new Set([
   "banto_shop_module_public",
   // 0098: 会員限定の商品にゲストが URL で来たとき「会員の方だけ」と出してよいか（'members' か null だけ。商品の中身は返さない）
   "product_public_gate",
+  // 0099: ゲストに見せる「会員価格」（公開中で見える商品の SKU の、当てはまる決まりのうちいちばん安い単価だけ。条件・決まりの中身は返さない）
+  "product_public_member_prices",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */

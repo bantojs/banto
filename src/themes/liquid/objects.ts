@@ -105,6 +105,9 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       barcode: s.gtin ?? null,
       price: money(s.price_jpy),
       compare_at_price: s.compare_at_price_jpy ? money(s.compare_at_price_jpy) : null,
+      // 会員価格（0099）: member_price はこの見る人に効く会員価格（会員）か、ゲストに見せる会員価格。regular_price は通常の価格
+      member_price: s.regular_price_jpy !== undefined && s.regular_price_jpy > s.price_jpy ? money(s.price_jpy) : s.member_price_jpy !== undefined && s.member_price_jpy < s.price_jpy ? money(s.member_price_jpy) : null,
+      regular_price: money(s.regular_price_jpy ?? s.price_jpy),
       available: s.available > 0,
       options: opts.filter((x): x is string => x !== null),
       option1: opts[0] ?? null,

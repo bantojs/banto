@@ -155,6 +155,9 @@ audiencesAdmin.get("/", requireOwner, async (c: AdminContext) => {
         <a class="btn" href={`${base(shop)}/new`}>
           {t("aud.add")}
         </a>
+        <a class="btn secondary" href={`${base(shop)}/prices`}>
+          {t("mprice.title")}
+        </a>
       </PageHead>
       {fl ? <p class={fl.kind === "ok" ? "notice" : "error"}>{t(fl.key)}</p> : null}
       {customerFields(shop.settings).length === 0 ? <p class="notice">{t("aud.no_fields")}</p> : null}

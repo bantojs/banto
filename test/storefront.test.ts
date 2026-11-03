@@ -179,8 +179,8 @@ describe("ヘッドレス API", () => {
 
     const detail = (await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: { skus: Record<string, unknown>[] } };
     expect(detail.product.skus).toEqual([
-      { id: teeM.id, code: "TEE-M", name: "M", options: {}, gtin: null, price_jpy: 3000, compare_at_price_jpy: null, in_stock: true },
-      { id: teeL.id, code: "TEE-L", name: "L", options: {}, gtin: null, price_jpy: 3200, compare_at_price_jpy: null, in_stock: false },
+      { id: teeM.id, code: "TEE-M", name: "M", options: {}, gtin: null, price_jpy: 3000, regular_price_jpy: 3000, member_price_jpy: null, compare_at_price_jpy: null, in_stock: true },
+      { id: teeL.id, code: "TEE-L", name: "L", options: {}, gtin: null, price_jpy: 3200, regular_price_jpy: 3200, member_price_jpy: null, compare_at_price_jpy: null, in_stock: false },
     ]);
 
     expect((await app.request(`${BASE}/api/shops/other-shop`)).status).toBe(404);

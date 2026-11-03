@@ -572,10 +572,12 @@ export interface PlaceOrderInput {
   customerEpoch?: number;
   /** 予約の上限（0029、reserveLimits() で作る） */
   limits?: ReserveLimits | null;
+  /** 会員価格（0099）が当たっていれば true（会員の予約の単価を写し直し、最終確認の単価と突き合わせる） */
+  memberPrices?: boolean;
 }
 
 /** free: 0 円の注文で、決済なしで確定した（url は完了画面、orderId は確定した注文） */
-export type PlaceOrderResult = { ok: true; url: string; reservationId: string; free?: { orderId: string } } | { ok: false; error: "stock" | "payment" | "coupon" | "member" | "limit" | "quote_used" };
+export type PlaceOrderResult = { ok: true; url: string; reservationId: string; free?: { orderId: string } } | { ok: false; error: "stock" | "payment" | "coupon" | "member" | "limit" | "quote_used" | "price" };
 
 /** Stripe の決済ページと領収メールに出す値引きの名前（例: クーポン SUMMER10 + FREESHIP） */
 export function discountLabel(discount: DiscountResult): string {
@@ -622,6 +624,22 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       return { ok: false, error: "member" };
     }
     throw e;
+  }
+
+  // 会員価格（0099）: 予約の単価を DB が会員価格で写し直す。最終確認で見せた単価（会員の読み取りの経路の値付け）と
+  // 1 円でも違えば（決まりやランクがあいだで変わった）確定しない
+  if (input.customerId && input.memberPrices) {
+    try {
+      const items = await deps.privileged.applyReservationMemberPrices(reservationId, shop.id);
+      const unit = new Map(items.map((i) => [i.sku_id, Number(i.unit_price_jpy)]));
+      if (lines.some((l) => unit.get(l.sku.id) !== l.sku.price_jpy)) {
+        await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
+        return { ok: false, error: "price" };
+      }
+    } catch (e) {
+      await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
+      throw e;
+    }
   }
 
   // クーポン: 値引きを予約に付け、回数（全体の上限の枠・1 人あたり）を在庫と同じく予約する。取れなければ予約ごと戻す

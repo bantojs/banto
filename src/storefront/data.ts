@@ -126,7 +126,14 @@ export interface ProductSummary {
 
 export interface SkuWithStock extends SkuRow {
   available: number;
+  /** 会員価格（0099）。会員の読み取りの経路では price_jpy がこの会員の単価で、regular_price_jpy が通常の価格 */
+  regular_price_jpy?: number;
+  /** ゲストに見せる「会員価格」（当てはまる決まりのうちいちばん安いもの。無ければ省く） */
+  member_price_jpy?: number;
 }
+
+/** 会員価格（0099）。当たるまで会員価格を引かない（予約の単価も写さない） */
+export const MEMBER_PRICES_MIGRATION = "0099_member_prices";
 
 export interface ProductDetail {
   product: ProductRow;
@@ -482,7 +489,23 @@ export class StorefrontData {
         .then(async (skus) => [skus, await this.inventoryOf(shop, skus.map((s) => s.id))] as const),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
-    return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })), purchasable: guestPurchasable(product) };
+    const member = await this.memberPricesFor(shop, skus.map((s) => s.id));
+    return {
+      product,
+      images,
+      skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0, ...(member.has(s.id) ? { member_price_jpy: member.get(s.id)! } : {}) })),
+      purchasable: guestPurchasable(product),
+    };
+  }
+
+  /** ゲストに見せる会員価格（0099。同梱モジュール audiences が ON のショップだけ。キャッシュ済みのショップ行で判定） */
+  private async memberPricesFor(shop: PublicShop, skuIds: readonly string[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    const mods = (shop.settings?.["modules"] ?? {}) as Record<string, unknown>;
+    if (skuIds.length === 0 || mods["audiences"] !== true || !(await this.migratedTo(MEMBER_PRICES_MIGRATION))) return out;
+    const rows = await this.db.rpc<{ sku_id: string; member_price_jpy: number }[] | null>("product_public_member_prices", { p_shop_id: shop.id, p_sku_ids: [...new Set(skuIds)].slice(0, 200) });
+    for (const r of Array.isArray(rows) ? rows : []) if (typeof r.member_price_jpy === "number") out.set(r.sku_id, r.member_price_jpy);
+    return out;
   }
 
   /**
