@@ -34,15 +34,16 @@ describe.skipIf(!dbAvailable)("会員限定の商品（0098）", () => {
   afterAll(closePool);
 
   it("匿名: 見せない商品は一覧・詳細・件数・サイトマップ・フィード・在庫・SKU・画像から消え、buy の商品は見える", async () => {
-    const slugs = (await asAnon((c) => c.query<{ slug: string }>("select slug from products where shop_id = $1 order by slug", [a.shopId]))).rows.map((r) => r.slug);
+    const slugs = (await asAnon((c) => c.query<{ slug: string }>("select slug from products where shop_id = $1", [a.shopId]))).rows.map((r) => r.slug).sort();
     expect(slugs).toEqual(["early", "tee"]);
     const list = (await asAnon((c) => c.query<{ r: { items: { slug: string }[] } }>("select product_public_list($1) as r", [a.shopId]))).rows[0]!.r.items.map((i) => i.slug).sort();
     expect(list).toEqual(["early", "tee"]);
     expect((await asAnon((c) => c.query<{ r: unknown }>("select product_public_get($1, 'vip') as r", [a.shopId]))).rows[0]!.r).toBeNull();
     expect((await asAnon((c) => c.query<{ r: { audience_mode: string } }>("select product_public_get($1, 'early') as r", [a.shopId]))).rows[0]!.r.audience_mode).toBe("buy");
     expect((await asAnon((c) => c.query<{ r: number }>("select product_public_count($1) as r", [a.shopId]))).rows[0]!.r).toBe(2);
-    const skus = (await asAnon((c) => c.query<{ code: string }>("select code from skus where shop_id = $1 order by code", [a.shopId]))).rows.map((r) => r.code);
-    expect(skus).toEqual(["TEE-M", "early-1"]);
+    // 並びは照合順序に依らないよう JS で（CI の PostgreSQL は大文字小文字の並びが違う）
+    const skus = (await asAnon((c) => c.query<{ code: string }>("select code from skus where shop_id = $1", [a.shopId]))).rows.map((r) => r.code).sort();
+    expect(skus).toEqual(["TEE-M", "early-1"].sort());
     // タグの件数に見せない商品を数えない（vip のタグは early の 1 件だけ）
     const facets = (await asAnon((c) => c.query<{ r: { tags: { tag: string; count: number }[] } }>("select product_public_facets($1) as r", [a.shopId]))).rows[0]!.r;
     expect(facets.tags.find((t) => t.tag === "vip")?.count).toBe(1);
