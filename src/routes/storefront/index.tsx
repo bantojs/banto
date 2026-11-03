@@ -39,8 +39,8 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { markdownToHtml } from "../../pages/markdown";
 import { filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
-import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, collectionLayoutId, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
-import { COLLECTION_PARTS, PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
+import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, collectionLayoutId, composeLayout, fillCurrent, isPlainTop, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
+import { COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
 import { listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
@@ -188,6 +188,7 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
       return articlePageResponse(c, s, sample.blog, sample.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix: note(sample.article.title), preview: true, layout: draft.page });
     }
     if (sample?.kind === "product") return productPageResponse(c, s, sample.detail, categories, { prefix: note(sample.detail.product.name), preview: true, layout: draft.page });
+    if (sample?.kind === "legal") return legalResponse(c, s, sample.legal, { prefix: note(legalPages[sample.legal]!.title()), preview: true, layout: draft.page });
     if (sample?.kind === "collection") {
       const list = await listingData(s, { categories, ...(sample.category ? { category: sample.category } : {}), all: !sample.category, count: Boolean(await liquidThemeFor(c, s)) });
       if (list) return collectionResponse(c, s, list, { prefix: note(sample.category ? sample.category.name : t("store.all_products")), preview: true, layout: draft.page });
@@ -205,7 +206,7 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
  * ひな形のプレビューの見本（0101・0102）: そのページを記事のひな形にしているブログのいちばん新しい記事、
  * 商品詳細のひな形なら割り当てたカテゴリー（無ければショップ全体）の最初の商品。どれにも割り当てていなければ null
  */
-async function templateSample(s: ShopScope, pageId: string, categories: CategoryRow[]): Promise<{ kind: "article"; blog: BlogRow; article: ArticleRow } | { kind: "product"; detail: ProductDetail } | { kind: "collection"; category: CategoryRow | null } | null> {
+async function templateSample(s: ShopScope, pageId: string, categories: CategoryRow[]): Promise<{ kind: "article"; blog: BlogRow; article: ArticleRow } | { kind: "product"; detail: ProductDetail } | { kind: "collection"; category: CategoryRow | null } | { kind: "legal"; legal: LegalKind } | null> {
   const l = pageLayoutsOf(s.shop.settings);
   const blogId = Object.entries(l.articles).find(([, p]) => p === pageId)?.[0];
   if (blogId && moduleEnabled(s.shop.settings, BLOG_MODULE)) {
@@ -225,6 +226,10 @@ async function templateSample(s: ShopScope, pageId: string, categories: Category
   const colCat = Object.entries(l.collectionCategories).find(([, p]) => p === pageId)?.[0];
   if (colCat) return { kind: "collection", category: categories.find((x) => x.id === colCat) ?? null };
   if (l.collection === pageId) return { kind: "collection", category: null };
+  // 法務のページ（0104）: 上書きしたページ、共通のものなら特商法の表記
+  const legalKind = Object.entries(l.legalPages).find(([, p]) => p === pageId)?.[0];
+  if (legalKind) return { kind: "legal", legal: legalKind as LegalKind };
+  if (l.legal === pageId) return { kind: "legal", legal: "legal" };
   return null;
 }
 
@@ -753,15 +758,45 @@ storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {
   // 連携サイトのページに向けていて、最後の確認で生きていればそちらへ（0062）。落ちていれば Banto のページを出す
   const external = liveLegalUrl(s.shop.legal_links, kind);
   if (external) return c.redirect(external, 302);
+  return legalResponse(c, s, kind);
+});
+
+/**
+ * 法務のページを描く（お店の画面とひな形のプレビューで同じ）。ひな形（0104）は、文面の部品（`::: current part=legal`）が
+ * 見る人に見える本文にあるときだけ使う（無い・見せる相手の囲みで隠れるなら今までの画面。文面を出さない法務のページを作らせない）
+ */
+async function legalResponse(c: Ctx, s: ShopScope, kind: LegalKind, o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
   const page = legalPages[kind]!;
-  // Liquid のテーマの templates/page（文面は Banto が作る）。無ければ既定のテーマ
+  const title = page.title();
+  const body = page.pick(s.shop) ?? "";
   const lt = await liquidThemeFor(c, s);
+  const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? legalLayoutId(pageLayoutsOf(s.shop.settings), kind) : null;
+  const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
+  if (layout) {
+    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    if (usesPart(view.body, "legal")) {
+      const categories = await s.sf.listCategories(s.shop);
+      const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+      const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
+      const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(layout), updated: layout.updated_at });
+      const parts = legalParts(title, body);
+      const only = Object.fromEntries(LEGAL_PARTS.map((k) => [k, parts[k] ?? ""]));
+      if (lt) {
+        const pg: PageRow = { ...layout, title, seo_title: null, seo_description: null, image_url: null };
+        const res = renderContentPage(c, s, lt, { page: pg, html: fillCurrent(doc, only), categories, blocks, cards, ablocks, acards, apps, appCards, path: `/${kind}` });
+        if (res) return res;
+      }
+      const html = fillCurrent(fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards), only);
+      return c.html(s.theme.LegalPage({ ctx: s.ctx, title, body, layout: () => html }));
+    }
+  }
+  // Liquid のテーマの templates/page（文面は Banto が作る）。無ければ既定のテーマ
   if (lt) {
-    const res = renderLegalPage(c, s, lt, { handle: kind, title: page.title(), body: page.pick(s.shop) ?? "", categories: await s.sf.listCategories(s.shop) });
+    const res = renderLegalPage(c, s, lt, { handle: kind, title, body, categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
-  return c.html(s.theme.LegalPage({ ctx: s.ctx, title: page.title(), body: page.pick(s.shop) ?? "" }));
-});
+  return c.html(s.theme.LegalPage({ ctx: s.ctx, title, body }));
+}
 
 // ---------- カート ----------
 async function cartLines(s: ShopScope): Promise<{ lines: CartLine[]; total: number }> {

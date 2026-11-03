@@ -729,11 +729,17 @@ export const defaultTheme: Theme = {
     );
   },
 
-  LegalPage({ ctx, title, body }) {
+  LegalPage({ ctx, title, body, layout }) {
     return (
       <Layout title={title} ctx={ctx} seo={{ path: undefined }}>
-        <h1>{title}</h1>
-        <pre class="legal">{body}</pre>
+        {layout ? (
+          <div class="page-body legal-layout">{raw(layout())}</div>
+        ) : (
+          <>
+            <h1>{title}</h1>
+            <pre class="legal">{body}</pre>
+          </>
+        )}
       </Layout>
     );
   },

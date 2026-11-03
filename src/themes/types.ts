@@ -274,7 +274,8 @@ export interface Theme {
    * 領収書（receiptUrl、GET）とお問い合わせ（inquiryUrl、GET）はリンクで出す
    */
   OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean; inquiry?: { token: string } | null; member?: { receiptUrl: string | null; inquiryUrl: string | null } }): Rendered;
-  LegalPage(props: { ctx: ThemeContext; title: string; body: string }): Rendered;
+  /** layout: 法務のページのひな形（0104）。返った HTML を本文として描く（文面はひな形の中の Banto の部品が出す） */
+  LegalPage(props: { ctx: ThemeContext; title: string; body: string; layout?: () => string }): Rendered;
   /**
    * ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。html は本文を src/pages/markdown.ts で HTML にしたもの
    * （決まった形のタグだけで、そのまま出してよい）。無いテーマではページを出さない

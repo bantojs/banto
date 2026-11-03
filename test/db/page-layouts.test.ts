@@ -61,6 +61,15 @@ describe.skipIf(!dbAvailable)("ひな形の割り当て（0101）", () => {
     expect(await set(a.ownerId, a.shopId, {})).toEqual({});
   });
 
+  it("法務のページ（0104）: 共通とページごと。鍵は legal・privacy・returns だけ", async () => {
+    expect(await set(a.ownerId, a.shopId, { legal: page, legal_pages: { privacy: page } })).toEqual({ legal: page, legal_pages: { privacy: page } });
+    const pub = await asAnon(async (c) => (await c.query("select shop_public_get('pl-a') as s")).rows[0].s);
+    expect(pub.settings.page_layouts).toEqual({ legal: page, legal_pages: { privacy: page } });
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { legal_pages: { cart: page } }))).toMatch(/invalid_page_layouts/);
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { legal: otherPage }))).toMatch(/invalid_page_layouts/);
+    expect(await set(a.ownerId, a.shopId, {})).toEqual({});
+  });
+
   it("ゴミ箱のページは割り当てられない。content の項目の無い人・匿名は呼べない", async () => {
     await getPool().query("update pages set deleted_at = now() where id = $1", [page]);
     expect(await expectDbError(() => set(a.ownerId, a.shopId, { home: page }))).toMatch(/invalid_page_layouts/);

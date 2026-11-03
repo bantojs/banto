@@ -45,7 +45,7 @@ describe("ひな形に記事を差し込む", () => {
     const nested = ":::: group\n::: current part=content\n::::";
     expect(composeLayout(nested, "記事")).toEqual({ body: nested, inserted: false });
     expect(composeLayout(":::: group\nx\n::::\n\n::: current part=content", "記事").inserted).toBe(true);
-    expect(pageLayoutsOf({ page_layouts: { home: "bad", articles: { x: "y" }, product: 1 } })).toEqual({ home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {} });
+    expect(pageLayoutsOf({ page_layouts: { home: "bad", articles: { x: "y" }, product: 1, legal_pages: { cart: "11111111-2222-4333-8444-555555555555" } } })).toEqual({ home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {}, legal: null, legalPages: {} });
   });
 });
 
@@ -332,5 +332,48 @@ describe("商品一覧のひな形（0103）", () => {
     expect(html).toContain("<h1>トップス</h1>");
     expect(html).toContain("Tシャツ");
     expect(html).toContain('rel="canonical" href="https://shop.example.jp?category=tops"');
+  });
+});
+
+describe("法務のページのひな形（0104）", () => {
+  it("文面の部品があれば、ひな形の中に見出しと文面を出す。ページごとの上書きが共通より先", async () => {
+    const { app, sb, shop, settings } = setup();
+    const stamp = () => new Date(Date.UTC(2020, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
+    const common = sb.addPage(shop.id, { handle: "legal-tpl", title: "法務のひな形", body: "法務の前書き\n\n::: current part=title\n\n::: current part=legal", updated_at: stamp() });
+    const priv = sb.addPage(shop.id, { handle: "privacy-tpl", title: "個人情報のひな形", body: "個人情報だけの前書き\n\n::: current part=legal", updated_at: stamp() });
+    settings()["page_layouts"] = { legal: common.id, legal_pages: { privacy: priv.id } };
+    const legal = await (await new Browser(app, BASE).get("/my-shop/legal")).text();
+    expect(legal).toContain("法務の前書き");
+    expect(legal).toContain('<pre class="legal banto-legal">a</pre>');
+    expect(legal.indexOf("法務の前書き")).toBeLessThan(legal.indexOf('<pre class="legal banto-legal">'));
+    const privacy = await (await new Browser(app, BASE).get("/my-shop/privacy")).text();
+    expect(privacy).toContain("個人情報だけの前書き");
+    expect(privacy).toContain('<pre class="legal banto-legal">b</pre>');
+    expect(await (await new Browser(app, BASE).get("/my-shop/returns")).text()).toContain("法務の前書き");
+  });
+
+  it("文面の部品が無い・見せる相手の囲みで隠れるなら、今までの画面（文面を出さない法務のページを作らせない）", async () => {
+    const { app, sb, shop, settings } = setup();
+    const stamp = () => new Date(Date.UTC(2020, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
+    const empty = sb.addPage(shop.id, { handle: "no-legal", title: "文面なし", body: "文面の無いひな形", updated_at: stamp() });
+    settings()["page_layouts"] = { legal: empty.id };
+    const html = await (await new Browser(app, BASE).get("/my-shop/legal")).text();
+    expect(html).not.toContain("文面の無いひな形");
+    expect(html).toContain('<pre class="legal">a</pre>');
+  });
+
+  it("管理画面: 0104 が当たれば欄を出して保存する。プレビューは割り当てた法務のページを見本にする", async () => {
+    const { app, sb, shop, settings, base } = setup();
+    const tpl = sb.addPage(shop.id, { handle: "legal-tpl", title: "法務のひな形", body: "::: current part=legal" });
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    expect(await (await b.get(`${base}/layouts`)).text()).toContain('name="legal_privacy"');
+    expect((await b.post(`${base}/layouts`, { legal_returns: tpl.id })).status).toBe(302);
+    expect(settings()["page_layouts"]).toEqual({ legal_pages: { returns: tpl.id } });
+    const html = await (await followPreview(app, await b.post(`${base}/${tpl.id}`, { title: "法務のひな形", handle: "legal-tpl", body: "下書きの前書き\n\n::: current part=title\n\n::: current part=legal", nav: "none", sort_order: "0", action: "preview" }))).text();
+    expect(html).toContain("下書きの前書き");
+    expect(html).toContain('<pre class="legal banto-legal">c</pre>');
+    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((m) => m !== "0104_page_layouts_legal") });
+    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
+    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain('name="legal"');
   });
 });

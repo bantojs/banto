@@ -32,12 +32,14 @@ export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "emb
 export const SHOP_BLOCKS_MAX = 8;
 
 /** ひな形の「今の記事」の部品（並びは編集の画面の選択肢の順） */
-export const CURRENT_PARTS = ["title", "image", "price", "buy", "content", "excerpt", "author", "tags", "attributes", "breadcrumb", "size-chart", "reviews", "prev-next", "products", "filters", "subcategories"] as const;
+export const CURRENT_PARTS = ["title", "image", "price", "buy", "content", "excerpt", "author", "tags", "attributes", "breadcrumb", "size-chart", "reviews", "prev-next", "products", "filters", "subcategories", "legal"] as const;
 /** 記事のひな形で使える部品・商品詳細のひな形で使える部品（ほかの部品は空） */
 export const ARTICLE_PARTS: readonly CurrentPart[] = ["title", "image", "content", "excerpt", "author", "tags", "prev-next"];
 export const PRODUCT_LAYOUT_PARTS: readonly CurrentPart[] = ["title", "image", "price", "buy", "content", "tags", "attributes", "breadcrumb", "size-chart", "reviews"];
 /** 商品一覧のひな形で使える部品（0103） */
 export const COLLECTION_PARTS: readonly CurrentPart[] = ["title", "products", "filters", "subcategories", "breadcrumb"];
+/** 法務のページのひな形で使える部品（0104）。legal（文面）が見える本文に無ければひな形を使わない */
+export const LEGAL_PARTS: readonly CurrentPart[] = ["title", "legal"];
 export type CurrentPart = (typeof CURRENT_PARTS)[number];
 export const currentMarker = (part: string) => `<!--banto:current:${part}-->`;
 

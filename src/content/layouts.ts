@@ -23,6 +23,9 @@ export interface PageLayouts {
   /** 商品一覧（0103）: すべての一覧とカテゴリーの一覧に共通のものと、カテゴリーごとの上書き */
   collection: string | null;
   collectionCategories: Record<string, string>;
+  /** 法務の 3 つのページ（0104）: 共通のものと、ページごと（legal・privacy・returns）の上書き */
+  legal: string | null;
+  legalPages: Record<string, string>;
 }
 
 const UUID = /^[0-9a-f-]{36}$/;
@@ -31,11 +34,13 @@ const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typ
 /** 公開の settings の page_layouts を読む（形の違うものは無いことにする） */
 export function pageLayoutsOf(settings: Record<string, unknown> | null | undefined): PageLayouts {
   const raw = isObject(settings) ? settings["page_layouts"] : null;
-  const out: PageLayouts = { home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {} };
+  const out: PageLayouts = { home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {}, legal: null, legalPages: {} };
   if (!isObject(raw)) return out;
   if (typeof raw["home"] === "string" && UUID.test(raw["home"])) out.home = raw["home"];
   if (typeof raw["product"] === "string" && UUID.test(raw["product"])) out.product = raw["product"];
   if (typeof raw["collection"] === "string" && UUID.test(raw["collection"])) out.collection = raw["collection"];
+  if (typeof raw["legal"] === "string" && UUID.test(raw["legal"])) out.legal = raw["legal"];
+  if (isObject(raw["legal_pages"])) for (const [k, v] of Object.entries(raw["legal_pages"])) if (LEGAL_KINDS.includes(k) && typeof v === "string" && UUID.test(v)) out.legalPages[k] = v;
   const map = (v: unknown, into: Record<string, string>) => {
     if (isObject(v)) for (const [k, x] of Object.entries(v)) if (UUID.test(k) && typeof x === "string" && UUID.test(x)) into[k] = x;
   };
@@ -48,6 +53,17 @@ export function pageLayoutsOf(settings: Record<string, unknown> | null | undefin
 /** 商品詳細のひな形: 主カテゴリーから親へたどって最初に割り当てのあるもの、無ければショップ全体のもの（無ければ null） */
 export function productLayoutId(l: PageLayouts, categories: readonly { id: string; parent_id: string | null }[], categoryId: string | null | undefined): string | null {
   return nearest(l.productCategories, categories, categoryId) ?? l.product;
+}
+
+/** 法務のページ（0104）。ページごとの上書き、無ければ共通のもの */
+export const LEGAL_KINDS: readonly string[] = ["legal", "privacy", "returns"];
+export function legalLayoutId(l: PageLayouts, kind: string): string | null {
+  return l.legalPages[kind] ?? l.legal;
+}
+
+/** 法務のページの部品: 見出しと文面（ショップの設定の必須項目。文字のまま、改行を活かす） */
+export function legalParts(title: string, body: string): Record<string, string> {
+  return { title: `<h1>${esc(title)}</h1>`, legal: `<pre class="legal banto-legal">${esc(body)}</pre>` };
 }
 
 /** 商品一覧のひな形（0103）: そのカテゴリーから親へたどって最初に割り当てのあるもの、無ければ共通のもの（すべての一覧は共通のもの） */
