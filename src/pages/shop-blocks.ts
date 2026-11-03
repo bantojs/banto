@@ -8,7 +8,7 @@
  *   ::: icon name=truck size=m label="送料無料"
  *   ::: date of=published format=datetime label="投稿日"   （of: published 投稿日時 / updated 最終更新日時 / now 今の日時）
  *   ::: embed url="https://www.youtube.com/watch?v=…"    （YouTube・X・Instagram・TikTok・Reddit・Bluesky。押すまで外へつながない、src/pages/embeds.ts）
- *   ::: current part=title    （ひな形に割り当てたページの中で、今の記事の部品。title・image・author・excerpt・tags・content・prev-next。src/content/layouts.ts）
+ *   ::: current part=title    （ひな形に割り当てたページの中で、今の記事・商品の部品。CURRENT_PARTS。src/content/layouts.ts）
  *   ::: video src="/media/pages/<ショップ>/<名前>.mp4" poster="…" autoplay=1 loop=1 controls=0   （置き場の mp4 だけ、src/media/video.ts）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
@@ -32,7 +32,10 @@ export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "emb
 export const SHOP_BLOCKS_MAX = 8;
 
 /** ひな形の「今の記事」の部品（並びは編集の画面の選択肢の順） */
-export const CURRENT_PARTS = ["title", "image", "author", "excerpt", "tags", "content", "prev-next"] as const;
+export const CURRENT_PARTS = ["title", "image", "price", "buy", "content", "excerpt", "author", "tags", "attributes", "breadcrumb", "size-chart", "reviews", "prev-next"] as const;
+/** 記事のひな形で使える部品・商品詳細のひな形で使える部品（ほかの部品は空） */
+export const ARTICLE_PARTS: readonly CurrentPart[] = ["title", "image", "content", "excerpt", "author", "tags", "prev-next"];
+export const PRODUCT_LAYOUT_PARTS: readonly CurrentPart[] = ["title", "image", "price", "buy", "content", "tags", "attributes", "breadcrumb", "size-chart", "reviews"];
 export type CurrentPart = (typeof CURRENT_PARTS)[number];
 export const currentMarker = (part: string) => `<!--banto:current:${part}-->`;
 

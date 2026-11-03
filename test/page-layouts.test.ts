@@ -43,7 +43,7 @@ describe("ひな形に記事を差し込む", () => {
     const nested = ":::: group\n::: current part=content\n::::";
     expect(composeLayout(nested, "記事")).toEqual({ body: nested, inserted: false });
     expect(composeLayout(":::: group\nx\n::::\n\n::: current part=content", "記事").inserted).toBe(true);
-    expect(pageLayoutsOf({ page_layouts: { home: "bad", articles: { x: "y" } } })).toEqual({ home: null, articles: {} });
+    expect(pageLayoutsOf({ page_layouts: { home: "bad", articles: { x: "y" }, product: 1 } })).toEqual({ home: null, articles: {}, product: null, productCategories: {} });
   });
 });
 
@@ -130,5 +130,81 @@ describe("お店の画面", () => {
     expect(home).toContain('<article class="page-default"><h1>トップ</h1>');
     expect(home).toContain("<h2>ようこそ</h2>");
     expect(home).toContain('rel="canonical" href="https://shop.example.jp"');
+  });
+});
+
+describe("商品詳細のひな形（0102）", () => {
+  const PRODUCT_TPL = ["::: current part=breadcrumb", "", "::: current part=title", "", "::: current part=price", "", "ひな形の案内", "", "::: current part=buy", "", "::: current part=content", "", "::: current part=excerpt"].join("\n");
+  function productSetup(liquid?: Record<string, string>) {
+    const x = setup(liquid ? { liquid } : {});
+    const tops = { id: crypto.randomUUID(), shop_id: x.shop.id, slug: "tops", name: "トップス", parent_id: null, sort_order: 0 };
+    const shirts = { id: crypto.randomUUID(), shop_id: x.shop.id, slug: "shirts", name: "シャツ", parent_id: tops.id, sort_order: 0 };
+    x.sb.tables.categories.push(tops, shirts);
+    const tee = x.sb.tables.products.find((p) => p["slug"] === "tee")!;
+    tee["category_id"] = shirts.id;
+    tee["description"] = "綿100%のTシャツ";
+    x.sb.addSku(x.shop.id, String(tee["id"]), { code: "TEE-M", name: "M", price_jpy: 3000, available: 5 });
+    const tpl = x.sb.addPage(x.shop.id, { handle: "product-tpl", title: "商品のひな形", body: PRODUCT_TPL });
+    const topsTpl = x.sb.addPage(x.shop.id, { handle: "tops-tpl", title: "トップスのひな形", body: "トップス専用\n\n::: current part=buy" });
+    return { ...x, tops, shirts, tpl, topsTpl };
+  }
+
+  it("ショップ全体のひな形: 部品の並び・買うフォーム・構造化データ。記事の部品は空", async () => {
+    const { app, tpl, settings } = productSetup();
+    settings()["page_layouts"] = { product: tpl.id };
+    const html = await (await new Browser(app, BASE).get("/my-shop/p/tee")).text();
+    const body = html.slice(html.indexOf("<body"));
+    const order = ["トップス</a>", "<h1>Tシャツ</h1>", 'class="product-price"', "ひな形の案内", 'action="/my-shop/cart/add"', "綿100%のTシャツ"].map((x) => body.indexOf(x));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+    expect(html).toContain('"@type":"Product"');
+    expect(html).toContain('rel="canonical" href="http://localhost:8787/my-shop/p/tee"');
+    expect(html).not.toContain("<!--banto:current");
+    // 買える: そのままカートに入る
+    const b = new Browser(app, BASE);
+    const sku = String(html.match(/<option value="([^"]+)"/)![1]);
+    expect((await b.post("/my-shop/cart/add", { sku_id: sku, qty: "1" }, { origin: BASE })).status).toBe(302);
+  });
+
+  it("カテゴリーの上書きは主カテゴリーから親へたどって近いもの。見えないページなら今までの画面", async () => {
+    const { app, sb, tpl, topsTpl, tops, settings } = productSetup();
+    settings()["page_layouts"] = { product: tpl.id, product_categories: { [tops.id]: topsTpl.id } };
+    expect(await (await new Browser(app, BASE).get("/my-shop/p/tee")).text()).toContain("トップス専用");
+    sb.tables.pages.find((p) => p["id"] === topsTpl.id)!["published"] = false;
+    sb.tables.pages.find((p) => p["id"] === tpl.id)!["published"] = false;
+    const app2 = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
+    const html = await (await new Browser(app2, BASE).get("/my-shop/p/tee")).text();
+    expect(html).not.toContain("トップス専用");
+    expect(html).toContain('<div class="product">');
+  });
+
+  it("管理画面: 0102 が当たれば商品とカテゴリーの欄を出して保存する。当たる前は出さず、送らない", async () => {
+    const { app, base, tpl, topsTpl, tops, settings } = productSetup();
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const form = await (await b.get(`${base}/layouts`)).text();
+    expect(form).toContain('name="product"');
+    expect(form).toContain(`name="category_${tops.id}"`);
+    expect((await b.post(`${base}/layouts`, { product: tpl.id, [`category_${tops.id}`]: topsTpl.id })).status).toBe(302);
+    expect(settings()["page_layouts"]).toEqual({ product: tpl.id, product_categories: { [tops.id]: topsTpl.id } });
+    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((m) => m !== "0102_page_layouts_product") });
+    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
+    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain('name="product"');
+  });
+
+  it("Liquid: ひな形の中に既定の部品で描き、構造化データと canonical は商品のもの", async () => {
+    const { app, tpl, settings } = productSetup({
+      "layout/theme.liquid": `<html><head>{{ content_for_header }}<title>{{ page_title }}</title></head><body><main>{{ content_for_layout }}</main></body></html>`,
+      "templates/index.liquid": "<h1>top</h1>",
+      "templates/page.liquid": `<article class="page-default">{{ page.content }}</article>`,
+      "templates/product.liquid": `<div class="liquid-product">{{ product.title }}</div>`,
+    });
+    settings()["page_layouts"] = { product: tpl.id };
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/p/tee")).text();
+    expect(html).toContain('<article class="page-default">');
+    expect(html).not.toContain("liquid-product");
+    expect(html).toContain("<h1>Tシャツ</h1>");
+    expect(html).toContain('action="/cart/add"');
+    expect(html).toContain('"@type":"Product"');
+    expect(html).toContain('rel="canonical" href="https://shop.example.jp/p/tee"');
   });
 });

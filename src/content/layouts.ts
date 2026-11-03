@@ -17,6 +17,9 @@ import { t } from "../i18n";
 export interface PageLayouts {
   home: string | null;
   articles: Record<string, string>;
+  /** 商品詳細（0102）: ショップ全体と、カテゴリーごとの上書き（商品の主カテゴリーから親へたどって近いもの） */
+  product: string | null;
+  productCategories: Record<string, string>;
 }
 
 const UUID = /^[0-9a-f-]{36}$/;
@@ -25,11 +28,28 @@ const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typ
 /** 公開の settings の page_layouts を読む（形の違うものは無いことにする） */
 export function pageLayoutsOf(settings: Record<string, unknown> | null | undefined): PageLayouts {
   const raw = isObject(settings) ? settings["page_layouts"] : null;
-  const out: PageLayouts = { home: null, articles: {} };
+  const out: PageLayouts = { home: null, articles: {}, product: null, productCategories: {} };
   if (!isObject(raw)) return out;
   if (typeof raw["home"] === "string" && UUID.test(raw["home"])) out.home = raw["home"];
-  if (isObject(raw["articles"])) for (const [k, v] of Object.entries(raw["articles"])) if (UUID.test(k) && typeof v === "string" && UUID.test(v)) out.articles[k] = v;
+  if (typeof raw["product"] === "string" && UUID.test(raw["product"])) out.product = raw["product"];
+  const map = (v: unknown, into: Record<string, string>) => {
+    if (isObject(v)) for (const [k, x] of Object.entries(v)) if (UUID.test(k) && typeof x === "string" && UUID.test(x)) into[k] = x;
+  };
+  map(raw["articles"], out.articles);
+  map(raw["product_categories"], out.productCategories);
   return out;
+}
+
+/** 商品詳細のひな形: 主カテゴリーから親へたどって最初に割り当てのあるもの、無ければショップ全体のもの（無ければ null） */
+export function productLayoutId(l: PageLayouts, categories: readonly { id: string; parent_id: string | null }[], categoryId: string | null | undefined): string | null {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  let cur = categoryId ? byId.get(categoryId) : undefined;
+  for (let depth = 0; cur && depth < 20; depth++) {
+    const hit = l.productCategories[cur.id];
+    if (hit) return hit;
+    cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
+  }
+  return l.product;
 }
 
 /** 一覧の絞り込み・ページ送りが無いトップか（そのときだけトップのひな形を使う。?all=1 は今までの一覧） */
@@ -107,6 +127,10 @@ export function fillCurrent(html: string, parts: Record<string, string> = {}): s
   if (!html.includes("<!--banto:current:")) return html;
   return CURRENT_PARTS.reduce((h, p) => h.split(currentMarker(p)).join(parts[p] ?? ""), html);
 }
+
+/** 商品の部品の最小の CSS（Liquid のテーマで商品詳細のひな形を描くとき。既定のテーマは自分の CSS を持つ） */
+export const PRODUCT_PARTS_CSS =
+  ".gallery img[data-main]{width:100%;height:auto;border-radius:var(--banto-radius,.5rem)}.gallery .thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}.gallery .thumbs img{width:4rem;height:4rem;object-fit:cover;border-radius:.35rem}.product-price{font-size:1.25em;font-weight:600}";
 
 /** 部品の最小の CSS（ひな形を使うページにだけ添える） */
 export const CURRENT_CSS =

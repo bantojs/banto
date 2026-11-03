@@ -39,10 +39,12 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { markdownToHtml } from "../../pages/markdown";
 import { filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
-import { CURRENT_CSS, articleParts, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, usesPart } from "../../content/layouts";
+import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, productLayoutId, usesPart } from "../../content/layouts";
+import { PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
+import { productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { cartImagesFor, cartSections, liquidProductJsonLd, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -408,22 +410,44 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
     const qty = Math.min(999, Math.max(1, Number.parseInt(c.req.query("qty") ?? "1", 10) || 1));
     if (added) track(c, "cart_add", added.price * qty, [{ ...added, quantity: qty }]);
   }
+  const props = {
+    ctx: s.ctx,
+    detail,
+    added: c.req.query("added") === "1",
+    // ?sku=<品番> で選んだ SKU（その SKU の画像を先頭に。0063）
+    selectedSku: c.req.query("sku") ?? null,
+    categoryPath: categoryPath(categories, detail.product.category_id).map((x) => ({ slug: x.slug, name: x.name })),
+    attributes: publicAttributes(productFields(s.shop.settings), detail.product.attributes),
+  };
   const lt = await liquidThemeFor(c, s);
+  // 商品詳細のひな形（0102）: 主カテゴリーから親へたどって近い割り当て、無ければショップ全体。見えないページなら今までの画面
+  const layoutId = moduleEnabled(s.shop.settings, PAGES_MODULE) ? productLayoutId(pageLayoutsOf(s.shop.settings), categories, detail.product.category_id) : null;
+  const layout = layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
+  if (layout) {
+    const view = await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const raw = pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
+    const doc = fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
+    // 商品の部品は既定のテーマのもの（買うフォームはここにしか無い。値段・在庫・会員価格は DB の判定のまま）。記事の部品は空
+    const only = (parts: Record<string, string>) => Object.fromEntries(PRODUCT_LAYOUT_PARTS.map((k) => [k, parts[k] ?? ""]));
+    if (lt) {
+      const view2 = productView(props);
+      const parts: Record<string, string> = {};
+      for (const [k, node] of Object.entries(view2.parts)) parts[k] = node === null ? "" : String(node);
+      parts["buy"] = (parts["added"] ?? "") + (parts["buy"] ?? "");
+      const { jsonLd, path } = liquidProductJsonLd(c, s, { detail, categoryNames: props.categoryPath.map((x) => x.name), selectedSku: props.selectedSku });
+      const page: PageRow = { ...layout, title: detail.product.name, seo_title: null, seo_description: detail.product.description ? detail.product.description.slice(0, 200) : null, image_url: null };
+      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, only(parts)), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd });
+      if (res) return res;
+    }
+    const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
+    return c.html(s.theme.ProductPage({ ...props, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+  }
   if (lt) {
-    const res = renderProduct(c, s, lt, { detail, categories, categoryNames: categoryPath(categories, detail.product.category_id).map((x) => x.name), selectedSku: c.req.query("sku") ?? null });
+    const res = renderProduct(c, s, lt, { detail, categories, categoryNames: props.categoryPath.map((x) => x.name), selectedSku: props.selectedSku });
     if (res) return res;
   }
-  return c.html(
-    s.theme.ProductPage({
-      ctx: s.ctx,
-      detail,
-      added: c.req.query("added") === "1",
-      // ?sku=<品番> で選んだ SKU（その SKU の画像を先頭に。0063）
-      selectedSku: c.req.query("sku") ?? null,
-      categoryPath: categoryPath(categories, detail.product.category_id).map((x) => ({ slug: x.slug, name: x.name })),
-      attributes: publicAttributes(productFields(s.shop.settings), detail.product.attributes),
-    }),
-  );
+  return c.html(s.theme.ProductPage(props));
 });
 
 // ---------- 法務ページ ----------

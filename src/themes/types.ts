@@ -92,7 +92,11 @@ export interface Theme {
   }): Rendered;
   /** categoryPath は最上位から主カテゴリーまで（パンくず）、attributes は公開するカスタム項目 */
   /** detail.purchasable が false なら（会員限定の商品、0098）、カートに入れるボタンの代わりに「会員の方だけ購入できます」（ゲストはログインへのリンク）を出す */
-  ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[] }): Rendered;
+  /**
+   * layout: 商品詳細のひな形（0102）。テーマは商品の部品を HTML にして渡し、返った HTML を本文として描く（SEO・構造化データはいつもどおり）。
+   * 部品の名前は title・image・price・buy・content・tags・attributes・breadcrumb・size-chart・reviews・member-note・reviews-summary（無いものは ""）
+   */
+  ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[]; layout?: (parts: Record<string, string>) => string }): Rendered;
   /** 会員限定の商品にゲストが URL で来たとき（0098）。商品の中身は渡さない。無ければ LegalPage で文だけ */
   MembersOnlyPage?(props: { ctx: ThemeContext; loginUrl: string }): Rendered;
   /** coupons が null / 省略なら、クーポン欄を出さない。入力は `${ctx.shopPath}/cart/coupon` に code、外すときは remove を POST する */

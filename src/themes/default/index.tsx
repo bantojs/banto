@@ -564,144 +564,39 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ProductPage({ ctx, detail, added, selectedSku, categoryPath, attributes }) {
-    const { product, skus } = detail;
-    const inStock = skus.filter((s) => s.available > 0);
-    // SKU ごとの画像（0063）: ?sku= で選んだ SKU に結んだ画像を先頭に（スクリプトは選び直したときに同じ規則で並べ替える）
-    const chosen = skus.find((s) => s.code === selectedSku) ?? null;
-    const images = orderImagesForSku(detail.images, chosen?.options);
-    const skuImages = detail.images.some((img) => Object.keys(imageOptionsOf(img.options)).length > 0);
-    // SKU を分ける軸（0065）: 軸ごとの選択欄にする（スクリプト。無ければ下の 1 つの選択欄のまま）。軸を決めていない商品は SKU の項目から推す
-    const axes = skus.length > 1 ? displayOptionAxes(product.option_axes, skus) : [];
-    const axesOn = axes.length > 0;
-    const first = images[0];
-    // 商品ページの大きい画像: 持っている段から端末に合うものを選ばせる（画面の半分、スマホでは画面いっぱい。0091）
-    const mainImage = (img: (typeof images)[number]) => responsiveImage(ctx.mediaBaseUrl, img, { sizes: "(max-width: 40rem) 100vw, 50vw" });
-    // 外部プラグインのレビュー（0084）。星と件数は名前の下、一覧は商品の下。構造化データにも同じものだけ
-    const reviews = productReviews(product);
-    // 採寸表（同梱モジュール size_charts、0095）。どの段の表かは DB が決めて product.size_chart に入れて返す（モジュールが OFF なら無い）
-    const sizeChart = sizeChartOf(product.size_chart);
-    const chartAxis = Boolean(sizeChart?.axis) && skus.length > 1;
+  ProductPage({ ctx, detail, added, selectedSku, categoryPath, attributes, layout }) {
+    const v = productView({ ctx, detail, added, selectedSku, categoryPath, attributes });
+    const p = v.parts;
+    // 商品詳細のひな形（0102）: 部品を HTML にして渡し、並びはひな形が決める（SEO・構造化データは同じ）
+    if (layout) {
+      const html: Record<string, string> = {};
+      for (const [k, node] of Object.entries(p)) html[k] = node === null ? "" : String(node);
+      // カートに入れた直後の知らせは、買うフォームの上に
+      html["buy"] = (html["added"] ?? "") + (html["buy"] ?? "");
+      return (
+        <Layout title={v.product.name} ctx={ctx} seo={v.seo}>
+          <div class="page-body product-layout">{raw(layout(html))}</div>
+        </Layout>
+      );
+    }
     return (
-      <Layout
-        title={product.name}
-        ctx={ctx}
-        seo={{
-          path: `${ctx.shopPath}/p/${product.slug}`,
-          type: "product",
-          description: product.description ?? undefined,
-          image: first ? imageUrl(ctx.mediaBaseUrl, first.storage_key) : undefined,
-          jsonLd: ctx.publicBaseUrl
-            ? productJsonLd({
-                url: `${ctx.publicBaseUrl}${ctx.shopPath}/p/${product.slug}`,
-                product,
-                images: images.map((img) => imageUrl(ctx.mediaBaseUrl, img.storage_key)),
-                skus,
-                category: (categoryPath ?? []).map((cat) => cat.name),
-                reviews,
-              })
-            : undefined,
-        }}
-      >
-        <p>
-          <a href={ctx.shopPath || "/"}>{ctx.shop.name}</a> ›{" "}
-          {(categoryPath ?? []).map((cat) => (
-            <span>
-              <a href={`${ctx.shopPath || "/"}?category=${encodeURIComponent(cat.slug)}`}>{cat.name}</a> ›{" "}
-            </span>
-          ))}
-          {product.name}
-        </p>
+      <Layout title={v.product.name} ctx={ctx} seo={v.seo}>
+        {p.breadcrumb}
         <div class="product">
-          <div class="gallery" data-sku-images={skuImages ? "" : undefined}>
-            {first ? <img {...mainImage(first)} alt={product.name} fetchpriority="high" decoding="async" data-main="" /> : null}
-            {images.length > 1 ? (
-              <div class="thumbs">
-                {images.map((img) => (
-                  <a
-                    href={imageUrl(ctx.mediaBaseUrl, img.storage_key)}
-                    target="_blank"
-                    rel="noopener"
-                    {...(skuImages ? { "data-image-options": JSON.stringify(imageOptionsOf(img.options)), "data-index": String(detail.images.indexOf(img)), "data-src": mainImage(img).src, "data-srcset": mainImage(img).srcset ?? "" } : {})}
-                  >
-                    <img src={imageUrl(ctx.mediaBaseUrl, img.thumb_key ?? img.storage_key)} alt="" loading="lazy" decoding="async" />
-                  </a>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          {p.image}
           <div>
-            {product.brand ? <p class="muted">{product.brand}</p> : null}
-            <h1>{product.name}</h1>
-            {memberPriceNote(skus) ? <p class="member-price">{memberPriceNote(skus)}</p> : null}
-            {reviews ? <ReviewsSummary reviews={reviews} href="#reviews" /> : null}
-            {added ? (
-              <p class="notice">
-                {t("store.added")} <a href={`${ctx.shopPath}/cart`}>{t("store.view_cart")}</a>
-              </p>
-            ) : null}
-            {product.description ? <pre class="legal">{product.description}</pre> : null}
-            {attributes && attributes.length > 0 ? (
-              <table class="attributes">
-                <tbody>
-                  {attributes.map((a) => (
-                    <tr>
-                      <th>{a.label}</th>
-                      <td>{String(a.value)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : null}
-            {(product.tags ?? []).length > 0 ? (
-              <p class="tags">
-                {(product.tags ?? []).map((x) => (
-                  <a href={`${ctx.shopPath || "/"}?tag=${encodeURIComponent(x)}`}>{x}</a>
-                ))}
-              </p>
-            ) : null}
-            {skus.length === 0 ? <p class="muted">{t("store.unavailable")}</p> : null}
-            {skus.length > 0 ? (
-              <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axes.map((a) => ({ key: a.key, name: optionLabel(optionNamesOf(ctx.shop.option_names), a.key) }))) } : {})}>
-                <label for="sku_id">{t("store.variant")}</label>
-                <select id="sku_id" name="sku_id" required>
-                  {skus.map((s) => (
-                    <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages || axesOn || chartAxis ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
-                      {skuLabel(s)} — {s.compare_at_price_jpy ? `${t("store.regular_price")} ${yen(s.compare_at_price_jpy)} → ` : ""}
-                      {memberPriceLabel(s)}
-                      {s.available <= 0 ? ` (${t("store.sold_out")})` : s.available <= 5 ? ` (${t("store.low_stock")})` : ""}
-                    </option>
-                  ))}
-                </select>
-                {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
-                <label for="qty">{t("store.qty")}</label>
-                <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
-                {detail.purchasable === false ? (
-                  <p class="notice" data-members-only="">
-                    {ctx.member ? (
-                      t("store.members_only_buy")
-                    ) : (
-                      <>
-                        {t("store.members_only_login")} <a href={`${ctx.shopPath}/account/login`}>{t("store.members_login")}</a>
-                      </>
-                    )}
-                  </p>
-                ) : (
-                  <p>
-                    <button type="submit" disabled={inStock.length === 0}>
-                      {inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart")}
-                    </button>
-                  </p>
-                )}
-              </form>
-            ) : null}
-            {skuImages && skus.length > 1 ? <script dangerouslySetInnerHTML={{ __html: SKU_IMAGE_SCRIPT }} /> : null}
-            {axesOn ? <script dangerouslySetInnerHTML={{ __html: OPTION_AXES_SCRIPT }} /> : null}
+            {p.title}
+            {p["member-note"]}
+            {p["reviews-summary"]}
+            {p.added}
+            {p.content}
+            {p.attributes}
+            {p.tags}
+            {p.buy}
           </div>
         </div>
-        {sizeChart ? <SizeChartView chart={sizeChart} mediaBaseUrl={ctx.mediaBaseUrl} selected={selectedRowValue(sizeChart, chosen?.options)} /> : null}
-        {sizeChart && chartAxis ? <script dangerouslySetInnerHTML={{ __html: SIZE_CHART_SCRIPT }} /> : null}
-        {reviews ? <ReviewsList reviews={reviews} id="reviews" /> : null}
+        {p["size-chart"]}
+        {p.reviews}
       </Layout>
     );
   },
@@ -1881,3 +1776,171 @@ export const defaultTheme: Theme = {
     );
   },
 };
+
+type ProductPageProps = Parameters<Theme["ProductPage"]>[0];
+
+/**
+ * 商品ページの部品（既定のテーマの見た目）。ふつうの商品ページと、商品詳細のひな形（0102、`::: current part=…`）の両方がここを通る。
+ * 買うフォーム（SKU の選択・会員限定・在庫）はここにしか無い。値段・在庫・会員価格は渡された detail（DB の判定）のまま
+ */
+export function productView({ ctx, detail, added, selectedSku, categoryPath, attributes }: Omit<ProductPageProps, "layout">) {
+  const { product, skus } = detail;
+  const inStock = skus.filter((s) => s.available > 0);
+  // SKU ごとの画像（0063）: ?sku= で選んだ SKU に結んだ画像を先頭に（スクリプトは選び直したときに同じ規則で並べ替える）
+  const chosen = skus.find((s) => s.code === selectedSku) ?? null;
+  const images = orderImagesForSku(detail.images, chosen?.options);
+  const skuImages = detail.images.some((img) => Object.keys(imageOptionsOf(img.options)).length > 0);
+  // SKU を分ける軸（0065）: 軸ごとの選択欄にする（スクリプト。無ければ下の 1 つの選択欄のまま）。軸を決めていない商品は SKU の項目から推す
+  const axes = skus.length > 1 ? displayOptionAxes(product.option_axes, skus) : [];
+  const axesOn = axes.length > 0;
+  const first = images[0];
+  // 商品ページの大きい画像: 持っている段から端末に合うものを選ばせる（画面の半分、スマホでは画面いっぱい。0091）
+  const mainImage = (img: (typeof images)[number]) => responsiveImage(ctx.mediaBaseUrl, img, { sizes: "(max-width: 40rem) 100vw, 50vw" });
+  // 外部プラグインのレビュー（0084）。星と件数は名前の下、一覧は商品の下。構造化データにも同じものだけ
+  const reviews = productReviews(product);
+  // 採寸表（同梱モジュール size_charts、0095）。どの段の表かは DB が決めて product.size_chart に入れて返す（モジュールが OFF なら無い）
+  const sizeChart = sizeChartOf(product.size_chart);
+  const chartAxis = Boolean(sizeChart?.axis) && skus.length > 1;
+  const seo = {
+    path: `${ctx.shopPath}/p/${product.slug}`,
+    type: "product" as const,
+    description: product.description ?? undefined,
+    image: first ? imageUrl(ctx.mediaBaseUrl, first.storage_key) : undefined,
+    jsonLd: ctx.publicBaseUrl
+      ? productJsonLd({
+          url: `${ctx.publicBaseUrl}${ctx.shopPath}/p/${product.slug}`,
+          product,
+          images: images.map((img) => imageUrl(ctx.mediaBaseUrl, img.storage_key)),
+          skus,
+          category: (categoryPath ?? []).map((cat) => cat.name),
+          reviews,
+        })
+      : undefined,
+  };
+  const prices = skus.map((s) => s.price_jpy);
+  const low = skus.length > 0 ? skus.reduce((m, s) => (s.price_jpy < m.price_jpy ? s : m)) : null;
+  const parts = {
+    breadcrumb: (
+      <p>
+        <a href={ctx.shopPath || "/"}>{ctx.shop.name}</a> ›{" "}
+        {(categoryPath ?? []).map((cat) => (
+          <span>
+            <a href={`${ctx.shopPath || "/"}?category=${encodeURIComponent(cat.slug)}`}>{cat.name}</a> ›{" "}
+          </span>
+        ))}
+        {product.name}
+      </p>
+    ),
+    image: (
+      <div class="gallery" data-sku-images={skuImages ? "" : undefined}>
+        {first ? <img {...mainImage(first)} alt={product.name} fetchpriority="high" decoding="async" data-main="" /> : null}
+        {images.length > 1 ? (
+          <div class="thumbs">
+            {images.map((img) => (
+              <a
+                href={imageUrl(ctx.mediaBaseUrl, img.storage_key)}
+                target="_blank"
+                rel="noopener"
+                {...(skuImages ? { "data-image-options": JSON.stringify(imageOptionsOf(img.options)), "data-index": String(detail.images.indexOf(img)), "data-src": mainImage(img).src, "data-srcset": mainImage(img).srcset ?? "" } : {})}
+              >
+                <img src={imageUrl(ctx.mediaBaseUrl, img.thumb_key ?? img.storage_key)} alt="" loading="lazy" decoding="async" />
+              </a>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    ),
+    title: (
+      <>
+        {product.brand ? <p class="muted">{product.brand}</p> : null}
+        <h1>{product.name}</h1>
+      </>
+    ),
+    // ひな形だけで使う: いちばん安い SKU の値段（会員価格を含む。SKU で値段が違えば「〜」）
+    price: low ? (
+      <p class="product-price">
+        {memberPriceLabel(low)}
+        {new Set(prices).size > 1 ? "〜" : ""}
+      </p>
+    ) : null,
+    "member-note": memberPriceNote(skus) ? <p class="member-price">{memberPriceNote(skus)}</p> : null,
+    "reviews-summary": reviews ? <ReviewsSummary reviews={reviews} href="#reviews" /> : null,
+    content: product.description ? <pre class="legal">{product.description}</pre> : null,
+    attributes:
+      attributes && attributes.length > 0 ? (
+        <table class="attributes">
+          <tbody>
+            {attributes.map((a) => (
+              <tr>
+                <th>{a.label}</th>
+                <td>{String(a.value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null,
+    tags:
+      (product.tags ?? []).length > 0 ? (
+        <p class="tags">
+          {(product.tags ?? []).map((x) => (
+            <a href={`${ctx.shopPath || "/"}?tag=${encodeURIComponent(x)}`}>{x}</a>
+          ))}
+        </p>
+      ) : null,
+    added: added ? (
+      <p class="notice">
+        {t("store.added")} <a href={`${ctx.shopPath}/cart`}>{t("store.view_cart")}</a>
+      </p>
+    ) : null,
+    buy: (
+      <>
+        {skus.length === 0 ? <p class="muted">{t("store.unavailable")}</p> : null}
+        {skus.length > 0 ? (
+          <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axes.map((a) => ({ key: a.key, name: optionLabel(optionNamesOf(ctx.shop.option_names), a.key) }))) } : {})}>
+            <label for="sku_id">{t("store.variant")}</label>
+            <select id="sku_id" name="sku_id" required>
+              {skus.map((s) => (
+                <option value={s.id} disabled={s.available <= 0} selected={chosen?.id === s.id} {...(skuImages || axesOn || chartAxis ? { "data-options": JSON.stringify(s.options ?? {}), "data-code": s.code } : {})}>
+                  {skuLabel(s)} — {s.compare_at_price_jpy ? `${t("store.regular_price")} ${yen(s.compare_at_price_jpy)} → ` : ""}
+                  {memberPriceLabel(s)}
+                  {s.available <= 0 ? ` (${t("store.sold_out")})` : s.available <= 5 ? ` (${t("store.low_stock")})` : ""}
+                </option>
+              ))}
+            </select>
+            {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
+            <label for="qty">{t("store.qty")}</label>
+            <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
+            {detail.purchasable === false ? (
+              <p class="notice" data-members-only="">
+                {ctx.member ? (
+                  t("store.members_only_buy")
+                ) : (
+                  <>
+                    {t("store.members_only_login")} <a href={`${ctx.shopPath}/account/login`}>{t("store.members_login")}</a>
+                  </>
+                )}
+              </p>
+            ) : (
+              <p>
+                <button type="submit" disabled={inStock.length === 0}>
+                  {inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart")}
+                </button>
+              </p>
+            )}
+          </form>
+        ) : null}
+        {skuImages && skus.length > 1 ? <script dangerouslySetInnerHTML={{ __html: SKU_IMAGE_SCRIPT }} /> : null}
+        {axesOn ? <script dangerouslySetInnerHTML={{ __html: OPTION_AXES_SCRIPT }} /> : null}
+      </>
+    ),
+    "size-chart": sizeChart ? (
+      <>
+        <SizeChartView chart={sizeChart} mediaBaseUrl={ctx.mediaBaseUrl} selected={selectedRowValue(sizeChart, chosen?.options)} />
+        {chartAxis ? <script dangerouslySetInnerHTML={{ __html: SIZE_CHART_SCRIPT }} /> : null}
+      </>
+    ) : null,
+    reviews: reviews ? <ReviewsList reviews={reviews} id="reviews" /> : null,
+  };
+  return { product, seo, parts };
+}
+
