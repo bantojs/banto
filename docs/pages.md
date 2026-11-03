@@ -226,6 +226,7 @@ WordPress のよく使うブロックを、決まった書式のまま入れ子�
 | `::: product slug=tee show=image,name,price,cart,buy` | 1 つの商品。`show` に出す項目（`image`・`name`・`price`・`sku`・`tags`・`description`・`cart`（カートに入れる）・`buy`（今すぐ買う））。省けば画像・名前・価格・カートに入れる |
 | `::: icon name=truck size=m tone=accent label="送料無料"` | 決まった一式のアイコン（48 個）。`size` は s / m / l / xl、`tone` は text / accent / muted。`label` は横に出す文字（読み上げにも使う。空なら飾り） |
 | `::: date of=published format=date label="投稿日"` | 日時。`of` は published（投稿日時。ページは公開した日時、無ければ作った日時）/ updated（最終更新日時）/ now（見た時点の日時）、`format` は date（日付だけ）/ datetime（日付と時刻）。時間帯はデプロイの `BANTO_TIMEZONE`。本文の HTML には印だけを置き、描くたびに入れる（本文の HTML の覚えに日時が残らない）。データは引かない |
+| `::: embed url="https://www.youtube.com/watch?v=…"` | YouTube・X・Instagram・TikTok・Reddit・Bluesky の動画や投稿。**お客様が押すまで外のサービスにつながない**（最初は枠と元の投稿へのリンクだけ。押した人のブラウザだけが相手の埋め込みのページを読み込む。サムネイルも外から取らない）。相手のスクリプトはお店の画面に読み込まず iframe だけで、iframe の URL は貼った URL から取り出した ID で Banto が組み直す。Bluesky は `at://did:…` か `did:` を含む URL だけ埋め込める（`@` の名前の URL はリンクだけ）。対応していない URL のブロックは文字のまま出る |
 
 - 見たままの編集のブロックの一覧（「お店」「デザイン」）から入れられ、右の設定の欄で選びます。
 - 商品・ページ・記事は、お店の画面と同じ読み取りの道で引きます。会員限定のもの・見えないものは、合わない人には出ません。価格は見る人の単価（会員なら会員価格）です。

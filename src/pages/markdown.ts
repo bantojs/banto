@@ -13,6 +13,7 @@
  */
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { t } from "../i18n";
+import { EMBED_CSS, EMBED_SCRIPT, embedHtml, parseEmbedUrl } from "./embeds";
 import { LOCAL_SHOP_BLOCKS, SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, dateHtml, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
 import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
@@ -241,6 +242,8 @@ interface RenderState {
   /** お店のブロック（データを引くもの）の数・お店のブロックを描いたか */
   shop: number;
   shopCss: boolean;
+  /** 埋め込みがある（押したら iframe にするスクリプトと CSS を 1 回だけ足す） */
+  embed: boolean;
   /** タブの数（ラジオの名前を重ねないため） */
   tabs: number;
 }
@@ -250,11 +253,12 @@ const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE
 
 export function markdownToHtml(source: string, opts: MarkdownOptions = {}): string {
   const rows = source.replace(/\r\n?/g, "\n").split("\n");
-  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false, shop: 0, shopCss: false, tabs: 0 };
+  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false, shop: 0, shopCss: false, embed: false, tabs: 0 };
   const html = render(rows, 0, st).join("\n");
   if (html.length > BODY_HTML_MAX) return `<p class="banto-too-large">${esc(t("pages.body_too_large"))}</p>`;
-  const css = !opts.editor && opts.layoutCss !== false ? `${st.layout ? LAYOUT_CSS : ""}${st.shopCss ? SHOP_BLOCKS_CSS : ""}` : "";
-  return css ? `<style>${css}</style>\n${html}` : html;
+  const css = !opts.editor && opts.layoutCss !== false ? `${st.layout ? LAYOUT_CSS : ""}${st.shopCss ? SHOP_BLOCKS_CSS : ""}${st.embed ? EMBED_CSS : ""}` : "";
+  const script = st.embed && !opts.editor ? `\n<script>${EMBED_SCRIPT}</script>` : "";
+  return (css ? `<style>${css}</style>\n${html}` : html) + script;
 }
 
 const ESC_ATTR = (s: string) => esc(s);
@@ -392,7 +396,13 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
         st.shopCss = true;
         const data = `data-banto-block="shop" data-kind="${sb.kind}" data-attrs="${esc(JSON.stringify(sb.attrs))}"`;
         if (sb.kind === "icon") out.push(opts.editor ? `<div class="banto-shop banto-shop--icon" ${data} contenteditable="false">${iconHtml(sb)}</div>` : `<p class="banto-shop banto-shop--icon">${iconHtml(sb)}</p>`);
-        else if (sb.kind === "date" && !opts.editor) out.push(`<p class="banto-shop banto-shop--date">${dateHtml(sb)}</p>`);
+        else if (sb.kind === "embed" && !opts.editor) {
+          const e = parseEmbedUrl(sb.attrs["url"] ?? "");
+          if (e) {
+            st.embed = true;
+            out.push(embedHtml(e));
+          }
+        } else if (sb.kind === "date" && !opts.editor) out.push(`<p class="banto-shop banto-shop--date">${dateHtml(sb)}</p>`);
         else if (opts.editor) out.push(`<div class="banto-shop banto-shop--${sb.kind}" ${data} contenteditable="false">${esc(opts.shopLabel ? opts.shopLabel(sb) : sb.kind)}</div>`);
         else out.push(`<div class="banto-shop banto-shop--${sb.kind}">${st.shop < SHOP_BLOCKS_MAX ? shopMarker(st.shop) : ""}</div>`);
         if (!LOCAL_SHOP_BLOCKS.includes(sb.kind)) st.shop++;

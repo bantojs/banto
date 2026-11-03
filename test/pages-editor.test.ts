@@ -198,6 +198,8 @@ describe("新しいブロック（グリッド・タブ・お店のブロック�
       '::: date of=updated format=datetime label="更新"',
       "",
       "::: date",
+      "",
+      '::: embed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"',
     ].join("\n");
     const editor = markdownToHtml(md, { mediaBase: "https://media.example.jp", editor: true });
     const again = back(editor);
@@ -210,6 +212,7 @@ describe("新しいブロック（グリッド・タブ・お店のブロック�
     expect(again).toContain('::: icon name=truck size=l label="送料無料"');
     expect(again).toContain('::: date of=updated format=datetime label="更新"');
     expect(again).toMatch(/^::: date$/m);
+    expect(again).toContain('::: embed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"');
     expect(html(again)).toBe(html(md));
   });
 

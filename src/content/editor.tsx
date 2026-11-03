@@ -234,6 +234,12 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) 
         { key: "label", label: t("blocks.icon_label"), type: "text", help: t("blocks.icon_label_help") },
       ],
     },
+    embed: {
+      label: t("blocks.embed"),
+      desc: t("blocks.embed_desc"),
+      group: "media",
+      fields: [{ key: "url", label: t("blocks.embed_url"), type: "text", required: true, pattern: "^(https?://|at://)\\S{3,300}$", placeholder: "https://www.youtube.com/watch?v=…", help: t("blocks.embed_help") }],
+    },
     date: {
       label: t("blocks.date"),
       desc: t("blocks.date_desc"),

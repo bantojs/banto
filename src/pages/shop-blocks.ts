@@ -7,6 +7,7 @@
  *   ::: product slug=tee show=image,name,price,cart,buy
  *   ::: icon name=truck size=m label="送料無料"
  *   ::: date of=published format=datetime label="投稿日"   （of: published 投稿日時 / updated 最終更新日時 / now 今の日時）
+ *   ::: embed url="https://www.youtube.com/watch?v=…"    （YouTube・X・Instagram・TikTok・Reddit・Bluesky。押すまで外へつながない、src/pages/embeds.ts）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
  * - アイコンは決まった一式（src/pages/icons.ts）から選び、その場で SVG を描く（データを引かない）
@@ -18,11 +19,12 @@
  */
 import { ICONS } from "./icons";
 import { formatDateTime } from "../i18n/time";
+import { parseEmbedUrl } from "./embeds";
 
-export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date";
-export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date"];
+export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed";
+export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed"];
 /** データを引かないブロック（印を数えない・body-blocks に渡さない） */
-export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date"];
+export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed"];
 /** データを引くブロックの数の上限（1 ページ） */
 export const SHOP_BLOCKS_MAX = 8;
 
@@ -34,7 +36,8 @@ export const PRODUCT_PARTS_DEFAULT: readonly ProductPart[] = ["image", "name", "
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const TEXT = (v: string) => v.replace(/["\n\r]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
 
-type Field = { values?: readonly string[]; test?: (v: string) => boolean; text?: true; def?: string };
+/** url: 大文字小文字を変えず、引用符で書き戻す（300 文字まで。形は test で確かめる） */
+type Field = { values?: readonly string[]; test?: (v: string) => boolean; text?: true; url?: true; def?: string };
 /** ブロックごとの鍵と値の形（def は省いたときの値。書き戻すときは def と同じなら省く） */
 export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   search: { placeholder: { text: true } },
@@ -42,6 +45,7 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   card: { page: { test: (v) => SLUG.test(v) }, article: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}\/[a-z0-9][a-z0-9-]{0,62}$/.test(v) } },
   product: { slug: { test: (v) => SLUG.test(v) }, show: { test: (v) => v.split(",").every((x) => (PRODUCT_PARTS as readonly string[]).includes(x)) } },
   icon: { name: { test: (v) => Object.prototype.hasOwnProperty.call(ICONS, v) }, size: { values: ["s", "m", "l", "xl"], def: "m" }, tone: { values: ["text", "accent", "muted"], def: "text" }, label: { text: true } },
+  embed: { url: { url: true, test: (v) => parseEmbedUrl(v) !== null } },
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
 };
 
@@ -51,7 +55,7 @@ export interface ShopBlock {
   attrs: Record<string, string>;
 }
 
-const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date)(?:\s+(.*?))?\s*$/;
+const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed)(?:\s+(.*?))?\s*$/;
 
 /** 1 行を読む。形が違えば null（その行は文字として出る）。必須の値が無いもの（商品の slug など）も null */
 export function parseShopBlock(line: string): ShopBlock | null {
@@ -60,19 +64,20 @@ export function parseShopBlock(line: string): ShopBlock | null {
   const kind = m[1] as ShopBlockKind;
   const schema = SHOP_BLOCK_SCHEMA[kind];
   const attrs: Record<string, string> = {};
-  const re = /([a-z]+)=(?:"([^"\n]{0,200})"|([^\s"]{1,200}))/g;
+  const re = /([a-z]+)=(?:"([^"\n]{0,300})"|([^\s"]{1,300}))/g;
   let a: RegExpExecArray | null;
   while ((a = re.exec(m[2] ?? ""))) {
     const key = a[1]!;
     const f = schema[key];
     if (!f) continue;
     const raw = a[2] ?? a[3] ?? "";
-    const v = f.text ? TEXT(raw) : raw.trim().toLowerCase();
-    if (f.text ? v !== "" : f.values ? f.values.includes(v) : f.test ? f.test(v) : false) attrs[key] = v;
+    const v = f.text ? TEXT(raw) : f.url ? raw.trim() : raw.trim().toLowerCase();
+    if (f.text ? v !== "" : f.url ? v.length <= 300 && (f.test ? f.test(v) : false) : f.values ? f.values.includes(v) : f.test ? f.test(v) : false) attrs[key] = v;
   }
   for (const [k, f] of Object.entries(schema)) if (f.def !== undefined && attrs[k] === undefined) attrs[k] = f.def;
   if (kind === "product" && !attrs["slug"]) return null;
   if (kind === "icon" && !attrs["name"]) return null;
+  if (kind === "embed" && !attrs["url"]) return null;
   if (kind === "card" && !attrs["page"] && !attrs["article"]) return null;
   if (kind === "card" && attrs["page"] && attrs["article"]) delete attrs["article"];
   return { kind, attrs };
@@ -85,7 +90,7 @@ export function shopBlockLine(b: ShopBlock): string {
   for (const [k, f] of Object.entries(schema)) {
     const v = b.attrs[k];
     if (v === undefined || v === "" || v === f.def) continue;
-    parts.push(f.text ? `${k}="${TEXT(v)}"` : `${k}=${v}`);
+    parts.push(f.text ? `${k}="${TEXT(v)}"` : f.url ? `${k}="${v.replace(/["\n\r]/g, "")}"` : `${k}=${v}`);
   }
   return `::: ${parts.join(" ")}`;
 }
