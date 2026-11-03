@@ -17,6 +17,7 @@ import { AUDIENCES_MODULE, audienceDisplayOnly } from "../members/audience";
 import { migrated } from "../db/migration-state";
 import { AUDIENCE_CONTENT_MIGRATION } from "../storefront/data";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
+import { MAX_VIDEO_BYTES, sniffMp4 } from "../media/video";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
@@ -240,6 +241,18 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) 
       group: "media",
       fields: [{ key: "url", label: t("blocks.embed_url"), type: "text", required: true, pattern: "^(https?://|at://)\\S{3,300}$", placeholder: "https://www.youtube.com/watch?v=…", help: t("blocks.embed_help") }],
     },
+    video: {
+      label: t("blocks.video"),
+      desc: t("blocks.video_desc"),
+      group: "media",
+      fields: [
+        { key: "src", label: t("blocks.video_file"), type: "video", required: true, help: t("blocks.video_help") },
+        { key: "poster", label: "", type: "hidden" },
+        { key: "autoplay", label: t("blocks.video_autoplay"), type: "select", options: opt([["0", t("blocks.no")], ["1", t("blocks.video_autoplay_on")]]), default: "0" },
+        { key: "loop", label: t("blocks.video_loop"), type: "select", options: opt([["0", t("blocks.no")], ["1", t("blocks.yes")]]), default: "0" },
+        { key: "controls", label: t("blocks.video_controls"), type: "select", options: opt([["1", t("blocks.yes")], ["0", t("blocks.no")]]), default: "1" },
+      ],
+    },
     date: {
       label: t("blocks.date"),
       desc: t("blocks.date_desc"),
@@ -378,6 +391,7 @@ export const EDITOR_CSS = `
 #md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
 .page-preview .banto-shop:not(.banto-shop--icon){border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
 .page-preview .banto-shop--icon{cursor:pointer;display:inline-block;margin:.25rem 0}
+.page-preview .banto-shop--video video{display:block;width:100%;max-height:360px;background:#000;border-radius:4px;pointer-events:none}
 .page-preview .banto-tabs{border:1px solid var(--border);border-radius:6px;padding:.5rem}
 .page-preview .banto-tab{border-top:1px dashed var(--border);padding:.25rem 0}.page-preview .banto-tab:first-child{border-top:0}
 .page-preview .banto-tab__title{font-weight:600;padding:.25rem 0}
@@ -560,6 +574,11 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-articles-max": tf("pages.articles_max", { n: ARTICLE_BLOCKS_MAX }),
     // お店のブロック（src/pages/shop-blocks.ts）の名前・説明・設定の欄
     "data-shop-blocks": JSON.stringify(shopBlockDefs(props.categories)),
+    // 動画のブロックの置き場（mp4、1 本の上限）
+    "data-video-upload": `${props.kind.base}/videos`,
+    "data-video-max": String(MAX_VIDEO_BYTES),
+    "data-t-video-uploading": t("video.uploading"),
+    "data-t-video-too-large": t("video.too_large"),
     "data-t-ok": t("blocks.ok"),
     "data-t-cancel": t("blocks.cancel"),
     "data-t-shop-required": t("blocks.required"),
@@ -1041,6 +1060,27 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   if (wantsJson) return c.json({ url });
   return c.redirect(`${back}?image=${encodeURIComponent(url)}`);
 });
+
+/**
+ * 本文の短い動画（`::: video`）を置く。mp4 だけ（先頭のバイトで確かめる）・1 本 MAX_VIDEO_BYTES まで。Worker では変換しない。
+ * 置き場は画像と同じ pages/<ショップ>/。メディアライブラリ（画像の一覧）には載せない
+ */
+  app.post("/videos", requireOwner, async (c: AdminContext) => {
+    const shop = await scope(c);
+    if (!shop) return c.notFound();
+    // 大きすぎるものは読む前に断る（申告の大きさ。中身は読んだ後にも数える）
+    const declared = Number(c.req.header("content-length") ?? NaN);
+    if (Number.isFinite(declared) && declared > MAX_VIDEO_BYTES + 64 * 1024) return c.json({ error: t("video.too_large") }, 413);
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!(file instanceof File) || file.size === 0) return c.json({ error: t("video.invalid_type") }, 400);
+    if (file.size > MAX_VIDEO_BYTES) return c.json({ error: t("video.too_large") }, 413);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!sniffMp4(bytes)) return c.json({ error: t("video.invalid_type") }, 400);
+    const key = `pages/${shop.id}/${randomKey()}.mp4`;
+    await c.get("adapters").storage.put(key, bytes.buffer as ArrayBuffer, "video/mp4");
+    return c.json({ url: imageUrl(mediaBaseUrl(c), key) });
+  });
 
 /**
  * メディアライブラリ（0080）: 置いた画像を新しい順に MEDIA_PAGE 枚ずつ。続きは next を after に渡す

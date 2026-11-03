@@ -1,5 +1,5 @@
 import { createApp } from "../src/app";
-import type { Adapters, StorageAdapter } from "../src/adapters/types";
+import { clampRange, type Adapters, type StorageAdapter } from "../src/adapters/types";
 import type { FakeSupabase } from "./fake-supabase";
 import type { FakeStripe } from "./fake-stripe";
 
@@ -21,6 +21,13 @@ export class MemoryStorage implements StorageAdapter {
   }
   async delete(key: string) {
     this.objects.delete(key);
+  }
+  async getRange(key: string, start: number, end: number | null) {
+    const o = this.objects.get(key);
+    if (!o) return null;
+    const r = clampRange(o.body.byteLength, start, end);
+    if (!r) return "unsatisfiable" as const;
+    return { body: new Blob([o.body.slice(r.start, r.end + 1)]).stream(), contentType: o.contentType, size: o.body.byteLength, ...r };
   }
 }
 

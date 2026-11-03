@@ -200,6 +200,8 @@ describe("新しいブロック（グリッド・タブ・お店のブロック�
       "::: date",
       "",
       '::: embed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"',
+      "",
+      '::: video src="/media/pages/11111111-2222-4333-8444-555555555555/a.mp4" autoplay=1 loop=1',
     ].join("\n");
     const editor = markdownToHtml(md, { mediaBase: "https://media.example.jp", editor: true });
     const again = back(editor);
@@ -213,6 +215,7 @@ describe("新しいブロック（グリッド・タブ・お店のブロック�
     expect(again).toContain('::: date of=updated format=datetime label="更新"');
     expect(again).toMatch(/^::: date$/m);
     expect(again).toContain('::: embed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"');
+    expect(again).toContain('::: video src="/media/pages/11111111-2222-4333-8444-555555555555/a.mp4" autoplay=1 loop=1');
     expect(html(again)).toBe(html(md));
   });
 

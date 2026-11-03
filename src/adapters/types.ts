@@ -9,6 +9,27 @@ export interface StorageAdapter {
   put(key: string, body: ReadableStream | ArrayBuffer | Blob, contentType: string): Promise<{ url: string }>;
   get(key: string): Promise<{ body: ReadableStream; contentType: string } | null>;
   delete(key: string): Promise<void>;
+  /**
+   * 一部だけ読む（動画の再生に要る HTTP の Range。iPhone の Safari は Range に答えない置き場の動画を再生しない）。
+   * start〜end（end を含む。null なら終わりまで）。end が大きさを超えたら丸める。start が大きさ以上なら "unsatisfiable"、無ければ null。
+   * 実装しない置き場では /media/ は全体だけを配る
+   */
+  getRange?(key: string, start: number, end: number | null): Promise<StorageRange | "unsatisfiable" | null>;
+}
+
+/** getRange の結果（size は全体の大きさ） */
+export interface StorageRange {
+  body: ReadableStream;
+  contentType: string;
+  size: number;
+  start: number;
+  end: number;
+}
+
+/** 範囲を大きさに合わせる（end を丸める・始まりが外なら null） */
+export function clampRange(size: number, start: number, end: number | null): { start: number; end: number } | null {
+  if (start >= size) return null;
+  return { start, end: Math.min(end ?? size - 1, size - 1) };
 }
 
 /**

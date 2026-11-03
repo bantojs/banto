@@ -377,6 +377,8 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var insBody=el("div",""); ins.appendChild(insBody);
   var insFor=null, insMode="after", insSel=0, insList=[];
   function match(b,f){ return !f||b.k.indexOf(f)===0||b.label.toLowerCase().indexOf(f)>=0||b.desc.toLowerCase().indexOf(f)>=0; }
+  // 名前に合うものを説明だけに合うものより先に（「動画」で動画のブロックが先頭に来るように）
+  function rank(list,f){ if(!f) return list; var hit=function(b){ return b.label.toLowerCase().indexOf(f)>=0||b.k.indexOf(f)===0?0:1; }; return list.map(function(b,i){ return [hit(b),i,b]; }).sort(function(x,y){ return x[0]-y[0]||x[1]-y[1]; }).map(function(x){ return x[2]; }); }
   // 図の並び（＋の一覧と左のブロックの一覧で共通）。list は絞り込んだもの、cur は選んでいる位置（-1 なら無し）
   function tiles(box,list,cur,onPick,onDrag){
     box.innerHTML="";
@@ -395,7 +397,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     });
   }
   function drawIns(){
-    var f=insQ.value.trim().toLowerCase(); insList=BLOCKS.filter(function(b){ return match(b,f); });
+    var f=insQ.value.trim().toLowerCase(); insList=rank(BLOCKS.filter(function(b){ return match(b,f); }),f);
     insSel=Math.max(0,Math.min(insSel,insList.length-1)); tiles(insBody,insList,insSel,pickIns,null);
   }
   var insAnchor=null;
@@ -523,7 +525,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var menuFor=null, menuSel=0, menuItems=[];
   function openMenu(blk,filter){
     menuFor=blk; var f=(filter||"").toLowerCase();
-    menuItems=BLOCKS.filter(function(b){ return match(b,f); });
+    menuItems=rank(BLOCKS.filter(function(b){ return match(b,f); }),f);
     if(!menuItems.length){ closeMenu(); return; }
     menuSel=Math.min(menuSel,menuItems.length-1); menu.innerHTML="";
     menuItems.forEach(function(b,i){
@@ -716,7 +718,31 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function setShopBox(box,kind,a){
     box.className="banto-shop banto-shop--"+kind+(sel===box?" is-sel":""); box.setAttribute("data-banto-block","shop"); box.setAttribute("contenteditable","false");
     box.setAttribute("data-kind",kind); box.setAttribute("data-attrs",JSON.stringify(a));
-    if(kind==="icon") iconInto(box,a); else box.textContent=shopText(kind,a);
+    if(kind==="icon") iconInto(box,a); else if(kind==="video") videoInto(box,a); else box.textContent=shopText(kind,a);
+  }
+  // 動画は編集の画面でも見えるように（置き場の URL だけ。自動の再生はしない）
+  function videoInto(box,a){
+    box.innerHTML=""; var ok=/^(\/media\/|https?:\/\/)[^\s"<>]+\.mp4$/.test(a.src||"");
+    if(!ok){ box.textContent=shopText("video",a); return; }
+    var v=document.createElement("video"); v.src=a.src; v.muted=true; v.controls=true; v.playsInline=true; v.preload="metadata"; if(/^(\/media\/|https?:\/\/)[^\s"<>]+$/.test(a.poster||"")) v.poster=a.poster; box.appendChild(v);
+  }
+  // 最初の場面を画像にする（読めない・時間がかかるときは表紙なし）
+  function posterOf(file){
+    return new Promise(function(ok){
+      var u=URL.createObjectURL(file), v=document.createElement("video"), fin=false;
+      var done=function(b){ if(fin) return; fin=true; URL.revokeObjectURL(u); ok(b); };
+      v.muted=true; v.playsInline=true; v.preload="auto";
+      v.addEventListener("error",function(){ done(null); });
+      v.addEventListener("loadeddata",function(){ try{ v.currentTime=Math.min(0.1,(v.duration||1)/2); }catch(_){ done(null); } });
+      v.addEventListener("seeked",function(){
+        var w=v.videoWidth,h=v.videoHeight; if(!w||!h) return done(null);
+        var r=Math.min(1,1600/Math.max(w,h)), c=document.createElement("canvas"); c.width=Math.round(w*r); c.height=Math.round(h*r);
+        try{ c.getContext("2d").drawImage(v,0,0,c.width,c.height); }catch(_){ return done(null); }
+        c.toBlob(function(b){ if(b&&b.type==="image/webp") return done(b); c.toBlob(function(j){ done(j); },"image/jpeg",.85); },"image/webp",.85);
+      });
+      setTimeout(function(){ done(null); },8000);
+      v.src=u;
+    });
   }
   // アイコンはお店の画面と同じ形で描く（SVG の中身はサーバーが渡した決まった一式だけ。ラベルは textContent）
   function iconInto(box,a){
@@ -737,11 +763,29 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(def.desc){ var p0=el("p","muted"); p0.textContent=def.desc; f.appendChild(p0); }
     (def.fields||[]).forEach(function(x){
       var id="shopf-"+x.key, v=cur[x.key]!==undefined?String(cur[x.key]):(x["default"]||"");
+      if(x.type==="hidden"){ var hi=document.createElement("input"); hi.type="hidden"; hi.name=x.key; hi.value=v; f.appendChild(hi); return; }
       var lab=document.createElement("label"); lab.textContent=x.label; f.appendChild(lab);
       if(x.type==="select"){
         lab.setAttribute("for",id); var se=document.createElement("select"); se.id=id; se.name=x.key;
         (x.options||[]).forEach(function(o){ var op=document.createElement("option"); op.value=o.value; op.textContent=o.label; if(o.value===v) op.selected=true; se.appendChild(op); });
         f.appendChild(se);
+      } else if(x.type==="video"){
+        // 動画（mp4）: 選んだらその場で置き、最初の場面を表紙の画像にする（ブラウザで作って画像と同じ口で置く）
+        var hv=document.createElement("input"); hv.type="hidden"; hv.name=x.key; hv.value=v; f.appendChild(hv);
+        var pv=document.createElement("video"); pv.muted=true; pv.playsInline=true; pv.controls=true; pv.preload="metadata"; pv.style.cssText="display:block;width:100%;max-height:220px;background:#000;margin:.25rem 0"; if(v) pv.src=v; else pv.hidden=true; f.appendChild(pv);
+        var fi=document.createElement("input"); fi.type="file"; fi.accept="video/mp4"; fi.id=id; lab.setAttribute("for",id); f.appendChild(fi);
+        var vs=el("p","muted"); vs.style.fontSize=".8rem"; f.appendChild(vs);
+        fi.addEventListener("change",function(){
+          var file=fi.files&&fi.files[0]; if(!file) return;
+          var max=Number(form.getAttribute("data-video-max")||0);
+          if(max&&file.size>max){ vs.textContent=T("video-too-large"); fi.value=""; return; }
+          var okb=f.querySelector("button[value=ok]"); vs.textContent=T("video-uploading"); if(okb) okb.disabled=true;
+          var fd=new FormData(); fd.append("file",file);
+          var up=fetch(form.getAttribute("data-video-upload")||"",{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json().then(function(j){ if(!r.ok||!j.url) throw new Error(j.error||"upload"); return j.url; }); });
+          var poster=posterOf(file).then(function(b){ return b&&window.bantoUploadImage?window.bantoUploadImage(new File([b],b.type==="image/jpeg"?"poster.jpg":"poster.webp",{type:b.type})):""; }).catch(function(){ return ""; });
+          Promise.all([up,poster]).then(function(r){ hv.value=r[0]; var pe=f.elements["poster"]; if(pe) pe.value=r[1]||""; pv.src=r[0]; pv.hidden=false; vs.textContent=""; if(okb) okb.disabled=false; })
+            .catch(function(e){ vs.textContent=(e&&e.message)||"upload"; if(okb) okb.disabled=false; fi.value=""; });
+        });
       } else if(x.type==="checks"){
         var on=v?v.split(","):[], box2=el("div",""); box2.style.cssText="display:flex;flex-wrap:wrap;gap:.25rem 1rem";
         (x.options||[]).forEach(function(o){ var l2=document.createElement("label"); l2.style.display="inline"; var cb=document.createElement("input"); cb.type="checkbox"; cb.name=x.key; cb.value=o.value; cb.checked=on.indexOf(o.value)>=0; l2.appendChild(cb); l2.appendChild(document.createTextNode(" "+o.label)); box2.appendChild(l2); });
@@ -1067,7 +1111,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
 
     // ブロックの一覧: 押すとカーソルの位置に、ドラッグすると置いた場所に入れる
     var libSel=-1, libList=BLOCKS;
-    function drawLib(){ var f=libQ.value.trim().toLowerCase(); libList=BLOCKS.filter(function(b){ return match(b,f); }); tiles(libBody,libList,libSel,function(i){ var b=libList[i]; if(b) insertAtCursor(b.k); },dragTile); }
+    function drawLib(){ var f=libQ.value.trim().toLowerCase(); libList=rank(BLOCKS.filter(function(b){ return match(b,f); }),f); tiles(libBody,libList,libSel,function(i){ var b=libList[i]; if(b) insertAtCursor(b.k); },dragTile); }
     libQ.addEventListener("input",function(){ libSel=libQ.value.trim()?0:-1; drawLib(); });
     libQ.addEventListener("keydown",function(e){ if(e.key==="Enter"&&libList.length){ e.preventDefault(); insertAtCursor(libList[Math.max(0,libSel)].k); } else if(e.key==="Escape"){ libQ.value=""; libSel=-1; drawLib(); } });
     var newDrag=null;

@@ -396,7 +396,21 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
         st.shopCss = true;
         const data = `data-banto-block="shop" data-kind="${sb.kind}" data-attrs="${esc(JSON.stringify(sb.attrs))}"`;
         if (sb.kind === "icon") out.push(opts.editor ? `<div class="banto-shop banto-shop--icon" ${data} contenteditable="false">${iconHtml(sb)}</div>` : `<p class="banto-shop banto-shop--icon">${iconHtml(sb)}</p>`);
-        else if (sb.kind === "embed" && !opts.editor) {
+        else if (sb.kind === "video") {
+          // 置き場の mp4 だけ（ホストも確かめる）。自動で再生するときは音を消し、iPhone で全画面にしない（ブラウザの決まり）
+          const src = safeImage(sb.attrs["src"] ?? "", opts);
+          const poster = sb.attrs["poster"] ? safeImage(sb.attrs["poster"], opts) : null;
+          if (src) {
+            const auto = sb.attrs["autoplay"] === "1";
+            const flags = `${sb.attrs["controls"] !== "0" || opts.editor ? " controls" : ""}${auto && !opts.editor ? " autoplay" : ""}${auto || opts.editor ? " muted" : ""}${sb.attrs["loop"] === "1" && !opts.editor ? " loop" : ""}`;
+            const video = `<video src="${esc(src)}"${poster ? ` poster="${esc(poster)}"` : ""} preload="metadata" playsinline${flags}></video>`;
+            if (opts.editor) out.push(`<div class="banto-shop banto-shop--video" ${data} contenteditable="false">${video}</div>`);
+            else {
+              st.shopCss = true;
+              out.push(`<figure class="banto-video">${video}</figure>`);
+            }
+          }
+        } else if (sb.kind === "embed" && !opts.editor) {
           const e = parseEmbedUrl(sb.attrs["url"] ?? "");
           if (e) {
             st.embed = true;

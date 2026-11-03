@@ -8,6 +8,7 @@
  *   ::: icon name=truck size=m label="送料無料"
  *   ::: date of=published format=datetime label="投稿日"   （of: published 投稿日時 / updated 最終更新日時 / now 今の日時）
  *   ::: embed url="https://www.youtube.com/watch?v=…"    （YouTube・X・Instagram・TikTok・Reddit・Bluesky。押すまで外へつながない、src/pages/embeds.ts）
+ *   ::: video src="/media/pages/<ショップ>/<名前>.mp4" poster="…" autoplay=1 loop=1 controls=0   （置き場の mp4 だけ、src/media/video.ts）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
  * - アイコンは決まった一式（src/pages/icons.ts）から選び、その場で SVG を描く（データを引かない）
@@ -20,11 +21,12 @@
 import { ICONS } from "./icons";
 import { formatDateTime } from "../i18n/time";
 import { parseEmbedUrl } from "./embeds";
+import { isPosterUrl, isVideoUrl } from "../media/video";
 
-export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed";
-export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed"];
+export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed" | "video";
+export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed", "video"];
 /** データを引かないブロック（印を数えない・body-blocks に渡さない） */
-export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed"];
+export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed", "video"];
 /** データを引くブロックの数の上限（1 ページ） */
 export const SHOP_BLOCKS_MAX = 8;
 
@@ -46,6 +48,7 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   product: { slug: { test: (v) => SLUG.test(v) }, show: { test: (v) => v.split(",").every((x) => (PRODUCT_PARTS as readonly string[]).includes(x)) } },
   icon: { name: { test: (v) => Object.prototype.hasOwnProperty.call(ICONS, v) }, size: { values: ["s", "m", "l", "xl"], def: "m" }, tone: { values: ["text", "accent", "muted"], def: "text" }, label: { text: true } },
   embed: { url: { url: true, test: (v) => parseEmbedUrl(v) !== null } },
+  video: { src: { url: true, test: isVideoUrl }, poster: { url: true, test: isPosterUrl }, autoplay: { values: ["0", "1"], def: "0" }, loop: { values: ["0", "1"], def: "0" }, controls: { values: ["0", "1"], def: "1" } },
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
 };
 
@@ -55,7 +58,7 @@ export interface ShopBlock {
   attrs: Record<string, string>;
 }
 
-const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed)(?:\s+(.*?))?\s*$/;
+const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed|video)(?:\s+(.*?))?\s*$/;
 
 /** 1 行を読む。形が違えば null（その行は文字として出る）。必須の値が無いもの（商品の slug など）も null */
 export function parseShopBlock(line: string): ShopBlock | null {
@@ -78,6 +81,7 @@ export function parseShopBlock(line: string): ShopBlock | null {
   if (kind === "product" && !attrs["slug"]) return null;
   if (kind === "icon" && !attrs["name"]) return null;
   if (kind === "embed" && !attrs["url"]) return null;
+  if (kind === "video" && !attrs["src"]) return null;
   if (kind === "card" && !attrs["page"] && !attrs["article"]) return null;
   if (kind === "card" && attrs["page"] && attrs["article"]) delete attrs["article"];
   return { kind, attrs };
@@ -152,6 +156,7 @@ export function fillDateBlocks(html: string, d: DateContext): string {
 export const SHOP_BLOCKS_CSS = [
   ".banto-icon{display:inline-flex;align-items:center;gap:.4em;vertical-align:middle}.banto-icon svg{width:1.5em;height:1.5em;flex:none}",
   ".banto-icon--s{font-size:.85em}.banto-icon--l{font-size:1.4em}.banto-icon--xl{font-size:2.2em}.banto-icon--accent{color:var(--banto-bg-accent,var(--accent,#1f6feb))}.banto-icon--muted{opacity:.65}",
+  ".banto-video{margin:1.25rem 0}.banto-video video{display:block;width:100%;height:auto;border-radius:var(--banto-radius,.5rem);background:#000}",
   ".banto-shop{margin:1.25rem 0}.banto-search{display:flex;gap:.5rem;max-width:32rem}.banto-search input{flex:1;font:inherit;padding:.5rem .65rem}",
   ".banto-categories{list-style:none;padding:0;margin:0}.banto-categories ul{list-style:none;padding-left:1.25rem}.banto-categories a{text-decoration:none}",
   ".banto-categories--grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));gap:.5rem}.banto-categories--grid>li>a{display:block;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem)}",
