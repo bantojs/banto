@@ -51,6 +51,8 @@ const ANON_FUNCTIONS = new Set([
   "product_public_gate",
   // 0099: ゲストに見せる「会員価格」（公開中で見える商品の SKU の、当てはまる決まりのうちいちばん安い単価だけ。条件・決まりの中身は返さない）
   "product_public_member_prices",
+  // 0100: 会員限定のページ・記事にゲストが URL で来たとき「会員の方だけ」と出してよいか（'members' か null だけ。中身は返さない）
+  "content_public_gate",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */
@@ -75,6 +77,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "banto_option_names_ok", // 0094: shops.option_names の CHECK（値の形を見るだけ）
   "option_names_set", // 0094: SKU の選択肢の表示名を変える（中で catalog の項目を確かめる）
   "size_chart_set", // 0095: 採寸表の 1 つの段を置き換える（中で catalog の項目を確かめる）
+  "page_layouts_set", // 0101: 固定ページをトップ・記事のひな形に割り当てる（中で content の項目とショップのページ・ブログかを確かめる）
   "size_chart_get", // 0095: 採寸表の段と表示される結果（中で catalog の項目を確かめる）
   // 0071: テーマの版（中で design の項目を確かめる）
   "theme_preview_audit", "theme_publish", "theme_version_complete", "theme_version_create", "theme_version_delete", "theme_version_set_settings",

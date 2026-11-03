@@ -13,8 +13,11 @@ import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
 import { audiencesReady, mediaBaseUrl } from "../routes/common";
 import { moduleEnabled } from "../modules/registry";
-import { AUDIENCES_MODULE } from "../members/audience";
+import { AUDIENCES_MODULE, audienceDisplayOnly } from "../members/audience";
+import { migrated } from "../db/migration-state";
+import { AUDIENCE_CONTENT_MIGRATION } from "../storefront/data";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
+import { MAX_VIDEO_BYTES, sniffMp4 } from "../media/video";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
@@ -30,7 +33,9 @@ import type { CacheAdapter, StorageAdapter } from "../adapters/types";
 import { parseManifest, type ManifestBlock } from "../hooks/manifest";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
-import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, layoutDefault } from "../pages/layout";
+import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
+import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
+import { ICONS, ICON_NAMES } from "../pages/icons";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
 function layoutConfig(audiences: { id: string; name: string }[] = []): string {
@@ -40,7 +45,7 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
   for (const k of kinds) {
     schema[k] = {};
     L[`kind.${k}`] = t(`layout.kind_${k}` as MessageKey);
-    if (k !== "column") L[`desc.${k}`] = t(`layout.desc_${k}` as MessageKey);
+    if (k !== "column" && k !== "tab") L[`desc.${k}`] = t(`layout.desc_${k}` as MessageKey);
     for (const [key, values] of Object.entries(LAYOUT_ATTRS[k])) {
       schema[k]![key] = { values, def: layoutDefault(k, key) };
       L[`field.${key}`] = t(`layout.field_${key}` as MessageKey);
@@ -48,6 +53,11 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
     }
   }
   for (const k of ["image", "alt"]) L[`field.${k}`] = t(`layout.field_${k}` as MessageKey);
+  // タブの数（書式には書かない。編集の画面で中のタブを足し引きするだけ）
+  const counts = Array.from({ length: TABS_MAX - 1 }, (_, i) => String(i + 2));
+  schema["tabs"] = { count: { values: counts, def: "2" } };
+  L["field.count"] = t("layout.field_count");
+  for (const v of counts) L[`opt.count.${v}`] = v;
   // 見せる相手の囲み（同梱モジュール audiences、0097）: 条件があるショップだけ一覧に出す。選ぶのは条件の名前
   if (audiences.length > 0) {
     schema["audience"] = { id: { values: audiences.map((a) => a.id), def: audiences[0]!.id } };
@@ -57,7 +67,7 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
     L["audience_label"] = t("pages.audience_label");
     for (const a of audiences) L[`opt.id.${a.id}`] = a.name;
   }
-  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
+  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "tab_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
   return JSON.stringify({ schema, depth: LAYOUT_DEPTH_MAX, t: L });
 }
 
@@ -109,6 +119,8 @@ export interface EditorExtras {
   apps?: EditorAppBlocks[];
   /** 見せる相手の囲みで選ぶ会員の条件（同梱モジュール audiences が ON で 0097 が当たっていれば） */
   audiences?: { id: string; name: string }[];
+  /** ページ・記事を会員限定にするときに選べる条件（0100 が当たっていれば。表示用の条件は除く）。無ければ欄を出さない */
+  gateAudiences?: { id: string; name: string }[];
 }
 
 export interface EditorAppBlocks {
@@ -146,17 +158,21 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
     editorAudiences(c, shop),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences };
+  const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) && (await contentGateReady(c)) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
 }
 
 /** 見せる相手の囲みで選べる会員の条件（モジュールが OFF・0097 の前は空。読めるのは項目 content を持つ人も） */
-async function editorAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string }[]> {
+async function editorAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string; condition?: unknown }[]> {
   if (!moduleEnabled(shop.settings, AUDIENCES_MODULE) || !(await audiencesReady(c))) return [];
   return owner(c)
-    .db.from<{ id: string; name: string }>("audiences")
-    .select("id,name", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
+    .db.from<{ id: string; name: string; condition: unknown }>("audiences")
+    .select("id,name,condition", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
     .catch(() => []);
 }
+
+/** 会員限定のページ・記事（0100）が当たっているか */
+const contentGateReady = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, AUDIENCE_CONTENT_MIGRATION);
 
 /** 公開中の Liquid のテーマのパターンとスタイル（公開中の版があるときだけ） */
 async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: PatternBody[]; styles: BlockStyles }> {
@@ -171,9 +187,101 @@ async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: 
   }
 }
 
+/** お店のブロックの編集の画面の定義（名前・説明・欄）。値の形は src/pages/shop-blocks.ts と同じ（サーバーが描くときにも確かめる） */
+export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) {
+  const opt = (pairs: [string, string][]) => pairs.map(([value, label]) => ({ value, label }));
+  const slug = "^[a-z0-9][a-z0-9-]{0,62}$";
+  return {
+    search: { label: t("blocks.search"), desc: t("blocks.search_desc"), group: "shop", fields: [{ key: "placeholder", label: t("blocks.placeholder"), type: "text", placeholder: t("blocks.search_placeholder") }] },
+    categories: {
+      label: t("blocks.categories"),
+      desc: t("blocks.categories_desc"),
+      group: "shop",
+      fields: [
+        { key: "parent", label: t("blocks.categories_parent"), type: "select", options: opt([["", t("blocks.categories_all")], ...categories.map((c): [string, string] => [c.slug, c.name])]) },
+        { key: "layout", label: t("blocks.layout"), type: "select", options: opt([["list", t("blocks.layout_list")], ["grid", t("blocks.layout_grid")]]), default: "list" },
+      ],
+    },
+    card: {
+      label: t("blocks.card"),
+      desc: t("blocks.card_desc"),
+      group: "shop",
+      oneOf: ["page", "article"],
+      oneOfLabel: t("blocks.card"),
+      fields: [
+        { key: "page", label: t("blocks.card_page"), type: "text", pattern: slug, placeholder: "about" },
+        { key: "article", label: t("blocks.card_article"), type: "text", pattern: "^[a-z0-9][a-z0-9-]{0,62}/[a-z0-9][a-z0-9-]{0,62}$", placeholder: "news/hello" },
+      ],
+    },
+    product: {
+      label: t("blocks.product"),
+      desc: t("blocks.product_desc"),
+      group: "shop",
+      fields: [
+        { key: "slug", label: t("blocks.product_slug"), type: "text", required: true, pattern: slug, placeholder: "tee" },
+        { key: "show", label: t("blocks.product_show"), type: "checks", default: PRODUCT_PARTS_DEFAULT.join(","), options: opt(PRODUCT_PARTS.map((x): [string, string] => [x, t(`blocks.part_${x}` as MessageKey)])) },
+      ],
+    },
+    icon: {
+      label: t("blocks.icon"),
+      desc: t("blocks.icon_desc"),
+      group: "design",
+      // 編集の画面でもその場で描くための SVG の中身（決まった一式。サーバーの定数だけで、入力からは作らない）
+      svgs: ICONS,
+      fields: [
+        { key: "name", label: t("blocks.icon_name"), type: "select", options: opt(ICON_NAMES.map((n): [string, string] => [n, n])) },
+        { key: "size", label: t("blocks.icon_size"), type: "select", options: opt([["s", "S"], ["m", "M"], ["l", "L"], ["xl", "XL"]]), default: "m" },
+        { key: "tone", label: t("blocks.icon_tone"), type: "select", options: opt([["text", t("blocks.tone_text")], ["accent", t("blocks.tone_accent")], ["muted", t("blocks.tone_muted")]]), default: "text" },
+        { key: "label", label: t("blocks.icon_label"), type: "text", help: t("blocks.icon_label_help") },
+      ],
+    },
+    embed: {
+      label: t("blocks.embed"),
+      desc: t("blocks.embed_desc"),
+      group: "media",
+      fields: [{ key: "url", label: t("blocks.embed_url"), type: "text", required: true, pattern: "^(https?://|at://)\\S{3,300}$", placeholder: "https://www.youtube.com/watch?v=…", help: t("blocks.embed_help") }],
+    },
+    current: {
+      label: t("blocks.current"),
+      desc: t("blocks.current_desc"),
+      group: "text",
+      fields: [{ key: "part", label: t("blocks.current_part"), type: "select", options: opt(CURRENT_PARTS.map((x): [string, string] => [x, t(`blocks.cur_${x}` as MessageKey)])), default: "title" }],
+    },
+    video: {
+      label: t("blocks.video"),
+      desc: t("blocks.video_desc"),
+      group: "media",
+      fields: [
+        { key: "src", label: t("blocks.video_file"), type: "video", required: true, help: t("blocks.video_help") },
+        { key: "poster", label: "", type: "hidden" },
+        { key: "autoplay", label: t("blocks.video_autoplay"), type: "select", options: opt([["0", t("blocks.no")], ["1", t("blocks.video_autoplay_on")]]), default: "0" },
+        { key: "loop", label: t("blocks.video_loop"), type: "select", options: opt([["0", t("blocks.no")], ["1", t("blocks.yes")]]), default: "0" },
+        { key: "controls", label: t("blocks.video_controls"), type: "select", options: opt([["1", t("blocks.yes")], ["0", t("blocks.no")]]), default: "1" },
+      ],
+    },
+    date: {
+      label: t("blocks.date"),
+      desc: t("blocks.date_desc"),
+      group: "text",
+      fields: [
+        { key: "of", label: t("blocks.date_of"), type: "select", options: opt([["published", t("blocks.date_published")], ["updated", t("blocks.date_updated")], ["now", t("blocks.date_now")]]), default: "published" },
+        { key: "format", label: t("blocks.date_format"), type: "select", options: opt([["date", t("blocks.format_date")], ["datetime", t("blocks.format_datetime")]]), default: "date" },
+        { key: "label", label: t("blocks.date_label"), type: "text", placeholder: t("blocks.date_label_placeholder") },
+      ],
+    },
+  };
+}
+
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
 export const editorHtml = (c: AdminContext, body: string) =>
-  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), audienceLabel: (title) => tf("pages.audience_label", { name: title || t("pages.audience_unnamed") }), editor: true });
+  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), audienceLabel: (title) => tf("pages.audience_label", { name: title || t("pages.audience_unnamed") }), shopLabel: (b) => shopBlockText(b), editor: true });
+
+/** 編集の画面のお店のブロックの目印（ブラウザ側の shopText と同じ形） */
+function shopBlockText(b: ShopBlock): string {
+  const label = t(`blocks.${b.kind}` as MessageKey);
+  const bits = Object.entries(b.attrs).filter(([k, v]) => v && !(k === "layout" && v === "list")).map(([, v]) => v);
+  return bits.length ? `${label} — ${bits.join(" · ")}` : label;
+}
 
 /**
  * 本文の入力の手助け（見出し・太字・リンク・箇条書き…のボタンと、画像を縮小して置いて ![](URL) を入れる）。
@@ -287,6 +395,13 @@ export const EDITOR_CSS = `
 .blk-opt small{display:block;color:var(--fg-muted);font-size:.75rem}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
 #md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
+.page-preview .banto-shop:not(.banto-shop--icon){border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
+.page-preview .banto-shop--icon{cursor:pointer;display:inline-block;margin:.25rem 0}
+.page-preview .banto-shop--video video{display:block;width:100%;max-height:360px;background:#000;border-radius:4px;pointer-events:none}
+.page-preview .banto-tabs{border:1px solid var(--border);border-radius:6px;padding:.5rem}
+.page-preview .banto-tab{border-top:1px dashed var(--border);padding:.25rem 0}.page-preview .banto-tab:first-child{border-top:0}
+.page-preview .banto-tab__title{font-weight:600;padding:.25rem 0}
+.page-preview .banto-grid{outline:1px dashed var(--border);outline-offset:3px}
 .page-preview .banto-audience{border:2px dashed var(--accent,#1f6feb);border-radius:6px;padding:.5rem .75rem;margin:.75rem 0}
 .page-preview .banto-audience__label{font-size:.8rem;color:var(--accent,#1f6feb);margin-bottom:.25rem;user-select:none}
 .page-preview .banto-app,.page-preview .banto-articles{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
@@ -350,6 +465,7 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .pe-file input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 ${LAYOUT_CSS}
+${SHOP_BLOCKS_CSS}
 `;
 
 /** 編集の画面の種類ごとの違い（ページと記事） */
@@ -379,6 +495,14 @@ export interface ContentValues {
   image_url?: string | null;
   nav?: PageNav;
   sort_order?: number;
+  /** 会員限定（0100）。欄があったときだけ書く */
+  audience_id?: string | null;
+  audience_hide?: boolean;
+}
+
+/** 会員限定の欄の値（欄の無い送信では列に触れない） */
+export function contentAudienceValues(f: Record<string, string>): Pick<ContentValues, "audience_id" | "audience_hide"> {
+  return f.audience_present === "1" ? { audience_id: f.audience_id || null, audience_hide: f.audience_hide === "on" } : {};
 }
 
 export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; extras?: EditorExtras; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; revisions: RevisionRow[] }) {
@@ -454,6 +578,16 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-articles": t("pages.block_articles"),
     "data-t-d-articles": t("pages.blockdesc_articles"),
     "data-t-articles-max": tf("pages.articles_max", { n: ARTICLE_BLOCKS_MAX }),
+    // お店のブロック（src/pages/shop-blocks.ts）の名前・説明・設定の欄
+    "data-shop-blocks": JSON.stringify(shopBlockDefs(props.categories)),
+    // 動画のブロックの置き場（mp4、1 本の上限）
+    "data-video-upload": `${props.kind.base}/videos`,
+    "data-video-max": String(MAX_VIDEO_BYTES),
+    "data-t-video-uploading": t("video.uploading"),
+    "data-t-video-too-large": t("video.too_large"),
+    "data-t-ok": t("blocks.ok"),
+    "data-t-cancel": t("blocks.cancel"),
+    "data-t-shop-required": t("blocks.required"),
     "data-t-articles-none": t("pages.articles_none"),
     "data-t-articles-label": t("pages.articles_label"),
     // 外部プラグインのブロック（0086）
@@ -574,6 +708,25 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <input id="published_at" name="published_at" type="datetime-local" value={isoToZonedInput(v.published_at)} />
               <p class="muted">{t("pages.published_at_help")}</p>
             </section>
+            {props.extras?.gateAudiences ? (
+              <section class="card">
+                <h2>{t("pages.audience_card")}</h2>
+                <input type="hidden" name="audience_present" value="1" />
+                <label for="audience_id">{t("pages.audience_gate")}</label>
+                <select id="audience_id" name="audience_id">
+                  <option value="">{t("pages.audience_anyone")}</option>
+                  {props.extras.gateAudiences.map((a) => (
+                    <option value={a.id} selected={v.audience_id === a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                <label style="display:block;margin-top:.5rem">
+                  <input type="checkbox" name="audience_hide" value="on" checked={v.audience_hide === true} /> {t("pages.audience_hide")}
+                </label>
+                <p class="muted">{t("pages.audience_gate_help")}</p>
+              </section>
+            ) : null}
             <section class="card">
               <h2>{t("pages.featured")}</h2>
               <input type="hidden" id="image_url" name="image_url" value={v.image_url ?? ""} />
@@ -913,6 +1066,27 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   if (wantsJson) return c.json({ url });
   return c.redirect(`${back}?image=${encodeURIComponent(url)}`);
 });
+
+/**
+ * 本文の短い動画（`::: video`）を置く。mp4 だけ（先頭のバイトで確かめる）・1 本 MAX_VIDEO_BYTES まで。Worker では変換しない。
+ * 置き場は画像と同じ pages/<ショップ>/。メディアライブラリ（画像の一覧）には載せない
+ */
+  app.post("/videos", requireOwner, async (c: AdminContext) => {
+    const shop = await scope(c);
+    if (!shop) return c.notFound();
+    // 大きすぎるものは読む前に断る（申告の大きさ。中身は読んだ後にも数える）
+    const declared = Number(c.req.header("content-length") ?? NaN);
+    if (Number.isFinite(declared) && declared > MAX_VIDEO_BYTES + 64 * 1024) return c.json({ error: t("video.too_large") }, 413);
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!(file instanceof File) || file.size === 0) return c.json({ error: t("video.invalid_type") }, 400);
+    if (file.size > MAX_VIDEO_BYTES) return c.json({ error: t("video.too_large") }, 413);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!sniffMp4(bytes)) return c.json({ error: t("video.invalid_type") }, 400);
+    const key = `pages/${shop.id}/${randomKey()}.mp4`;
+    await c.get("adapters").storage.put(key, bytes.buffer as ArrayBuffer, "video/mp4");
+    return c.json({ url: imageUrl(mediaBaseUrl(c), key) });
+  });
 
 /**
  * メディアライブラリ（0080）: 置いた画像を新しい順に MEDIA_PAGE 枚ずつ。続きは next を after に渡す

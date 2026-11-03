@@ -21,7 +21,10 @@
  */
 
 /** 中に本文を持つ囲み */
-export const LAYOUT_CONTAINERS = ["group", "columns", "column", "cover", "media", "gallery", "accordion"] as const;
+export const LAYOUT_CONTAINERS = ["group", "columns", "column", "cover", "media", "gallery", "accordion", "grid", "tabs", "tab"] as const;
+/** グリッドの列の数・タブの数の上限 */
+export const GRID_COLS = ["2", "3", "4", "5", "6"] as const;
+export const TABS_MAX = 8;
 export type LayoutContainer = (typeof LAYOUT_CONTAINERS)[number];
 /** 入れ子の上限（囲みの中の囲み… を 4 段まで） */
 export const LAYOUT_DEPTH_MAX = 4;
@@ -51,10 +54,14 @@ export const LAYOUT_ATTRS: Record<LayoutContainer | "spacer", Record<string, rea
   media: { side: SIDE, valign: VALIGN },
   gallery: { cols: GALLERY_COLS },
   accordion: { icon: ACCORDION_ICONS, open: ["0", "1"] },
+  // グリッド: 中のブロックを 1 つずつ升目に並べる（狭い画面では 2 列まで）。タブ: 中の「タブ」（題つき）を切り替えて見せる
+  grid: { cols: GRID_COLS },
+  tabs: {},
+  tab: {},
   spacer: { size: SPACER },
 };
 /** 既定を変えたいもの（先頭以外を既定にする） */
-const DEFAULTS: Partial<Record<string, string>> = { "group.pad": "m", "cover.height": "m", "cover.overlay": "dark", "cover.align": "center", "cover.valign": "center", "cover.focus": "center", "columns.valign": "top", "media.valign": "center", "gallery.cols": "3", "spacer.size": "m", "accordion.icon": "chevron" };
+const DEFAULTS: Partial<Record<string, string>> = { "group.pad": "m", "cover.height": "m", "cover.overlay": "dark", "cover.align": "center", "cover.valign": "center", "cover.focus": "center", "columns.valign": "top", "media.valign": "center", "gallery.cols": "3", "grid.cols": "3", "spacer.size": "m", "accordion.icon": "chevron" };
 
 export interface LayoutOpen {
   kind: LayoutContainer;
@@ -67,7 +74,7 @@ export interface LayoutOpen {
   style: string | null;
 }
 
-const OPEN = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion)(?:\s+(.*?))?\s*$/;
+const OPEN = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion|grid|tabs|tab)(?:\s+(.*?))?\s*$/;
 const CLOSE = /^\s{0,3}:{3,}\s*$/;
 /** 見せる相手の囲み（同梱モジュール audiences、0097。src/content/audience-blocks.ts） */
 const AUDIENCE_OPEN = /^\s{0,3}:{3,}\s*audience(?:\s+(.*?))?\s*$/;
@@ -162,7 +169,27 @@ export function layoutOpenLine(o: Pick<LayoutOpen, "kind" | "attrs"> & Partial<P
  * 狭い画面（40rem まで）ではカラムと画像と文を縦に並べる
  */
 export const LAYOUT_CSS = [
-  ".banto-group,.banto-cover,.banto-media,.banto-columns,.banto-gallery,.banto-accordion{margin:1.5rem 0;box-sizing:border-box}",
+  ".banto-grid{display:grid;gap:var(--banto-gap,1.5rem);margin:1.5rem 0}.banto-grid>*{min-width:0;margin:0}",
+  ".banto-grid--2{grid-template-columns:repeat(2,minmax(0,1fr))}",
+  ".banto-grid--3{grid-template-columns:repeat(3,minmax(0,1fr))}",
+  ".banto-grid--4{grid-template-columns:repeat(4,minmax(0,1fr))}",
+  ".banto-grid--5{grid-template-columns:repeat(5,minmax(0,1fr))}",
+  ".banto-grid--6{grid-template-columns:repeat(6,minmax(0,1fr))}",
+  "@media(max-width:40rem){.banto-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.banto-grid--2{grid-template-columns:1fr}}",
+  ".banto-tabs{margin:1.5rem 0}.banto-tabs__r{position:absolute;opacity:0;pointer-events:none}",
+  ".banto-tabs__nav{display:flex;flex-wrap:wrap;gap:.25rem;border-bottom:1px solid var(--banto-line,rgba(127,127,127,.3))}",
+  ".banto-tabs__nav label{padding:.5rem 1rem;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}",
+  ".banto-tabs__panel{display:none;padding:1rem 0}.banto-tabs__panel>:first-child{margin-top:0}",
+  ".banto-tabs__r:focus-visible~.banto-tabs__nav label{outline-offset:2px}",
+  ".banto-tabs__r:nth-of-type(1):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(1){display:block}.banto-tabs__r:nth-of-type(1):checked~.banto-tabs__nav>label:nth-child(1){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(2):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(2){display:block}.banto-tabs__r:nth-of-type(2):checked~.banto-tabs__nav>label:nth-child(2){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(3):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(3){display:block}.banto-tabs__r:nth-of-type(3):checked~.banto-tabs__nav>label:nth-child(3){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(4):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(4){display:block}.banto-tabs__r:nth-of-type(4):checked~.banto-tabs__nav>label:nth-child(4){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(5):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(5){display:block}.banto-tabs__r:nth-of-type(5):checked~.banto-tabs__nav>label:nth-child(5){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(6):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(6){display:block}.banto-tabs__r:nth-of-type(6):checked~.banto-tabs__nav>label:nth-child(6){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(7):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(7){display:block}.banto-tabs__r:nth-of-type(7):checked~.banto-tabs__nav>label:nth-child(7){border-bottom-color:currentColor;font-weight:600}",
+  ".banto-tabs__r:nth-of-type(8):checked~.banto-tabs__panels>.banto-tabs__panel:nth-child(8){display:block}.banto-tabs__r:nth-of-type(8):checked~.banto-tabs__nav>label:nth-child(8){border-bottom-color:currentColor;font-weight:600}",
+    ".banto-group,.banto-cover,.banto-media,.banto-columns,.banto-gallery,.banto-accordion{margin:1.5rem 0;box-sizing:border-box}",
   ".banto-group>:first-child,.banto-column>:first-child,.banto-cover__inner>:first-child,.banto-media__body>:first-child,.banto-accordion__body>:first-child{margin-top:0}",
   ".banto-group>:last-child,.banto-column>:last-child,.banto-cover__inner>:last-child,.banto-media__body>:last-child,.banto-accordion__body>:last-child{margin-bottom:0}",
   ".banto-group{border-radius:var(--banto-radius,.5rem)}",

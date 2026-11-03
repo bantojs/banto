@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { previewResponse } from "../../content/preview";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -17,7 +18,7 @@ import { migrated } from "../../db/migration-state";
 import { SECURITY_HARDENING_3_MIGRATION } from "../../storefront/data";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
-import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow } from "../../content/editor";
+import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
 import { BLOG_MODULE, articleHandleOk, blogHandleOk, parseTags, type ArticleRow, type BlogRow } from "../../blog";
 
 /**
@@ -465,6 +466,7 @@ function articleValues(f: Record<string, string>, mediaBase: string): { values: 
     tags: parseTags(f.tags ?? ""),
     excerpt: opt(f.excerpt, 1000),
     author: opt(f.author, 100),
+    ...contentAudienceValues(f),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
   if (values.image_url) {
@@ -480,6 +482,7 @@ function articleValues(f: Record<string, string>, mediaBase: string): { values: 
 }
 
 function articleDbError(e: DbError): MessageKey {
+  if (/audience_display_only/.test(e.message)) return "product.audience_display_only";
   if (planLimitOf(e)) return "plan.limit_articles";
   if (e.code === "23505") return "pages.error_handle_taken";
   if (/articles_full/.test(e.message)) return "blog.error_articles_full";
@@ -531,7 +534,14 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
   );
 }
 
-function previewArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, v: ArticleValues, error: MessageKey | null) {
+async function previewArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, v: ArticleValues, error: MessageKey | null) {
+  if (!error) {
+    const now = new Date().toISOString();
+    const article = { id: "preview", shop_id: shop.id, blog_id: blog.id, created_at: now, updated_at: now, ...v, published_at: v.published_at ?? now } as ArticleRow;
+    const categories = await owner(c).db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" }).catch(() => [] as CategoryRow[]);
+    const res = await previewResponse(c, shop, { kind: "article", blog, article }, categories);
+    if (res) return res;
+  }
   return layout(
     c,
     shop,

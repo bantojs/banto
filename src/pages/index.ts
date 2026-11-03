@@ -31,6 +31,9 @@ export interface PageRow {
   deleted_at?: string | null;
   /** アイキャッチ画像（ショップの画像の置き場の URL）。0080 から */
   image_url?: string | null;
+  /** 会員限定（0100）: 会員の条件と、存在も隠すか */
+  audience_id?: string | null;
+  audience_hide?: boolean;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { previewResponse } from "../../content/preview";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -23,7 +24,10 @@ import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MA
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
-import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow } from "../../content/editor";
+import { pageLayoutsOf } from "../../content/layouts";
+import { categoryTree, type CategoryNode } from "../../products/categories";
+import { BLOG_MODULE, type BlogRow } from "../../blog";
+import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow, contentAudienceValues } from "../../content/editor";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
@@ -42,7 +46,7 @@ async function scope(c: AdminContext): Promise<ShopRow | null> {
   return shop && moduleEnabled(shop.settings, PAGES_MODULE) ? shop : null;
 }
 
-type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url">;
+type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url" | "audience_id" | "audience_hide">;
 
 const EMPTY: PageValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: false, published_at: null, image_url: null };
 
@@ -74,6 +78,7 @@ function pageValues(f: Record<string, string>, opts: { mediaBase: string }): { v
     // 公開する日時（ショップの時間帯の「日付と時刻」。空ならすぐ）とアイキャッチ
     published_at: f.published_at ? zonedInputToIso(f.published_at) : null,
     image_url: (f.image_url ?? "").trim() || null,
+    ...contentAudienceValues(f),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
   if (values.image_url) {
@@ -92,6 +97,7 @@ function pageValues(f: Record<string, string>, opts: { mediaBase: string }): { v
 function dbError(e: DbError): MessageKey {
   if (planLimitOf(e)) return "plan.limit_pages";
   if (e.code === "23505") return "pages.error_handle_taken";
+  if (/audience_display_only/.test(e.message)) return "product.audience_display_only";
   if (/pages_full/.test(e.message)) return "pages.error_full";
   if (e.code === "23514") return "pages.error_invalid";
   return "error.generic";
@@ -141,6 +147,14 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
         <a class="btn" href={`${base(shop.id)}/new`}>
           {t("pages.new")}
         </a>
+        {(await layoutsReady(c)) ? (
+          <>
+            {" "}
+            <a class="btn secondary" href={`${base(shop.id)}/layouts`}>
+              {t("pages.layouts")}
+            </a>
+          </>
+        ) : null}
       </p>
       <form method="get" action={base(shop.id)} class="toolbar" role="search">
         <nav aria-label={t("pages.state")} style="display:flex;gap:.75rem;flex-wrap:wrap">
@@ -252,7 +266,16 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
 }
 
 /** プレビュー（新しいタブ。保存しない）。本文はお店の画面と同じ変換、見た目はテーマが決めるので管理画面の形で中身だけ見せる */
-function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null) {
+async function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null, pageId: string | null = null) {
+  // お店の画面と同じテーマ・同じブロックの中身で描く（描けないテーマなら下の簡単な形）
+  if (!error) {
+    const now = new Date().toISOString();
+    // 保存済みのページは本当の id（ひな形に割り当てていれば、プレビューは見本の記事・商品で描く）
+    const page: PageRow = { id: pageId ?? "preview", shop_id: shop.id, created_at: now, updated_at: now, ...values, body: values.body } as PageRow;
+    const categories = await owner(c).db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" }).catch(() => [] as CategoryRow[]);
+    const res = await previewResponse(c, shop, { kind: "page", page }, categories);
+    if (res) return res;
+  }
   return layout(
     c,
     shop,
@@ -275,6 +298,165 @@ pagesAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   return editPage(c, shop, { values: EMPTY });
 });
 
+// ---------- ひな形の割り当て（0101、docs/pages.md「ひな形の割り当て」） ----------
+export const PAGE_LAYOUTS_MIGRATION = "0101_page_layouts";
+const layoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_LAYOUTS_MIGRATION);
+/** 商品詳細のひな形（0102）。当たるまで商品の欄を出さない・送らない（0101 の page_layouts_set は知らない鍵を断る） */
+export const PRODUCT_LAYOUTS_MIGRATION = "0102_page_layouts_product";
+const productLayoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PRODUCT_LAYOUTS_MIGRATION);
+/** 商品一覧のひな形（0103）。当たるまで一覧の欄を出さない・送らない */
+export const COLLECTION_LAYOUTS_MIGRATION = "0103_page_layouts_collection";
+const collectionLayoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COLLECTION_LAYOUTS_MIGRATION);
+/** 法務のページのひな形（0104）。当たるまで欄を出さない・送らない */
+export const LEGAL_LAYOUTS_MIGRATION = "0104_page_layouts_legal";
+const legalLayoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, LEGAL_LAYOUTS_MIGRATION);
+
+/** カテゴリーの木を上から順に（深さつき） */
+function flattenTree(nodes: CategoryNode[], depth = 0): { node: CategoryNode; depth: number }[] {
+  return nodes.flatMap((node) => [{ node, depth }, ...flattenTree(node.children, depth + 1)]);
+}
+
+async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "error" | null, status: 200 | 400 = 200) {
+  const db = owner(c).db;
+  const blogOn = moduleEnabled(shop.settings, BLOG_MODULE);
+  const productOn = await productLayoutsReady(c);
+  const collectionOn = await collectionLayoutsReady(c);
+  const legalOn = await legalLayoutsReady(c);
+  const [pages, blogs, categories] = await Promise.all([
+    db.from<PageRow>("pages").select("id,title,handle,published,deleted_at", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" }),
+    blogOn ? db.from<BlogRow>("blogs").select("id,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" }) : Promise.resolve([] as BlogRow[]),
+    productOn || collectionOn ? db.from<CategoryRow>("categories").select("id,name,parent_id,sort_order", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }) : Promise.resolve([] as CategoryRow[]),
+  ]);
+  const usable = pages.filter((p) => !p.deleted_at);
+  const cur = pageLayoutsOf(shop.settings);
+  const select = (name: string, value: string | null, none: MessageKey = "pages.layouts_none") => (
+    <select name={name} id={name}>
+      <option value="">{t(none)}</option>
+      {usable.map((p) => (
+        <option value={p.id} selected={p.id === value}>
+          {p.title} (/pages/{p.handle}){p.published ? "" : ` — ${t("pages.tab_draft")}`}
+        </option>
+      ))}
+    </select>
+  );
+  return layout(
+    c,
+    shop,
+    t("pages.layouts"),
+    [{ label: t("mod.pages.name"), href: base(shop.id) }, { label: t("pages.layouts") }],
+    <>
+      <PageHead title={t("pages.layouts")} sub={t("pages.layouts_desc")} />
+      {flash === "saved" ? <p class="notice">{t("pages.layouts_saved")}</p> : null}
+      {flash === "error" ? <p class="error">{t("pages.layouts_error")}</p> : null}
+      <form method="post" action={`${base(shop.id)}/layouts`} class="card">
+        <label for="home">{t("pages.layouts_home")}</label>
+        {select("home", cur.home)}
+        <p class="muted">{t("pages.layouts_home_help")}</p>
+        {blogs.map((b) => (
+          <>
+            <label for={`article_${b.id}`}>{tf("pages.layouts_article", { blog: b.title })}</label>
+            {select(`article_${b.id}`, cur.articles[b.id] ?? null)}
+          </>
+        ))}
+        {blogs.length > 0 ? <p class="muted">{t("pages.layouts_article_help")}</p> : null}
+        {productOn ? (
+          <>
+            <label for="product">{t("pages.layouts_product")}</label>
+            {select("product", cur.product)}
+            <p class="muted">{t("pages.layouts_product_help")}</p>
+            {categories.length > 0 ? (
+              <details open={Object.keys(cur.productCategories).length > 0}>
+                <summary>{t("pages.layouts_categories")}</summary>
+                {flattenTree(categoryTree(categories)).map(({ node, depth }) => (
+                  <>
+                    <label for={`category_${node.id}`} style={`padding-left:${depth * 1.25}rem`}>
+                      {tf("pages.layouts_category", { category: node.name })}
+                    </label>
+                    <div style={`padding-left:${depth * 1.25}rem`}>{select(`category_${node.id}`, cur.productCategories[node.id] ?? null, "pages.layouts_inherit")}</div>
+                  </>
+                ))}
+              </details>
+            ) : null}
+          </>
+        ) : null}
+        {collectionOn ? (
+          <>
+            <label for="collection">{t("pages.layouts_collection")}</label>
+            {select("collection", cur.collection)}
+            <p class="muted">{t("pages.layouts_collection_help")}</p>
+            {categories.length > 0 ? (
+              <details open={Object.keys(cur.collectionCategories).length > 0}>
+                <summary>{t("pages.layouts_collection_categories")}</summary>
+                {flattenTree(categoryTree(categories)).map(({ node, depth }) => (
+                  <>
+                    <label for={`ccategory_${node.id}`} style={`padding-left:${depth * 1.25}rem`}>
+                      {tf("pages.layouts_collection_category", { category: node.name })}
+                    </label>
+                    <div style={`padding-left:${depth * 1.25}rem`}>{select(`ccategory_${node.id}`, cur.collectionCategories[node.id] ?? null, "pages.layouts_inherit")}</div>
+                  </>
+                ))}
+              </details>
+            ) : null}
+          </>
+        ) : null}
+        {legalOn ? (
+          <>
+            <label for="legal">{t("pages.layouts_legal")}</label>
+            {select("legal", cur.legal)}
+            <p class="muted">{t("pages.layouts_legal_help")}</p>
+            <details open={Object.keys(cur.legalPages).length > 0}>
+              <summary>{t("pages.layouts_legal_pages")}</summary>
+              {(["legal", "privacy", "returns"] as const).map((k) => (
+                <>
+                  <label for={`legal_${k}`}>{t(k === "legal" ? "shop.legal_notice" : k === "privacy" ? "shop.privacy_policy" : "shop.return_policy")}</label>
+                  {select(`legal_${k}`, cur.legalPages[k] ?? null, "pages.layouts_inherit")}
+                </>
+              ))}
+            </details>
+          </>
+        ) : null}
+        <p class="muted">{t("pages.layouts_hidden_note")}</p>
+        <p>
+          <button type="submit">{t("shop.save")}</button> <a href={base(shop.id)}>{t("blocks.cancel")}</a>
+        </p>
+      </form>
+    </>,
+    status,
+  );
+}
+
+pagesAdmin.get("/layouts", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await layoutsReady(c))) return c.notFound();
+  return layoutsPage(c, shop, c.req.query("flash") === "saved" ? "saved" : null);
+});
+
+pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await layoutsReady(c))) return c.notFound();
+  const f = await formFields(c);
+  const articles: Record<string, string> = {};
+  const cats: Record<string, string> = {};
+  const ccats: Record<string, string> = {};
+  for (const [k, v] of Object.entries(f)) {
+    if (k.startsWith("article_") && v) articles[k.slice("article_".length)] = v;
+    if (k.startsWith("category_") && v) cats[k.slice("category_".length)] = v;
+    if (k.startsWith("ccategory_") && v) ccats[k.slice("ccategory_".length)] = v;
+  }
+  const collection = (await collectionLayoutsReady(c)) ? { collection: f["collection"] || null, collection_categories: ccats } : {};
+  const legalPagesSel: Record<string, string> = {};
+  for (const k of ["legal", "privacy", "returns"]) if (f[`legal_${k}`]) legalPagesSel[k] = f[`legal_${k}`]!;
+  const legal = (await legalLayoutsReady(c)) ? { legal: f["legal"] || null, legal_pages: legalPagesSel } : {};
+  const product = (await productLayoutsReady(c)) ? { product: f["product"] || null, product_categories: cats } : {};
+  try {
+    await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles, ...product, ...collection, ...legal } });
+  } catch (e) {
+    if (e instanceof DbError) return layoutsPage(c, shop, "error", 400);
+    throw e;
+  }
+  return c.redirect(`${base(shop.id)}/layouts?flash=saved`);
+});
+
 /** 作る・保存する。action=preview なら保存せずにプレビューを出す */
 async function save(c: AdminContext, pageId: string | null) {
   const shop = await scope(c);
@@ -282,7 +464,7 @@ async function save(c: AdminContext, pageId: string | null) {
   const f = await formFields(c);
   const { values, error, autoHandle } = pageValues(f, { mediaBase: mediaBaseUrl(c) });
   const page = pageId ? { pageId } : {};
-  if (f.action === "preview") return previewPage(c, shop, values, error);
+  if (f.action === "preview") return previewPage(c, shop, values, error, pageId);
   // 公開のボタンで誤りがあったら、画面の状態は押す前のまま（下書きなら下書き）に見せる
   const shown = (v: PageValues) => ({ ...v, published: f.published === "on" });
   if (error) return editPage(c, shop, { ...page, values: shown(values), error, status: 400 });

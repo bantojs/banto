@@ -89,10 +89,16 @@ export interface Theme {
     pagination?: { next?: string; first?: string };
     /** 検索（/:shop/search）の案内（語が短すぎる・見つからない）。あれば商品が無いときの文言の代わりに出す */
     notice?: string;
+    /** 商品一覧のひな形（0103）。部品（title・products・filters・subcategories・breadcrumb）の HTML を渡し、返った HTML を本文として描く */
+    layout?: (parts: Record<string, string>) => string;
   }): Rendered;
   /** categoryPath は最上位から主カテゴリーまで（パンくず）、attributes は公開するカスタム項目 */
   /** detail.purchasable が false なら（会員限定の商品、0098）、カートに入れるボタンの代わりに「会員の方だけ購入できます」（ゲストはログインへのリンク）を出す */
-  ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[] }): Rendered;
+  /**
+   * layout: 商品詳細のひな形（0102）。テーマは商品の部品を HTML にして渡し、返った HTML を本文として描く（SEO・構造化データはいつもどおり）。
+   * 部品の名前は title・image・price・buy・content・tags・attributes・breadcrumb・size-chart・reviews・member-note・reviews-summary（無いものは ""）
+   */
+  ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[]; layout?: (parts: Record<string, string>) => string }): Rendered;
   /** 会員限定の商品にゲストが URL で来たとき（0098）。商品の中身は渡さない。無ければ LegalPage で文だけ */
   MembersOnlyPage?(props: { ctx: ThemeContext; loginUrl: string }): Rendered;
   /** coupons が null / 省略なら、クーポン欄を出さない。入力は `${ctx.shopPath}/cart/coupon` に code、外すときは remove を POST する */
@@ -268,19 +274,25 @@ export interface Theme {
    * 領収書（receiptUrl、GET）とお問い合わせ（inquiryUrl、GET）はリンクで出す
    */
   OrderLookupPage(props: { ctx: ThemeContext; result?: Record<string, unknown> | null; error?: string; values: { number?: string; email?: string }; receipt?: boolean; inquiry?: { token: string } | null; member?: { receiptUrl: string | null; inquiryUrl: string | null } }): Rendered;
-  LegalPage(props: { ctx: ThemeContext; title: string; body: string }): Rendered;
+  /** layout: 法務のページのひな形（0104）。返った HTML を本文として描く（文面はひな形の中の Banto の部品が出す） */
+  LegalPage(props: { ctx: ThemeContext; title: string; body: string; layout?: () => string }): Rendered;
   /**
    * ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。html は本文を src/pages/markdown.ts で HTML にしたもの
    * （決まった形のタグだけで、そのまま出してよい）。無いテーマではページを出さない
    */
-  ContentPage?(props: { ctx: ThemeContext; page: PageRow; html: string }): Rendered;
+  /**
+   * bare: ひな形に割り当てたページ（0101）。テーマは見出し・アイキャッチを出さず、本文（html）だけを描く（並びはひな形が決める）。
+   * path: canonical のパス（お店のトップのひな形は ""。無ければ /pages/<handle>）
+   */
+  ContentPage?(props: { ctx: ThemeContext; page: PageRow; html: string; bare?: boolean; path?: string }): Rendered;
   /**
    * ブログの記事の一覧（同梱モジュール blog、0081、/blogs/<handle>）。articles は公開した日時の新しい順の 1 ページ分、
    * summary は記事ごとの短い紹介（抜粋か本文の頭の文字）。tag で絞っていればその名前。newer / older はページ送りの URL
    */
   BlogPage?(props: { ctx: ThemeContext; blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; newer: string | null; older: string | null; feedUrl: string }): Rendered;
   /** ブログの記事（/blogs/<ブログ>/<handle>）。html は本文を HTML にしたもの（ページと同じ。そのまま出してよい） */
-  ArticlePage?(props: { ctx: ThemeContext; blog: BlogRow; article: ArticleRow; html: string; feedUrl: string }): Rendered;
+  /** bare: 記事のひな形（0101）で描いた本文。テーマは記事の見出し・日付・アイキャッチ・タグを出さず、本文（html）だけを描く */
+  ArticlePage?(props: { ctx: ThemeContext; blog: BlogRow; article: ArticleRow; html: string; feedUrl: string; bare?: boolean }): Rendered;
   /**
    * 決済ページから戻ってきた直後。注文確定は Webhook で行うので、status が無ければ「受付済み」の表示に留める。
    * status（0035、照会トークン付きで開いたとき）: confirmed なら orderNumber を出す、pending なら「確認中」（refresh が true なら数秒後に自動で再読み込み）、

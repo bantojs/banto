@@ -1,5 +1,5 @@
 import { MemoryCache } from "../memory-cache";
-import type { Adapters, ConfigAdapter, SchedulerAdapter, ScheduledJob, StorageAdapter } from "../types";
+import { clampRange, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type StorageAdapter, type StorageRange } from "../types";
 import { normalizeConfigValue } from "../types";
 import { workersSockets } from "./socket";
 
@@ -49,6 +49,15 @@ class R2Storage implements StorageAdapter {
   }
   async delete(key: string) {
     await this.bucket.delete(key);
+  }
+  async getRange(key: string, start: number, end: number | null): Promise<StorageRange | "unsatisfiable" | null> {
+    const head = await this.bucket.head(key);
+    if (!head) return null;
+    const r = clampRange(head.size, start, end);
+    if (!r) return "unsatisfiable";
+    const obj = await this.bucket.get(key, { range: { offset: r.start, length: r.end - r.start + 1 } });
+    if (!obj) return null;
+    return { body: obj.body, contentType: obj.httpMetadata?.contentType ?? "application/octet-stream", size: head.size, ...r };
   }
 }
 

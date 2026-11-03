@@ -8,9 +8,10 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSummary, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
+import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 import { hasAudienceBlocks } from "../../content/audience-blocks";
-import { viewerBody } from "../audience-render";
+import { apiViewerData, viewerBody } from "../audience-render";
 import { GUEST, queryParamsOf } from "../../members/audience";
 import { memberFromRequest } from "./members";
 
@@ -42,8 +43,11 @@ async function scope(c: Ctx, module: string): Promise<Scope | Response> {
   const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
   const shop = await sf.shopBySlug(param(c, "shop"));
   if (!shop || !moduleEnabled(shop.settings, module)) return c.json({ error: "not_found" }, 404);
+  // 会員トークンの会員には会員限定のページ・記事も（0100。同梱モジュール audiences が ON のショップだけ。壊れたトークンは 401）
+  const viewer = await apiViewerData(c, sf, shop);
+  if (viewer instanceof Response) return viewer;
   const origin = publicBaseUrl(c);
-  return { sf, shop, mediaBaseUrl: mediaBaseUrl(c), origin, home: shopHome(origin, shop) };
+  return { sf: viewer, shop, mediaBaseUrl: mediaBaseUrl(c), origin, home: shopHome(origin, shop) };
 }
 
 /** アイキャッチ（保存した URL。/media/ から始まるものは絶対 URL に） */
@@ -54,7 +58,7 @@ const absImage = (s: Scope, url: string | null | undefined) => (url ? (url.start
  * 見せる相手の囲み（0097）は、会員トークン（Authorization: Bearer bm1.…）の会員に合わせて、書式からも HTML からも外す。
  * トークンが無ければゲスト、壊れていれば 401
  */
-async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at" | "body">): Promise<{ body: string; html: string } | Response> {
+async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at" | "body">, published: string | null): Promise<{ body: string; html: string } | Response> {
   let view = { body: row.body, key: "" };
   if (hasAudienceBlocks(row.body)) {
     const m = await memberFromRequest(c, s.shop);
@@ -64,10 +68,11 @@ async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at"
     view = await viewerBody(c, s.shop, row.body, { ...(m.member ? { member: true, attrs: m.member.attrs ?? {} } : GUEST), params });
     c.header("Vary", "Authorization");
   }
-  const html = pageBodyHtml({ ...row, body: view.body }, s.mediaBaseUrl, s.origin, view.key);
+  // 日時のブロックは描くたびに入れる（本文の HTML の覚えに日時を入れない）
+  const html = fillDateBlocks(pageBodyHtml({ ...row, body: view.body }, s.mediaBaseUrl, s.origin, view.key), { published, updated: row.updated_at });
   const categories = await s.sf.listCategories(s.shop);
-  const { cards, acards, appCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, view.body, categories);
-  return { body: view.body, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards) };
+  const { cards, acards, appCards, shopCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, view.body, categories);
+  return { body: view.body, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(fillShopBlocks(html, shopCards), cards), acards), appCards) };
 }
 
 function pageSummary(s: Scope, p: Omit<PageRow, "body">) {
@@ -101,8 +106,12 @@ contentApi.get("/shops/:shop/pages/:handle", async (c: Ctx) => {
   const s = await scope(c, PAGES_MODULE);
   if (s instanceof Response) return s;
   const page = await s.sf.pageByHandle(s.shop, handle);
-  if (!page) return c.json({ error: "not_found" }, 404);
-  const v = await viewBody(c, s, page);
+  if (!page) {
+    // 会員限定のページ（0100）: ゲストには「会員の方だけ」（存在も隠すページ・合わない会員は 404）
+    if (!c.req.header("authorization") && (await s.sf.contentGate(s.shop, "page", handle))) return c.json({ error: "members_only" }, 403);
+    return c.json({ error: "not_found" }, 404);
+  }
+  const v = await viewBody(c, s, page, pagePublishedAt(page));
   if (v instanceof Response) return v;
   return c.json({ page: { ...pageSummary(s, page), body: v.body, html: v.html } });
 });
@@ -160,8 +169,12 @@ contentApi.get("/shops/:shop/blogs/:blog/articles/:article", async (c: Ctx) => {
   const blog = await s.sf.blogByHandle(s.shop, handle);
   if (!blog) return c.json({ error: "not_found" }, 404);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
-  if (!article) return c.json({ error: "not_found" }, 404);
-  const v = await viewBody(c, s, article);
+  if (!article) {
+    // 会員限定の記事（0100）: ゲストには「会員の方だけ」（存在も隠す記事・合わない会員は 404）
+    if (!c.req.header("authorization") && (await s.sf.contentGate(s.shop, "article", ah, blog.id))) return c.json({ error: "members_only" }, 403);
+    return c.json({ error: "not_found" }, 404);
+  }
+  const v = await viewBody(c, s, article, article.published_at ?? article.updated_at);
   if (v instanceof Response) return v;
   return c.json({ blog: blogSummary(s, blog), article: { ...articleSummaryJson(s, blog, article), seo_title: article.seo_title, seo_description: article.seo_description, template_suffix: article.template_suffix, body: v.body, html: v.html } });
 });

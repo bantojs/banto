@@ -668,9 +668,9 @@ export class FakeSupabase {
     if (table === "shops") return row["published"] === true;
     if (table === "products") return row["published"] === true && this.shopPublished(row["shop_id"]) && this.productOpen(row);
     if (table === "categories") return this.shopPublished(row["shop_id"]);
-    if (table === "pages") return this.pageLive(row) && this.shopPublished(row["shop_id"]);
+    if (table === "pages") return this.pageLive(row) && this.shopPublished(row["shop_id"]) && !row["audience_id"];
     if (table === "blogs") return this.shopPublished(row["shop_id"]);
-    if (table === "articles") return this.pageLive(row) && Boolean(row["published_at"]) && this.shopPublished(row["shop_id"]);
+    if (table === "articles") return this.pageLive(row) && Boolean(row["published_at"]) && this.shopPublished(row["shop_id"]) && !row["audience_id"];
     if (table === "stores") return this.storeVisible(uid, row);
     if (table === "tryon_requests") return this.storePerm(uid, row["store_id"], "tryon");
     if (table === "tryon_items") return this.tables.tryon_requests.some((r) => r["id"] === row["request_id"] && this.storePerm(uid, r["store_id"], "tryon"));
@@ -1372,6 +1372,22 @@ export class FakeSupabase {
       return json(p && this.shopPublished(args["p_shop_id"]) && p["audience_id"] && p["audience_mode"] !== "buy" && !p["audience_hide"] ? "members" : null);
     }
     if (fn === "product_member_list") return this.productPublicList(args, this.memberAudienceIds(args));
+    // 0100: 会員限定のページ・記事
+    if (fn === "content_public_gate") {
+      const rows = args["p_kind"] === "page" ? this.tables.pages.filter((p) => p["shop_id"] === args["p_shop_id"] && p["handle"] === args["p_handle"]) : this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && a["blog_id"] === args["p_blog_id"] && a["handle"] === args["p_handle"]);
+      const r = rows.find((x) => this.pageLive(x) && x["audience_id"] && !x["audience_hide"]);
+      return json(r && this.shopPublished(args["p_shop_id"]) ? "members" : null);
+    }
+    if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") {
+      const aud = this.memberAudienceIds(args);
+      const open = (x: Row) => this.pageLive(x) && (!x["audience_id"] || aud.includes(String(x["audience_id"])));
+      if (fn === "page_member_get") return json(this.tables.pages.find((p) => p["shop_id"] === args["p_shop_id"] && p["handle"] === args["p_handle"] && open(p)) ?? null);
+      const arts = this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && a["blog_id"] === args["p_blog_id"] && Boolean(a["published_at"]) && open(a));
+      if (fn === "article_member_get") return json(arts.find((a) => a["handle"] === args["p_handle"]) ?? null);
+      const tag = args["p_tag"] as string | null;
+      const list = arts.filter((a) => !tag || ((a["tags"] ?? []) as string[]).includes(tag)).sort((x, y) => String(y["published_at"]).localeCompare(String(x["published_at"])));
+      return json(list.slice(Number(args["p_offset"] ?? 0), Number(args["p_offset"] ?? 0) + Number(args["p_limit"] ?? 12) + 1));
+    }
     if (fn === "product_public_member_prices") {
       const ids = (args["p_sku_ids"] ?? []) as string[];
       return json(ids.map((id) => ({ sku_id: id, member_price_jpy: this.memberUnitPrice(id, null).floor })).filter((x) => x.member_price_jpy !== null));
@@ -1498,6 +1514,64 @@ export class FakeSupabase {
         return "error" in r ? json({ code: "P0001", message: r.error }, 400) : json(r);
       }
       return json(this.sizeChartGet(shopId, cat, prod, true));
+    }
+    if (fn === "page_layouts_set") {
+      // 0101: 本物の SQL（形・ショップのページとブログか・権限）は test/db/page-layouts.test.ts
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("content"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string>; product?: string | null; product_categories?: Record<string, string>; collection?: string | null; collection_categories?: Record<string, string>; legal?: string | null; legal_pages?: Record<string, string> };
+      const pageOk = (id: string) => this.tables.pages.some((p) => p["id"] === id && p["shop_id"] === shopId && !p["deleted_at"]);
+      const out: Record<string, unknown> = {};
+      if (l.home) {
+        if (!pageOk(l.home)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        out["home"] = l.home;
+      }
+      const articles: Record<string, string> = {};
+      for (const [b, pid] of Object.entries(l.articles ?? {})) {
+        if (!pid) continue;
+        if (!this.tables.blogs.some((x) => x["id"] === b && x["shop_id"] === shopId) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        articles[b] = pid;
+      }
+      if (Object.keys(articles).length > 0) out["articles"] = articles;
+      if (l.product) {
+        if (!pageOk(l.product)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        out["product"] = l.product;
+      }
+      const cats: Record<string, string> = {};
+      for (const [cid, pid] of Object.entries(l.product_categories ?? {})) {
+        if (!pid) continue;
+        if (!this.tables.categories.some((x) => x["id"] === cid && x["shop_id"] === shopId) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        cats[cid] = pid;
+      }
+      if (Object.keys(cats).length > 0) out["product_categories"] = cats;
+      if (l.collection) {
+        if (!pageOk(l.collection)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        out["collection"] = l.collection;
+      }
+      const ccats: Record<string, string> = {};
+      for (const [cid, pid] of Object.entries(l.collection_categories ?? {})) {
+        if (!pid) continue;
+        if (!this.tables.categories.some((x) => x["id"] === cid && x["shop_id"] === shopId) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        ccats[cid] = pid;
+      }
+      if (Object.keys(ccats).length > 0) out["collection_categories"] = ccats;
+      if (l.legal) {
+        if (!pageOk(l.legal)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        out["legal"] = l.legal;
+      }
+      const lpages: Record<string, string> = {};
+      for (const [k, pid] of Object.entries(l.legal_pages ?? {})) {
+        if (!pid) continue;
+        if (!["legal", "privacy", "returns"].includes(k) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        lpages[k] = pid;
+      }
+      if (Object.keys(lpages).length > 0) out["legal_pages"] = lpages;
+      const settings = { ...((shop["settings"] ?? {}) as Row) };
+      if (Object.keys(out).length > 0) settings["page_layouts"] = out;
+      else delete settings["page_layouts"];
+      shop["settings"] = settings;
+      return json(out);
     }
     if (fn === "option_names_set") {
       // 0094: 本物の SQL（名前の重なり・知らない key）は test/db/option-keys.test.ts
@@ -1963,7 +2037,7 @@ export class FakeSupabase {
       // 0079: メニューに出すページ（モジュール pages が ON のショップの、公開中で nav のあるもの）
       pages_nav: moduleOn(s, "pages")
         ? this.tables.pages
-            .filter((p) => p["shop_id"] === s["id"] && this.pageLive(p) && p["nav"] !== "none" && p["nav"] !== undefined)
+            .filter((p) => p["shop_id"] === s["id"] && this.pageLive(p) && p["nav"] !== "none" && p["nav"] !== undefined && !p["audience_id"])
             .sort((a, b) => Number(a["sort_order"] ?? 0) - Number(b["sort_order"] ?? 0))
             .map((p) => ({ handle: p["handle"], title: p["title"], nav: p["nav"] }))
         : [],
@@ -3315,7 +3389,7 @@ export class FakeSupabase {
 
   private serviceRpc(fn: string, args: Record<string, unknown>): Response {
     // 0098: 会員の読み取りの経路（中身は rpc() の product_member_*）
-    if (fn.startsWith("product_member_")) return this.rpc(fn, args, null);
+    if (fn.startsWith("product_member_") || fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") return this.rpc(fn, args, null);
     if (fn === "theme_preview_settings") {
       const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"] && x["shop_id"] === args["p_shop_id"]);
       return json(v ? (v["settings"] ?? {}) : null);

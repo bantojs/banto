@@ -30,6 +30,9 @@ export interface BlogRow {
 }
 
 export interface ArticleRow {
+  /** 会員限定（0100）: 会員の条件と、存在も隠すか */
+  audience_id?: string | null;
+  audience_hide?: boolean;
   id: string;
   shop_id: string;
   blog_id: string;

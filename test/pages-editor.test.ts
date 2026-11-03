@@ -166,3 +166,69 @@ describe("見たままの編集 → 決まった書式", () => {
     expect((html("::: spacer\n\n::: group\na\n:::").match(/<style>/g) ?? []).length).toBe(1);
   });
 });
+
+describe("新しいブロック（グリッド・タブ・お店のブロック）", () => {
+  it("書式 → 編集の画面の HTML → 書式 で同じ形に戻る", () => {
+    const md = [
+      ":::: grid cols=4",
+      "a",
+      "",
+      "b",
+      "::::",
+      "",
+      "::::: tabs",
+      ':::: tab title="送料"',
+      "全国一律",
+      "::::",
+      ':::: tab title="返品"',
+      "7日以内",
+      "::::",
+      ":::::",
+      "",
+      '::: search placeholder="Tシャツを探す"',
+      "",
+      "::: categories parent=tops layout=grid",
+      "",
+      "::: card article=news/hello",
+      "",
+      "::: product slug=tee show=image,price,buy",
+      "",
+      '::: icon name=truck size=l label="送料無料"',
+      "",
+      '::: date of=updated format=datetime label="更新"',
+      "",
+      "::: date",
+      "",
+      '::: embed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"',
+      "",
+      '::: video src="/media/pages/11111111-2222-4333-8444-555555555555/a.mp4" autoplay=1 loop=1',
+      "",
+      "::: current part=prev-next",
+    ].join("\n");
+    const editor = markdownToHtml(md, { mediaBase: "https://media.example.jp", editor: true });
+    const again = back(editor);
+    expect(again).toContain("::: grid cols=4");
+    expect(again).toContain('title="送料"');
+    expect(again).toContain('::: search placeholder="Tシャツを探す"');
+    expect(again).toContain("::: categories parent=tops layout=grid");
+    expect(again).toContain("::: card article=news/hello");
+    expect(again).toContain("::: product slug=tee show=image,price,buy");
+    expect(again).toContain('::: icon name=truck size=l label="送料無料"');
+    expect(again).toContain('::: date of=updated format=datetime label="更新"');
+    expect(again).toMatch(/^::: date$/m);
+    expect(again).toContain('::: embed url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"');
+    expect(again).toContain('::: video src="/media/pages/11111111-2222-4333-8444-555555555555/a.mp4" autoplay=1 loop=1');
+    expect(again).toContain("::: current part=prev-next");
+    expect(html(again)).toBe(html(md));
+  });
+
+  it("お店のブロック: 形の違う値は捨てる・必須が無ければ文字のまま。タブは CSS だけで切り替える", () => {
+    const store = html('::: icon name=nope\n\n::: product show=price\n\n::: categories parent=Bad_Slug\n\n:::: tabs\n::: tab title="A"\nx\n:::\n::::');
+    expect(store).not.toContain('class="banto-icon');
+    // 商品の slug が無いものは文字のまま、カテゴリーの形の違う parent は捨てて「すべて」
+    expect(store.match(/banto:shop:/g)).toHaveLength(1);
+    expect(store).toContain("banto-shop--categories");
+    expect(store).toContain('<input type="radio" class="banto-tabs__r" name="banto-tabs-0" id="banto-tabs-0-0" checked>');
+    expect(store).toContain('<label for="banto-tabs-0-0">A</label>');
+  });
+});

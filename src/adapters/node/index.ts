@@ -8,9 +8,9 @@
  *   SocketAdapter   … node:net / node:tls（SMTP でメールを送るため）
  * Cloudflare 固有の型はここに現れない。
  */
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
-import type { Adapters, ConfigAdapter, SchedulerAdapter, ScheduledJob, StorageAdapter } from "../types";
+import { clampRange, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type StorageAdapter, type StorageRange } from "../types";
 import { normalizeConfigValue } from "../types";
 import { S3Storage } from "./s3";
 import { createPublicFetch } from "./public-fetch";
@@ -69,6 +69,28 @@ export class FsStorage implements StorageAdapter {
     const path = this.pathFor(key);
     await rm(path, { force: true });
     await rm(`${path}.type`, { force: true });
+  }
+
+  async getRange(key: string, start: number, end: number | null): Promise<StorageRange | "unsatisfiable" | null> {
+    const path = this.pathFor(key);
+    let fh;
+    try {
+      fh = await open(path, "r");
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw e;
+    }
+    try {
+      const size = (await fh.stat()).size;
+      const r = clampRange(size, start, end);
+      if (!r) return "unsatisfiable";
+      const buf = new Uint8Array(r.end - r.start + 1);
+      await fh.read(buf, 0, buf.length, r.start);
+      const type = await readFile(`${path}.type`, "utf8").catch(() => "application/octet-stream");
+      return { body: new Blob([buf]).stream(), contentType: type.trim(), size, ...r };
+    } finally {
+      await fh.close();
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, followPreview, tinyPng } from "./helpers";
 import { handleFromTitle } from "../src/pages";
 import { PAGE_BLOCKS_SCRIPT } from "../src/content/blocks-script";
 import { MEDIA_PAGE } from "../src/content/editor";
@@ -34,12 +34,35 @@ describe("ショップのページの管理画面", () => {
     expect(((sb.tables.shops[0]!["settings"] as Record<string, unknown>)["modules"] as Record<string, unknown>)["pages"]).toBe(true);
   });
 
+  it("プレビューはお店の画面と同じテーマで描き、商品・アイコンのブロックの中身も入る（見せる相手の囲みは中身ごと）", async () => {
+    const { sb, app, shop, base } = setup();
+    sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const body = "## 店のこと\n\n::: product slug=tee show=name\n\n::: icon name=truck label=\"送料無料\"";
+    const handoff = await owner.post(base, { ...form, body, action: "preview" });
+    expect(handoff.status).toBe(200);
+    expect(handoff.headers.get("cache-control")).toContain("no-store");
+    const res = await followPreview(app, handoff);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex");
+    const html = await res.text();
+    expect(html).toContain("お店の画面と同じテーマで描いています");
+    expect(html).toContain("<h2>店のこと</h2>");
+    expect(html).toContain("Tシャツ");
+    expect(html).not.toContain("<!--banto:shop:");
+    expect(html).toMatch(/class="banto-icon[^"]*"[^>]*><svg/);
+    expect(html).toContain(`href="/my-shop"`);
+    expect(html).not.toContain("/admin/shops/");
+    expect(sb.tables.pages).toHaveLength(0);
+  });
+
   it("content の項目の人が作り・直し・消せる。プレビューは保存しない。タブに出る", async () => {
     const { sb, app, shop, base } = setup();
     const writer = await staff(sb, app, shop, "writer@example.com", ["content"]);
     const list = await (await writer.get(base)).text();
     expect(list).toContain(`href="/admin/shops/${shop.id}/modules/pages"`);
-    const preview = await writer.post(base, { ...form, action: "preview" });
+    const preview = await followPreview(app, await writer.post(base, { ...form, action: "preview" }));
     expect(preview.status).toBe(200);
     const html = await preview.text();
     expect(html).toContain("<h2>店のこと</h2>");
@@ -131,7 +154,7 @@ describe("ショップのページの管理画面", () => {
     await owner.post(`${base}/${id}`, { ...draftForm, title: "更新した", published: "on", action: "draft" });
     expect(page["published"]).toBe(false);
     // プレビューは保存せず、本文をお店の画面と同じ変換で見せる
-    const preview = await (await owner.post(`${base}/${id}`, { ...draftForm, title: "見るだけ", action: "preview" })).text();
+    const preview = await (await followPreview(app, await owner.post(`${base}/${id}`, { ...draftForm, title: "見るだけ", action: "preview" }))).text();
     expect(preview).toContain("<h1>見るだけ</h1>");
     expect(preview).toContain("<h2>店のこと</h2>");
     expect(page["title"]).toBe("更新した");

@@ -2,7 +2,7 @@
  * S3 互換 API（AWS S3 / Cloudflare R2 の S3 API / Backblaze B2 / MinIO）向け StorageAdapter。
  * SDK を使わず、SigV4 を WebCrypto で署名する（src/util/sigv4.ts）。Node 以外のランタイムでも動く（依存は fetch と crypto.subtle のみ）。
  */
-import type { StorageAdapter } from "../types";
+import type { StorageAdapter, StorageRange } from "../types";
 import { sha256Hex, signAwsRequest } from "../../util/sigv4";
 
 export interface S3Options {
@@ -65,7 +65,7 @@ export class S3Storage implements StorageAdapter {
     return new URL(`${base}/${this.o.bucket}/${encoded}`);
   }
 
-  private async send(method: string, key: string, body?: ArrayBuffer, contentType?: string): Promise<Response> {
+  private async send(method: string, key: string, body?: ArrayBuffer, contentType?: string, range?: string): Promise<Response> {
     const url = this.objectUrl(key);
     const payloadHash = await sha256Hex(body ?? "");
     const headers = await signS3Request({
@@ -78,7 +78,8 @@ export class S3Storage implements StorageAdapter {
       secretAccessKey: this.o.secretAccessKey,
       now: this.o.now?.() ?? new Date(),
     });
-    return this.doFetch(url.toString(), { method, headers, body });
+    // Range は署名に入れない（署名する見出しは signS3Request が決めたものだけ）
+    return this.doFetch(url.toString(), { method, headers: range ? { ...headers, range } : headers, body });
   }
 
   async put(key: string, body: ReadableStream | ArrayBuffer | Blob, contentType: string) {
@@ -93,6 +94,20 @@ export class S3Storage implements StorageAdapter {
     if (res.status === 404) return null;
     if (!res.ok || !res.body) throw new Error(`S3 GET ${res.status}`);
     return { body: res.body, contentType: res.headers.get("content-type") ?? "application/octet-stream" };
+  }
+
+  async getRange(key: string, start: number, end: number | null): Promise<StorageRange | "unsatisfiable" | null> {
+    const res = await this.send("GET", key, undefined, undefined, `bytes=${start}-${end ?? ""}`);
+    if (res.status === 404) return null;
+    if (res.status === 416) return "unsatisfiable";
+    if (!res.ok || !res.body) throw new Error(`S3 GET ${res.status}`);
+    const contentType = res.headers.get("content-type") ?? "application/octet-stream";
+    const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get("content-range") ?? "");
+    if (res.status === 206 && m) return { body: res.body, contentType, start: Number(m[1]), end: Number(m[2]), size: Number(m[3]) };
+    // Range を無視して全体を返す互換の置き場: 全体として扱う
+    const size = Number(res.headers.get("content-length") ?? "NaN");
+    if (!Number.isFinite(size)) throw new Error("S3 GET: no length");
+    return { body: res.body, contentType, start: 0, end: size - 1, size };
   }
 
   async delete(key: string) {
