@@ -19,7 +19,7 @@ import {
 import { ensureOwnerRow, loadSession, requireOwner, setSessionCookie, toSessionData } from "./auth";
 import { generateSecret } from "../../auth/session";
 import { requireOrgAdmin } from "./access";
-import { isMigrateStep, MigrateForm, migrateStepJson, runMigrationFromForm } from "./migrate";
+import { isMigrateStep, MigrateForm, migrateStepJson, migrationList, runMigrationFromForm } from "./migrate";
 import { projectRefFromUrl } from "../../db/migrate-api";
 import { createPrivilegedAuth } from "../../db/privileged";
 
@@ -151,12 +151,12 @@ function DbSection(props: { db: DbState; migrateError?: string | null; migrated?
       {db.status === "no_migrations" ? <p class="error">{t("setup.db.no_migrations")}</p> : null}
       {db.status === "ok" && db.pending.length > 0 ? (
         <p class="error">
-          {t("setup.db.pending")} {db.pending.join(", ")}
+          {t("setup.db.pending")} {migrationList(db.pending)}
         </p>
       ) : null}
       {props.migrated && props.migrated.length > 0 ? (
         <p class="notice">
-          {t("migrate.done")} {props.migrated.join(", ")}
+          {t("migrate.done")} {migrationList(props.migrated)}
           {needsMigration ? ` ${t("migrate.more")}` : null}
         </p>
       ) : null}
@@ -176,7 +176,7 @@ function DbSection(props: { db: DbState; migrateError?: string | null; migrated?
       {needsMigration ? <MigrateForm action="/admin/setup/migrate" pending={db.pending} error={props.migrateError} projectRef={props.projectRef} /> : null}
       {db.status === "ok" ? (
         <p>
-          {t("setup.db.ok")} {t("setup.db.applied")} {db.applied.join(", ") || "-"}
+          {t("setup.db.ok")} {t("setup.db.applied")} {migrationList(db.applied) || "-"}
         </p>
       ) : null}
     </section>

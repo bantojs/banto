@@ -6,6 +6,13 @@ import { pendingMigrationFiles } from "../../db/migrations";
 import { forgetAppliedMigrations } from "../../db/migration-state";
 import { t, tf } from "../../i18n";
 
+/** マイグレーションの名前の並び。多いときは件数と最初・最後だけにする（全部並べると画面が名前で埋まる） */
+export function migrationList(names: readonly string[]): string {
+  if (names.length <= 3) return names.join(", ");
+  return tf("migrate.list_range", { n: names.length, first: names[0] ?? "", last: names[names.length - 1] ?? "" });
+}
+
+
 /**
  * 当てる版が多いと（初回は全部）、1 回のリクエストでは当てきれない（Workers のサブリクエストの上限・ブラウザとの接続の持ち時間）。
  * フォームの送信をこのスクリプトが受け、同じ内容を何度か送って続きを当てる（トークンや接続文字列は画面の入力欄にあるものを毎回送るだけで、

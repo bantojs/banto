@@ -11,6 +11,7 @@ import type { ShopRow } from "../../db/types";
 import { requireOwner } from "./auth";
 import { isOrgAdmin, myShops, requireOrgAdmin } from "./access";
 import { fetchLatestRelease, isNewer } from "../../updates/releases";
+import { migrationList } from "./migrate";
 
 export const dashboard = new Hono<AppEnv>();
 
@@ -64,7 +65,7 @@ dashboard.get("/", requireOwner, async (c) => {
       {flash === "forbidden" ? <p class="error">{t("access.forbidden")}</p> : null}
       {admin && pending.length > 0 ? (
         <p class="notice">
-          {t("dashboard.pending_migrations")} ({pending.join(", ")}) <a href="/admin/update">{t("update.title")}</a>
+          {t("dashboard.pending_migrations")} ({migrationList(pending)}) <a href="/admin/update">{t("update.title")}</a>
         </p>
       ) : null}
       {admin && updateAvailable ? (

@@ -693,6 +693,7 @@ export const ja = {
   "migrate.not_stored": "この文字列は適用に使うだけで、どこにも保存されません。",
   "migrate.submit": "適用する",
   "migrate.submit_count": "適用する（{n} 件）",
+  "migrate.list_range": "{n} 件（{first} 〜 {last}）",
   "copy.button": "コピー",
   "copy.done": "コピーしました",
   "copy.failed": "コピーできませんでした。選んでコピーしてください",

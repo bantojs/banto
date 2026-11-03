@@ -7,7 +7,7 @@ import { AdminLayout, PageHead } from "./layout";
 import { owner, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { requireOrgAdmin } from "./access";
-import { isMigrateStep, MigrateForm, migrateStepJson, runMigrationFromForm } from "./migrate";
+import { isMigrateStep, MigrateForm, migrateStepJson, migrationList, runMigrationFromForm } from "./migrate";
 import { projectRefFromUrl } from "../../db/migrate-api";
 
 /** アップデート（/admin/update）: 未適用マイグレーションの検出と適用（docs/upgrade.md） */
@@ -32,7 +32,7 @@ function Page(props: { pending: string[]; applied: string[]; error?: string | nu
       </p>
       {props.done && props.done.length > 0 ? (
         <p class="notice">
-          {t("migrate.done")} {props.done.join(", ")}
+          {t("migrate.done")} {migrationList(props.done)}
           {props.pending.length > 0 ? ` ${t("migrate.more")}` : null}
         </p>
       ) : null}
@@ -48,13 +48,13 @@ function Page(props: { pending: string[]; applied: string[]; error?: string | nu
       ) : (
         <section class="step" data-state="ng">
           <h2>
-            {t("setup.db.pending")} {props.pending.join(", ")}
+            {t("setup.db.pending")} {migrationList(props.pending)}
           </h2>
           <MigrateForm action="/admin/update" pending={props.pending} error={props.error} projectRef={props.projectRef} />
         </section>
       )}
       <p class="muted">
-        {t("setup.db.applied")} {props.applied.join(", ") || "-"}
+        {t("setup.db.applied")} {migrationList(props.applied) || "-"}
       </p>
       <p>
         <a href="https://github.com/bantojs/banto/blob/main/docs/upgrade.md" target="_blank" rel="noopener">
