@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, followPreview, tinyPng } from "./helpers";
 import { handleFromTitle } from "../src/pages";
 import { PAGE_BLOCKS_SCRIPT } from "../src/content/blocks-script";
 import { MEDIA_PAGE } from "../src/content/editor";
@@ -39,7 +39,10 @@ describe("ショップのページの管理画面", () => {
     sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
     const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const body = "## 店のこと\n\n::: product slug=tee show=name\n\n::: icon name=truck label=\"送料無料\"";
-    const res = await owner.post(base, { ...form, body, action: "preview" });
+    const handoff = await owner.post(base, { ...form, body, action: "preview" });
+    expect(handoff.status).toBe(200);
+    expect(handoff.headers.get("cache-control")).toContain("no-store");
+    const res = await followPreview(app, handoff);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toContain("no-store");
     expect(res.headers.get("x-robots-tag")).toBe("noindex");
@@ -59,7 +62,7 @@ describe("ショップのページの管理画面", () => {
     const writer = await staff(sb, app, shop, "writer@example.com", ["content"]);
     const list = await (await writer.get(base)).text();
     expect(list).toContain(`href="/admin/shops/${shop.id}/modules/pages"`);
-    const preview = await writer.post(base, { ...form, action: "preview" });
+    const preview = await followPreview(app, await writer.post(base, { ...form, action: "preview" }));
     expect(preview.status).toBe(200);
     const html = await preview.text();
     expect(html).toContain("<h2>店のこと</h2>");
@@ -151,7 +154,7 @@ describe("ショップのページの管理画面", () => {
     await owner.post(`${base}/${id}`, { ...draftForm, title: "更新した", published: "on", action: "draft" });
     expect(page["published"]).toBe(false);
     // プレビューは保存せず、本文をお店の画面と同じ変換で見せる
-    const preview = await (await owner.post(`${base}/${id}`, { ...draftForm, title: "見るだけ", action: "preview" })).text();
+    const preview = await (await followPreview(app, await owner.post(`${base}/${id}`, { ...draftForm, title: "見るだけ", action: "preview" }))).text();
     expect(preview).toContain("<h1>見るだけ</h1>");
     expect(preview).toContain("<h2>店のこと</h2>");
     expect(page["title"]).toBe("更新した");

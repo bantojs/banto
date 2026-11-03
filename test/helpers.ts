@@ -230,3 +230,18 @@ export async function readSitemap(get: (url: string) => Promise<string>, url: st
   const files = [...xml.matchAll(/<sitemap><loc>([^<]+)<\/loc><\/sitemap>/g)].map((m) => m[1]!.replace(/&amp;/g, "&"));
   return [xml, ...(await Promise.all(files.map(get)))].join("\n");
 }
+
+/**
+ * ページ・記事のプレビュー: 管理画面が返した送り出しの画面（src/content/preview.tsx）のフォームを、本物のブラウザと同じく
+ * 別のオリジンからの POST（no-referrer の画面なので Origin: null）としてお店の画面へ送る
+ */
+export async function followPreview(app: ReturnType<typeof appWith>, handoff: Response, edit?: (f: Record<string, string>) => void): Promise<Response> {
+  const html = await handoff.text();
+  const dec = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const action = /<form id="pv" method="post" action="([^"]+)"/.exec(html);
+  if (!action) throw new Error(`not a preview hand-off: ${html.slice(0, 200)}`);
+  const fields: Record<string, string> = {};
+  for (const m of html.matchAll(/<input type="hidden" name="([a-z]+)" value="([^"]*)">/g)) fields[m[1]!] = dec(m[2]!);
+  edit?.(fields);
+  return app.request(dec(action[1]!), { method: "POST", body: new URLSearchParams(fields).toString(), headers: { "content-type": "application/x-www-form-urlencoded", origin: "null", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } });
+}

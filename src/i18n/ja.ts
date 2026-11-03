@@ -2121,8 +2121,9 @@ export const ja = {
   // 外部プラグインのブロック（0086）
   "pages.block_group_apps": "プラグイン",
   "pages.block_app": "プラグインのブロック",
+  "pages.preview_opening": "お店の画面でプレビューを開いています…（開かなければボタンを押してください）",
   "pages.preview_theme_note": "プレビューです（保存していません）。お店の画面と同じテーマで描いています。",
-  "pages.preview_unpublished": "ショップが非公開のあいだは、商品・ページ・記事のブロックの中身は空になります。",
+  "pages.preview_unpublished": "ショップが非公開のあいだは管理画面で既定のテーマで描き、商品・ページ・記事のブロックの中身は空になります（公開すると、お店の画面の上で実際のテーマで描きます）。",
   "pages.app_label": "プラグイン {app}・{block} — 商品 {product}",
   "pages.audience_label": "見せる相手: {name}",
   "pages.audience_unnamed": "（名前なし）",

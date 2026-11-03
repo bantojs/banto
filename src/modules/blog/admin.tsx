@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { themedPreview } from "../../content/preview";
+import { previewResponse } from "../../content/preview";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -537,7 +537,7 @@ async function previewArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, v: 
     const now = new Date().toISOString();
     const article = { id: "preview", shop_id: shop.id, blog_id: blog.id, created_at: now, updated_at: now, ...v, published_at: v.published_at ?? now } as ArticleRow;
     const categories = await owner(c).db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" }).catch(() => [] as CategoryRow[]);
-    const res = await themedPreview(c, shop, { kind: "article", blog, article }, categories);
+    const res = await previewResponse(c, shop, { kind: "article", blog, article }, categories);
     if (res) return res;
   }
   return layout(

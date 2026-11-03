@@ -21,8 +21,34 @@ import type { ArticleRow, BlogRow } from "../blog";
 import { blogPath } from "../blog";
 import type { CategoryRow } from "../db/types";
 import { t } from "../i18n";
+import { shopHome } from "../storefront/urls";
+import { sealContentPreview } from "./preview-ticket";
+import { escapeHtml } from "../mail/html";
 
 export type PreviewTarget = { kind: "page"; page: PageRow } | { kind: "article"; blog: BlogRow; article: ArticleRow };
+
+/**
+ * プレビューを出す。公開中のショップは、お店の画面のオリジン（独自ドメインならそのドメイン）へ下書きを送り、本物と同じ処理・同じテーマ
+ * （Liquid のテーマを含む）で描く（src/routes/storefront/index.tsx の POST /_preview/content）。
+ * 非公開のショップ・サイトの秘密が無いときは、管理画面で既定のテーマで描く（themedPreview）
+ */
+export async function previewResponse(c: AdminContext, shop: ShopRow, target: PreviewTarget, categories: CategoryRow[]): Promise<Response | null> {
+  const secret = c.get("sessionSecret");
+  if (!shop.published || !secret) return themedPreview(c, shop, target, categories);
+  const draft = JSON.stringify(target);
+  const token = await sealContentPreview(secret, shop.id, draft);
+  const action = `${shopHome(publicBaseUrl(c), shop)}/_preview/content`;
+  c.header("Cache-Control", "private, no-store");
+  c.header("X-Robots-Tag", "noindex");
+  // 新しいタブで開いた画面から、お店のオリジンへ送る（スクリプトが動かなければボタンで）
+  return c.html(
+    `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>${escapeHtml(t("pages.preview"))}</title></head>` +
+      `<body style="font-family:system-ui,sans-serif;padding:2rem"><form id="pv" method="post" action="${escapeHtml(action)}">` +
+      `<input type="hidden" name="token" value="${escapeHtml(token)}"><input type="hidden" name="draft" value="${escapeHtml(draft)}">` +
+      `<p>${escapeHtml(t("pages.preview_opening"))}</p><button type="submit">${escapeHtml(t("pages.preview"))}</button></form>` +
+      `<script>document.getElementById("pv").submit();</script></body></html>`,
+  );
+}
 
 /** テーマで描いたプレビューの HTML。テーマが描けなければ null（呼び出し側が今までの簡単な形で出す） */
 export async function themedPreview(c: AdminContext, shop: ShopRow, target: PreviewTarget, categories: CategoryRow[]): Promise<Response | null> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, followPreview } from "./helpers";
 import { parseTags } from "../src/blog";
 
 /** ブログの管理画面（同梱モジュール blog、0081）。扱えるのは content の項目の人。記事の編集の画面はページと同じ */
@@ -113,7 +113,7 @@ describe("ブログの管理画面", () => {
     const { sb, app, shop, base } = setup();
     const blog = sb.addBlog(shop.id, { handle: "news", title: "お知らせ" });
     const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const res = await owner.post(`${base}/${blog.id}/articles`, { title: "見るだけの記事", handle: "peek", body: "## 中身\n\n::: icon name=truck", action: "preview" });
+    const res = await followPreview(app, await owner.post(`${base}/${blog.id}/articles`, { title: "見るだけの記事", handle: "peek", body: "## 中身\n\n::: icon name=truck", action: "preview" }));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("お店の画面と同じテーマで描いています");

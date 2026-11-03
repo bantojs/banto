@@ -35,7 +35,11 @@ import { bindScope, customerPrefill, customerSession, members, membersEnabled, r
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
-import { PAGES_MODULE, pageBodyHtml, pageHandleOk } from "../../pages";
+import { PAGES_MODULE, pageBodyHtml, pageHandleOk, type PageRow } from "../../pages";
+import { markdownToHtml } from "../../pages/markdown";
+import { filterAudienceBlocks } from "../../content/audience-blocks";
+import { openContentPreview } from "../../content/preview-ticket";
+import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
@@ -60,7 +64,9 @@ import { PrivilegedRpcError } from "../../db/privileged";
  */
 export const storefront = new Hono<AppEnv>();
 
-storefront.use("*", csrfGuard);
+// ページ・記事のプレビュー（POST /<ショップ>/_preview/content）だけは管理画面のオリジンから届く。状態を変えず、券で確かめる
+const PREVIEW_PATH = /^\/[^/]+\/_preview\/content$/;
+storefront.use("*", (c, next) => (c.req.method === "POST" && PREVIEW_PATH.test(c.req.path) ? next() : csrfGuard(c, next)));
 storefront.use("*", redirectToShopDomain);
 
 const data = storefrontData;
@@ -93,7 +99,8 @@ storefront.use("*", async (c, next) => {
   }
   await next();
   const contributors = STOREFRONT_HEAD_CONTRIBUTORS.filter((h) => moduleEnabled(shop.settings, h.module));
-  if (contributors.length === 0 || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
+  // プレビュー（保存しない下書き）には分析のタグなどを入れない
+  if (contributors.length === 0 || PREVIEW_PATH.test(c.req.path) || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
   const events = c.get("shopEvents") ?? [];
   const snippet = renderHeadTags(contributors.flatMap((h) => h.tags(shop, events)));
   if (!snippet) return;
@@ -148,6 +155,35 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   const query = await storefrontQueryContext(c, shop, ctx.shopPath || "/");
   return { shop, sf: reader, cart, ctx, theme, query };
 }
+
+/**
+ * ページ・記事のプレビュー（保存しない下書き。src/content/preview-ticket.ts）。管理画面の新しいタブから送られ、本物と同じ処理・同じテーマ
+ * （Liquid のテーマを含む）で描く。券がそのショップのその下書きのものでなければ 404。何も書き換えない。
+ * 管理画面のオリジンから送るので、このパスだけ csrfGuard を通さない（状態を変えず、券が下書きと結ばれている）。
+ * 会員・お問い合わせのルート（それぞれ全パスに csrfGuard を付ける）より先に置く。
+ * 見せる相手の囲み（0097）は中身ごと出す（運営者が確かめるため）
+ */
+storefront.post("/:shop/_preview/content", async (c: Ctx) => {
+  const secret = c.get("sessionSecret");
+  const s = secret ? await scope(c) : null;
+  if (!s || !secret) return notFound(c);
+  const f = await formFields(c);
+  const draft = await openContentPreview(secret, f["token"], s.shop.id, f["draft"]);
+  if (!draft) return notFound(c);
+  c.header("Cache-Control", "private, no-store");
+  c.header("X-Robots-Tag", "noindex");
+  c.header("Referrer-Policy", "no-referrer");
+  const prefix = `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))}</p>`;
+  const categories = await s.sf.listCategories(s.shop);
+  if (draft.kind === "page") {
+    if (!moduleEnabled(s.shop.settings, PAGES_MODULE)) return notFoundPage(c, s);
+    const body = filterAudienceBlocks(draft.page.body, () => true).body;
+    return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, prefix);
+  }
+  if (!moduleEnabled(s.shop.settings, BLOG_MODULE)) return notFoundPage(c, s);
+  const body = filterAudienceBlocks(draft.article.body, () => true).body;
+  return articlePageResponse(c, s, draft.blog, draft.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, prefix);
+});
 
 // 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
 bindScope(async (c) => {
@@ -416,9 +452,17 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   if (!page) return notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, page.body, viewerOf(s));
   const raw = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
+  return contentPageResponse(c, s, page, view.body, raw, categories);
+});
+
+/**
+ * ページを描く（お店の画面とプレビューで同じ）。body は見る人で絞った本文、raw はその HTML。
+ * prefix はプレビューの知らせ（本文の前に足す）
+ */
+async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: string, raw: string, categories: CategoryRow[], prefix = ""): Promise<Response> {
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
   // お店のブロック（検索・カテゴリー・カード・商品）はテーマに依らない HTML なので先に入れる
-  const html = fillShopBlocks(raw, shopCards);
+  const html = prefix + fillShopBlocks(raw, shopCards);
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards });
@@ -426,7 +470,22 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
   return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards) }));
-});
+}
+
+/** 記事を描く（お店の画面とプレビューで同じ） */
+async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], prefix = ""): Promise<Response> {
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
+  const html = prefix + fillShopBlocks(raw, shopCards);
+  const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards });
+    if (res) return res;
+  }
+  if (!s.theme.ArticlePage) return notFoundPage(c, s);
+  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl }));
+}
+
 
 // ---------- ブログ（同梱モジュール blog、0081、docs/blog.md） ----------
 /** ブログの記事の一覧（公開した日時の新しい順、?tag= で絞る、?page= でページ送り） */
@@ -491,16 +550,7 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   if (!article) return notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
   const raw = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
-  const html = fillShopBlocks(raw, shopCards);
-  const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
-  const lt = await liquidThemeFor(c, s);
-  if (lt) {
-    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards });
-    if (res) return res;
-  }
-  if (!s.theme.ArticlePage) return notFoundPage(c, s);
-  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl }));
+  return articlePageResponse(c, s, blog, article, view.body, raw, categories);
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {
