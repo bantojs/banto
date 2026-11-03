@@ -81,17 +81,28 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 
 ブラウザで `https://<ショップの URL>/admin/setup` を開きます。4つの項目が順に表示されます。
 
+![セットアップ画面。1. 環境変数と Secret は設定済み、2. マイグレーションは未適用で「適用する（99 件）」のボタンが出ている](images/setup-wizard.webp)
+
 1. **環境変数と Secret** — 足りないものがあれば、名前と「Cloudflare のどこで貼るか」「値は Supabase のどこにあるか」が表示されます。貼ったらこのページを再読み込みします。
 2. **Supabase への接続とマイグレーション** — データベースに必要なテーブルを作ります。Supabase の **アクセストークン** を使います。
    1. Supabase の画面右上のアカウントメニュー → **Account preferences → Access Tokens**（[直接開く](https://supabase.com/dashboard/account/tokens)）→ **Generate new token**
    2. 名前は「banto setup」など何でも構いません。権限（Permissions）を選ぶ画面では **Database だけ Full access**（テーブルを作るため書き込みが必要）、ほかは No access にします。表示された `sbp_` で始まるトークンをコピーします（この画面を閉じると二度と見られません）
    3. セットアップ画面に貼り付けて **適用する** を押します。SQL は HTTPS で Supabase に送られ、トークンは保存されません。終わったら Supabase 側でトークンを削除して構いません
    - 「別の方法: 接続文字列で適用する」は、Node で動かしている場合やローカルの Supabase 用です。Cloudflare からは TLS の制約で `Connection terminated unexpectedly` になることがあります
+
+   ![運営者アカウントの欄。メールアドレスとパスワードを入れて「運営者を作成」を押す](images/setup-owner.webp)
+
 3. **運営者アカウント** — メールアドレスとパスワード（8 文字以上）で登録します。**登録できるのは最初の1人だけ**です。確認メールは届きません（確認済みとして作られ、そのままログインします）。
    - 同じメールアドレスが Supabase にすでにある場合は、そのパスワードを入れれば進めます。古いバージョンで登録して確認メールが `localhost:3000` に飛んでしまった人は、Supabase の Authentication → Users でそのユーザーを「Confirm email」してから、管理画面のログインでそのまま入れます
 4. **最初のショップ** — ショップ名と、URL に使う短い英字（例 `my-shop`）を入力します。
 
+   ![最初のショップの欄。ショップ名とスラッグを入れて「ショップを作成」を押す](images/setup-shop.webp)
+
 完了すると管理画面（`/admin`）が開きます。ショップの URL は `https://<ショップの URL>/my-shop` です。
+
+![管理画面のダッシュボード。ショップのカードに直近 30 日の売上と注文数が出る](images/admin-dashboard.webp)
+
+> 画面の画像は、架空の「ひなた雑貨店」で撮った見本です。
 
 ## 5. 決済（Stripe）をつなぐ
 
@@ -135,6 +146,20 @@ Webhook は「接続済みアカウントのイベントをリッスン」で登
 - 止まったときに気づけるよう、無料の監視サービスに `/health` を登録する（[docs/monitoring.md](monitoring.md)）
 - 独自ドメインにしたら、Cloudflare のレート制限と WAF でログイン画面を守る（[docs/hardening.md](hardening.md)）
 - 月に一度、ショップ設定の **バックアップ** から JSON を保存する（[docs/backup.md](backup.md)）
+
+### 管理画面の例
+
+商品は「商品」→「商品を追加」で作り、SKU（サイズ・色など）ごとに価格と在庫を入れます。
+
+![商品の一覧。商品名・スラッグ・公開の状態が並ぶ](images/admin-products.webp)
+
+![商品の SKU と在庫。SKU ごとに価格と在庫を持ち、在庫はその場で更新できる](images/admin-product-skus.webp)
+
+注文は「注文」に新しい順に並びます。開くと明細・お届け先・決済が見られ、送り状の番号を入れて発送済みにできます。
+
+![注文の一覧。注文番号・日時・購入者・合計・状態（支払い済み・発送済み）](images/admin-orders.webp)
+
+![注文の詳細。明細と合計、購入者・配送先・決済、発送済みにする欄](images/admin-order.webp)
 
 ## 7. 画像を R2 から直接配信する（推奨）
 
