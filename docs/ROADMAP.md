@@ -76,7 +76,3 @@ CLAUDE.md §10 と同期させること。各ステップは「他人に渡せ�
 - [x] 英語 UI（`src/i18n/en.ts`、`BANTO_LOCALE=en`）
 - [x] 外部プラグインの実例（examples/plugin-slack、契約テスト付き）
 - [ ] 既存画像のサムネイル一括生成（今は上げ直しのみ）
-
-## 将来（条件が揃った時のみ）
-
-- ホスティングして提供する場合の方針（フォークせずタグを依存に・事業者ごとに分ける・MIT のまま） — docs/ARCHITECTURE.md「ホスティングして提供する場合」、docs/knowledge/02-decisions.md 2026-10-23 参照
