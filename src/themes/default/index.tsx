@@ -1,3 +1,4 @@
+import type { CategoryNode } from "../../products/categories";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
@@ -485,16 +486,25 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice }) {
+  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
     const heading = category ? category.name : tag;
+    const seo = { path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home, description: intro, image: products.find((p) => p.image)?.image ? imageUrl(ctx.mediaBaseUrl, products.find((p) => p.image)!.image!.storage_key) : undefined, ...(pagination?.first ? { noindex: true } : {}) };
+    const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
+    // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
+    if (layout) {
+      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice });
+      const html: Record<string, string> = {};
+      for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
+      return (
+        <Layout title={title} ctx={ctx} seo={seo}>
+          <div class="page-body list-layout">{raw(layout(html))}</div>
+        </Layout>
+      );
+    }
     return (
-      <Layout
-        title={heading ? `${heading} · ${t("store.products")}` : t("store.products")}
-        ctx={ctx}
-        seo={{ path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home, description: intro, image: products.find((p) => p.image)?.image ? imageUrl(ctx.mediaBaseUrl, products.find((p) => p.image)!.image!.storage_key) : undefined, ...(pagination?.first ? { noindex: true } : {}) }}
-      >
+      <Layout title={title} ctx={ctx} seo={seo}>
         <div class="hero">
           <h1>{ctx.shop.name}</h1>
           {intro ? <p>{intro}</p> : null}
@@ -532,34 +542,7 @@ export const defaultTheme: Theme = {
           </p>
         ) : null}
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
-        <div class="grid">
-          {products.map(({ product, image, minPrice, compareAt }) => (
-            <div class="card">
-              <a href={`${ctx.shopPath}/p/${product.slug}`}>
-                <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
-                <div class="body">
-                  <div>{product.name}</div>
-                  {product.brand ? <div class="muted">{product.brand}</div> : null}
-                  {minPrice !== null ? (
-                    <div class="price">
-                      {compareAt ? <s class="muted">{yen(compareAt)}</s> : null} {yen(minPrice)}〜 <span class="muted">{t("store.tax_included")}</span>
-                    </div>
-                  ) : null}
-                </div>
-              </a>
-            </div>
-          ))}
-        </div>
-        {pagination?.next || pagination?.first ? (
-          <nav class="pager" aria-label={t("store.pagination")}>
-            {pagination.first ? <a href={pagination.first}>{t("store.first_page")}</a> : null}
-            {pagination.next ? (
-              <a href={pagination.next} rel="next">
-                {t("store.next_page")}
-              </a>
-            ) : null}
-          </nav>
-        ) : null}
+        <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </Layout>
     );
   },
@@ -1942,5 +1925,111 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
     reviews: reviews ? <ReviewsList reviews={reviews} id="reviews" /> : null,
   };
   return { product, seo, parts };
+}
+
+type ShopHomeProps = Parameters<Theme["ShopHome"]>[0];
+
+/** 商品の並び（カード）とページ送り。ふつうの一覧と、商品一覧のひな形（0103）の両方 */
+function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"]; products: ShopHomeProps["products"]; pagination?: ShopHomeProps["pagination"] }) {
+  return (
+    <>
+      <div class="grid">
+        {products.map(({ product, image, minPrice, compareAt }) => (
+          <div class="card">
+            <a href={`${ctx.shopPath}/p/${product.slug}`}>
+              <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
+              <div class="body">
+                <div>{product.name}</div>
+                {product.brand ? <div class="muted">{product.brand}</div> : null}
+                {minPrice !== null ? (
+                  <div class="price">
+                    {compareAt ? <s class="muted">{yen(compareAt)}</s> : null} {yen(minPrice)}〜 <span class="muted">{t("store.tax_included")}</span>
+                  </div>
+                ) : null}
+              </div>
+            </a>
+          </div>
+        ))}
+      </div>
+      {pagination?.next || pagination?.first ? (
+        <nav class="pager" aria-label={t("store.pagination")}>
+          {pagination.first ? <a href={pagination.first}>{t("store.first_page")}</a> : null}
+          {pagination.next ? (
+            <a href={pagination.next} rel="next">
+              {t("store.next_page")}
+            </a>
+          ) : null}
+        </nav>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * 商品一覧のひな形（0103、`::: current part=…`）の部品。title（カテゴリーの名前か「すべての商品」）・products（並びとページ送り）・
+ * filters（タグ。カテゴリーで絞ったまま）・subcategories（子カテゴリー。すべての一覧なら上の段のカテゴリー）・breadcrumb
+ */
+export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice }: Omit<ShopHomeProps, "layout">) {
+  const home = ctx.shopPath || "/";
+  const q = (extra: Record<string, string>) => `${home}?${new URLSearchParams({ ...(category ? { category: category.slug } : { all: "1" }), ...extra }).toString()}`;
+  const find = (nodes: CategoryNode[], slug: string): CategoryNode | null => {
+    for (const n of nodes) {
+      if (n.slug === slug) return n;
+      const hit = find(n.children, slug);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const trail = (nodes: CategoryNode[], slug: string, path: CategoryNode[] = []): CategoryNode[] | null => {
+    for (const n of nodes) {
+      if (n.slug === slug) return [...path, n];
+      const hit = trail(n.children, slug, [...path, n]);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const tree = categories ?? [];
+  const children = category ? (find(tree, category.slug)?.children ?? []) : tree;
+  return {
+    title: <h1>{category ? category.name : t("store.all_products")}</h1>,
+    products: (
+      <>
+        {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
+        <ProductGrid ctx={ctx} products={products} pagination={pagination} />
+      </>
+    ),
+    filters:
+      tags && tags.length > 0 ? (
+        <p class="tags">
+          <a href={q({})} class={tag ? "" : "active"}>
+            {t("store.all_products")}
+          </a>
+          {tags.map((x) => (
+            <a href={q({ tag: x.tag })} class={x.tag === tag ? "active" : ""}>
+              {x.tag} <span class="muted">({x.count})</span>
+            </a>
+          ))}
+        </p>
+      ) : null,
+    subcategories:
+      children.length > 0 ? (
+        <nav class="categories" aria-label={t("store.categories")}>
+          {children.map((n) => (
+            <a href={`${home}?category=${encodeURIComponent(n.slug)}`}>{n.name}</a>
+          ))}
+        </nav>
+      ) : null,
+    breadcrumb: (
+      <p>
+        <a href={home}>{ctx.shop.name}</a> ›{" "}
+        {(category ? (trail(tree, category.slug) ?? []).slice(0, -1) : []).map((n) => (
+          <span>
+            <a href={`${home}?category=${encodeURIComponent(n.slug)}`}>{n.name}</a> ›{" "}
+          </span>
+        ))}
+        {category ? category.name : t("store.all_products")}
+      </p>
+    ),
+  };
 }
 

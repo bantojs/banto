@@ -49,6 +49,18 @@ describe.skipIf(!dbAvailable)("ひな形の割り当て（0101）", () => {
     expect(await set(a.ownerId, a.shopId, {})).toEqual({});
   });
 
+  it("商品一覧（0103）: 共通とカテゴリーごと。よそのカテゴリーは断る", async () => {
+    const pool = getPool();
+    const cat = (await pool.query("insert into categories (shop_id, slug, name) values ($1, 'bags', 'バッグ') returning id", [a.shopId])).rows[0].id;
+    const other = (await pool.query("insert into categories (shop_id, slug, name) values ($1, 'bags', 'よそ') returning id", [b.shopId])).rows[0].id;
+    expect(await set(a.ownerId, a.shopId, { collection: page, collection_categories: { [cat]: page } })).toEqual({ collection: page, collection_categories: { [cat]: page } });
+    const pub = await asAnon(async (c) => (await c.query("select shop_public_get('pl-a') as s")).rows[0].s);
+    expect(pub.settings.page_layouts).toEqual({ collection: page, collection_categories: { [cat]: page } });
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { collection_categories: { [other]: page } }))).toMatch(/invalid_page_layouts/);
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { collection: otherPage }))).toMatch(/invalid_page_layouts/);
+    expect(await set(a.ownerId, a.shopId, {})).toEqual({});
+  });
+
   it("ゴミ箱のページは割り当てられない。content の項目の無い人・匿名は呼べない", async () => {
     await getPool().query("update pages set deleted_at = now() where id = $1", [page]);
     expect(await expectDbError(() => set(a.ownerId, a.shopId, { home: page }))).toMatch(/invalid_page_layouts/);

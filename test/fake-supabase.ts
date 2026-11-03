@@ -1520,7 +1520,7 @@ export class FakeSupabase {
       const shopId = args["p_shop_id"] as string;
       if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("content"))) return json({ code: "42501", message: "forbidden" }, 403);
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
-      const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string>; product?: string | null; product_categories?: Record<string, string> };
+      const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string>; product?: string | null; product_categories?: Record<string, string>; collection?: string | null; collection_categories?: Record<string, string> };
       const pageOk = (id: string) => this.tables.pages.some((p) => p["id"] === id && p["shop_id"] === shopId && !p["deleted_at"]);
       const out: Record<string, unknown> = {};
       if (l.home) {
@@ -1545,6 +1545,17 @@ export class FakeSupabase {
         cats[cid] = pid;
       }
       if (Object.keys(cats).length > 0) out["product_categories"] = cats;
+      if (l.collection) {
+        if (!pageOk(l.collection)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        out["collection"] = l.collection;
+      }
+      const ccats: Record<string, string> = {};
+      for (const [cid, pid] of Object.entries(l.collection_categories ?? {})) {
+        if (!pid) continue;
+        if (!this.tables.categories.some((x) => x["id"] === cid && x["shop_id"] === shopId) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        ccats[cid] = pid;
+      }
+      if (Object.keys(ccats).length > 0) out["collection_categories"] = ccats;
       const settings = { ...((shop["settings"] ?? {}) as Row) };
       if (Object.keys(out).length > 0) settings["page_layouts"] = out;
       else delete settings["page_layouts"];

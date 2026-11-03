@@ -5,7 +5,7 @@ import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../store
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import type { AppEnv } from "../../app";
-import { type StorefrontData, type PublicShop, type ProductDetail, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
+import { type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -39,9 +39,9 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { markdownToHtml } from "../../pages/markdown";
 import { filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
-import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
-import { PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
-import { productView } from "../../themes/default";
+import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, collectionLayoutId, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
+import { COLLECTION_PARTS, PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
+import { listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { cartImagesFor, cartSections, liquidProductJsonLd, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
@@ -188,6 +188,10 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
       return articlePageResponse(c, s, sample.blog, sample.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix: note(sample.article.title), preview: true, layout: draft.page });
     }
     if (sample?.kind === "product") return productPageResponse(c, s, sample.detail, categories, { prefix: note(sample.detail.product.name), preview: true, layout: draft.page });
+    if (sample?.kind === "collection") {
+      const list = await listingData(s, { categories, ...(sample.category ? { category: sample.category } : {}), all: !sample.category, count: Boolean(await liquidThemeFor(c, s)) });
+      if (list) return collectionResponse(c, s, list, { prefix: note(sample.category ? sample.category.name : t("store.all_products")), preview: true, layout: draft.page });
+    }
     const body = filterAudienceBlocks(draft.page.body, () => true).body;
     return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
   }
@@ -201,7 +205,7 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
  * ひな形のプレビューの見本（0101・0102）: そのページを記事のひな形にしているブログのいちばん新しい記事、
  * 商品詳細のひな形なら割り当てたカテゴリー（無ければショップ全体）の最初の商品。どれにも割り当てていなければ null
  */
-async function templateSample(s: ShopScope, pageId: string, categories: CategoryRow[]): Promise<{ kind: "article"; blog: BlogRow; article: ArticleRow } | { kind: "product"; detail: ProductDetail } | null> {
+async function templateSample(s: ShopScope, pageId: string, categories: CategoryRow[]): Promise<{ kind: "article"; blog: BlogRow; article: ArticleRow } | { kind: "product"; detail: ProductDetail } | { kind: "collection"; category: CategoryRow | null } | null> {
   const l = pageLayoutsOf(s.shop.settings);
   const blogId = Object.entries(l.articles).find(([, p]) => p === pageId)?.[0];
   if (blogId && moduleEnabled(s.shop.settings, BLOG_MODULE)) {
@@ -217,6 +221,10 @@ async function templateSample(s: ShopScope, pageId: string, categories: Category
     const detail = first ? await s.sf.productBySlug(s.shop, first.product.slug) : null;
     if (detail) return { kind: "product", detail };
   }
+  // 商品一覧のひな形（0103）: 割り当てたカテゴリーの一覧、共通のものならすべての一覧
+  const colCat = Object.entries(l.collectionCategories).find(([, p]) => p === pageId)?.[0];
+  if (colCat) return { kind: "collection", category: categories.find((x) => x.id === colCat) ?? null };
+  if (l.collection === pageId) return { kind: "collection", category: null };
   return null;
 }
 
@@ -381,23 +389,21 @@ storefront.get("/:shop", async (c: Ctx) => {
   const tag = c.req.query("tag") || undefined;
   const categorySlug = c.req.query("category") || undefined;
   const after = c.req.query("after") || undefined;
-  const query = { tag, category: categorySlug, limit: STORE_PAGE_SIZE };
+  const all = c.req.query("all") === "1";
   // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）。それ以外は並列
   const categories = await s.sf.listCategories(s.shop);
   const category = categorySlug ? categories.find((x) => x.slug === categorySlug) : undefined;
   if (categorySlug && !category) return notFoundPage(c, s);
+  // 商品一覧のひな形（0103）: カテゴリーの一覧（近い割り当て、無ければ共通）とすべての一覧（共通）。タグだけで絞った一覧は今までの画面
+  const tagOnly = Boolean(tag) && !category && !all;
+  const colId = !tagOnly && moduleEnabled(s.shop.settings, PAGES_MODULE) ? collectionLayoutId(pageLayoutsOf(s.shop.settings), categories, category?.id) : null;
+  const colLayout = colId ? await s.sf.layoutPage(s.shop, colId) : null;
   // Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
   const lt = await liquidThemeFor(c, s);
-  const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, categories, { cursor: after, ...(lt ? { count: true } : {}) }), s.sf.productFacets(s.shop, categories)]);
-  if (!page) return notFoundPage(c, s);
-  const link = (cursor: string | null) => {
-    const q = new URLSearchParams();
-    if (tag) q.set("tag", tag);
-    if (categorySlug) q.set("category", categorySlug);
-    if (cursor) q.set("after", cursor);
-    const qs = q.toString();
-    return `${s.ctx.shopPath || "/"}${qs ? `?${qs}` : ""}`;
-  };
+  const list = await listingData(s, { categories, ...(category ? { category } : {}), ...(tag ? { tag } : {}), ...(after ? { after } : {}), all, count: Boolean(lt) });
+  if (!list) return notFoundPage(c, s);
+  if (colLayout) return collectionResponse(c, s, list, { layout: colLayout });
+  const { page, facets, link } = list;
   if (lt) {
     const filter = new URLSearchParams();
     if (tag) filter.set("tag", tag);
@@ -418,6 +424,68 @@ storefront.get("/:shop", async (c: Ctx) => {
     }),
   );
 });
+
+interface ListingData {
+  page: ProductListPage;
+  facets: Awaited<ReturnType<StorefrontData["productFacets"]>>;
+  categories: CategoryRow[];
+  category?: CategoryRow;
+  tag?: string;
+  after?: string;
+  all: boolean;
+  /** ページ送りの URL（すべての一覧は ?all=1 を残す。トップのひな形と分けるため） */
+  link: (cursor: string | null) => string;
+}
+
+/** 商品の一覧の材料（お店のトップ・カテゴリーの一覧・商品一覧のひな形のプレビューで同じ） */
+async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; tag?: string; after?: string; all: boolean; count: boolean }): Promise<ListingData | null> {
+  const query = { tag: q.tag, category: q.category?.slug, limit: STORE_PAGE_SIZE };
+  const [page, facets] = await Promise.all([s.sf.productPage(s.shop, query, q.categories, { cursor: q.after, ...(q.count ? { count: true } : {}) }), s.sf.productFacets(s.shop, q.categories)]);
+  if (!page) return null;
+  const link = (cursor: string | null) => {
+    const p = new URLSearchParams();
+    if (q.all && !q.category) p.set("all", "1");
+    if (q.tag) p.set("tag", q.tag);
+    if (q.category) p.set("category", q.category.slug);
+    if (cursor) p.set("after", cursor);
+    const qs = p.toString();
+    return `${s.ctx.shopPath || "/"}${qs ? `?${qs}` : ""}`;
+  };
+  return { page, facets, categories: q.categories, ...(q.category ? { category: q.category } : {}), ...(q.tag ? { tag: q.tag } : {}), ...(q.after ? { after: q.after } : {}), all: q.all, link };
+}
+
+/**
+ * 商品一覧をひな形（0103）で描く（お店の画面とひな形のプレビューで同じ）。部品は既定のテーマのもの（並び・ページ送り・タグ・子カテゴリー・パンくず）。
+ * 並べ方・ページ送り・会員限定の出し分けは今の一覧と同じ（listingData）
+ */
+async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: RenderOpts & { layout: PageRow }): Promise<Response> {
+  const layout = o.layout;
+  const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+  const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, d.categories);
+  const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(layout), updated: layout.updated_at });
+  const props = {
+    ctx: s.ctx,
+    products: d.page.items,
+    ...(d.tag ? { tag: d.tag } : {}),
+    tags: d.facets.tags,
+    categories: categoryTree(d.categories),
+    ...(d.category ? { category: { slug: d.category.slug, name: d.category.name } } : {}),
+    pagination: { ...(d.page.nextCursor ? { next: d.link(d.page.nextCursor) } : {}), ...(d.after ? { first: d.link(null) } : {}) },
+  };
+  const only = (parts: Record<string, string>) => Object.fromEntries(COLLECTION_PARTS.map((k) => [k, parts[k] ?? ""]));
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const parts: Record<string, string> = {};
+    for (const [k, node] of Object.entries(listParts(props))) parts[k] = node === null ? "" : String(node);
+    const qs = new URLSearchParams({ ...(d.category ? { category: d.category.slug } : d.all ? { all: "1" } : {}), ...(d.tag ? { tag: d.tag } : {}) }).toString();
+    const page: PageRow = { ...layout, title: d.category ? d.category.name : t("store.all_products"), seo_title: null, seo_description: null, image_url: null };
+    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, only(parts)), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: qs ? `?${qs}` : "" });
+    if (res) return res;
+  }
+  const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
+  return c.html(s.theme.ShopHome({ ...props, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+}
 
 storefront.get("/:shop/p/:product", async (c: Ctx) => {
   const s = await scope(c);

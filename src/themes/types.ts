@@ -89,6 +89,8 @@ export interface Theme {
     pagination?: { next?: string; first?: string };
     /** 検索（/:shop/search）の案内（語が短すぎる・見つからない）。あれば商品が無いときの文言の代わりに出す */
     notice?: string;
+    /** 商品一覧のひな形（0103）。部品（title・products・filters・subcategories・breadcrumb）の HTML を渡し、返った HTML を本文として描く */
+    layout?: (parts: Record<string, string>) => string;
   }): Rendered;
   /** categoryPath は最上位から主カテゴリーまで（パンくず）、attributes は公開するカスタム項目 */
   /** detail.purchasable が false なら（会員限定の商品、0098）、カートに入れるボタンの代わりに「会員の方だけ購入できます」（ゲストはログインへのリンク）を出す */
