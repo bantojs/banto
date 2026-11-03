@@ -137,6 +137,7 @@ const FLASH: Record<string, { kind: "ok" | "error"; key: MessageKey }> = {
   invalid: { kind: "error", key: "aud.invalid" },
   invalid_attr: { kind: "error", key: "aud.invalid_attr" },
   invalid_param: { kind: "error", key: "aud.invalid_param" },
+  display_only_in_use: { kind: "error", key: "aud.display_only_in_use" },
   empty: { kind: "error", key: "aud.empty" },
   duplicate: { kind: "error", key: "aud.duplicate" },
   in_use: { kind: "error", key: "aud.in_use" },
@@ -389,7 +390,7 @@ async function save(c: AdminContext, id: string | null) {
     else id = String((await db.from<{ id: string; shop_id: string; name: string; condition: unknown }>("audiences").insert({ shop_id: shop.id, name: s("name"), condition }))[0]?.id ?? "");
   } catch (e) {
     if (e instanceof DbError) {
-      const code = /invalid_audience_attr/.test(e.message) ? "invalid_attr" : /invalid_audience_param/.test(e.message) ? "invalid_param" : /duplicate|unique/.test(e.message) ? "duplicate" : "invalid";
+      const code = /invalid_audience_attr/.test(e.message) ? "invalid_attr" : /invalid_audience_param/.test(e.message) ? "invalid_param" : /audience_display_only_in_use/.test(e.message) ? "display_only_in_use" : /duplicate|unique/.test(e.message) ? "duplicate" : "invalid";
       return fail(FLASH[code]!.key);
     }
     throw e;

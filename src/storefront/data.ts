@@ -132,13 +132,41 @@ export interface ProductDetail {
   product: ProductRow;
   images: ProductImageRow[];
   skus: SkuWithStock[];
+  /** 見る人が買えるか（会員限定の商品、0098。会員は DB が判定、ゲストは会員の条件の付いた商品は買えない）。省略は買える */
+  purchasable?: boolean;
 }
+
+/** 会員限定の商品（0098）。当たるまで会員の読み取りの経路を使わない */
+export const AUDIENCE_PRODUCTS_MIGRATION = "0098_audience_products";
+
+/** 会員の読み取りの経路（service_role の product_member_*。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の商品を足す） */
+export interface MemberReader {
+  member: { cid: string; ep: number; sid: string };
+  list(args: Record<string, unknown>): Promise<unknown>;
+  get(slug: string): Promise<unknown>;
+  skus(skuIds: string[]): Promise<unknown>;
+}
+
+/** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
+const guestPurchasable = (p: ProductRow) => !p.audience_id;
 
 export class StorefrontData {
   constructor(
     private db: DbClient,
     private cache: CacheAdapter,
+    private reader: MemberReader | null = null,
   ) {}
+
+  /** ログイン中の会員として読む（一覧・詳細・カートが会員限定の商品を含む。キャッシュしない） */
+  withMember(reader: MemberReader): StorefrontData {
+    return new StorefrontData(this.db, this.cache, reader);
+  }
+
+  /** ゲストが見せない商品の URL で来たとき「会員の方だけ」と出してよいか（存在も隠す商品・無い商品は false） */
+  async productGate(shop: PublicShop, slug: string): Promise<boolean> {
+    if (!(await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION))) return false;
+    return (await this.db.rpc<string | null>("product_public_gate", { p_shop_id: shop.id, p_slug: slug })) === "members";
+  }
 
   /** 適用済みの版の一覧（このインスタンスでは 1 回だけ引く。並列の判定が同時にキャッシュを外して二重に問い合わせないように） */
   private applied?: Promise<ReadonlySet<string>>;
@@ -212,11 +240,14 @@ export class StorefrontData {
       p_count: opts.count ?? false,
     };
     // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
-    const cacheable = !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
+    // 会員は会員限定の商品を含むのでキャッシュしない（会員の読み取りの経路は 0098 から）
+    const reader = this.reader && (await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION)) ? this.reader : null;
+    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
     const key = `plist:${JSON.stringify(args)}`;
     const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
     if (hit) return hit;
-    const r = await this.db.rpc<{ items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean }>("product_public_list", args);
+    type ListResult = { items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean };
+    const r = reader ? ((await reader.list(args)) as ListResult) : await this.db.rpc<ListResult>("product_public_list", args);
     const items = r.items.map((x): ProductSummary => ({
       product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },
       image: x.image,
@@ -433,6 +464,12 @@ export class StorefrontData {
   }
 
   async productBySlug(shop: PublicShop, slug: string): Promise<ProductDetail | null> {
+    // 会員: 商品・画像・SKU と在庫・買えるかを 1 回で（0098）
+    if (this.reader && (await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION))) {
+      const r = (await this.reader.get(slug)) as { product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[]; purchasable?: boolean } | null;
+      if (!r || !r.product) return null;
+      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], purchasable: r.purchasable !== false };
+    }
     // product_public_get（0055。attributes は公開の項目だけ）
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
     if (!product || typeof product !== "object") return null;
@@ -445,7 +482,7 @@ export class StorefrontData {
         .then(async (skus) => [skus, await this.inventoryOf(shop, skus.map((s) => s.id))] as const),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
-    return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })) };
+    return { product, images, skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 })), purchasable: guestPurchasable(product) };
   }
 
   /**
@@ -478,23 +515,30 @@ export class StorefrontData {
   }
 
   /** カート表示用: SKU 行 + 商品 + 在庫（公開中のものだけ返る） */
-  async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow }>> {
-    const out = new Map<string, { sku: SkuWithStock; product: ProductRow }>();
+  async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow; purchasable: boolean }>> {
+    const out = new Map<string, { sku: SkuWithStock; product: ProductRow; purchasable: boolean }>();
     if (skuIds.length === 0) return out;
     // カートの分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた商品がカートから消える）
     const ids = [...new Set(skuIds)].filter((id) => UUID_RE.test(id)).slice(0, 100);
     if (ids.length === 0) return out;
+    const wanted = new Set(skuIds);
+    const gated = await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION);
+    // 会員: SKU・商品・在庫・買えるかを 1 回で（0098）
+    if (this.reader && gated) {
+      const rows = (await this.reader.skus(ids)) as { sku: SkuWithStock; product: ProductRow; purchasable: boolean }[] | null;
+      for (const r of Array.isArray(rows) ? rows : []) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, purchasable: r.purchasable !== false });
+      return out;
+    }
     const skus = await this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } });
     const [inventory, products] = await Promise.all([
       this.inventoryOf(shop, skus.map((s) => s.id)),
-      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(PUBLIC_PRODUCT_COLUMNS, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
+      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(gated ? `${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode` : PUBLIC_PRODUCT_COLUMNS, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));
-    const wanted = new Set(skuIds);
     for (const s of skus) {
       const product = byProduct.get(s.product_id);
-      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product });
+      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, purchasable: guestPurchasable(product) });
     }
     return out;
   }

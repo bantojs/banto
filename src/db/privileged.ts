@@ -359,6 +359,10 @@ export interface PrivilegedDb {
   memberSessionCheck(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<boolean>;
   /** 0097: 同じ確かめと、会員の条件で使っている独自項目の値 */
   memberSessionCheckAttrs(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ ok: boolean; attrs: Record<string, unknown> }>;
+  /** 0098: 会員の読み取りの経路（会員のセッションを確かめ、合う会員の条件の商品を足す）。形は product_public_list / 詳細 / カート */
+  productMemberList(args: Record<string, unknown>): Promise<unknown>;
+  productMemberGet(args: Record<string, unknown>): Promise<unknown>;
+  productMemberSkus(args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
   shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
@@ -612,6 +616,9 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       const r = await rpc<{ ok?: boolean; attrs?: Record<string, unknown> } | null>("member_session_check_attrs", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId });
       return { ok: r?.ok === true, attrs: r?.attrs && typeof r.attrs === "object" ? r.attrs : {} };
     },
+    productMemberList: (args) => rpc<unknown>("product_member_list", args),
+    productMemberGet: (args) => rpc<unknown>("product_member_get", args),
+    productMemberSkus: (args) => rpc<unknown>("product_member_skus", args),
     shopAudiencesRender: async (shopId) => {
       const r = await rpc<unknown>("shop_audiences_render", { p_shop_id: shopId });
       return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown }[]) : [];

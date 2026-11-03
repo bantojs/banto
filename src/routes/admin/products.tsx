@@ -23,6 +23,9 @@ import { MAX_COMBINATIONS, codeFromPattern, combinations, inferOptionAxes, optio
 import { sizeChartHref } from "../../modules/size-charts/admin";
 import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./option-axes";
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
+import { moduleEnabled } from "../../modules/registry";
+import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
+import { AUDIENCE_PRODUCTS_MIGRATION } from "../../storefront/data";
 
 export const products = new Hono<AppEnv>();
 
@@ -44,6 +47,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     axes_duplicate: "axes.duplicate",
     infer_failed: "axes.infer_failed",
     matrix_empty: "axes.matrix_empty",
+    audience_display_only: "product.audience_display_only",
   };
   if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
   const key = map[code];
@@ -190,11 +194,63 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
 interface CatalogContext {
   categories: CategoryRow[];
   fields: ProductField[];
+  /** 会員限定にするときに選べる会員の条件（同梱モジュール audiences が ON で 0098 が当たっていれば。表示用の条件は除く） */
+  audiences?: { id: string; name: string }[];
 }
 
 async function catalogContext(c: AdminContext, shop: ShopRow): Promise<CatalogContext> {
-  const categories = await loadCategories(owner(c).db, shop.id);
-  return { categories, fields: productFields(shop.settings) };
+  const [categories, audiences] = await Promise.all([loadCategories(owner(c).db, shop.id), productAudiences(c, shop)]);
+  return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}) };
+}
+
+/** 会員限定の商品（0098）で選べる会員の条件。モジュールが OFF・当たる前は null（欄を出さない） */
+async function productAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string }[] | null> {
+  if (!moduleEnabled(shop.settings, AUDIENCES_MODULE)) return null;
+  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, AUDIENCE_PRODUCTS_MIGRATION))) return null;
+  const rows = await owner(c)
+    .db.from<{ id: string; name: string; condition: unknown }>("audiences")
+    .select("id,name,condition", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
+    .catch(() => []);
+  return rows.filter((r) => !audienceDisplayOnly(r.condition)).map((r) => ({ id: r.id, name: r.name }));
+}
+
+/** 会員限定の欄（条件を選ぶと扱いの欄が効く。条件を「だれでも」にすると扱いは使わない） */
+function AudienceFields(props: { product?: ProductRow; audiences: { id: string; name: string }[]; shopId: string }) {
+  const p = props.product;
+  const cur = p?.audience_id ?? "";
+  const mode = p?.audience_mode ?? "hide";
+  return (
+    <section class="card">
+      <h2>{t("product.audience_section")}</h2>
+      <input type="hidden" name="audience_present" value="1" />
+      <label for="audience_id">{t("product.audience")}</label>
+      <select id="audience_id" name="audience_id">
+        <option value="">{t("product.audience_anyone")}</option>
+        {props.audiences.map((a) => (
+          <option value={a.id} selected={cur === a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+      {props.audiences.length === 0 ? (
+        <p class="muted">
+          {t("product.audience_none")} <a href={`/admin/shops/${props.shopId}/modules/audiences`}>{t("aud.title")}</a>
+        </p>
+      ) : null}
+      <p>
+        <label style="display:block">
+          <input type="radio" name="audience_mode" value="hide" checked={mode === "hide"} /> {t("product.audience_mode_hide")}
+        </label>
+        <label style="display:block;margin-left:1.5rem">
+          <input type="checkbox" name="audience_hide" value="on" checked={p?.audience_hide === true} /> {t("product.audience_hide")}
+        </label>
+        <label style="display:block">
+          <input type="radio" name="audience_mode" value="buy" checked={mode === "buy"} /> {t("product.audience_mode_buy")}
+        </label>
+      </p>
+      <p class="muted">{t("product.audience_hint")}</p>
+    </section>
+  );
 }
 
 function ProductForm(props: { action: string; product?: ProductRow; catalog: CatalogContext }) {
@@ -254,6 +310,7 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
       <input id="tags" type="text" name="tags" value={(p?.tags ?? []).join(", ")} placeholder={t("product.tags_placeholder")} style="width:100%;max-width:40rem" />
       <p class="muted">{t("product.tags_hint")}</p>
       </section>
+      {props.catalog.audiences ? <AudienceFields product={p} audiences={props.catalog.audiences} shopId={p?.shop_id ?? props.action.split("/")[3] ?? ""} /> : null}
       {fields.length > 0 ? (
         <section class="card">
           <h2>{t("product.fields")}</h2>
@@ -328,6 +385,15 @@ function productValues(f: Record<string, string>, fields: ProductField[]): Parti
     brand: brand || null,
     attributes: cleanAttributes(fields, attrInput),
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
+    // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面・当たる前の DB では列に触れない）。
+    // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
+    ...(f.audience_present === "1"
+      ? {
+          audience_id: f.audience_id || null,
+          audience_mode: f.audience_hide === "on" || f.audience_mode !== "buy" ? ("hide" as const) : ("buy" as const),
+          audience_hide: f.audience_hide === "on",
+        }
+      : {}),
     published: f.published === "on",
   };
 }
@@ -637,6 +703,7 @@ products.post("/:shopId/products/:productId", requireOwner, async (c: AdminConte
     await db.rpc("enqueue_hook", { p_shop_id: shopId, p_event: "product.updated", p_payload: { product_id: p.id, shop_id: shopId, slug: p.slug, name: p.name, published: p.published } });
   } catch (e) {
     if (e instanceof DbError && e.status === 409) return c.redirect(`${base}?flash=slug_taken`);
+    if (e instanceof DbError && /audience_display_only/.test(e.message)) return c.redirect(`${base}?flash=audience_display_only`);
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
   }

@@ -91,7 +91,10 @@ export interface Theme {
     notice?: string;
   }): Rendered;
   /** categoryPath は最上位から主カテゴリーまで（パンくず）、attributes は公開するカスタム項目 */
+  /** detail.purchasable が false なら（会員限定の商品、0098）、カートに入れるボタンの代わりに「会員の方だけ購入できます」（ゲストはログインへのリンク）を出す */
   ProductPage(props: { ctx: ThemeContext; detail: ProductDetail; added?: boolean; selectedSku?: string | null; categoryPath?: { slug: string; name: string }[]; attributes?: { key: string; label: string; value: string | number }[] }): Rendered;
+  /** 会員限定の商品にゲストが URL で来たとき（0098）。商品の中身は渡さない。無ければ LegalPage で文だけ */
+  MembersOnlyPage?(props: { ctx: ThemeContext; loginUrl: string }): Rendered;
   /** coupons が null / 省略なら、クーポン欄を出さない。入力は `${ctx.shopPath}/cart/coupon` に code、外すときは remove を POST する */
   /** tryon が true なら（同梱モジュール store_tryon）、GET `${ctx.shopPath}/tryon` への「お店で試着を申し込む」を出す */
   CartPage(props: { ctx: ThemeContext; lines: CartLine[]; total: number; payments: PaymentOptions; shipping: ShippingInfo; coupons?: CartCoupons | null; error?: string; tryon?: boolean }): Rendered;

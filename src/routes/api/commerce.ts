@@ -1,4 +1,5 @@
 import { deliveryOptions } from "../../modules/delivery-time";
+import { withApiMember } from "../audience-render";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
@@ -51,7 +52,8 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   const m = await memberFromRequest(c, shop);
   // トークンが付いているのに確かめられない: 連携側はトークンを更新して呼び直す（黙ってゲスト扱いにすると、会員の値引きが消えて見える）
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
-  return { sf, shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop) };
+  // 会員限定の商品（0098）: 会員トークンの会員はカートの値付けも会員の読み取りの経路で（買えるかは DB が判定）
+  return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop) };
 }
 
 async function jsonBody(c: Ctx): Promise<Record<string, unknown> | null> {
@@ -159,6 +161,8 @@ commerceApi.post("/shops/:shop/cart", async (c: Ctx) => {
       // 公開中の SKU だけ受け付ける
       const found = await s.sf.skusForCart(s.shop, [skuId]);
       if (!found.has(skuId) && !(op === "set" && qty === 0)) return c.json({ error: "sku_not_available", sku_id: skuId }, 404);
+      // 会員限定で買えない商品（0098。会員トークンの会員なら DB が判定、ゲストは条件のある商品は買えない）
+      if (found.get(skuId)?.purchasable === false && !(op === "set" && qty === 0)) return c.json({ error: "members_only", sku_id: skuId }, 403);
     }
     cart = op === "add" ? addItem(cart, skuId, qty) : setQty(cart, skuId, op === "remove" ? 0 : qty);
   } else {

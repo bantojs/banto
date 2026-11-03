@@ -47,6 +47,8 @@ const ANON_FUNCTIONS = new Set([
   "product_public_stock",
   // 0089: pages / blogs / articles の公開の RLS が使う「そのモジュールが ON の公開中のショップか」（ON / OFF しか返さない）
   "banto_shop_module_public",
+  // 0098: 会員限定の商品にゲストが URL で来たとき「会員の方だけ」と出してよいか（'members' か null だけ。商品の中身は返さない）
+  "product_public_gate",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */

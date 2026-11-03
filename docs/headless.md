@@ -20,7 +20,7 @@ Banto の商品ページ・カートの画面を使わないなら、ショッ�
 
 A と B では、特定商取引法の最終確認画面は Banto の画面が出します。**C では連携側の画面が最終確認画面になります**（下の「C を選ぶときの責任」）。
 
-公開読み取り API（`/api/shops`、`/api/shops/:shop`、`/api/shops/:shop/products`、`/api/shops/:shop/products/:product`）とあわせて、
+公開読み取り API（`/api/shops`、`/api/shops/:shop`、`/api/shops/:shop/products`、`/api/shops/:shop/products/:product`。会員限定の商品は会員トークンを付けると読めます、docs/audiences.md「会員限定の商品」）とあわせて、
 `/api/shops/...` は CORS を許可しています（`Access-Control-Allow-Origin: *`）。Cookie は使わないので、別ドメインのブラウザから直接呼べます。
 ただし **会員の API（`/api/shops/<shop>/members/*`）だけは、ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンにしか CORS を返しません**（ログインはメールを送るので、どのサイトからでも訪問者のブラウザで叩けてはいけないため）。
 `/api/v1` と `/mcp`（AI 用トークンが必要）には CORS を付けていません。

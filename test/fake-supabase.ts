@@ -9,6 +9,7 @@ import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { normalizeTags } from "../src/products/tags";
 import { productFields } from "../src/products/fields";
 import { publicShopSettings } from "../src/storefront/data";
+import { audienceDisplayOnly, audienceOk } from "../src/members/audience";
 import { legalLinksOf } from "../src/storefront/legal-links";
 
 export interface FakeSupabaseOptions {
@@ -608,6 +609,22 @@ export class FakeSupabase {
     return Boolean(p && p["published"] === true && this.shopPublished(p["shop_id"]));
   }
 
+  /** 0098: 匿名に見える商品（会員の条件の無い商品と buy の商品）。aud は見る会員が合う条件 */
+  private productOpen(p: Row, aud: readonly string[] = []): boolean {
+    return !p["audience_id"] || p["audience_mode"] === "buy" || aud.includes(String(p["audience_id"]));
+  }
+  private productGuestVisible(productId: unknown): boolean {
+    const p = this.tables.products.find((x) => x["id"] === productId);
+    return Boolean(p && this.productPublished(productId) && this.productOpen(p));
+  }
+  /** 0098: 会員の合う条件（セッションが生きていなければ空。表示用の条件は数えない） */
+  private memberAudienceIds(args: Record<string, unknown>): string[] {
+    if (!this.liveMemberSession(args["p_shop_id"], args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return [];
+    const c = this.tables.customers.find((x) => x["id"] === args["p_customer_id"] && x["shop_id"] === args["p_shop_id"]);
+    const attrs = (c?.["attributes"] ?? {}) as Record<string, unknown>;
+    return this.tables.audiences.filter((a) => a["shop_id"] === args["p_shop_id"] && !audienceDisplayOnly(a["condition"]) && audienceOk(a["condition"], { member: true, attrs })).map((a) => String(a["id"]));
+  }
+
   /** SELECT の可視性（ポリシーの using 相当） */
   private visible(table: TableName, row: Row, uid: string | null): boolean {
     // 0051: 監査ログは組織の owner / admin だけ
@@ -617,7 +634,7 @@ export class FakeSupabase {
     if (table === "shops" && this.memberPerms(uid, row["id"]).length > 0) return true;
     if (table === "shops" && uid && this.ownedShopIds(uid).has(row["id"] as string)) return true;
     if (table === "shops") return row["published"] === true;
-    if (table === "products") return row["published"] === true && this.shopPublished(row["shop_id"]);
+    if (table === "products") return row["published"] === true && this.shopPublished(row["shop_id"]) && this.productOpen(row);
     if (table === "categories") return this.shopPublished(row["shop_id"]);
     if (table === "pages") return this.pageLive(row) && this.shopPublished(row["shop_id"]);
     if (table === "blogs") return this.shopPublished(row["shop_id"]);
@@ -625,7 +642,7 @@ export class FakeSupabase {
     if (table === "stores") return this.storeVisible(uid, row);
     if (table === "tryon_requests") return this.storePerm(uid, row["store_id"], "tryon");
     if (table === "tryon_items") return this.tables.tryon_requests.some((r) => r["id"] === row["request_id"] && this.storePerm(uid, r["store_id"], "tryon"));
-    if (table === "skus" || table === "product_images") return this.productPublished(row["product_id"]);
+    if (table === "skus" || table === "product_images") return this.productGuestVisible(row["product_id"]);
     if (table === "inventory") {
       // 0089: anon は在庫の数を読めない（product_public_stock で 0〜99 の段階値を引く）
       if (this.appliedMigrations.includes("0089_security_hardening_3")) return false;
@@ -1100,7 +1117,7 @@ export class FakeSupabase {
     return k ? { price: Number(k["price_jpy"]), compareAt: (k["compare_at_price_jpy"] as number | null) ?? null } : { price: null, compareAt: null };
   }
 
-  private productPublicList(args: Record<string, unknown>): Response {
+  private productPublicList(args: Record<string, unknown>, aud: readonly string[] = []): Response {
     const shopId = args["p_shop_id"];
     if (!this.shopPublished(shopId)) return json({ items: [], next: null });
     const limit = Math.min(Math.max(Number(args["p_limit"] ?? 24) || 24, 1), 100);
@@ -1129,7 +1146,7 @@ export class FakeSupabase {
     const tagsOf = (p: Row) => (Array.isArray(p["tags"]) ? (p["tags"] as string[]) : []);
     const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300)].join(" ").toLowerCase();
     let rows: Entry[] = this.tables.products
-      .filter((p) => p["shop_id"] === shopId && p["published"] === true)
+      .filter((p) => p["shop_id"] === shopId && p["published"] === true && this.productOpen(p, aud))
       .filter((p) => !tag || tagsOf(p).includes(tag))
       .filter((p) => !cats || cats.includes(String(p["category_id"])) || ((p["extra_category_ids"] ?? []) as string[]).some((c) => cats.includes(c)))
       .filter((p) => !brand || p["brand"] === brand)
@@ -1311,15 +1328,44 @@ export class FakeSupabase {
       const out: { sku_id: string; available: number }[] = [];
       for (const i of this.tables.inventory) {
         const sku = this.tables.skus.find((k) => k["id"] === i["sku_id"]);
-        if (!sku || sku["shop_id"] !== args["p_shop_id"] || !ids.includes(String(i["sku_id"])) || !this.productPublished(sku["product_id"])) continue;
+        if (!sku || sku["shop_id"] !== args["p_shop_id"] || !ids.includes(String(i["sku_id"])) || !this.productGuestVisible(sku["product_id"])) continue;
         out.push({ sku_id: String(i["sku_id"]), available: Math.min(Math.max(Number(i["available"]), 0), 99) });
       }
       return json(out);
     }
     // 0055: 商品詳細（公開中のショップの公開中の商品だけ。attributes は公開の項目だけ）
+    // 0098: 会員の読み取りの経路と、ゲストの「会員の方だけ」
+    if (fn === "product_public_gate") {
+      const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true);
+      return json(p && this.shopPublished(args["p_shop_id"]) && p["audience_id"] && p["audience_mode"] !== "buy" && !p["audience_hide"] ? "members" : null);
+    }
+    if (fn === "product_member_list") return this.productPublicList(args, this.memberAudienceIds(args));
+    if (fn === "product_member_get" || fn === "product_member_skus") {
+      const aud = this.memberAudienceIds(args);
+      const stock = (skuId: unknown) => Math.min(Math.max(Number(this.tables.inventory.find((i) => i["sku_id"] === skuId)?.["available"] ?? 0), 0), 99);
+      const can = (p: Row) => !p["audience_id"] || aud.includes(String(p["audience_id"]));
+      if (fn === "product_member_get") {
+        const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true);
+        if (!p || !this.shopPublished(args["p_shop_id"]) || !this.productOpen(p, aud)) return json(null);
+        return json({
+          product: { ...p, attributes: {}, app_data: [], size_chart: null },
+          images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]),
+          skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ ...k, available: stock(k["id"]) })),
+          purchasable: can(p),
+        });
+      }
+      const ids = (args["p_sku_ids"] ?? []) as string[];
+      const out: Row[] = [];
+      for (const k of this.tables.skus.filter((x) => x["shop_id"] === args["p_shop_id"] && ids.includes(String(x["id"])))) {
+        const p = this.tables.products.find((x) => x["id"] === k["product_id"]);
+        if (!p || !this.productPublished(p["id"]) || !this.productOpen(p, aud)) continue;
+        out.push({ sku: { ...k, available: stock(k["id"]) }, product: p, purchasable: can(p) });
+      }
+      return json(out);
+    }
     if (fn === "product_public_get") {
       if (!this.shopPublished(args["p_shop_id"])) return json(null);
-      const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true);
+      const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true && this.productOpen(x));
       if (!p) return json(null);
       const shop = this.tables.shops.find((s) => s["id"] === args["p_shop_id"]);
       const fields = productFields((shop?.["settings"] ?? {}) as Record<string, unknown>);
@@ -3232,6 +3278,8 @@ export class FakeSupabase {
   }
 
   private serviceRpc(fn: string, args: Record<string, unknown>): Response {
+    // 0098: 会員の読み取りの経路（中身は rpc() の product_member_*）
+    if (fn.startsWith("product_member_")) return this.rpc(fn, args, null);
     if (fn === "theme_preview_settings") {
       const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"] && x["shop_id"] === args["p_shop_id"]);
       return json(v ? (v["settings"] ?? {}) : null);

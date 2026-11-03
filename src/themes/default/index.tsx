@@ -661,11 +661,23 @@ export const defaultTheme: Theme = {
                 {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
                 <label for="qty">{t("store.qty")}</label>
                 <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
-                <p>
-                  <button type="submit" disabled={inStock.length === 0}>
-                    {inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart")}
-                  </button>
-                </p>
+                {detail.purchasable === false ? (
+                  <p class="notice" data-members-only="">
+                    {ctx.member ? (
+                      t("store.members_only_buy")
+                    ) : (
+                      <>
+                        {t("store.members_only_login")} <a href={`${ctx.shopPath}/account/login`}>{t("store.members_login")}</a>
+                      </>
+                    )}
+                  </p>
+                ) : (
+                  <p>
+                    <button type="submit" disabled={inStock.length === 0}>
+                      {inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart")}
+                    </button>
+                  </p>
+                )}
               </form>
             ) : null}
             {skuImages && skus.length > 1 ? <script dangerouslySetInnerHTML={{ __html: SKU_IMAGE_SCRIPT }} /> : null}
@@ -829,6 +841,17 @@ export const defaultTheme: Theme = {
       <Layout title={title} ctx={ctx} seo={{ path: undefined }}>
         <h1>{title}</h1>
         <pre class="legal">{body}</pre>
+      </Layout>
+    );
+  },
+
+  MembersOnlyPage({ ctx, loginUrl }) {
+    return (
+      <Layout title={t("store.members_only_title")} ctx={ctx} seo={{ noindex: true }}>
+        <h1>{t("store.members_only_title")}</h1>
+        <p>
+          {t("store.members_only_login")} <a href={loginUrl}>{t("store.members_login")}</a>
+        </p>
       </Layout>
     );
   },

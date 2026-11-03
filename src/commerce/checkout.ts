@@ -90,8 +90,10 @@ export const FREE_PROVIDER = "free";
 export interface PricedCart {
   lines: CartLine[];
   subtotal: number;
-  /** 非公開になった・削除された SKU（カートから外す） */
+  /** 非公開になった・削除された SKU と、見る人が買えない会員限定の商品の SKU（カートから外す） */
   dropped: string[];
+  /** dropped のうち、会員限定で買えないもの（0098。カートの画面の知らせに使う） */
+  restricted?: string[];
   /** 表示できる行だけに整えたカート */
   cart: Cart;
 }
@@ -104,10 +106,17 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
   );
   const lines: CartLine[] = [];
   const dropped: string[] = [];
+  const restricted: string[] = [];
   for (const item of cart.items) {
     const hit = found.get(item.sku_id);
     if (!hit) {
       dropped.push(item.sku_id);
+      continue;
+    }
+    // 会員限定の商品（0098）: 買えるかは会員なら DB が判定した値、ゲストは条件のある商品は買えない。確定もこの値付けを通る
+    if (!hit.purchasable) {
+      dropped.push(item.sku_id);
+      restricted.push(item.sku_id);
       continue;
     }
     lines.push({ sku: hit.sku, product: hit.product, qty: item.qty, short: hit.sku.available < item.qty });
@@ -116,6 +125,7 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
     lines,
     subtotal: lines.reduce((n, l) => n + l.sku.price_jpy * l.qty, 0),
     dropped,
+    ...(restricted.length > 0 ? { restricted } : {}),
     cart: { items: lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })) },
   };
 }

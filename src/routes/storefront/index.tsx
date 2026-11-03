@@ -22,8 +22,8 @@ import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, para
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
-import { storefrontQueryContext, viewerBody } from "../audience-render";
-import { GUEST, type AudienceContext } from "../../members/audience";
+import { memberReader, storefrontQueryContext, viewerBody } from "../audience-render";
+import { AUDIENCES_MODULE, GUEST, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
@@ -134,12 +134,18 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   const theme = resolveTheme(shop.settings ?? {});
   // お問い合わせのリンク（同梱モジュール inquiries）。キャッシュ済みのショップ行だけで判定する（版の確認は画面を開いたときだけ）
   if (moduleEnabled(shop.settings, INQUIRIES_MODULE) && theme.InquiryPage) ctx.inquiries = true;
+  let reader = sf;
   if (ctx.membersEnabled) {
     const member = await customerSession(c, { shop });
     ctx.member = member ? { email: member.email, attrs: member.at ?? {} } : null;
+    // 会員限定の商品（0098）: 同梱モジュール audiences が ON のショップでは、ログイン中の会員の一覧・詳細・カートを会員の読み取りの経路で
+    if (member?.sid && moduleEnabled(shop.settings, AUDIENCES_MODULE)) {
+      const r = memberReader(c, shop.id, { cid: member.cid, ep: member.ep, sid: member.sid });
+      if (r) reader = sf.withMember(r);
+    }
   }
   const query = await storefrontQueryContext(c, shop, ctx.shopPath || "/");
-  return { shop, sf, cart, ctx, theme, query };
+  return { shop, sf: reader, cart, ctx, theme, query };
 }
 
 // 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
@@ -336,7 +342,15 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const [detail, categories] = await Promise.all([s.sf.productBySlug(s.shop, param(c, "product")), s.sf.listCategories(s.shop)]);
-  if (!detail) return notFoundPage(c, s);
+  if (!detail) {
+    // 会員限定の商品（0098）にゲストが来たとき: 「会員の方だけ」とログインへ（存在も隠す商品は 404。ログイン中で合わない会員も 404）
+    if (!s.ctx.member && s.ctx.membersEnabled && moduleEnabled(s.shop.settings, AUDIENCES_MODULE) && (await s.sf.productGate(s.shop, param(c, "product")))) {
+      const loginUrl = `${s.ctx.shopPath}/account/login`;
+      c.header("Cache-Control", "private, no-store");
+      return c.html(s.theme.MembersOnlyPage ? s.theme.MembersOnlyPage({ ctx: s.ctx, loginUrl }) : s.theme.LegalPage({ ctx: s.ctx, title: t("store.members_only_title"), body: t("store.members_only_login") }));
+    }
+    return notFoundPage(c, s);
+  }
   // 品目は SKU の品番（カート・購入手続きと同じ）。商品を見たときは SKU を全部並べる
   const items = detail.skus.map((k) => ({ sku: k.code, name: detail.product.name, ...(k.name ? { variant: k.name } : {}), price: k.price_jpy }));
   const price = items.reduce<number | null>((m, k) => (m === null || k.price < m ? k.price : m), null) ?? 0;
@@ -731,6 +745,8 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
   const found = await s.sf.skusForCart(s.shop, [skuId]);
   const hit = found.get(skuId);
   if (!hit) return notFound(c, s);
+  // 会員限定で買えない商品（0098）は入れない（商品のページが「会員の方だけ購入できます」を出している）
+  if (!hit.purchasable) return c.redirect(`${s.ctx.shopPath}/p/${hit.product.slug}`);
   await writeCart(c, s, addItem(s.cart, skuId, qty));
   // sku と qty は「カートに入れた」の出来事用（どの SKU を何点入れたか。src/storefront/events.ts）
   return c.redirect(`${s.ctx.shopPath}/p/${hit.product.slug}?added=1&sku=${encodeURIComponent(hit.sku.code)}&qty=${qty}`);
@@ -860,6 +876,7 @@ async function cartAddJs(c: Ctx): Promise<Response> {
   if (adds.length === 0) return c.json({ status: 422, message: "invalid", description: "id and quantity are required" }, 422);
   const found = await s.sf.skusForCart(s.shop, adds.map((a) => a.skuId));
   if (adds.some((a) => !found.has(a.skuId))) return c.json({ status: 404, message: "not found", description: "this variant is not available" }, 404);
+  if (adds.some((a) => found.get(a.skuId)?.purchasable === false)) return c.json({ status: 422, message: "Cart Error", description: t("store.members_only_buy") }, 422);
   const cart = adds.reduce((cart, a) => addItem(cart, a.skuId, a.qty), s.cart);
   // 在庫を超えるなら入れない（Shopify と同じく 422）
   const { lines } = await priceCart(s.sf, s.shop, cart);

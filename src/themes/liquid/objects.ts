@@ -131,7 +131,10 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     compare_at_price: compare.length ? Math.min(...compare) : null,
     compare_at_price_min: compare.length ? Math.min(...compare) : null,
     compare_at_price_max: compare.length ? Math.max(...compare) : null,
-    available: available.length > 0,
+    // 会員限定で買えない商品（0098）は売り切れと同じに見せ、members_only でテーマが「会員の方だけ」を出せる
+    available: available.length > 0 && d.purchasable !== false,
+    members_only: Boolean(p.audience_id),
+    purchasable: d.purchasable !== false,
     vendor: p.brand ?? "",
     type: "",
     tags: p.tags ?? [],

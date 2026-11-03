@@ -49,6 +49,10 @@ export interface ProductRow {
   /** 0065。SKU を分ける軸（null = 決めていない）と、商品で上書きしたか。src/products/option-axes.ts */
   option_axes?: unknown;
   option_axes_custom?: boolean;
+  /** 0098。会員の条件（null = だれでも）と扱い（hide 見せない / buy 見せるが買えない）、存在も隠すか */
+  audience_id?: string | null;
+  audience_mode?: "hide" | "buy";
+  audience_hide?: boolean;
   published: boolean;
   created_at: string;
   updated_at: string;

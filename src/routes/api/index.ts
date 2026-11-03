@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { apiViewerData } from "../audience-render";
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 import { connectApi } from "./connect";
 import { appDataOf, productReviews } from "../../apps/app-data";
@@ -105,9 +106,12 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   // 2 文字以下の語はタグ・カテゴリー・ブランドで絞っているときだけ（product_public_list と同じ。全件を見る検索をさせない）
   if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tag && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
   const categories = await d.sf.listCategories(shop);
+  // 会員トークンの会員には会員限定の商品も（0098）
+  const sf = await apiViewerData(c, d.sf, shop);
+  if (sf instanceof Response) return sf;
   // total は最初のページだけ数える（ページごとに数え直させない）
   const first = !cursor && !query.offset;
-  const [page, facets] = await Promise.all([d.sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
+  const [page, facets] = await Promise.all([sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
   if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
   const catById = new Map(categories.map((x) => [x.id, x]));
   return c.json({
@@ -173,8 +177,14 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
   if (!d) return c.json({ error: "not_configured" }, 503);
   const shop = await d.sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
-  const [detail, categories] = await Promise.all([d.sf.productBySlug(shop, param(c, "product")), d.sf.listCategories(shop)]);
-  if (!detail) return c.json({ error: "not_found" }, 404);
+  const sf = await apiViewerData(c, d.sf, shop);
+  if (sf instanceof Response) return sf;
+  const [detail, categories] = await Promise.all([sf.productBySlug(shop, param(c, "product")), d.sf.listCategories(shop)]);
+  if (!detail) {
+    // 会員限定の商品（0098）: ゲストには「会員の方だけ」（存在も隠す商品・合わない会員は 404）
+    if (!c.req.header("authorization") && (await d.sf.productGate(shop, param(c, "product")))) return c.json({ error: "members_only" }, 403);
+    return c.json({ error: "not_found" }, 404);
+  }
   const p = detail.product;
   return c.json({
     product: {
@@ -189,6 +199,9 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       /** 追加カテゴリー（売り場の棚。主カテゴリーのほかに並ぶカテゴリー） */
       extra_categories: (p.extra_category_ids ?? []).map((id) => categoryRef(categories.find((x) => x.id === id))).filter((x) => x !== null),
       tags: tagsOf(p),
+      /** 会員限定の商品か（0098）と、この見る人（会員トークンの会員かゲスト）が買えるか。買えなければカートに入れると 403 members_only */
+      members_only: Boolean(p.audience_id),
+      purchasable: detail.purchasable !== false,
       /** カスタム項目のうち公開するもの（表示名つき） */
       attributes: publicAttributes(productFields(shop.settings), p.attributes),
       updated_at: p.updated_at,
