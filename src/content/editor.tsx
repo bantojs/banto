@@ -32,7 +32,7 @@ import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
 import { PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
-import { ICON_NAMES } from "../pages/icons";
+import { ICONS, ICON_NAMES } from "../pages/icons";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
 function layoutConfig(audiences: { id: string; name: string }[] = []): string {
@@ -217,6 +217,8 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) 
       label: t("blocks.icon"),
       desc: t("blocks.icon_desc"),
       group: "design",
+      // 編集の画面でもその場で描くための SVG の中身（決まった一式。サーバーの定数だけで、入力からは作らない）
+      svgs: ICONS,
       fields: [
         { key: "name", label: t("blocks.icon_name"), type: "select", options: opt(ICON_NAMES.map((n): [string, string] => [n, n])) },
         { key: "size", label: t("blocks.icon_size"), type: "select", options: opt([["s", "S"], ["m", "M"], ["l", "L"], ["xl", "XL"]]), default: "m" },

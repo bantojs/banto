@@ -716,7 +716,18 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function setShopBox(box,kind,a){
     box.className="banto-shop banto-shop--"+kind+(sel===box?" is-sel":""); box.setAttribute("data-banto-block","shop"); box.setAttribute("contenteditable","false");
     box.setAttribute("data-kind",kind); box.setAttribute("data-attrs",JSON.stringify(a));
-    if(kind!=="icon"||!box.querySelector("svg")) box.textContent=shopText(kind,a);
+    if(kind==="icon") iconInto(box,a); else box.textContent=shopText(kind,a);
+  }
+  // アイコンはお店の画面と同じ形で描く（SVG の中身はサーバーが渡した決まった一式だけ。ラベルは textContent）
+  function iconInto(box,a){
+    var svgs=(SHOPDEF.icon&&SHOPDEF.icon.svgs)||{}, inner=Object.prototype.hasOwnProperty.call(svgs,a.name||"")?svgs[a.name]:null;
+    box.innerHTML="";
+    if(inner===null){ box.textContent=shopText("icon",a); return; }
+    var size=["s","m","l","xl"].indexOf(a.size)>=0?a.size:"m", tone=["text","accent","muted"].indexOf(a.tone)>=0?a.tone:"text";
+    var sp=document.createElement("span"); sp.className="banto-icon banto-icon--"+size+" banto-icon--"+tone;
+    sp.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">'+inner+'</svg>';
+    if(a.label){ var lb=document.createElement("span"); lb.className="banto-icon__label"; lb.textContent=a.label; sp.appendChild(lb); }
+    box.appendChild(sp);
   }
   function openShop(box,blk,kind){
     var def=SHOPDEF[kind]; if(!def) return;
@@ -740,6 +751,11 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       }
       if(x.help){ var hp=el("p","muted"); hp.style.fontSize=".8rem"; hp.textContent=x.help; f.appendChild(hp); }
     });
+    if(kind==="icon"){
+      var pv=el("div","banto-shop banto-shop--icon"); pv.style.margin=".75rem 0"; f.appendChild(pv);
+      var redraw=function(){ var o={}; ["name","size","tone","label"].forEach(function(k){ var e3=f.elements[k]; if(e3&&e3.value) o[k]=String(e3.value).trim(); }); iconInto(pv,o); };
+      f.addEventListener("input",redraw); f.addEventListener("change",redraw); redraw();
+    }
     var err=el("p","error"); err.hidden=true; f.appendChild(err);
     var row=el("p",""); var ok=document.createElement("button"); ok.type="submit"; ok.value="ok"; ok.textContent=T("ok")||"OK"; var cancel=document.createElement("button"); cancel.type="submit"; cancel.value="cancel"; cancel.className="secondary"; cancel.textContent=T("cancel")||"Cancel"; cancel.formNoValidate=true;
     row.appendChild(ok); row.appendChild(document.createTextNode(" ")); row.appendChild(cancel); f.appendChild(row);
@@ -762,7 +778,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     dlg.addEventListener("close",function(){
       var okd=dlg.returnValue==="ok"; document.body.removeChild(dlg);
       if(!okd){ if(blk){ caretIn(blk); select(blk); } return; }
-      if(box){ if(kind==="icon") box.innerHTML=""; setShopBox(box,kind,a); mark(); select(box); }
+      if(box){ setShopBox(box,kind,a); mark(); select(box); }
       else { var nb=document.createElement("div"); setShopBox(nb,kind,a); place2(nb,blk); }
     });
     dlg.showModal();

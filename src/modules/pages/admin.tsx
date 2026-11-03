@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { themedPreview } from "../../content/preview";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -252,7 +253,15 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
 }
 
 /** プレビュー（新しいタブ。保存しない）。本文はお店の画面と同じ変換、見た目はテーマが決めるので管理画面の形で中身だけ見せる */
-function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null) {
+async function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null) {
+  // お店の画面と同じテーマ・同じブロックの中身で描く（描けないテーマなら下の簡単な形）
+  if (!error) {
+    const now = new Date().toISOString();
+    const page: PageRow = { id: "preview", shop_id: shop.id, created_at: now, updated_at: now, ...values, body: values.body } as PageRow;
+    const categories = await owner(c).db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" }).catch(() => [] as CategoryRow[]);
+    const res = await themedPreview(c, shop, { kind: "page", page }, categories);
+    if (res) return res;
+  }
   return layout(
     c,
     shop,

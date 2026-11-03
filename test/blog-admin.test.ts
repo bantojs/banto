@@ -109,6 +109,21 @@ describe("ブログの管理画面", () => {
     expect(sb.tables.blogs).toHaveLength(0);
   });
 
+  it("記事のプレビューもお店の画面と同じテーマで描く（保存しない）", async () => {
+    const { sb, app, shop, base } = setup();
+    const blog = sb.addBlog(shop.id, { handle: "news", title: "お知らせ" });
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const res = await owner.post(`${base}/${blog.id}/articles`, { title: "見るだけの記事", handle: "peek", body: "## 中身\n\n::: icon name=truck", action: "preview" });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("お店の画面と同じテーマで描いています");
+    expect(html).toContain("見るだけの記事");
+    expect(html).toContain("<h2>中身</h2>");
+    expect(html).toMatch(/class="banto-icon[^"]*"[^>]*><svg/);
+    expect(html).toContain(`href="/my-shop"`);
+    expect(sb.tables.articles).toHaveLength(0);
+  });
+
   it("タグの読み方", () => {
     expect(parseTags("新作、セール, 新作 ,, 春")).toEqual(["新作", "セール", "春"]);
   });
