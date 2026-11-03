@@ -164,12 +164,6 @@ textarea.copy{position:absolute;left:-9999px;top:0}
     </fieldset>
   </form>
 
-  <section class="card" aria-labelledby="h-saas">
-    <h2 id="h-saas">参考: ショップ作成サービスと比べると</h2>
-    <p class="hint" style="margin:0 0 8px">同じ売上を各社の公開料金（下の単価表、編集可）に当てはめた金額です。各社は決済・ホスティング・サポートを含みます。Banto は手数料が決済事業者分だけな代わりに、運用はあなた自身が行います。</p>
-    <div class="tbl"><table id="saas"><thead><tr><th>サービス</th><th>プラン</th><th class="r">月額合計</th><th class="r">Banto との差</th></tr></thead><tbody></tbody></table></div>
-  </section>
-
   <details>
     <summary>単価表（編集できます）<span class="hint" id="asof"></span></summary>
     <div class="body">
@@ -263,18 +257,9 @@ var DEFAULT_PRICES = {
   km_card_pct:     {v:3.6,   u:"%",         l:"KOMOJU カード", g:"pay"},
   km_konbini_pct:  {v:3.5,   u:"%",         l:"KOMOJU コンビニ決済（要確認）", g:"pay"},
   km_konbini_fix:  {v:0,     u:"円 / 件",   l:"KOMOJU コンビニ決済の固定額（要確認）", g:"pay"},
-  km_monthly_jpy:  {v:0,     u:"円 / 月",   l:"KOMOJU 月額固定費", g:"pay"},
-  base_std_pct:    {v:6.6,   u:"%",         l:"BASE スタンダード 決済 3.6% + サービス利用料 3%", g:"saas"},
-  base_std_fix:    {v:40,    u:"円 / 件",   l:"BASE スタンダード 1 件あたり", g:"saas"},
-  base_grow_jpy:   {v:19980, u:"円 / 月",   l:"BASE グロース 月額", g:"saas"},
-  base_grow_pct:   {v:2.9,   u:"%",         l:"BASE グロース 決済手数料", g:"saas"},
-  stores_free_pct: {v:5,     u:"%",         l:"STORES フリー 決済手数料", g:"saas"},
-  stores_std_jpy:  {v:3480,  u:"円 / 月",   l:"STORES スタンダード 月額", g:"saas"},
-  stores_std_pct:  {v:3.6,   u:"%",         l:"STORES スタンダード 決済手数料", g:"saas"},
-  shop_basic_jpy:  {v:4850,  u:"円 / 月",   l:"Shopify ベーシック 月額（月払い）", g:"saas"},
-  shop_basic_pct:  {v:3.55,  u:"%",         l:"Shopify ベーシック 国内カード", g:"saas"}
+  km_monthly_jpy:  {v:0,     u:"円 / 月",   l:"KOMOJU 月額固定費", g:"pay"}
 };
-var GROUPS = [["cf","Cloudflare Workers / R2","https://developers.cloudflare.com/workers/platform/pricing/"],["sb","Supabase","https://supabase.com/pricing"],["mail","メール / LINE","https://resend.com/pricing"],["pay","決済手数料","https://stripe.com/jp/pricing"],["other","その他",""],["saas","参考: ショップ作成サービス",""]];
+var GROUPS = [["cf","Cloudflare Workers / R2","https://developers.cloudflare.com/workers/platform/pricing/"],["sb","Supabase","https://supabase.com/pricing"],["mail","メール / LINE","https://resend.com/pricing"],["pay","決済手数料","https://stripe.com/jp/pricing"],["other","その他",""]];
 var PRESETS = {
   hobby:{orders:20,aov:4000,pv:3000,reqPerPv:4,peak:3,products:20,imgs:3,imgMb:0.2,r2Direct:false,provider:"stripe",cardShare:90,mailsPerOrder:2,bcc:true,line:false,members:false,backups:false,domain:false,fx:150},
   small:{orders:100,aov:6000,pv:20000,reqPerPv:4,peak:3,products:50,imgs:3,imgMb:0.2,r2Direct:true,provider:"stripe",cardShare:90,mailsPerOrder:2,bcc:true,line:false,members:false,backups:false,domain:true,fx:150},
@@ -398,17 +383,7 @@ function compute(i, p){
     why: "カード " + Math.round(s*100) + "%（" + cardPct + "%）、コンビニ " + Math.round((1-s)*100) + "%（" + kPct + "%" + (kFix ? " + " + yen(kFix) : "") + "）"});
 
   var total = fixed + fees;
-  var saas = [];
-  function best(name, plans){
-    var b = null;
-    plans.forEach(function(pl){ var c = pl.fee + gmv * pl.pct / 100 + i.orders * (pl.fix || 0); if (!b || c < b.cost) b = {plan: pl.name, cost: c}; });
-    saas.push({name: name, plan: b.plan, cost: b.cost});
-  }
-  best("BASE", [{name:"スタンダード", fee:0, pct:p.base_std_pct, fix:p.base_std_fix},{name:"グロース", fee:p.base_grow_jpy, pct:p.base_grow_pct}]);
-  best("STORES", [{name:"フリー", fee:0, pct:p.stores_free_pct},{name:"スタンダード", fee:p.stores_std_jpy, pct:p.stores_std_pct}]);
-  best("Shopify", [{name:"ベーシック", fee:p.shop_basic_jpy, pct:p.shop_basic_pct}]);
-
-  return {gmv:gmv, rows:rows, notes:notes, fixed:fixed, fees:fees, total:total, effPct:effPct, saas:saas,
+  return {gmv:gmv, rows:rows, notes:notes, fixed:fixed, fees:fees, total:total, effPct:effPct,
     perOrder: i.orders > 0 ? total / i.orders : 0, pct: gmv > 0 ? total / gmv * 100 : 0};
 }
 
@@ -436,16 +411,6 @@ function render(){
   tb.appendChild(sum);
   var nl = $("notes"); nl.innerHTML = "";
   r.notes.forEach(function(n){ var li = document.createElement("li"); if (n.w) li.className = "w"; li.textContent = n.t; nl.appendChild(li); });
-  var st = $("saas").tBodies[0]; st.innerHTML = "";
-  var me = document.createElement("tr");
-  me.innerHTML = "<td><strong>Banto（自前）</strong></td><td>Cloudflare + Supabase + " + (i.provider === "stripe" ? "Stripe" : "KOMOJU") + "</td><td class='r'><strong>" + esc(yen(r.total)) + "</strong></td><td class='r'>—</td>";
-  st.appendChild(me);
-  r.saas.forEach(function(x){
-    var d = x.cost - r.total;
-    var tr = document.createElement("tr");
-    tr.innerHTML = "<td>" + esc(x.name) + "</td><td>" + esc(x.plan) + "</td><td class='r'>" + esc(yen(x.cost)) + "</td><td class='r'>" + (d >= 0 ? "+" : "−") + esc(yen(Math.abs(d))) + "</td>";
-    st.appendChild(tr);
-  });
 }
 
 function buildPrices(){
@@ -510,7 +475,6 @@ function asText(){
   L.push("");
   L.push("注文 1 件あたり " + yen(r.perOrder) + "、売上の " + r.pct.toFixed(1) + "%、年額 " + yen(r.total * 12));
   if (r.notes.length) { L.push(""); r.notes.forEach(function(n){ L.push("- " + n.t); }); }
-  L.push(""); L.push("参考（各社の公開料金から）:"); r.saas.forEach(function(x){ L.push("- " + x.name + " " + x.plan + ": " + yen(x.cost) + "/月"); });
   return L.join("\n");
 }
 
