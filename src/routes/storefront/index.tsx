@@ -434,6 +434,18 @@ storefront.get("/:shop/feed/products.xml", async (c: Ctx) => {
 });
 
 // ---------- ショップのページ（同梱モジュール pages、0079、docs/pages.md） ----------
+/**
+ * 会員限定のページ・記事（0100）にゲストが来たとき: 「会員の方だけ」とログインへ（存在も隠すものは null = 404。ログイン中で合わない会員も 404）。
+ * 商品（0098）と同じ画面
+ */
+async function membersOnlyGate(c: Ctx, s: ShopScope, kind: "page" | "article", handle: string, blogId: string | null = null): Promise<Response | null> {
+  if (s.ctx.member || !s.ctx.membersEnabled || !moduleEnabled(s.shop.settings, AUDIENCES_MODULE)) return null;
+  if (!(await s.sf.contentGate(s.shop, kind, handle, blogId))) return null;
+  const loginUrl = `${s.ctx.shopPath}/account/login`;
+  c.header("Cache-Control", "private, no-store");
+  return c.html(s.theme.MembersOnlyPage ? s.theme.MembersOnlyPage({ ctx: s.ctx, loginUrl }) : s.theme.LegalPage({ ctx: s.ctx, title: t("store.members_only_title"), body: t("store.members_only_login") }));
+}
+
 /** 見る人（ログイン中の会員なら独自項目の値も）。見せる相手の囲み（0097）の判定に使う */
 const viewerOf = (s: ShopScope): AudienceContext => ({ ...(s.ctx.member ? { member: true, attrs: s.ctx.member.attrs ?? {} } : GUEST), ...s.query });
 
@@ -449,7 +461,7 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   const handle = param(c, "handle");
   if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
-  if (!page) return notFoundPage(c, s);
+  if (!page) return (await membersOnlyGate(c, s, "page", handle)) ?? notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, page.body, viewerOf(s));
   const raw = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   return contentPageResponse(c, s, page, view.body, raw, categories);
@@ -547,7 +559,7 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   const [blog, categories] = await Promise.all([s.sf.blogByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!blog) return notFoundPage(c, s);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
-  if (!article) return notFoundPage(c, s);
+  if (!article) return (await membersOnlyGate(c, s, "article", ah, blog.id)) ?? notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
   const raw = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   return articlePageResponse(c, s, blog, article, view.body, raw, categories);

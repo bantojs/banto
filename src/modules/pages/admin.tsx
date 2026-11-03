@@ -24,7 +24,7 @@ import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MA
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
-import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow } from "../../content/editor";
+import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow, contentAudienceValues } from "../../content/editor";
 
 /**
  * 同梱モジュール「ページ」の管理画面（0079_mod_pages、docs/pages.md）。扱えるのは content の項目を持つ人（RLS が正）。
@@ -43,7 +43,7 @@ async function scope(c: AdminContext): Promise<ShopRow | null> {
   return shop && moduleEnabled(shop.settings, PAGES_MODULE) ? shop : null;
 }
 
-type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url">;
+type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url" | "audience_id" | "audience_hide">;
 
 const EMPTY: PageValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: false, published_at: null, image_url: null };
 
@@ -75,6 +75,7 @@ function pageValues(f: Record<string, string>, opts: { mediaBase: string }): { v
     // 公開する日時（ショップの時間帯の「日付と時刻」。空ならすぐ）とアイキャッチ
     published_at: f.published_at ? zonedInputToIso(f.published_at) : null,
     image_url: (f.image_url ?? "").trim() || null,
+    ...contentAudienceValues(f),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
   if (values.image_url) {
@@ -93,6 +94,7 @@ function pageValues(f: Record<string, string>, opts: { mediaBase: string }): { v
 function dbError(e: DbError): MessageKey {
   if (planLimitOf(e)) return "plan.limit_pages";
   if (e.code === "23505") return "pages.error_handle_taken";
+  if (/audience_display_only/.test(e.message)) return "product.audience_display_only";
   if (/pages_full/.test(e.message)) return "pages.error_full";
   if (e.code === "23514") return "pages.error_invalid";
   return "error.generic";

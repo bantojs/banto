@@ -11,7 +11,7 @@ import { bodyBlocks } from "../../content/body-blocks";
 import { fillShopBlocks } from "../../pages/shop-blocks";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 import { hasAudienceBlocks } from "../../content/audience-blocks";
-import { viewerBody } from "../audience-render";
+import { apiViewerData, viewerBody } from "../audience-render";
 import { GUEST, queryParamsOf } from "../../members/audience";
 import { memberFromRequest } from "./members";
 
@@ -43,8 +43,11 @@ async function scope(c: Ctx, module: string): Promise<Scope | Response> {
   const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
   const shop = await sf.shopBySlug(param(c, "shop"));
   if (!shop || !moduleEnabled(shop.settings, module)) return c.json({ error: "not_found" }, 404);
+  // 会員トークンの会員には会員限定のページ・記事も（0100。同梱モジュール audiences が ON のショップだけ。壊れたトークンは 401）
+  const viewer = await apiViewerData(c, sf, shop);
+  if (viewer instanceof Response) return viewer;
   const origin = publicBaseUrl(c);
-  return { sf, shop, mediaBaseUrl: mediaBaseUrl(c), origin, home: shopHome(origin, shop) };
+  return { sf: viewer, shop, mediaBaseUrl: mediaBaseUrl(c), origin, home: shopHome(origin, shop) };
 }
 
 /** アイキャッチ（保存した URL。/media/ から始まるものは絶対 URL に） */
@@ -102,7 +105,11 @@ contentApi.get("/shops/:shop/pages/:handle", async (c: Ctx) => {
   const s = await scope(c, PAGES_MODULE);
   if (s instanceof Response) return s;
   const page = await s.sf.pageByHandle(s.shop, handle);
-  if (!page) return c.json({ error: "not_found" }, 404);
+  if (!page) {
+    // 会員限定のページ（0100）: ゲストには「会員の方だけ」（存在も隠すページ・合わない会員は 404）
+    if (!c.req.header("authorization") && (await s.sf.contentGate(s.shop, "page", handle))) return c.json({ error: "members_only" }, 403);
+    return c.json({ error: "not_found" }, 404);
+  }
   const v = await viewBody(c, s, page);
   if (v instanceof Response) return v;
   return c.json({ page: { ...pageSummary(s, page), body: v.body, html: v.html } });
@@ -161,7 +168,11 @@ contentApi.get("/shops/:shop/blogs/:blog/articles/:article", async (c: Ctx) => {
   const blog = await s.sf.blogByHandle(s.shop, handle);
   if (!blog) return c.json({ error: "not_found" }, 404);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
-  if (!article) return c.json({ error: "not_found" }, 404);
+  if (!article) {
+    // 会員限定の記事（0100）: ゲストには「会員の方だけ」（存在も隠す記事・合わない会員は 404）
+    if (!c.req.header("authorization") && (await s.sf.contentGate(s.shop, "article", ah, blog.id))) return c.json({ error: "members_only" }, 403);
+    return c.json({ error: "not_found" }, 404);
+  }
   const v = await viewBody(c, s, article);
   if (v instanceof Response) return v;
   return c.json({ blog: blogSummary(s, blog), article: { ...articleSummaryJson(s, blog, article), seo_title: article.seo_title, seo_description: article.seo_description, template_suffix: article.template_suffix, body: v.body, html: v.html } });

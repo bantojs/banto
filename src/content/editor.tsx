@@ -13,7 +13,9 @@ import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
 import { audiencesReady, mediaBaseUrl } from "../routes/common";
 import { moduleEnabled } from "../modules/registry";
-import { AUDIENCES_MODULE } from "../members/audience";
+import { AUDIENCES_MODULE, audienceDisplayOnly } from "../members/audience";
+import { migrated } from "../db/migration-state";
+import { AUDIENCE_CONTENT_MIGRATION } from "../storefront/data";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
@@ -116,6 +118,8 @@ export interface EditorExtras {
   apps?: EditorAppBlocks[];
   /** 見せる相手の囲みで選ぶ会員の条件（同梱モジュール audiences が ON で 0097 が当たっていれば） */
   audiences?: { id: string; name: string }[];
+  /** ページ・記事を会員限定にするときに選べる条件（0100 が当たっていれば。表示用の条件は除く）。無ければ欄を出さない */
+  gateAudiences?: { id: string; name: string }[];
 }
 
 export interface EditorAppBlocks {
@@ -153,17 +157,21 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
     editorAudiences(c, shop),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences };
+  const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) && (await contentGateReady(c)) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
 }
 
 /** 見せる相手の囲みで選べる会員の条件（モジュールが OFF・0097 の前は空。読めるのは項目 content を持つ人も） */
-async function editorAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string }[]> {
+async function editorAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string; condition?: unknown }[]> {
   if (!moduleEnabled(shop.settings, AUDIENCES_MODULE) || !(await audiencesReady(c))) return [];
   return owner(c)
-    .db.from<{ id: string; name: string }>("audiences")
-    .select("id,name", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
+    .db.from<{ id: string; name: string; condition: unknown }>("audiences")
+    .select("id,name,condition", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
     .catch(() => []);
 }
+
+/** 会員限定のページ・記事（0100）が当たっているか */
+const contentGateReady = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, AUDIENCE_CONTENT_MIGRATION);
 
 /** 公開中の Liquid のテーマのパターンとスタイル（公開中の版があるときだけ） */
 async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: PatternBody[]; styles: BlockStyles }> {
@@ -451,6 +459,14 @@ export interface ContentValues {
   image_url?: string | null;
   nav?: PageNav;
   sort_order?: number;
+  /** 会員限定（0100）。欄があったときだけ書く */
+  audience_id?: string | null;
+  audience_hide?: boolean;
+}
+
+/** 会員限定の欄の値（欄の無い送信では列に触れない） */
+export function contentAudienceValues(f: Record<string, string>): Pick<ContentValues, "audience_id" | "audience_hide"> {
+  return f.audience_present === "1" ? { audience_id: f.audience_id || null, audience_hide: f.audience_hide === "on" } : {};
 }
 
 export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; extras?: EditorExtras; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; revisions: RevisionRow[] }) {
@@ -651,6 +667,25 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <input id="published_at" name="published_at" type="datetime-local" value={isoToZonedInput(v.published_at)} />
               <p class="muted">{t("pages.published_at_help")}</p>
             </section>
+            {props.extras?.gateAudiences ? (
+              <section class="card">
+                <h2>{t("pages.audience_card")}</h2>
+                <input type="hidden" name="audience_present" value="1" />
+                <label for="audience_id">{t("pages.audience_gate")}</label>
+                <select id="audience_id" name="audience_id">
+                  <option value="">{t("pages.audience_anyone")}</option>
+                  {props.extras.gateAudiences.map((a) => (
+                    <option value={a.id} selected={v.audience_id === a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                <label style="display:block;margin-top:.5rem">
+                  <input type="checkbox" name="audience_hide" value="on" checked={v.audience_hide === true} /> {t("pages.audience_hide")}
+                </label>
+                <p class="muted">{t("pages.audience_gate_help")}</p>
+              </section>
+            ) : null}
             <section class="card">
               <h2>{t("pages.featured")}</h2>
               <input type="hidden" id="image_url" name="image_url" value={v.image_url ?? ""} />

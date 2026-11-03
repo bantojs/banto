@@ -146,12 +146,18 @@ export interface ProductDetail {
 /** 会員限定の商品（0098）。当たるまで会員の読み取りの経路を使わない */
 export const AUDIENCE_PRODUCTS_MIGRATION = "0098_audience_products";
 
-/** 会員の読み取りの経路（service_role の product_member_*。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の商品を足す） */
+/** 会員限定のページ・記事（0100）。当たるまで会員の読み取りの経路を使わない */
+export const AUDIENCE_CONTENT_MIGRATION = "0100_audience_content";
+
+/** 会員の読み取りの経路（service_role の product_member_* / page_member_get など。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の行を足す） */
 export interface MemberReader {
   member: { cid: string; ep: number; sid: string };
   list(args: Record<string, unknown>): Promise<unknown>;
   get(slug: string): Promise<unknown>;
   skus(skuIds: string[]): Promise<unknown>;
+  page(handle: string): Promise<unknown>;
+  article(blogId: string, handle: string): Promise<unknown>;
+  articles(blogId: string, offset: number, limit: number, tag: string | null): Promise<unknown>;
 }
 
 /** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
@@ -167,6 +173,12 @@ export class StorefrontData {
   /** ログイン中の会員として読む（一覧・詳細・カートが会員限定の商品を含む。キャッシュしない） */
   withMember(reader: MemberReader): StorefrontData {
     return new StorefrontData(this.db, this.cache, reader);
+  }
+
+  /** ゲストが会員限定のページ・記事の URL で来たとき「会員の方だけ」と出してよいか（0100。存在も隠すもの・無いものは false） */
+  async contentGate(shop: PublicShop, kind: "page" | "article", handle: string, blogId: string | null = null): Promise<boolean> {
+    if (!(await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) return false;
+    return (await this.db.rpc<string | null>("content_public_gate", { p_shop_id: shop.id, p_kind: kind, p_blog_id: blogId, p_handle: handle })) === "members";
   }
 
   /** ゲストが見せない商品の URL で来たとき「会員の方だけ」と出してよいか（存在も隠す商品・無い商品は false） */
@@ -368,6 +380,11 @@ export class StorefrontData {
 
   /** ショップのページ（同梱モジュール pages、0079）。公開中のものだけ（RLS）。商品の一覧と同じく短時間キャッシュする */
   async pageByHandle(shop: PublicShop, handle: string): Promise<PageRow | null> {
+    // 会員: 会員限定のページも（0100。キャッシュしない）
+    if (this.reader && (await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) {
+      const r = (await this.reader.page(handle)) as PageRow | null;
+      return r && typeof r === "object" ? r : null;
+    }
     const key = `page:${shop.id}:${handle}`;
     const hit = await this.cache.get<{ page: PageRow | null }>(key);
     if (hit) return hit.page;
@@ -422,6 +439,11 @@ export class StorefrontData {
    */
   async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
     const offset = Math.max(0, Math.min(ARTICLES_OFFSET_MAX, Math.floor(opts.offset)));
+    if (this.reader && (await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) {
+      const rows = (await this.reader.articles(blogId, offset, opts.limit, opts.tag ?? null)) as ArticleRow[] | null;
+      const list = Array.isArray(rows) ? rows : [];
+      return { items: list.slice(0, opts.limit), hasNext: list.length > opts.limit };
+    }
     const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}`;
     const hit = await this.cache.get<{ items: ArticleRow[]; hasNext: boolean }>(key);
     if (hit) return hit;
@@ -439,6 +461,10 @@ export class StorefrontData {
 
   /** 記事 1 つ（公開中のものだけ、RLS） */
   async articleByHandle(shop: PublicShop, blogId: string, handle: string): Promise<ArticleRow | null> {
+    if (this.reader && (await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) {
+      const r = (await this.reader.article(blogId, handle)) as ArticleRow | null;
+      return r && typeof r === "object" ? r : null;
+    }
     const key = `article:${blogId}:${handle}`;
     const hit = await this.cache.get<{ article: ArticleRow | null }>(key);
     if (hit) return hit.article;
