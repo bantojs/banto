@@ -365,6 +365,8 @@ export interface PrivilegedDb {
   productMemberList(args: Record<string, unknown>): Promise<unknown>;
   productMemberGet(args: Record<string, unknown>): Promise<unknown>;
   productMemberSkus(args: Record<string, unknown>): Promise<unknown>;
+  /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page） */
+  contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
   shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
@@ -621,6 +623,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     productMemberList: (args) => rpc<unknown>("product_member_list", args),
     productMemberGet: (args) => rpc<unknown>("product_member_get", args),
     productMemberSkus: (args) => rpc<unknown>("product_member_skus", args),
+    contentMemberRpc: (fn, args) => rpc<unknown>(fn, args),
     shopAudiencesRender: async (shopId) => {
       const r = await rpc<unknown>("shop_audiences_render", { p_shop_id: shopId });
       return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown }[]) : [];

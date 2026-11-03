@@ -2062,6 +2062,11 @@ export const en: Record<MessageKey, string> = {
   // 外部プラグインのブロック（0086）
   "pages.block_group_apps": "Plugins",
   "pages.block_app": "Plugin block",
+  "pages.audience_card": "Members only",
+  "pages.audience_gate": "Members who can open it",
+  "pages.audience_anyone": "Anyone (not members only)",
+  "pages.audience_hide": "Hide that it exists (visitors who are not logged in get \"page not found\" instead of \"members only\")",
+  "pages.audience_gate_help": "Only members who match the condition can open it. It is left out of lists, menus, the sitemap and RSS. Conditions that use URL parameters cannot be chosen. To show part of the body to some people only, use the \"Audience\" block.",
   "pages.app_label": "Plugin {app} / {block} — product {product}",
   "pages.audience_label": "Visible to: {name}",
   "pages.audience_unnamed": "(unnamed)",

@@ -51,6 +51,8 @@ const ANON_FUNCTIONS = new Set([
   "product_public_gate",
   // 0099: ゲストに見せる「会員価格」（公開中で見える商品の SKU の、当てはまる決まりのうちいちばん安い単価だけ。条件・決まりの中身は返さない）
   "product_public_member_prices",
+  // 0100: 会員限定のページ・記事にゲストが URL で来たとき「会員の方だけ」と出してよいか（'members' か null だけ。中身は返さない）
+  "content_public_gate",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */

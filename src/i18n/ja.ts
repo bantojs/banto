@@ -2069,6 +2069,11 @@ export const ja = {
   // 外部プラグインのブロック（0086）
   "pages.block_group_apps": "プラグイン",
   "pages.block_app": "プラグインのブロック",
+  "pages.audience_card": "会員限定",
+  "pages.audience_gate": "見られる会員",
+  "pages.audience_anyone": "だれでも（会員限定にしない）",
+  "pages.audience_hide": "存在も隠す（ログインしていない人が URL で来ても「会員の方だけ」と出さず、ページが無いことにする）",
+  "pages.audience_gate_help": "条件に合う会員だけが開けます。一覧・メニュー・サイトマップ・RSS には出ません。URL のパラメータを使う条件は選べません。本文の一部だけを出し分けるときは「見せる相手」のブロックを使います。",
   "pages.app_label": "プラグイン {app}・{block} — 商品 {product}",
   "pages.audience_label": "見せる相手: {name}",
   "pages.audience_unnamed": "（名前なし）",
