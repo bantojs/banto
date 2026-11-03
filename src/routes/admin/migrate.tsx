@@ -4,7 +4,7 @@ import { applyMigrations, migrationHosts, MigrationError, MIGRATION_STEP_BUDGET_
 import { applyMigrationsViaApi, ManagementApiError, normalizeAccessToken, projectRefFromUrl } from "../../db/migrate-api";
 import { pendingMigrationFiles } from "../../db/migrations";
 import { forgetAppliedMigrations } from "../../db/migration-state";
-import { t } from "../../i18n";
+import { t, tf } from "../../i18n";
 
 /**
  * 当てる版が多いと（初回は全部）、1 回のリクエストでは当てきれない（Workers のサブリクエストの上限・ブラウザとの接続の持ち時間）。
@@ -75,7 +75,9 @@ function MigrateFormOnly(props: { action: string; pending: string[]; error?: str
       <p class="muted">{t("migrate.not_stored")}</p>
       <p>
         <button type="submit">
-          {t("migrate.submit")} ({props.pending.join(", ")})
+          {props.pending.length > 3
+            ? tf("migrate.submit_count", { n: props.pending.length })
+            : `${t("migrate.submit")} (${props.pending.join(", ")})`}
         </button>
       </p>
       <progress data-migrate-bar="" max={props.pending.length || 1} value={0} hidden style="width:100%;max-width:40rem"></progress>

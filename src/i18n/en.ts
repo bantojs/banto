@@ -688,6 +688,7 @@ export const en: Record<MessageKey, string> = {
   "migrate.field": "Connection string",
   "migrate.not_stored": "The string is used only to apply the migrations and is not stored anywhere.",
   "migrate.submit": "Apply",
+  "migrate.submit_count": "Apply ({n} migrations)",
   "copy.button": "Copy",
   "copy.done": "Copied",
   "copy.failed": "Could not copy. Select the text and copy it.",

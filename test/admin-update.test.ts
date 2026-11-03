@@ -116,7 +116,9 @@ describe("マイグレーション適用フォーム", () => {
     let html = await (await b.get("/admin/setup")).text();
     expect(html).toContain('action="/admin/setup/migrate"');
     expect(html).toContain("Session pooler");
-    expect(html).toContain(`適用する (${BUNDLED_MIGRATIONS.join(", ")})`);
+    // 未適用が多いときはボタンに件数だけを出す（名前を並べると画面の横幅が広がる）
+    expect(html).toContain(`適用する（${BUNDLED_MIGRATIONS.length} 件）`);
+    expect(html).not.toContain(BUNDLED_MIGRATIONS.join(", ") + ")");
     // 何件中何件まで進んだかを出す材料（スクリプトは応答の残りの数で確かめ直す）
     expect(html).toContain(`data-total="${BUNDLED_MIGRATIONS.length}"`);
     expect(html).toContain("data-migrate-bar");
