@@ -234,6 +234,16 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) 
         { key: "label", label: t("blocks.icon_label"), type: "text", help: t("blocks.icon_label_help") },
       ],
     },
+    date: {
+      label: t("blocks.date"),
+      desc: t("blocks.date_desc"),
+      group: "text",
+      fields: [
+        { key: "of", label: t("blocks.date_of"), type: "select", options: opt([["published", t("blocks.date_published")], ["updated", t("blocks.date_updated")], ["now", t("blocks.date_now")]]), default: "published" },
+        { key: "format", label: t("blocks.date_format"), type: "select", options: opt([["date", t("blocks.format_date")], ["datetime", t("blocks.format_datetime")]]), default: "date" },
+        { key: "label", label: t("blocks.date_label"), type: "text", placeholder: t("blocks.date_label_placeholder") },
+      ],
+    },
   };
 }
 

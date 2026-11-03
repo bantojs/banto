@@ -225,6 +225,7 @@ WordPress のよく使うブロックを、決まった書式のまま入れ子�
 | `::: card page=about` ／ `::: card article=news/hello` | ページか記事を 1 つ、カード（題・アイキャッチ・抜粋）で |
 | `::: product slug=tee show=image,name,price,cart,buy` | 1 つの商品。`show` に出す項目（`image`・`name`・`price`・`sku`・`tags`・`description`・`cart`（カートに入れる）・`buy`（今すぐ買う））。省けば画像・名前・価格・カートに入れる |
 | `::: icon name=truck size=m tone=accent label="送料無料"` | 決まった一式のアイコン（48 個）。`size` は s / m / l / xl、`tone` は text / accent / muted。`label` は横に出す文字（読み上げにも使う。空なら飾り） |
+| `::: date of=published format=date label="投稿日"` | 日時。`of` は published（投稿日時。ページは公開した日時、無ければ作った日時）/ updated（最終更新日時）/ now（見た時点の日時）、`format` は date（日付だけ）/ datetime（日付と時刻）。時間帯はデプロイの `BANTO_TIMEZONE`。本文の HTML には印だけを置き、描くたびに入れる（本文の HTML の覚えに日時が残らない）。データは引かない |
 
 - 見たままの編集のブロックの一覧（「お店」「デザイン」）から入れられ、右の設定の欄で選びます。
 - 商品・ページ・記事は、お店の画面と同じ読み取りの道で引きます。会員限定のもの・見えないものは、合わない人には出ません。価格は見る人の単価（会員なら会員価格）です。

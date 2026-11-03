@@ -282,7 +282,7 @@ export function pageEditorClient() {
       // お店のブロック（src/pages/shop-blocks.ts）: data-kind と data-attrs から 1 行に戻す（値の形はサーバーが描くときにも確かめる）
       if (kind === "shop") {
         const k = attr(c, "data-kind");
-        if (!/^(search|categories|card|product|icon)$/.test(k)) continue;
+        if (!/^(search|categories|card|product|icon|date)$/.test(k)) continue;
         let o: Record<string, unknown> = {};
         try {
           const v: unknown = JSON.parse(attr(c, "data-attrs") || "{}");
@@ -294,7 +294,7 @@ export function pageEditorClient() {
         for (const [key, raw] of Object.entries(o)) {
           if (!/^[a-z]{1,20}$/.test(key) || typeof raw !== "string" || raw === "") continue;
           // 既定の値は書かない（src/pages/shop-blocks.ts の def と同じ）
-          if ((key === "size" && raw === "m") || (key === "tone" && raw === "text") || (key === "layout" && raw === "list")) continue;
+          if ((key === "size" && raw === "m") || (key === "tone" && raw === "text") || (key === "layout" && raw === "list") || (key === "of" && raw === "published") || (key === "format" && raw === "date")) continue;
           if (key === "placeholder" || key === "label") parts.push(`${key}="${quoted(raw).slice(0, 60)}"`);
           else if (/^[a-z0-9][a-z0-9,/_-]{0,200}$/.test(raw)) parts.push(`${key}=${raw}`);
         }

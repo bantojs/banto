@@ -22,7 +22,7 @@ import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, para
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
-import { fillShopBlocks } from "../../pages/shop-blocks";
+import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
@@ -35,7 +35,7 @@ import { bindScope, customerPrefill, customerSession, members, membersEnabled, r
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
-import { PAGES_MODULE, pageBodyHtml, pageHandleOk, type PageRow } from "../../pages";
+import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
 import { filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
@@ -473,8 +473,8 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
  */
 async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: string, raw: string, categories: CategoryRow[], prefix = ""): Promise<Response> {
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
-  // お店のブロック（検索・カテゴリー・カード・商品）はテーマに依らない HTML なので先に入れる
-  const html = prefix + fillShopBlocks(raw, shopCards);
+  // お店のブロック（検索・カテゴリー・カード・商品・日時）はテーマに依らない HTML なので先に入れる。日時は描くたびに
+  const html = prefix + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at });
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards });
@@ -487,7 +487,7 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
 /** 記事を描く（お店の画面とプレビューで同じ） */
 async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], prefix = ""): Promise<Response> {
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
-  const html = prefix + fillShopBlocks(raw, shopCards);
+  const html = prefix + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: article.published_at ?? article.updated_at, updated: article.updated_at });
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const lt = await liquidThemeFor(c, s);
   if (lt) {

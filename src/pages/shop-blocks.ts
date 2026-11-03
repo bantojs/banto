@@ -6,17 +6,23 @@
  *   ::: card page=about            ／ ::: card article=news/hello
  *   ::: product slug=tee show=image,name,price,cart,buy
  *   ::: icon name=truck size=m label="送料無料"
+ *   ::: date of=published format=datetime label="投稿日"   （of: published 投稿日時 / updated 最終更新日時 / now 今の日時）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
  * - アイコンは決まった一式（src/pages/icons.ts）から選び、その場で SVG を描く（データを引かない）
+ * - 日時は本文の HTML に印（<time data-banto-date="…">）だけを置き、描くたびに fillDateBlocks で入れる（本文の HTML の覚えに日時を入れない）。
+ *   データは引かない（そのページ・記事の行と今の時刻だけ）。時間帯はデプロイの BANTO_TIMEZONE
  * - ほかはデータが要るので、本文の HTML には印（<!--banto:shop:N-->）だけを置き、お店の画面とヘッドレスの API が
  *   src/content/body-blocks.ts で中身に置き換える（商品・ページ・記事は匿名・会員の読み取りの経路のまま。会員限定のものは合わない人には出ない）
  * - データを引くブロックは 1 ページに SHOP_BLOCKS_MAX まで（多すぎる分は空）
  */
 import { ICONS } from "./icons";
+import { formatDateTime } from "../i18n/time";
 
-export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon";
-export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon"];
+export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date";
+export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date"];
+/** データを引かないブロック（印を数えない・body-blocks に渡さない） */
+export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date"];
 /** データを引くブロックの数の上限（1 ページ） */
 export const SHOP_BLOCKS_MAX = 8;
 
@@ -36,6 +42,7 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   card: { page: { test: (v) => SLUG.test(v) }, article: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}\/[a-z0-9][a-z0-9-]{0,62}$/.test(v) } },
   product: { slug: { test: (v) => SLUG.test(v) }, show: { test: (v) => v.split(",").every((x) => (PRODUCT_PARTS as readonly string[]).includes(x)) } },
   icon: { name: { test: (v) => Object.prototype.hasOwnProperty.call(ICONS, v) }, size: { values: ["s", "m", "l", "xl"], def: "m" }, tone: { values: ["text", "accent", "muted"], def: "text" }, label: { text: true } },
+  date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
 };
 
 export interface ShopBlock {
@@ -44,7 +51,7 @@ export interface ShopBlock {
   attrs: Record<string, string>;
 }
 
-const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon)(?:\s+(.*?))?\s*$/;
+const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date)(?:\s+(.*?))?\s*$/;
 
 /** 1 行を読む。形が違えば null（その行は文字として出る）。必須の値が無いもの（商品の slug など）も null */
 export function parseShopBlock(line: string): ShopBlock | null {
@@ -88,7 +95,7 @@ export function shopBlocksOf(body: string): ShopBlock[] {
   const out: ShopBlock[] = [];
   for (const line of body.replace(/\r\n?/g, "\n").split("\n")) {
     const b = parseShopBlock(line);
-    if (b && b.kind !== "icon") out.push(b);
+    if (b && !LOCAL_SHOP_BLOCKS.includes(b.kind)) out.push(b);
     if (out.length >= SHOP_BLOCKS_MAX) break;
   }
   return out;
@@ -110,6 +117,30 @@ export function iconHtml(b: ShopBlock): string {
   const a11y = label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"';
   const text = label ? `<span class="banto-icon__label">${esc(label)}</span>` : "";
   return `<span class="banto-icon banto-icon--${b.attrs["size"]} banto-icon--${b.attrs["tone"]}"${a11y}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">${inner}</svg>${text}</span>`;
+}
+
+/** 日時のブロックの HTML（印。時刻は描くたびに fillDateBlocks が入れる） */
+export function dateHtml(b: ShopBlock): string {
+  const label = b.attrs["label"] ?? "";
+  const esc = (x: string) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return `${label ? `<span class="banto-date__label">${esc(label)}</span> ` : ""}<time data-banto-date="${b.attrs["of"]}|${b.attrs["format"]}"></time>`;
+}
+
+/** 日時の材料（そのページ・記事の投稿日時と最終更新日時。ISO）。無ければ印は空になる */
+export interface DateContext {
+  published?: string | null;
+  updated?: string | null;
+  now?: Date;
+}
+
+/** 日時の印を入れる（運営者の時間帯の表示と、機械が読む datetime） */
+export function fillDateBlocks(html: string, d: DateContext): string {
+  if (!html.includes("data-banto-date=")) return html;
+  return html.replace(/<time data-banto-date="(published|updated|now)\|(date|datetime)"><\/time>/g, (_, of: string, format: string) => {
+    const iso = of === "now" ? (d.now ?? new Date()).toISOString() : of === "updated" ? d.updated : d.published;
+    if (!iso || Number.isNaN(new Date(iso).getTime())) return "";
+    return `<time class="banto-date" datetime="${new Date(iso).toISOString()}">${formatDateTime(iso, { dateOnly: format === "date" })}</time>`;
+  });
 }
 
 /** お店のブロックの最小の CSS（ブロックがあるページにだけ添える。色と大きさはテーマの CSS の変数） */

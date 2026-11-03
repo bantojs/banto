@@ -13,7 +13,7 @@
  */
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { t } from "../i18n";
-import { SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
+import { LOCAL_SHOP_BLOCKS, SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, dateHtml, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
 import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
@@ -392,9 +392,10 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
         st.shopCss = true;
         const data = `data-banto-block="shop" data-kind="${sb.kind}" data-attrs="${esc(JSON.stringify(sb.attrs))}"`;
         if (sb.kind === "icon") out.push(opts.editor ? `<div class="banto-shop banto-shop--icon" ${data} contenteditable="false">${iconHtml(sb)}</div>` : `<p class="banto-shop banto-shop--icon">${iconHtml(sb)}</p>`);
+        else if (sb.kind === "date" && !opts.editor) out.push(`<p class="banto-shop banto-shop--date">${dateHtml(sb)}</p>`);
         else if (opts.editor) out.push(`<div class="banto-shop banto-shop--${sb.kind}" ${data} contenteditable="false">${esc(opts.shopLabel ? opts.shopLabel(sb) : sb.kind)}</div>`);
         else out.push(`<div class="banto-shop banto-shop--${sb.kind}">${st.shop < SHOP_BLOCKS_MAX ? shopMarker(st.shop) : ""}</div>`);
-        if (sb.kind !== "icon") st.shop++;
+        if (!LOCAL_SHOP_BLOCKS.includes(sb.kind)) st.shop++;
         i++;
         continue;
       }

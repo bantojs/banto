@@ -14,7 +14,7 @@ import { markdownToHtml } from "../pages/markdown";
 import { filterAudienceBlocks } from "./audience-blocks";
 import { bodyBlocks } from "./body-blocks";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../pages/blocks";
-import { fillShopBlocks } from "../pages/shop-blocks";
+import { fillDateBlocks, fillShopBlocks } from "../pages/shop-blocks";
 import { mediaBaseUrl, publicBaseUrl } from "../routes/common";
 import type { PageRow } from "../pages";
 import type { ArticleRow, BlogRow } from "../blog";
@@ -70,7 +70,8 @@ export async function themedPreview(c: AdminContext, shop: ShopRow, target: Prev
   };
   const source = target.kind === "page" ? target.page.body : target.article.body;
   const body = filterAudienceBlocks(source, () => true).body;
-  const raw = markdownToHtml(body, { mediaBase });
+  const dates = target.kind === "page" ? { published: target.page.published_at ?? target.page.created_at, updated: target.page.updated_at } : { published: target.article.published_at ?? target.article.updated_at, updated: target.article.updated_at };
+  const raw = fillDateBlocks(markdownToHtml(body, { mediaBase }), dates);
   let html = raw;
   if (sf) {
     const b = await bodyBlocks({ sf, shop: pub, shopPath, mediaBaseUrl: mediaBase }, body, categories).catch(() => null);
