@@ -57,7 +57,7 @@ export interface PublicShop {
 export const PUBLIC_PRODUCT_COLUMNS = "id,shop_id,slug,name,description,published,created_at,updated_at,tags,category_id,brand,tax_class,extra_category_ids";
 
 /** お客様の画面に渡す settings の鍵（0028 の banto_shop_public_settings と同じ。足すときは SQL と test/fake-supabase.ts も揃える） */
-export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent"] as const;
+export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent", "page_layouts"] as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
@@ -392,6 +392,36 @@ export class StorefrontData {
     const page = rows[0] ?? null;
     await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
     return page;
+  }
+
+  /**
+   * ひな形に割り当てたページ（0101、id で）。いつも匿名の読み取り（会員限定・非公開・予約公開の前・ゴミ箱のページは見えない → null で今までの画面に戻す）
+   */
+  async layoutPage(shop: PublicShop, id: string): Promise<PageRow | null> {
+    if (!/^[0-9a-f-]{36}$/.test(id)) return null;
+    const key = `layout:${shop.id}:${id}`;
+    const hit = await this.cache.get<{ page: PageRow | null }>(key);
+    if (hit) return hit.page;
+    const rows = await this.db.from<PageRow>("pages").select(PUBLIC_PAGE_COLUMNS, { eq: { shop_id: shop.id, id, published: true }, limit: 1 });
+    const page = rows[0] ?? null;
+    await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
+    return page;
+  }
+
+  /** 同じブログの前後の記事（公開した日時の順。匿名の読み取りで、会員限定の記事は入らない）。ひな形の「前後の記事」の部品だけが使う */
+  async articleNeighbors(shop: PublicShop, blogId: string, article: Pick<ArticleRow, "id" | "published_at">): Promise<{ prev: Pick<ArticleRow, "handle" | "title"> | null; next: Pick<ArticleRow, "handle" | "title"> | null }> {
+    if (!article.published_at) return { prev: null, next: null };
+    const key = `neighbors:${blogId}:${article.id}`;
+    const hit = await this.cache.get<{ prev: Pick<ArticleRow, "handle" | "title"> | null; next: Pick<ArticleRow, "handle" | "title"> | null }>(key);
+    if (hit) return hit;
+    const base = { eq: { shop_id: shop.id, blog_id: blogId, published: true }, limit: 1 } as const;
+    const [older, newer] = await Promise.all([
+      this.db.from<ArticleRow>("articles").select("handle,title", { ...base, where: [{ col: "published_at", op: "lt", value: article.published_at }], order: "published_at.desc" }),
+      this.db.from<ArticleRow>("articles").select("handle,title", { ...base, where: [{ col: "published_at", op: "gt", value: article.published_at }], order: "published_at.asc" }),
+    ]);
+    const out = { prev: older[0] ?? null, next: newer[0] ?? null };
+    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    return out;
   }
 
   /**

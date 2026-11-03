@@ -39,6 +39,7 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { markdownToHtml } from "../../pages/markdown";
 import { filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
+import { CURRENT_CSS, articleParts, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, usesPart } from "../../content/layouts";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { cartImagesFor, cartSections, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
@@ -178,11 +179,11 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
   if (draft.kind === "page") {
     if (!moduleEnabled(s.shop.settings, PAGES_MODULE)) return notFoundPage(c, s);
     const body = filterAudienceBlocks(draft.page.body, () => true).body;
-    return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, prefix);
+    return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
   }
   if (!moduleEnabled(s.shop.settings, BLOG_MODULE)) return notFoundPage(c, s);
   const body = filterAudienceBlocks(draft.article.body, () => true).body;
-  return articlePageResponse(c, s, draft.blog, draft.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, prefix);
+  return articlePageResponse(c, s, draft.blog, draft.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
 });
 
 // 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
@@ -334,6 +335,15 @@ const STORE_PAGE_SIZE = 48;
 storefront.get("/:shop", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
+  // お店のトップのひな形（0101）: 一覧の絞り込み・ページ送りが無いとき。見えないページ（非公開・会員限定）なら今までの一覧
+  const homeId = moduleEnabled(s.shop.settings, PAGES_MODULE) && isPlainTop(c.req.query()) ? pageLayoutsOf(s.shop.settings).home : null;
+  const home = homeId ? await s.sf.layoutPage(s.shop, homeId) : null;
+  if (home) {
+    const categories = await s.sf.listCategories(s.shop);
+    const view = await viewerBody(c, s.shop, home.body, viewerOf(s));
+    const raw = pageBodyHtml({ ...home, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+    return contentPageResponse(c, s, { ...home, seo_title: home.seo_title || s.shop.name }, view.body, raw, categories, { layoutPath: "" });
+  }
   const tag = c.req.query("tag") || undefined;
   const categorySlug = c.req.query("category") || undefined;
   const after = c.req.query("after") || undefined;
@@ -467,28 +477,66 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   return contentPageResponse(c, s, page, view.body, raw, categories);
 });
 
+/** 描き方の指定（プレビュー・ひな形） */
+interface RenderOpts {
+  /** プレビューの知らせ（本文の前に足す） */
+  prefix?: string;
+  /** プレビュー: 見せる相手の囲みは中身ごと・本文の HTML を覚えない */
+  preview?: boolean;
+  /** ページをひな形（0101）として描く: テーマの見出しを出さず、canonical をこのパスにする（お店のトップは ""） */
+  layoutPath?: string;
+}
+
 /**
- * ページを描く（お店の画面とプレビューで同じ）。body は見る人で絞った本文、raw はその HTML。
- * prefix はプレビューの知らせ（本文の前に足す）
+ * ページを描く（お店の画面・プレビュー・お店のトップのひな形で同じ）。body は見る人で絞った本文、raw はその HTML
  */
-async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: string, raw: string, categories: CategoryRow[], prefix = ""): Promise<Response> {
+async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts = {}): Promise<Response> {
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
-  // お店のブロック（検索・カテゴリー・カード・商品・日時）はテーマに依らない HTML なので先に入れる。日時は描くたびに
-  const html = prefix + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at });
+  // お店のブロック（検索・カテゴリー・カード・商品・日時）はテーマに依らない HTML なので先に入れる。日時は描くたびに。
+  // 「今の記事の部品」はページ（記事のひな形でない）では空
+  const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at }));
+  const layout = o.layoutPath !== undefined;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards });
+    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, ...(layout ? { path: o.layoutPath } : {}) });
     if (res) return res;
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
-  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards) }));
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), ...(layout ? { bare: true, path: `${s.ctx.shopPath}${o.layoutPath}` || "/" } : {}) }));
 }
 
-/** 記事を描く（お店の画面とプレビューで同じ） */
-async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], prefix = ""): Promise<Response> {
-  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
-  const html = prefix + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: article.published_at ?? article.updated_at, updated: article.updated_at });
+/**
+ * 記事を描く（お店の画面とプレビューで同じ）。ブログに記事のひな形（0101）があれば、ひな形の本文に記事の本文を差し込んで描く。
+ * body は見る人で絞った記事の本文、raw はその HTML、segment は見る人の区分（本文の HTML の覚えの鍵）
+ */
+async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts & { segment?: string } = {}): Promise<Response> {
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
+  const dates = { published: article.published_at ?? article.updated_at, updated: article.updated_at };
+  const layoutId = moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
+  const layout = layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
+  if (layout) {
+    const lview = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const comp = composeLayout(lview.body, body);
+    const doc = o.preview
+      ? markdownToHtml(comp.body, { mediaBase: s.ctx.mediaBaseUrl })
+      : pageBodyHtml({ id: `${layout.id}:${article.id}`, updated_at: `${layout.updated_at}|${article.updated_at}`, body: comp.body }, s.ctx.mediaBaseUrl, undefined, `${lview.key}|${o.segment ?? ""}`);
+    const neighbors = usesPart(lview.body, "prev-next") ? await s.sf.articleNeighbors(s.shop, blog.id, article) : null;
+    // 本文を差し込めなかった（囲みの中に置いた）ときは、記事の本文の HTML をそのまま入れる（その本文のお店のブロックは出ない）
+    const parts = articleParts({ shopPath: s.ctx.shopPath, mediaBase: s.ctx.mediaBaseUrl, blog, article, neighbors, ...(comp.inserted ? {} : { content: fillCurrent(raw).replace(/<!--banto:[a-z]+:\d+-->/g, "") }) });
+    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, comp.body, categories);
+    const html = (o.prefix ?? "") + `<style>${CURRENT_CSS}</style>` + fillCurrent(fillDateBlocks(fillShopBlocks(doc, shopCards), dates), parts);
+    const path = `/blogs/${encodeURIComponent(blog.handle)}/${encodeURIComponent(article.handle)}`;
+    const lt = await liquidThemeFor(c, s);
+    if (lt) {
+      // Liquid: ひな形のページとして templates/page（ひな形の template_suffix があればそれ）で描く。見出しなどは記事のもの
+      const page: PageRow = { ...layout, title: article.title, seo_title: article.seo_title, seo_description: article.seo_description || article.excerpt, image_url: article.image_url };
+      const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, path });
+      if (res) return res;
+    }
+    if (s.theme.ArticlePage) return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl, bare: true }));
+  }
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
+  const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), dates));
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards });
@@ -562,7 +610,7 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   if (!article) return (await membersOnlyGate(c, s, "article", ah, blog.id)) ?? notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
   const raw = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-  return articlePageResponse(c, s, blog, article, view.body, raw, categories);
+  return articlePageResponse(c, s, blog, article, view.body, raw, categories, { segment: view.key });
 });
 
 storefront.get("/:shop/:page{legal|privacy|returns}", async (c: Ctx) => {

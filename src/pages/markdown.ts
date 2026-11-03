@@ -14,7 +14,7 @@
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { t } from "../i18n";
 import { EMBED_CSS, EMBED_SCRIPT, embedHtml, parseEmbedUrl } from "./embeds";
-import { LOCAL_SHOP_BLOCKS, SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, dateHtml, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
+import { currentMarker, LOCAL_SHOP_BLOCKS, SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, dateHtml, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
 import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
@@ -396,6 +396,7 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
         st.shopCss = true;
         const data = `data-banto-block="shop" data-kind="${sb.kind}" data-attrs="${esc(JSON.stringify(sb.attrs))}"`;
         if (sb.kind === "icon") out.push(opts.editor ? `<div class="banto-shop banto-shop--icon" ${data} contenteditable="false">${iconHtml(sb)}</div>` : `<p class="banto-shop banto-shop--icon">${iconHtml(sb)}</p>`);
+        else if (sb.kind === "current" && !opts.editor) out.push(currentMarker(sb.attrs["part"] ?? ""));
         else if (sb.kind === "video") {
           // 置き場の mp4 だけ（ホストも確かめる）。自動で再生するときは音を消し、iPhone で全画面にしない（ブラウザの決まり）
           const src = safeImage(sb.attrs["src"] ?? "", opts);

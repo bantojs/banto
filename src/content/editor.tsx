@@ -34,7 +34,7 @@ import { parseManifest, type ManifestBlock } from "../hooks/manifest";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
-import { PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
+import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
@@ -240,6 +240,12 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) 
       desc: t("blocks.embed_desc"),
       group: "media",
       fields: [{ key: "url", label: t("blocks.embed_url"), type: "text", required: true, pattern: "^(https?://|at://)\\S{3,300}$", placeholder: "https://www.youtube.com/watch?v=…", help: t("blocks.embed_help") }],
+    },
+    current: {
+      label: t("blocks.current"),
+      desc: t("blocks.current_desc"),
+      group: "text",
+      fields: [{ key: "part", label: t("blocks.current_part"), type: "select", options: opt(CURRENT_PARTS.map((x): [string, string] => [x, t(`blocks.cur_${x}` as MessageKey)])), default: "title" }],
     },
     video: {
       label: t("blocks.video"),

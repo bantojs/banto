@@ -24,6 +24,8 @@ import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MA
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
+import { pageLayoutsOf } from "../../content/layouts";
+import { BLOG_MODULE, type BlogRow } from "../../blog";
 import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow, contentAudienceValues } from "../../content/editor";
 
 /**
@@ -144,6 +146,14 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
         <a class="btn" href={`${base(shop.id)}/new`}>
           {t("pages.new")}
         </a>
+        {(await layoutsReady(c)) ? (
+          <>
+            {" "}
+            <a class="btn secondary" href={`${base(shop.id)}/layouts`}>
+              {t("pages.layouts")}
+            </a>
+          </>
+        ) : null}
       </p>
       <form method="get" action={base(shop.id)} class="toolbar" role="search">
         <nav aria-label={t("pages.state")} style="display:flex;gap:.75rem;flex-wrap:wrap">
@@ -284,6 +294,80 @@ pagesAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   return editPage(c, shop, { values: EMPTY });
+});
+
+// ---------- ひな形の割り当て（0101、docs/pages.md「ひな形の割り当て」） ----------
+export const PAGE_LAYOUTS_MIGRATION = "0101_page_layouts";
+const layoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_LAYOUTS_MIGRATION);
+
+async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "error" | null, status: 200 | 400 = 200) {
+  const db = owner(c).db;
+  const blogOn = moduleEnabled(shop.settings, BLOG_MODULE);
+  const [pages, blogs] = await Promise.all([
+    db.from<PageRow>("pages").select("id,title,handle,published,deleted_at", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" }),
+    blogOn ? db.from<BlogRow>("blogs").select("id,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" }) : Promise.resolve([] as BlogRow[]),
+  ]);
+  const usable = pages.filter((p) => !p.deleted_at);
+  const cur = pageLayoutsOf(shop.settings);
+  const select = (name: string, value: string | null) => (
+    <select name={name} id={name}>
+      <option value="">{t("pages.layouts_none")}</option>
+      {usable.map((p) => (
+        <option value={p.id} selected={p.id === value}>
+          {p.title} (/pages/{p.handle}){p.published ? "" : ` — ${t("pages.tab_draft")}`}
+        </option>
+      ))}
+    </select>
+  );
+  return layout(
+    c,
+    shop,
+    t("pages.layouts"),
+    [{ label: t("mod.pages.name"), href: base(shop.id) }, { label: t("pages.layouts") }],
+    <>
+      <PageHead title={t("pages.layouts")} sub={t("pages.layouts_desc")} />
+      {flash === "saved" ? <p class="notice">{t("pages.layouts_saved")}</p> : null}
+      {flash === "error" ? <p class="error">{t("pages.layouts_error")}</p> : null}
+      <form method="post" action={`${base(shop.id)}/layouts`} class="card">
+        <label for="home">{t("pages.layouts_home")}</label>
+        {select("home", cur.home)}
+        <p class="muted">{t("pages.layouts_home_help")}</p>
+        {blogs.map((b) => (
+          <>
+            <label for={`article_${b.id}`}>{tf("pages.layouts_article", { blog: b.title })}</label>
+            {select(`article_${b.id}`, cur.articles[b.id] ?? null)}
+          </>
+        ))}
+        {blogs.length > 0 ? <p class="muted">{t("pages.layouts_article_help")}</p> : null}
+        <p class="muted">{t("pages.layouts_hidden_note")}</p>
+        <p>
+          <button type="submit">{t("shop.save")}</button> <a href={base(shop.id)}>{t("blocks.cancel")}</a>
+        </p>
+      </form>
+    </>,
+    status,
+  );
+}
+
+pagesAdmin.get("/layouts", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await layoutsReady(c))) return c.notFound();
+  return layoutsPage(c, shop, c.req.query("flash") === "saved" ? "saved" : null);
+});
+
+pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop || !(await layoutsReady(c))) return c.notFound();
+  const f = await formFields(c);
+  const articles: Record<string, string> = {};
+  for (const [k, v] of Object.entries(f)) if (k.startsWith("article_") && v) articles[k.slice("article_".length)] = v;
+  try {
+    await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles } });
+  } catch (e) {
+    if (e instanceof DbError) return layoutsPage(c, shop, "error", 400);
+    throw e;
+  }
+  return c.redirect(`${base(shop.id)}/layouts?flash=saved`);
 });
 
 /** 作る・保存する。action=preview なら保存せずにプレビューを出す */

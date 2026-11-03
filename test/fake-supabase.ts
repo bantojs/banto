@@ -1515,6 +1515,31 @@ export class FakeSupabase {
       }
       return json(this.sizeChartGet(shopId, cat, prod, true));
     }
+    if (fn === "page_layouts_set") {
+      // 0101: 本物の SQL（形・ショップのページとブログか・権限）は test/db/page-layouts.test.ts
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("content"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string> };
+      const pageOk = (id: string) => this.tables.pages.some((p) => p["id"] === id && p["shop_id"] === shopId && !p["deleted_at"]);
+      const out: Record<string, unknown> = {};
+      if (l.home) {
+        if (!pageOk(l.home)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        out["home"] = l.home;
+      }
+      const articles: Record<string, string> = {};
+      for (const [b, pid] of Object.entries(l.articles ?? {})) {
+        if (!pid) continue;
+        if (!this.tables.blogs.some((x) => x["id"] === b && x["shop_id"] === shopId) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        articles[b] = pid;
+      }
+      if (Object.keys(articles).length > 0) out["articles"] = articles;
+      const settings = { ...((shop["settings"] ?? {}) as Row) };
+      if (Object.keys(out).length > 0) settings["page_layouts"] = out;
+      else delete settings["page_layouts"];
+      shop["settings"] = settings;
+      return json(out);
+    }
     if (fn === "option_names_set") {
       // 0094: 本物の SQL（名前の重なり・知らない key）は test/db/option-keys.test.ts
       const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);

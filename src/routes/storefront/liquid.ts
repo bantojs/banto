@@ -510,7 +510,8 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
 }
 
 /** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
-export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[] } & ArticleBlocks): Response | null {
+/** path: canonical のパス（ひな形、0101。お店のトップは ""・記事は /blogs/…。無ければ /pages/<handle>） */
+export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string } & ArticleBlocks): Response | null {
   const pg = p.page;
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
@@ -522,9 +523,9 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     values: { page: { id: pg.id, handle: pg.handle, title: pg.title, content: new SafeHtml(html), url: pagePath(s.ctx.shopPath, pg.handle), template_suffix: pg.template_suffix, published_at: pagePublishedAt(pg), updated_at: pg.updated_at, image }, ...(image ? { page_image: image } : {}) },
     title: pg.seo_title || pg.title,
     ...(pg.seo_description ? { description: pg.seo_description } : {}),
-    path: `/pages/${encodeURIComponent(pg.handle)}`,
+    path: p.path ?? `/pages/${encodeURIComponent(pg.handle)}`,
     categories: p.categories,
-    currentPage: pg.handle,
+    ...(p.path === undefined ? { currentPage: pg.handle } : {}),
   });
   return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
 }
