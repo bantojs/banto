@@ -99,6 +99,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     gallery:'<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/>',
     accordion:'<rect x="3" y="4" width="18" height="6" rx="1"/><path d="M3 14h18M3 19h18M15 6.5l1.5 1.5 1.5-1.5"/>',
     spacer:'<path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/>',
+    grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    tabs:'<path d="M3 9h18v11H3z"/><path d="M3 9V5h7v4M10 5h6v4"/>',
+    shop:'<path d="M3 9l1.5-5h15L21 9M3 9h18v11H3zM9 20v-6h6v6"/>',
     audience:'<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/><rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="3 2"/>',
     parent:'<path d="M9 14l-5-5 5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v5"/>'
   };
@@ -106,9 +109,11 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var LAY={}; try{ LAY=JSON.parse(form.getAttribute("data-layout")||"{}"); }catch(_){}
   var LS=LAY.schema||{}, LTX=LAY.t||{}, DEPTH=LAY.depth||4;
   function LT(k){ return LTX[k]||""; }
-  var CONT={group:1,columns:1,column:1,cover:1,media:1,gallery:1,accordion:1,audience:1};
+  var CONT={group:1,columns:1,column:1,cover:1,media:1,gallery:1,accordion:1,audience:1,grid:1,tabs:1,tab:1};
   // 文字を書けない箱（押すと選ぶ）
-  var BOXES={products:1,button:1,spacer:1,gallery:1,articles:1,app:1};
+  var BOXES={products:1,button:1,spacer:1,gallery:1,articles:1,app:1,shop:1};
+  // お店のブロック（src/pages/shop-blocks.ts。サーバーが data-shop-blocks の JSON で、名前・説明・設定の欄を渡す）
+  var SHOPDEF={}; try{ SHOPDEF=JSON.parse(form.getAttribute("data-shop-blocks")||"{}"); }catch(_){}
   // テーマのパターン・スタイル（サーバーが data-* の JSON で渡す。パターンの本文は選んだときに受け取る）
   var PATTERNS=[], STYLES={}; try{ PATTERNS=JSON.parse(form.getAttribute("data-patterns")||"[]"); STYLES=JSON.parse(form.getAttribute("data-styles")||"{}"); }catch(_){}
   var HAS_ARTICLES=!!document.getElementById("blk-articles");
@@ -119,9 +124,10 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var BLOCKS=[
     ["p","text"],["h2","text"],["h3","text"],["ul","text"],["ol","text"],["q","text"],["table","text"],["accordion","text"],
     ["img","media"],["gallery","media"],["cover","media"],["media","media"],
-    ["group","design"],["columns","design"],["spacer","design"],["hr","design"],["audience","design"],
+    ["group","design"],["columns","design"],["grid","design"],["tabs","design"],["spacer","design"],["hr","design"],["audience","design"],
     ["products","shop"],["articles","shop"],["button","shop"]
   ].filter(function(x){ return (!(CONT[x[0]]||x[0]==="spacer")||LS[x[0]])&&(x[0]!=="articles"||HAS_ARTICLES); }).map(function(x){ var lay=!!LS[x[0]]; return {k:x[0],g:x[1],label:lay?LT("kind."+x[0]):T(x[0]),desc:lay?LT("desc."+x[0]):T("d-"+x[0])}; })
+   .concat(Object.keys(SHOPDEF).map(function(k){ var d=SHOPDEF[k]; return {k:"shop:"+k,g:d.group||"shop",label:d.label,desc:d.desc||""}; }))
    .concat(PATTERNS.map(function(p){ return {k:"pattern:"+p.name,g:p.source==="theme"?"theme":"patterns",label:p.title,desc:p.description||"",pattern:p.name}; }))
    .concat(APPS.reduce(function(a,p){ (p.blocks||[]).forEach(function(b){ a.push({k:"app:"+p.app+":"+b.id,g:"apps",label:b.label,desc:p.name+(b.description?" — "+b.description:"")}); }); return a; },[]));
   function nameOf(k){ return LS[k]?LT("kind."+k):T(k); }
@@ -129,7 +135,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function kindOf(el){
     if(!el||el.nodeType!==1) return "";
     var n=el.nodeName, bk=el.getAttribute("data-banto-block");
-    if(bk&&(CONT[bk]||bk==="spacer"||bk==="products"||bk==="articles"||bk==="app")) return bk;
+    if(bk&&(CONT[bk]||bk==="spacer"||bk==="products"||bk==="articles"||bk==="app"||bk==="shop")) return bk;
     if(n==="P"&&/(^|\s)banto-button(\s|$)/.test(el.className)) return "button";
     if(n==="H1"||n==="H2") return "h2";
     if(/^H[3-6]$/.test(n)) return "h3";
@@ -142,7 +148,8 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   // ---------- 入れ子（ブロックはスロットの子。スロット = 本文・グループ・列・カバーの中・画像と文の文・アコーディオンの中。
   // カラムの列の並びは data-slot="cols" で、列だけを置く） ----------
   function isSlot(x){ return x===ed||(!!x&&x.nodeType===1&&x.hasAttribute("data-slot")); }
-  function isCols(x){ return !!x&&x!==ed&&x.nodeType===1&&x.getAttribute("data-slot")==="cols"; }
+  // 列の並び（カラム）とタブの並び: 中には列・タブしか置けない
+  function isCols(x){ if(!x||x===ed||x.nodeType!==1) return false; var v=x.getAttribute("data-slot"); return v==="cols"||v==="tabs"; }
   function isBlock(b){ return !!b&&b.nodeType===1&&b!==ed&&!!b.parentNode&&ed.contains(b)&&isSlot(b.parentNode); }
   function blockOf(n){ while(n&&n!==ed){ if(n.nodeType===1&&isSlot(n.parentNode)) return n; n=n.parentNode; } return null; }
   // スロットを持つ囲み（グループ・列・カラムは自分、カバーなどは外側）
@@ -151,16 +158,22 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function depthOf(x){ var d=0; for(var n=x;n&&n!==ed;n=n.parentNode){ if(n.nodeType===1&&CONT[n.getAttribute("data-banto-block")]) d++; } return d; }
   // b の中の囲みの段の数（b が囲みなら 1 から）
   function heightOf(b){ var base=depthOf(b.parentNode), m=CONT[kindOf(b)]?1:0; Array.prototype.forEach.call(b.querySelectorAll("[data-banto-block]"),function(x){ if(CONT[x.getAttribute("data-banto-block")]) m=Math.max(m,depthOf(x)-base); }); return m; }
-  function slotsOf(b){ var k=kindOf(b); if(k==="group"||k==="column"||k==="columns") return [b]; var s=b.querySelector(":scope > [data-slot]"); return s?[s]:[]; }
+  function slotsOf(b){ var k=kindOf(b); if(k==="group"||k==="column"||k==="columns"||k==="grid"||k==="tabs") return [b]; var s=b.querySelector(":scope > [data-slot]"); return s?[s]:[]; }
   // 囲みの class（変換 src/pages/markdown.ts と同じ形）
   function cls(d){
     var k=d.getAttribute("data-banto-block"), g=function(x){ return d.getAttribute("data-"+x)||""; }, keep=d.classList.contains("is-sel");
     var c={group:"banto-group banto-bg-"+g("bg")+" banto-pad-"+g("pad"),columns:"banto-columns banto-cols-"+g("ratio")+" banto-valign-"+g("valign"),column:"banto-column",
       cover:"banto-cover banto-cover--h-"+g("height")+" banto-cover--overlay-"+g("overlay")+" banto-align-"+g("align")+" banto-valign-"+g("valign")+" banto-cover--focus-"+g("focus"),media:"banto-media banto-media--"+g("side")+" banto-valign-"+g("valign"),
-      gallery:"banto-gallery banto-gallery--"+g("cols"),accordion:"banto-accordion banto-accordion--"+g("icon"),spacer:"banto-spacer banto-spacer--"+g("size"),audience:"banto-audience"}[k];
+      gallery:"banto-gallery banto-gallery--"+g("cols"),grid:"banto-grid banto-grid--"+g("cols"),tabs:"banto-tabs",tab:"banto-tab",accordion:"banto-accordion banto-accordion--"+g("icon"),spacer:"banto-spacer banto-spacer--"+g("size"),audience:"banto-audience"}[k];
     var stl=g("style"); if(c) d.className=c+(stl&&/^[a-z0-9][a-z0-9-]{0,29}$/.test(stl)?" banto-style-"+stl:"")+(keep?" is-sel":"");
   }
   var RATIO_OF={2:"1-1",3:"1-1-1",4:"1-1-1-1"};
+  // タブの数に合わせる（減らすときは中身を前のタブへ寄せる）
+  function syncTabs(d){
+    var n=Math.max(2,Math.min(8,parseInt(d.getAttribute("data-count")||"2",10)||2));
+    while(d.children.length<n) d.appendChild(mk("tab"));
+    while(d.children.length>n){ var last=d.lastElementChild, prev=last.previousElementSibling, body=last.querySelector(":scope > [data-slot]"), pb=prev.querySelector(":scope > [data-slot]"); if(body&&pb) Array.prototype.slice.call(body.childNodes).forEach(function(x){ if(!(x.nodeType===1&&isEmpty(x))) pb.appendChild(x); }); d.removeChild(last); }
+  }
   // カラムの列の数を比に合わせる（減らすときは中身を前の列へ寄せる）
   function syncCols(d){
     var n=(d.getAttribute("data-ratio")||"1-1").split("-").length;
@@ -186,7 +199,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     var d=document.createElement("div"); d.setAttribute("data-banto-block",kind);
     var sc=LS[kind]||{}; Object.keys(sc).forEach(function(k){ d.setAttribute("data-"+k,sc[k].def); });
     var slotDiv=function(c,first){ var x=el("div",c); x.setAttribute("data-slot",""); x.appendChild(first||emptyP()); return x; };
-    if(kind==="group"||kind==="column"){ d.setAttribute("data-slot",""); d.appendChild(emptyP()); }
+    if(kind==="group"||kind==="column"||kind==="grid"){ d.setAttribute("data-slot",""); d.appendChild(emptyP()); if(kind==="grid") d.appendChild(emptyP()); }
+    else if(kind==="tabs"){ d.setAttribute("data-slot","tabs"); d.setAttribute("data-count","2"); d.appendChild(mk("tab")); d.appendChild(mk("tab")); }
+    else if(kind==="tab"){ var tt=el("div","banto-tab__title"); tt.setAttribute("data-acc-title",""); tt.appendChild(document.createElement("br")); d.appendChild(tt); d.appendChild(slotDiv("banto-tab__body")); }
     else if(kind==="columns"){ d.setAttribute("data-slot","cols"); syncCols(d); }
     else if(kind==="cover"){ var h=document.createElement("h2"); h.appendChild(document.createElement("br")); d.appendChild(slotDiv("banto-cover__inner",h)); }
     else if(kind==="media"){ var f=el("figure","banto-media__fig"); f.setAttribute("contenteditable","false"); f.setAttribute("data-ph",LT("media_empty")); d.appendChild(f); d.appendChild(slotDiv("banto-media__body")); }
@@ -247,7 +262,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     var only=ed.children.length===1&&isEmpty(ed.firstElementChild)?ed.firstElementChild:null;
     var phEl=sel&&isEmpty(sel)&&document.activeElement===ed?sel:only;
     if(phEl){ phEl.classList.add("is-ph"); phEl.setAttribute("data-ph",T("ph")); }
-    Array.prototype.forEach.call(ed.querySelectorAll("[data-acc-title]"),function(x){ var e0=!(x.textContent||"").trim(); x.classList.toggle("is-ph-title",e0); if(e0) x.setAttribute("data-ph",LT("acc_title")); });
+    Array.prototype.forEach.call(ed.querySelectorAll("[data-acc-title]"),function(x){ var e0=!(x.textContent||"").trim(); x.classList.toggle("is-ph-title",e0); if(e0) x.setAttribute("data-ph",LT(x.parentNode&&x.parentNode.classList&&x.parentNode.classList.contains("banto-tab")?"tab_title":"acc_title")); });
     if(ed.hidden||!sel){ tb.hidden=true; plus.hidden=true; return; }
     var r=sel.getBoundingClientRect();
     if(isEmpty(sel)&&document.activeElement===ed&&ins.hidden&&menu.hidden){ plus.hidden=false; at(plus,r,r.width-30,(r.height-26)/2); } else plus.hidden=true;
@@ -289,7 +304,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(nested){ add(btn("","parent","parent",LT("parent"))); }
     add(btn("","drag","drag",T("drag"))); add(btn("","up","up",T("up"))); add(btn("","down","down",T("down")));
     if(TEXTY[k]){ sep(); var bb=add(btn("","bold","",T("bold"),"B")); bb.style.fontWeight="700"; var ib=add(btn("","italic","",T("italic"),"I")); ib.style.fontStyle="italic"; add(btn("","link","link",T("link"))); }
-    if(k==="products"||k==="articles"||k==="app"||k==="button"||LS[k]&&k!=="column"){ sep(); add(btn("","edit","edit",T("edit"),T("edit"))); }
+    if(k==="products"||k==="articles"||k==="app"||k==="button"||k==="shop"||LS[k]&&k!=="column"&&k!=="tab"){ sep(); add(btn("","edit","edit",T("edit"),T("edit"))); }
     sep(); add(btn("","more","more",T("more"))).setAttribute("aria-haspopup","true");
   }
   tb.addEventListener("click",function(e){
@@ -304,7 +319,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     else if(k==="link"){ var u=window.prompt(T("link-ask"),"https://"); if(u){ restore(); document.execCommand("createLink",false,u.replace(/[\s()<>"]/g,"")); mark(); } }
     else if(k==="edit") editBlock(blk);
   });
-  function editBlock(b){ var k=kindOf(b); if(k==="products") openProducts(b,null); else if(k==="articles") openArticles(b,null); else if(k==="app") openApp(b,null,""); else if(k==="button") openButton(b,null); else if(LS[k]) openSettings(); }
+  function editBlock(b){ var k=kindOf(b); if(k==="shop") openShop(b,null,b.getAttribute("data-kind")||""); else if(k==="products") openProducts(b,null); else if(k==="articles") openArticles(b,null); else if(k==="app") openApp(b,null,""); else if(k==="button") openButton(b,null); else if(LS[k]) openSettings(); }
   // 前後に足す（列の並びの中なら列を足す。4 列まで）
   function addNear(blk,where){
     if(kindOf(blk)==="column"){ var cols=blk.parentNode; if(cols.children.length>=4) return; var c=mk("column"); cols.insertBefore(c,where==="before"?blk:blk.nextSibling); fixCols(cols); mark(); caretIn(c.firstElementChild); select(c.firstElementChild); return; }
@@ -404,7 +419,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(ref&&isCols(ref.parentNode)){ ref=ref.parentNode; if(mode==="replace") mode="after"; }
     if(ref&&isCols(ref)&&mode==="replace") mode="after";
     var slot=isBlock(ref)?ref.parentNode:ed;
-    if(CONT[k]&&tooDeep(slot,k==="columns"?2:1)){ window.alert(LT("depth_max")); return; }
+    if(CONT[k]&&tooDeep(slot,k==="columns"||k==="tabs"?2:1)){ window.alert(LT("depth_max")); return; }
     var blk=ref;
     if(!(mode==="replace"&&isBlock(ref)&&isEmpty(ref))){ blk=emptyP(); if(isBlock(ref)) slot.insertBefore(blk,mode==="before"?ref:ref.nextSibling); else ed.appendChild(blk); }
     apply(k,blk);
@@ -605,6 +620,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(kind.indexOf("pattern:")===0){ insertPattern(kind.slice(8),blk); return; }
     if(kind==="articles"){ openArticles(null,blk); return; }
     if(kind.indexOf("app:")===0){ openApp(null,blk,kind.slice(4)); return; }
+    if(kind.indexOf("shop:")===0){ openShop(null,blk,kind.slice(5)); return; }
     if(kind==="img"){ caretIn(blk); select(blk); if(window.bantoOpenMedia){ window.bantoOpenMedia("body"); return; } var inp=document.getElementById("page-image"); if(inp) inp.click(); return; }
     if(kind==="products"){ openProducts(null,blk); return; }
     if(kind==="button"){ openButton(null,blk); return; }
@@ -688,6 +704,68 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       tidy(); mark();
       var first=nodes[0].querySelector("[data-slot] > *")||nodes[0]; if(first&&!BOXES[kindOf(first)]&&!CONT[kindOf(first)]){ caretIn(first); select(first); } else { pin=nodes[0]; select(nodes[0]); }
     }).catch(function(){});
+  }
+
+  // ---------- お店のブロック（検索・カテゴリー・カード・商品・アイコン。src/pages/shop-blocks.ts） ----------
+  function shopAttrs(box){ try{ var o=JSON.parse(box.getAttribute("data-attrs")||"{}"); return o&&typeof o==="object"?o:{}; }catch(_){ return {}; } }
+  function shopText(kind,a){
+    var d=SHOPDEF[kind]||{label:kind,fields:[]}, bits=[];
+    (d.fields||[]).forEach(function(f){ var v=a[f.key]; if(!v) return; if(f.type==="select"){ (f.options||[]).forEach(function(o){ if(o.value===v) v=o.label; }); } bits.push(v); });
+    return d.label+(bits.length?" — "+bits.join(" · "):"");
+  }
+  function setShopBox(box,kind,a){
+    box.className="banto-shop banto-shop--"+kind+(sel===box?" is-sel":""); box.setAttribute("data-banto-block","shop"); box.setAttribute("contenteditable","false");
+    box.setAttribute("data-kind",kind); box.setAttribute("data-attrs",JSON.stringify(a));
+    if(kind!=="icon"||!box.querySelector("svg")) box.textContent=shopText(kind,a);
+  }
+  function openShop(box,blk,kind){
+    var def=SHOPDEF[kind]; if(!def) return;
+    var cur=box?shopAttrs(box):{};
+    var dlg=document.createElement("dialog"); dlg.className="blk-dlg"; var f=document.createElement("form"); f.method="dialog"; dlg.appendChild(f);
+    var h=document.createElement("h2"); h.textContent=def.label; f.appendChild(h);
+    if(def.desc){ var p0=el("p","muted"); p0.textContent=def.desc; f.appendChild(p0); }
+    (def.fields||[]).forEach(function(x){
+      var id="shopf-"+x.key, v=cur[x.key]!==undefined?String(cur[x.key]):(x["default"]||"");
+      var lab=document.createElement("label"); lab.textContent=x.label; f.appendChild(lab);
+      if(x.type==="select"){
+        lab.setAttribute("for",id); var se=document.createElement("select"); se.id=id; se.name=x.key;
+        (x.options||[]).forEach(function(o){ var op=document.createElement("option"); op.value=o.value; op.textContent=o.label; if(o.value===v) op.selected=true; se.appendChild(op); });
+        f.appendChild(se);
+      } else if(x.type==="checks"){
+        var on=v?v.split(","):[], box2=el("div",""); box2.style.cssText="display:flex;flex-wrap:wrap;gap:.25rem 1rem";
+        (x.options||[]).forEach(function(o){ var l2=document.createElement("label"); l2.style.display="inline"; var cb=document.createElement("input"); cb.type="checkbox"; cb.name=x.key; cb.value=o.value; cb.checked=on.indexOf(o.value)>=0; l2.appendChild(cb); l2.appendChild(document.createTextNode(" "+o.label)); box2.appendChild(l2); });
+        f.appendChild(box2);
+      } else {
+        lab.setAttribute("for",id); var inp=document.createElement("input"); inp.id=id; inp.name=x.key; inp.type="text"; inp.value=v; inp.maxLength=200; if(x.placeholder) inp.placeholder=x.placeholder; inp.style.width="100%"; f.appendChild(inp);
+      }
+      if(x.help){ var hp=el("p","muted"); hp.style.fontSize=".8rem"; hp.textContent=x.help; f.appendChild(hp); }
+    });
+    var err=el("p","error"); err.hidden=true; f.appendChild(err);
+    var row=el("p",""); var ok=document.createElement("button"); ok.type="submit"; ok.value="ok"; ok.textContent=T("ok")||"OK"; var cancel=document.createElement("button"); cancel.type="submit"; cancel.value="cancel"; cancel.className="secondary"; cancel.textContent=T("cancel")||"Cancel"; cancel.formNoValidate=true;
+    row.appendChild(ok); row.appendChild(document.createTextNode(" ")); row.appendChild(cancel); f.appendChild(row);
+    document.body.appendChild(dlg);
+    var a={};
+    f.addEventListener("submit",function(e){
+      var sub=e.submitter; if(!sub||sub.value!=="ok") return;
+      a={}; var miss=null;
+      (def.fields||[]).forEach(function(x){
+        var v;
+        if(x.type==="checks") v=Array.prototype.filter.call(f.querySelectorAll("input[name='"+x.key+"']"),function(c){ return c.checked; }).map(function(c){ return c.value; }).join(",");
+        else { var e2=f.elements[x.key]; v=e2?String(e2.value||"").trim():""; }
+        if(x.type!=="select"&&x.type!=="checks"&&x.pattern&&v&&!new RegExp(x.pattern).test(v)) miss=x.label;
+        if(x.required&&!v) miss=x.label;
+        if(v) a[x.key]=v;
+      });
+      if(def.oneOf&&!def.oneOf.some(function(k2){ return a[k2]; })) miss=def.oneOfLabel||def.label;
+      if(miss){ e.preventDefault(); err.textContent=(T("shop-required")||"").replace("{field}",miss); err.hidden=false; }
+    });
+    dlg.addEventListener("close",function(){
+      var okd=dlg.returnValue==="ok"; document.body.removeChild(dlg);
+      if(!okd){ if(blk){ caretIn(blk); select(blk); } return; }
+      if(box){ if(kind==="icon") box.innerHTML=""; setShopBox(box,kind,a); mark(); select(box); }
+      else { var nb=document.createElement("div"); setShopBox(nb,kind,a); place2(nb,blk); }
+    });
+    dlg.showModal();
   }
 
   // ---------- 外部プラグインのブロック（0086。1 ページに 2 つまで。設定の欄はマニフェストの fields と、reviews.v1 の見せ方・件数） ----------
@@ -866,16 +944,16 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   // ---------- ブロックの設定（右の欄のいちばん上。選んだレイアウトのブロックの値をその場で変える） ----------
   var setCard=null, setFor=null;
   (function(){ var aside0=form.querySelector(".split > aside"); if(aside0){ setCard=el("section","card pe-blockset"); setCard.setAttribute("aria-live","polite"); aside0.insertBefore(setCard,aside0.firstChild); } })();
-  function setAttr(b,key,v){ b.setAttribute("data-"+key,v); if(kindOf(b)==="audience") audienceLabel(b); cls(b); if(key==="ratio") syncCols(b); if(key==="alt"){ var im=b.querySelector(".banto-media__fig img"); if(im) im.alt=v; } mark(); refresh(); }
+  function setAttr(b,key,v){ b.setAttribute("data-"+key,v); if(kindOf(b)==="audience") audienceLabel(b); if(kindOf(b)==="tabs"&&key==="count") syncTabs(b); cls(b); if(key==="ratio") syncCols(b); if(key==="alt"){ var im=b.querySelector(".banto-media__fig img"); if(im) im.alt=v; } mark(); refresh(); }
   function openSettings(){ var a0=form.querySelector(".split > aside"); if(a0&&a0.hidden&&typeof setSet==="function") setSet(true); drawSettings(true); if(setCard) setCard.scrollIntoView({block:"nearest"}); }
   function drawSettings(force){
     if(!setCard) return;
     // 選んだブロックがレイアウトのブロックでなければ、それを囲む一番近いもの（列ならカラム）の設定を出す
-    var b=sel; while(b&&!(LS[kindOf(b)]&&kindOf(b)!=="column")) b=b.parentNode===ed?null:ownerOf(b.parentNode);
+    var b=sel; while(b&&!(LS[kindOf(b)]&&kindOf(b)!=="column"&&kindOf(b)!=="tab")) b=b.parentNode===ed?null:ownerOf(b.parentNode);
     var k=b?kindOf(b):"";
     if(!force&&setFor===b) return; setFor=b;
     setCard.innerHTML=""; var h=el("h2","");
-    if(!b||!LS[k]||k==="column"){ h.textContent=LT("settings"); setCard.appendChild(h); var p0=el("p","muted"); p0.textContent=LT("settings_none"); setCard.appendChild(p0); return; }
+    if(!b||!LS[k]||k==="column"||k==="tab"){ h.textContent=LT("settings"); setCard.appendChild(h); var p0=el("p","muted"); p0.textContent=LT("settings_none"); setCard.appendChild(p0); return; }
     h.innerHTML=svg(ICO[k]); h.appendChild(document.createTextNode(nameOf(k))); setCard.appendChild(h);
     // テーマのスタイル（テーマが決めているブロックだけ）
     if(STYLES[k]&&STYLES[k].length){ var ls0=el("label",""); ls0.textContent=T("style"); ls0.setAttribute("for","ls-style"); setCard.appendChild(ls0); var ss=document.createElement("select"); ss.id="ls-style"; fillStyle(ss,k,b.getAttribute("data-style")||""); ss.addEventListener("change",function(){ var v=styleVal(ss); if(v) b.setAttribute("data-style",v); else b.removeAttribute("data-style"); cls(b); mark(); refresh(); }); setCard.appendChild(ss); }

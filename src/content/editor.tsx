@@ -30,7 +30,9 @@ import type { CacheAdapter, StorageAdapter } from "../adapters/types";
 import { parseManifest, type ManifestBlock } from "../hooks/manifest";
 import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
-import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, layoutDefault } from "../pages/layout";
+import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
+import { PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
+import { ICON_NAMES } from "../pages/icons";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
 function layoutConfig(audiences: { id: string; name: string }[] = []): string {
@@ -40,7 +42,7 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
   for (const k of kinds) {
     schema[k] = {};
     L[`kind.${k}`] = t(`layout.kind_${k}` as MessageKey);
-    if (k !== "column") L[`desc.${k}`] = t(`layout.desc_${k}` as MessageKey);
+    if (k !== "column" && k !== "tab") L[`desc.${k}`] = t(`layout.desc_${k}` as MessageKey);
     for (const [key, values] of Object.entries(LAYOUT_ATTRS[k])) {
       schema[k]![key] = { values, def: layoutDefault(k, key) };
       L[`field.${key}`] = t(`layout.field_${key}` as MessageKey);
@@ -48,6 +50,11 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
     }
   }
   for (const k of ["image", "alt"]) L[`field.${k}`] = t(`layout.field_${k}` as MessageKey);
+  // タブの数（書式には書かない。編集の画面で中のタブを足し引きするだけ）
+  const counts = Array.from({ length: TABS_MAX - 1 }, (_, i) => String(i + 2));
+  schema["tabs"] = { count: { values: counts, def: "2" } };
+  L["field.count"] = t("layout.field_count");
+  for (const v of counts) L[`opt.count.${v}`] = v;
   // 見せる相手の囲み（同梱モジュール audiences、0097）: 条件があるショップだけ一覧に出す。選ぶのは条件の名前
   if (audiences.length > 0) {
     schema["audience"] = { id: { values: audiences.map((a) => a.id), def: audiences[0]!.id } };
@@ -57,7 +64,7 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
     L["audience_label"] = t("pages.audience_label");
     for (const a of audiences) L[`opt.id.${a.id}`] = a.name;
   }
-  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
+  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "tab_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
   return JSON.stringify({ schema, depth: LAYOUT_DEPTH_MAX, t: L });
 }
 
@@ -171,9 +178,65 @@ async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: 
   }
 }
 
+/** お店のブロックの編集の画面の定義（名前・説明・欄）。値の形は src/pages/shop-blocks.ts と同じ（サーバーが描くときにも確かめる） */
+export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) {
+  const opt = (pairs: [string, string][]) => pairs.map(([value, label]) => ({ value, label }));
+  const slug = "^[a-z0-9][a-z0-9-]{0,62}$";
+  return {
+    search: { label: t("blocks.search"), desc: t("blocks.search_desc"), group: "shop", fields: [{ key: "placeholder", label: t("blocks.placeholder"), type: "text", placeholder: t("blocks.search_placeholder") }] },
+    categories: {
+      label: t("blocks.categories"),
+      desc: t("blocks.categories_desc"),
+      group: "shop",
+      fields: [
+        { key: "parent", label: t("blocks.categories_parent"), type: "select", options: opt([["", t("blocks.categories_all")], ...categories.map((c): [string, string] => [c.slug, c.name])]) },
+        { key: "layout", label: t("blocks.layout"), type: "select", options: opt([["list", t("blocks.layout_list")], ["grid", t("blocks.layout_grid")]]), default: "list" },
+      ],
+    },
+    card: {
+      label: t("blocks.card"),
+      desc: t("blocks.card_desc"),
+      group: "shop",
+      oneOf: ["page", "article"],
+      oneOfLabel: t("blocks.card"),
+      fields: [
+        { key: "page", label: t("blocks.card_page"), type: "text", pattern: slug, placeholder: "about" },
+        { key: "article", label: t("blocks.card_article"), type: "text", pattern: "^[a-z0-9][a-z0-9-]{0,62}/[a-z0-9][a-z0-9-]{0,62}$", placeholder: "news/hello" },
+      ],
+    },
+    product: {
+      label: t("blocks.product"),
+      desc: t("blocks.product_desc"),
+      group: "shop",
+      fields: [
+        { key: "slug", label: t("blocks.product_slug"), type: "text", required: true, pattern: slug, placeholder: "tee" },
+        { key: "show", label: t("blocks.product_show"), type: "checks", default: PRODUCT_PARTS_DEFAULT.join(","), options: opt(PRODUCT_PARTS.map((x): [string, string] => [x, t(`blocks.part_${x}` as MessageKey)])) },
+      ],
+    },
+    icon: {
+      label: t("blocks.icon"),
+      desc: t("blocks.icon_desc"),
+      group: "design",
+      fields: [
+        { key: "name", label: t("blocks.icon_name"), type: "select", options: opt(ICON_NAMES.map((n): [string, string] => [n, n])) },
+        { key: "size", label: t("blocks.icon_size"), type: "select", options: opt([["s", "S"], ["m", "M"], ["l", "L"], ["xl", "XL"]]), default: "m" },
+        { key: "tone", label: t("blocks.icon_tone"), type: "select", options: opt([["text", t("blocks.tone_text")], ["accent", t("blocks.tone_accent")], ["muted", t("blocks.tone_muted")]]), default: "text" },
+        { key: "label", label: t("blocks.icon_label"), type: "text", help: t("blocks.icon_label_help") },
+      ],
+    },
+  };
+}
+
 /** 管理画面で本文を HTML にする（商品のブロックは説明の箱にする） */
 export const editorHtml = (c: AdminContext, body: string) =>
-  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), audienceLabel: (title) => tf("pages.audience_label", { name: title || t("pages.audience_unnamed") }), editor: true });
+  markdownToHtml(body, { mediaBase: mediaBaseUrl(c), productsLabel, articlesLabel: (b) => tf("pages.articles_label", { blog: b.blog, n: b.limit }), appLabel: (b) => tf("pages.app_label", { app: b.app, block: b.block, product: b.product }), audienceLabel: (title) => tf("pages.audience_label", { name: title || t("pages.audience_unnamed") }), shopLabel: (b) => shopBlockText(b), editor: true });
+
+/** 編集の画面のお店のブロックの目印（ブラウザ側の shopText と同じ形） */
+function shopBlockText(b: ShopBlock): string {
+  const label = t(`blocks.${b.kind}` as MessageKey);
+  const bits = Object.entries(b.attrs).filter(([k, v]) => v && !(k === "layout" && v === "list")).map(([, v]) => v);
+  return bits.length ? `${label} — ${bits.join(" · ")}` : label;
+}
 
 /**
  * 本文の入力の手助け（見出し・太字・リンク・箇条書き…のボタンと、画像を縮小して置いて ![](URL) を入れる）。
@@ -287,6 +350,12 @@ export const EDITOR_CSS = `
 .blk-opt small{display:block;color:var(--fg-muted);font-size:.75rem}
 .blk-opt[aria-selected=true],.blk-opt:hover{background:var(--bg-subtle);opacity:1}
 #md-tools[hidden],.blk-tb[hidden],.blk-ins[hidden],.blk-menu[hidden],.blk-pop[hidden],.blk-plus[hidden],.blk-gap[hidden]{display:none}
+.page-preview .banto-shop:not(.banto-shop--icon){border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
+.page-preview .banto-shop--icon{cursor:pointer;display:inline-block;margin:.25rem 0}
+.page-preview .banto-tabs{border:1px solid var(--border);border-radius:6px;padding:.5rem}
+.page-preview .banto-tab{border-top:1px dashed var(--border);padding:.25rem 0}.page-preview .banto-tab:first-child{border-top:0}
+.page-preview .banto-tab__title{font-weight:600;padding:.25rem 0}
+.page-preview .banto-grid{outline:1px dashed var(--border);outline-offset:3px}
 .page-preview .banto-audience{border:2px dashed var(--accent,#1f6feb);border-radius:6px;padding:.5rem .75rem;margin:.75rem 0}
 .page-preview .banto-audience__label{font-size:.8rem;color:var(--accent,#1f6feb);margin-bottom:.25rem;user-select:none}
 .page-preview .banto-app,.page-preview .banto-articles{border:1px dashed var(--border-strong);border-radius:6px;padding:.75rem 1rem;margin:.75rem 0;background:var(--bg-subtle);cursor:pointer;font-size:.9rem;user-select:none}
@@ -350,6 +419,7 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .pe-file input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 ${LAYOUT_CSS}
+${SHOP_BLOCKS_CSS}
 `;
 
 /** 編集の画面の種類ごとの違い（ページと記事） */
@@ -454,6 +524,11 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-articles": t("pages.block_articles"),
     "data-t-d-articles": t("pages.blockdesc_articles"),
     "data-t-articles-max": tf("pages.articles_max", { n: ARTICLE_BLOCKS_MAX }),
+    // お店のブロック（src/pages/shop-blocks.ts）の名前・説明・設定の欄
+    "data-shop-blocks": JSON.stringify(shopBlockDefs(props.categories)),
+    "data-t-ok": t("blocks.ok"),
+    "data-t-cancel": t("blocks.cancel"),
+    "data-t-shop-required": t("blocks.required"),
     "data-t-articles-none": t("pages.articles_none"),
     "data-t-articles-label": t("pages.articles_label"),
     // 外部プラグインのブロック（0086）

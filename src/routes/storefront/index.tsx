@@ -22,6 +22,7 @@ import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, para
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
+import { fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
@@ -414,8 +415,10 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, page.body, viewerOf(s));
-  const html = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, view.body, categories);
+  const raw = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
+  // お店のブロック（検索・カテゴリー・カード・商品）はテーマに依らない HTML なので先に入れる
+  const html = fillShopBlocks(raw, shopCards);
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards });
@@ -487,8 +490,9 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return notFoundPage(c, s);
   const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
-  const html = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-  const { blocks, cards, ablocks, acards, apps, appCards } = await bodyProducts(s, view.body, categories);
+  const raw = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
+  const html = fillShopBlocks(raw, shopCards);
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
@@ -748,7 +752,10 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
   if (!hit) return notFound(c, s);
   // 会員限定で買えない商品（0098）は入れない（商品のページが「会員の方だけ購入できます」を出している）
   if (!hit.purchasable) return c.redirect(`${s.ctx.shopPath}/p/${hit.product.slug}`);
-  await writeCart(c, s, addItem(s.cart, skuId, qty));
+  const next = addItem(s.cart, skuId, qty);
+  await writeCart(c, s, next);
+  // 本文の「今すぐ買う」（src/pages/shop-blocks.ts）: カートに入れて、そのまま購入手続き（配送先 → 最終確認）へ
+  if (f.buy === "1") return startCheckout(c, { ...s, cart: next }, {});
   // sku と qty は「カートに入れた」の出来事用（どの SKU を何点入れたか。src/storefront/events.ts）
   return c.redirect(`${s.ctx.shopPath}/p/${hit.product.slug}?added=1&sku=${encodeURIComponent(hit.sku.code)}&qty=${qty}`);
 });

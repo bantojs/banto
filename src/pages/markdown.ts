@@ -13,7 +13,8 @@
  */
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { t } from "../i18n";
-import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
+import { SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
+import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
   /** 画像として受け付ける URL の起点（MEDIA_BASE_URL。無ければ /media/ だけ） */
@@ -32,6 +33,8 @@ export interface MarkdownOptions {
   articlesLabel?: (b: ArticlesBlock) => string;
   /** 管理画面の見たままの編集: プラグインのブロック（0086）の説明の文字（お店の画面では渡さない） */
   appLabel?: (b: AppBlock) => string;
+  /** お店のブロックの目印の文字（編集の画面だけ） */
+  shopLabel?: (b: ShopBlock) => string;
   /** 見せる相手の囲み（0097）の目印の文字（編集の画面だけ。お客様の画面は描く前に src/content/audience-blocks.ts で外す） */
   audienceLabel?: (title: string, id: string | null) => string;
   /**
@@ -235,6 +238,11 @@ interface RenderState {
   apps: number;
   /** レイアウトのブロックを描いたか（CSS を添えるため） */
   layout: boolean;
+  /** お店のブロック（データを引くもの）の数・お店のブロックを描いたか */
+  shop: number;
+  shopCss: boolean;
+  /** タブの数（ラジオの名前を重ねないため） */
+  tabs: number;
 }
 
 const blank = (l: string | undefined) => l === undefined || l.trim() === "";
@@ -242,10 +250,11 @@ const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE
 
 export function markdownToHtml(source: string, opts: MarkdownOptions = {}): string {
   const rows = source.replace(/\r\n?/g, "\n").split("\n");
-  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false };
+  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false, shop: 0, shopCss: false, tabs: 0 };
   const html = render(rows, 0, st).join("\n");
   if (html.length > BODY_HTML_MAX) return `<p class="banto-too-large">${esc(t("pages.body_too_large"))}</p>`;
-  return st.layout && !opts.editor && opts.layoutCss !== false ? `<style>${LAYOUT_CSS}</style>\n${html}` : html;
+  const css = !opts.editor && opts.layoutCss !== false ? `${st.layout ? LAYOUT_CSS : ""}${st.shopCss ? SHOP_BLOCKS_CSS : ""}` : "";
+  return css ? `<style>${css}</style>\n${html}` : html;
 }
 
 const ESC_ATTR = (s: string) => esc(s);
@@ -291,6 +300,33 @@ function layoutBlock(o: LayoutOpen, inner: string[], depth: number, st: RenderSt
         }
       }
       return `<div class="banto-gallery banto-gallery--${a["cols"]}${sty}" ${data()}${ed ? ' contenteditable="false"' : ""}>${figs.join("")}</div>`;
+    }
+    case "grid":
+      return `<div class="banto-grid banto-grid--${a["cols"]}${sty}" ${data()}${slot}>${body()}</div>`;
+    case "tab": {
+      // タブの外に置かれたタブ（編集の画面以外）は、題つきのグループとして出す
+      const title = esc(o.title);
+      if (ed) return `<div class="banto-tab${sty}" ${data()}><div class="banto-tab__title" data-acc-title>${title || "<br>"}</div><div class="banto-tab__body" data-slot>${body()}</div></div>`;
+      return `<div class="banto-tab${sty}">${title ? `<p><strong>${title}</strong></p>` : ""}${body()}</div>`;
+    }
+    case "tabs": {
+      // 中の「タブ」の囲みだけを拾う（ほかの行は捨てる。編集の画面はタブしか置かせない）
+      const tabs: { open: LayoutOpen; rows: string[] }[] = [];
+      for (let j = 0; j < inner.length && tabs.length < TABS_MAX; j++) {
+        const lo = parseLayoutOpen(inner[j]!);
+        if (!lo) continue;
+        const end = layoutEnd(inner, j);
+        if (lo.kind === "tab") tabs.push({ open: lo, rows: inner.slice(j + 1, end) });
+        j = end;
+      }
+      if (ed) return `<div class="banto-tabs${sty}" ${data(` data-count="${Math.max(2, tabs.length)}"`)} data-slot="tabs">${tabs.map((x) => layoutBlock(x.open, x.rows, depth + 1, st)).join("")}</div>`;
+      if (tabs.length === 0) return "";
+      const n = st.tabs++;
+      const id = (k: number) => `banto-tabs-${n}-${k}`;
+      const radios = tabs.map((_, k) => `<input type="radio" class="banto-tabs__r" name="banto-tabs-${n}" id="${id(k)}"${k === 0 ? " checked" : ""}>`).join("");
+      const nav = tabs.map((x, k) => `<label for="${id(k)}">${esc(x.open.title) || String(k + 1)}</label>`).join("");
+      const panels = tabs.map((x) => `<div class="banto-tabs__panel">${render(x.rows, depth + 2, st).join("\n")}</div>`).join("");
+      return `<div class="banto-tabs${sty}" ${data()}>${radios}<div class="banto-tabs__nav">${nav}</div><div class="banto-tabs__panels">${panels}</div></div>`;
     }
     case "accordion": {
       const title = esc(o.title);
@@ -347,6 +383,18 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       if (sp) {
         st.layout = true;
         out.push(`<div class="banto-spacer banto-spacer--${sp.size}" data-banto-block="spacer" data-size="${sp.size}" aria-hidden="true"${opts.editor ? ' contenteditable="false"' : ""}></div>`);
+        i++;
+        continue;
+      }
+      // お店のブロック（src/pages/shop-blocks.ts）。アイコンはその場で描き、ほかは印だけ（中身は src/content/body-blocks.ts）
+      const sb = parseShopBlock(row);
+      if (sb) {
+        st.shopCss = true;
+        const data = `data-banto-block="shop" data-kind="${sb.kind}" data-attrs="${esc(JSON.stringify(sb.attrs))}"`;
+        if (sb.kind === "icon") out.push(opts.editor ? `<div class="banto-shop banto-shop--icon" ${data} contenteditable="false">${iconHtml(sb)}</div>` : `<p class="banto-shop banto-shop--icon">${iconHtml(sb)}</p>`);
+        else if (opts.editor) out.push(`<div class="banto-shop banto-shop--${sb.kind}" ${data} contenteditable="false">${esc(opts.shopLabel ? opts.shopLabel(sb) : sb.kind)}</div>`);
+        else out.push(`<div class="banto-shop banto-shop--${sb.kind}">${st.shop < SHOP_BLOCKS_MAX ? shopMarker(st.shop) : ""}</div>`);
+        if (sb.kind !== "icon") st.shop++;
         i++;
         continue;
       }

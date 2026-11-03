@@ -193,10 +193,10 @@ export function pageEditorClient() {
   /** 囲みの値に使える文字（選択肢は英小文字・数字・ハイフン。説明・題は " と改行を外す） */
   const word = (v: string) => (/^[a-z0-9-]{1,30}$/.test(v) ? v : "");
   const quoted = (v: string) => v.replace(/["\n\r]/g, "").replace(/\s+/g, " ").trim().slice(0, 200);
-  const LAYOUT = /^(group|columns|column|cover|media|gallery|accordion)$/;
+  const LAYOUT = /^(group|columns|column|cover|media|gallery|accordion|grid|tabs|tab)$/;
   /** 囲みの中身を持つ要素（カバー・画像と文・アコーディオンは中の欄、ほかは自分） */
   function slotOf(c: MdNode, kind: string): MdNode {
-    const cls = kind === "cover" ? "banto-cover__inner" : kind === "media" ? "banto-media__body" : kind === "accordion" ? "banto-accordion__body" : "";
+    const cls = kind === "cover" ? "banto-cover__inner" : kind === "media" ? "banto-media__body" : kind === "accordion" ? "banto-accordion__body" : kind === "tab" ? "banto-tab__body" : "";
     if (!cls) return c;
     return Array.from(c.childNodes).find((x) => x.nodeType === 1 && (" " + attr(x, "class") + " ").includes(` ${cls} `)) ?? { nodeType: 1, nodeName: "DIV", childNodes: [], textContent: "" };
   }
@@ -229,8 +229,9 @@ export function pageEditorClient() {
       };
       walk(c);
     } else {
-      if (kind === "accordion") {
-        const t = Array.from(c.childNodes).find((x) => x.nodeType === 1 && (" " + attr(x, "class") + " ").includes(" banto-accordion__title "));
+      if (kind === "accordion" || kind === "tab") {
+        const tcls = kind === "tab" ? " banto-tab__title " : " banto-accordion__title ";
+        const t = Array.from(c.childNodes).find((x) => x.nodeType === 1 && (" " + attr(x, "class") + " ").includes(tcls));
         const title = quoted(t?.textContent ?? "");
         if (title) parts.push(`title="${title}"`);
       }
@@ -276,6 +277,28 @@ export function pageEditorClient() {
       }
       if (LAYOUT.test(kind)) {
         layout(c, kind, out, heights);
+        continue;
+      }
+      // お店のブロック（src/pages/shop-blocks.ts）: data-kind と data-attrs から 1 行に戻す（値の形はサーバーが描くときにも確かめる）
+      if (kind === "shop") {
+        const k = attr(c, "data-kind");
+        if (!/^(search|categories|card|product|icon)$/.test(k)) continue;
+        let o: Record<string, unknown> = {};
+        try {
+          const v: unknown = JSON.parse(attr(c, "data-attrs") || "{}");
+          if (v && typeof v === "object" && !Array.isArray(v)) o = v as Record<string, unknown>;
+        } catch {
+          o = {};
+        }
+        const parts = [k];
+        for (const [key, raw] of Object.entries(o)) {
+          if (!/^[a-z]{1,20}$/.test(key) || typeof raw !== "string" || raw === "") continue;
+          // 既定の値は書かない（src/pages/shop-blocks.ts の def と同じ）
+          if ((key === "size" && raw === "m") || (key === "tone" && raw === "text") || (key === "layout" && raw === "list")) continue;
+          if (key === "placeholder" || key === "label") parts.push(`${key}="${quoted(raw).slice(0, 60)}"`);
+          else if (/^[a-z0-9][a-z0-9,/_-]{0,200}$/.test(raw)) parts.push(`${key}=${raw}`);
+        }
+        out.push(`::: ${parts.join(" ")}`);
         continue;
       }
       if (kind === "spacer") {

@@ -8,6 +8,7 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSummary, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
+import { fillShopBlocks } from "../../pages/shop-blocks";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 import { hasAudienceBlocks } from "../../content/audience-blocks";
 import { viewerBody } from "../audience-render";
@@ -66,8 +67,8 @@ async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at"
   }
   const html = pageBodyHtml({ ...row, body: view.body }, s.mediaBaseUrl, s.origin, view.key);
   const categories = await s.sf.listCategories(s.shop);
-  const { cards, acards, appCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, view.body, categories);
-  return { body: view.body, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards) };
+  const { cards, acards, appCards, shopCards } = await bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.home, mediaBaseUrl: s.mediaBaseUrl }, view.body, categories);
+  return { body: view.body, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(fillShopBlocks(html, shopCards), cards), acards), appCards) };
 }
 
 function pageSummary(s: Scope, p: Omit<PageRow, "body">) {
