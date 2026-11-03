@@ -46,9 +46,10 @@ Banto は、運営者が発行した **AI 用トークン** を使って、Claud
 | `content:read` | ショップのページ・ブログの記事の参照（0083。モジュール「ページ」「ブログ」が ON のショップだけ）。下書き・予約・ゴミ箱も読める |
 | `content:write` | ページ・記事を作る・直す・**公開する**（予約公開も）・ゴミ箱へ移す（0083、§9）。お店の画面に出る |
 | `app_data:write` | 外部プラグインが商品に付くデータ（レビューの要約）を置き直す（0084、§10）。**連携（プラグイン）に結んで発行**し、その名前の空間だけに書ける。お店の画面に出る。REST だけ |
+| `line:send` | ショップの LINE 公式アカウントから会員に宣伝のメッセージを送る（0105、§12、docs/line.md §4）。**LINE の利用者 ID は返さない**（送るのは Banto）。宣伝の月の上限あり。REST だけ |
 
 - 有効期限（任意）、失効（管理画面でいつでも）、最終利用日時の記録。
-- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content`、`app_data:write` は `apps` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
+- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content`、`app_data:write` は `apps`、`line:send` は `marketing` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
 - **発行した人の権限が続いている間だけ使える**（0026）: 発行者がそのショップの `integrations` の項目（組織の owner / admin を含む）を失うと、トークンは `unauthorized` になります（メンバーを組織から外した・項目を外したときに、発行済みのトークンが残って使えてしまわないように）。項目を戻せばまた使えます。
 - お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read、連絡先は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。メンテナの決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
 - クーポンと会員（0036）: 判断の理由は §6。
@@ -290,3 +291,13 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - 運営者が連携の画面で「許してつなぐ」と、プラグインが裏で引き換えるときに AI 用トークンが作られます（docs/hooks.md §6）。名前は「連携: <プラグインの名前>」で、AI 連携の画面の一覧にも出ます。
 - スコープは**プラグインが求め、運営者が許したものだけ**で、許した人の権限の項目まで（ほかのトークンと同じ決まり）。連携に結ばれ、連携を消すとトークンも消えます。つなぎ直すと前のトークンは取り消しです。
 - 運営者はトークンを見たり写したりしません。取り消しは AI 連携の画面から、ほかのトークンと同じようにできます。
+
+## 12. 外部プラグイン（MA・CRM・自動化）向けの口（0105、メンテナの決定 2026-11-03）
+
+- **注文の一覧を会員で絞る・更新順に読む**（`orders:read`）: `GET /api/v1/orders?customer_id=<会員 ID>`、`GET /api/v1/orders?updated_since=<ISO 8601>`。
+  `updated_since` を渡すと更新の古い順（`updated_at`・`id`）になり、応答に `cursor`（`{ updated_since, after }`）と `has_more` が付きます。
+  続きは `?updated_since=<cursor.updated_since>&after=<cursor.after>`。同じ時刻に更新された注文も読み落としません。
+  hooks を取りこぼしたときの確かめと、つなぐ前の注文の取り込みに使います。書き込みの取引が終わる前の時刻が付くことがあるので、最後に読んだ時刻より少し（数分）前から読み直すと確実です。
+- **LINE で送る口**（`line:send`）: docs/line.md §4。
+- **hooks `checkout.abandoned`**（カゴ落ち）: docs/hooks.md §1。会員の予約の期限切れだけ。
+- どれもデータベースの更新 `0105_ma_ports` が要ります。当たるまでは 409（`migration_required`）です。

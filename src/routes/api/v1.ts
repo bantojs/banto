@@ -210,7 +210,18 @@ v1.delete("/images/:id", async (c) => api(c).imageDelete(c.req.param("id")).then
 
 v1.get("/orders", async (c) =>
   api(c)
-    .ordersList({ status: c.req.query("status") || undefined, query: c.req.query("q") || undefined, from: c.req.query("from") || undefined, to: c.req.query("to") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
+    .ordersList({
+      status: c.req.query("status") || undefined,
+      query: c.req.query("q") || undefined,
+      from: c.req.query("from") || undefined,
+      to: c.req.query("to") || undefined,
+      limit: int(c.req.query("limit"), 50),
+      offset: int(c.req.query("offset"), 0),
+      // 0105: 会員で絞る・更新順に読む（続きは cursor の updated_since と after）
+      customerId: c.req.query("customer_id") || undefined,
+      updatedSince: c.req.query("updated_since") || undefined,
+      after: c.req.query("after") || undefined,
+    })
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),
 );
@@ -411,6 +422,15 @@ v1.post("/customers/upsert", async (c) =>
 v1.get("/customers/:id", async (c) => api(c).customerGet(c.req.param("id")).then((r) => c.json(r, 200, { "cache-control": "no-store" })).catch((e) => errorJson(c, e)));
 v1.patch("/customers/:id", async (c) => body(c).then((b) => api(c).customerUpdate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/customers/:id", async (c) => api(c).customerDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+
+// LINE で送る口（0105。line:send。Banto がショップの LINE 公式アカウントで 1 通送る。LINE の利用者 ID は返さない。docs/line.md §4）
+v1.post("/customers/:id/line-message", async (c) =>
+  body(c)
+    .then((b) => api(c).lineMessageSend(c.req.param("id"), b, c.req.header("idempotency-key") ?? undefined))
+    .then((r) => c.json(r, 200, { "cache-control": "no-store" }))
+    .catch((e) => errorJson(c, e)),
+);
+v1.get("/line/usage", async (c) => api(c).lineUsage().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 
 v1.get("/stats/sales", async (c) => {
   const from = c.req.query("from");

@@ -7,7 +7,7 @@ import { IMAGE_PROCESSING_MIGRATION, VARIANT_SIZES, imageKeys, readVariantFiles,
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
-import { hashApiToken } from "./tokens";
+import { MA_PORTS_MIGRATION, hashApiToken } from "./tokens";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, productImageKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
@@ -29,6 +29,8 @@ import { getLocale } from "../i18n";
 import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone } from "../i18n/time";
+import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
+import { lineTokenFor } from "../plugins/line_token";
 
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
@@ -93,6 +95,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
     // ページ・記事（0083）
     // 拡張データ（0084）
+    if (e.is("idempotency_key_reused")) throw new ApiError("conflict", "idempotency_key_reused: this Idempotency-Key was already used for another member", 409);
+    if (e.is("invalid_cursor")) throw new ApiError("invalid", "invalid_cursor: pass after together with updated_since", 400);
     if (e.is("app_data_keys_full")) throw new ApiError("conflict", "app_data_keys_full: a plugin can keep up to 20 custom.v1 keys per product; delete some first", 409);
     if (e.is("app_handle_required")) throw new ApiError("conflict", "app_handle_required: give this plugin (hook endpoint) an app name in the admin screen first", 409);
     if (e.is("handle_taken")) throw new ApiError("conflict", "handle_taken: another page (or article in this blog) outside the trash already uses this handle", 409);
@@ -179,6 +183,11 @@ export interface OrdersQuery {
   to?: string;
   limit?: number;
   offset?: number;
+  /** 会員で絞る（0105） */
+  customerId?: string;
+  /** 更新順に読む（0105）。続きは前の応答の cursor の updated_since と after */
+  updatedSince?: string;
+  after?: string;
 }
 
 /** AI から進められる試着の状態（期限切れは Cron。在庫を戻すのは tryonRequestRestock） */
@@ -455,15 +464,65 @@ export class ApiService {
   }
 
   // ---- orders ----
-  ordersList = (q: OrdersQuery = {}) =>
-    this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("api_orders_list", {
+  ordersList = async (q: OrdersQuery = {}) => {
+    const extra: Record<string, unknown> = {};
+    if (q.customerId !== undefined || q.updatedSince !== undefined || q.after !== undefined) {
+      if (!(await this.migratedTo(MA_PORTS_MIGRATION))) throw new ApiError("migration_required", "customer_id / updated_since / after need the database update 0105_ma_ports", 409);
+      if (q.after !== undefined && q.updatedSince === undefined) throw new ApiError("invalid", "invalid_cursor: pass after together with updated_since (both from the previous response's cursor)", 400);
+      if (q.updatedSince !== undefined && Number.isNaN(Date.parse(q.updatedSince))) throw new ApiError("invalid", "updated_since must be an ISO 8601 date-time", 400);
+      extra["p_customer_id"] = q.customerId !== undefined ? uuidOr404(q.customerId) : null;
+      extra["p_updated_since"] = q.updatedSince ?? null;
+      extra["p_after"] = q.after !== undefined ? uuidOr404(q.after) : null;
+    }
+    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
       p_status: q.status ?? null,
       p_from: q.from ?? null,
       p_to: q.to ?? null,
       p_limit: q.limit ?? 50,
       p_offset: q.offset ?? 0,
       p_query: q.query ?? null,
+      ...extra,
     });
+  };
+
+  // ---- LINE で送る口（line:send、0105。docs/line.md §4）。LINE の利用者 ID は応答に載せない ----
+  lineMessageSend = async (customerId: string, input: Record<string, unknown>, idempotencyKey: string | undefined): Promise<{ id?: string; status: LineSendStatus; limit?: number; count?: number }> => {
+    if (!(await this.migratedTo(MA_PORTS_MIGRATION))) throw new ApiError("migration_required", "LINE messages need the database update 0105_ma_ports", 409);
+    if (!idempotencyKey || !IDEMPOTENCY_KEY_RE.test(idempotencyKey)) throw new ApiError("invalid", "Idempotency-Key header is required: 8 to 64 letters, digits, '-' or '_' (reuse the same key to retry the same message)", 400);
+    let messages;
+    try {
+      messages = lineMessagesFrom(input);
+    } catch (e) {
+      if (e instanceof LineInputError) throw new ApiError("invalid", e.message, 400);
+      throw e;
+    }
+    const b = await this.call<{ id?: string; status: string; done: boolean; shop_id?: string; line_user_id?: string; retry_key?: string; limit?: number; count?: number }>("api_line_message_begin", {
+      p_customer_id: uuidOr404(customerId),
+      p_key: idempotencyKey,
+    });
+    if (b.done || !b.id || !b.shop_id || !b.line_user_id || !b.retry_key) {
+      const status = b.status as LineSendStatus;
+      return status === "quota" ? { status, ...(b.limit !== undefined ? { limit: b.limit } : {}), ...(b.count !== undefined ? { count: b.count } : {}) } : { ...(b.id ? { id: b.id } : {}), status };
+    }
+    let token: string | null = null;
+    try {
+      token = await lineTokenFor({ db: this.db, secret: this.theme?.secret ?? null, config: this.config }, b.shop_id);
+    } catch {
+      token = null;
+    }
+    if (!token) {
+      await this.call("api_line_message_finish", { p_id: b.id, p_status: "failed" });
+      throw new ApiError("conflict", "line_not_configured: set the shop's LINE Official Account channel access token in the admin screen first", 409);
+    }
+    const result = await pushLine(this.fetchImpl, token, b.line_user_id, b.retry_key, messages);
+    await this.call("api_line_message_finish", { p_id: b.id, p_status: result });
+    if (result === "failed") throw new ApiError("upstream", "line_upstream: LINE did not accept the message; retry later with the same Idempotency-Key", 502);
+    return { id: b.id, status: result };
+  };
+  lineUsage = async () => {
+    if (!(await this.migratedTo(MA_PORTS_MIGRATION))) throw new ApiError("migration_required", "LINE messages need the database update 0105_ma_ports", 409);
+    return this.call<{ month: string; count: number; limit: number }>("api_line_usage", {});
+  };
   orderGet = (id: string) => this.call<Record<string, unknown>>("api_order_get", { p_order_id: id });
   orderUpdateStatus = (id: string, status: "shipped" | "cancelled") =>
     status === "cancelled" ? this.orderCancel(id) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status });

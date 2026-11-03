@@ -112,6 +112,8 @@ export class FakeSupabase {
   /** パスワードの失敗（0013）・外部アカウント（0014）・引き換え券（0014） */
   readonly memberFailures: Row[] = [];
   readonly memberIdentities: Row[] = [];
+  /** LINE で送る口の記録（0105。line_messages の代わり。月の区切りは見ない。本物は test/db/ma-ports.test.ts） */
+  readonly lineMessages: Row[] = [];
   readonly memberHandoffs: Row[] = [];
   /** 会員のセッション（0045。member_sessions の代わり）。expires_at・rotated_at・revoked_at は ms */
   readonly memberSessions: Row[] = [];
@@ -1515,6 +1517,12 @@ export class FakeSupabase {
       }
       return json(this.sizeChartGet(shopId, cat, prod, true));
     }
+    if (fn === "line_marketing_usage") {
+      const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      if (!shop || !uid || !(this.ownedShopIds(uid).has(String(shop["id"])) || this.memberPerms(uid, String(shop["id"])).includes("marketing"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const lim = (shop["settings"] as Row | undefined)?.["line_marketing_limit"];
+      return json({ count: this.lineMessages.filter((m) => m["shop_id"] === shop["id"] && ["pending", "sent"].includes(String(m["status"]))).length, limit: typeof lim === "number" ? lim : 150 });
+    }
     if (fn === "page_layouts_set") {
       // 0101: 本物の SQL（形・ショップのページとブログか・権限）は test/db/page-layouts.test.ts
       const shopId = args["p_shop_id"] as string;
@@ -2815,9 +2823,44 @@ export class FakeSupabase {
       }
       case "api_orders_list": {
         if (!need("orders:read")) return unauthorized();
+        // 0105 の引数（古い DB は知らない引数で関数を見つけられない）
+        if (("p_customer_id" in args || "p_updated_since" in args || "p_after" in args) && !this.appliedMigrations.includes("0105_ma_ports")) return json({ code: "PGRST202", message: "Could not find the function public.api_orders_list" }, 404);
         const q = args["p_query"] as string | null;
-        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
+        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
         return json({ items: all.map((o) => order(o, need("orders:pii"))), total: all.length, limit: 50, offset: 0, pii: need("orders:pii") });
+      }
+      case "api_line_message_begin": {
+        if (!need("line:send")) return unauthorized();
+        const cust = this.tables.customers.find((c) => c["id"] === args["p_customer_id"] && c["shop_id"] === shopId);
+        if (!cust) return notFound();
+        let row = this.lineMessages.find((m) => m["shop_id"] === shopId && m["idem_key"] === args["p_key"]);
+        if (row && row["customer_id"] !== cust["id"]) return json({ code: "P0001", message: "idempotency_key_reused" }, 400);
+        if (row && ["sent", "no_line", "not_friend"].includes(String(row["status"]))) return json({ id: row["id"], status: row["status"], done: true });
+        const line = this.memberIdentities.find((m) => m["shop_id"] === shopId && m["customer_id"] === cust["id"] && m["provider"] === "line");
+        if (!line) {
+          if (!row) this.lineMessages.push((row = { id: crypto.randomUUID(), shop_id: shopId, customer_id: cust["id"], idem_key: args["p_key"], status: "no_line" }));
+          row["status"] = "no_line";
+          return json({ id: row["id"], status: "no_line", done: true });
+        }
+        const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+        const lim = (shop["settings"] as Row | undefined)?.["line_marketing_limit"];
+        const limit = typeof lim === "number" ? lim : 150;
+        const count = this.lineMessages.filter((m) => m["shop_id"] === shopId && ["pending", "sent"].includes(String(m["status"]))).length;
+        if ((!row || row["status"] === "failed") && count >= limit) return json({ status: "quota", done: true, limit, count });
+        if (!row) this.lineMessages.push((row = { id: crypto.randomUUID(), shop_id: shopId, customer_id: cust["id"], idem_key: args["p_key"], status: "pending" }));
+        row["status"] = "pending";
+        return json({ id: row["id"], status: "pending", done: false, shop_id: shopId, line_user_id: line["subject"], retry_key: row["id"] });
+      }
+      case "api_line_message_finish": {
+        if (!need("line:send")) return unauthorized();
+        const row = this.lineMessages.find((m) => m["id"] === args["p_id"] && m["shop_id"] === shopId && m["status"] === "pending");
+        if (!row) return notFound();
+        row["status"] = args["p_status"];
+        return json({ id: row["id"], status: row["status"] });
+      }
+      case "api_line_usage": {
+        if (!need("line:send")) return unauthorized();
+        return json({ month: "2026-11", count: this.lineMessages.filter((m) => m["shop_id"] === shopId && ["pending", "sent"].includes(String(m["status"]))).length, limit: 150 });
       }
       case "api_order_get": {
         if (!need("orders:read")) return unauthorized();
@@ -3636,13 +3679,15 @@ export class FakeSupabase {
       if (o) return json({ status: "confirmed", expires_at: r["expires_at"] ?? null, order: { number: o["number"], status: o["status"], total_jpy: o["total_jpy"], payment_provider: o["payment_provider"] ?? null, created_at: o["created_at"] } });
       return json({ status: r["status"], order: null, expires_at: r["expires_at"] ?? null });
     }
-    if (fn === "release_reservation") {
+    if (fn === "release_reservation" || fn === "release_reservation_abandoned") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"]);
       if (!res || res["status"] !== "pending") return json(false);
       for (const it of res["items"] as { sku_id: string; qty: number }[]) inv(it.sku_id)!["available"] = (inv(it.sku_id)!["available"] as number) + it.qty;
       this.releaseCoupons(res["id"]);
       res["status"] = "released";
       res["customer"] = null;
+      // 0105: 決済ページの期限切れ。会員の予約ならカゴ落ちを積む（本物は test/db/ma-ports.test.ts）
+      if (fn === "release_reservation_abandoned" && res["customer_id"]) this.enqueue(String(res["shop_id"]), "checkout.abandoned", { reservation_id: res["id"], shop_id: res["shop_id"], customer_id: res["customer_id"], reason: "expired" });
       return json(true);
     }
     if (fn === "release_expired_reservations") {

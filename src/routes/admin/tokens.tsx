@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { API_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { DEFAULT_SCOPES, MA_PORTS_MIGRATION, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, issuableScopes, tokenPrefix, type ApiScope } from "../../api/tokens";
+import { migrated } from "../../db/migration-state";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
@@ -55,7 +56,11 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "content:read": "tokens.scope.content_read",
   "content:write": "tokens.scope.content_write",
   "app_data:write": "tokens.scope.app_data_write",
+  "line:send": "tokens.scope.line_send",
 };
+
+/** 発行できるスコープ（line:send は 0105 が当たってから） */
+const scopesFor = async (c: AdminContext) => issuableScopes(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, MA_PORTS_MIGRATION));
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
 
@@ -74,7 +79,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const shop = sa.shop;
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
-  const scopeList = API_SCOPES;
+  const scopeList = await scopesFor(c);
   const withApps = scopeList.includes("app_data:write");
   const [rows, apps] = await Promise.all([
     db.from<TokenRow>("api_tokens").select(`id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at${withApps ? ",endpoint_id" : ""}`, { eq: { shop_id: shopId }, order: "created_at.desc" }),
@@ -205,7 +210,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const body = await c.req.parseBody({ all: true });
   const rawScopes = body["scopes"];
   const scopes = (Array.isArray(rawScopes) ? rawScopes : typeof rawScopes === "string" ? [rawScopes] : []).filter((v): v is ApiScope => typeof v === "string" && isApiScope(v));
-  const issuable = API_SCOPES;
+  const issuable = await scopesFor(c);
   if (scopes.some((sc) => !issuable.includes(sc))) return c.redirect(`/admin/shops/${shopId}/tokens?flash=generic`);
   const f = await formFields(c);
   const name = (f.name ?? "").trim().slice(0, 100);

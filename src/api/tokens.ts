@@ -25,6 +25,7 @@ export const API_SCOPES = [
   "content:read",
   "content:write",
   "app_data:write",
+  "line:send",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -55,11 +56,18 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "content:read": "content",
   "content:write": "content",
   "app_data:write": "apps",
+  "line:send": "marketing",
 };
 
 
-/** 0084 が当たるまで出さないスコープ（外部プラグインの拡張データ。送信先に結んで発行する） */
-export const APP_DATA_SCOPES: readonly ApiScope[] = ["app_data:write"];
+/** 0105 が当たるまで出さないスコープ（LINE で送る口。docs/line.md §4） */
+export const MA_PORTS_MIGRATION = "0105_ma_ports";
+export const LINE_SEND_SCOPES: readonly ApiScope[] = ["line:send"];
+
+/** DB がまだ受け付けないスコープを除いた一覧（発行の画面・つなぐ画面） */
+export function issuableScopes(maPorts: boolean): readonly ApiScope[] {
+  return maPorts ? API_SCOPES : API_SCOPES.filter((s) => !LINE_SEND_SCOPES.includes(s));
+}
 
 export function isApiScope(s: string): s is ApiScope {
   return (API_SCOPES as readonly string[]).includes(s);

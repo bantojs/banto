@@ -407,6 +407,8 @@ export interface PrivilegedDb {
   orderContact(orderId: string, shopId: string): Promise<Record<string, unknown>>;
   /** 予約を解放（pending のときだけ）。戻り値: 解放したか */
   releaseReservation(reservationId: string, shopId: string): Promise<boolean>;
+  /** 決済ページの期限切れの解放。会員の予約なら hooks checkout.abandoned を積む（0105） */
+  releaseReservationAbandoned(reservationId: string, shopId: string): Promise<boolean>;
   /** TTL 切れ予約の一括解放（Cron） */
   releaseExpiredReservations(): Promise<number>;
   /** Webhook の冪等化。初見なら true */
@@ -685,6 +687,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     cancelOrder: (orderId, shopId, refunded) => rpc("cancel_order", { p_order_id: orderId, p_shop_id: shopId, p_refunded: refunded }),
     orderContact: (orderId, shopId) => rpc("order_contact", { p_order_id: orderId, p_shop_id: shopId }),
     releaseReservation: (reservationId, shopId) => rpc<boolean>("release_reservation", { p_reservation_id: reservationId, p_shop_id: shopId }),
+    releaseReservationAbandoned: (reservationId, shopId) => rpc<boolean>("release_reservation_abandoned", { p_reservation_id: reservationId, p_shop_id: shopId }),
     releaseExpiredReservations: () => rpc<number>("release_expired_reservations", {}),
     recordWebhookEvent: (provider, eventId) => rpc<boolean>("record_webhook_event", { p_provider: provider, p_event_id: eventId }),
     maskShippedOrders: (days = 180) => rpc<number>("mask_shipped_orders", { p_days: days }),
