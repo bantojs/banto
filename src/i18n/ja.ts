@@ -2188,6 +2188,7 @@ export const ja = {
   "pages.block_group_apps": "プラグイン",
   "pages.block_app": "プラグインのブロック",
   "pages.preview_opening": "お店の画面でプレビューを開いています…（開かなければボタンを押してください）",
+  "pages.preview_sample": "見本: 「{name}」で描いています（このページをひな形にしている記事・商品のうち 1 つ）。",
   "pages.preview_theme_note": "プレビューです（保存していません）。お店の画面と同じテーマで描いています。",
   "pages.preview_unpublished": "ショップが非公開のあいだは管理画面で既定のテーマで描き、商品・ページ・記事のブロックの中身は空になります（公開すると、お店の画面の上で実際のテーマで描きます）。",
   "pages.audience_card": "会員限定",

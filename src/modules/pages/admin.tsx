@@ -266,11 +266,12 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
 }
 
 /** プレビュー（新しいタブ。保存しない）。本文はお店の画面と同じ変換、見た目はテーマが決めるので管理画面の形で中身だけ見せる */
-async function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null) {
+async function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, error: MessageKey | null, pageId: string | null = null) {
   // お店の画面と同じテーマ・同じブロックの中身で描く（描けないテーマなら下の簡単な形）
   if (!error) {
     const now = new Date().toISOString();
-    const page: PageRow = { id: "preview", shop_id: shop.id, created_at: now, updated_at: now, ...values, body: values.body } as PageRow;
+    // 保存済みのページは本当の id（ひな形に割り当てていれば、プレビューは見本の記事・商品で描く）
+    const page: PageRow = { id: pageId ?? "preview", shop_id: shop.id, created_at: now, updated_at: now, ...values, body: values.body } as PageRow;
     const categories = await owner(c).db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" }).catch(() => [] as CategoryRow[]);
     const res = await previewResponse(c, shop, { kind: "page", page }, categories);
     if (res) return res;
@@ -413,7 +414,7 @@ async function save(c: AdminContext, pageId: string | null) {
   const f = await formFields(c);
   const { values, error, autoHandle } = pageValues(f, { mediaBase: mediaBaseUrl(c) });
   const page = pageId ? { pageId } : {};
-  if (f.action === "preview") return previewPage(c, shop, values, error);
+  if (f.action === "preview") return previewPage(c, shop, values, error, pageId);
   // 公開のボタンで誤りがあったら、画面の状態は押す前のまま（下書きなら下書き）に見せる
   const shown = (v: PageValues) => ({ ...v, published: f.published === "on" });
   if (error) return editPage(c, shop, { ...page, values: shown(values), error, status: 400 });

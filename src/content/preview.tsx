@@ -21,6 +21,7 @@ import type { ArticleRow, BlogRow } from "../blog";
 import { blogPath } from "../blog";
 import type { CategoryRow } from "../db/types";
 import { t } from "../i18n";
+import { articleParts, fillCurrent, pageParts } from "./layouts";
 import { shopHome } from "../storefront/urls";
 import { sealContentPreview } from "./preview-ticket";
 import { escapeHtml } from "../mail/html";
@@ -71,7 +72,9 @@ export async function themedPreview(c: AdminContext, shop: ShopRow, target: Prev
   const source = target.kind === "page" ? target.page.body : target.article.body;
   const body = filterAudienceBlocks(source, () => true).body;
   const dates = target.kind === "page" ? { published: target.page.published_at ?? target.page.created_at, updated: target.page.updated_at } : { published: target.article.published_at ?? target.article.updated_at, updated: target.article.updated_at };
-  const raw = fillDateBlocks(markdownToHtml(body, { mediaBase }), dates);
+  // 今の記事・商品の部品: ページはそのページ自身、記事は記事のもの（ひな形の見本はお店の画面のプレビューで）
+  const parts = target.kind === "page" ? pageParts({ mediaBase, page: target.page }) : articleParts({ shopPath, mediaBase, blog: target.blog, article: target.article });
+  const raw = fillCurrent(fillDateBlocks(markdownToHtml(body, { mediaBase }), dates), parts);
   let html = raw;
   if (sf) {
     const b = await bodyBlocks({ sf, shop: pub, shopPath, mediaBaseUrl: mediaBase }, body, categories).catch(() => null);

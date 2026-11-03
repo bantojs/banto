@@ -2181,6 +2181,7 @@ export const en: Record<MessageKey, string> = {
   "pages.block_group_apps": "Plugins",
   "pages.block_app": "Plugin block",
   "pages.preview_opening": "Opening the preview on your storefront… (press the button if it does not open)",
+  "pages.preview_sample": "Sample: drawn with \"{name}\" (one of the articles or products that use this page as a template).",
   "pages.preview_theme_note": "This is a preview (not saved), drawn with the same theme as your shop.",
   "pages.preview_unpublished": "While the shop is unpublished, the preview is drawn in the admin with the default theme and product, page and article blocks are empty (once published, it is drawn on your storefront with your actual theme).",
   "pages.audience_card": "Members only",

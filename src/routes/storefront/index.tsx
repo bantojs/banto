@@ -5,7 +5,7 @@ import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../store
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import type { AppEnv } from "../../app";
-import { type StorefrontData, type PublicShop, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
+import { type StorefrontData, type PublicShop, type ProductDetail, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -39,7 +39,7 @@ import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow
 import { markdownToHtml } from "../../pages/markdown";
 import { filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
-import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, productLayoutId, usesPart } from "../../content/layouts";
+import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, composeLayout, fillCurrent, isPlainTop, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
 import { PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
 import { productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
@@ -180,6 +180,14 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
   const categories = await s.sf.listCategories(s.shop);
   if (draft.kind === "page") {
     if (!moduleEnabled(s.shop.settings, PAGES_MODULE)) return notFoundPage(c, s);
+    // ひな形に割り当てたページ（0101・0102）なら、見本の記事・商品で描く（今の記事・商品の部品の中身が見えるように）
+    const sample = await templateSample(s, draft.page.id, categories);
+    const note = (what: string) => `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))} ${escapeHtml(tf("pages.preview_sample", { name: what }))}</p>`;
+    if (sample?.kind === "article") {
+      const body = filterAudienceBlocks(sample.article.body, () => true).body;
+      return articlePageResponse(c, s, sample.blog, sample.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix: note(sample.article.title), preview: true, layout: draft.page });
+    }
+    if (sample?.kind === "product") return productPageResponse(c, s, sample.detail, categories, { prefix: note(sample.detail.product.name), preview: true, layout: draft.page });
     const body = filterAudienceBlocks(draft.page.body, () => true).body;
     return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
   }
@@ -187,6 +195,30 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
   const body = filterAudienceBlocks(draft.article.body, () => true).body;
   return articlePageResponse(c, s, draft.blog, draft.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
 });
+
+
+/**
+ * ひな形のプレビューの見本（0101・0102）: そのページを記事のひな形にしているブログのいちばん新しい記事、
+ * 商品詳細のひな形なら割り当てたカテゴリー（無ければショップ全体）の最初の商品。どれにも割り当てていなければ null
+ */
+async function templateSample(s: ShopScope, pageId: string, categories: CategoryRow[]): Promise<{ kind: "article"; blog: BlogRow; article: ArticleRow } | { kind: "product"; detail: ProductDetail } | null> {
+  const l = pageLayoutsOf(s.shop.settings);
+  const blogId = Object.entries(l.articles).find(([, p]) => p === pageId)?.[0];
+  if (blogId && moduleEnabled(s.shop.settings, BLOG_MODULE)) {
+    const blog = await s.sf.blogById(s.shop, blogId);
+    const article = blog ? (await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: 1 })).items[0] : undefined;
+    if (blog && article) return { kind: "article", blog, article };
+  }
+  const catId = Object.entries(l.productCategories).find(([, p]) => p === pageId)?.[0];
+  if (catId || l.product === pageId) {
+    const cat = catId ? categories.find((x) => x.id === catId) : undefined;
+    const list = await s.sf.productPage(s.shop, { ...(cat ? { category: cat.slug } : {}), limit: 1 }, categories);
+    const first = list?.items[0];
+    const detail = first ? await s.sf.productBySlug(s.shop, first.product.slug) : null;
+    if (detail) return { kind: "product", detail };
+  }
+  return null;
+}
 
 // 会員ルートは別モジュール。ショップの解決だけこちらのものを貸す
 bindScope(async (c) => {
@@ -410,6 +442,15 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
     const qty = Math.min(999, Math.max(1, Number.parseInt(c.req.query("qty") ?? "1", 10) || 1));
     if (added) track(c, "cart_add", added.price * qty, [{ ...added, quantity: qty }]);
   }
+  return productPageResponse(c, s, detail, categories);
+});
+
+
+/**
+ * 商品ページを描く（お店の画面とひな形のプレビューで同じ）。o.layout はひな形の上書き（プレビュー: 保存していないひな形の下書き）。
+ * null なら割り当てがあってもひな形を使わない
+ */
+async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, categories: CategoryRow[], o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
   const props = {
     ctx: s.ctx,
     detail,
@@ -421,13 +462,13 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
   };
   const lt = await liquidThemeFor(c, s);
   // 商品詳細のひな形（0102）: 主カテゴリーから親へたどって近い割り当て、無ければショップ全体。見えないページなら今までの画面
-  const layoutId = moduleEnabled(s.shop.settings, PAGES_MODULE) ? productLayoutId(pageLayoutsOf(s.shop.settings), categories, detail.product.category_id) : null;
-  const layout = layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
+  const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? productLayoutId(pageLayoutsOf(s.shop.settings), categories, detail.product.category_id) : null;
+  const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const view = await viewerBody(c, s.shop, layout.body, viewerOf(s));
-    const raw = pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
+    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
-    const doc = fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
+    const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
     // 商品の部品は既定のテーマのもの（買うフォームはここにしか無い。値段・在庫・会員価格は DB の判定のまま）。記事の部品は空
     const only = (parts: Record<string, string>) => Object.fromEntries(PRODUCT_LAYOUT_PARTS.map((k) => [k, parts[k] ?? ""]));
     if (lt) {
@@ -448,7 +489,7 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
     if (res) return res;
   }
   return c.html(s.theme.ProductPage(props));
-});
+}
 
 // ---------- 法務ページ ----------
 const legalPages: Record<string, { title: () => string; pick: (s: PublicShop) => string | null }> = {
@@ -517,8 +558,8 @@ interface RenderOpts {
 async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts = {}): Promise<Response> {
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
   // お店のブロック（検索・カテゴリー・カード・商品・日時）はテーマに依らない HTML なので先に入れる。日時は描くたびに。
-  // 「今の記事の部品」はページ（記事のひな形でない）では空
-  const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at }));
+  // 「今の記事・商品の部品」はふつうのページ（お店のトップのひな形を含む）ではそのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）
+  const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at }), pageParts({ mediaBase: s.ctx.mediaBaseUrl, page }));
   const layout = o.layoutPath !== undefined;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
@@ -533,11 +574,11 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
  * 記事を描く（お店の画面とプレビューで同じ）。ブログに記事のひな形（0101）があれば、ひな形の本文に記事の本文を差し込んで描く。
  * body は見る人で絞った記事の本文、raw はその HTML、segment は見る人の区分（本文の HTML の覚えの鍵）
  */
-async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts & { segment?: string } = {}): Promise<Response> {
+async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts & { segment?: string; layout?: PageRow | null } = {}): Promise<Response> {
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const dates = { published: article.published_at ?? article.updated_at, updated: article.updated_at };
-  const layoutId = moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
-  const layout = layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
+  const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
+  const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
     const lview = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
     const comp = composeLayout(lview.body, body);

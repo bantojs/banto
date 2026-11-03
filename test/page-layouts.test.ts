@@ -208,3 +208,43 @@ describe("商品詳細のひな形（0102）", () => {
     expect(html).toContain('rel="canonical" href="https://shop.example.jp/p/tee"');
   });
 });
+
+describe("今の記事・商品の部品: ページ自身とひな形のプレビュー", () => {
+  const IMG = "/media/pages/11111111-2222-4333-8444-555555555555/eye.webp";
+
+  it("ふつうのページでは、そのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）を出す", async () => {
+    const { app, sb, shop } = setup();
+    sb.addPage(shop.id, { handle: "own", title: "自分のページ", image_url: IMG, seo_description: "説明文", body: "::: current part=title\n\n::: current part=image\n\n::: current part=excerpt\n\n::: current part=buy" });
+    const html = await (await new Browser(app, BASE).get("/my-shop/pages/own")).text();
+    expect(html).toContain('<h1 class="banto-current-title">自分のページ</h1>');
+    expect(html).toContain(`<img class="banto-current-image" src="${IMG}"`);
+    expect(html).toContain('<p class="banto-current-excerpt">説明文</p>');
+    expect(html).not.toContain('action="/my-shop/cart/add"');
+  });
+
+  it("記事のひな形のページのプレビューは、いちばん新しい記事を見本にして描く（保存していない下書きのひな形で）", async () => {
+    const { app, tpl, blog, settings, base } = setup();
+    settings()["page_layouts"] = { articles: { [blog.id]: tpl.id } };
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const res = await followPreview(app, await b.post(`${base}/${tpl.id}`, { title: "記事のひな形", handle: "article-tpl", body: "::: current part=image\n\n::: current part=title\n\n下書きの締め\n\n::: current part=content", nav: "none", sort_order: "0", action: "preview" }));
+    const html = await res.text();
+    expect(html).toContain('<h1 class="banto-current-title">三つ目の記事</h1>');
+    expect(html).toContain("三つ目");
+    expect(html).toContain("下書きの締め");
+    expect(html).toContain("見本: 「三つ目の記事」");
+  });
+
+  it("商品詳細のひな形のページのプレビューは、商品を見本にして描く", async () => {
+    const { app, sb, shop, settings, base } = setup();
+    const tee = sb.tables.products.find((p) => p["slug"] === "tee")!;
+    sb.addSku(shop.id, String(tee["id"]), { code: "TEE-M", name: "M", price_jpy: 3000, available: 5 });
+    const ptpl = sb.addPage(shop.id, { handle: "ptpl", title: "商品のひな形", body: "x" });
+    settings()["page_layouts"] = { product: ptpl.id };
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const res = await followPreview(app, await b.post(`${base}/${ptpl.id}`, { title: "商品のひな形", handle: "ptpl", body: "::: current part=title\n\n::: current part=buy", nav: "none", sort_order: "0", action: "preview" }));
+    const html = await res.text();
+    expect(html).toContain("<h1>Tシャツ</h1>");
+    expect(html).toContain('action="/my-shop/cart/add"');
+    expect(html).toContain("見本: 「Tシャツ」");
+  });
+});

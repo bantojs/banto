@@ -122,6 +122,16 @@ export function articleParts(o: {
   };
 }
 
+/** ふつうのページ（お店のトップのひな形を含む）の部品: そのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）。ほかは空 */
+export function pageParts(o: { mediaBase: string; page: { title: string; image_url?: string | null; seo_description?: string | null } }): Record<string, string> {
+  const img = o.page.image_url ? shopImageUrl(o.page.image_url, o.mediaBase) : null;
+  return {
+    title: `<h1 class="banto-current-title">${esc(o.page.title)}</h1>`,
+    image: img ? `<img class="banto-current-image" src="${esc(img)}" alt="" decoding="async">` : "",
+    excerpt: o.page.seo_description ? `<p class="banto-current-excerpt">${esc(o.page.seo_description)}</p>` : "",
+  };
+}
+
 /** 部品の印を入れる（無い部品・トップのひな形・ふつうのページでは空） */
 export function fillCurrent(html: string, parts: Record<string, string> = {}): string {
   if (!html.includes("<!--banto:current:")) return html;

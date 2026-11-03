@@ -408,6 +408,13 @@ export class StorefrontData {
     return page;
   }
 
+  /** ブログ（id で。ひな形のプレビューの見本だけが使う。匿名の読み取り） */
+  async blogById(shop: PublicShop, id: string): Promise<BlogRow | null> {
+    if (!/^[0-9a-f-]{36}$/.test(id)) return null;
+    const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id, id }, limit: 1 });
+    return rows[0] ?? null;
+  }
+
   /** 同じブログの前後の記事（公開した日時の順。匿名の読み取りで、会員限定の記事は入らない）。ひな形の「前後の記事」の部品だけが使う */
   async articleNeighbors(shop: PublicShop, blogId: string, article: Pick<ArticleRow, "id" | "published_at">): Promise<{ prev: Pick<ArticleRow, "handle" | "title"> | null; next: Pick<ArticleRow, "handle" | "title"> | null }> {
     if (!article.published_at) return { prev: null, next: null };
