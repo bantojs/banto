@@ -1,4 +1,5 @@
 import { getLocale, t, type Locale } from "../../i18n";
+import { DIALOG_RUNTIME } from "../dialogs/dialogs";
 
 /**
  * 貼れるタグ（同梱モジュール embed）のブラウザ側のスクリプト。docs/embed.md
@@ -28,6 +29,8 @@ const SOURCE = String.raw`(function(I){
 if(window.__bantoEmbed)return;window.__bantoEmbed=1;
 /* 問い合わせ先（Banto の URL）は配るときにサーバーが書き込む。作成ツールが読み込み方を変えても（currentScript が無くても）同じ */
 var BASE=__BANTO_BASE__;
+/* お店の画面のダイアログのスクリプトの本体（src/modules/dialogs/dialogs.ts の DIALOG_RUNTIME。お店の画面と同じもの） */
+var DLG=__BANTO_DIALOGS__;
 if(!BASE||!window.customElements||!Element.prototype.attachShadow)return;
 var nf=new Intl.NumberFormat(I.locale);
 function yen(n){return I.yen.replace("{n}",nf.format(Number(n)||0))}
@@ -38,7 +41,7 @@ var mem={},views={},queues={},loading={};
 function key(shop){return "banto-cart-"+shop}
 function getTok(shop){try{return localStorage.getItem(key(shop))||""}catch(e){return mem[shop]||""}}
 function setTok(shop,t){mem[shop]=t;try{if(t)localStorage.setItem(key(shop),t);else localStorage.removeItem(key(shop))}catch(e){}}
-function publish(shop,v){views[shop]=v;window.dispatchEvent(new CustomEvent("banto:cart",{detail:{shop:shop,cart:v}}))}
+function publish(shop,v){views[shop]=v;try{if(v&&typeof v.subtotal_jpy==="number")sessionStorage.setItem("banto_dc",String(v.subtotal_jpy))}catch(e){}window.dispatchEvent(new CustomEvent("banto:cart",{detail:{shop:shop,cart:v}}))}
 function send(shop,body){var tok=getTok(shop);
 if(!body)return api(shop,"/cart"+(tok?"?cart="+encodeURIComponent(tok):""));
 var b={};for(var k in body)b[k]=body[k];if(tok)b.cart=tok;
@@ -76,7 +79,7 @@ var CUR=document.currentScript;
 var RVK="banto-visitor",cfgs={},cfgv={},rq={},toks={},consent=!(CUR&&CUR.getAttribute("data-consent")==="wait");
 function rid(){var a=new Uint8Array(16);crypto.getRandomValues(a);var h="v_";for(var i=0;i<a.length;i++)h+=(a[i]<16?"0":"")+a[i].toString(16);return h}
 function visitor(){var v="";try{v=localStorage.getItem(RVK)||""}catch(e){v=mem[RVK]||""}if(!/^v_[A-Za-z0-9_-]{16,64}$/.test(v)){v=rid();mem[RVK]=v;try{localStorage.setItem(RVK,v)}catch(e){}}return v}
-function defShop(){var s=CUR&&CUR.getAttribute("data-shop");if(s)return s;var n=document.querySelector("banto-product[shop],banto-products[shop],banto-cart[shop],banto-buy-button[shop],banto-event[shop]");return n?String(n.getAttribute("shop")||"").trim():""}
+function defShop(){var s=CUR&&CUR.getAttribute("data-shop");if(s)return s;var n=document.querySelector("banto-product[shop],banto-products[shop],banto-cart[shop],banto-buy-button[shop],banto-event[shop],banto-dialogs[shop]");return n?String(n.getAttribute("shop")||"").trim():""}
 function relayCfg(shop){if(!cfgs[shop])cfgs[shop]=fetch(BASE+"/api/shops/"+encodeURIComponent(shop)+"/events/config").then(function(r){return r.ok?r.json():null}).then(function(c){if(c&&!Array.isArray(c.types))c=null;cfgv[shop]=c;return c},function(){cfgv[shop]=null;return null});return cfgs[shop]}
 function allowed(c,shop,t){if(t==="visitor.identified")return!!(c.guests&&toks[shop]);if(t.indexOf("x.")===0){var cu=c.custom||[];return cu.indexOf("x.*")>=0||cu.indexOf(t)>=0}return c.types.indexOf(t)>=0}
 function track(t,d,shop){if(!consent||typeof t!=="string"||!t)return;shop=shop||(d&&d.shop)||defShop();if(!shop)return;
@@ -179,6 +182,15 @@ window.addEventListener("banto:cart",function(e){if(e.detail&&e.detail.shop===sh
 if(!shop){panel.hidden=false;panel.appendChild(el("p","muted",I.unavailable));return}
 render(views[shop]||null);loadCart(shop).then(function(v){if(expanded&&v&&v.items&&v.items.length)track("cart_view",{value_jpy:v.subtotal_jpy},shop);render(v)})}});
 
+/* お店の画面のダイアログ（docs/dialogs.md「ヘッドレスと貼れるタグ」）: <banto-dialogs shop="my-shop" kind="product" product-id="…" category-id="…" tags="a,b"></banto-dialogs>
+   どのページかは作り手が属性で渡す。だれには Banto が決める（banto.identify の会員トークンがあれば会員）。描くのは Banto のスクリプト（お店の画面と同じ） */
+define("banto-dialogs",{connectedCallback:function(){if(this._done)return;this._done=1;var h=this,shop=attr(h,"shop")||defShop();if(!shop)return;
+var q=["kind="+encodeURIComponent(attr(h,"kind")||"page")];["product-id","category-id","tags"].forEach(function(n){var v=attr(h,n);if(v)q.push(n.replace("-","_")+"="+encodeURIComponent(v))});
+var hd={};if(toks[shop])hd.Authorization="Bearer "+toks[shop];
+fetch(BASE+"/api/shops/"+encodeURIComponent(shop)+"/dialogs?"+q.join("&"),{headers:hd}).then(function(r){return r.ok?r.json():null}).then(function(v){
+if(!v||!Array.isArray(v.items)||!v.items.length)return;var ct=views[shop]&&typeof views[shop].subtotal_jpy==="number"?views[shop].subtotal_jpy:null;
+DLG(v.items,BASE+"/"+encodeURIComponent(shop),{close:I.dlgClose,copy:I.dlgCopy,copied:I.dlgCopied,coupon:I.dlgCoupon},ct)},function(){})}});
+
 /* 作り手が明示する出来事: <banto-event type="article_view" shop="my-shop" article-id="…" author="…" tags="a,b" meta-from="lookbook"></banto-event> */
 define("banto-event",{connectedCallback:function(){if(this._done)return;this._done=1;var h=this,d={},m=null;
 ["product-id","category-id","article-id","page-id","blog","handle","author","sku"].forEach(function(n){var v=attr(h,n);if(v)d[n.replace("-","_")]=v});
@@ -211,6 +223,10 @@ const KEYS = {
   subtotal: "embed.js.subtotal",
   freeShipping: "embed.js.free_shipping",
   yen: "embed.js.yen",
+  dlgClose: "dlg.js.close",
+  dlgCopy: "dlg.js.copy",
+  dlgCopied: "dlg.js.copied",
+  dlgCoupon: "dlg.js.coupon",
 } as const;
 
 const built = new Map<string, string>();
@@ -228,7 +244,8 @@ export function embedScript(base: string, locale: Locale = getLocale()): string 
   // スクリプトのファイルとして配るが、念のため < と行区切りの文字は \u で書く（文言から文脈を抜けさせない）
   const json = JSON.stringify(strings).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   const origin = JSON.stringify(new URL(base).origin).replace(/</g, "\\u003c");
-  const js = SOURCE.replace("__BANTO_BASE__", origin).replace("__BANTO_I18N__", json);
+  // 置き換えの文字列の $ を特別扱いさせない（関数で渡す）
+  const js = SOURCE.replace("__BANTO_BASE__", () => origin).replace("__BANTO_DIALOGS__", () => DIALOG_RUNTIME).replace("__BANTO_I18N__", () => json);
   built.set(cacheKey, js);
   return js;
 }

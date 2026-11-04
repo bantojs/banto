@@ -286,3 +286,43 @@ describe("AI 用 API とつないだプラグイン（段階 2、0111）", () =>
     }
   });
 });
+
+describe("ヘッドレスと貼れるタグ（段階 3）", () => {
+  const get = (app: ReturnType<typeof appWith>, q: string, token?: string) => app.request(`${BASE}/api/shops/my-shop/dialogs${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+
+  it("ページの種類と商品の手がかりで当てはまるものを返す。だれにはトークンで決める。中身だけ（だれに・どのページは返さない）", async () => {
+    const { app, shop, tee, sb } = setup([
+      { id: "d-all", title: "みなさまへ", pages: { kinds: ["all"] } },
+      { id: "d-tag", title: "秋物", pages: { kinds: ["product"], tags: ["秋"] } },
+      { id: "d-guest", title: "はじめての方へ", audience: "guests", pages: { kinds: ["product"] } },
+      { id: "d-member", title: "会員の方へ", audience: "members", pages: { kinds: ["all"] } },
+      { id: "d-cart", title: "カート", pages: { kinds: ["cart"] } },
+    ]);
+    const r = await get(app, `?kind=product&product_id=${tee.id}&tags=${encodeURIComponent("秋")}`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("access-control-allow-origin")).toBe("*");
+    const body = (await r.json()) as { items: Record<string, unknown>[] };
+    expect(body.items.map((d) => d["id"])).toEqual(["d-all", "d-tag", "d-guest"]);
+    expect(body.items[0]).not.toHaveProperty("audience");
+    expect(body.items[0]).not.toHaveProperty("pages");
+    // 会員トークン
+    const { issueTokens } = await import("../src/members/auth");
+    sb.tables.customers.push({ id: "cust-1", shop_id: shop.id, email: "h@example.com", session_epoch: 0 });
+    const { access_token } = await issueTokens("test-session-secret", shop.id, "cust-1", 0, null);
+    const m = (await (await get(app, "?kind=cart", access_token)).json()) as { items: { id: string }[] };
+    expect(m.items.map((d) => d.id)).toEqual(["d-all", "d-member", "d-cart"]);
+    expect((await get(app, "?kind=cart", "bm1.broken")).status).toBe(401);
+    expect((await get(app, "?kind=nope")).status).toBe(400);
+    const off = setup([{ id: "x", title: "x" }], {});
+    expect((await get(off.app, "?kind=home")).status).toBe(404);
+  });
+
+  it("貼れるタグのスクリプトに、お店の画面と同じダイアログの本体と <banto-dialogs> が入っている（構文として読める）", async () => {
+    const { embedScript } = await import("../src/modules/embed/script");
+    const { DIALOG_RUNTIME } = await import("../src/modules/dialogs/dialogs");
+    const js = embedScript("https://banto.example.com", "ja");
+    expect(js).toContain(DIALOG_RUNTIME);
+    expect(js).toContain('define("banto-dialogs"');
+    expect(() => new Function(js)).not.toThrow();
+  });
+});

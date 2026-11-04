@@ -117,7 +117,7 @@ export function dialogsFor(list: readonly PublicDialog[], page: DialogPage, view
 const scriptJson = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 
 /** ブラウザに渡す分（だれに・どのページは決め済みなので落とす） */
-const forBrowser = (d: PublicDialog) => ({ id: d.id, layout: d.layout, title: d.title, body: d.body, image_url: d.image_url, buttons: d.buttons, coupon_code: d.coupon_code, trigger: d.trigger ?? {}, snooze_days: d.snooze_days });
+export const forBrowser = (d: PublicDialog) => ({ id: d.id, layout: d.layout, title: d.title, body: d.body, image_url: d.image_url, buttons: d.buttons, coupon_code: d.coupon_code, trigger: d.trigger ?? {}, snooze_days: d.snooze_days });
 
 /**
  * ブラウザのスクリプト。きっかけを見て、1 ページに 1 つだけ出す。
@@ -126,9 +126,8 @@ const forBrowser = (d: PublicDialog) => ({ id: d.id, layout: d.layout, title: d.
  *   - 閉じた・押した: localStorage の banto_dlg_<id> に「この時刻まで出さない」
  * 描くのは Shadow DOM の中で、文字は textContent だけ。色と角はテーマの CSS の変数（--banto-dialog-*）
  */
-export function dialogScript(base: string, dialogs: readonly PublicDialog[], cartTotal: number | null): string {
-  const words = { close: t("dlg.js.close"), copy: t("dlg.js.copy"), copied: t("dlg.js.copied"), coupon: t("dlg.js.coupon") };
-  return `(function(){var D=${scriptJson(dialogs.map(forBrowser))},B=${scriptJson(base)},W=${scriptJson(words)},CT=${cartTotal === null ? "null" : String(cartTotal)};
+/** スクリプトの本体（D: ダイアログ、B: ショップの中のパスの起点、W: 文言、CT: カートの合計）。お店の画面と貼れるタグ（embed）で同じものを使う */
+export const DIALOG_RUNTIME = `function(D,B,W,CT){
 if(!D.length||!Element.prototype.attachShadow)return;var now=Date.now(),V={};
 function ls(k,v){try{if(v===undefined)return JSON.parse(localStorage.getItem(k)||"null");localStorage.setItem(k,JSON.stringify(v))}catch(e){return null}}
 V=ls("banto_dv")||{};if(!V.s||now-(V.t||0)>1800000)V={s:now,n:0,d:[]};V.n=(V.n||0)+1;V.t=now;V.d=V.d||[];ls("banto_dv",V);
@@ -169,7 +168,13 @@ var need={delay:true,scroll:!tr.scroll_pct,exit:!tr.exit_intent};
 function check(){if(need.delay&&need.scroll&&need.exit){if(tr.cart_min_jpy&&!(cart!==null&&cart>=tr.cart_min_jpy))return;show(d)}}
 need.delay=false;setTimeout(function(){need.delay=true;check()},(tr.delay_s||0)*1000);
 if(tr.scroll_pct)addEventListener("scroll",function s(){var h=document.documentElement,max=h.scrollHeight-innerHeight;if(max<=0||(scrollY/max)*100>=tr.scroll_pct){need.scroll=true;removeEventListener("scroll",s);check()}},{passive:true});
-if(tr.exit_intent)document.addEventListener("mouseout",function m(e){if(!e.relatedTarget&&e.clientY<=0){need.exit=true;document.removeEventListener("mouseout",m);check()}})})}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);else start();})();`;
+if(tr.exit_intent)document.addEventListener("mouseout",function m(e){if(!e.relatedTarget&&e.clientY<=0){need.exit=true;document.removeEventListener("mouseout",m);check()}})})}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);else start();}`;
+
+/** ダイアログの文言（スクリプトの W） */
+export const dialogWords = () => ({ close: t("dlg.js.close"), copy: t("dlg.js.copy"), copied: t("dlg.js.copied"), coupon: t("dlg.js.coupon") });
+
+export function dialogScript(base: string, dialogs: readonly PublicDialog[], cartTotal: number | null): string {
+  return `(${DIALOG_RUNTIME})(${scriptJson(dialogs.map(forBrowser))},${scriptJson(base)},${scriptJson(dialogWords())},${cartTotal === null ? "null" : String(cartTotal)});`;
 }
 
 export interface DialogHeadExtra {

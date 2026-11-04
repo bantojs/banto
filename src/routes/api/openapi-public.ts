@@ -368,6 +368,20 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           responses: { 200: ok(obj({ types: arr(str), custom: arr({ ...str, description: "許された独自の出来事の名前（x.* ならすべて）" }), guests: { ...bool, description: "ゲストの行動（訪問者 ID）も渡すか" } })), 404: err("not_found（モジュールが OFF）") },
         },
       },
+      "/shops/{shop}/dialogs": {
+        get: {
+          summary: "そのページの人に出すお店の画面のダイアログ（同梱モジュール「お店の画面のダイアログ」、docs/dialogs.md）。どのページかは kind と商品・記事の手がかりで渡す。会員トークンがあれば会員として選ぶ。きっかけ（trigger）と回数（snooze_days）は呼ぶ側が守る。出した・閉じた・押したは events の dialog_* で送る",
+          security: memberOptional,
+          parameters: [
+            shopPath,
+            { name: "kind", in: "query", required: true, schema: { type: "string", enum: ["home", "product", "list", "article", "page", "cart"] } },
+            { name: "product_id", in: "query", schema: str, description: "商品のページのとき" },
+            { name: "category_id", in: "query", schema: str, description: "商品の主カテゴリーの id" },
+            { name: "tags", in: "query", schema: str, description: "商品・記事のタグ（カンマ区切り）" },
+          ],
+          responses: { 200: ok(obj({ items: arr(any("id・layout（bar / modal / corner）・title・body・image_url・buttons（{ label, url }。/ で始まる url は Banto のショップの中）・coupon_code・trigger（delay_s・scroll_pct・exit_intent・visit_pages・cart_min_jpy）・snooze_days")) })), 400: err("invalid_request（kind）"), 401: err("invalid_member_token"), 404: err("not_found（モジュールが OFF）") },
+        },
+      },
       "/shops/{shop}/inquiries/config": { get: { summary: "お問い合わせのフォームの選択肢（同梱モジュール「お問い合わせ」）", security: memberOptional, parameters: [shopPath], responses: { 200: ok(obj({ categories: arr(obj({ value: str, label: str })), member: { type: ["object", "null"] } })), 404: err("inquiries_disabled・not_found") } } },
       "/shops/{shop}/inquiries/order-check": { post: { summary: "ゲストの注文を番号とメールアドレスで確かめる（注文トークン、24 時間）", parameters: [shopPath], requestBody: body(obj({ number: int, email: str }, ["number", "email"])), responses: { 200: ok(obj({ order: any("number・status・created_at・total_jpy・items"), order_token: str })), 400: err("invalid_request"), 404: err("inquiries_disabled"), 409: err("order_not_found"), 429: err("too_many") } } },
       "/shops/{shop}/inquiries": {
@@ -461,6 +475,7 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/inquiries": "createInquiry",
   "post /shops/{shop}/events": "sendStorefrontEvents",
   "get /shops/{shop}/events/config": "getStorefrontEventsConfig",
+  "get /shops/{shop}/dialogs": "listDialogs",
   "post /shops/{shop}/inquiries/view": "viewInquiry",
   "post /shops/{shop}/inquiries/reply": "replyToInquiry",
   "post /shops/{shop}/inquiries/attachments/{id}": "getInquiryAttachment",

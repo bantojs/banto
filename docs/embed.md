@@ -73,6 +73,8 @@ WordPress を使わない人でも、今あるサイトにそのまま「カー�
 <script src="https://<あなたの Banto>/api/embed/v1.js" data-shop="my-shop" data-consent="wait" defer></script>
 ```
 
+モジュール「お店の画面のダイアログ」を ON にしていれば、`<banto-dialogs shop="my-shop" kind="product" product-id="…">` を置いたページにダイアログも出せます（docs/dialogs.md「ヘッドレスと貼れるタグ」）。
+
 行動を送るときは、サイトのプライバシーポリシーに、どんな行動を・どこへ渡すか（と、端末に訪問者 ID を置くこと）を書いてください。
 
 ## 知っておくこと

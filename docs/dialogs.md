@@ -65,6 +65,28 @@ Content-Type: application/json
 - プラグインに作らせるには、プラグインのマニフェストの `scopes` に `dialogs:write` を入れ、「つなぐ」で運営者が許します（docs/hooks.md §6）。
 - 履歴（過去の購入・閲覧）でお客様を選びたいプラグインは、会員の独自項目に写してから（`customers:write`）、その条件の「会員の条件」をダイアログの「だれに」に使います。ダイアログ自体は、今の訪問・今のページで分かることだけで出します。
 
-## これから（段階 3）
+## ヘッドレスと貼れるタグ
 
-- ヘッドレス（連携サイト）と貼れるタグで出す。
+Banto の画面ではないサイトでも、同じダイアログを出せます。
+
+**貼れるタグ**（docs/embed.md）を使っているサイトは、出したいページに `<banto-dialogs>` を置くだけです。描くのも、きっかけと回数を守るのも、Banto の画面と同じスクリプトです。
+
+```html
+<banto-dialogs shop="my-shop" kind="product" product-id="<商品の id>" tags="秋,セール"></banto-dialogs>
+```
+
+- `kind` はそのページの種類（`home`・`product`・`list`・`article`・`page`・`cart`）。外のサイトのページは Banto には分からないので、作り手が書きます。
+- 会員として選ぶには、連携サイトでログインした会員の会員トークンを `banto.identify("<会員トークン>")` で渡してから置きます（docs/event-relay.md「貼れるタグから送る」）。
+- ボタンの `/` で始まるリンクは、Banto のショップの中（`https://<あなたの Banto>/<ショップ>/…`）に向きます。外のサイトのページへ向けたいときは https:// で書いてください。
+- カートの金額のきっかけは、同じページの `<banto-cart>` などがカートを読んだ後から効きます。
+
+**ヘッドレス**（自分で画面を作るサイト）は、公開 API で中身を受け取り、自分で描きます。
+
+```http
+GET /api/shops/<ショップ>/dialogs?kind=product&product_id=…&category_id=…&tags=秋
+Authorization: Bearer <会員トークン>     ← 無ければゲストとして選ぶ
+```
+
+- 返るのは、そのページのその人に当てはまるダイアログの中身だけです（だれに・どのページの決まりは返しません）。きっかけ（`trigger`）と回数（`snooze_days`、1 回の訪問に 1 回）は、呼ぶ側で守ってください。
+- 出した・閉じた・押したは、行動の中継の `POST /api/shops/<ショップ>/events` に `dialog_view`・`dialog_close`・`dialog_click`（`dialog_id`）で送れます（docs/event-relay.md）。
+- 中身は文字として描いてください（HTML として差し込まない）。
