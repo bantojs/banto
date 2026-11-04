@@ -3,8 +3,6 @@
  *   - どの段（ショップ・カテゴリー・商品）の表を使うかは DB の banto_size_chart_resolve だけが決める（ここでは決めない）
  *   - ここは DB が返した結果を読む形にそろえるだけ（壊れた値は捨てる）。描くのは src/size-charts/html.tsx と Liquid
  */
-/** 採寸表のマイグレーション（当たるまでモジュールの一覧に出さない・API は 409） */
-export const SIZE_CHARTS_MIGRATION = "0095_mod_size_charts";
 
 export interface SizeChartColumn {
   key: string;

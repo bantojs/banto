@@ -16,10 +16,6 @@ import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, type ArticleRow, type BlogNa
 
 export const STOREFRONT_CACHE_TTL = 30;
 
-/** 守りの締め直し 3（0089）: 在庫は product_public_stock（anon は inventory を読めない）、注文照会はアドレスの HMAC も渡す、ブログは blog_delete、物理削除は Cron だけ */
-export const SECURITY_HARDENING_3_MIGRATION = "0089_security_hardening_3";
-/** 守りの締め直し 4（0090）: 会員の再認証（退会・連携の解除・パスキーの削除・全端末ログアウトは 15 分以内）、セッションの authenticated_at、注文の payment_account */
-export const SECURITY_HARDENING_4_MIGRATION = "0090_security_hardening_4";
 /** product_public_stock に 1 回で渡せる SKU の数（超えると too_many_skus） */
 const PUBLIC_STOCK_MAX_SKUS = 200;
 
@@ -573,11 +569,9 @@ export class StorefrontData {
 
   /**
    * SKU の在庫（その SKU の分だけ。SKU が無ければ問い合わせない）。
-   * 0089 からは anon が inventory を読めないので product_public_stock（公開中の SKU だけ、0〜99 に頭打ち）を 200 個ずつ呼ぶ。
-   * 当たる前の DB では従来の select（docs/upgrade.md「適用するまでのあいだ」）
+   * anon は inventory を読めない（0089）ので product_public_stock（公開中の SKU だけ、0〜99 に頭打ち）を 200 個ずつ呼ぶ。
    */
   private async inventoryOf(shop: PublicShop, skuIds: readonly string[]): Promise<InventoryRow[]> {
-    if (!(await this.migratedTo(SECURITY_HARDENING_3_MIGRATION))) return selectIn<InventoryRow>(this.db, "inventory", "sku_id,available", shop.id, "sku_id", skuIds);
     const unique = [...new Set(skuIds)];
     const parts: string[][] = [];
     for (let i = 0; i < unique.length; i += PUBLIC_STOCK_MAX_SKUS) parts.push(unique.slice(i, i + PUBLIC_STOCK_MAX_SKUS));

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { imageProcessing, thumbScript, variantKey } from "../src/media/variants";
 import { parseManifest } from "../src/hooks/manifest";
@@ -93,18 +92,6 @@ describe("AI 用 API（プラグインが使う口）", () => {
     expect(row).toMatchObject({ variants: [], thumb_width: 400 });
     expect(storage.objects.size).toBe(2);
   });
-
-  it("0092 の前は段を受けない（409）。段なしの差し替えは今までどおり", async () => {
-    const { app, issue, sb, product, shop } = await setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0092_image_processing") });
-    const tok = await issue(["products:write", "products:read"]);
-    const id = crypto.randomUUID();
-    sb.tables.product_images.push({ id, shop_id: shop.id, product_id: product.id, storage_key: `shops/${shop.id}/products/${product.id}/${"b".repeat(24)}.jpg`, thumb_key: null, width: 10, height: 10, sort_order: 0, options: {} });
-    let m = await multipart({ image: webp(1600, 1200), variant_800: webp(800, 600) });
-    expect((await app.request(`${BASE}/api/v1/images/${id}/file`, { method: "PUT", headers: { authorization: `Bearer ${tok}`, ...m.headers }, body: m.body })).status).toBe(409);
-    m = await multipart({ image: webp(1600, 1200) });
-    expect((await app.request(`${BASE}/api/v1/images/${id}/file`, { method: "PUT", headers: { authorization: `Bearer ${tok}`, ...m.headers }, body: m.body })).status).toBe(200);
-    expect((await app.request(`${BASE}/api/v1/image-settings`, { headers: { authorization: `Bearer ${tok}` } })).status).toBe(409);
-  });
 });
 
 describe("管理画面", () => {
@@ -141,12 +128,5 @@ describe("管理画面", () => {
     const b2 = await Browser.loggedIn(app2, "owner@example.com", "password-123");
     const r2 = await b2.postMultipart(`/admin/shops/${shop2.id}/products/${p2.id}/images`, { file: new File([big], "IMG_0001.jpg", { type: "image/jpeg" }) });
     expect(r2.headers.get("location")).toContain("flash=image_size");
-  });
-
-  it("0092 の前は任せるの欄を出さず、元の写真も 5MB まで", async () => {
-    const { app, shop, product } = await setup({ settings: { images: { processing: "plugin" } }, applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0092_image_processing") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await b.get(`/admin/shops/${shop.id}`)).text()).not.toContain('name="image_processing"');
-    expect(await (await b.get(`/admin/shops/${shop.id}/products/${product.id}`)).text()).toContain('data-processing="browser"');
   });
 });

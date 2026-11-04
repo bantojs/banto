@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { fitWidth, imageKeys, imageLadder, imageMaxWidth, keyForWidth, readVariantFiles, resizeScript, variantKey, variantSizesFor } from "../src/media/variants";
 import { responsiveImage } from "../src/media/images";
 
@@ -104,16 +103,11 @@ describe("管理画面のアップロードとショップの設定", () => {
     expect(storage.objects.size).toBe(0);
   });
 
-  it("形の違う中間の段は断る（何も置かない）。0091 の前は中間の段を受け取らない", async () => {
-    let { sb, storage, b, base } = await setup();
+  it("形の違う中間の段は断る（何も置かない）", async () => {
+    const { storage, b, base } = await setup();
     const res = await b.postMultipart(`${base}/images`, { file: file(webp(1600, 1200), "a.webp"), variant_1600: file(webp(1600, 1200), "v.webp") });
     expect(res.headers.get("location")).toContain("flash=image_type");
     expect(storage.objects.size).toBe(0);
-    ({ sb, storage, b, base } = await setup({}, { applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0091_image_variants") }));
-    expect(await (await b.get(base)).text()).toContain('data-variants="0"');
-    await b.postMultipart(`${base}/images`, { file: file(webp(1600, 1200), "a.webp"), variant_800: file(webp(800, 600), "v.webp") });
-    expect(sb.tables.product_images[0]!["variants"]).toBeUndefined();
-    expect(storage.objects.size).toBe(1);
   });
 
   it("ショップの設定で大きさを選ぶ（決まった値だけ）", async () => {

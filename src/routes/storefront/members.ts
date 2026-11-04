@@ -54,7 +54,7 @@ import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
 import type { AccountPageProps, AddressFormValues } from "../../themes/types";
 import { liquidThemeFor, renderAccount } from "./liquid";
-import { SECURITY_HARDENING_4_MIGRATION, type PublicShop } from "../../storefront/data";
+import { type PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
 import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
@@ -203,7 +203,7 @@ export function loginDeps(c: Ctx): LoginDeps | null {
  */
 async function reauthSessionId(c: Ctx, session: MemberSession): Promise<string | undefined> {
   const sf = storefrontData(c);
-  return sf && session.sid && (await sf.migratedTo(SECURITY_HARDENING_4_MIGRATION)) ? session.sid : undefined;
+  return session.sid || undefined;
 }
 
 /** 15 分を過ぎたセッションからの操作（reauth_required）: この端末のセッションを終えて、ログイン画面に理由を出す */

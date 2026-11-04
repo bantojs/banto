@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { selectedRowValue, sizeChartOf, tsvToRows } from "../src/size-charts/chart";
 import { productFromDetail } from "../src/themes/liquid/objects";
@@ -138,12 +137,6 @@ describe("管理画面とお店の画面", () => {
     expect(await get()).toBeNull();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     expect((await b.get(`/admin/shops/${shop.id}/modules/size-charts`)).status).toBe(404);
-  });
-
-  it("0095 の前はモジュールの一覧に出ない", async () => {
-    const { app, shop } = await setup({ on: false, applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0095_mod_size_charts") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await b.get(`/admin/shops/${shop.id}/modules`)).text()).not.toContain('data-module="size_charts"');
   });
 });
 

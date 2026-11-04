@@ -6,8 +6,7 @@ import type { PrivilegedDb } from "../db/privileged";
 import { createStripeClient } from "../payments/stripe";
 import { createKomojuClient } from "../plugins/komoju";
 import type { ConfigAdapter } from "../adapters/types";
-import { migrated, type MigrationStateDeps } from "../db/migration-state";
-import { SECURITY_HARDENING_4_MIGRATION } from "../storefront/data";
+import { type MigrationStateDeps } from "../db/migration-state";
 
 /** orders.payment_account（0090）の API キー方式の印（Connect の接続先ではなく運営者自身のアカウントで決済した） */
 export const PLATFORM_PAYMENT_ACCOUNT = "platform";
@@ -67,7 +66,7 @@ export async function cancelOrderWithRefund(
   if (info.status === "cancelled" || info.status === "refunded") return { status: info.status, already: true, refunded: info.status === "refunded" };
   if (info.status !== "paid") throw new CancelError("not_cancellable", `order is ${info.status}`);
   // 0090 が当たっていれば、決済した口座を注文から読む（列は 0090 から）
-  const payment_account = opts.migrationState && (await migrated(opts.migrationState, SECURITY_HARDENING_4_MIGRATION)) ? await db.orderPaymentAccount(orderId, shopId) : null;
+  const payment_account = await db.orderPaymentAccount(orderId, shopId);
   let refunded = false;
   try {
     refunded = await refundPayment({ ...info, payment_account }, { ...opts, idempotencyKey: `cancel-${orderId}` });

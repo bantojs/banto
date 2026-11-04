@@ -1,6 +1,6 @@
 import { ipHash, orderEmailHash } from "../members/auth";
 import { PrivilegedRpcError } from "../db/privileged";
-import { SECURITY_HARDENING_3_MIGRATION, type PublicShop, type StorefrontData } from "../storefront/data";
+import { type PublicShop, type StorefrontData } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { clientIpFor, type Ctx } from "./common";
 
@@ -15,7 +15,7 @@ export async function guestOrderLookup(c: Ctx, sf: StorefrontData, shop: PublicS
   if (!db || !secret) return { ok: true, order: null };
   const ip = await clientIpFor(c, shop);
   try {
-    const emailHash = (await sf.migratedTo(SECURITY_HARDENING_3_MIGRATION)) ? await orderEmailHash(secret, email) : undefined;
+    const emailHash = await orderEmailHash(secret, email);
     const r = await db.orderLookup(shop.id, number, email, ip ? await ipHash(secret, ip) : null, emailHash);
     return { ok: true, order: r && typeof r === "object" ? r : null };
   } catch (e) {

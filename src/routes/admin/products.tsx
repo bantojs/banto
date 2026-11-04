@@ -7,7 +7,7 @@ import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, imageUrl, productImageKey, thumbKey } from "../../media/images";
-import { IMAGE_PROCESSING_MIGRATION, IMAGE_VARIANTS_MIGRATION, ORIGINAL_MAX_BYTES, imageKeys, imageMaxWidth, imageProcessing, readVariantFiles, resizeScript, thumbScript, thumbWidthOf, variantKey } from "../../media/variants";
+import { ORIGINAL_MAX_BYTES, imageKeys, imageMaxWidth, imageProcessing, readVariantFiles, resizeScript, thumbScript, thumbWidthOf, variantKey } from "../../media/variants";
 import { migrated } from "../../db/migration-state";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
@@ -451,7 +451,9 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const names = optionNamesOf(shop.option_names);
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const mediaBase = mediaBaseUrl(c);
-  const [catalog, variantsReady, pluginMode] = await Promise.all([catalogContext(c, shop), imageVariantsReady(c), imagePluginMode(c, shop)]);
+  const catalog = await catalogContext(c, shop);
+  const variantsReady = true;
+  const pluginMode = imagePluginMode(shop);
   // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
   const optionChoices = skuOptionChoices(skus);
   // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
@@ -1041,11 +1043,8 @@ products.post("/:shopId/products/:productId/skus/:skuId/delete", requireOwner, a
 });
 
 // ---------- 画像 ----------
-/** 中間の段の列（0091）が当たっているか */
-const imageVariantsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION);
-/** 外部の変換プラグインに任せるショップか（設定と 0092） */
-const imagePluginMode = async (c: AdminContext, shop: ShopRow): Promise<boolean> =>
-  imageProcessing(shop.settings) === "plugin" && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_PROCESSING_MIGRATION));
+/** 外部の変換プラグインに任せるショップか（0092） */
+const imagePluginMode = (shop: ShopRow): boolean => imageProcessing(shop.settings) === "plugin";
 
 products.post("/:shopId/products/:productId/images", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -1061,7 +1060,7 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   const ext = imageExtension(file.type);
   if (!ext) return c.redirect(`${base}?flash=image_type`);
   // 任せるショップは元の写真をそのまま受ける（スマホの写真が入る大きさまで）
-  const pluginMode = await imagePluginMode(c, data.shop);
+  const pluginMode = imagePluginMode(data.shop);
   if (file.size > (pluginMode ? ORIGINAL_MAX_BYTES : MAX_IMAGE_BYTES)) return c.redirect(`${base}?flash=image_size`);
   // サムネイルと寸法はブラウザ側のスクリプトが付ける（任意。JS が無い環境では本画像だけ）
   const thumb = body.thumb instanceof File && body.thumb.size > 0 ? body.thumb : null;
@@ -1073,7 +1072,7 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   // 中間の段（0091 が当たってから。本画像の実際の横幅より狭いものだけ）
   const mainBytes = new Uint8Array(await file.arrayBuffer());
   const mainDim = imageSize(mainBytes, file.type);
-  const variantsOn = await imageVariantsReady(c);
+  const variantsOn = true;
   const variants = variantsOn && !pluginMode ? await readVariantFiles(body, mainDim?.width ?? 0) : [];
   if (variants === null) return c.redirect(`${base}?flash=image_type`);
 

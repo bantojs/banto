@@ -4,7 +4,7 @@ import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
 import { consentCollected, returnOrigins, safeReturnUrl } from "../../commerce/checkout";
-import { SECURITY_HARDENING_4_MIGRATION, StorefrontData, type PublicShop } from "../../storefront/data";
+import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
@@ -119,15 +119,6 @@ async function grant(c: Ctx, db: PrivilegedDb, secret: string, shopId: string, c
   // 会員の条件（0097）で使っている独自項目の値を access に入れる（ログインのときだけ 1 回多く問い合わせる。以後は refresh で入れ直す）
   const attrs = (await audiencesReady(c)) ? audienceAttrsOf((await db.memberSessionCheckAttrs(shopId, customerId, epoch, sid).catch(() => null))?.attrs) : undefined;
   return issueTokens(secret, shopId, customerId, epoch, { sid, gen: 0, expiresAt: Math.floor(Date.now() / 1000) + SESSION_ABSOLUTE_SECONDS }, undefined, attrs);
-}
-
-/** 0090 が当たっているか（会員の再認証・セッションの authenticated_at）。anon キーが無ければ false（古い関数の形で呼ぶ） */
-async function hardened4(c: Ctx): Promise<boolean> {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
-  if (!url || !anonKey) return false;
-  return new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache).migratedTo(SECURITY_HARDENING_4_MIGRATION);
 }
 
 const isReauthRequired = (e: unknown): boolean => e instanceof PrivilegedRpcError && e.is("reauth_required");
@@ -326,7 +317,7 @@ membersApi.post("/shops/:shop/members/withdraw", async (c: Ctx) => {
   let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth_required。連携側はログインし直させる）
-    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid && (await hardened4(c)) ? s.member.sid : undefined);
+    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid ?? undefined);
   } catch (e) {
     if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
     throw e;
@@ -392,7 +383,7 @@ membersApi.post("/shops/:shop/members/logout-all", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ
-    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid && (await hardened4(c)) ? s.member.sid : undefined);
+    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid ?? undefined);
     return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
   } catch (e) {
     if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
@@ -431,7 +422,7 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
   if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）。古い DB には渡さない
-  const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, (await hardened4(c)) ? r.authenticated_at : undefined);
+  const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });
 

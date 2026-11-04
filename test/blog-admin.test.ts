@@ -65,7 +65,7 @@ describe("ブログの管理画面", () => {
     await owner.post(`${at}/${id}/trash`, {});
     expect(a["deleted_at"]).toBeTruthy();
     expect(await (await owner.get(`${base}/${String(blog["id"])}?status=trash`)).text()).not.toContain(`${at}/${id}/delete`);
-    expect((await owner.post(`${at}/${id}/delete`, {})).headers.get("location")).toBe(`${base}/${String(blog["id"])}?status=trash`);
+    expect((await owner.post(`${at}/${id}/delete`, {})).status).toBe(404);
     expect(sb.tables.articles).toHaveLength(2);
     // 記事の名前 feed は使えない
     expect((await owner.post(at, { ...article, handle: "feed", action: "draft" })).status).toBe(400);
@@ -89,24 +89,6 @@ describe("ブログの管理画面", () => {
     expect(sb.calls.some((x) => x.includes("/rest/v1/rpc/blog_delete"))).toBe(true);
     expect(sb.tables.blogs.filter((b) => b["shop_id"] === shop.id)).toHaveLength(0);
     expect(sb.tables.articles.filter((x) => x["shop_id"] === shop.id)).toHaveLength(0);
-  });
-
-  it("0089 が当たる前の DB では従来どおり表の delete で消す（ブログ・ゴミ箱の記事）", async () => {
-    const sb = new FakeSupabase({ appliedMigrations: [...new FakeSupabase().appliedMigrations].filter((v) => v !== "0089_security_hardening_3") });
-    const owner0 = sb.addUser("owner@example.com", "password-123", { owner: true });
-    const shop = sb.addShop(owner0.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules: { blog: true } } });
-    const app = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
-    const base = `/admin/shops/${shop.id}/modules/blog`;
-    const blog = sb.addBlog(shop.id, { handle: "news" });
-    const a = sb.addArticle(shop.id, blog.id);
-    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    await owner.post(`${base}/${blog.id}/articles/${a.id}/trash`, {});
-    expect(await (await owner.get(`${base}/${blog.id}?status=trash`)).text()).toContain(`${base}/${blog.id}/articles/${a.id}/delete`);
-    await owner.post(`${base}/${blog.id}/articles/${a.id}/delete`, {});
-    expect(sb.tables.articles).toHaveLength(0);
-    await owner.post(`${base}/${blog.id}/delete`, {});
-    expect(sb.calls.some((x) => x.includes("/rest/v1/rpc/blog_delete"))).toBe(false);
-    expect(sb.tables.blogs).toHaveLength(0);
   });
 
   it("記事のプレビューもお店の画面と同じテーマで描く（保存しない）", async () => {

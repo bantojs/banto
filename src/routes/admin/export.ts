@@ -7,8 +7,6 @@ import { BANTO_VERSION } from "../../version";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
-import { migrated } from "../../db/migration-state";
-import { SIZE_CHARTS_MIGRATION } from "../../size-charts/chart";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -68,7 +66,7 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  const sizeCharts = (await migrated({ db, cache: c.get("adapters").cache }, SIZE_CHARTS_MIGRATION)) ? SIZE_CHART_TABLES : [];
+  const sizeCharts = SIZE_CHART_TABLES;
   for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...sizeCharts]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,

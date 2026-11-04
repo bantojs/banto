@@ -16,7 +16,6 @@ import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { migrated } from "../../db/migration-state";
-import { SECURITY_HARDENING_3_MIGRATION } from "../../storefront/data";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, PAGES_TRASH_DAYS, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { formatDateTime, isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { markdownToHtml } from "../../pages/markdown";
@@ -119,8 +118,6 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.notFound();
   const cols = "id,handle,title,nav,sort_order,published,published_at,deleted_at,updated_at";
   const all = await owner(c).db.from<PageRow>("pages").select(cols, { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" });
-  // 0089 からは「完全に削除」が無い（ゴミ箱のものは Cron が 30 日で消す）
-  const canDelete = !(await hardened(c));
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
   // タブ（すべて = ゴミ箱の外）と検索（タイトルと URL の名前。ページは 1 つのショップに 100 までなので、絞り込みはここで）
@@ -210,16 +207,6 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
                           {t("pages.restore")}
                         </button>
                       </form>
-                      {canDelete ? (
-                        <>
-                          {" "}
-                          <form method="post" action={`${base(shop.id)}/${p.id}/delete`} style="display:inline" onsubmit={`return confirm(${JSON.stringify(t("pages.delete_confirm"))})`}>
-                            <button type="submit" class="secondary small">
-                              {t("pages.delete_forever")}
-                            </button>
-                          </form>
-                        </>
-                      ) : null}
                     </>
                   ) : (
                     <form method="post" action={`${base(shop.id)}/${p.id}/trash`} style="display:inline">
@@ -559,23 +546,3 @@ pagesAdmin.post("/:pageId/revisions/:revisionId/restore", requireOwner, async (c
   return c.redirect(`${base(shop.id)}/${pageId}?flash=reverted`);
 });
 
-/** 0089 が当たっていれば、ゴミ箱の中の「完全に削除」は Cron の purge に任せる（運営者の JWT では消せない） */
-const hardened = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SECURITY_HARDENING_3_MIGRATION);
-
-/** 消す（ゴミ箱の中のものだけ） */
-pagesAdmin.post("/:pageId/delete", requireOwner, async (c: AdminContext) => {
-  const shop = await scope(c);
-  if (!shop) return c.notFound();
-  const pageId = param(c, "pageId");
-  // 0089 からは運営者の JWT で物理削除できない（Cron の pages_purge_trash が 30 日で消す。画面にもボタンを出さない）
-  if (await hardened(c)) return c.redirect(`${base(shop.id)}?status=trash`);
-  try {
-    const row = await owner(c).db.from<PageRow>("pages").selectOne("id,deleted_at", { eq: { id: pageId, shop_id: shop.id } });
-    if (!row?.deleted_at) return c.redirect(base(shop.id));
-    await owner(c).db.from("pages").delete({ id: pageId, shop_id: shop.id });
-  } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${base(shop.id)}?flash=generic`);
-    throw e;
-  }
-  return c.redirect(`${base(shop.id)}?status=trash&flash=deleted`);
-});

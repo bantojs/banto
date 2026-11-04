@@ -82,7 +82,7 @@ describe("ショップのページの管理画面", () => {
     await writer.post(`${base}/${String(page["id"])}/trash`, {});
     expect(page["deleted_at"]).toBeTruthy();
     expect(await (await writer.get(`${base}?status=trash`)).text()).not.toContain(`${base}/${String(page["id"])}/delete`);
-    expect((await writer.post(`${base}/${String(page["id"])}/delete`, {})).headers.get("location")).toBe(`${base}?status=trash`);
+    expect((await writer.post(`${base}/${String(page["id"])}/delete`, {})).status).toBe(404);
     expect(sb.tables.pages).toHaveLength(1);
   });
 

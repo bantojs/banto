@@ -1,6 +1,5 @@
 import { Hono } from "hono";
-import { IMAGE_VARIANTS_MIGRATION, VARIANT_SIZES, imageMaxWidth, readVariantFiles, thumbWidthOf, variantKey } from "../../media/variants";
-import { migrated } from "../../db/migration-state";
+import { VARIANT_SIZES, imageMaxWidth, readVariantFiles, thumbWidthOf, variantKey } from "../../media/variants";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
@@ -89,9 +88,9 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
   const large = (queue?.failures ?? []).filter((f) => f.code === "too_large").map((f) => ({ slug: f.slug, url: f.url }));
   // 要確認のクーポンを直して入れる画面（0043）
   const couponImport = `/admin/shops/${shop.id}/modules/coupons/import`;
-  // 画像の大きさ（ショップの設定）と中間の段（0091 が当たってから）
+  // 画像の大きさ（ショップの設定）と中間の段（0091）
   const imageMax = imageMaxWidth(shop.settings);
-  const variantSizes = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION)) ? [...VARIANT_SIZES] : [];
+  const variantSizes = [...VARIANT_SIZES];
   const cfg = { base: `/admin/shops/${shop.id}/modules/woo-import`, shopUrl: shopHome(publicBaseUrl(c), shop), t: dict, large, couponImport, imageMax, variantSizes };
   // </script> を閉じさせない（< をエスケープ）
   const json = JSON.stringify(cfg).replace(/</g, "\\u003c");
@@ -452,8 +451,7 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
     return c.json({ added: 0, skipped: 1 });
   }
   const size = imageSize(image, kind.contentType);
-  const variantsOn = await migrated({ db, cache: c.get("adapters").cache }, IMAGE_VARIANTS_MIGRATION);
-  const variants = variantsOn ? await readVariantFiles(form, size?.width ?? 0) : [];
+  const variants = await readVariantFiles(form, size?.width ?? 0);
   if (variants === null) return c.json({ error: "invalid_image" }, 400);
   const storage = c.get("adapters").storage;
   const key = wcImageKey(shop.id, product.id, url, kind.ext);
@@ -471,7 +469,8 @@ wooImport.post("/images/resized", requireOwner, async (c: AdminContext) => {
       width: size?.width ?? null,
       height: size?.height ?? null,
       sort_order: existing.reduce((n, i) => Math.max(n, i.sort_order + 1), 0),
-      ...(variantsOn ? { variants: variants.map((v) => v.size), thumb_width: thumb && thumbKind ? thumbWidthOf(thumb, thumbKind.contentType) : null } : {}),
+      variants: variants.map((v) => v.size),
+      thumb_width: thumb && thumbKind ? thumbWidthOf(thumb, thumbKind.contentType) : null,
     });
   } catch (e) {
     await Promise.all([key, tKey, ...vKeys].filter((k): k is string => !!k).map((k) => storage.delete(k).catch(() => undefined)));

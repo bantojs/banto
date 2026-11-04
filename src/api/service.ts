@@ -2,8 +2,7 @@
  * AI 用トークンでの操作をまとめる層（docs/ai-access.md）。REST（/api/v1）と MCP（/mcp）の両方がここを使う。
  * 権限の判定は SQL（api_*）側。ここはトークンのハッシュ化、エラーの分類、画像の取り込みだけを担う。
  */
-import { SIZE_CHARTS_MIGRATION } from "../size-charts/chart";
-import { IMAGE_PROCESSING_MIGRATION, VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } from "../media/variants";
+import { VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } from "../media/variants";
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
@@ -20,7 +19,6 @@ import { inquiryLinkHash } from "../members/auth";
 import { randomToken } from "../util/signed";
 import { returnOrigins, safeReturnUrl, withQueryParam } from "../commerce/checkout";
 import { shopHome } from "../storefront/urls";
-import { SECURITY_HARDENING_4_MIGRATION } from "../storefront/data";
 import { sendAssignNotice, sendReplyNotice } from "../modules/inquiries";
 import type { InquiryMailShop } from "../modules/inquiries/mail";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, sealThemeAssets, storeThemeBundle, themeStorage, unsealThemeAssets } from "../themes/liquid/versions";
@@ -311,7 +309,7 @@ export class ApiService {
     if (info.status !== "paid") throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
     const shop = await this.call<{ shop_id: string; stripe_account_id?: string | null }>("api_token_shop", {});
     // 0090: 決済した口座で返金する（列は 0090 から）
-    const payment_account = (await this.migratedTo(SECURITY_HARDENING_4_MIGRATION)) ? await this.db.orderPaymentAccount(id, shop.shop_id) : null;
+    const payment_account = await this.db.orderPaymentAccount(id, shop.shop_id);
     let refunded = false;
     try {
       refunded = await refundPayment({ ...info, payment_account }, { config: this.config, fetch: this.fetchImpl, stripeAccountId: shop.stripe_account_id ?? null, idempotencyKey: `cancel-${id}` });
@@ -357,13 +355,8 @@ export class ApiService {
    */
   async imageReplaceFile(imageId: string, image: Uint8Array, thumbnail: Uint8Array | null, variantForm?: Record<string, unknown>): Promise<Record<string, unknown>> {
     uuidOr404(imageId);
-    // 中間の段（variant_<横幅>）とサムネイルの横幅は 0092 から（外部の変換プラグインが本画像と一緒に差し替える）
+    // 中間の段（variant_<横幅>）とサムネイルの横幅（0092。外部の変換プラグインが本画像と一緒に差し替える）
     const withVariants = variantForm !== undefined && Object.keys(variantForm).some((k) => k.startsWith("variant_"));
-    const ready = await this.migratedTo(IMAGE_PROCESSING_MIGRATION);
-    if (withVariants && !ready) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `variant_* needs the database update ${IMAGE_PROCESSING_MIGRATION}; apply it from /admin/update`, 409);
-    }
     const main = sniffImage(image.subarray(0, 256));
     if (!main) throw new ApiError("invalid", "image must be JPEG, PNG, WebP, GIF or AVIF", 400);
     if (image.byteLength > MAX_IMAGE_BYTES) throw new ApiError("invalid", "image is larger than 5MB", 400);
@@ -378,7 +371,7 @@ export class ApiService {
     const variants = withVariants ? await readVariantFiles(variantForm!, size?.width ?? 0) : [];
     if (variants === null) throw new ApiError("invalid", "variant_<width> must be WebP, one of 800 / 1600 / 2048 / 2560, narrower than the image, at most that wide and 4096px high", 400);
     const vkeys = variants.map((v) => variantKey(key, v.size));
-    const thumbWidth = ready && thumbnail && thumb ? thumbWidthOf(thumbnail, thumb.contentType) : null;
+    const thumbWidth = thumbnail && thumb ? thumbWidthOf(thumbnail, thumb.contentType) : null;
     const copy = (b: Uint8Array) => b.slice().buffer;
     await this.storage.put(key, copy(image), main.contentType);
     let r: { image_id: string; previous: { storage_key: string; thumb_key: string | null }; product: Record<string, unknown> };
@@ -387,8 +380,8 @@ export class ApiService {
       await Promise.all(variants.map((v, i) => this.storage.put(vkeys[i]!, copy(v.bytes), "image/webp")));
       r = await this.call("api_image_replace_file", {
         p_image_id: imageId, p_storage_key: key, p_thumb_key: tkey, p_width: size?.width ?? null, p_height: size?.height ?? null,
-        // 0092 の前は引数の数が違う（渡すと関数が見つからない）
-        ...(ready ? { p_variants: variants.map((v) => v.size), p_thumb_width: thumbWidth } : {}),
+        p_variants: variants.map((v) => v.size),
+        p_thumb_width: thumbWidth,
       });
     } catch (e) {
       await Promise.all([key, tkey, ...vkeys].filter((k): k is string => !!k).map((k) => this.storage.delete(k).catch(() => undefined)));
@@ -404,27 +397,16 @@ export class ApiService {
    * own はその段に置いたもの、effective は上の段を含めて決めた表示される表。表示はモジュールが ON のショップだけ
    */
   async sizeChartGet(level: SizeChartLevel): Promise<Record<string, unknown>> {
-    await this.requireSizeCharts();
     return this.call<Record<string, unknown>>("api_size_chart_get", sizeChartArgs(level));
   }
   /** 1 つの段を置き換える（products:write）。columns・rows・note を null にするとその段では決めない（上の段を使う）。図は管理画面だけ */
   async sizeChartSet(level: SizeChartLevel, data: unknown): Promise<Record<string, unknown>> {
-    await this.requireSizeCharts();
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new ApiError("invalid", "invalid_size_chart: send an object { hidden?, axis?, columns?, rows?, note? }", 400);
     return this.call<Record<string, unknown>>("api_size_chart_set", { ...sizeChartArgs(level), p_data: data });
-  }
-  private async requireSizeCharts(): Promise<void> {
-    if (await this.migratedTo(SIZE_CHARTS_MIGRATION)) return;
-    await this.call("api_token_shop", {});
-    throw new ApiError("migration_required", `size charts need the database update ${SIZE_CHARTS_MIGRATION}; apply it from /admin/update`, 409);
   }
 
   /** 商品画像の大きさの設定（0092、products:read）。外部の変換プラグインが作る段を決めるのに使う */
   async imageSettings(): Promise<Record<string, unknown>> {
-    if (!(await this.migratedTo(IMAGE_PROCESSING_MIGRATION))) {
-      await this.call("api_token_shop", {});
-      throw new ApiError("migration_required", `image settings need the database update ${IMAGE_PROCESSING_MIGRATION}; apply it from /admin/update`, 409);
-    }
     return this.call<Record<string, unknown>>("api_image_settings", {});
   }
 

@@ -90,14 +90,6 @@ describe("同梱テーマ: 退会・全端末ログアウトの再認証と知�
     expect((await b.post("/my-shop/account/password", { password: "new-password-1" }, { headers: { "sec-fetch-mode": "navigate", "sec-fetch-site": "same-origin" } })).headers.get("location")).toBe("/my-shop/account?flash=password_saved");
     expect((await b.post("/my-shop/account/delete", {})).headers.get("location")).toBe("/my-shop");
   });
-
-  it("0090 より前の DB では今までどおり（セッションの id を渡さず、退会に知らせは無い）", async () => {
-    const { sb, mail, b, age } = setup({ migrated: false });
-    await memberLogin(b, mail, "/my-shop", "member@example.com");
-    age(16);
-    expect((await b.post("/my-shop/account/delete", {})).headers.get("location")).toBe("/my-shop");
-    expect(sb.tables.customers).toHaveLength(0);
-  });
 });
 
 describe("ヘッドレスの会員 API: 退会・全端末ログアウトの再認証、パスワードの設定で 15 分の起点を引き継ぐ", () => {

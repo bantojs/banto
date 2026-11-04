@@ -21,14 +21,11 @@ import { todayHere } from "../modules/store-tryon";
 import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
 import { PAGES_TRASH_DAYS } from "../pages";
-import { createDbClient } from "../db/client";
-import { migrated } from "../db/migration-state";
 import { fetchManifest } from "../hooks/manifest";
 
 /** マニフェストの取り直し（0096）: 1 回に取り直す数と、1 件の待ち時間。5 分ごとなら 1 日に 576 件 */
 export const MANIFEST_REFRESH_PER_RUN = 2;
 const MANIFEST_REFRESH_TIMEOUT_MS = 5000;
-export const MANIFEST_REFRESH_MIGRATION = "0096_hook_manifest_refresh";
 
 /** Cron のハートビート名（/health が heartbeat_age_seconds で読む） */
 export const CRON_HEARTBEAT = "cron";
@@ -112,10 +109,8 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   });
 
   // 外部プラグインのマニフェストを取り直す（0096）。プラグインを上げたのに前のマニフェスト（capabilities・ブロック・設定の項目）のまま、を防ぐ。
-  // 当たる前の DB では何もしない（版の判定は anon の banto_setup_state）。取れなければ前のまま時刻だけ進める
+  // 取れなければ前のまま時刻だけ進める
   adapters.scheduler.register("hook_manifests", async () => {
-    const anonKey = cfg.get("SUPABASE_ANON_KEY");
-    if (!anonKey || !(await migrated({ db: createDbClient({ url, anonKey, fetch: doFetch }), cache: adapters.cache }, MANIFEST_REFRESH_MIGRATION))) return;
     const outbound = adapters.publicFetch ?? doFetch;
     for (const due of await db.hookManifestsDue(MANIFEST_REFRESH_PER_RUN)) {
       await db.hookManifestRecord(due.id, due.url, await fetchManifest(due.url, outbound, MANIFEST_REFRESH_TIMEOUT_MS));

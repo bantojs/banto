@@ -4,7 +4,6 @@
  * ON/OFF はキャッシュ済み / 読み込み済みのショップ行で判定し、そのために DB に問い合わせない。OFF のモジュールはルートもメニューも出さない。
  */
 import type { MessageKey } from "../i18n";
-import { SIZE_CHARTS_MIGRATION } from "../size-charts/chart";
 import { AUDIENCES_MIGRATION } from "../members/audience";
 
 export interface ModuleDef {
@@ -49,7 +48,7 @@ export const MODULES: readonly ModuleDef[] = [
   // 採寸表（ショップ全体・カテゴリー・商品の段。表示するときに近い段から決める。0095_mod_size_charts、docs/size-charts.md）
   // 会員の条件（会員の独自項目の組み合わせ。ブロック・商品・ページ・会員価格で使う。0097_audiences、docs/audiences.md）
   { id: "audiences", name: "mod.audiences.name", description: "mod.audiences.description", adminPath: "audiences", migration: AUDIENCES_MIGRATION },
-  { id: "size_charts", name: "mod.size_charts.name", description: "mod.size_charts.description", adminPath: "size-charts", migration: SIZE_CHARTS_MIGRATION },
+  { id: "size_charts", name: "mod.size_charts.name", description: "mod.size_charts.description", adminPath: "size-charts" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

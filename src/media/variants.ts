@@ -12,12 +12,6 @@
  */
 import { MAX_IMAGE_BYTES, imageSize, sniffImage } from "./images";
 
-/** 中間の段の列のマイグレーション（当たるまで中間の段を作らない・送らない。CLAUDE.md §11「コードと DB の版のずれ」） */
-export const IMAGE_VARIANTS_MIGRATION = "0091_image_variants";
-
-/** 外部の変換プラグインに任せるモード・段を書き戻す API（0092） */
-export const IMAGE_PROCESSING_MIGRATION = "0092_image_processing";
-
 /** 任せるモードで受け取る元の写真の上限（スマホの写真をそのまま。縮小した本画像は MAX_IMAGE_BYTES まで） */
 export const ORIGINAL_MAX_BYTES = 20 * 1024 * 1024;
 

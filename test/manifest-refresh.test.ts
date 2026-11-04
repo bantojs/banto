@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, externalHosts, memoryAdapters } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { registerJobs } from "../src/jobs";
 import type { ScheduledJob } from "../src/adapters/types";
 
@@ -74,13 +73,5 @@ describe("Cron: 1 日 1 回取り直す", () => {
     await runJob(sb);
     expect(ep["manifest"]).toMatchObject({ capabilities: ["images"] });
     expect(ep["manifest_checked_at"]).toBeTruthy();
-  });
-
-  it("0096 の前は何もしない", async () => {
-    const { sb } = setup(BUNDLED_MIGRATIONS.filter((v) => v !== "0096_hook_manifest_refresh"));
-    let hits = 0;
-    externalHosts.set("https://webp.example/", () => (hits++, Response.json(NEW)));
-    await runJob(sb);
-    expect(hits).toBe(0);
   });
 });
