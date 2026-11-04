@@ -235,7 +235,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 - SQL は `supabase/migrations/` に前方専用で追加。ロールバック用マイグレーションは書かない。カラム削除・リネームは2段階（新カラム追加 → 次の MINOR で旧カラム削除）。
 - **コードと DB の版のずれ**（メンテナの決定 2026-10-17、docs/upgrade.md「適用するまでのあいだ」）: アップデートを強制しない。コードだけ新しいあいだも、お客様の画面と既存の機能は止めない。
   新しいマイグレーションを使う機能は `src/db/migration-state.ts` の `migrated(deps, "00NN_xxx")` で判定し、適用されるまで出さない（既存の経路の select に新しい列を足すときも、この判定で列を選ぶ）。
-  機能ごとに「表・列・関数が無いエラーを受け止める」書き方はしない。サポートする古い DB はひとつ前のマイナー版まで。マイナー版を上げるときに `BASELINE_MIGRATION` を進め、それ以前の `migrated()` の分岐を消す。v0.9.0 の土台は `0105_ma_ports`（v0.8 系のセットアップで当たる範囲）。
+  機能ごとに「表・列・関数が無いエラーを受け止める」書き方はしない。サポートする古い DB はひとつ前のマイナー版まで。マイナー版を上げるときに `BASELINE_MIGRATION` を進め、それ以前の `migrated()` の分岐を消す。土台までのマイグレーションは新しい導入にしか当たらないので、Worker に埋め込むときに後で定義し直される関数の古い定義を外す（`scripts/sql-squash.mjs`、`supabase/migrations/` は変えない。全部を当てた DB と関数・権限・表などが同じになることを `test/db/squash.test.ts` が確かめる）。v0.9.0 の土台は `0105_ma_ports`（v0.8 系のセットアップで当たる範囲）。
 - コミットは Conventional Commits（`feat:` `fix:` `docs:` `chore:`）。
 - テストは `vitest`。RLS と RPC のテストは実 PostgreSQL に対して流す（`test/db/`）。
   `BANTO_TEST_DB_URL` が指す DB に `supabase/test/auth_shim.sql`（Supabase の auth スキーマ・ロール・既定権限の最小再現）と

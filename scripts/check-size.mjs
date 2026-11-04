@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Worker 本体の圧縮後サイズが予算内か検査する（docs/ARCHITECTURE.md「速度の予算」、CLAUDE.md §7）。
 // 先に npm run build:workers を実行しておくこと。上限を上げるときは理由を docs/knowledge/02-decisions.md に書く。
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const file = join(root, "dist", "workers", "index.js");
 if (!existsSync(file)) {
   console.error("check-size: dist/workers/index.js がありません。先に npm run build:workers を実行してください");
+  process.exit(1);
+}
+// 古いビルドを測らない（src/ のほうが新しければ止める。2026-11-04 に古い成果物の大きさを報告してしまったため）
+const newest = (dir) => readdirSync(dir, { withFileTypes: true }).reduce((t, e) => Math.max(t, e.isDirectory() ? newest(join(dir, e.name)) : statSync(join(dir, e.name)).mtimeMs), 0);
+if (newest(join(root, "src")) > statSync(file).mtimeMs) {
+  console.error("check-size: dist/workers/index.js が src/ より古いビルドです。先に npm run build:workers を実行してください");
   process.exit(1);
 }
 const raw = readFileSync(file);
