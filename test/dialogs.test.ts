@@ -120,7 +120,7 @@ describe("管理画面", () => {
 
 describe("ブラウザのスクリプト", () => {
   type El = { tag: string; className: string; textContent: string; children: El[]; attrs: Record<string, string>; listeners: Record<string, () => void>; [k: string]: unknown };
-  function run(dialogs: PublicDialog[], opts: { store?: Map<string, string>; cart?: number | null; session?: Map<string, string> } = {}) {
+  function run(dialogs: PublicDialog[], opts: { store?: Map<string, string>; cart?: number | null; session?: Map<string, string>; loading?: boolean } = {}) {
     const store = opts.store ?? new Map<string, string>();
     const session = opts.session ?? new Map<string, string>();
     const timers: (() => void)[] = [];
@@ -144,7 +144,7 @@ describe("ブラウザのスクリプト", () => {
       Date, JSON, Number, String, Array,
       localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) },
       sessionStorage: { getItem: (k: string) => session.get(k) ?? null, setItem: (k: string, v: string) => void session.set(k, v) },
-      document: { body, createElement: mk, activeElement: null, documentElement: { scrollHeight: 2000 }, addEventListener: (n: string, f: (e: unknown) => void) => ((docListeners[n] ??= []).push(f)), removeEventListener: () => undefined },
+      document: { readyState: opts.loading ? "loading" : "complete", body: opts.loading ? null : body, createElement: mk, activeElement: null, documentElement: { scrollHeight: 2000 }, addEventListener: (n: string, f: (e: unknown) => void) => ((docListeners[n] ??= []).push(f)), removeEventListener: () => undefined },
       Element: { prototype: { attachShadow: () => undefined } },
       setTimeout: (f: () => void) => timers.push(f),
       addEventListener: () => undefined, removeEventListener: () => undefined,
@@ -158,7 +158,13 @@ describe("ブラウザのスクリプト", () => {
     const shown = () => body.children.map((h) => h.attrs["data-banto-dialog"]);
     const fire = () => timers.splice(0).forEach((f) => f());
     const exit = () => (docListeners["mouseout"] ?? []).forEach((f) => f({ relatedTarget: null, clientY: 0 }));
-    return { store, session, shown, fire, exit, events, tracked, body };
+    // <head> の中で動いたあと、<body> ができて DOMContentLoaded
+    const ready = () => {
+      (ctx["document"] as Record<string, unknown>)["body"] = body;
+      (ctx["document"] as Record<string, unknown>)["readyState"] = "interactive";
+      (docListeners["DOMContentLoaded"] ?? []).forEach((f) => f({}));
+    };
+    return { store, session, shown, fire, exit, ready, events, tracked, body };
   }
 
   it("秒数がたつと 1 つだけ出す（優先の高い順）。出したことを GA4 と行動の中継に知らせる", () => {
@@ -168,6 +174,15 @@ describe("ブラウザのスクリプト", () => {
     expect(r.shown()).toEqual(["a"]);
     expect(r.events).toEqual([{ name: "banto_dialog_view", p: { dialog_id: "a" } }]);
     expect(r.tracked).toEqual([{ type: "dialog_view", d: { dialog_id: "a" } }]);
+  });
+
+  it("<head> の中で動いても、<body> ができてから出す", () => {
+    const r = run([dialog({ id: "a", trigger: { delay_s: 1 } })], { loading: true });
+    r.fire();
+    expect(r.shown()).toEqual([]);
+    r.ready();
+    r.fire();
+    expect(r.shown()).toEqual(["a"]);
   });
 
   it("離脱しそう・カートの金額・訪問のページ数がそろうまで出さない", () => {

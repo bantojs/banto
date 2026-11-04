@@ -127,7 +127,7 @@ const forBrowser = (d: PublicDialog) => ({ id: d.id, layout: d.layout, title: d.
 export function dialogScript(base: string, dialogs: readonly PublicDialog[], cartTotal: number | null): string {
   const words = { close: t("dlg.js.close"), copy: t("dlg.js.copy"), copied: t("dlg.js.copied"), coupon: t("dlg.js.coupon") };
   return `(function(){var D=${scriptJson(dialogs.map(forBrowser))},B=${scriptJson(base)},W=${scriptJson(words)},CT=${cartTotal === null ? "null" : String(cartTotal)};
-if(!D.length||!document.body||!Element.prototype.attachShadow)return;var now=Date.now(),V={};
+if(!D.length||!Element.prototype.attachShadow)return;var now=Date.now(),V={};
 function ls(k,v){try{if(v===undefined)return JSON.parse(localStorage.getItem(k)||"null");localStorage.setItem(k,JSON.stringify(v))}catch(e){return null}}
 V=ls("banto_dv")||{};if(!V.s||now-(V.t||0)>1800000)V={s:now,n:0,d:[]};V.n=(V.n||0)+1;V.t=now;V.d=V.d||[];ls("banto_dv",V);
 var cart=CT;try{if(cart!==null)sessionStorage.setItem("banto_dc",String(cart));else{var c=sessionStorage.getItem("banto_dc");cart=c===null?null:Number(c)}}catch(e){}
@@ -160,14 +160,14 @@ function close(){if(!host.parentNode)return;host.parentNode.removeChild(host);do
 function key(e){if(e.key==="Escape")close()}
 x.addEventListener("click",close);if(ov)ov.addEventListener("click",close);document.addEventListener("keydown",key,true);
 root.appendChild(w);document.body.appendChild(host);try{x.focus()}catch(e){}seen(d);ev("dialog_view",d)}
-D.forEach(function(d){var tr=d.trigger||{};
+function start(){D.forEach(function(d){var tr=d.trigger||{};
 if(V.d.indexOf(d.id)>=0)return;var until=ls("banto_dlg_"+d.id);if(typeof until==="number"&&until>now)return;
 if(tr.visit_pages&&V.n<tr.visit_pages)return;
 var need={delay:true,scroll:!tr.scroll_pct,exit:!tr.exit_intent};
 function check(){if(need.delay&&need.scroll&&need.exit){if(tr.cart_min_jpy&&!(cart!==null&&cart>=tr.cart_min_jpy))return;show(d)}}
 need.delay=false;setTimeout(function(){need.delay=true;check()},(tr.delay_s||0)*1000);
 if(tr.scroll_pct)addEventListener("scroll",function s(){var h=document.documentElement,max=h.scrollHeight-innerHeight;if(max<=0||(scrollY/max)*100>=tr.scroll_pct){need.scroll=true;removeEventListener("scroll",s);check()}},{passive:true});
-if(tr.exit_intent)document.addEventListener("mouseout",function m(e){if(!e.relatedTarget&&e.clientY<=0){need.exit=true;document.removeEventListener("mouseout",m);check()}})})})();`;
+if(tr.exit_intent)document.addEventListener("mouseout",function m(e){if(!e.relatedTarget&&e.clientY<=0){need.exit=true;document.removeEventListener("mouseout",m);check()}})})}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);else start();})();`;
 }
 
 export interface DialogHeadExtra {
