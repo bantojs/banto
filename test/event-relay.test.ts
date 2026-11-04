@@ -153,4 +153,12 @@ describe("管理画面: 連携ごとの許し", () => {
     await owner.post(`${base}/storefront-events`, {});
     expect(sb.tables.hook_endpoints.find((e) => e["id"] === "ep-ma")!["storefront_events"]).toBeNull();
   });
+
+  it("マニフェストを読めていない外部の送信先には、欄が出ない理由と読み直し方を出す", async () => {
+    const { app, sb, shop } = setup({ grant: null });
+    sb.tables.hook_endpoints.push({ id: "ep-none", shop_id: shop.id, name: "n8n", url: "https://n8n.example.com/hook", events: [], enabled: true, settings: {}, manifest: null, created_at: "" });
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    expect(await (await owner.get(`/admin/shops/${shop.id}/hooks/ep-none`)).text()).toContain("マニフェストを読めていません");
+    expect(await (await owner.get(`/admin/shops/${shop.id}/hooks/ep-ma`)).text()).not.toContain("マニフェストを読めていません");
+  });
 });

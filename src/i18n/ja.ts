@@ -703,6 +703,7 @@ export const ja = {
   "hooks.next": "次へ",
   "hooks.manifest_found": "マニフェストを読み込みました:",
   "hooks.manifest_missing": "マニフェストは見つかりませんでした。名前とイベントを手動で設定してください。",
+  "hooks.manifest_absent": "この送信先のマニフェストを読めていません。プラグインの設定などの欄は、マニフェストを読めたときに出ます。プラグインなら、URL をブラウザで開いて JSON が返ることを確かめてから「保存」を押すと読み直します。マニフェストの無い受け口（n8n・Make など）なら、このままで構いません。",
   "hooks.manifest_failed": "マニフェストの取得に失敗しました。",
   "hooks.invalid_url": "URL は http(s):// で始まる必要があります。",
   "hooks.deleted": "送信先を削除しました。",

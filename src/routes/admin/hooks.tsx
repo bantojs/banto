@@ -404,6 +404,8 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
       />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
+      {/* 登録・保存のときにマニフェストを読めなかった外部の送信先。プラグインの欄（設定・お店の行動を渡す等）が出ない理由を見せる */}
+      {!endpoint.manifest && bundledPluginIdFromUrl(endpoint.url) === null ? <p class="muted">{t("hooks.manifest_absent")}</p> : null}
       <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps />
       {relayOn && endpoint.manifest?.storefront_events ? <StorefrontEventsForm action={`${base}/storefront-events`} requested={endpoint.manifest.storefront_events} granted={endpoint.storefront_events ?? null} /> : null}
 

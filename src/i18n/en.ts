@@ -701,6 +701,7 @@ export const en: Record<MessageKey, string> = {
   "hooks.next": "Next",
   "hooks.manifest_found": "Manifest loaded:",
   "hooks.manifest_missing": "No manifest found. Set the name and events by hand.",
+  "hooks.manifest_absent": "Banto has not read a manifest for this endpoint. Plugin sections (settings and so on) appear once it has. For a plugin, open the URL in a browser to check that it returns JSON, then press Save to read it again. Receivers without a manifest (n8n, Make and so on) can stay as they are.",
   "hooks.manifest_failed": "Could not fetch the manifest.",
   "hooks.invalid_url": "The URL must start with http(s)://.",
   "hooks.deleted": "Endpoint deleted.",
