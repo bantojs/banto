@@ -102,6 +102,7 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `tryon_requests_list` / `tryon_request_get` | orders:read（連絡先は orders:pii） | `GET /tryon-requests`、`GET /tryon-requests/{number}` |
 | `tryon_request_update_status` / `tryon_request_restock`【書き込み】 | orders:write | `POST /tryon-requests/{number}/status`、`POST /tryon-requests/{number}/restock` |
 | `sales_summary` / `inventory_low` | stats:read | `GET /stats/sales`、`GET /stats/inventory-low` |
+| `dialogs_list` / `dialog_create` / `dialog_update` / `dialog_delete`【書き込み】 | dialogs:write | `GET /dialogs`、`POST /dialogs`、`PATCH /dialogs/{id}`、`DELETE /dialogs/{id}`（docs/dialogs.md） |
 | `coupons_list` / `coupon_get` / `coupon_grants_list` | coupons:read | `GET /coupons`、`GET /coupons/{id かコード}`、`GET /coupons/{id}/grants` |
 | `coupon_create` / `coupon_update` / `coupon_delete`【書き込み】 | coupons:write | `POST /coupons`、`PATCH /coupons/{id}`、`DELETE /coupons/{id}` |
 | `coupon_grants_issue` / `coupon_grant_revoke`【書き込み】 | coupons:write | `POST /coupons/{id}/grants`、`POST /coupon-grants/{id}/revoke` |

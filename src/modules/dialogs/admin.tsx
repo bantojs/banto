@@ -42,6 +42,8 @@ interface DialogRow {
   snooze_days: number;
   starts_at: string | null;
   ends_at: string | null;
+  /** つないだ外部プラグイン（連携）が作ったもの（0111）。当たる前は無い */
+  endpoint_id?: string | null;
 }
 
 /** 入れたまま描き直すための値 */
@@ -163,6 +165,7 @@ dialogsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const rows = await owner(c).db.from<DialogRow>("dialogs").select("*", { eq: { shop_id: shop.id }, order: "priority.desc,created_at.asc", limit: 100 });
+  const plugins = await endpointNames(c, shop, rows);
   const fl = FLASH[c.req.query("flash") ?? ""];
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("dlg.title")}`} nav crumbs={crumbs(shop)} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
@@ -190,7 +193,10 @@ dialogsAdmin.get("/", requireOwner, async (c: AdminContext) => {
                 <td>
                   <a href={`${base(shop)}/${r.id}`}>{r.name}</a>
                 </td>
-                <td>{describe(r)}</td>
+                <td>
+                  {describe(r)}
+                  {r.endpoint_id ? <div class="muted">{tf("dlg.by_plugin", { name: plugins.get(r.endpoint_id) ?? "?" })}</div> : null}
+                </td>
                 <td>
                   {r.starts_at ? formatDateTime(r.starts_at) : ""}
                   {r.starts_at || r.ends_at ? " 〜 " : ""}
@@ -207,7 +213,15 @@ dialogsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   );
 });
 
-function EditPage(props: { shop: ShopRow; id: string | null; draft: Draft; audiences: { id: string; name: string }[]; categories: CategoryRow[]; access: { role: string; perms: readonly string[] } | undefined; error?: string }) {
+/** プラグインが作ったダイアログの連携の名前（0111） */
+async function endpointNames(c: AdminContext, shop: ShopRow, rows: readonly { endpoint_id?: string | null }[]): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map((r) => r.endpoint_id).filter((x): x is string => Boolean(x)))];
+  if (ids.length === 0) return new Map();
+  const eps = await owner(c).db.from<{ id: string; name: string }>("hook_endpoints").select("id,name", { eq: { shop_id: shop.id }, in: { id: ids } }).catch(() => []);
+  return new Map(eps.map((e) => [e.id, e.name]));
+}
+
+function EditPage(props: { shop: ShopRow; id: string | null; draft: Draft; plugin?: string | null; audiences: { id: string; name: string }[]; categories: CategoryRow[]; access: { role: string; perms: readonly string[] } | undefined; error?: string }) {
   const { shop, draft: d } = props;
   const action = props.id ? `${base(shop)}/${props.id}` : base(shop);
   const numInput = (name: keyof Draft, label: MessageKey, max: number) => (
@@ -219,6 +233,11 @@ function EditPage(props: { shop: ShopRow; id: string | null; draft: Draft; audie
   return (
     <AdminLayout title={`${shop.name} · ${t("dlg.title")}`} nav crumbs={crumbs(shop, d.name || t("dlg.add"))} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules" }}>
       <PageHead title={d.name || t("dlg.add")} />
+      {props.plugin ? (
+        <p class="notice">
+          {tf("dlg.by_plugin", { name: props.plugin })}。{t("dlg.plugin_note")}
+        </p>
+      ) : null}
       {props.error ? (
         <p class="error" role="alert">
           {props.error}
@@ -347,9 +366,9 @@ function EditPage(props: { shop: ShopRow; id: string | null; draft: Draft; audie
   );
 }
 
-async function page(c: AdminContext, shop: ShopRow, id: string | null, draft: Draft, error?: string, status: 200 | 400 = 200) {
+async function page(c: AdminContext, shop: ShopRow, id: string | null, draft: Draft, error?: string, status: 200 | 400 = 200, plugin: string | null = null) {
   const [audiences, categories] = await Promise.all([audiencesOf(c, shop), loadCategories(owner(c).db, shop.id)]);
-  return c.html(<EditPage shop={shop} id={id} draft={draft} audiences={audiences} categories={categories} access={c.get("shopAccess")} {...(error ? { error } : {})} />, status);
+  return c.html(<EditPage shop={shop} id={id} draft={draft} plugin={plugin} audiences={audiences} categories={categories} access={c.get("shopAccess")} {...(error ? { error } : {})} />, status);
 }
 
 dialogsAdmin.get("/new", requireOwner, async (c: AdminContext) => {
@@ -363,7 +382,8 @@ dialogsAdmin.get("/:id", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.notFound();
   const [row] = await owner(c).db.from<DialogRow>("dialogs").select("*", { eq: { id: param(c, "id"), shop_id: shop.id }, limit: 1 });
   if (!row) return c.notFound();
-  return page(c, shop, row.id, await toDraft(c, shop, row));
+  const plugin = row.endpoint_id ? ((await endpointNames(c, shop, [row])).get(row.endpoint_id) ?? "?") : null;
+  return page(c, shop, row.id, await toDraft(c, shop, row), undefined, 200, plugin);
 });
 
 async function save(c: AdminContext, id: string | null) {

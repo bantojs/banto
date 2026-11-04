@@ -48,6 +48,24 @@ function pick(args: Record<string, unknown>, keys: string[]): Record<string, unk
   return out;
 }
 
+const DIALOG_FIELDS: Record<string, unknown> = {
+  name: s("string", "管理用の名前（1〜60 字）"),
+  enabled: s("boolean", "出すか（既定 true）"),
+  priority: s("integer", "0〜100。同じページで重なったら高いほうを 1 つだけ出す"),
+  layout: s("string", "bar（下のバー）/ modal（中央）/ corner（角の小窓）", { enum: ["bar", "modal", "corner"] }),
+  title: s("string", "見出し（1〜100 字）"),
+  body: s("string", "本文（500 字まで、文字だけ）"),
+  image_url: s("string", "https:// の画像の URL"),
+  buttons: s("array", "ボタン 2 つまで。{ label, url }（url は https:// かショップの中のパス /p/…）", { items: { type: "object" } }),
+  coupon_code: s("string", "クーポンのモジュールで作った公開のコード"),
+  audience: s("string", "all / guests / members / audience", { enum: ["all", "guests", "members", "audience"] }),
+  audience_id: s("string", "audience のときの会員の条件の id"),
+  pages: s("object", "{ kinds: [all|home|product|list|article|page|cart], products?: [商品の id], categories?: [カテゴリーの id], tags?: [タグ] }"),
+  trigger: s("object", "{ delay_s?: 秒, scroll_pct?: %, exit_intent?: true, visit_pages?: 数, cart_min_jpy?: 円 }。入れたものがすべてそろったときに出す"),
+  snooze_days: s("integer", "閉じたら出さない日数（0〜365、既定 7）"),
+  starts_at: s("string", "始まり（ISO 8601）"),
+  ends_at: s("string", "終わり（ISO 8601）"),
+};
 const COUPON_FIELDS: Record<string, unknown> = {
   name: s("string", "管理用の名前（100 文字まで）"),
   code: s(["string", "null"], "購入者が入力するコード（英数字・ハイフン・アンダースコア、32 文字まで）"),
@@ -554,6 +572,35 @@ export const MCP_TOOLS: McpTool[] = [
     inputSchema: obj({ grant_id: s("string", "発行済みのクーポンの id") }, ["grant_id"]),
     readOnly: false,
     run: (api, a) => api.couponGrantRevoke(str(a, "grant_id", true)!),
+  },
+  // ---- お店の画面のダイアログ（0111。モジュール dialogs が ON のショップだけ。docs/dialogs.md）----
+  {
+    name: "dialogs_list",
+    description: "お店の画面のダイアログの一覧（このトークンが作れるものだけ。連携に結んだトークンは自分の連携のもの）。スコープ dialogs:write。" + DATA_NOTE,
+    inputSchema: obj({}),
+    readOnly: true,
+    run: (api) => api.dialogsList(),
+  },
+  {
+    name: "dialog_create",
+    description: "【書き込み】お店の画面のダイアログを作る。判定に使えるのは今の訪問・今のページで分かることだけ（だれに・どのページ・きっかけ）。レジ・会員ページには出ない。中身は文字・https の画像・ボタン・公開のクーポンコードだけ。スコープ dialogs:write。",
+    inputSchema: obj(DIALOG_FIELDS, ["name", "title"]),
+    readOnly: false,
+    run: (api, a) => api.dialogCreate(pick(a, Object.keys(DIALOG_FIELDS))),
+  },
+  {
+    name: "dialog_update",
+    description: "【書き込み】ダイアログを更新する。渡した項目だけ変わる。止めるときは enabled を false に。スコープ dialogs:write。",
+    inputSchema: obj({ id: s("string", "ダイアログの id"), ...DIALOG_FIELDS }, ["id"]),
+    readOnly: false,
+    run: (api, a) => api.dialogUpdate(str(a, "id", true)!, pick(a, Object.keys(DIALOG_FIELDS))),
+  },
+  {
+    name: "dialog_delete",
+    description: "【書き込み・取り消し不可】ダイアログを消す。スコープ dialogs:write。",
+    inputSchema: obj({ id: s("string", "ダイアログの id") }, ["id"]),
+    readOnly: false,
+    run: (api, a) => api.dialogDelete(str(a, "id", true)!),
   },
   // ---- 会員（0036。個人情報。メールアドレスは変えられない）----
   {

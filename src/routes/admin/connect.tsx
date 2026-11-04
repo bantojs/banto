@@ -9,7 +9,8 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { createPrivilegedDb } from "../../db/privileged";
-import { API_SCOPES, SCOPE_PERM, hashApiToken, isApiScope, type ApiScope } from "../../api/tokens";
+import { API_SCOPES, SCOPE_MIGRATION, SCOPE_PERM, hashApiToken, isApiScope, type ApiScope } from "../../api/tokens";
+import { migrated } from "../../db/migration-state";
 import { APP_HANDLE_RE, fetchManifest, type PluginManifest } from "../../hooks/manifest";
 import { isHookEvent } from "../../hooks/events";
 import { connectionSecretPurpose, endpointSecret } from "../../hooks/signing";
@@ -155,6 +156,13 @@ export function ConnectionCard(props: { shopId: string; endpointId: string; conn
 /** 券を作ってプラグインへ移す（つなぐ・つなぎ直す共通） */
 async function beginAndRedirect(c: AdminContext, shopId: string, endpointId: string, scopes: ApiScope[], connectUrl: string): Promise<Response | string> {
   const ticket = randomToken(32);
+  // 当てるまで DB が受け付けないスコープ（0111 の dialogs:write など）は付けずにつなぐ
+  const ready: ApiScope[] = [];
+  for (const s of scopes) {
+    const v = SCOPE_MIGRATION[s];
+    if (!v || (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, v))) ready.push(s);
+  }
+  scopes = ready;
   try {
     await owner(c).db.rpc("app_connect_begin", { p_shop_id: shopId, p_endpoint_id: endpointId, p_scopes: scopes, p_ticket_hash: await hashApiToken(ticket) });
   } catch (e) {

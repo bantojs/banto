@@ -26,6 +26,7 @@ export const API_SCOPES = [
   "content:write",
   "app_data:write",
   "line:send",
+  "dialogs:write",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -57,7 +58,21 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "content:write": "content",
   "app_data:write": "apps",
   "line:send": "marketing",
+  "dialogs:write": "marketing",
 };
+
+/** 当てるまで出さないスコープ（そのマイグレーションが DB の api_tokens_scopes_valid に足す） */
+export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = { "dialogs:write": "0111_dialogs_api" };
+
+/** 発行できるスコープ（DB がまだ受け付けないものを除く。発行の画面・つなぐ画面） */
+export async function issuableScopes(isMigrated: (version: string) => Promise<boolean>): Promise<ApiScope[]> {
+  const out: ApiScope[] = [];
+  for (const s of API_SCOPES) {
+    const v = SCOPE_MIGRATION[s];
+    if (!v || (await isMigrated(v))) out.push(s);
+  }
+  return out;
+}
 
 
 export function isApiScope(s: string): s is ApiScope {

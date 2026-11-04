@@ -46,6 +46,15 @@ export function openapiDocument(origin: string, version: string): Record<string,
     auto_grant: { type: ["string", "null"], enum: ["first_login", "after_purchase", null] }, claimable: bool, external_ref: nullableStr,
     conditions: obj({ product_ids: ids, exclude_product_ids: ids, category_ids: ids, exclude_category_ids: ids, tags, exclude_tags: tags, brands: tags, exclude_brands: tags, payment_methods: { type: "array", items: str, maxItems: 20 }, attributes: { type: "object", description: "会員の独自項目の条件（0049）。{ \"<鍵>\": [\"値\", ...] }。鍵はショップの設定 customer_fields にあるものだけ", additionalProperties: { type: "array", items: { type: ["string", "number"] }, maxItems: 20 } }, exclude_sale: bool, min_subtotal_jpy: int, max_subtotal_jpy: int, min_qty: int }),
   };
+  const dialogFields = {
+    name: str, enabled: bool, priority: int, layout: { type: "string", enum: ["bar", "modal", "corner"] }, title: str, body: str, image_url: str,
+    buttons: { type: "array", maxItems: 2, items: obj({ label: str, url: str }, ["label", "url"]) }, coupon_code: str,
+    audience: { type: "string", enum: ["all", "guests", "members", "audience"] }, audience_id: str,
+    pages: obj({ kinds: { type: "array", items: { type: "string", enum: ["all", "home", "product", "list", "article", "page", "cart"] } }, products: { type: "array", items: str }, categories: { type: "array", items: str }, tags: { type: "array", items: str } }),
+    trigger: obj({ delay_s: int, scroll_pct: int, exit_intent: bool, visit_pages: int, cart_min_jpy: int }),
+    snooze_days: int, starts_at: str, ends_at: str,
+  };
+  const dialog = obj({ id: str, ...dialogFields, created_at: str, updated_at: str });
   const coupon = obj({ id: str, ...couponFields, usage: obj({ used: int, held: int }), grants: obj({ available: int, held: int, used: int, revoked: int }), created_at: str, updated_at: str });
   const address = { type: ["object", "null"], properties: { name: str, phone: str, postal_code: str, country: str, state: str, city: str, line1: str, line2: str }, additionalProperties: false };
   const externalRef = { type: ["object", "null"], properties: { provider: { ...str, description: "^[a-z][a-z0-9_]{0,31}$（例: hubspot）" }, id: str }, required: ["provider", "id"], additionalProperties: false, description: "外部の顧客マスタでの ID（0047）。ショップ × provider × id で一意。null で外す" };
@@ -261,6 +270,14 @@ export function openapiDocument(origin: string, version: string): Record<string,
           requestBody: { content: { "application/json": { schema: obj({ text: str, image_url: str, buttons: obj({ text: str, actions: { type: "array", items: obj({ label: str, url: str }, ["label", "url"]) } }, ["text", "actions"]) }, ["text"]) } } },
           responses: { 200: resp("ok", obj({ id: str, status: { type: "string", enum: ["sent", "no_line", "not_friend", "quota"] }, limit: int, count: int })), ...errors },
         },
+      },
+      "/dialogs": {
+        get: { summary: "お店の画面のダイアログの一覧（dialogs:write、0111。連携に結んだトークンは自分の連携のものだけ。モジュール dialogs が OFF なら 409 module_disabled）", security: bearer, responses: { 200: resp("ok", obj({ items: { type: "array", items: dialog } })), ...errors } },
+        post: { summary: "ダイアログを作る（dialogs:write）。判定は今の訪問・今のページで分かることだけ。形が合わなければ 400 invalid_dialog:<欄>（docs/dialogs.md）", security: bearer, requestBody: { content: { "application/json": { schema: obj(dialogFields, ["name", "title"]) } } }, responses: { 201: resp("created", dialog), ...errors } },
+      },
+      "/dialogs/{id}": {
+        patch: { summary: "ダイアログを更新（dialogs:write）。渡した項目だけ変わる", security: bearer, parameters: idPath, requestBody: { content: { "application/json": { schema: obj(dialogFields) } } }, responses: { 200: resp("ok", dialog), ...errors } },
+        delete: { summary: "ダイアログを消す（dialogs:write）", security: bearer, parameters: idPath, responses: { 200: resp("ok", obj({ deleted: bool })), ...errors } },
       },
       "/line/usage": { get: { summary: "今月（日本時間）の宣伝の LINE の数と上限（line:send、0105）", security: bearer, responses: { 200: resp("ok", obj({ month: str, count: int, limit: int })), ...errors } } },
       "/stats/sales": { get: { summary: "売上集計（stats:read）", security: bearer, parameters: [{ name: "from", in: "query", required: true, schema: str }, { name: "to", in: "query", required: true, schema: str }, { name: "group_by", in: "query", schema: { type: "string", enum: ["day", "month", "product"] } }], responses: { 200: resp("ok"), ...errors } } },

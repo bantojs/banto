@@ -2880,6 +2880,33 @@ export class FakeSupabase {
         const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
         return json({ items: all.map((o) => order(o, need("orders:pii"))), total: all.length, limit: 50, offset: 0, pii: need("orders:pii") });
       }
+      // 0111: お店の画面のダイアログ（本物の形の確かめ・連携の分け方は test/db/dialogs-api.test.ts）
+      case "api_dialogs_list":
+      case "api_dialog_create":
+      case "api_dialog_update":
+      case "api_dialog_delete": {
+        if (!need("dialogs:write")) return unauthorized();
+        const shopRow = this.tables.shops.find((x) => x["id"] === shopId);
+        if (((shopRow?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["dialogs"] !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+        const epId = (tok["endpoint_id"] as string | null | undefined) ?? null;
+        const own = (d: Row) => d["shop_id"] === shopId && ((d["endpoint_id"] as string | null | undefined) ?? null) === epId;
+        if (fn === "api_dialogs_list") return json(this.tables.dialogs.filter(own));
+        const v = (args["p_values"] ?? {}) as Row;
+        if (fn === "api_dialog_create") {
+          if (!v["name"] || !v["title"]) return json({ code: "23502", message: 'null value in column "title" of relation "dialogs" violates not-null constraint' }, 400);
+          const row: Row = { id: crypto.randomUUID(), shop_id: shopId, endpoint_id: epId, enabled: true, priority: 0, layout: "bar", body: "", buttons: [], audience: "all", pages: { kinds: ["all"] }, trigger: {}, snooze_days: 7, ...v };
+          this.tables.dialogs.push(row);
+          return json(row);
+        }
+        const d = this.tables.dialogs.find((x) => x["id"] === args["p_id"] && own(x));
+        if (!d) return notFound();
+        if (fn === "api_dialog_delete") {
+          this.tables.dialogs = this.tables.dialogs.filter((x) => x !== d);
+          return json(true);
+        }
+        Object.assign(d, v);
+        return json(d);
+      }
       case "api_order_annotate": {
         // 0106: 本物（形・権限・マスキング）は test/db/order-tags.test.ts
         if (!need("orders:write")) return unauthorized();

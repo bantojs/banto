@@ -47,9 +47,10 @@ Banto は、運営者が発行した **AI 用トークン** を使って、Claud
 | `content:write` | ページ・記事を作る・直す・**公開する**（予約公開も）・ゴミ箱へ移す（0083、§9）。お店の画面に出る |
 | `app_data:write` | 外部プラグインが商品に付くデータ（レビューの要約）を置き直す（0084、§10）。**連携（プラグイン）に結んで発行**し、その名前の空間だけに書ける。お店の画面に出る。REST だけ |
 | `line:send` | ショップの LINE 公式アカウントから会員に宣伝のメッセージを送る（0105、§12、docs/line.md §4）。**LINE の利用者 ID は返さない**（送るのは Banto）。宣伝の月の上限あり。REST だけ |
+| `dialogs:write` | お店の画面のダイアログを作る・直す・止める・消す（0111、§14、docs/dialogs.md）。連携に結んだトークンは自分の連携のものだけ |
 
 - 有効期限（任意）、失効（管理画面でいつでも）、最終利用日時の記録。
-- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content`、`app_data:write` は `apps`、`line:send` は `marketing` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
+- **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii` は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content`、`app_data:write` は `apps`、`line:send`・`dialogs:write` は `marketing` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
 - **発行した人の権限が続いている間だけ使える**（0026）: 発行者がそのショップの `integrations` の項目（組織の owner / admin を含む）を失うと、トークンは `unauthorized` になります（メンバーを組織から外した・項目を外したときに、発行済みのトークンが残って使えてしまわないように）。項目を戻せばまた使えます。
 - お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read、連絡先は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。メンテナの決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
 - クーポンと会員（0036）: 判断の理由は §6。
@@ -311,3 +312,12 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - 印やメモを変えても hooks は出ません（印を付けたプラグインが、その印でまた動かないように）。監査ログにも残しません。
 - メモは、購入者の個人情報を消したとき（発送から既定 180 日の自動のマスキング・管理画面の削除）に一緒に消えます。印は残ります。
 - 外の道具（MA・CRM・n8n）が「処理済み」の印を付けて二重に処理しない、といった使い方を想定しています。
+
+## 14. お店の画面のダイアログ（0111、メンテナの決定 2026-11-04）
+
+- スコープ `dialogs:write`（項目 `marketing`）で、お店の画面のダイアログ（docs/dialogs.md）を作る・直す・止める・消すことができます。モジュール「お店の画面のダイアログ」が OFF のショップは 409（`module_disabled`）です。
+- `GET /api/v1/dialogs`・`POST /api/v1/dialogs`・`PATCH /api/v1/dialogs/{id}`（渡した項目だけ変わる）・`DELETE /api/v1/dialogs/{id}`。MCP は `dialogs_list`・`dialog_create`・`dialog_update`・`dialog_delete`。
+- **連携に結んだトークン**（「つなぐ」で受け取ったもの、§11）で作ったダイアログは、その連携のものになります。プラグインが触れるのは自分の連携のものだけ、運営者が発行したトークン（連携に結ばない）が触れるのは運営者のものだけです。運営者は管理画面で、プラグインのものも見て・止めて・消せます。連携を外すと、その連携のダイアログも消えます。
+- 形が合わなければ 400（`invalid_dialog:<欄>`）。決められるのは今の訪問・今のページで分かることだけです（だれに・どのページ・きっかけ）。履歴でお客様を選ぶときは、会員の独自項目（§7）に写してから「会員の条件」で選びます。
+- データベースの更新 `0111_dialogs_api` が要ります。当たるまでは 409（`migration_required`）で、発行の画面にもスコープが出ません。
+

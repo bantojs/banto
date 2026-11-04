@@ -224,3 +224,65 @@ describe("ブラウザのスクリプト", () => {
     expect(Number(store.get("banto_dlg_a"))).toBeGreaterThan(Date.now() + 2 * 86400000);
   });
 });
+
+describe("AI 用 API とつないだプラグイン（段階 2、0111）", () => {
+  async function issue(sb: FakeSupabase, shopId: string, scopes: string[], endpointId: string | null = null) {
+    const { generateApiToken, hashApiToken, tokenPrefix } = await import("../src/api/tokens");
+    const owner = sb.tables.shops.find((s) => s["id"] === shopId)!["owner_id"];
+    const raw = generateApiToken();
+    sb.tables.api_tokens.push({ id: `tok-${sb.tables.api_tokens.length + 1}`, shop_id: shopId, owner_id: owner, name: "t", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes, endpoint_id: endpointId, expires_at: null, revoked_at: null, last_used_at: null, created_at: "" });
+    return raw;
+  }
+  const call = async (app: ReturnType<typeof appWith>, tok: string, method: string, path: string, body?: unknown) => {
+    const res = await app.request(`${BASE}/api/v1${path}`, { method, headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: res.status, json: (await res.json()) as Record<string, unknown> & { items?: { id: string; name: string }[]; error?: { code: string } } };
+  };
+
+  it("作る・一覧・直す・消す。プラグインのトークンと運営者のトークンは、互いのものに触れない", async () => {
+    const { app, sb, shop } = setup();
+    sb.tables.hook_endpoints.push({ id: "ep-ma", shop_id: shop.id, name: "MA", url: "https://ma.example.com/hook", events: [], enabled: true, settings: {}, manifest: null, created_at: "" });
+    const plugin = await issue(sb, shop.id, ["dialogs:write"], "ep-ma");
+    const op = await issue(sb, shop.id, ["dialogs:write"]);
+    const made = await call(app, plugin, "POST", "/dialogs", { name: "カゴ", title: "カートに残っています", pages: { kinds: ["cart"] } });
+    expect(made.status).toBe(201);
+    const id = String(made.json["id"]);
+    expect(sb.tables.dialogs[0]).toMatchObject({ endpoint_id: "ep-ma", name: "カゴ" });
+    expect((await call(app, plugin, "GET", "/dialogs")).json.items!.map((d) => d.name)).toEqual(["カゴ"]);
+    expect((await call(app, op, "GET", "/dialogs")).json.items).toEqual([]);
+    expect((await call(app, op, "PATCH", `/dialogs/${id}`, { enabled: false })).status).toBe(404);
+    expect((await call(app, plugin, "PATCH", `/dialogs/${id}`, { enabled: false })).json["enabled"]).toBe(false);
+    expect((await call(app, plugin, "DELETE", `/dialogs/${id}`)).json).toEqual({ deleted: true });
+    expect(sb.tables.dialogs).toHaveLength(0);
+  });
+
+  it("スコープが無ければ 401、モジュールが OFF なら 409、名前・見出しが無ければ 400", async () => {
+    const off = setup([], {});
+    expect((await call(off.app, await issue(off.sb, off.shop.id, ["dialogs:write"]), "GET", "/dialogs")).status).toBe(409);
+    const { app, sb, shop } = setup();
+    expect((await call(app, await issue(sb, shop.id, ["coupons:write"]), "GET", "/dialogs")).status).toBe(401);
+    const bad = await call(app, await issue(sb, shop.id, ["dialogs:write"]), "POST", "/dialogs", { name: "x" });
+    expect(bad.status).toBe(400);
+    expect(bad.json.error?.code).toBe("invalid");
+  });
+
+  it("管理画面の一覧に、プラグインが作ったものを連携の名前つきで出す", async () => {
+    const { app, sb, shop } = setup();
+    sb.tables.hook_endpoints.push({ id: "ep-ma", shop_id: shop.id, name: "テスト MA", url: "https://ma.example.com/hook", events: [], enabled: true, settings: {}, manifest: null, created_at: "" });
+    sb.tables.dialogs.push({ id: "d-p", shop_id: shop.id, endpoint_id: "ep-ma", name: "プラグインの", title: "x", enabled: true, priority: 0, layout: "bar", audience: "all", pages: { kinds: ["all"] }, trigger: {}, snooze_days: 7, buttons: [] });
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/dialogs`;
+    expect(await (await owner.get(base)).text()).toContain("連携「テスト MA」が作ったもの");
+    expect(await (await owner.get(`${base}/d-p`)).text()).toContain("プラグインが後から書き直すことがあります");
+  });
+
+  it("発行の画面: 0111 を当てるまで dialogs:write を出さない", async () => {
+    const { BUNDLED_MIGRATIONS } = await import("../src/db/migrations");
+    for (const [applied, shown] of [[BUNDLED_MIGRATIONS, true], [BUNDLED_MIGRATIONS.filter((v) => v !== "0111_dialogs_api"), false]] as const) {
+      const sb = new FakeSupabase({ appliedMigrations: [...applied] });
+      const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+      const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+      const b = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
+      expect((await (await b.get(`/admin/shops/${shop.id}/tokens`)).text()).includes('value="dialogs:write"')).toBe(shown);
+    }
+  });
+});

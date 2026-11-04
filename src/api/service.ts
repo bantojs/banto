@@ -8,6 +8,7 @@ import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
 import { hashApiToken } from "./tokens";
 import { ORDER_TAGS_MIGRATION } from "../orders/tags";
+import { DIALOGS_API_MIGRATION } from "../modules/dialogs/dialogs";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, productImageKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
@@ -94,6 +95,11 @@ function mapRpcError(e: unknown): never {
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
     // ページ・記事（0083）
     // 拡張データ（0084）
+    // お店の画面のダイアログ（0111）
+    if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
+    if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
+    if (/null value in column "(name|title)" of relation "dialogs"/.test(e.dbMessage)) throw new ApiError("invalid", "invalid_dialog:required: name and title are required", 400);
+    if (/violates check constraint "dialogs_|invalid input syntax for type (integer|boolean|uuid|timestamp)/.test(e.dbMessage)) throw new ApiError("invalid", "invalid_dialog: a field has the wrong type or is out of range (see docs/dialogs.md)", 400);
     if (e.is("invalid_tags")) throw new ApiError("invalid", "invalid_tags: up to 20 tags of 1 to 40 characters, no commas or control characters; send either tags (replace) or add_tags / remove_tags", 400);
     if (e.is("orders_note_len")) throw new ApiError("invalid", "invalid_note: up to 2000 characters", 400);
     if (e.is("idempotency_key_reused")) throw new ApiError("conflict", "idempotency_key_reused: this Idempotency-Key was already used for another member", 409);
@@ -473,6 +479,28 @@ export class ApiService {
       p_query: q.query ?? null,
       ...extra,
     });
+  };
+
+  // ---- お店の画面のダイアログ（0111。dialogs:write、モジュール dialogs が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
+  private async dialogsReady(): Promise<void> {
+    if (!(await this.migratedTo(DIALOGS_API_MIGRATION))) throw new ApiError("migration_required", "dialogs need the database update 0111_dialogs_api", 409);
+  }
+  dialogsList = async () => {
+    await this.dialogsReady();
+    return { items: await this.call<Record<string, unknown>[]>("api_dialogs_list", {}) };
+  };
+  dialogCreate = async (values: Record<string, unknown>) => {
+    await this.dialogsReady();
+    return this.call<Record<string, unknown>>("api_dialog_create", { p_values: values });
+  };
+  dialogUpdate = async (id: string, values: Record<string, unknown>) => {
+    await this.dialogsReady();
+    return this.call<Record<string, unknown>>("api_dialog_update", { p_id: uuidOr404(id), p_values: values });
+  };
+  dialogDelete = async (id: string) => {
+    await this.dialogsReady();
+    await this.call<boolean>("api_dialog_delete", { p_id: uuidOr404(id) });
+    return { deleted: true };
   };
 
   // ---- 注文の印とメモ（0106。orders:write、メモは orders:pii も）----

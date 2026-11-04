@@ -368,6 +368,12 @@ v1.get("/blogs/:blog/articles/:ref", async (c) => api(c).articleGet(c.req.param(
 v1.patch("/blogs/:blog/articles/:id", async (c) => body(c).then((b) => api(c).articleSave(c.req.param("blog"), { ...b, id: c.req.param("id") })).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/blogs/:blog/articles/:id", async (c) => api(c).articleTrash(c.req.param("blog"), c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 
+// お店の画面のダイアログ（0111。dialogs:write）。連携に結んだトークンは自分の連携のものだけ
+v1.get("/dialogs", async (c) => api(c).dialogsList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/dialogs", async (c) => body(c).then((b) => api(c).dialogCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
+v1.patch("/dialogs/:id", async (c) => body(c).then((b) => api(c).dialogUpdate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.delete("/dialogs/:id", async (c) => api(c).dialogDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+
 // クーポン（0036。coupons:read / coupons:write）。:ref は id（UUID）かコード
 v1.get("/coupons", async (c) =>
   api(c)
