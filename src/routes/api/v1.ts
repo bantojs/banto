@@ -221,11 +221,15 @@ v1.get("/orders", async (c) =>
       customerId: c.req.query("customer_id") || undefined,
       updatedSince: c.req.query("updated_since") || undefined,
       after: c.req.query("after") || undefined,
+      // 0106: 印で絞る
+      tag: c.req.query("tag") || undefined,
     })
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),
 );
 v1.get("/orders/:id", async (c) => api(c).orderGet(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+// 印とメモ（0106。orders:write、メモは orders:pii も）
+v1.patch("/orders/:id", async (c) => body(c).then((b) => api(c).orderAnnotate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.post("/orders/:id/status", async (c) =>
   body(c)
     .then((b) => {

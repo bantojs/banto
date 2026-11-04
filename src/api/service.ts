@@ -7,6 +7,7 @@ import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
 import { MA_PORTS_MIGRATION, hashApiToken } from "./tokens";
+import { ORDER_TAGS_MIGRATION } from "../orders/tags";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, productImageKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
@@ -93,6 +94,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
     // ページ・記事（0083）
     // 拡張データ（0084）
+    if (e.is("invalid_tags")) throw new ApiError("invalid", "invalid_tags: up to 20 tags of 1 to 40 characters, no commas or control characters; send either tags (replace) or add_tags / remove_tags", 400);
+    if (e.is("orders_note_len")) throw new ApiError("invalid", "invalid_note: up to 2000 characters", 400);
     if (e.is("idempotency_key_reused")) throw new ApiError("conflict", "idempotency_key_reused: this Idempotency-Key was already used for another member", 409);
     if (e.is("invalid_cursor")) throw new ApiError("invalid", "invalid_cursor: pass after together with updated_since", 400);
     if (e.is("app_data_keys_full")) throw new ApiError("conflict", "app_data_keys_full: a plugin can keep up to 20 custom.v1 keys per product; delete some first", 409);
@@ -186,6 +189,8 @@ export interface OrdersQuery {
   /** 更新順に読む（0105）。続きは前の応答の cursor の updated_since と after */
   updatedSince?: string;
   after?: string;
+  /** 印で絞る（0106） */
+  tag?: string;
 }
 
 /** AI から進められる試着の状態（期限切れは Cron。在庫を戻すのは tryonRequestRestock） */
@@ -456,6 +461,10 @@ export class ApiService {
       extra["p_updated_since"] = q.updatedSince ?? null;
       extra["p_after"] = q.after !== undefined ? uuidOr404(q.after) : null;
     }
+    if (q.tag !== undefined) {
+      if (!(await this.migratedTo(ORDER_TAGS_MIGRATION))) throw new ApiError("migration_required", "tag needs the database update 0106_order_tags", 409);
+      extra["p_tag"] = q.tag.slice(0, 40);
+    }
     return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
       p_status: q.status ?? null,
       p_from: q.from ?? null,
@@ -464,6 +473,29 @@ export class ApiService {
       p_offset: q.offset ?? 0,
       p_query: q.query ?? null,
       ...extra,
+    });
+  };
+
+  // ---- 注文の印とメモ（0106。orders:write、メモは orders:pii も）----
+  /** body: { tags?: string[]（置き換え）, add_tags?: string[], remove_tags?: string[], note?: string | null } */
+  orderAnnotate = async (orderId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    if (!(await this.migratedTo(ORDER_TAGS_MIGRATION))) throw new ApiError("migration_required", "order tags and notes need the database update 0106_order_tags", 409);
+    for (const k of Object.keys(body)) if (!["tags", "add_tags", "remove_tags", "note"].includes(k)) throw new ApiError("invalid", `unknown field: ${k} (tags, add_tags, remove_tags, note)`, 400);
+    const list = (k: string): string[] | null => {
+      const v = body[k];
+      if (v === undefined || v === null) return null;
+      if (!Array.isArray(v) || !v.every((x) => typeof x === "string")) throw new ApiError("invalid", `${k} must be an array of strings`, 400);
+      return v as string[];
+    };
+    const note = body["note"];
+    if (note !== undefined && note !== null && typeof note !== "string") throw new ApiError("invalid", "note must be a string or null", 400);
+    return this.call<Record<string, unknown>>("api_order_annotate", {
+      p_order_id: uuidOr404(orderId),
+      p_add: list("add_tags"),
+      p_remove: list("remove_tags"),
+      p_tags: list("tags"),
+      p_note: typeof note === "string" ? note : null,
+      p_note_set: note !== undefined,
     });
   };
 

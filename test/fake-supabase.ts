@@ -1517,6 +1517,20 @@ export class FakeSupabase {
       }
       return json(this.sizeChartGet(shopId, cat, prod, true));
     }
+    if (fn === "order_annotate") {
+      // 0106: 本物は test/db/order-tags.test.ts
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("orders"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const o = this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["shop_id"] === shopId);
+      if (!o) return json({ code: "P0001", message: "not_found" }, 400);
+      if (Array.isArray(args["p_tags"])) {
+        const norm = [...new Set((args["p_tags"] as string[]).map((x) => x.trim()).filter(Boolean))];
+        if (norm.length > 20 || norm.some((x) => x.length > 40 || x.includes(","))) return json({ code: "P0001", message: "invalid_tags" }, 400);
+        o["tags"] = norm;
+      }
+      if (args["p_note_set"]) o["note"] = typeof args["p_note"] === "string" && args["p_note"].trim() ? args["p_note"].trim() : null;
+      return json({ id: o["id"], tags: o["tags"] ?? [], note: o["note"] ?? null });
+    }
     if (fn === "line_marketing_usage") {
       const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
       if (!shop || !uid || !(this.ownedShopIds(uid).has(String(shop["id"])) || this.memberPerms(uid, String(shop["id"])).includes("marketing"))) return json({ code: "42501", message: "forbidden" }, 403);
@@ -2826,8 +2840,22 @@ export class FakeSupabase {
         // 0105 の引数（古い DB は知らない引数で関数を見つけられない）
         if (("p_customer_id" in args || "p_updated_since" in args || "p_after" in args) && !this.appliedMigrations.includes("0105_ma_ports")) return json({ code: "PGRST202", message: "Could not find the function public.api_orders_list" }, 404);
         const q = args["p_query"] as string | null;
-        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
+        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
         return json({ items: all.map((o) => order(o, need("orders:pii"))), total: all.length, limit: 50, offset: 0, pii: need("orders:pii") });
+      }
+      case "api_order_annotate": {
+        // 0106: 本物（形・権限・マスキング）は test/db/order-tags.test.ts
+        if (!need("orders:write")) return unauthorized();
+        if (args["p_note_set"] && !need("orders:pii")) return json({ code: "P0001", message: "pii_scope_required" }, 400);
+        const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]));
+        if (!o) return notFound();
+        const cur = Array.isArray(o["tags"]) ? (o["tags"] as string[]) : [];
+        const next = Array.isArray(args["p_tags"]) ? (args["p_tags"] as string[]) : [...cur.filter((x) => !((args["p_remove"] as string[] | null) ?? []).includes(x)), ...((args["p_add"] as string[] | null) ?? [])];
+        const norm = [...new Set(next.map((x) => x.trim()).filter(Boolean))];
+        if (norm.length > 20 || norm.some((x) => x.length > 40 || x.includes(","))) return json({ code: "P0001", message: "invalid_tags" }, 400);
+        o["tags"] = norm;
+        if (args["p_note_set"]) o["note"] = typeof args["p_note"] === "string" && args["p_note"].trim() ? args["p_note"] : null;
+        return json({ ...order(o, need("orders:pii")), tags: norm, ...(need("orders:pii") ? { note: o["note"] ?? null } : {}) });
       }
       case "api_line_message_begin": {
         if (!need("line:send")) return unauthorized();
