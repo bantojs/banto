@@ -6,6 +6,7 @@ import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../db/types";
 import { BASELINE_MIGRATION, appliedMigrations } from "../db/migration-state";
+import type { PublicDialog } from "../modules/dialogs/dialogs";
 import { descendantIds } from "../products/categories";
 import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import { selectIn } from "../db/select-in";
@@ -49,6 +50,8 @@ export interface PublicShop {
   option_names?: Record<string, string>;
   /** ゲストの行動を渡す連携があるか（0108、同梱モジュール event_relay。src/modules/event-relay/relay.ts）。当たる前は無い */
   relay_guests?: boolean;
+  /** お店の画面のダイアログ（0110、同梱モジュール dialogs が ON のときだけ。有効で期間内のもの）。当たる前は無い */
+  dialogs?: PublicDialog[];
 }
 
 /** anon で products を読むときの列（0055 から anon は products.attributes を読めない。商品詳細は product_public_get が公開の項目だけを返す） */

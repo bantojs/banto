@@ -36,7 +36,7 @@ export const RELAY_PER_MINUTE = 120;
 export const RELAY_TARGETS_TTL = 60;
 const FORWARD_TIMEOUT_MS = 5000;
 
-export const RELAY_EVENT_TYPES = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase"] as const;
+export const RELAY_EVENT_TYPES = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase", "dialog_view", "dialog_close", "dialog_click"] as const;
 export type RelayEventType = (typeof RELAY_EVENT_TYPES)[number];
 /** ログインした会員と、それまでの訪問者 ID を結ぶ知らせ（0108）。許しの種類ではなく、ゲストも許した連携にだけ渡す */
 export const VISITOR_IDENTIFIED = "visitor.identified";
@@ -71,6 +71,8 @@ export interface RelayEvent {
   handle?: string;
   author?: string;
   page_id?: string;
+  /** ダイアログの id（dialog_view・dialog_close・dialog_click、0110） */
+  dialog_id?: string;
   /** 作り手の独自の情報（0109）。Banto は解釈しない */
   meta?: Record<string, MetaValue>;
 }
@@ -163,6 +165,7 @@ export function normalizeRelayEvent(raw: unknown, now = Date.now()): RelayEvent 
   set("handle", str(r["handle"], 100));
   set("author", str(r["author"], 100));
   set("page_id", id(r["page_id"]));
+  set("dialog_id", id(r["dialog_id"]));
   set("meta", normalizeMeta(r["meta"]));
   return e;
 }

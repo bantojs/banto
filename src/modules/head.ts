@@ -5,5 +5,6 @@
 import { eventRelayHead } from "./event-relay/relay";
 import type { StorefrontHeadContributor } from "../storefront/head";
 import { ga4Head } from "./ga4/ga4";
+import { dialogsHead } from "./dialogs/dialogs";
 
-export const STOREFRONT_HEAD_CONTRIBUTORS: readonly StorefrontHeadContributor[] = [ga4Head, eventRelayHead];
+export const STOREFRONT_HEAD_CONTRIBUTORS: readonly StorefrontHeadContributor[] = [ga4Head, eventRelayHead, dialogsHead];

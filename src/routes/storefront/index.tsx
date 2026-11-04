@@ -5,6 +5,7 @@ import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../store
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
 import { EVENT_RELAY_MODULE, VISITOR_RE } from "../../modules/event-relay/relay";
+import { DIALOGS_MODULE } from "../../modules/dialogs/dialogs";
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
@@ -26,8 +27,8 @@ import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
-import { memberReader, storefrontQueryContext, viewerBody } from "../audience-render";
-import { AUDIENCES_MODULE, GUEST, type AudienceContext } from "../../members/audience";
+import { memberReader, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
+import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
@@ -40,7 +41,7 @@ import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
-import { filterAudienceBlocks } from "../../content/audience-blocks";
+import { audienceShow, filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
 import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, collectionLayoutId, composeLayout, fillCurrent, isPlainTop, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
 import { COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
@@ -108,9 +109,14 @@ storefront.use("*", async (c, next) => {
   // プレビュー（保存しない下書き）には分析のタグなどを入れない
   if (contributors.length === 0 || PREVIEW_PATH.test(c.req.path) || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
   const events = c.get("shopEvents") ?? [];
-  // 会員かどうか（お店の行動の中継は、段階 4a では会員のページにだけスクリプトを載せる）。要るモジュールが ON のときだけ確かめる
-  const member = contributors.some((h) => h.module === EVENT_RELAY_MODULE) ? Boolean(await customerSession(c, { shop }).catch(() => null)) : false;
-  const extra = { member, base: onShopDomain(c, shop) ? "" : `/${shop.slug}` };
+  // 会員かどうか（お店の行動の中継・ダイアログの「だれに」）。要るモジュールが ON のときだけ確かめる
+  const dialogsOn = contributors.some((h) => h.module === DIALOGS_MODULE) && (shop.dialogs ?? []).length > 0;
+  const session = dialogsOn || contributors.some((h) => h.module === EVENT_RELAY_MODULE) ? await customerSession(c, { shop }).catch(() => null) : null;
+  const member = Boolean(session);
+  // 会員の条件のダイアログ（0110）があるときだけ条件の一覧を引く（キャッシュ済み）
+  const audienceOk = dialogsOn && (shop.dialogs ?? []).some((d) => d.audience === "audience") ? audienceShow(await shopAudiences(c, shop), { ...(session ? { member: true, attrs: session.at ?? {} } : GUEST), params: queryParamsOf(new URL(c.req.url).searchParams.entries()) }) : undefined;
+  const url = new URL(c.req.url);
+  const extra = { member, base: onShopDomain(c, shop) ? "" : `/${shop.slug}`, path: m![2] ?? "", search: url.search, ...(audienceOk ? { audienceOk } : {}) };
   const snippet = renderHeadTags(contributors.flatMap((h) => h.tags(shop, events, extra)));
   if (!snippet) return;
   const html = await c.res.text();

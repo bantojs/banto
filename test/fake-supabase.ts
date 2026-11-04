@@ -38,7 +38,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -130,7 +130,7 @@ export class FakeSupabase {
   /** 0109 の banto_relay_effective と同じ（求めと許しの重なり。独自の出来事は custom、"x.*" はマニフェストが "x.*" を求めたときだけ） */
   static relayEffective(manifest: Row | undefined, grant: Row | undefined | null): Row | null {
     if (!manifest || !grant) return null;
-    const known = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase"];
+    const known = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase", "dialog_view", "dialog_close", "dialog_click"];
     const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === "string") : []);
     const want = list(manifest["types"]);
     const types = [...new Set(list(grant["types"]).filter((x) => known.includes(x) && want.includes(x)))].sort();
@@ -142,6 +142,7 @@ export class FakeSupabase {
   readonly tables: Record<TableName, Row[]> = {
     size_charts: [],
     audiences: [],
+    dialogs: [],
     price_rules: [],
     shops: [],
     categories: [],
@@ -2093,6 +2094,14 @@ export class FakeSupabase {
             .map((b) => ({ handle: b["handle"], title: b["title"], nav: b["nav"] }))
         : [],
       // 0108: ゲストの行動を渡す連携があるか（モジュール event_relay が ON のときだけ）
+      // 0110: お店の画面のダイアログ（モジュール dialogs が ON のとき。有効で期間内のもの、優先の高い順に 20）
+      dialogs: moduleOn(s, "dialogs")
+        ? this.tables.dialogs
+            .filter((d) => d["shop_id"] === s["id"] && d["enabled"] !== false && (!d["starts_at"] || Date.parse(String(d["starts_at"])) <= Date.now()) && (!d["ends_at"] || Date.parse(String(d["ends_at"])) > Date.now()))
+            .sort((a, b) => Number(b["priority"] ?? 0) - Number(a["priority"] ?? 0))
+            .slice(0, 20)
+            .map((d) => ({ id: d["id"], layout: d["layout"] ?? "bar", title: d["title"], body: d["body"] ?? "", image_url: d["image_url"] ?? null, buttons: d["buttons"] ?? [], coupon_code: d["coupon_code"] ?? null, audience: d["audience"] ?? "all", audience_id: d["audience_id"] ?? null, pages: d["pages"] ?? { kinds: ["all"] }, trigger: d["trigger"] ?? {}, snooze_days: d["snooze_days"] ?? 7 }))
+        : [],
       relay_guests:
         moduleOn(s, "event_relay") &&
         this.tables.hook_endpoints.some(

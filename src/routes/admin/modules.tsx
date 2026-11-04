@@ -25,6 +25,7 @@ import { blogAdmin } from "../../modules/blog/admin";
 import { embedAdmin } from "../../modules/embed/admin";
 import { sizeChartsAdmin } from "../../modules/size-charts/admin";
 import { audiencesAdmin } from "../../modules/audiences/admin";
+import { dialogsAdmin } from "../../modules/dialogs/admin";
 import { priceRulesAdmin } from "../../modules/audiences/prices";
 
 /**
@@ -119,6 +120,7 @@ modules.route("/:shopId/modules/pages", pagesAdmin);
 modules.route("/:shopId/modules/blog", blogAdmin);
 modules.route("/:shopId/modules/embed", embedAdmin);
 modules.route("/:shopId/modules/size-charts", sizeChartsAdmin);
+modules.route("/:shopId/modules/dialogs", dialogsAdmin);
 // 会員価格（0099）は条件の /:id より先に
 modules.route("/:shopId/modules/audiences/prices", priceRulesAdmin);
 modules.route("/:shopId/modules/audiences", audiencesAdmin);

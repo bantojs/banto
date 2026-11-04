@@ -88,6 +88,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
 /** モジュールの画面に要る権限の項目（loadShop と同じ。メニューの出し分け用） */
 const MODULE_PERMS: Record<string, ShopPerm> = {
   coupons: "marketing",
+  dialogs: "marketing",
   woo_import: "catalog",
   line_login: "integrations",
   google_login: "integrations",
