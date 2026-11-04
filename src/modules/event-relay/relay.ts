@@ -10,6 +10,8 @@
  * - 会員の出来事は会員 ID で、ゲストの出来事は訪問者 ID（ブラウザが作るランダムな ID、段階 4b・0108）で渡す。
  *   ゲストの分を渡すのは、運営者が「ゲストも」と許した連携だけ。ログインしたら visitor.identified で「この訪問者はこの会員」を渡す
  *   （会員を確かめた Cookie・会員トークンのあるまとまりだけ。それまでの行動をどこまで結ぶかはプラグインが決める。説明書は 30 分を勧める）
+ * - 段階 4c（0109）: 決まった出来事に作り手の独自の情報（meta、平らな形・上限つき）、作り手の独自の出来事（x. で始まる名前）。
+ *   Banto は中身を解釈せず、形と大きさだけを確かめて渡す。独自の出来事はプラグインがマニフェストの custom で求め、運営者が許したものだけ
  * - 「何を見たか」はブラウザの申告なので本人なら偽れる（会員 ID は偽れない）。アプローチは偽っても困らない範囲にする（プラグインの責任）
  */
 import type { CacheAdapter } from "../../adapters/types";
@@ -38,12 +40,24 @@ export const RELAY_EVENT_TYPES = ["product_view", "article_view", "page_view", "
 export type RelayEventType = (typeof RELAY_EVENT_TYPES)[number];
 /** ログインした会員と、それまでの訪問者 ID を結ぶ知らせ（0108）。許しの種類ではなく、ゲストも許した連携にだけ渡す */
 export const VISITOR_IDENTIFIED = "visitor.identified";
+/** 作り手の独自の出来事の名前（x. ＋ 英小文字・数字・_・.、60 字まで）。マニフェストの custom の "x.*" はすべて */
+export const CUSTOM_EVENT_RE = /^x\.[a-z0-9_.]{1,58}$/;
+export const CUSTOM_ALL = "x.*";
+export type CustomEventType = `x.${string}`;
+/** 独自の情報（meta）の値。平らな形だけ（入れ子のオブジェクトは受けない） */
+export type MetaValue = string | number | boolean | string[];
+const META_KEY_RE = /^[a-z0-9_]{1,40}$/;
+const META_MAX_KEYS = 20;
+const META_MAX_STR = 200;
+const META_MAX_LIST = 20;
+/** メールアドレスに見える値は捨てる（Banto は中身を解釈しないので確実ではない。説明書で「個人情報を入れない」と頼む） */
+const EMAIL_LIKE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 /** 訪問者 ID の形（ブラウザが作る。名前もメールアドレスも入らない） */
 export const VISITOR_RE = /^v_[A-Za-z0-9_-]{16,64}$/;
 
 /** プラグインへ渡す出来事の形（個人情報は入らない。ID・数・金額・記事の著者の欄の文字だけ） */
 export interface RelayEvent {
-  type: RelayEventType | typeof VISITOR_IDENTIFIED;
+  type: RelayEventType | typeof VISITOR_IDENTIFIED | CustomEventType;
   at: string;
   product_id?: string;
   category_id?: string;
@@ -57,11 +71,21 @@ export interface RelayEvent {
   handle?: string;
   author?: string;
   page_id?: string;
+  /** 作り手の独自の情報（0109）。Banto は解釈しない */
+  meta?: Record<string, MetaValue>;
 }
 
 export interface RelayGrant {
   types: string[];
+  /** 許した独自の出来事（0109）。"x.*" ならすべて */
+  custom?: string[];
   visitors: "members" | "all";
+}
+
+/** この許しで、その出来事を渡してよいか（visitor.identified は呼ぶ側が決める） */
+export function grantAllows(grant: RelayGrant, type: string): boolean {
+  if (type.startsWith("x.")) return (grant.custom ?? []).some((c) => c === CUSTOM_ALL || c === type);
+  return grant.types.includes(type);
 }
 export interface RelayTarget {
   endpoint_id: string;
@@ -81,6 +105,31 @@ const tagList = (v: unknown): string[] | undefined => {
   return out.length > 0 ? out : undefined;
 };
 
+const metaStr = (v: string): string | undefined => (v.length <= META_MAX_STR && !EMAIL_LIKE.test(v) ? v : undefined);
+
+/** 独自の情報を平らな形に組み直す（鍵の形・数・値の種類と長さ。合わない鍵は落とす。何も残らなければ undefined） */
+export function normalizeMeta(raw: unknown): Record<string, MetaValue> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, MetaValue> = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (n >= META_MAX_KEYS) break;
+    if (!META_KEY_RE.test(k)) continue;
+    let val: MetaValue | undefined;
+    if (typeof v === "string") val = metaStr(v);
+    else if (typeof v === "number") val = Number.isFinite(v) ? v : undefined;
+    else if (typeof v === "boolean") val = v;
+    else if (Array.isArray(v)) {
+      const list = v.filter((x): x is string => typeof x === "string").map(metaStr).filter((x): x is string => x !== undefined).slice(0, META_MAX_LIST);
+      val = list.length > 0 ? list : undefined;
+    }
+    if (val === undefined) continue;
+    out[k] = val;
+    n++;
+  }
+  return n > 0 ? out : undefined;
+}
+
 /** 時刻は 1 日以内のずれまで受け、外れていれば受けた時刻にする（端末の時計が狂っていても並びが壊れない） */
 function atOf(v: unknown, now: number): string {
   const t = typeof v === "string" && v.length <= 40 ? Date.parse(v) : Number.NaN;
@@ -93,6 +142,10 @@ export function normalizeRelayEvent(raw: unknown, now = Date.now()): RelayEvent 
   const r = raw as Record<string, unknown>;
   const type = r["type"];
   if (type === VISITOR_IDENTIFIED) return { type, at: atOf(r["at"], now) };
+  if (typeof type === "string" && CUSTOM_EVENT_RE.test(type)) {
+    const meta = normalizeMeta(r["meta"]);
+    return { type: type as CustomEventType, at: atOf(r["at"], now), ...(meta ? { meta } : {}) };
+  }
   if (typeof type !== "string" || !(RELAY_EVENT_TYPES as readonly string[]).includes(type)) return null;
   const e: RelayEvent = { type: type as RelayEventType, at: atOf(r["at"], now) };
   const set = <K extends keyof RelayEvent>(k: K, v: RelayEvent[K] | undefined) => {
@@ -110,6 +163,7 @@ export function normalizeRelayEvent(raw: unknown, now = Date.now()): RelayEvent 
   set("handle", str(r["handle"], 100));
   set("author", str(r["author"], 100));
   set("page_id", id(r["page_id"]));
+  set("meta", normalizeMeta(r["meta"]));
   return e;
 }
 
@@ -187,7 +241,7 @@ export async function forwardRelay(opts: {
     opts.targets.map(async (t) => {
       const guests = t.grant.visitors === "all";
       if (!opts.customerId && !guests) return;
-      const events = opts.events.filter((e) => (e.type === VISITOR_IDENTIFIED ? Boolean(opts.customerId && visitor && guests) : t.grant.types.includes(e.type)));
+      const events = opts.events.filter((e) => (e.type === VISITOR_IDENTIFIED ? Boolean(opts.customerId && visitor && guests) : grantAllows(t.grant, e.type)));
       if (events.length === 0 || blockedHookTarget(t.url)) return;
       const secret = t.secret_box ? await openSecret(opts.sessionSecret, opts.shopId, connectionSecretPurpose(t.endpoint_id), t.secret_box) : await endpointSecret(opts.sessionSecret, t.endpoint_id);
       if (!secret) return;
@@ -233,13 +287,15 @@ const scriptJson = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c").re
  *   - 会員からゲストに変わった（ログアウトした）ら作り直す。共用の端末で、次の人の行動を前の会員に結ばない
  *   - ゲストから会員に変わった（ログインした）ら visitor.identified を積む（Banto は Cookie の会員だけを結ぶ）
  *   - 変わったときは、前の状態で積んだまだ送っていない出来事を捨てる（別の人の行動として送らない）
- * visitors でないショップでは訪問者 ID を作らず、前に作ったものも消す
+ *   - 貼れるタグから Banto のレジへ移ってきたとき（URL の banto_v）、まだ訪問者 ID が無ければそれを使う（0109。外のサイトの続き）
+ * visitors でないショップでは訪問者 ID を作らず、前に作ったものも消す。
+ * テーマの作り手には window.banto.track(type, { ...項目, meta }) を出す（0109。x. の独自の出来事・決まった出来事に meta）
  */
 export function relayScript(url: string, events: readonly Omit<RelayEvent, "at">[], opts: { member: boolean; visitors: boolean } = { member: true, visitors: false }): string {
   const visitor = opts.visitors
-    ? `var V="banto_v",st=null;try{st=JSON.parse(localStorage.getItem(V)||"null")}catch(e){}var M=${opts.member ? "true" : "false"};function rid(){var a=new Uint8Array(16);crypto.getRandomValues(a);var h="v_";for(var i=0;i<a.length;i++)h+=(a[i]<16?"0":"")+a[i].toString(16);return h}if(!st||typeof st.id!=="string"||st.m!==M){var was=st&&typeof st.id==="string";if(!was||st.m){st={id:rid(),m:M}}else{st={id:st.id,m:M}}q=[];if(was&&M&&st.id)q.push({type:"visitor.identified",at:new Date().toISOString()})}try{localStorage.setItem(V,JSON.stringify(st))}catch(e){}var VI=st.id;`
+    ? `var V="banto_v",st=null;try{st=JSON.parse(localStorage.getItem(V)||"null")}catch(e){}var M=${opts.member ? "true" : "false"};function rid(){var a=new Uint8Array(16);crypto.getRandomValues(a);var h="v_";for(var i=0;i<a.length;i++)h+=(a[i]<16?"0":"")+a[i].toString(16);return h}if(!st){try{var P=new URLSearchParams(location.search).get("banto_v");if(P&&/^v_[A-Za-z0-9_-]{16,64}$/.test(P))st={id:P,m:false}}catch(e){}}if(!st||typeof st.id!=="string"||st.m!==M){var was=st&&typeof st.id==="string";if(!was||st.m){st={id:rid(),m:M}}else{st={id:st.id,m:M}}q=[];if(was&&M&&st.id)q.push({type:"visitor.identified",at:new Date().toISOString()})}try{localStorage.setItem(V,JSON.stringify(st))}catch(e){}var VI=st.id;`
     : `var VI=null;try{localStorage.removeItem("banto_v")}catch(e){}`;
-  return `(function(){var U=${scriptJson(url)},K="banto_rq",q=[];try{q=JSON.parse(sessionStorage.getItem(K)||"[]")||[]}catch(e){}${visitor}function sv(){try{sessionStorage.setItem(K,JSON.stringify(q))}catch(e){}}function fl(){while(q.length){var b=q.splice(0,20);sv();var o={events:b};if(VI)o.visitor=VI;var d=JSON.stringify(o);var ok=false;try{ok=navigator.sendBeacon&&navigator.sendBeacon(U,new Blob([d],{type:"text/plain"}))}catch(e){}if(!ok){try{fetch(U,{method:"POST",body:d,keepalive:true,credentials:"same-origin",headers:{"Content-Type":"text/plain"}})}catch(e){}}}}var n=new Date().toISOString(),ev=${scriptJson(events)};for(var i=0;i<ev.length;i++){ev[i].at=n;q.push(ev[i])}if(q.length>200)q=q.slice(-200);sv();if(q.length>=20)fl();setInterval(fl,30000);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")fl()});addEventListener("pagehide",fl)})();`;
+  return `(function(){var U=${scriptJson(url)},K="banto_rq",q=[];try{q=JSON.parse(sessionStorage.getItem(K)||"[]")||[]}catch(e){}${visitor}function sv(){try{sessionStorage.setItem(K,JSON.stringify(q))}catch(e){}}function fl(){while(q.length){var b=q.splice(0,20);sv();var o={events:b};if(VI)o.visitor=VI;var d=JSON.stringify(o);var ok=false;try{ok=navigator.sendBeacon&&navigator.sendBeacon(U,new Blob([d],{type:"text/plain"}))}catch(e){}if(!ok){try{fetch(U,{method:"POST",body:d,keepalive:true,credentials:"same-origin",headers:{"Content-Type":"text/plain"}})}catch(e){}}}}var n=new Date().toISOString(),ev=${scriptJson(events)};for(var i=0;i<ev.length;i++){ev[i].at=n;q.push(ev[i])}if(q.length>200)q=q.slice(-200);sv();if(q.length>=20)fl();var B=window.banto=window.banto||{};B.track=function(t,d){if(typeof t!=="string")return;var e={},k;if(d&&typeof d==="object")for(k in d)e[k]=d[k];e.type=t;e.at=new Date().toISOString();q.push(e);if(q.length>200)q=q.slice(-200);sv();if(q.length>=20)fl()};setInterval(fl,30000);document.addEventListener("visibilitychange",function(){if(document.visibilityState==="hidden")fl()});addEventListener("pagehide",fl)})();`;
 }
 
 export const eventRelayHead: StorefrontHeadContributor = {

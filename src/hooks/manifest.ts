@@ -57,7 +57,8 @@ export interface PluginManifest {
   /** できること（0092）。"images" = 商品画像の段を作って差し替える（ショップの設定「外部の変換プラグインに任せる」の相手） */
   capabilities?: string[];
   /** 欲しいお店の行動（0107、同梱モジュール event_relay）。求めるだけで、渡すかは運営者が連携の画面で許す */
-  storefront_events?: { types: string[]; visitors: "members" | "all" };
+  /** お店の行動（0107）。custom は作り手の独自の出来事の名前（x. で始まる、"x.*" ですべて。0109） */
+  storefront_events?: { types: string[]; custom?: string[]; visitors: "members" | "all" };
 }
 
 /** お店の行動の種類（src/modules/event-relay/relay.ts の RELAY_EVENT_TYPES と同じ） */
@@ -165,6 +166,8 @@ export function parseManifest(input: unknown): PluginManifest | null {
   const capabilities = Array.isArray(m["capabilities"]) ? [...new Set(m["capabilities"].filter((x): x is string => typeof x === "string" && (MANIFEST_CAPABILITIES as readonly string[]).includes(x)))] : [];
   const se = m["storefront_events"] && typeof m["storefront_events"] === "object" && !Array.isArray(m["storefront_events"]) ? (m["storefront_events"] as Record<string, unknown>) : null;
   const seTypes = se && Array.isArray(se["types"]) ? [...new Set(se["types"].filter((x): x is string => typeof x === "string" && (MANIFEST_STOREFRONT_EVENTS as readonly string[]).includes(x)))] : [];
+  // 独自の出来事（0109）: x. ＋ 英小文字・数字・_・.、60 字まで（src/modules/event-relay/relay.ts の CUSTOM_EVENT_RE と同じ）。50 個まで
+  const seCustom = se && Array.isArray(se["custom"]) ? [...new Set(se["custom"].filter((x): x is string => typeof x === "string" && (x === "x.*" || /^x\.[a-z0-9_.]{1,58}$/.test(x))))].slice(0, 50) : [];
   const more: Record<string, string> = {};
   if (m["more"] && typeof m["more"] === "object" && !Array.isArray(m["more"])) {
     const v = (m["more"] as Record<string, unknown>)["reviews.v1"];
@@ -183,7 +186,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     ...(connect_url ? { connect_url } : {}),
     ...(scopes.length > 0 ? { scopes } : {}),
     ...(capabilities.length > 0 ? { capabilities } : {}),
-    ...(seTypes.length > 0 ? { storefront_events: { types: seTypes, visitors: se?.["visitors"] === "all" ? ("all" as const) : ("members" as const) } } : {}),
+    ...(seTypes.length > 0 || seCustom.length > 0 ? { storefront_events: { types: seTypes, ...(seCustom.length > 0 ? { custom: seCustom } : {}), visitors: se?.["visitors"] === "all" ? ("all" as const) : ("members" as const) } } : {}),
   };
 }
 

@@ -127,14 +127,17 @@ export class FakeSupabase {
   readonly owners = new Set<string>();
   /** 画像の URL の目印 → SKU の options（0063。product_image_hints の代わり。中身は test/db/sku-images.test.ts） */
   readonly imageHints: { shop_id: string; product_id: string; tag: string; options: Row }[] = [];
-  /** 0107 の banto_relay_effective と同じ（求めと許しの重なり） */
+  /** 0109 の banto_relay_effective と同じ（求めと許しの重なり。独自の出来事は custom、"x.*" はマニフェストが "x.*" を求めたときだけ） */
   static relayEffective(manifest: Row | undefined, grant: Row | undefined | null): Row | null {
     if (!manifest || !grant) return null;
     const known = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase"];
-    const want = Array.isArray(manifest["types"]) ? (manifest["types"] as string[]) : [];
-    const types = [...new Set((Array.isArray(grant["types"]) ? (grant["types"] as string[]) : []).filter((x) => known.includes(x) && want.includes(x)))].sort();
-    if (types.length === 0) return null;
-    return { types, visitors: grant["visitors"] === "all" && manifest["visitors"] === "all" ? "all" : "members" };
+    const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).filter((x): x is string => typeof x === "string") : []);
+    const want = list(manifest["types"]);
+    const types = [...new Set(list(grant["types"]).filter((x) => known.includes(x) && want.includes(x)))].sort();
+    const wantCustom = list(manifest["custom"]);
+    const custom = [...new Set(list(grant["custom"]).filter((x) => (x === "x.*" || /^x\.[a-z0-9_.]{1,58}$/.test(x)) && (wantCustom.includes(x) || (x !== "x.*" && wantCustom.includes("x.*")))))].sort();
+    if (types.length === 0 && custom.length === 0) return null;
+    return { types, ...(custom.length > 0 ? { custom } : {}), visitors: grant["visitors"] === "all" && manifest["visitors"] === "all" ? "all" : "members" };
   }
   readonly tables: Record<TableName, Row[]> = {
     size_charts: [],

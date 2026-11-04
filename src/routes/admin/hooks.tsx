@@ -36,7 +36,7 @@ interface EndpointRow {
   /** 拡張データの名前の空間（0084） */
   app_handle?: string | null;
   /** お店の行動を渡す許し（0107） */
-  storefront_events?: { types: string[]; visitors: "members" | "all" } | null;
+  storefront_events?: { types: string[]; custom?: string[]; visitors: "members" | "all" } | null;
 }
 
 /** 拡張データ（0084）が DB に入ったか。入る前は app_handle の列が無い */
@@ -471,7 +471,10 @@ hooks.post("/:shopId/hooks/:endpointId/storefront-events", requireOwner, async (
   const body = await c.req.parseBody({ all: true });
   const raw = body["types"];
   const types = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).filter((v): v is string => typeof v === "string");
-  const grant = types.length > 0 ? { types, visitors: body["visitors"] === "all" ? "all" : "members" } : null;
+  const rawCustom = body["custom"];
+  const custom = (Array.isArray(rawCustom) ? rawCustom : typeof rawCustom === "string" ? [rawCustom] : []).filter((v): v is string => typeof v === "string");
+  // 決まった種類も独自の出来事も選ばなければ取り消し。範囲（求めた分まで）は DB の banto_relay_effective が当て直す
+  const grant = types.length > 0 || custom.length > 0 ? { types, ...(custom.length > 0 ? { custom } : {}), visitors: body["visitors"] === "all" ? "all" : "members" } : null;
   try {
     await owner(c).db.rpc("hook_storefront_events_set", { p_shop_id: shop.id, p_endpoint_id: endpoint.id, p_grant: grant });
   } catch (e) {
@@ -483,22 +486,37 @@ hooks.post("/:shopId/hooks/:endpointId/storefront-events", requireOwner, async (
 });
 
 /** 許しの欄。求められた種類だけを並べ、運営者は外せる（広げられない） */
-function StorefrontEventsForm(props: { action: string; requested: { types: string[]; visitors: "members" | "all" }; granted: { types: string[]; visitors: "members" | "all" } | null }) {
+function StorefrontEventsForm(props: { action: string; requested: { types: string[]; custom?: string[]; visitors: "members" | "all" }; granted: { types: string[]; custom?: string[]; visitors: "members" | "all" } | null }) {
   const on = new Set(props.granted?.types ?? []);
+  const customOn = new Set(props.granted?.custom ?? []);
+  const requestedCustom = props.requested.custom ?? [];
   return (
     <section class="card">
       <h2>{t("relay.title")}</h2>
       <p>{t("relay.intro")}</p>
       <p class="notice">{t("relay.privacy")}</p>
       <form method="post" action={props.action}>
-        <fieldset>
-          <legend>{t("relay.types")}</legend>
-          {props.requested.types.map((ty) => (
-            <label style="display:block">
-              <input type="checkbox" name="types" value={ty} checked={on.has(ty)} /> {t(`relay.type.${ty}` as MessageKey)}
-            </label>
-          ))}
-        </fieldset>
+        {props.requested.types.length > 0 ? (
+          <fieldset>
+            <legend>{t("relay.types")}</legend>
+            {props.requested.types.map((ty) => (
+              <label style="display:block">
+                <input type="checkbox" name="types" value={ty} checked={on.has(ty)} /> {t(`relay.type.${ty}` as MessageKey)}
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
+        {requestedCustom.length > 0 ? (
+          <fieldset>
+            <legend>{t("relay.custom")}</legend>
+            <p class="muted">{t("relay.custom_hint")}</p>
+            {requestedCustom.map((name) => (
+              <label style="display:block">
+                <input type="checkbox" name="custom" value={name} checked={customOn.has(name)} /> {name === "x.*" ? t("relay.custom_all") : <code>{name}</code>}
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
         {props.requested.visitors === "all" ? (
           <fieldset>
             <legend>{t("relay.visitors")}</legend>

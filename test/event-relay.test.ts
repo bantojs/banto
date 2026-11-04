@@ -4,7 +4,8 @@ import { BASE, Browser, MemoryStorage, appWith, externalHosts, memberLogin, memb
 import { endpointSecret, verifyHookSignature } from "../src/hooks/signing";
 import { issueTokens } from "../src/members/auth";
 import { memoryRateLimit } from "../src/adapters/rate-limit";
-import { forwardRelay, normalizeRelayEvent, parseRelayBody, relayEventsFromPage, relayScript, type RelayTarget } from "../src/modules/event-relay/relay";
+import { forwardRelay, normalizeMeta, normalizeRelayEvent, parseRelayBody, relayEventsFromPage, relayScript, type RelayTarget } from "../src/modules/event-relay/relay";
+import { embedScript } from "../src/modules/embed/script";
 import { runInNewContext } from "node:vm";
 import { parseManifest } from "../src/hooks/manifest";
 
@@ -43,7 +44,7 @@ describe("出来事の形", () => {
   it("決まった形に組み直す（知らない種類・鍵は捨てる、時刻は 1 日以内、文字と数に上限）", () => {
     const now = Date.parse("2026-11-04T00:00:00Z");
     expect(normalizeRelayEvent({ type: "product_view", product_id: "p-1", tags: ["a", 1, "x".repeat(41)], extra: "drop", at: "2026-11-03T23:59:00Z" }, now)).toEqual({ type: "product_view", at: "2026-11-03T23:59:00.000Z", product_id: "p-1", tags: ["a"] });
-    expect(normalizeRelayEvent({ type: "x.custom" }, now)).toBeNull();
+    expect(normalizeRelayEvent({ type: "custom" }, now)).toBeNull();
     expect(normalizeRelayEvent({ type: "page_view", at: "1999-01-01T00:00:00Z", page_id: "<script>" }, now)).toEqual({ type: "page_view", at: "2026-11-04T00:00:00.000Z" });
     expect(parseRelayBody("not json")).toBeNull();
     expect(parseRelayBody(JSON.stringify({ events: Array.from({ length: 51 }, () => ({ type: "cart_view" })) }))).toBeNull();
@@ -266,6 +267,7 @@ describe("ゲストの訪問者 ID と visitor.identified（段階 4b、0108）"
         JSON,
         Uint8Array,
       };
+      (ctx as Record<string, unknown>)["window"] = ctx;
       runInNewContext(code, ctx);
       (ctx as unknown as { flush: () => void }).flush();
       return beacons.map((b) => JSON.parse(b) as { visitor?: string; events: { type: string }[] });
@@ -293,5 +295,184 @@ describe("ゲストの訪問者 ID と visitor.identified（段階 4b、0108）"
       expect(b.visitor).toBeUndefined();
       expect(store.has("banto_v")).toBe(false);
     });
+  });
+});
+
+describe("独自の情報（meta）と独自の出来事（段階 4c、0109）", () => {
+  it("meta は平らな形だけ（鍵の形・数・値の長さ、入れ子・メールアドレスに見える値は落とす）。x. の出来事は名前と meta だけ", () => {
+    const now = Date.parse("2026-11-04T00:00:00Z");
+    expect(normalizeMeta({ from: "lookbook", h: 158, ok: true, list: ["a", 1, "b@example.com"], Bad: "x", nested: { a: 1 }, mail: "a@example.com", long: "x".repeat(201) })).toEqual({ from: "lookbook", h: 158, ok: true, list: ["a"] });
+    expect(normalizeMeta(Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`k${i}`, i])))).toHaveProperty("k19");
+    expect(Object.keys(normalizeMeta(Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`k${i}`, i])))!)).toHaveLength(20);
+    expect(normalizeRelayEvent({ type: "x.quiz_answered", meta: { quiz: "fit" }, product_id: "drop" }, now)).toEqual({ type: "x.quiz_answered", at: "2026-11-04T00:00:00.000Z", meta: { quiz: "fit" } });
+    expect(normalizeRelayEvent({ type: "x.Bad" }, now)).toBeNull();
+    expect(normalizeRelayEvent({ type: "product_view", product_id: "p", meta: { from: "lb" } }, now)).toMatchObject({ meta: { from: "lb" } });
+  });
+
+  it("マニフェストの custom（x.* か名前）を読む。custom だけでも storefront_events になる", () => {
+    expect(parseManifest({ name: "MA", storefront_events: { custom: ["x.quiz", "nope", "x.*", "x.quiz"] } })?.storefront_events).toEqual({ types: [], custom: ["x.quiz", "x.*"], visitors: "members" });
+  });
+
+  it("独自の出来事は許した名前（か x.*）の連携にだけ。meta は許した出来事と一緒に渡る", async () => {
+    const sent: { url: string; events: { type: string; meta?: unknown }[] }[] = [];
+    const fetch = (async (url: string, init: RequestInit) => {
+      sent.push({ url, events: JSON.parse(String(init.body)).data.events });
+      return new Response("ok");
+    }) as unknown as typeof globalThis.fetch;
+    const targets: RelayTarget[] = [
+      { endpoint_id: "e-all", url: "https://all.example.com/h", secret_box: null, grant: { types: [], custom: ["x.*"], visitors: "members" } },
+      { endpoint_id: "e-one", url: "https://one.example.com/h", secret_box: null, grant: { types: ["product_view"], custom: ["x.quiz"], visitors: "members" } },
+    ];
+    const at = "2026-11-04T00:00:00.000Z";
+    await forwardRelay({ targets, shopId: "s", customerId: "c-1", visitor: null, source: "headless", sessionSecret: SECRET, fetch, events: [{ type: "x.quiz", at }, { type: "x.video", at }, { type: "product_view", at, meta: { from: "lb" } }] });
+    expect(sent.find((x) => x.url.includes("all"))!.events.map((e) => e.type)).toEqual(["x.quiz", "x.video"]);
+    expect(sent.find((x) => x.url.includes("one"))!.events).toEqual([{ type: "x.quiz", at }, { type: "product_view", at, meta: { from: "lb" } }]);
+  });
+
+  it("管理画面: 求められた独自の出来事を並べて許す。設定の入口は許しの和を返す（URL は返さない）", async () => {
+    const { app, sb, shop } = setup({ grant: null });
+    const ep = sb.tables.hook_endpoints.find((e) => e["id"] === "ep-ma")!;
+    (ep["manifest"] as { storefront_events: Record<string, unknown> }).storefront_events["custom"] = ["x.*"];
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/hooks/ep-ma`;
+    expect(await (await owner.get(base)).text()).toContain('name="custom" value="x.*"');
+    await owner.post(`${base}/storefront-events`, { types: "product_view", custom: "x.*" });
+    expect(ep["storefront_events"]).toEqual({ types: ["product_view"], custom: ["x.*"], visitors: "members" });
+    const res = await app.request(`${BASE}/api/shops/my-shop/events/config`);
+    expect(await res.json()).toEqual({ types: ["product_view"], custom: ["x.*"], guests: false });
+    expect(JSON.stringify(await (await app.request(`${BASE}/api/shops/my-shop/events/config`)).json())).not.toContain("ma.example.com");
+    const off = setup({ relay: false });
+    expect((await off.app.request(`${BASE}/api/shops/my-shop/events/config`)).status).toBe(404);
+  });
+
+  it("お店の画面のスクリプト: banto.track で x. の出来事と meta を積む。URL の banto_v は、まだ訪問者 ID が無いときだけ使う", () => {
+    const beacons: string[] = [];
+    const run = (code: string, store: Map<string, string>, search: string, after?: (w: { banto: { track: (t: string, d?: unknown) => void } }) => void) => {
+      const ctx: Record<string, unknown> = {
+        localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) },
+        sessionStorage: { getItem: () => null, setItem: () => undefined },
+        crypto: globalThis.crypto, location: { search }, URLSearchParams,
+        navigator: { sendBeacon: (_u: string, b: { s: string }) => (beacons.push(b.s), true) },
+        Blob: class { s: string; constructor(p: string[]) { this.s = p[0] ?? ""; } },
+        document: { visibilityState: "visible", addEventListener: () => undefined },
+        setInterval: () => 0, Date, JSON, Uint8Array,
+      };
+      ctx["window"] = ctx;
+      ctx["addEventListener"] = (_n: string, f: () => void) => (ctx["flush"] = f);
+      runInNewContext(code, ctx);
+      after?.(ctx as unknown as { banto: { track: (t: string, d?: unknown) => void } });
+      (ctx["flush"] as () => void)();
+    };
+    const store = new Map<string, string>();
+    run(relayScript("/s/_x", [], { member: false, visitors: true }), store, `?banto_v=${V1}`, (w) => w.banto.track("x.quiz", { meta: { q: "fit" } }));
+    const b1 = JSON.parse(beacons[0]!) as { visitor: string; events: { type: string; meta?: unknown }[] };
+    expect(b1.visitor).toBe(V1);
+    expect(b1.events).toMatchObject([{ type: "x.quiz", meta: { q: "fit" } }]);
+    // もう訪問者 ID があれば URL のものは使わない
+    run(relayScript("/s/_x", [{ type: "page_view", page_id: "p" }], { member: false, visitors: true }), store, "?banto_v=v_ffffffffffffffffffffffffffffffff");
+    expect((JSON.parse(beacons[1]!) as { visitor: string }).visitor).toBe(V1);
+  });
+
+  it("貼れるタグから Banto のカートへ: banto_v を形の合うものだけカートの画面へ持ち越す", async () => {
+    const { app } = setup();
+    const b = new Browser(app);
+    expect((await b.get(`/my-shop/cart/load?banto_v=${V1}`)).headers.get("location")).toBe(`/my-shop/cart?banto_v=${V1}`);
+    expect((await b.get("/my-shop/cart/load?banto_v=<x>")).headers.get("location")).toBe("/my-shop/cart");
+  });
+});
+
+describe("貼れるタグから送る（0109）", () => {
+  type Win = Record<string, unknown> & { banto: { track: (t: string, d?: unknown) => void; consent: (v: boolean) => void; identify: (t: string | null, shop?: string) => void } };
+  function load(opts: { consent?: "wait"; config: unknown }) {
+    const beacons: { url: string; body: string }[] = [];
+    const fetches: { url: string; headers: Record<string, string>; body?: string }[] = [];
+    const store = new Map<string, string>();
+    const listeners: Record<string, () => void> = {};
+    const win: Record<string, unknown> = {
+      customElements: { get: () => undefined, define: () => undefined },
+      localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) },
+      crypto: globalThis.crypto, Intl, URL, Date, JSON, Uint8Array, Promise, Array, String, Number, Object,
+      Element: { prototype: { attachShadow: () => undefined } },
+      HTMLElement: class {},
+      CustomEvent: class {},
+      navigator: { sendBeacon: (url: string, b: { s: string }) => (beacons.push({ url, body: b.s }), true) },
+      Blob: class { s: string; constructor(p: string[]) { this.s = p[0] ?? ""; } },
+      setInterval: () => 0,
+      document: {
+        currentScript: { getAttribute: (n: string) => (n === "data-shop" ? "my-shop" : n === "data-consent" ? (opts.consent ?? null) : null) },
+        querySelector: () => null, visibilityState: "visible", addEventListener: () => undefined, createElement: () => ({}),
+      },
+      fetch: async (url: string, init?: { headers?: Record<string, string>; body?: string }) => {
+        if (url.endsWith("/events/config")) return { ok: true, json: async () => opts.config };
+        fetches.push({ url, headers: init?.headers ?? {}, ...(init?.body ? { body: init.body } : {}) });
+        return { ok: true, json: async () => ({}) };
+      },
+    };
+    win["window"] = win;
+    win["self"] = win;
+    win["top"] = win;
+    win["addEventListener"] = (n: string, f: () => void) => (listeners[n] = f);
+    runInNewContext(embedScript("https://banto.example.com", "ja"), win);
+    const flush = async () => {
+      listeners["pagehide"]?.();
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+    };
+    return { w: win as Win, beacons, fetches, store, flush };
+  }
+
+  it("許された種類だけ、ゲストは訪問者 ID を付けて送る（x. は custom の名前だけ）", async () => {
+    const t = load({ config: { types: ["product_view"], custom: ["x.quiz"], guests: true } });
+    t.w.banto.track("product_view", { product_id: "p-1" });
+    t.w.banto.track("cart_add", { sku: "TEE" });
+    t.w.banto.track("x.quiz", { meta: { q: "fit" } });
+    t.w.banto.track("x.other");
+    await t.flush();
+    expect(t.beacons).toHaveLength(1);
+    expect(t.beacons[0]!.url).toBe("https://banto.example.com/api/shops/my-shop/events");
+    const body = JSON.parse(t.beacons[0]!.body) as { visitor: string; events: { type: string }[] };
+    expect(body.visitor).toMatch(/^v_[0-9a-f]{32}$/);
+    expect(body.events.map((e) => e.type)).toEqual(["product_view", "x.quiz"]);
+  });
+
+  it("ゲストを渡さないショップでは、会員トークンを渡すまで送らない。identify で会員として送り、null で訪問者 ID を作り直す", async () => {
+    const t = load({ config: { types: ["product_view"], custom: [], guests: false } });
+    t.w.banto.track("product_view", { product_id: "p-1" });
+    await t.flush();
+    expect(t.beacons).toHaveLength(0);
+    t.w.banto.identify("bm1.token");
+    t.w.banto.track("product_view", { product_id: "p-1" });
+    await t.flush();
+    expect(t.fetches).toHaveLength(1);
+    expect(t.fetches[0]!.headers["Authorization"]).toBe("Bearer bm1.token");
+    // visitor.identified はゲストも渡すショップだけ
+    expect((JSON.parse(t.fetches[0]!.body!) as { events: { type: string }[]; visitor?: string }).events.map((e) => e.type)).toEqual(["product_view"]);
+    expect(JSON.parse(t.fetches[0]!.body!)).not.toHaveProperty("visitor");
+  });
+
+  it("ゲストも渡すショップで identify すると visitor.identified を同じ訪問者 ID で送る。ログアウトで作り直す", async () => {
+    const t = load({ config: { types: ["product_view"], custom: [], guests: true } });
+    t.w.banto.track("product_view", { product_id: "p-1" });
+    await t.flush();
+    const v1 = (JSON.parse(t.beacons[0]!.body) as { visitor: string }).visitor;
+    t.w.banto.identify("bm1.token");
+    await t.flush();
+    expect(JSON.parse(t.fetches[0]!.body!)).toMatchObject({ visitor: v1, events: [{ type: "visitor.identified" }] });
+    t.w.banto.identify(null);
+    t.w.banto.track("product_view", { product_id: "p-1" });
+    await t.flush();
+    expect((JSON.parse(t.beacons[1]!.body) as { visitor: string }).visitor).not.toBe(v1);
+  });
+
+  it("data-consent=\"wait\" なら banto.consent(true) まで送らず、その間の出来事は捨てる", async () => {
+    const t = load({ consent: "wait", config: { types: ["product_view"], custom: [], guests: true } });
+    t.w.banto.track("product_view", { product_id: "before" });
+    await t.flush();
+    expect(t.beacons).toHaveLength(0);
+    t.w.banto.consent(true);
+    t.w.banto.track("product_view", { product_id: "after" });
+    await t.flush();
+    expect((JSON.parse(t.beacons[0]!.body) as { events: { product_id: string }[] }).events.map((e) => e.product_id)).toEqual(["after"]);
+    expect(t.store.has("banto-visitor")).toBe(true);
   });
 });

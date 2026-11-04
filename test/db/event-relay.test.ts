@@ -63,4 +63,15 @@ describe.skipIf(!dbAvailable)("お店の行動を連携に渡す（0107_mod_even
     await getPool().query("update hook_endpoints set enabled = false where id = $1", [ep]);
     expect(await pub()).toBe(false);
   });
+
+  it("0109: 独自の出来事は求めた名前まで（x.* はマニフェストが x.* を求めたときだけ）。custom だけの許しもある", async () => {
+    await getPool().query(`update hook_endpoints set enabled = true, manifest = jsonb_set(manifest, '{storefront_events}', '{"types":["product_view"],"custom":["x.quiz"],"visitors":"members"}') where id = $1`, [ep]);
+    expect(await set(a.ownerId, a.shopId, ep, { types: [], custom: ["x.quiz", "x.other", "x.*", "bad"], visitors: "members" })).toEqual({ types: [], custom: ["x.quiz"], visitors: "members" });
+    await getPool().query(`update hook_endpoints set manifest = jsonb_set(manifest, '{storefront_events,custom}', '["x.*"]') where id = $1`, [ep]);
+    expect(await set(a.ownerId, a.shopId, ep, { types: ["product_view"], custom: ["x.*", "x.video"], visitors: "members" })).toEqual({ types: ["product_view"], custom: ["x.*", "x.video"], visitors: "members" });
+    expect((await targets(a.shopId))[0]!.grant).toMatchObject({ custom: ["x.*", "x.video"] });
+    expect(await set(a.ownerId, a.shopId, ep, { types: [], custom: [], visitors: "members" })).toBeNull();
+    // 形の違う値（配列でない）は空として扱う
+    expect(await set(a.ownerId, a.shopId, ep, { types: "product_view", custom: "x.quiz", visitors: "members" })).toBeNull();
+  });
 });

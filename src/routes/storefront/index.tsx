@@ -4,7 +4,7 @@ import { blockedTarget, storefrontSettings } from "../../storefront/mode";
 import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../storefront/events";
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
-import { EVENT_RELAY_MODULE } from "../../modules/event-relay/relay";
+import { EVENT_RELAY_MODULE, VISITOR_RE } from "../../modules/event-relay/relay";
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
@@ -1302,7 +1302,9 @@ storefront.get("/:shop/cart/load", async (c: Ctx) => {
   const token = c.req.query("cart");
   // 署名が合わないトークンで今のカートを空にしない
   if (secret && token && (await openJson(secret, token)) !== null) await writeCart(c, s, await openCart(secret, token));
-  return c.redirect(`${s.ctx.shopPath}/cart`);
+  // 貼れるタグの訪問者 ID（0109、お店の行動の中継）はカートの画面へ持ち越す（形の合うものだけ。お店の画面のスクリプトが、まだ無ければ使う）
+  const visitor = c.req.query("banto_v");
+  return c.redirect(`${s.ctx.shopPath}/cart${visitor && VISITOR_RE.test(visitor) ? `?banto_v=${visitor}` : ""}`);
 });
 
 // ---------- チェックアウト ----------

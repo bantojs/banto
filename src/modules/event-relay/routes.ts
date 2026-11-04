@@ -2,6 +2,7 @@
  * お店の行動の中継の入口（同梱モジュール event_relay、0107）。docs/event-relay.md
  *   POST /<ショップ>/_x                        お店の画面のスクリプト（会員の Cookie の署名で会員を確かめる）
  *   POST /api/shops/<ショップ>/events           ヘッドレス（Authorization: Bearer <会員トークン>、無ければゲスト）
+ *   GET  /api/shops/<ショップ>/events/config    貼れるタグが送ってよい種類を知る（0109。許しの和。中身の判断は送ったときに Banto がし直す）
  * どちらも DB に触らない（会員は署名だけ、送り先は覚えたもの）。受けたらすぐ 204 を返し、プラグインへは応答の後に送る。
  * モジュールが OFF・形が違う・送り先が無い（ゲストを許した連携が無いショップのゲストなど）でも、送らずに 204（中の様子を外に見せない）。
  * 回数を超えたら 429。ゲストは本文の visitor（ブラウザが作る訪問者 ID、0108）で渡す
@@ -16,7 +17,7 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { StorefrontData } from "../../storefront/data";
 import { openToken } from "../../members/auth";
-import { EVENT_RELAY_MODULE, RELAY_MAX_BYTES, RELAY_PER_MINUTE, forwardRelay, parseRelayBody, relayTargets } from "./relay";
+import { CUSTOM_ALL, EVENT_RELAY_MODULE, RELAY_MAX_BYTES, RELAY_PER_MINUTE, RELAY_TARGETS_TTL, forwardRelay, parseRelayBody, relayTargets } from "./relay";
 
 /** 届いたまとまりを受けて送る。customerId は呼ぶ側が署名で確かめた会員（ゲストは null） */
 export async function acceptRelay(c: Ctx, shop: PublicShop, customerId: string | null, source: "storefront" | "headless"): Promise<Response> {
@@ -42,13 +43,42 @@ export async function acceptRelay(c: Ctx, shop: PublicShop, customerId: string |
 
 export const eventsApi = new Hono<AppEnv>();
 
-/** 連携サイトが送る（CORS は公開の *）。会員トークンがあれば署名と期限だけで確かめる（壊れていれば 401）。無ければゲスト */
-eventsApi.post("/shops/:shop/events", async (c) => {
+async function publicShop(c: Ctx): Promise<PublicShop | null | "not_configured"> {
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
-  if (!url || !anonKey) return c.json({ error: "not_configured" }, 503);
-  const shop = await new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache).shopBySlug(param(c, "shop"));
+  if (!url || !anonKey) return "not_configured";
+  return new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache).shopBySlug(param(c, "shop"));
+}
+
+/**
+ * 貼れるタグ（同梱モジュール embed）が、送ってよい種類を知る（0109）。許しのある連携の和: 決まった種類・独自の出来事・ゲストも渡すか。
+ * 送り先の URL や連携の名前は返さない。許しが無ければ空（タグは何も送らない）
+ */
+eventsApi.get("/shops/:shop/events/config", async (c) => {
+  const shop = await publicShop(c);
+  if (shop === "not_configured") return c.json({ error: "not_configured" }, 503);
+  if (!shop || !moduleEnabled(shop.settings, EVENT_RELAY_MODULE)) return c.json({ error: "not_found" }, 404);
+  const db = privilegedFor(c);
+  const targets = db ? await relayTargets({ db, cache: c.get("adapters").cache }, shop.id).catch(() => []) : [];
+  const types = new Set<string>();
+  const custom = new Set<string>();
+  for (const t of targets) {
+    for (const x of t.grant.types) types.add(x);
+    for (const x of t.grant.custom ?? []) custom.add(x);
+  }
+  const all = custom.has(CUSTOM_ALL);
+  return c.json(
+    { types: [...types].sort(), custom: all ? [CUSTOM_ALL] : [...custom].sort(), guests: shop.relay_guests === true && targets.some((t) => t.grant.visitors === "all") },
+    200,
+    { "Cache-Control": `public, max-age=${RELAY_TARGETS_TTL}` },
+  );
+});
+
+/** 連携サイトが送る（CORS は公開の *）。会員トークンがあれば署名と期限だけで確かめる（壊れていれば 401）。無ければゲスト */
+eventsApi.post("/shops/:shop/events", async (c) => {
+  const shop = await publicShop(c);
+  if (shop === "not_configured") return c.json({ error: "not_configured" }, 503);
   if (!shop || !moduleEnabled(shop.settings, EVENT_RELAY_MODULE)) return c.json({ error: "not_found" }, 404);
   const header = c.req.header("authorization") ?? "";
   let customerId: string | null = null;
