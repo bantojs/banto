@@ -71,7 +71,7 @@ X-Banto-Signature: t=<送信時刻 epoch 秒>,v1=<hex(HMAC-SHA256(secret, `${t}.
 3. `HMAC-SHA256(secret, t + "." + 生のリクエストボディ)` を hex にし、`v1` と定数時間比較する
 
 参考実装は `src/hooks/signing.ts` の `verifyHookSignature()` です（WebCrypto のみ。Workers / Node / Deno でそのまま動きます）。
-動く実例は [examples/plugin-slack](../examples/plugin-slack/)（Slack 通知。マニフェスト・署名検証・冪等化・再送の扱いまで入った最小のプラグイン）を見てください。
+動く実例は [examples/plugin-slack](../examples/plugin-slack/)（Slack 通知。マニフェスト・署名検証・冪等化・再送の扱いまで入った最小のプラグイン）を見てください。n8n・Make・Zapier などの自動化ツールで受けるときの手順と見本は [docs/automation.md](automation.md) です。
 
 ```ts
 import { verifyHookSignature } from "./signing";

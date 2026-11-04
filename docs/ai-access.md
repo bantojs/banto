@@ -301,6 +301,7 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - **LINE で送る口**（`line:send`）: docs/line.md §4。
 - **hooks `checkout.abandoned`**（カゴ落ち）: docs/hooks.md §1。会員の予約の期限切れだけ。
 - どれもデータベースの更新 `0105_ma_ports` が要ります。当たるまでは 409（`migration_required`）です。
+- n8n・Make・Zapier などで組む手順と見本（カゴ落ちの LINE・処理済みの印・取りこぼしの確かめ）は docs/automation.md です。
 
 ## 13. 注文の印（タグ）と社内のメモ（0106、メンテナの決定 2026-11-04）
 

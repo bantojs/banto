@@ -6,7 +6,7 @@ Banto には用途の違う 4 つの API があります。まずこの表で自
 | --- | --- | --- | --- | --- |
 | 別のサイト（WordPress・LP・SPA）からショップを出したい | **公開 API・カート・チェックアウト・会員**（`/api/shops/...`） | なし（会員の操作だけ Banto の会員トークン） | `GET /api/openapi.json`（OpenAPI 3.1）、`GET /api/` が一覧を返す | [docs/headless.md](headless.md) |
 | AI（Claude など）や自動化ツールで商品・注文・集計を扱いたい | **AI 用 API**（`/mcp`、`/api/v1`） | 管理画面で発行する AI 用トークン（`Authorization: Bearer banto_...`） | `GET /api/v1/openapi.json`（OpenAPI 3.1） | [docs/ai-access.md](ai-access.md) と §3 |
-| 注文や商品の変化を自分のサービスで受け取りたい（CRM・メール・Slack） | **hooks**（署名付き Webhook の送信） | 送信先ごとの署名シークレット（管理画面に表示） | 管理画面 → hooks | [docs/hooks.md](hooks.md)、実例 [examples/plugin-slack](../examples/plugin-slack/) |
+| 注文や商品の変化を自分のサービスで受け取りたい（CRM・メール・Slack） | **hooks**（署名付き Webhook の送信） | 送信先ごとの署名シークレット（管理画面に表示） | 管理画面 → hooks | [docs/hooks.md](hooks.md)、実例 [examples/plugin-slack](../examples/plugin-slack/)。n8n・Make・Zapier で組むなら [docs/automation.md](automation.md) |
 | 稼働を監視したい | **/health** | なし | `GET /health` | [docs/monitoring.md](monitoring.md) |
 
 購入者の画面そのもの（同梱テーマ）は API ではなく SSR のページです。商品フィード（Google / Meta）は `GET /<slug>/feed/products.xml`（同梱モジュール product_feed を ON にしたとき。[docs/product-feed.md](product-feed.md)）、サイトマップは `GET /sitemap.xml`。
@@ -15,7 +15,7 @@ Banto には用途の違う 4 つの API があります。まずこの表で自
 
 ## 1. 共通の決まり
 
-- **URL の起点**はショップの URL（`https://banto.<アカウント>.workers.dev`、独自ドメインを付けたら `https://shop.example.jp`。[docs/custom-domain.md](custom-domain.md)）。ショップの独自ドメインの上では `/api/...` も `/mcp` も同じパスで動きます。
+- **URL の起点**はショップの URL（`https://banto.<アカウント>.workers.dev`、独自ドメインを付けたら `https://shop.example.jp`。[docs/custom-domain.md](custom-domain.md)）。ショップの独自ドメインの上では公開 API（`/api/shops/...`）は同じパスで動きますが、**AI 用 API（`/api/v1`・`/mcp`）と決済の Webhook は Banto 自身のホストだけ**です（独自ドメインの上では 404。店主がドメインの DNS を握る構成で、トークンが店主のサーバーへ向かないように）。
 - **形式**は JSON（`Content-Type: application/json`）。金額はすべて**税込の整数の円**（`*_jpy`）。日時は ISO 8601（UTC）。
 - **エラー**は HTTP の状態コードと `error` で返します。公開 API は `{"error": "stock"}` のように短いコード（必要なら `field` 等が付く）、AI 用 API は `{"error": {"code": "unauthorized", "message": "..."}}`。存在しない ID と他のショップの ID は区別せず `not_found` / `unauthorized` です。
 - **CORS**: 公開 API（商品・カート・チェックアウト・お店で試着）は `Access-Control-Allow-Origin: *`。**会員の API（`/api/shops/<slug>/members/*`）だけは、ショップ設定の「決済後の戻り先として許可するサイト」のオリジンにしか返しません**（ログインのメールを送るため）。`/api/v1` と `/mcp` には CORS を付けていません（ブラウザから直接叩く用途ではない）。

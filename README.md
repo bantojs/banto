@@ -76,6 +76,7 @@ CI はこの方式で回しています。
 - [docs/cost.md](docs/cost.md) — 運用費用の目安（[試算ページ](docs/cost-estimator.html)）
 - **API の入口**: [docs/api.md](docs/api.md) — 公開 API / AI 用 API / hooks の使い分けと共通の決まり、エンドポイントの一覧
 - プラグインを作る: [docs/hooks.md](docs/hooks.md)（仕様）と [examples/plugin-slack](examples/plugin-slack/)（Slack 通知の実例）
+- n8n・Make・Zapier で自動化する: [docs/automation.md](docs/automation.md)（注文に印・カゴ落ちの LINE・取りこぼしの確かめの見本）
 - 運用ガイド: [docs/backup.md](docs/backup.md)（バックアップと復元）/ [docs/email.md](docs/email.md)（メールの到達性）/ [docs/monitoring.md](docs/monitoring.md)（死活監視）/ [docs/hardening.md](docs/hardening.md)（WAF・レート制限・管理画面の保護）
 - [CLAUDE.md](CLAUDE.md) — 開発規約（AI エージェント向けの判断基準。人間にも有効）
 - [docs/knowledge/](docs/knowledge/README.md) — 開発に参加する人向けのナレッジ（設計判断・実機の落とし穴・コードの地図）。参加の手引きは [CONTRIBUTING.md](CONTRIBUTING.md)
