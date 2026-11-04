@@ -1061,7 +1061,7 @@ export const en: Record<MessageKey, string> = {
   "relay.visitors_all": "Guests too (guest activity comes in a later version)",
   "relay.visitors_members_only": "Only logged-in members' activity is passed.",
   "relay.hint": "Clear every box and save to stop passing activity. Changes take up to a minute to apply.",
-  "relay.save": "Save",
+  "relay.save": "Save settings",
   "mod.ga4.name": "Google Analytics (GA4)",
   "mod.ga4.description": "Adds your own GA4 tag to the shop pages. Sends page views and e-commerce events (view item, add to cart, view cart, begin checkout, purchase). No personal data is sent.",
   "ga4.intro": "Adds the GA4 tag to Banto's shop pages (not the admin). Data goes to your own GA4; nothing is sent to the Banto team.",
