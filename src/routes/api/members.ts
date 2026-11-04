@@ -8,7 +8,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, audiencesReady, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
 import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
@@ -117,7 +117,7 @@ async function grant(c: Ctx, db: PrivilegedDb, secret: string, shopId: string, c
   const sid = await db.memberSessionStart(shopId, customerId, epoch, "api", deviceLabel(c.req.header("user-agent")), SESSION_ABSOLUTE_SECONDS, authenticatedAt);
   if (!sid) return null;
   // 会員の条件（0097）で使っている独自項目の値を access に入れる（ログインのときだけ 1 回多く問い合わせる。以後は refresh で入れ直す）
-  const attrs = (await audiencesReady(c)) ? audienceAttrsOf((await db.memberSessionCheckAttrs(shopId, customerId, epoch, sid).catch(() => null))?.attrs) : undefined;
+  const attrs = audienceAttrsOf((await db.memberSessionCheckAttrs(shopId, customerId, epoch, sid).catch(() => null))?.attrs);
   return issueTokens(secret, shopId, customerId, epoch, { sid, gen: 0, expiresAt: Math.floor(Date.now() / 1000) + SESSION_ABSOLUTE_SECONDS }, undefined, attrs);
 }
 

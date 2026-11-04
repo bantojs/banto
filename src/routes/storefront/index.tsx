@@ -8,7 +8,7 @@ import { EVENT_RELAY_MODULE, VISITOR_RE } from "../../modules/event-relay/relay"
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
-import { type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
+import { type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -1413,7 +1413,6 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
     cancelUrl: `${shopHome(base, s.shop)}/cart`,
     ...(member ? { customerId: member.cid, customerEpoch: member.ep } : {}),
     limits: await reserveLimits(secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
-    memberPrices: await s.sf.migratedTo(MEMBER_PRICES_MIGRATION),
   });
   // 全端末からログアウトした後の古いセッション: ログインし直してもらう
   if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);

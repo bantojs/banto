@@ -60,15 +60,6 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
 };
 
 
-/** 0105 が当たるまで出さないスコープ（LINE で送る口。docs/line.md §4） */
-export const MA_PORTS_MIGRATION = "0105_ma_ports";
-export const LINE_SEND_SCOPES: readonly ApiScope[] = ["line:send"];
-
-/** DB がまだ受け付けないスコープを除いた一覧（発行の画面・つなぐ画面） */
-export function issuableScopes(maPorts: boolean): readonly ApiScope[] {
-  return maPorts ? API_SCOPES : API_SCOPES.filter((s) => !LINE_SEND_SCOPES.includes(s));
-}
-
 export function isApiScope(s: string): s is ApiScope {
   return (API_SCOPES as readonly string[]).includes(s);
 }

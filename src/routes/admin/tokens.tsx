@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { DEFAULT_SCOPES, MA_PORTS_MIGRATION, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, issuableScopes, tokenPrefix, type ApiScope } from "../../api/tokens";
-import { migrated } from "../../db/migration-state";
+import { API_SCOPES, DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { t, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
@@ -59,8 +58,6 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "line:send": "tokens.scope.line_send",
 };
 
-/** 発行できるスコープ（line:send は 0105 が当たってから） */
-const scopesFor = async (c: AdminContext) => issuableScopes(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, MA_PORTS_MIGRATION));
 
 const fmt = (iso: string | null): string => formatDateTime(iso);
 
@@ -79,7 +76,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const shop = sa.shop;
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
-  const scopeList = await scopesFor(c);
+  const scopeList = API_SCOPES;
   const withApps = scopeList.includes("app_data:write");
   const [rows, apps] = await Promise.all([
     db.from<TokenRow>("api_tokens").select(`id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at${withApps ? ",endpoint_id" : ""}`, { eq: { shop_id: shopId }, order: "created_at.desc" }),
@@ -210,7 +207,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const body = await c.req.parseBody({ all: true });
   const rawScopes = body["scopes"];
   const scopes = (Array.isArray(rawScopes) ? rawScopes : typeof rawScopes === "string" ? [rawScopes] : []).filter((v): v is ApiScope => typeof v === "string" && isApiScope(v));
-  const issuable = await scopesFor(c);
+  const issuable = API_SCOPES;
   if (scopes.some((sc) => !issuable.includes(sc))) return c.redirect(`/admin/shops/${shopId}/tokens?flash=generic`);
   const f = await formFields(c);
   const name = (f.name ?? "").trim().slice(0, 100);

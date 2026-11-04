@@ -4,7 +4,6 @@
  * ON/OFF はキャッシュ済み / 読み込み済みのショップ行で判定し、そのために DB に問い合わせない。OFF のモジュールはルートもメニューも出さない。
  */
 import type { MessageKey } from "../i18n";
-import { AUDIENCES_MIGRATION } from "../members/audience";
 
 export interface ModuleDef {
   id: string;
@@ -47,7 +46,7 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "embed", name: "mod.embed.name", description: "mod.embed.description", adminPath: "embed" },
   // 採寸表（ショップ全体・カテゴリー・商品の段。表示するときに近い段から決める。0095_mod_size_charts、docs/size-charts.md）
   // 会員の条件（会員の独自項目の組み合わせ。ブロック・商品・ページ・会員価格で使う。0097_audiences、docs/audiences.md）
-  { id: "audiences", name: "mod.audiences.name", description: "mod.audiences.description", adminPath: "audiences", migration: AUDIENCES_MIGRATION },
+  { id: "audiences", name: "mod.audiences.name", description: "mod.audiences.description", adminPath: "audiences" },
   { id: "size_charts", name: "mod.size_charts.name", description: "mod.size_charts.description", adminPath: "size-charts" },
   // お店の行動（商品を見た・記事を読んだ・カートに入れた…）を、つないだ外部プラグインへ渡す。何を渡すかは連携ごとに運営者が許す（0107_mod_event_relay、docs/event-relay.md）
   { id: "event_relay", name: "mod.event_relay.name", description: "mod.event_relay.description", migration: "0107_mod_event_relay" },

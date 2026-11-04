@@ -15,7 +15,6 @@ import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../../media/im
 import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
-import { migrated } from "../../db/migration-state";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, PAGES_TRASH_DAYS, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { formatDateTime, isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { markdownToHtml } from "../../pages/markdown";
@@ -144,14 +143,13 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
         <a class="btn" href={`${base(shop.id)}/new`}>
           {t("pages.new")}
         </a>
-        {(await layoutsReady(c)) ? (
-          <>
-            {" "}
-            <a class="btn secondary" href={`${base(shop.id)}/layouts`}>
-              {t("pages.layouts")}
-            </a>
-          </>
-        ) : null}
+        <>
+          {" "}
+          <a class="btn secondary" href={`${base(shop.id)}/layouts`}>
+            {t("pages.layouts")}
+          </a>
+        </>
+      
       </p>
       <form method="get" action={base(shop.id)} class="toolbar" role="search">
         <nav aria-label={t("pages.state")} style="display:flex;gap:.75rem;flex-wrap:wrap">
@@ -285,18 +283,7 @@ pagesAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   return editPage(c, shop, { values: EMPTY });
 });
 
-// ---------- ひな形の割り当て（0101、docs/pages.md「ひな形の割り当て」） ----------
-export const PAGE_LAYOUTS_MIGRATION = "0101_page_layouts";
-const layoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_LAYOUTS_MIGRATION);
-/** 商品詳細のひな形（0102）。当たるまで商品の欄を出さない・送らない（0101 の page_layouts_set は知らない鍵を断る） */
-export const PRODUCT_LAYOUTS_MIGRATION = "0102_page_layouts_product";
-const productLayoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PRODUCT_LAYOUTS_MIGRATION);
-/** 商品一覧のひな形（0103）。当たるまで一覧の欄を出さない・送らない */
-export const COLLECTION_LAYOUTS_MIGRATION = "0103_page_layouts_collection";
-const collectionLayoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COLLECTION_LAYOUTS_MIGRATION);
-/** 法務のページのひな形（0104）。当たるまで欄を出さない・送らない */
-export const LEGAL_LAYOUTS_MIGRATION = "0104_page_layouts_legal";
-const legalLayoutsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, LEGAL_LAYOUTS_MIGRATION);
+// ---------- ひな形の割り当て（0101〜0104、docs/pages.md「ひな形の割り当て」） ----------
 
 /** カテゴリーの木を上から順に（深さつき） */
 function flattenTree(nodes: CategoryNode[], depth = 0): { node: CategoryNode; depth: number }[] {
@@ -306,13 +293,10 @@ function flattenTree(nodes: CategoryNode[], depth = 0): { node: CategoryNode; de
 async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "error" | null, status: 200 | 400 = 200) {
   const db = owner(c).db;
   const blogOn = moduleEnabled(shop.settings, BLOG_MODULE);
-  const productOn = await productLayoutsReady(c);
-  const collectionOn = await collectionLayoutsReady(c);
-  const legalOn = await legalLayoutsReady(c);
   const [pages, blogs, categories] = await Promise.all([
     db.from<PageRow>("pages").select("id,title,handle,published,deleted_at", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" }),
     blogOn ? db.from<BlogRow>("blogs").select("id,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" }) : Promise.resolve([] as BlogRow[]),
-    productOn || collectionOn ? db.from<CategoryRow>("categories").select("id,name,parent_id,sort_order", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }) : Promise.resolve([] as CategoryRow[]),
+    db.from<CategoryRow>("categories").select("id,name,parent_id,sort_order", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }),
   ]);
   const usable = pages.filter((p) => !p.deleted_at);
   const cur = pageLayoutsOf(shop.settings);
@@ -346,62 +330,59 @@ async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "err
           </>
         ))}
         {blogs.length > 0 ? <p class="muted">{t("pages.layouts_article_help")}</p> : null}
-        {productOn ? (
-          <>
-            <label for="product">{t("pages.layouts_product")}</label>
-            {select("product", cur.product)}
-            <p class="muted">{t("pages.layouts_product_help")}</p>
-            {categories.length > 0 ? (
-              <details open={Object.keys(cur.productCategories).length > 0}>
-                <summary>{t("pages.layouts_categories")}</summary>
-                {flattenTree(categoryTree(categories)).map(({ node, depth }) => (
-                  <>
-                    <label for={`category_${node.id}`} style={`padding-left:${depth * 1.25}rem`}>
-                      {tf("pages.layouts_category", { category: node.name })}
-                    </label>
-                    <div style={`padding-left:${depth * 1.25}rem`}>{select(`category_${node.id}`, cur.productCategories[node.id] ?? null, "pages.layouts_inherit")}</div>
-                  </>
-                ))}
-              </details>
-            ) : null}
-          </>
-        ) : null}
-        {collectionOn ? (
-          <>
-            <label for="collection">{t("pages.layouts_collection")}</label>
-            {select("collection", cur.collection)}
-            <p class="muted">{t("pages.layouts_collection_help")}</p>
-            {categories.length > 0 ? (
-              <details open={Object.keys(cur.collectionCategories).length > 0}>
-                <summary>{t("pages.layouts_collection_categories")}</summary>
-                {flattenTree(categoryTree(categories)).map(({ node, depth }) => (
-                  <>
-                    <label for={`ccategory_${node.id}`} style={`padding-left:${depth * 1.25}rem`}>
-                      {tf("pages.layouts_collection_category", { category: node.name })}
-                    </label>
-                    <div style={`padding-left:${depth * 1.25}rem`}>{select(`ccategory_${node.id}`, cur.collectionCategories[node.id] ?? null, "pages.layouts_inherit")}</div>
-                  </>
-                ))}
-              </details>
-            ) : null}
-          </>
-        ) : null}
-        {legalOn ? (
-          <>
-            <label for="legal">{t("pages.layouts_legal")}</label>
-            {select("legal", cur.legal)}
-            <p class="muted">{t("pages.layouts_legal_help")}</p>
-            <details open={Object.keys(cur.legalPages).length > 0}>
-              <summary>{t("pages.layouts_legal_pages")}</summary>
-              {(["legal", "privacy", "returns"] as const).map((k) => (
+        <>
+          <label for="product">{t("pages.layouts_product")}</label>
+          {select("product", cur.product)}
+          <p class="muted">{t("pages.layouts_product_help")}</p>
+          {categories.length > 0 ? (
+            <details open={Object.keys(cur.productCategories).length > 0}>
+              <summary>{t("pages.layouts_categories")}</summary>
+              {flattenTree(categoryTree(categories)).map(({ node, depth }) => (
                 <>
-                  <label for={`legal_${k}`}>{t(k === "legal" ? "shop.legal_notice" : k === "privacy" ? "shop.privacy_policy" : "shop.return_policy")}</label>
-                  {select(`legal_${k}`, cur.legalPages[k] ?? null, "pages.layouts_inherit")}
+                  <label for={`category_${node.id}`} style={`padding-left:${depth * 1.25}rem`}>
+                    {tf("pages.layouts_category", { category: node.name })}
+                  </label>
+                  <div style={`padding-left:${depth * 1.25}rem`}>{select(`category_${node.id}`, cur.productCategories[node.id] ?? null, "pages.layouts_inherit")}</div>
                 </>
               ))}
             </details>
-          </>
-        ) : null}
+          ) : null}
+        </>
+      
+        <>
+          <label for="collection">{t("pages.layouts_collection")}</label>
+          {select("collection", cur.collection)}
+          <p class="muted">{t("pages.layouts_collection_help")}</p>
+          {categories.length > 0 ? (
+            <details open={Object.keys(cur.collectionCategories).length > 0}>
+              <summary>{t("pages.layouts_collection_categories")}</summary>
+              {flattenTree(categoryTree(categories)).map(({ node, depth }) => (
+                <>
+                  <label for={`ccategory_${node.id}`} style={`padding-left:${depth * 1.25}rem`}>
+                    {tf("pages.layouts_collection_category", { category: node.name })}
+                  </label>
+                  <div style={`padding-left:${depth * 1.25}rem`}>{select(`ccategory_${node.id}`, cur.collectionCategories[node.id] ?? null, "pages.layouts_inherit")}</div>
+                </>
+              ))}
+            </details>
+          ) : null}
+        </>
+      
+        <>
+          <label for="legal">{t("pages.layouts_legal")}</label>
+          {select("legal", cur.legal)}
+          <p class="muted">{t("pages.layouts_legal_help")}</p>
+          <details open={Object.keys(cur.legalPages).length > 0}>
+            <summary>{t("pages.layouts_legal_pages")}</summary>
+            {(["legal", "privacy", "returns"] as const).map((k) => (
+              <>
+                <label for={`legal_${k}`}>{t(k === "legal" ? "shop.legal_notice" : k === "privacy" ? "shop.privacy_policy" : "shop.return_policy")}</label>
+                {select(`legal_${k}`, cur.legalPages[k] ?? null, "pages.layouts_inherit")}
+              </>
+            ))}
+          </details>
+        </>
+      
         <p class="muted">{t("pages.layouts_hidden_note")}</p>
         <p>
           <button type="submit">{t("shop.save")}</button> <a href={base(shop.id)}>{t("blocks.cancel")}</a>
@@ -414,13 +395,13 @@ async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "err
 
 pagesAdmin.get("/layouts", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
-  if (!shop || !(await layoutsReady(c))) return c.notFound();
+  if (!shop) return c.notFound();
   return layoutsPage(c, shop, c.req.query("flash") === "saved" ? "saved" : null);
 });
 
 pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
-  if (!shop || !(await layoutsReady(c))) return c.notFound();
+  if (!shop) return c.notFound();
   const f = await formFields(c);
   const articles: Record<string, string> = {};
   const cats: Record<string, string> = {};
@@ -430,11 +411,11 @@ pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
     if (k.startsWith("category_") && v) cats[k.slice("category_".length)] = v;
     if (k.startsWith("ccategory_") && v) ccats[k.slice("ccategory_".length)] = v;
   }
-  const collection = (await collectionLayoutsReady(c)) ? { collection: f["collection"] || null, collection_categories: ccats } : {};
+  const collection = { collection: f["collection"] || null, collection_categories: ccats };
   const legalPagesSel: Record<string, string> = {};
   for (const k of ["legal", "privacy", "returns"]) if (f[`legal_${k}`]) legalPagesSel[k] = f[`legal_${k}`]!;
-  const legal = (await legalLayoutsReady(c)) ? { legal: f["legal"] || null, legal_pages: legalPagesSel } : {};
-  const product = (await productLayoutsReady(c)) ? { product: f["product"] || null, product_categories: cats } : {};
+  const legal = { legal: f["legal"] || null, legal_pages: legalPagesSel };
+  const product = { product: f["product"] || null, product_categories: cats };
   try {
     await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles, ...product, ...collection, ...legal } });
   } catch (e) {

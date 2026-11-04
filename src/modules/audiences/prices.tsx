@@ -9,10 +9,8 @@ import { owner, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
 import { loadCategories } from "../../routes/admin/categories";
-import { migrated } from "../../db/migration-state";
 import { moduleEnabled } from "../registry";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
-import { MEMBER_PRICES_MIGRATION } from "../../storefront/data";
 import { yen } from "../../routes/common";
 
 /**
@@ -60,8 +58,7 @@ interface Draft {
 
 async function scope(c: AdminContext): Promise<ShopRow | null> {
   const shop = await loadShop(c, param(c, "shopId"), "marketing");
-  if (!shop || !moduleEnabled(shop.settings, AUDIENCES_MODULE)) return null;
-  return (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, MEMBER_PRICES_MIGRATION)) ? shop : null;
+  return shop && moduleEnabled(shop.settings, AUDIENCES_MODULE) ? shop : null;
 }
 
 const base = (shop: ShopRow) => `/admin/shops/${shop.id}/modules/audiences/prices`;

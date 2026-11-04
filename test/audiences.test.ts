@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith, memberMail } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { issueTokens, openSession, openToken, sealSession } from "../src/members/auth";
-import { AUDIENCES_MIGRATION } from "../src/members/audience";
 
 /** 同梱モジュール「会員の条件」（0097、docs/audiences.md）: 管理画面・会員の Cookie とトークンに載る値 */
 
@@ -59,9 +57,6 @@ describe("管理画面", () => {
     expect(row["condition"]).toEqual(nested);
     const edit = await (await b.get(`${base}/${row["id"]}`)).text();
     expect(edit).toContain("<details open");
-    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== AUDIENCES_MIGRATION) });
-    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(`/admin/shops/${old.shop.id}/modules`)).text()).not.toContain('data-module="audiences"');
   });
 });
 

@@ -8,7 +8,6 @@ import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, imageUrl, productImageKey, thumbKey } from "../../media/images";
 import { ORIGINAL_MAX_BYTES, imageKeys, imageMaxWidth, imageProcessing, readVariantFiles, resizeScript, thumbScript, thumbWidthOf, variantKey } from "../../media/variants";
-import { migrated } from "../../db/migration-state";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
 import { SLUG_RE, formFields, mediaBaseUrl, owner, param, params, type AdminContext } from "./context";
@@ -25,7 +24,6 @@ import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 import { moduleEnabled } from "../../modules/registry";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
-import { AUDIENCE_PRODUCTS_MIGRATION } from "../../storefront/data";
 
 export const products = new Hono<AppEnv>();
 
@@ -203,10 +201,9 @@ async function catalogContext(c: AdminContext, shop: ShopRow): Promise<CatalogCo
   return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}) };
 }
 
-/** 会員限定の商品（0098）で選べる会員の条件。モジュールが OFF・当たる前は null（欄を出さない） */
+/** 会員限定の商品（0098）で選べる会員の条件。モジュールが OFF なら null（欄を出さない） */
 async function productAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string }[] | null> {
   if (!moduleEnabled(shop.settings, AUDIENCES_MODULE)) return null;
-  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, AUDIENCE_PRODUCTS_MIGRATION))) return null;
   const rows = await owner(c)
     .db.from<{ id: string; name: string; condition: unknown }>("audiences")
     .select("id,name,condition", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })

@@ -130,9 +130,6 @@ export interface SkuWithStock extends SkuRow {
   member_price_jpy?: number;
 }
 
-/** 会員価格（0099）。当たるまで会員価格を引かない（予約の単価も写さない） */
-export const MEMBER_PRICES_MIGRATION = "0099_member_prices";
-
 export interface ProductDetail {
   product: ProductRow;
   images: ProductImageRow[];
@@ -140,12 +137,6 @@ export interface ProductDetail {
   /** 見る人が買えるか（会員限定の商品、0098。会員は DB が判定、ゲストは会員の条件の付いた商品は買えない）。省略は買える */
   purchasable?: boolean;
 }
-
-/** 会員限定の商品（0098）。当たるまで会員の読み取りの経路を使わない */
-export const AUDIENCE_PRODUCTS_MIGRATION = "0098_audience_products";
-
-/** 会員限定のページ・記事（0100）。当たるまで会員の読み取りの経路を使わない */
-export const AUDIENCE_CONTENT_MIGRATION = "0100_audience_content";
 
 /** 会員の読み取りの経路（service_role の product_member_* / page_member_get など。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の行を足す） */
 export interface MemberReader {
@@ -175,13 +166,11 @@ export class StorefrontData {
 
   /** ゲストが会員限定のページ・記事の URL で来たとき「会員の方だけ」と出してよいか（0100。存在も隠すもの・無いものは false） */
   async contentGate(shop: PublicShop, kind: "page" | "article", handle: string, blogId: string | null = null): Promise<boolean> {
-    if (!(await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) return false;
     return (await this.db.rpc<string | null>("content_public_gate", { p_shop_id: shop.id, p_kind: kind, p_blog_id: blogId, p_handle: handle })) === "members";
   }
 
   /** ゲストが見せない商品の URL で来たとき「会員の方だけ」と出してよいか（存在も隠す商品・無い商品は false） */
   async productGate(shop: PublicShop, slug: string): Promise<boolean> {
-    if (!(await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION))) return false;
     return (await this.db.rpc<string | null>("product_public_gate", { p_shop_id: shop.id, p_slug: slug })) === "members";
   }
 
@@ -258,7 +247,7 @@ export class StorefrontData {
     };
     // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
     // 会員は会員限定の商品を含むのでキャッシュしない（会員の読み取りの経路は 0098 から）
-    const reader = this.reader && (await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION)) ? this.reader : null;
+    const reader = this.reader;
     const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
     const key = `plist:${JSON.stringify(args)}`;
     const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
@@ -379,7 +368,7 @@ export class StorefrontData {
   /** ショップのページ（同梱モジュール pages、0079）。公開中のものだけ（RLS）。商品の一覧と同じく短時間キャッシュする */
   async pageByHandle(shop: PublicShop, handle: string): Promise<PageRow | null> {
     // 会員: 会員限定のページも（0100。キャッシュしない）
-    if (this.reader && (await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) {
+    if (this.reader) {
       const r = (await this.reader.page(handle)) as PageRow | null;
       return r && typeof r === "object" ? r : null;
     }
@@ -474,7 +463,7 @@ export class StorefrontData {
    */
   async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
     const offset = Math.max(0, Math.min(ARTICLES_OFFSET_MAX, Math.floor(opts.offset)));
-    if (this.reader && (await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) {
+    if (this.reader) {
       const rows = (await this.reader.articles(blogId, offset, opts.limit, opts.tag ?? null)) as ArticleRow[] | null;
       const list = Array.isArray(rows) ? rows : [];
       return { items: list.slice(0, opts.limit), hasNext: list.length > opts.limit };
@@ -496,7 +485,7 @@ export class StorefrontData {
 
   /** 記事 1 つ（公開中のものだけ、RLS） */
   async articleByHandle(shop: PublicShop, blogId: string, handle: string): Promise<ArticleRow | null> {
-    if (this.reader && (await this.migratedTo(AUDIENCE_CONTENT_MIGRATION))) {
+    if (this.reader) {
       const r = (await this.reader.article(blogId, handle)) as ArticleRow | null;
       return r && typeof r === "object" ? r : null;
     }
@@ -533,7 +522,7 @@ export class StorefrontData {
 
   async productBySlug(shop: PublicShop, slug: string): Promise<ProductDetail | null> {
     // 会員: 商品・画像・SKU と在庫・買えるかを 1 回で（0098）
-    if (this.reader && (await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION))) {
+    if (this.reader) {
       const r = (await this.reader.get(slug)) as { product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[]; purchasable?: boolean } | null;
       if (!r || !r.product) return null;
       return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], purchasable: r.purchasable !== false };
@@ -563,7 +552,7 @@ export class StorefrontData {
   private async memberPricesFor(shop: PublicShop, skuIds: readonly string[]): Promise<Map<string, number>> {
     const out = new Map<string, number>();
     const mods = (shop.settings?.["modules"] ?? {}) as Record<string, unknown>;
-    if (skuIds.length === 0 || mods["audiences"] !== true || !(await this.migratedTo(MEMBER_PRICES_MIGRATION))) return out;
+    if (skuIds.length === 0 || mods["audiences"] !== true) return out;
     const rows = await this.db.rpc<{ sku_id: string; member_price_jpy: number }[] | null>("product_public_member_prices", { p_shop_id: shop.id, p_sku_ids: [...new Set(skuIds)].slice(0, 200) });
     for (const r of Array.isArray(rows) ? rows : []) if (typeof r.member_price_jpy === "number") out.set(r.sku_id, r.member_price_jpy);
     return out;
@@ -604,9 +593,8 @@ export class StorefrontData {
     const ids = [...new Set(skuIds)].filter((id) => UUID_RE.test(id)).slice(0, 100);
     if (ids.length === 0) return out;
     const wanted = new Set(skuIds);
-    const gated = await this.migratedTo(AUDIENCE_PRODUCTS_MIGRATION);
     // 会員: SKU・商品・在庫・買えるかを 1 回で（0098）
-    if (this.reader && gated) {
+    if (this.reader) {
       const rows = (await this.reader.skus(ids)) as { sku: SkuWithStock; product: ProductRow; purchasable: boolean }[] | null;
       for (const r of Array.isArray(rows) ? rows : []) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, purchasable: r.purchasable !== false });
       return out;
@@ -614,7 +602,7 @@ export class StorefrontData {
     const skus = await this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } });
     const [inventory, products] = await Promise.all([
       this.inventoryOf(shop, skus.map((s) => s.id)),
-      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(gated ? `${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode` : PUBLIC_PRODUCT_COLUMNS, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
+      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(`${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode`, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));

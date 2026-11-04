@@ -10,8 +10,6 @@ import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { can } from "./access";
-import { migrated } from "../../db/migration-state";
-import { MA_PORTS_MIGRATION } from "../../api/tokens";
 
 /** 宣伝の月の上限の既定（0105 の banto_line_marketing_limit と同じ） */
 export const LINE_MARKETING_LIMIT_DEFAULT = 150;
@@ -37,8 +35,7 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
   const base = `/admin/shops/${shop.id}/line-messaging`;
   const flash = c.req.query("flash");
   // 宣伝の月の上限と今月の数（0105）
-  const maPorts = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, MA_PORTS_MIGRATION);
-  const usage = maPorts && can(c.get("shopAccess"), "marketing") ? await owner(c).db.rpc<{ count: number; limit: number }>("line_marketing_usage", { p_shop_id: shop.id }) : null;
+  const usage = can(c.get("shopAccess"), "marketing") ? await owner(c).db.rpc<{ count: number; limit: number }>("line_marketing_usage", { p_shop_id: shop.id }) : null;
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
       <PageHead title={t("linemsg.title")} />
@@ -61,24 +58,23 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
           <button type="submit">{t("linemsg.save")}</button>
         </p>
       </form>
-      {maPorts ? (
-        <section class="card">
-          <h2>{t("linemsg.marketing_title")}</h2>
-          <p class="muted">{t("linemsg.marketing_intro")}</p>
-          {flash === "limit_saved" ? <p class="notice">{t("linemsg.limit_saved")}</p> : null}
-          {usage ? <p>{t("linemsg.marketing_count").replace("{count}", String(usage.count)).replace("{limit}", String(usage.limit))}</p> : null}
-          {can(c.get("shopAccess"), "settings") ? (
-            <form method="post" action={`${base}/limit`}>
-              <label for="limit">{t("linemsg.limit")}</label>
-              <input id="limit" name="limit" type="number" min={0} max={9999999} step={1} value={String(lineMarketingLimit(shop.settings))} required style="width:10rem" />
-              <p class="muted">{t("linemsg.limit_note")}</p>
-              <p>
-                <button type="submit">{t("linemsg.save")}</button>
-              </p>
-            </form>
-          ) : null}
-        </section>
-      ) : null}
+      <section class="card">
+        <h2>{t("linemsg.marketing_title")}</h2>
+        <p class="muted">{t("linemsg.marketing_intro")}</p>
+        {flash === "limit_saved" ? <p class="notice">{t("linemsg.limit_saved")}</p> : null}
+        {usage ? <p>{t("linemsg.marketing_count").replace("{count}", String(usage.count)).replace("{limit}", String(usage.limit))}</p> : null}
+        {can(c.get("shopAccess"), "settings") ? (
+          <form method="post" action={`${base}/limit`}>
+            <label for="limit">{t("linemsg.limit")}</label>
+            <input id="limit" name="limit" type="number" min={0} max={9999999} step={1} value={String(lineMarketingLimit(shop.settings))} required style="width:10rem" />
+            <p class="muted">{t("linemsg.limit_note")}</p>
+            <p>
+              <button type="submit">{t("linemsg.save")}</button>
+            </p>
+          </form>
+        ) : null}
+      </section>
+    
       {row ? (
         <form method="post" action={`${base}/delete`}>
           <button type="submit">{t("linemsg.delete")}</button>

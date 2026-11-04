@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith, memberLogin, memberMail } from "./helpers";
 import { issueTokens } from "../src/members/auth";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
-import { AUDIENCE_PRODUCTS_MIGRATION } from "../src/storefront/data";
 
 /** 会員限定の商品（0098、docs/audiences.md「会員限定の商品」）: お店の画面・カート・ヘッドレス・管理画面 */
 
@@ -79,8 +77,8 @@ describe("お店の画面", () => {
     expect((await silver.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" })).headers.get("location")).toBe("/my-shop/p/early");
   });
 
-  it("モジュールが OFF・0098 の前は会員の読み取りの経路を使わない（見せない商品はだれにも出ない）", async () => {
-    for (const o of [{ modules: {} }, { applied: BUNDLED_MIGRATIONS.filter((v) => v !== AUDIENCE_PRODUCTS_MIGRATION) }]) {
+  it("モジュールが OFF なら会員の読み取りの経路を使わない（見せない商品はだれにも出ない）", async () => {
+    for (const o of [{ modules: {} }]) {
       const { app, mail } = setup(o);
       const gold = new Browser(app, BASE);
       await memberLogin(gold, mail, "/my-shop", "gold@example.com");

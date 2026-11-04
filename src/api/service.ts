@@ -6,7 +6,7 @@ import { VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } 
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
-import { MA_PORTS_MIGRATION, hashApiToken } from "./tokens";
+import { hashApiToken } from "./tokens";
 import { ORDER_TAGS_MIGRATION } from "../orders/tags";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, productImageKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
@@ -454,7 +454,6 @@ export class ApiService {
   ordersList = async (q: OrdersQuery = {}) => {
     const extra: Record<string, unknown> = {};
     if (q.customerId !== undefined || q.updatedSince !== undefined || q.after !== undefined) {
-      if (!(await this.migratedTo(MA_PORTS_MIGRATION))) throw new ApiError("migration_required", "customer_id / updated_since / after need the database update 0105_ma_ports", 409);
       if (q.after !== undefined && q.updatedSince === undefined) throw new ApiError("invalid", "invalid_cursor: pass after together with updated_since (both from the previous response's cursor)", 400);
       if (q.updatedSince !== undefined && Number.isNaN(Date.parse(q.updatedSince))) throw new ApiError("invalid", "updated_since must be an ISO 8601 date-time", 400);
       extra["p_customer_id"] = q.customerId !== undefined ? uuidOr404(q.customerId) : null;
@@ -501,7 +500,6 @@ export class ApiService {
 
   // ---- LINE で送る口（line:send、0105。docs/line.md §4）。LINE の利用者 ID は応答に載せない ----
   lineMessageSend = async (customerId: string, input: Record<string, unknown>, idempotencyKey: string | undefined): Promise<{ id?: string; status: LineSendStatus; limit?: number; count?: number }> => {
-    if (!(await this.migratedTo(MA_PORTS_MIGRATION))) throw new ApiError("migration_required", "LINE messages need the database update 0105_ma_ports", 409);
     if (!idempotencyKey || !IDEMPOTENCY_KEY_RE.test(idempotencyKey)) throw new ApiError("invalid", "Idempotency-Key header is required: 8 to 64 letters, digits, '-' or '_' (reuse the same key to retry the same message)", 400);
     let messages;
     try {
@@ -534,7 +532,6 @@ export class ApiService {
     return { id: b.id, status: result };
   };
   lineUsage = async () => {
-    if (!(await this.migratedTo(MA_PORTS_MIGRATION))) throw new ApiError("migration_required", "LINE messages need the database update 0105_ma_ports", 409);
     return this.call<{ month: string; count: number; limit: number }>("api_line_usage", {});
   };
   orderGet = (id: string) => this.call<Record<string, unknown>>("api_order_get", { p_order_id: id });

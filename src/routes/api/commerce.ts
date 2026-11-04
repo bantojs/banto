@@ -3,7 +3,7 @@ import { withApiMember } from "../audience-render";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { StorefrontData, type PublicShop, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
+import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
@@ -226,7 +226,6 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
     // 会員の注文として紐づける（会員は自分の注文を /members/me や会員ページで読める）
     ...(s.member ? { customerId: s.member.id, customerEpoch: s.member.epoch } : {}),
     limits: await reserveLimits(s.secret, quote, await clientIpFor(c, s.shop), s.member ? { id: s.member.id } : null),
-    memberPrices: await s.sf.migratedTo(MEMBER_PRICES_MIGRATION),
   });
   if (!placed.ok) {
     if (placed.error === "stock") return c.json({ error: "stock" }, 409);

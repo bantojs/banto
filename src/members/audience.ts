@@ -4,8 +4,6 @@
  *     同じ答え合わせの表（test/fixtures/audience-cases.ts）を TS と実 PostgreSQL に流して、ずれないことを確かめる
  *   - お金と秘密（買える・単価・見せない商品やページ）は DB が判定する。ここで決めない
  */
-/** 会員の条件のマイグレーション。当たるまで条件の機能は出さない（会員の Cookie にも値を入れない） */
-export const AUDIENCES_MIGRATION = "0097_audiences";
 /** 同梱モジュールの id（既定 OFF） */
 export const AUDIENCES_MODULE = "audiences";
 

@@ -4,8 +4,6 @@ import { FakeStripe } from "./fake-stripe";
 import { BASE, Browser, MemoryStorage, appWith, memberLogin, memberMail } from "./helpers";
 import { forgetThemes } from "../src/themes/liquid/cache";
 import { issueTokens } from "../src/members/auth";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
-import { AUDIENCES_MIGRATION } from "../src/members/audience";
 
 /** 本文の見せる相手の囲み（0097、docs/audiences.md「本文のブロック」）: お店の画面・Liquid・ヘッドレスの公開 API */
 
@@ -77,8 +75,8 @@ describe("お店の画面", () => {
     expect(await (await gold.get("/my-shop/blogs/news")).text()).not.toContain("ゴールドだけ");
   });
 
-  it("モジュールが OFF・0097 の前は、合う会員にも出さない", async () => {
-    for (const o of [{ modules: { pages: true, blog: true } }, { applied: BUNDLED_MIGRATIONS.filter((v) => v !== AUDIENCES_MIGRATION) }]) {
+  it("モジュールが OFF なら、合う会員にも出さない", async () => {
+    for (const o of [{ modules: { pages: true, blog: true } }]) {
       const { app, mail } = setup(o);
       const gold = new Browser(app, BASE);
       await memberLogin(gold, mail, "/my-shop", "gold@example.com");

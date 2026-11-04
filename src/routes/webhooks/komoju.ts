@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { createPrivilegedDb, PrivilegedRpcError } from "../../db/privileged";
 import { createKomojuClient, verifyKomojuSignature, type KomojuEvent } from "../../plugins/komoju";
-import { maPortsReady, type Ctx } from "../common";
+import { type Ctx } from "../common";
 
 /**
  * KOMOJU Webhook。X-Komoju-Signature（HMAC-SHA256 hex）を検証し、
@@ -44,7 +44,7 @@ komojuWebhook.post("/", async (c: Ctx) => {
 
   if (RELEASE.has(event.type)) {
     // 決済ページの期限切れだけがカゴ落ち（会員の予約なら checkout.abandoned を積む、0105）。支払いの失敗・取り消しは数えない
-    const released = event.type === "payment.expired" && (await maPortsReady(c)) ? await db.releaseReservationAbandoned(reservationId, shopId) : await db.releaseReservation(reservationId, shopId);
+    const released = event.type === "payment.expired" ? await db.releaseReservationAbandoned(reservationId, shopId) : await db.releaseReservation(reservationId, shopId);
     await db.recordWebhookEvent("komoju", event.id);
     return c.json({ received: true, released });
   }

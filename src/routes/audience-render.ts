@@ -4,7 +4,7 @@
  * 引けなければ空（どの囲みも見せない）
  */
 import type { Ctx } from "./common";
-import { audiencesReady, isSecureRequest } from "./common";
+import { isSecureRequest } from "./common";
 import { readCookie } from "../util/signed";
 import { privilegedFor } from "./payment-deps";
 import { moduleEnabled } from "../modules/registry";
@@ -19,7 +19,6 @@ export const audiencesCacheKey = (shopId: string) => `audiences:${shopId}`;
 
 export async function shopAudiences(c: Ctx, shop: { id: string; settings?: Record<string, unknown> | null }): Promise<RenderAudience[]> {
   if (!moduleEnabled(shop.settings ?? {}, AUDIENCES_MODULE)) return [];
-  if (!(await audiencesReady(c))) return [];
   const cache = c.get("adapters").cache;
   const key = audiencesCacheKey(shop.id);
   const hit = await cache.get<RenderAudience[]>(key);

@@ -3,7 +3,6 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, followPreview } from "./helpers";
 import { composeLayout, pageLayoutsOf } from "../src/content/layouts";
 import { forgetThemes } from "../src/themes/liquid/cache";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /** ひな形の割り当て（0101、src/content/layouts.ts、docs/pages.md「ひな形の割り当て」）: お店のトップと記事 */
 
@@ -59,10 +58,6 @@ describe("管理画面", () => {
     expect((await b.post(`${base}/layouts`, { home: top.id, [`article_${blog.id}`]: tpl.id })).status).toBe(302);
     expect(settings()["page_layouts"]).toEqual({ home: top.id, articles: { [blog.id]: tpl.id } });
     expect((await b.post(`${base}/layouts`, { home: "00000000-0000-4000-8000-000000000000" })).status).toBe(400);
-    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((m) => m !== "0101_page_layouts") });
-    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(old.base)).text()).not.toContain("/layouts");
-    expect((await b2.get(`${old.base}/layouts`)).status).toBe(404);
   });
 });
 
@@ -188,9 +183,6 @@ describe("商品詳細のひな形（0102）", () => {
     expect(form).toContain(`name="category_${tops.id}"`);
     expect((await b.post(`${base}/layouts`, { product: tpl.id, [`category_${tops.id}`]: topsTpl.id })).status).toBe(302);
     expect(settings()["page_layouts"]).toEqual({ product: tpl.id, product_categories: { [tops.id]: topsTpl.id } });
-    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((m) => m !== "0102_page_layouts_product") });
-    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain('name="product"');
   });
 
   it("Liquid: ひな形の中に既定の部品で描き、構造化データと canonical は商品のもの", async () => {
@@ -302,9 +294,6 @@ describe("商品一覧のひな形（0103）", () => {
     expect(settings()["page_layouts"]).toEqual({ collection: tpl.id, collection_categories: { [tops.id]: topsTpl.id } });
     expect(await (await new Browser(app, BASE).get("/my-shop?category=shirts")).text()).toContain("トップス専用の一覧");
     expect(await (await new Browser(app, BASE).get("/my-shop?all=1")).text()).toContain("一覧の案内");
-    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((m) => m !== "0103_page_layouts_collection") });
-    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain('name="collection"');
   });
 
   it("プレビューは割り当てたカテゴリーの一覧を見本にする", async () => {
@@ -372,8 +361,5 @@ describe("法務のページのひな形（0104）", () => {
     const html = await (await followPreview(app, await b.post(`${base}/${tpl.id}`, { title: "法務のひな形", handle: "legal-tpl", body: "下書きの前書き\n\n::: current part=title\n\n::: current part=legal", nav: "none", sort_order: "0", action: "preview" }))).text();
     expect(html).toContain("下書きの前書き");
     expect(html).toContain('<pre class="legal banto-legal">c</pre>');
-    const old = setup({ applied: BUNDLED_MIGRATIONS.filter((m) => m !== "0104_page_layouts_legal") });
-    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain('name="legal"');
   });
 });

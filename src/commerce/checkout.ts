@@ -572,8 +572,6 @@ export interface PlaceOrderInput {
   customerEpoch?: number;
   /** 予約の上限（0029、reserveLimits() で作る） */
   limits?: ReserveLimits | null;
-  /** 会員価格（0099）が当たっていれば true（会員の予約の単価を写し直し、最終確認の単価と突き合わせる） */
-  memberPrices?: boolean;
 }
 
 /** free: 0 円の注文で、決済なしで確定した（url は完了画面、orderId は確定した注文） */
@@ -628,7 +626,7 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
 
   // 会員価格（0099）: 予約の単価を DB が会員価格で写し直す。最終確認で見せた単価（会員の読み取りの経路の値付け）と
   // 1 円でも違えば（決まりやランクがあいだで変わった）確定しない
-  if (input.customerId && input.memberPrices) {
+  if (input.customerId) {
     try {
       const items = await deps.privileged.applyReservationMemberPrices(reservationId, shop.id);
       const unit = new Map(items.map((i) => [i.sku_id, Number(i.unit_price_jpy)]));

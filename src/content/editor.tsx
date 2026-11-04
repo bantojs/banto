@@ -11,11 +11,9 @@ import { getLocale, t, tf, type MessageKey } from "../i18n";
 import { formFields, owner, type AdminContext } from "../routes/admin/context";
 import { requireOwner } from "../routes/admin/auth";
 import { olderThan, readAfter, splitPage } from "../routes/admin/paging";
-import { audiencesReady, mediaBaseUrl } from "../routes/common";
+import { mediaBaseUrl } from "../routes/common";
 import { moduleEnabled } from "../modules/registry";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../members/audience";
-import { migrated } from "../db/migration-state";
-import { AUDIENCE_CONTENT_MIGRATION } from "../storefront/data";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageUrl, randomKey, sniffImage, thumbKey } from "../media/images";
 import { MAX_VIDEO_BYTES, sniffMp4 } from "../media/video";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
@@ -158,21 +156,18 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
     editorAudiences(c, shop),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
-  const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) && (await contentGateReady(c)) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
+  const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
   return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
 }
 
-/** 見せる相手の囲みで選べる会員の条件（モジュールが OFF・0097 の前は空。読めるのは項目 content を持つ人も） */
+/** 見せる相手の囲みで選べる会員の条件（モジュールが OFF なら空。読めるのは項目 content を持つ人も） */
 async function editorAudiences(c: AdminContext, shop: ShopRow): Promise<{ id: string; name: string; condition?: unknown }[]> {
-  if (!moduleEnabled(shop.settings, AUDIENCES_MODULE) || !(await audiencesReady(c))) return [];
+  if (!moduleEnabled(shop.settings, AUDIENCES_MODULE)) return [];
   return owner(c)
     .db.from<{ id: string; name: string; condition: unknown }>("audiences")
     .select("id,name,condition", { eq: { shop_id: shop.id }, order: "name.asc", limit: 200 })
     .catch(() => []);
 }
-
-/** 会員限定のページ・記事（0100）が当たっているか */
-const contentGateReady = (c: AdminContext) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, AUDIENCE_CONTENT_MIGRATION);
 
 /** 公開中の Liquid のテーマのパターンとスタイル（公開中の版があるときだけ） */
 async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: PatternBody[]; styles: BlockStyles }> {

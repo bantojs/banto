@@ -122,18 +122,10 @@ describe("REST POST /api/v1/customers/{id}/line-message", () => {
     expect((await send(app, tok, member, { text: "a" }, "msg-0000005")).json).toEqual({ status: "quota", limit: 0, count: 0 });
     expect(pushes).toHaveLength(0);
   });
-
-  it("0105 が当たるまでは 409（migration_required）", async () => {
-    const { app, issue, member } = await setup({ migrations: ["0088_app_connect"] });
-    const tok = await issue(["line:send"]);
-    const r = await send(app, tok, member, { text: "a" });
-    expect(r.status).toBe(409);
-    expect(r.json.error?.code).toBe("migration_required");
-  });
 });
 
 describe("REST GET /api/v1/orders の新しい引数（0105）", () => {
-  it("customer_id で絞る。after だけは 400。古い DB では 409", async () => {
+  it("customer_id で絞る。after だけは 400", async () => {
     const { sb, shop, app, issue, member } = await setup();
     sb.tables.orders.push({ id: crypto.randomUUID(), shop_id: shop.id, status: "paid", total_jpy: 1000, number: 1001, customer_id: member });
     sb.tables.orders.push({ id: crypto.randomUUID(), shop_id: shop.id, status: "paid", total_jpy: 2000, number: 1002, customer_id: null });
@@ -146,16 +138,11 @@ describe("REST GET /api/v1/orders の新しい引数（0105）", () => {
     expect((await get("")).json.items).toHaveLength(2);
     expect((await get(`?after=${member}`)).status).toBe(400);
     expect((await get("?updated_since=yesterday")).status).toBe(400);
-
-    const old = await setup({ migrations: ["0088_app_connect"] });
-    const oldTok = await old.issue(["orders:read"]);
-    const res = await old.app.request(`${BASE}/api/v1/orders?customer_id=${old.member}`, { headers: { authorization: `Bearer ${oldTok}` } });
-    expect(res.status).toBe(409);
   });
 });
 
 describe("管理画面: 宣伝の月の上限（0105）", () => {
-  it("今月の数と上限を出し、上限を保存する。0105 が当たるまでは出さない", async () => {
+  it("今月の数と上限を出し、上限を保存する", async () => {
     const { sb, shop, app, issue, member } = await setup();
     await send(app, await issue(["line:send"]), member, { text: "a" });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
@@ -169,9 +156,5 @@ describe("管理画面: 宣伝の月の上限（0105）", () => {
     const plugins = await (await admin.get(`/admin/shops/${shop.id}/plugins`)).text();
     expect(plugins.split(`href="${base}"`).length - 1).toBe(3);
     expect(plugins).toContain("宣伝のメッセージの月の上限");
-
-    const old = await setup({ migrations: ["0088_app_connect"] });
-    const oldAdmin = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await oldAdmin.get(`/admin/shops/${old.shop.id}/line-messaging`)).text()).not.toContain("宣伝のメッセージの月の上限");
   });
 });
