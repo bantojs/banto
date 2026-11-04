@@ -2089,6 +2089,12 @@ export class FakeSupabase {
             .sort((a, b) => Number(a["sort_order"] ?? 0) - Number(b["sort_order"] ?? 0))
             .map((b) => ({ handle: b["handle"], title: b["title"], nav: b["nav"] }))
         : [],
+      // 0108: ゲストの行動を渡す連携があるか（モジュール event_relay が ON のときだけ）
+      relay_guests:
+        moduleOn(s, "event_relay") &&
+        this.tables.hook_endpoints.some(
+          (e) => e["shop_id"] === s["id"] && e["enabled"] !== false && !String(e["url"]).startsWith("https://banto.invalid/") && FakeSupabase.relayEffective((e["manifest"] as Row | null)?.["storefront_events"] as Row | undefined, e["storefront_events"] as Row | undefined)?.["visitors"] === "all",
+        ),
     };
   }
 

@@ -3,7 +3,8 @@
  *   POST /<ショップ>/_x                        お店の画面のスクリプト（会員の Cookie の署名で会員を確かめる）
  *   POST /api/shops/<ショップ>/events           ヘッドレス（Authorization: Bearer <会員トークン>、無ければゲスト）
  * どちらも DB に触らない（会員は署名だけ、送り先は覚えたもの）。受けたらすぐ 204 を返し、プラグインへは応答の後に送る。
- * モジュールが OFF・形が違う・ゲスト（段階 4a）でも、送らずに 204（中の様子を外に見せない）。回数を超えたら 429
+ * モジュールが OFF・形が違う・送り先が無い（ゲストを許した連携が無いショップのゲストなど）でも、送らずに 204（中の様子を外に見せない）。
+ * 回数を超えたら 429。ゲストは本文の visitor（ブラウザが作る訪問者 ID、0108）で渡す
  */
 import type { PublicShop } from "../../storefront/data";
 import { afterResponse, clientIp, param, readBodyLimited, type Ctx } from "../../routes/common";
@@ -25,13 +26,15 @@ export async function acceptRelay(c: Ctx, shop: PublicShop, customerId: string |
   if (!(await rateLimiter(c.get("adapters")).hit(`relay:${shop.id}:${ip}`, RELAY_PER_MINUTE, 60))) return c.json({ error: "too_many_requests" }, 429);
   const raw = await readBodyLimited(c.req.raw, RELAY_MAX_BYTES);
   if (!raw) return c.json({ error: "too_large" }, 413);
-  const events = parseRelayBody(new TextDecoder().decode(raw));
+  const body = parseRelayBody(new TextDecoder().decode(raw));
   const secret = c.get("sessionSecret");
   const db = privilegedFor(c);
-  if (!events || events.length === 0 || !customerId || !secret || !db) return noContent();
+  if (!body || body.events.length === 0 || (!customerId && !body.visitor) || !secret || !db) return noContent();
+  // ゲストのまとまりは、ゲストも渡す連携があるショップだけ送り先を引く（無いショップで DB に問い合わせない。0108 の前は無い）
+  if (!customerId && shop.relay_guests !== true) return noContent();
   const targets = await relayTargets({ db, cache: c.get("adapters").cache }, shop.id).catch(() => []);
   if (targets.length === 0) return noContent();
-  await afterResponse(c, forwardRelay({ targets, shopId: shop.id, customerId, source, events, sessionSecret: secret, fetch: c.get("deps").fetch }).catch(() => 0));
+  await afterResponse(c, forwardRelay({ targets, shopId: shop.id, customerId, visitor: body.visitor, source, events: body.events, sessionSecret: secret, fetch: c.get("deps").fetch }).catch(() => 0));
   return noContent();
 }
 

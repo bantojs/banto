@@ -47,6 +47,8 @@ export interface PublicShop {
   blogs_nav?: BlogNavItem[];
   /** SKU の選択肢の key → 表示名（0094。src/products/option-names.ts）。当たる前は無い */
   option_names?: Record<string, string>;
+  /** ゲストの行動を渡す連携があるか（0108、同梱モジュール event_relay。src/modules/event-relay/relay.ts）。当たる前は無い */
+  relay_guests?: boolean;
 }
 
 /** anon で products を読むときの列（0055 から anon は products.attributes を読めない。商品詳細は product_public_get が公開の項目だけを返す） */

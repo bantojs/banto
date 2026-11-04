@@ -354,10 +354,10 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
 
       "/shops/{shop}/events": {
         post: {
-          summary: "お店の行動を、運営者が許した外部プラグインへ渡す（同梱モジュール「お店の行動を連携に渡す」、docs/event-relay.md）。Banto は溜めない。今の版は会員の行動だけを渡す（トークンが無ければ送らずに 204）",
+          summary: "お店の行動を、運営者が許した外部プラグインへ渡す（同梱モジュール「お店の行動を連携に渡す」、docs/event-relay.md）。Banto は溜めない。トークンがあれば会員の行動、無ければ visitor（訪問者 ID）のゲストの行動として、ゲストも許した連携にだけ渡す。ログインしたら会員トークンを付けて visitor.identified を送る",
           security: memberOptional,
           parameters: [shopPath],
-          requestBody: body(obj({ events: arr(any("type（product_view・article_view・page_view・cart_add・cart_view・checkout_start・purchase）・at・product_id・article_id・author・tags など。50 件・16KB まで")) }, ["events"])),
+          requestBody: body(obj({ visitor: { ...str, description: "訪問者 ID（v_ ＋ 英数字・_・- を 16〜64 字）。連携サイトが作って端末に置く。ゲストの行動はこれが無いと渡さない" }, events: arr(any("type（product_view・article_view・page_view・cart_add・cart_view・checkout_start・purchase・visitor.identified）・at・product_id・article_id・author・tags など。50 件・16KB まで")) }, ["events"])),
           responses: { 204: { description: "受けた（送ったかどうかは返さない）" }, 401: err("invalid_member_token"), 404: err("not_found（モジュールが OFF）"), 413: err("too_large"), 429: err("too_many_requests") },
         },
       },

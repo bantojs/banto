@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 /** 0107_mod_event_relay: 運営者の許し（マニフェストの範囲まで）・送り先・列の直接の書き込みの禁止・監査ログ */
 describe.skipIf(!dbAvailable)("お店の行動を連携に渡す（0107_mod_event_relay）", () => {
@@ -48,5 +48,19 @@ describe.skipIf(!dbAvailable)("お店の行動を連携に渡す（0107_mod_even
     expect(await expectDbError(() => set(b.ownerId, a.shopId, ep, { types: ["article_view"], visitors: "members" }))).toMatch(/forbidden/);
     expect(await expectDbError(() => set(b.ownerId, b.shopId, ep, { types: ["article_view"], visitors: "members" }))).toMatch(/not_found/);
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select event_relay_targets($1)", [a.shopId])))).toMatch(/permission denied|service_role only/);
+  });
+
+  it("0108: ゲストも許した連携があり、モジュールが ON のショップだけ、公開のショップ行の relay_guests が true", async () => {
+    const pub = async () => (await asAnon(async (c) => (await c.query<{ r: { relay_guests: boolean } }>("select shop_public_get('er-a') as r")).rows[0]!.r)).relay_guests;
+    await getPool().query(`update hook_endpoints set manifest = jsonb_set(manifest, '{storefront_events}', '{"types":["product_view"],"visitors":"all"}') where id = $1`, [ep]);
+    await set(a.ownerId, a.shopId, ep, { types: ["product_view"], visitors: "all" });
+    expect(await pub()).toBe(false); // モジュールが OFF
+    await getPool().query(`update shops set settings = jsonb_set(coalesce(settings, '{}'), '{modules}', coalesce(settings->'modules', '{}') || '{"event_relay": true}') where id = $1`, [a.shopId]);
+    expect(await pub()).toBe(true);
+    await set(a.ownerId, a.shopId, ep, { types: ["product_view"], visitors: "members" });
+    expect(await pub()).toBe(false);
+    await set(a.ownerId, a.shopId, ep, { types: ["product_view"], visitors: "all" });
+    await getPool().query("update hook_endpoints set enabled = false where id = $1", [ep]);
+    expect(await pub()).toBe(false);
   });
 });
