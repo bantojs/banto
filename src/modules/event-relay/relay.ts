@@ -24,7 +24,6 @@ import type { ShopEvent } from "../../storefront/events";
 import type { HeadTag, StorefrontHeadContributor } from "../../storefront/head";
 
 export const EVENT_RELAY_MODULE = "event_relay";
-export const EVENT_RELAY_MIGRATION = "0107_mod_event_relay";
 /** お店の画面のスクリプトが送る先（ショップのパスの下。/collect・/track のような知られた形にしない） */
 export const RELAY_PATH = "/_x";
 /** 1 回のまとまりの上限 */

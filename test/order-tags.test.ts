@@ -52,13 +52,6 @@ describe("管理画面", () => {
     expect(csv.split("\r\n")[0]).toContain("印,メモ");
     expect(csv).toContain("ギフト, 電話済み");
   });
-
-  it("0106 が当たるまで印とメモの欄を出さない", async () => {
-    const { app, o1, base } = setup({ migrations: ["0096_hook_manifest_refresh"] });
-    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await owner.get(`${base}/${o1.id}`)).text()).not.toContain("/annotate");
-    expect(await (await owner.get(base)).text()).not.toContain('name="tag"');
-  });
 });
 
 describe("REST /api/v1/orders", () => {
@@ -81,12 +74,5 @@ describe("REST /api/v1/orders", () => {
     expect((await call(app, write, "PATCH", `/orders/${o1.id}`, { colour: "red" })).status).toBe(400);
     const list = await call(app, write, "GET", `/orders?tag=${encodeURIComponent("処理済み")}`);
     expect((list.json["items"] as { number: number }[]).map((o) => o.number)).toEqual([1001]);
-  });
-
-  it("0106 が当たるまでは 409", async () => {
-    const { app, o1, issue } = setup({ migrations: ["0096_hook_manifest_refresh"] });
-    const tok = await issue(["orders:read", "orders:write"]);
-    expect((await call(app, tok, "PATCH", `/orders/${o1.id}`, { tags: ["a"] })).json.error?.code).toBe("migration_required");
-    expect((await call(app, tok, "GET", "/orders?tag=a")).status).toBe(409);
   });
 });

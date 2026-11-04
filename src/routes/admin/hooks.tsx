@@ -14,8 +14,7 @@ import { formFields, owner, param, sessionSecret, type AdminContext } from "./co
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
-import { migrated } from "../../db/migration-state";
-import { EVENT_RELAY_MIGRATION, EVENT_RELAY_MODULE, forgetRelayTargets } from "../../modules/event-relay/relay";
+import { EVENT_RELAY_MODULE, forgetRelayTargets } from "../../modules/event-relay/relay";
 
 /**
  * 連携（hooks の送信先 = 外部プラグイン）。/admin/shops/:shopId/hooks
@@ -389,8 +388,8 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
   const signing = secret && !conn ? await endpointSecret(secret, endpoint.id) : null;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const f = flash(c.req.query("flash"));
-  // お店の行動を渡す許し（同梱モジュール event_relay が ON・0107 が当たっているショップだけ）
-  const relayOn = moduleEnabled(shop.settings, EVENT_RELAY_MODULE) && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, EVENT_RELAY_MIGRATION));
+  // お店の行動を渡す許し（同梱モジュール event_relay が ON のショップだけ）
+  const relayOn = moduleEnabled(shop.settings, EVENT_RELAY_MODULE);
   return c.html(
     <AdminLayout title={endpoint.name} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }, { label: endpoint.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
       <PageHead

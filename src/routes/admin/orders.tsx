@@ -21,8 +21,7 @@ import { RECEIPT_MODULE, adminReceipt } from "../../modules/receipt/admin";
 import { RECEIPT_STATUSES } from "../../modules/receipt/render";
 import { deliveryText } from "../../modules/delivery-time";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier, normalizeTracking, trackingUrl } from "../../orders/tracking";
-import { ORDER_NOTE_MAX_CHARS, ORDER_TAGS_MIGRATION, orderTagsOf, parseOrderTags } from "../../orders/tags";
-import { migrated } from "../../db/migration-state";
+import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/tags";
 
 export const orders = new Hono<AppEnv>();
 
@@ -65,9 +64,6 @@ interface OrderListRow extends OrderRow {
   note?: string | null;
 }
 
-/** 印とメモ（0106）が当たっているか */
-const orderTagsReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, ORDER_TAGS_MIGRATION);
-
 /** CSV に入れる注文の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
 const CSV_MAX_ORDERS = 2000;
 
@@ -75,12 +71,12 @@ const CSV_MAX_ORDERS = 2000;
  * 一覧と CSV で共通: 注文番号・決済の参照（完全一致）、メール・氏名（部分一致）と状態で DB で絞り、
  * 新しい順に limit 件（after より後ろ）を読む
  */
-async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition; tags: boolean }): Promise<{ rows: OrderListRow[]; q: string; status: string; tag: string }> {
+async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; q: string; status: string; tag: string }> {
   const { db } = owner(c);
   const q = (c.req.query("q") ?? "").trim().slice(0, 100);
   const status = c.req.query("status") ?? "";
   // 印で絞る（0106）。検索と一緒のときは、検索の結果をここで絞る
-  const tag = opts.tags ? (c.req.query("tag") ?? "").trim().slice(0, 40) : "";
+  const tag = (c.req.query("tag") ?? "").trim().slice(0, 40);
   const contains = tag ? { arrayContains: { tags: [tag] } } : {};
   const eq: Record<string, string> = { shop_id: shopId };
   if (["paid", "shipped", "cancelled", "refunded"].includes(status)) eq["status"] = status;
@@ -110,8 +106,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   void db;
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
-  const tagsOn = await orderTagsReady(c);
-  const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, tags: tagsOn, ...(after ? { after } : {}) });
+  const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
   const { q, status, tag } = list;
   const page = splitPage(list.rows, (o) => o.created_at);
   const rows = page.rows;
@@ -134,7 +129,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
               </option>
             ))}
         </select>
-        {tagsOn ? <input id="tag" type="search" name="tag" value={tag} placeholder={t("order.tag_filter")} aria-label={t("order.tag_filter")} maxlength={40} style="width:10rem" /> : null}
+        <input id="tag" type="search" name="tag" value={tag} placeholder={t("order.tag_filter")} aria-label={t("order.tag_filter")} maxlength={40} style="width:10rem" />
         <button type="submit" class="secondary small">
           {t("order.search")}
         </button>
@@ -191,8 +186,7 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const tagsOn = await orderTagsReady(c);
-  const { rows } = await listOrders(c, shopId, { limit: CSV_MAX_ORDERS, tags: tagsOn });
+  const { rows } = await listOrders(c, shopId, { limit: CSV_MAX_ORDERS });
   const { db } = owner(c);
   // 明細と SKU は CSV に入る注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
   const items = await selectIn<OrderItemRow>(db, "order_items", "*", shopId, "order_id", rows.map((o) => o.id));
@@ -200,13 +194,13 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const itemsByOrder = new Map<string, OrderItemRow[]>();
   for (const i of items) itemsByOrder.set(i.order_id, [...(itemsByOrder.get(i.order_id) ?? []), i]);
-  const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", ...(tagsOn ? ["印", "メモ"] : [])];
+  const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
   const lines = rows.map((o) => {
     const a = (o.shipping_address ?? {}) as Record<string, unknown>;
     const detail = (itemsByOrder.get(o.id) ?? [])
       .map((i) => `${(i.sku_id ? skuById.get(i.sku_id)?.code : undefined) ?? i.item_name ?? i.sku_id ?? ""} x${i.qty}`)
       .join(" / ");
-    return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), ...(tagsOn ? [orderTagsOf(o).join(", "), o.note ?? ""] : [])].map(csvCell).join(",");
+    return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? ""].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n";
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="orders-${shop.slug}.csv"`, "Cache-Control": "no-store" });
@@ -226,7 +220,6 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
   const base = `/admin/shops/${shopId}/orders/${orderId}`;
   const addr = order.shipping_address ?? null;
   const msg = flash(c.req.query("flash"));
-  const tagsOn = await orderTagsReady(c);
 
   return c.html(
     <AdminLayout title={t("order.detail")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list"), href: `/admin/shops/${shop.id}/orders` }, { label: fmtDate(order.created_at) }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
@@ -323,24 +316,22 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
         </div>
 
         <aside>
-          {tagsOn ? (
-            <section class="card">
-              <h2>{t("order.tags_title")}</h2>
-              <form method="post" action={`${base}/annotate`}>
-                <label for="tags">{t("order.tags")}</label>
-                <input id="tags" name="tags" type="text" value={orderTagsOf(order).join(", ")} placeholder={t("order.tags_placeholder")} style="width:100%" />
-                <p class="muted">{t("order.tags_hint")}</p>
-                <label for="note">{t("order.note")}</label>
-                <textarea id="note" name="note" rows={4} maxlength={ORDER_NOTE_MAX_CHARS} style="width:100%">
-                  {order.note ?? ""}
-                </textarea>
-                <p class="muted">{t("order.note_hint")}</p>
-                <button type="submit" class="secondary">
-                  {t("order.tags_save")}
-                </button>
-              </form>
-            </section>
-          ) : null}
+          <section class="card">
+            <h2>{t("order.tags_title")}</h2>
+            <form method="post" action={`${base}/annotate`}>
+              <label for="tags">{t("order.tags")}</label>
+              <input id="tags" name="tags" type="text" value={orderTagsOf(order).join(", ")} placeholder={t("order.tags_placeholder")} style="width:100%" />
+              <p class="muted">{t("order.tags_hint")}</p>
+              <label for="note">{t("order.note")}</label>
+              <textarea id="note" name="note" rows={4} maxlength={ORDER_NOTE_MAX_CHARS} style="width:100%">
+                {order.note ?? ""}
+              </textarea>
+              <p class="muted">{t("order.note_hint")}</p>
+              <button type="submit" class="secondary">
+                {t("order.tags_save")}
+              </button>
+            </form>
+          </section>
           <section class="card">
             <h2>{t("order.customer")}</h2>
             <p>

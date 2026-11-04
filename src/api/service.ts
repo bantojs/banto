@@ -7,7 +7,6 @@ import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
 import { hashApiToken } from "./tokens";
-import { ORDER_TAGS_MIGRATION } from "../orders/tags";
 import { DIALOGS_API_MIGRATION } from "../modules/dialogs/dialogs";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, productImageKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
@@ -467,7 +466,6 @@ export class ApiService {
       extra["p_after"] = q.after !== undefined ? uuidOr404(q.after) : null;
     }
     if (q.tag !== undefined) {
-      if (!(await this.migratedTo(ORDER_TAGS_MIGRATION))) throw new ApiError("migration_required", "tag needs the database update 0106_order_tags", 409);
       extra["p_tag"] = q.tag.slice(0, 40);
     }
     return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
@@ -506,7 +504,6 @@ export class ApiService {
   // ---- 注文の印とメモ（0106。orders:write、メモは orders:pii も）----
   /** body: { tags?: string[]（置き換え）, add_tags?: string[], remove_tags?: string[], note?: string | null } */
   orderAnnotate = async (orderId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    if (!(await this.migratedTo(ORDER_TAGS_MIGRATION))) throw new ApiError("migration_required", "order tags and notes need the database update 0106_order_tags", 409);
     for (const k of Object.keys(body)) if (!["tags", "add_tags", "remove_tags", "note"].includes(k)) throw new ApiError("invalid", `unknown field: ${k} (tags, add_tags, remove_tags, note)`, 400);
     const list = (k: string): string[] | null => {
       const v = body[k];

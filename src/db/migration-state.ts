@@ -12,8 +12,8 @@
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "./client";
 
-/** v0.9.0 の土台（v0.8 系のセットアップで当たる 0001〜0105）。これ以前のマイグレーションは適用済みとみなす */
-export const BASELINE_MIGRATION = "0105_ma_ports";
+/** v0.10.0 の土台（v0.9 系のセットアップで当たる 0001〜0109）。これ以前のマイグレーションは適用済みとみなす */
+export const BASELINE_MIGRATION = "0109_event_relay_custom";
 
 export const APPLIED_MIGRATIONS_CACHE_KEY = "migrations:applied";
 /** isolate ごとに覚える秒数。適用した isolate では即座に消すが、ほかの isolate は最大この秒数だけ古い一覧を使う */
