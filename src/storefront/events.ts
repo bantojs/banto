@@ -19,12 +19,18 @@ export interface ShopEventItem {
 }
 
 export interface ShopEvent {
-  type: "product_view" | "cart_add" | "cart_view" | "checkout_start" | "purchase";
+  type: "product_view" | "cart_add" | "cart_view" | "checkout_start" | "purchase" | "article_view" | "page_view";
   /** 税込の金額（円） */
   value_jpy: number;
   items: ShopEventItem[];
   /** purchase のときの注文番号 */
   order_number?: number;
+  /** product_view のときの商品（0107。外部プラグインの条件に使う。ID・カテゴリー・タグだけ） */
+  product?: { id: string; category_id?: string | null; tags?: string[] };
+  /** article_view（0107）: ブログの記事。著者は記事の欄の文字（自由入力） */
+  article?: { id: string; blog: string; handle: string; author?: string | null; tags?: string[] };
+  /** page_view（0107）: ショップのページ */
+  page?: { id: string; handle: string };
 }
 
 export function recordShopEvent(c: Context<AppEnv>, event: ShopEvent): void {

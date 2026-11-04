@@ -56,7 +56,12 @@ export interface PluginManifest {
   scopes?: ApiScope[];
   /** できること（0092）。"images" = 商品画像の段を作って差し替える（ショップの設定「外部の変換プラグインに任せる」の相手） */
   capabilities?: string[];
+  /** 欲しいお店の行動（0107、同梱モジュール event_relay）。求めるだけで、渡すかは運営者が連携の画面で許す */
+  storefront_events?: { types: string[]; visitors: "members" | "all" };
 }
+
+/** お店の行動の種類（src/modules/event-relay/relay.ts の RELAY_EVENT_TYPES と同じ） */
+export const MANIFEST_STOREFRONT_EVENTS = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase"] as const;
 
 /** マニフェストの capabilities に書いてよい値 */
 export const MANIFEST_CAPABILITIES = ["images"] as const;
@@ -158,6 +163,8 @@ export function parseManifest(input: unknown): PluginManifest | null {
   const connect_url = typeof m["connect_url"] === "string" && m["connect_url"].length <= 500 && MORE_URL_RE.test(m["connect_url"]) ? m["connect_url"] : undefined;
   const scopes = Array.isArray(m["scopes"]) ? [...new Set(m["scopes"].filter((x): x is ApiScope => typeof x === "string" && isApiScope(x)))] : [];
   const capabilities = Array.isArray(m["capabilities"]) ? [...new Set(m["capabilities"].filter((x): x is string => typeof x === "string" && (MANIFEST_CAPABILITIES as readonly string[]).includes(x)))] : [];
+  const se = m["storefront_events"] && typeof m["storefront_events"] === "object" && !Array.isArray(m["storefront_events"]) ? (m["storefront_events"] as Record<string, unknown>) : null;
+  const seTypes = se && Array.isArray(se["types"]) ? [...new Set(se["types"].filter((x): x is string => typeof x === "string" && (MANIFEST_STOREFRONT_EVENTS as readonly string[]).includes(x)))] : [];
   const more: Record<string, string> = {};
   if (m["more"] && typeof m["more"] === "object" && !Array.isArray(m["more"])) {
     const v = (m["more"] as Record<string, unknown>)["reviews.v1"];
@@ -176,6 +183,7 @@ export function parseManifest(input: unknown): PluginManifest | null {
     ...(connect_url ? { connect_url } : {}),
     ...(scopes.length > 0 ? { scopes } : {}),
     ...(capabilities.length > 0 ? { capabilities } : {}),
+    ...(seTypes.length > 0 ? { storefront_events: { types: seTypes, visitors: se?.["visitors"] === "all" ? ("all" as const) : ("members" as const) } } : {}),
   };
 }
 

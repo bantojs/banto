@@ -13,6 +13,9 @@ import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, sessionSecret, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { moduleEnabled } from "../../modules/registry";
+import { migrated } from "../../db/migration-state";
+import { EVENT_RELAY_MIGRATION, EVENT_RELAY_MODULE, forgetRelayTargets } from "../../modules/event-relay/relay";
 
 /**
  * 連携（hooks の送信先 = 外部プラグイン）。/admin/shops/:shopId/hooks
@@ -32,6 +35,8 @@ interface EndpointRow {
   created_at: string;
   /** 拡張データの名前の空間（0084） */
   app_handle?: string | null;
+  /** お店の行動を渡す許し（0107） */
+  storefront_events?: { types: string[]; visitors: "members" | "all" } | null;
 }
 
 /** 拡張データ（0084）が DB に入ったか。入る前は app_handle の列が無い */
@@ -384,6 +389,8 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
   const signing = secret && !conn ? await endpointSecret(secret, endpoint.id) : null;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const f = flash(c.req.query("flash"));
+  // お店の行動を渡す許し（同梱モジュール event_relay が ON・0107 が当たっているショップだけ）
+  const relayOn = moduleEnabled(shop.settings, EVENT_RELAY_MODULE) && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, EVENT_RELAY_MIGRATION));
   return c.html(
     <AdminLayout title={endpoint.name} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("hooks.title"), href: `/admin/shops/${shop.id}/hooks` }, { label: endpoint.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "hooks" }}>
       <PageHead
@@ -398,6 +405,7 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
       <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps />
+      {relayOn && endpoint.manifest?.storefront_events ? <StorefrontEventsForm action={`${base}/storefront-events`} requested={endpoint.manifest.storefront_events} granted={endpoint.storefront_events ?? null} /> : null}
 
       {bundledPluginIdFromUrl(endpoint.url) === null ? (
         <div>
@@ -451,6 +459,63 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   }
   return c.redirect(`${base}?flash=saved`);
 });
+
+/** お店の行動を渡す許し（0107）。決めるのは DB の hook_storefront_events_set（マニフェストが求めた範囲まで・監査ログ） */
+hooks.post("/:shopId/hooks/:endpointId/storefront-events", requireOwner, async (c: AdminContext) => {
+  const data = await loadEndpoint(c);
+  if (!data) return c.text(t("hooks.not_found"), 404);
+  const { shop, endpoint } = data;
+  const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
+  const body = await c.req.parseBody({ all: true });
+  const raw = body["types"];
+  const types = (Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : []).filter((v): v is string => typeof v === "string");
+  const grant = types.length > 0 ? { types, visitors: body["visitors"] === "all" ? "all" : "members" } : null;
+  try {
+    await owner(c).db.rpc("hook_storefront_events_set", { p_shop_id: shop.id, p_endpoint_id: endpoint.id, p_grant: grant });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
+    throw e;
+  }
+  await forgetRelayTargets(c.get("adapters").cache, shop.id);
+  return c.redirect(`${base}?flash=saved`);
+});
+
+/** 許しの欄。求められた種類だけを並べ、運営者は外せる（広げられない） */
+function StorefrontEventsForm(props: { action: string; requested: { types: string[]; visitors: "members" | "all" }; granted: { types: string[]; visitors: "members" | "all" } | null }) {
+  const on = new Set(props.granted?.types ?? []);
+  return (
+    <section class="card">
+      <h2>{t("relay.title")}</h2>
+      <p>{t("relay.intro")}</p>
+      <p class="notice">{t("relay.privacy")}</p>
+      <form method="post" action={props.action}>
+        <fieldset>
+          <legend>{t("relay.types")}</legend>
+          {props.requested.types.map((ty) => (
+            <label style="display:block">
+              <input type="checkbox" name="types" value={ty} checked={on.has(ty)} /> {t(`relay.type.${ty}` as MessageKey)}
+            </label>
+          ))}
+        </fieldset>
+        {props.requested.visitors === "all" ? (
+          <fieldset>
+            <legend>{t("relay.visitors")}</legend>
+            <label style="display:block">
+              <input type="radio" name="visitors" value="members" checked={props.granted?.visitors !== "all"} /> {t("relay.visitors_members")}
+            </label>
+            <label style="display:block">
+              <input type="radio" name="visitors" value="all" checked={props.granted?.visitors === "all"} /> {t("relay.visitors_all")}
+            </label>
+          </fieldset>
+        ) : (
+          <p class="muted">{t("relay.visitors_members_only")}</p>
+        )}
+        <p class="muted">{t("relay.hint")}</p>
+        <button type="submit">{t("relay.save")}</button>
+      </form>
+    </section>
+  );
+}
 
 hooks.post("/:shopId/hooks/:endpointId/delete", requireOwner, async (c: AdminContext) => {
   const data = await loadEndpoint(c);

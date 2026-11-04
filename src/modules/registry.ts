@@ -49,6 +49,8 @@ export const MODULES: readonly ModuleDef[] = [
   // 会員の条件（会員の独自項目の組み合わせ。ブロック・商品・ページ・会員価格で使う。0097_audiences、docs/audiences.md）
   { id: "audiences", name: "mod.audiences.name", description: "mod.audiences.description", adminPath: "audiences", migration: AUDIENCES_MIGRATION },
   { id: "size_charts", name: "mod.size_charts.name", description: "mod.size_charts.description", adminPath: "size-charts" },
+  // お店の行動（商品を見た・記事を読んだ・カートに入れた…）を、つないだ外部プラグインへ渡す。何を渡すかは連携ごとに運営者が許す（0107_mod_event_relay、docs/event-relay.md）
+  { id: "event_relay", name: "mod.event_relay.name", description: "mod.event_relay.description", migration: "0107_mod_event_relay" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

@@ -1,3 +1,4 @@
+import { eventsApi } from "../../modules/event-relay/routes";
 import { Hono } from "hono";
 import { apiViewerData } from "../audience-render";
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
@@ -47,6 +48,8 @@ api.route("/", inquiriesApi);
 api.route("/", ordersApi);
 api.route("/", contentApi);
 api.route("/", connectApi);
+// お店の行動の中継（同梱モジュール event_relay、0107。docs/event-relay.md）
+api.route("/", eventsApi);
 
 function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   const cfg = c.get("adapters").config;

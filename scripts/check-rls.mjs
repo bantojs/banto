@@ -78,6 +78,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "option_names_set", // 0094: SKU の選択肢の表示名を変える（中で catalog の項目を確かめる）
   "size_chart_set", // 0095: 採寸表の 1 つの段を置き換える（中で catalog の項目を確かめる）
   "page_layouts_set", // 0101: 固定ページをトップ・記事のひな形に割り当てる（中で content の項目とショップのページ・ブログかを確かめる）
+  "hook_storefront_events_set", // 0107: 連携ごとにお店の行動を渡す許し（中で integrations の項目・マニフェストの範囲を確かめ、監査ログに残す）
   "order_annotate", // 0106: 注文の印と社内のメモを書く（中で orders の項目とショップの注文かを確かめる）
   "line_marketing_usage", // 0105: LINE の宣伝のメッセージの今月の数と上限（中で marketing の項目を確かめる）
   "size_chart_get", // 0095: 採寸表の段と表示される結果（中で catalog の項目を確かめる）

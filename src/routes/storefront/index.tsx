@@ -4,6 +4,9 @@ import { blockedTarget, storefrontSettings } from "../../storefront/mode";
 import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../storefront/events";
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
+import { EVENT_RELAY_MODULE } from "../../modules/event-relay/relay";
+import { acceptRelay } from "../../modules/event-relay/routes";
+import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
 import { type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, MEMBER_PRICES_MIGRATION } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
@@ -31,7 +34,7 @@ import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
-import { bindScope, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
+import { bindScope, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
@@ -105,7 +108,10 @@ storefront.use("*", async (c, next) => {
   // プレビュー（保存しない下書き）には分析のタグなどを入れない
   if (contributors.length === 0 || PREVIEW_PATH.test(c.req.path) || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
   const events = c.get("shopEvents") ?? [];
-  const snippet = renderHeadTags(contributors.flatMap((h) => h.tags(shop, events)));
+  // 会員かどうか（お店の行動の中継は、段階 4a では会員のページにだけスクリプトを載せる）。要るモジュールが ON のときだけ確かめる
+  const member = contributors.some((h) => h.module === EVENT_RELAY_MODULE) ? Boolean(await customerSession(c, { shop }).catch(() => null)) : false;
+  const extra = { member, base: onShopDomain(c, shop) ? "" : `/${shop.slug}` };
+  const snippet = renderHeadTags(contributors.flatMap((h) => h.tags(shop, events, extra)));
   if (!snippet) return;
   const html = await c.res.text();
   const headers = new Headers(c.res.headers);
@@ -259,6 +265,12 @@ async function writeCart(c: Ctx, s: ShopScope, cart: Cart): Promise<void> {
 /** お店の画面で起きた出来事を積む（src/storefront/events.ts。受け取るモジュールが ON のときだけ外に出る。個人情報は入れない） */
 function track(c: Ctx, type: ShopEvent["type"], value: number, items: ShopEventItem[], orderNumber?: number) {
   recordShopEvent(c, { type, value_jpy: value, items, ...(orderNumber !== undefined ? { order_number: orderNumber } : {}) });
+}
+/** 最後に積んだ product_view に商品の ID・カテゴリー・タグを足す（0107。外部プラグインの条件に使う） */
+function attachProduct(c: Ctx, product: NonNullable<ShopEvent["product"]>) {
+  const list = c.get("shopEvents") ?? [];
+  const last = list[list.length - 1];
+  if (last?.type === "product_view") last.product = product;
 }
 const cartItems = (lines: CartLine[]): ShopEventItem[] =>
   lines.map((l) => ({ sku: l.sku.code, name: l.product.name, ...(l.sku.name ? { variant: l.sku.name } : {}), price: l.sku.price_jpy, quantity: l.qty }));
@@ -509,6 +521,7 @@ storefront.get("/:shop/p/:product", async (c: Ctx) => {
   const items = detail.skus.map((k) => ({ sku: k.code, name: detail.product.name, ...(k.name ? { variant: k.name } : {}), price: k.price_jpy }));
   const price = items.reduce<number | null>((m, k) => (m === null || k.price < m ? k.price : m), null) ?? 0;
   track(c, "product_view", price, items);
+  attachProduct(c, { id: detail.product.id, category_id: detail.product.category_id ?? null, tags: (detail.product.tags ?? []).slice(0, 20) });
   // カートに入れた直後の商品ページ（?added=1&sku=…&qty=…）。どの SKU かは sku で受ける（無ければ最安の SKU）
   if (c.req.query("added") === "1") {
     const added = items.find((k) => k.sku === c.req.query("sku")) ?? items.find((k) => k.price === price);
@@ -629,6 +642,8 @@ interface RenderOpts {
  * ページを描く（お店の画面・プレビュー・お店のトップのひな形で同じ）。body は見る人で絞った本文、raw はその HTML
  */
 async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts = {}): Promise<Response> {
+  // ページを見た（0107。プレビュー・ひな形の見本では積まない）
+  if (!o.preview) recordShopEvent(c, { type: "page_view", value_jpy: 0, items: [], page: { id: page.id, handle: page.handle } });
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
   // お店のブロック（検索・カテゴリー・カード・商品・日時）はテーマに依らない HTML なので先に入れる。日時は描くたびに。
   // 「今の記事・商品の部品」はふつうのページ（お店のトップのひな形を含む）ではそのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）
@@ -648,6 +663,8 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
  * body は見る人で絞った記事の本文、raw はその HTML、segment は見る人の区分（本文の HTML の覚えの鍵）
  */
 async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts & { segment?: string; layout?: PageRow | null } = {}): Promise<Response> {
+  // 記事を読んだ（0107。プレビューでは積まない）
+  if (!o.preview) recordShopEvent(c, { type: "article_view", value_jpy: 0, items: [], article: { id: article.id, blog: blog.handle, handle: article.handle, author: article.author ?? null, tags: (article.tags ?? []).slice(0, 20) } });
   const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
   const dates = { published: article.published_at ?? article.updated_at, updated: article.updated_at };
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
@@ -1012,6 +1029,16 @@ storefront.post("/:shop/cart/coupon", async (c: Ctx) => {
   if (!code) return c.redirect(`${cartUrl}?error=coupon_invalid`);
   await writeCart(c, s, addCoupon(s.cart, code));
   return c.redirect(cartUrl);
+});
+
+// お店の行動の中継（同梱モジュール event_relay、0107）。会員は Cookie の署名だけで確かめる（DB に触らない）。docs/event-relay.md
+storefront.post("/:shop/_x", async (c: Ctx) => {
+  const sf = data(c);
+  const shop = sf ? await sf.shopBySlug(param(c, "shop")).catch(() => null) : null;
+  if (!shop) return c.body(null, 404);
+  const secret = c.get("sessionSecret");
+  const session = secret && membersEnabled(shop) ? await openMemberSession(secret, shop.id, readCookie(c.req.header("cookie"), customerCookieName(shop.id))) : null;
+  return acceptRelay(c, shop, session && !session.add ? session.cid : null, "storefront");
 });
 
 storefront.post("/:shop/cart/add", async (c: Ctx) => {

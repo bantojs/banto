@@ -12,7 +12,8 @@ export type HeadTag = { kind: "script"; src: string } | { kind: "inline-script";
 export interface StorefrontHeadContributor {
   /** 同梱モジュールの id（registry.ts）。ON のショップだけで呼ぶ */
   module: string;
-  tags(shop: PublicShop, events: readonly ShopEvent[]): HeadTag[];
+  /** extra: 見ている人が会員か・ショップのパスの起点（独自ドメインでは ""）。要るモジュールだけが使う */
+  tags(shop: PublicShop, events: readonly ShopEvent[], extra?: { member: boolean; base: string }): HeadTag[];
 }
 
 const escAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");

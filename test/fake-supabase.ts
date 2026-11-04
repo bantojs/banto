@@ -127,6 +127,15 @@ export class FakeSupabase {
   readonly owners = new Set<string>();
   /** 画像の URL の目印 → SKU の options（0063。product_image_hints の代わり。中身は test/db/sku-images.test.ts） */
   readonly imageHints: { shop_id: string; product_id: string; tag: string; options: Row }[] = [];
+  /** 0107 の banto_relay_effective と同じ（求めと許しの重なり） */
+  static relayEffective(manifest: Row | undefined, grant: Row | undefined | null): Row | null {
+    if (!manifest || !grant) return null;
+    const known = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase"];
+    const want = Array.isArray(manifest["types"]) ? (manifest["types"] as string[]) : [];
+    const types = [...new Set((Array.isArray(grant["types"]) ? (grant["types"] as string[]) : []).filter((x) => known.includes(x) && want.includes(x)))].sort();
+    if (types.length === 0) return null;
+    return { types, visitors: grant["visitors"] === "all" && manifest["visitors"] === "all" ? "all" : "members" };
+  }
   readonly tables: Record<TableName, Row[]> = {
     size_charts: [],
     audiences: [],
@@ -1516,6 +1525,16 @@ export class FakeSupabase {
         return "error" in r ? json({ code: "P0001", message: r.error }, 400) : json(r);
       }
       return json(this.sizeChartGet(shopId, cat, prod, true));
+    }
+    if (fn === "hook_storefront_events_set") {
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("integrations"))) return json({ code: "42501", message: "forbidden" }, 403);
+      const e = this.tables.hook_endpoints.find((x) => x["id"] === args["p_endpoint_id"] && x["shop_id"] === shopId);
+      if (!e) return json({ code: "P0001", message: "not_found" }, 400);
+      const requested = (e["manifest"] as Row | null)?.["storefront_events"] as Row | undefined;
+      if (args["p_grant"] && !requested) return json({ code: "P0001", message: "not_requested" }, 400);
+      e["storefront_events"] = args["p_grant"] ? FakeSupabase.relayEffective(requested, args["p_grant"] as Row) : null;
+      return json(e["storefront_events"]);
     }
     if (fn === "order_annotate") {
       // 0106: 本物は test/db/order-tags.test.ts
@@ -3529,6 +3548,15 @@ export class FakeSupabase {
       this.tables.api_tokens.push({ id: tokenId, shop_id: c["shop_id"], owner_id: c["created_by"], name: `連携: ${String(ep["name"])}`, token_hash: args["p_token_hash"], prefix: args["p_token_prefix"], scopes: c["scopes"], endpoint_id: c["endpoint_id"], expires_at: null, revoked_at: null, last_used_at: null, created_at: this.now() });
       Object.assign(c, { ticket_hash: null, ticket_expires_at: null, secret_box: args["p_secret_box"], token_id: tokenId, connected_at: this.now() });
       return json({ shop_id: c["shop_id"], shop_slug: shop["slug"], shop_name: shop["name"], endpoint_id: c["endpoint_id"], app: ep["app_handle"] ?? null, scopes: c["scopes"], token_id: tokenId });
+    }
+    if (fn === "event_relay_targets") {
+      // 0107: 本物（重なり・許しの守り・監査ログ）は test/db/event-relay.test.ts
+      const out = this.tables.hook_endpoints
+        .filter((e) => e["shop_id"] === args["p_shop_id"] && e["enabled"] !== false && !String(e["url"]).startsWith("https://banto.invalid/"))
+        .map((e) => ({ e, grant: FakeSupabase.relayEffective((e["manifest"] as Row | null)?.["storefront_events"] as Row | undefined, e["storefront_events"] as Row | undefined) }))
+        .filter((x) => x.grant)
+        .map((x) => ({ endpoint_id: x.e["id"], url: x.e["url"], secret_box: this.tables.app_connections.find((c) => c["endpoint_id"] === x.e["id"])?.["secret_box"] ?? null, grant: x.grant }));
+      return json(out);
     }
     if (fn === "app_connection_secret_box") return json(this.tables.app_connections.find((x) => x["endpoint_id"] === args["p_endpoint_id"])?.["secret_box"] ?? null);
     if (fn === "legal_links_record") return this.legalLinksRecord(args["p_shop_id"], (args["p_results"] ?? {}) as Record<string, { url?: string; ok?: boolean }>, null, true);

@@ -352,6 +352,15 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
         },
       },
 
+      "/shops/{shop}/events": {
+        post: {
+          summary: "お店の行動を、運営者が許した外部プラグインへ渡す（同梱モジュール「お店の行動を連携に渡す」、docs/event-relay.md）。Banto は溜めない。今の版は会員の行動だけを渡す（トークンが無ければ送らずに 204）",
+          security: memberOptional,
+          parameters: [shopPath],
+          requestBody: body(obj({ events: arr(any("type（product_view・article_view・page_view・cart_add・cart_view・checkout_start・purchase）・at・product_id・article_id・author・tags など。50 件・16KB まで")) }, ["events"])),
+          responses: { 204: { description: "受けた（送ったかどうかは返さない）" }, 401: err("invalid_member_token"), 404: err("not_found（モジュールが OFF）"), 413: err("too_large"), 429: err("too_many_requests") },
+        },
+      },
       "/shops/{shop}/inquiries/config": { get: { summary: "お問い合わせのフォームの選択肢（同梱モジュール「お問い合わせ」）", security: memberOptional, parameters: [shopPath], responses: { 200: ok(obj({ categories: arr(obj({ value: str, label: str })), member: { type: ["object", "null"] } })), 404: err("inquiries_disabled・not_found") } } },
       "/shops/{shop}/inquiries/order-check": { post: { summary: "ゲストの注文を番号とメールアドレスで確かめる（注文トークン、24 時間）", parameters: [shopPath], requestBody: body(obj({ number: int, email: str }, ["number", "email"])), responses: { 200: ok(obj({ order: any("number・status・created_at・total_jpy・items"), order_token: str })), 400: err("invalid_request"), 404: err("inquiries_disabled"), 409: err("order_not_found"), 429: err("too_many") } } },
       "/shops/{shop}/inquiries": {
@@ -443,6 +452,7 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/inquiries/order-check": "checkInquiryOrder",
   "get /shops/{shop}/inquiries": "listMemberInquiries",
   "post /shops/{shop}/inquiries": "createInquiry",
+  "post /shops/{shop}/events": "sendStorefrontEvents",
   "post /shops/{shop}/inquiries/view": "viewInquiry",
   "post /shops/{shop}/inquiries/reply": "replyToInquiry",
   "post /shops/{shop}/inquiries/attachments/{id}": "getInquiryAttachment",

@@ -429,6 +429,8 @@ export interface PrivilegedDb {
   appConnectExchange(ticketHash: string, tokenHash: string, tokenPrefix: string, secretBox: string): Promise<AppConnectExchange>;
   /** つないだ連携の署名シークレットの暗号文（0088）。つないでいなければ null */
   appConnectionSecretBox(endpointId: string): Promise<string | null>;
+  /** お店の行動を渡す先（0107）。許しとマニフェストの重なりのある有効な連携 */
+  eventRelayTargets(shopId: string): Promise<{ endpoint_id: string; url: string; secret_box: string | null; grant: { types: string[]; visitors: "members" | "all" } }[]>;
   /** hooks: 配信結果を記録（失敗は DB 側でバックオフ） */
   finishHookDelivery(id: string, success: boolean, status: number | null, error: string | null): Promise<void>;
   /** hooks: service_role からイベントを積む（Webhook 処理等） */
@@ -699,6 +701,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     appConnectExchange: (ticketHash, tokenHash, tokenPrefix, secretBox) =>
       rpc<AppConnectExchange>("app_connect_exchange", { p_ticket_hash: ticketHash, p_token_hash: tokenHash, p_token_prefix: tokenPrefix, p_secret_box: secretBox }),
     appConnectionSecretBox: (endpointId) => rpc<string | null>("app_connection_secret_box", { p_endpoint_id: endpointId }),
+    eventRelayTargets: (shopId) => rpc("event_relay_targets", { p_shop_id: shopId }),
     finishHookDelivery: (id, success, status, error) =>
       rpc<void>("finish_hook_delivery", { p_id: id, p_success: success, p_status: status, p_error: error }),
     enqueueHook: (shopId, event, payload) => rpc<number>("enqueue_hook", { p_shop_id: shopId, p_event: event, p_payload: payload }),

@@ -18,16 +18,20 @@ export function ga4Id(settings: Record<string, unknown> | null | undefined): str
   return typeof id === "string" && GA4_ID_RE.test(id) ? id : null;
 }
 
-const GA4_EVENT: Record<ShopEvent["type"], string> = {
+// page_view は GA4 の config が自分で送るので重ねない。記事は GA4 の決まったイベントが無いので view_article（独自のイベント）
+const GA4_EVENT: Record<ShopEvent["type"], string | null> = {
   product_view: "view_item",
   cart_add: "add_to_cart",
   cart_view: "view_cart",
   checkout_start: "begin_checkout",
   purchase: "purchase",
+  article_view: "view_article",
+  page_view: null,
 };
 
 /** 出来事 → GA4 の EC のイベントの引数（https://developers.google.com/analytics/devguides/collection/ga4/ecommerce） */
 export function ga4Params(e: ShopEvent): Record<string, unknown> {
+  if (e.type === "article_view" && e.article) return { article_id: e.article.id, blog: e.article.blog, ...(e.article.author ? { author: e.article.author } : {}) };
   return {
     currency: "JPY",
     value: e.value_jpy,
@@ -41,7 +45,10 @@ export function ga4Params(e: ShopEvent): Record<string, unknown> {
 const scriptJson = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 
 export function ga4Tags(id: string, events: readonly ShopEvent[]): HeadTag[] {
-  const calls = events.map((e) => `gtag("event",${scriptJson(GA4_EVENT[e.type])},${scriptJson(ga4Params(e))});`).join("");
+  const calls = events
+    .filter((e) => GA4_EVENT[e.type])
+    .map((e) => `gtag("event",${scriptJson(GA4_EVENT[e.type])},${scriptJson(ga4Params(e))});`)
+    .join("");
   return [
     { kind: "script", src: `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}` },
     { kind: "inline-script", code: `window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag("js",new Date());gtag("config",${scriptJson(id)});${calls}` },

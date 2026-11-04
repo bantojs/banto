@@ -109,6 +109,16 @@ export interface DomainAdapter {
   status(domain: string, shop: { id: string; slug: string }): Promise<DomainState | null>;
 }
 
+/**
+ * 回数の制限（0107、メンテナの決定 2026-11-03）。DB で数えたくない入口（お店の行動の中継）のため。
+ * 既定はメモリ（src/adapters/rate-limit.ts）: Node は 1 プロセスなので正確、Workers は拠点・isolate ごとに分かれるのでゆるい上限。
+ * 確かにしたいときは、提供する側が Cloudflare の Rate Limiting のバインディングなどで差し替える
+ */
+export interface RateLimitAdapter {
+  /** key で 1 回数え、windowSeconds のあいだに limit 回を超えていたら false */
+  hit(key: string, limit: number, windowSeconds: number): Promise<boolean>;
+}
+
 export interface Adapters {
   storage: StorageAdapter;
   /**
@@ -128,6 +138,8 @@ export interface Adapters {
   publicFetch?: typeof fetch;
   /** 独自ドメインの提供元。無ければ案内だけ（セルフホストの既定） */
   domain?: DomainAdapter;
+  /** 回数の制限。無ければメモリ（src/adapters/rate-limit.ts の memoryRateLimit） */
+  rateLimit?: RateLimitAdapter;
   /**
    * 1 リクエストの CPU の上限を気にしなくてよいランタイム（Node）。Liquid のテーマは Workers の有料プランかこれのときだけ描く
    * （docs/themes.md。Workers はサイトの設定 workers_plan で判定する）
