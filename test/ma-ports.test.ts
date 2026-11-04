@@ -160,6 +160,11 @@ describe("管理画面: 宣伝の月の上限（0105）", () => {
     expect((await admin.post(`${base}/limit`, { limit: "500" })).headers.get("location")).toBe(`${base}?flash=limit_saved`);
     expect((sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] as Record<string, unknown>)["line_marketing_limit"]).toBe(500);
 
+    // プラグインの画面: LINE の 2 つのカードから設定の画面へ
+    const plugins = await (await admin.get(`/admin/shops/${shop.id}/plugins`)).text();
+    expect(plugins.split(`href="${base}"`).length - 1).toBe(3);
+    expect(plugins).toContain("宣伝のメッセージの月の上限");
+
     const old = await setup({ migrations: ["0088_app_connect"] });
     const oldAdmin = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
     expect(await (await oldAdmin.get(`/admin/shops/${old.shop.id}/line-messaging`)).text()).not.toContain("宣伝のメッセージの月の上限");

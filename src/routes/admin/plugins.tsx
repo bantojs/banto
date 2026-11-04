@@ -55,6 +55,11 @@ plugins.get("/:shopId/plugins", requireOwner, async (c: AdminContext) => {
               {row?.enabled ? <span class="badge ok">{t("hooks.enabled")}</span> : <span class="badge">{t("plugins.off")}</span>}
             </h2>
             <p>{p.manifest.description}</p>
+            {p.id === "line_notify" || p.id === "line_buyer_notify" ? (
+              <p class="muted">
+                <a href={`/admin/shops/${shop.id}/line-messaging`}>{t("linemsg.card_link")}</a>
+              </p>
+            ) : null}
             {p.id === "email_resend" ? <p class="muted">{tf("plugins.mail_transport", { name: mailTransportName(cfg) ?? `${cfg.get("MAIL_TRANSPORT")} (?)` })}</p> : null}
             {missing.length > 0 ? (
               <p class="notice">
