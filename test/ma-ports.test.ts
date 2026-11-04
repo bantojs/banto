@@ -26,8 +26,10 @@ async function setup(opts: { migrations?: string[] } = {}) {
     return raw;
   };
   const pushes: { headers: Headers; body: { to: string; messages: Record<string, unknown>[] } }[] = [];
-  const line = { status: 200 };
+  // friend: プロフィールが引けるか（友だちでない・ブロックは 404）。status: push の応答（LINE は友だちでない相手にも 200 を返す）
+  const line = { status: 200, friend: true };
   externalHosts.set("https://api.line.me/", async (req) => {
+    if (req.method === "GET" && new URL(req.url).pathname.startsWith("/v2/bot/profile/")) return new Response("{}", { status: line.friend ? 200 : 404 });
     pushes.push({ headers: req.headers, body: (await req.json()) as { to: string; messages: Record<string, unknown>[] } });
     return new Response("{}", { status: line.status });
   });
@@ -89,13 +91,16 @@ describe("REST POST /api/v1/customers/{id}/line-message", () => {
     expect(pushes).toHaveLength(1);
   });
 
-  it("LINE と結んでいない会員は no_line、友だちでない人は not_friend。LINE の一時的な失敗は 502 で、同じキーで送り直せる", async () => {
+  it("LINE と結んでいない会員は no_line、友だちでない人は not_friend（プロフィールが引けない）。LINE の一時的な失敗は 502 で、同じキーで送り直せる", async () => {
     const { app, issue, member, mailOnly, pushes, line } = await setup();
     const tok = await issue(["line:send"]);
     expect((await send(app, tok, mailOnly, { text: "a" }, "msg-0000002")).json).toMatchObject({ status: "no_line" });
     expect(pushes).toHaveLength(0);
-    line.status = 403;
+    // 友だちでない・ブロックされた: プロフィールが 404 なら送らない（push は 200 を返して届けないため）
+    line.friend = false;
     expect((await send(app, tok, member, { text: "a" }, "msg-0000003")).json).toMatchObject({ status: "not_friend" });
+    expect(pushes).toHaveLength(0);
+    line.friend = true;
     line.status = 500;
     const fail = await send(app, tok, member, { text: "a" }, "msg-0000004");
     expect(fail.status).toBe(502);

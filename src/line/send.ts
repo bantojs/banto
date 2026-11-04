@@ -80,19 +80,26 @@ export function lineMessagesFrom(body: Record<string, unknown>): LineMessage[] {
   return messages;
 }
 
-/** LINE へ 1 回送る。409 は同じ再送キーを LINE が受け付け済み（送れている）。友だちでない・ブロックは 400 / 403 */
+export const LINE_PROFILE_URL = "https://api.line.me/v2/bot/profile/";
+
+/**
+ * LINE へ 1 回送る。
+ * LINE の push は、ブロックされた・友だちでない相手にも 200 を返して届けない（公式の Messaging API のリファレンス「Send push message」）。
+ * なので先にプロフィールを引き（友だちでない・ブロックされたら 404）、引けた相手にだけ送る。
+ * 409 は同じ再送キーを LINE が受け付け済み（送れている）。
+ */
 export async function pushLine(fetchImpl: typeof fetch, token: string, to: string, retryKey: string, messages: LineMessage[]): Promise<"sent" | "not_friend" | "failed"> {
-  let res: Response;
   try {
-    res = await fetchImpl(LINE_PUSH_URL, {
+    const profile = await fetchImpl(`${LINE_PROFILE_URL}${encodeURIComponent(to)}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (profile.status === 404) return "not_friend";
+    if (!profile.ok) return "failed";
+    const res = await fetchImpl(LINE_PUSH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": retryKey },
       body: JSON.stringify({ to, messages }),
     });
+    return res.ok || res.status === 409 ? "sent" : "failed";
   } catch {
     return "failed";
   }
-  if (res.ok || res.status === 409) return "sent";
-  if (res.status === 400 || res.status === 403) return "not_friend";
-  return "failed";
 }
