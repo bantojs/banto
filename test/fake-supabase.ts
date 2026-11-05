@@ -1591,7 +1591,9 @@ export class FakeSupabase {
       const shopId = args["p_shop_id"] as string;
       if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("content"))) return json({ code: "42501", message: "forbidden" }, 403);
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
-      const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string>; product?: string | null; product_categories?: Record<string, string>; collection?: string | null; collection_categories?: Record<string, string>; legal?: string | null; legal_pages?: Record<string, string> };
+      const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string>; product?: string | null; product_categories?: Record<string, string>; collection?: string | null; collection_categories?: Record<string, string>; legal?: string | null; legal_pages?: Record<string, string>; blogs?: Record<string, string> };
+      // 0114 の前の DB は blogs の鍵を断る
+      if (l.blogs !== undefined && !this.appliedMigrations.includes("0114_page_layouts_blogs")) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
       const pageOk = (id: string) => this.tables.pages.some((p) => p["id"] === id && p["shop_id"] === shopId && !p["deleted_at"]);
       const out: Record<string, unknown> = {};
       if (l.home) {
@@ -1638,6 +1640,13 @@ export class FakeSupabase {
         lpages[k] = pid;
       }
       if (Object.keys(lpages).length > 0) out["legal_pages"] = lpages;
+      const blogLists: Record<string, string> = {};
+      for (const [b, pid] of Object.entries(l.blogs ?? {})) {
+        if (!pid) continue;
+        if (!this.tables.blogs.some((x) => x["id"] === b && x["shop_id"] === shopId) || !pageOk(pid)) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
+        blogLists[b] = pid;
+      }
+      if (Object.keys(blogLists).length > 0) out["blogs"] = blogLists;
       const settings = { ...((shop["settings"] ?? {}) as Row) };
       if (Object.keys(out).length > 0) settings["page_layouts"] = out;
       else delete settings["page_layouts"];

@@ -148,12 +148,13 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 
 ## ひな形の部品
 
-ショップのページを商品詳細・商品一覧のひな形にしたとき（docs/pages.md「ひな形の割り当て」）、本文の部品（`::: current part=buy` など）は、テーマに `snippets/part-<部品>.liquid` があればそれで描きます。無い部品は既定のテーマの見た目のままです（色の見本・お店で試着のボタン・下に固定のバー・テーマの商品カードを、部品ごとにテーマに合わせられます）。
+ショップのページを商品詳細・商品一覧・ブログの一覧のひな形にしたとき（docs/pages.md「ひな形の割り当て」）、本文の部品（`::: current part=buy` など）は、テーマに `snippets/part-<部品>.liquid` があればそれで描きます。無い部品は既定のテーマの見た目のままです（色の見本・お店で試着のボタン・下に固定のバー・テーマの商品カードを、部品ごとにテーマに合わせられます）。
 
 | ひな形 | 部品 | snippet に渡すもの |
 | --- | --- | --- |
 | 商品詳細 | `title`・`image`・`price`・`buy`・`content`・`tags`・`attributes`・`breadcrumb`・`size-chart`・`reviews` | `product`・`current_variant`（`templates/product` と同じ） |
 | 商品一覧 | `title`・`image`・`content`・`products`・`filters`・`subcategories`・`breadcrumb` | `collection`・`products`・`current_tags`・`paginate`（`templates/collection` と同じ） |
+| ブログの一覧（0114） | `title`・`content`・`articles`・`filters`・`breadcrumb` | `blog`・`articles`（その 1 ページの記事）・`current_tags`・`paginate`（`templates/blog` と同じ） |
 
 - どの部品にも `part`（`name` = 部品の名前、`default` = Banto の既定の部品の HTML）を渡します。`{{ part.default }}` を出せば、既定の部品をテーマの枠で包めます（例: `part-buy` で色の見本を足し、買うフォームは Banto のまま）。
 - 買うフォームを自分で描くときは `{% form 'product' %}`（`templates/product` と同じ）です。値段・在庫・会員価格・買えるかは今までどおりカートと最終確認で Banto が引き直すので、テーマの部品からは変えられません。

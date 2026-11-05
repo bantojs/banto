@@ -22,7 +22,8 @@ import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MA
 import { PRODUCT_SORTS } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { CLIENT_PRELUDE } from "../woo-import/admin";
-import { pageLayoutsOf } from "../../content/layouts";
+import { BLOG_LAYOUT_MIGRATION, pageLayoutsOf } from "../../content/layouts";
+import { migrated } from "../../db/migration-state";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { BLOG_MODULE, type BlogRow } from "../../blog";
 import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow, contentAudienceValues } from "../../content/editor";
@@ -300,6 +301,8 @@ async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "err
   ]);
   const usable = pages.filter((p) => !p.deleted_at);
   const cur = pageLayoutsOf(shop.settings);
+  // ブログの一覧のひな形（0114）は当たるまで出さない
+  const blogLists = blogs.length > 0 && (await migrated({ db, cache: c.get("adapters").cache }, BLOG_LAYOUT_MIGRATION));
   const select = (name: string, value: string | null, none: MessageKey = "pages.layouts_none") => (
     <select name={name} id={name}>
       <option value="">{t(none)}</option>
@@ -325,10 +328,17 @@ async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "err
         <p class="muted">{t("pages.layouts_home_help")}</p>
         {blogs.map((b) => (
           <>
+            {blogLists ? (
+              <>
+                <label for={`bloglist_${b.id}`}>{tf("pages.layouts_blog_list", { blog: b.title })}</label>
+                {select(`bloglist_${b.id}`, cur.blogs[b.id] ?? null)}
+              </>
+            ) : null}
             <label for={`article_${b.id}`}>{tf("pages.layouts_article", { blog: b.title })}</label>
             {select(`article_${b.id}`, cur.articles[b.id] ?? null)}
           </>
         ))}
+        {blogLists ? <p class="muted">{t("pages.layouts_blog_list_help")}</p> : null}
         {blogs.length > 0 ? <p class="muted">{t("pages.layouts_article_help")}</p> : null}
         <>
           <label for="product">{t("pages.layouts_product")}</label>
@@ -406,7 +416,9 @@ pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
   const articles: Record<string, string> = {};
   const cats: Record<string, string> = {};
   const ccats: Record<string, string> = {};
+  const blogLists: Record<string, string> = {};
   for (const [k, v] of Object.entries(f)) {
+    if (k.startsWith("bloglist_") && v) blogLists[k.slice("bloglist_".length)] = v;
     if (k.startsWith("article_") && v) articles[k.slice("article_".length)] = v;
     if (k.startsWith("category_") && v) cats[k.slice("category_".length)] = v;
     if (k.startsWith("ccategory_") && v) ccats[k.slice("ccategory_".length)] = v;
@@ -417,7 +429,9 @@ pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
   const legal = { legal: f["legal"] || null, legal_pages: legalPagesSel };
   const product = { product: f["product"] || null, product_categories: cats };
   try {
-    await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles, ...product, ...collection, ...legal } });
+    // ブログの一覧（0114）: 当たる前の DB は blogs の鍵を断るので送らない（当たった後は、欄が無い = 外す）
+    const withBlogs = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, BLOG_LAYOUT_MIGRATION)) ? { blogs: blogLists } : {};
+    await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles, ...product, ...collection, ...legal, ...withBlogs } });
   } catch (e) {
     if (e instanceof DbError) return layoutsPage(c, shop, "error", 400);
     throw e;

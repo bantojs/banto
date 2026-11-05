@@ -37,6 +37,18 @@ describe.skipIf(!dbAvailable)("ひな形の割り当て（0101）", () => {
     expect((await getPool().query("select settings ? 'page_layouts' as has from shops where id = $1", [a.shopId])).rows[0].has).toBe(false);
   });
 
+  it("ブログの一覧（0114）: ブログごと。よそのブログ・ページ・形の違う値は断り、公開の settings に出る", async () => {
+    const otherBlog = (await getPool().query("insert into blogs (shop_id, handle, title) values ($1, 'news', 'よそ') returning id", [b.shopId])).rows[0].id;
+    expect(await set(a.ownerId, a.shopId, { blogs: { [blog]: page }, articles: { [blog]: page } })).toEqual({ blogs: { [blog]: page }, articles: { [blog]: page } });
+    const pub = await asAnon(async (c) => (await c.query("select shop_public_get('pl-a') as s")).rows[0].s);
+    expect(pub.settings.page_layouts.blogs).toEqual({ [blog]: page });
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { blogs: { [otherBlog]: page } }))).toMatch(/invalid_page_layouts/);
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { blogs: { [blog]: otherPage } }))).toMatch(/invalid_page_layouts/);
+    expect(await expectDbError(() => set(a.ownerId, a.shopId, { blogs: [page] }))).toMatch(/invalid_page_layouts/);
+    // 空の値は外す
+    expect(await set(a.ownerId, a.shopId, { blogs: { [blog]: "" } })).toEqual({});
+  });
+
   it("商品詳細（0102）: ショップ全体とカテゴリーごと。よそのカテゴリー・ページは断る", async () => {
     const pool = getPool();
     const cat = (await pool.query("insert into categories (shop_id, slug, name) values ($1, 'tops', 'トップス') returning id", [a.shopId])).rows[0].id;

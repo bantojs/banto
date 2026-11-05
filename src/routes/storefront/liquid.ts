@@ -587,7 +587,7 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
 
 /** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
 /** path: canonical のパス（ひな形、0101。お店のトップは ""・記事は /blogs/…。無ければ /pages/<handle>） */
-export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string; jsonLd?: unknown } & ArticleBlocks): Response | null {
+export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string; jsonLd?: unknown; noindex?: boolean } & ArticleBlocks): Response | null {
   const pg = p.page;
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
@@ -603,6 +603,7 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     categories: p.categories,
     ...(p.path === undefined ? { currentPage: pg.handle } : {}),
     ...(p.jsonLd ? { jsonLd: p.jsonLd } : {}),
+    ...(p.noindex ? { noindex: true } : {}),
   });
   return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
 }
@@ -719,7 +720,15 @@ function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: 
 }
 
 /** ブログの記事の一覧（同梱モジュール blog、0081、/blogs/<handle>）。templates/blog.<suffix> か templates/blog */
-export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; pageNo: number; newer: string | null; older: string | null; categories: CategoryRow[] }): Response | null {
+type BlogListInput = { blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; pageNo: number; newer: string | null; older: string | null };
+
+/** ブログの一覧のひな形の部品に渡す値（templates/blog と同じ blog・articles・current_tags・paginate、0114） */
+export function blogPartValues(s: LiquidScope, p: BlogListInput): Record<string, unknown> {
+  const v = blogListValues(s, p);
+  return { blog: v.blog, articles: v.articles, current_tags: p.tag ? [p.tag] : [], paginate: v.paginate };
+}
+
+function blogListValues(s: LiquidScope, p: BlogListInput) {
   const sp = s.ctx.shopPath;
   const articles = p.articles.map(({ article }) => articleObject(sp, p.blog, article, "", s.ctx.publicBaseUrl));
   const paginate: Paginate = {
@@ -732,6 +741,11 @@ export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: 
     parts: [],
   };
   const blog = blogObject(sp, p.blog, { articles, articles_count: articles.length, all_tags: p.tags, tags: p.tags });
+  return { articles, paginate, blog };
+}
+
+export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: BlogListInput & { categories: CategoryRow[] }): Response | null {
+  const { blog, paginate } = blogListValues(s, p);
   return render(c, s, choice, {
     template: suffixedTemplate(choice.lt, "blog", p.blog.template_suffix),
     // paginate は {% paginate blog.articles by … %} の中と外のどちらでも読める（Banto が 1 ページの数を決める）

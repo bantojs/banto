@@ -26,7 +26,12 @@ export interface PageLayouts {
   /** 法務の 3 つのページ（0104）: 共通のものと、ページごと（legal・privacy・returns）の上書き */
   legal: string | null;
   legalPages: Record<string, string>;
+  /** ブログの一覧（0114）: ブログの id → ひな形のページの id */
+  blogs: Record<string, string>;
 }
+
+/** ブログの一覧のひな形のマイグレーション（割り当ての欄と保存は当たるまで出さない） */
+export const BLOG_LAYOUT_MIGRATION = "0114_page_layouts_blogs";
 
 const UUID = /^[0-9a-f-]{36}$/;
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
@@ -34,7 +39,7 @@ const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typ
 /** 公開の settings の page_layouts を読む（形の違うものは無いことにする） */
 export function pageLayoutsOf(settings: Record<string, unknown> | null | undefined): PageLayouts {
   const raw = isObject(settings) ? settings["page_layouts"] : null;
-  const out: PageLayouts = { home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {}, legal: null, legalPages: {} };
+  const out: PageLayouts = { home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {}, legal: null, legalPages: {}, blogs: {} };
   if (!isObject(raw)) return out;
   if (typeof raw["home"] === "string" && UUID.test(raw["home"])) out.home = raw["home"];
   if (typeof raw["product"] === "string" && UUID.test(raw["product"])) out.product = raw["product"];
@@ -47,6 +52,7 @@ export function pageLayoutsOf(settings: Record<string, unknown> | null | undefin
   map(raw["articles"], out.articles);
   map(raw["product_categories"], out.productCategories);
   map(raw["collection_categories"], out.collectionCategories);
+  map(raw["blogs"], out.blogs);
   return out;
 }
 
@@ -171,6 +177,13 @@ export function fillCurrent(html: string, parts: Record<string, string> = {}): s
 /** 商品の部品の最小の CSS（Liquid のテーマで商品詳細のひな形を描くとき。既定のテーマは自分の CSS を持つ） */
 export const PRODUCT_PARTS_CSS =
   ".gallery img[data-main]{width:100%;height:auto;border-radius:var(--banto-radius,.5rem)}.gallery .thumbs{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}.gallery .thumbs img{width:4rem;height:4rem;object-fit:cover;border-radius:.35rem}.product-price{font-size:1.25em;font-weight:600}";
+
+/** ブログの一覧の部品の CSS（Liquid のテーマで、既定のテーマの部品を出すとき。既定のテーマの CSS と同じもの、0114） */
+export const BLOG_PARTS_CSS =
+  ".blog-list{list-style:none;padding:0;margin:0;max-width:44rem}.blog-list li{padding:1.25rem 0;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}.blog-list h2{margin:.25rem 0}.blog-list a{text-decoration:none;color:inherit}.blog-list img{width:100%;max-height:16rem;object-fit:cover;border-radius:.5rem}.blog-meta{font-size:.85rem;opacity:.65}.blog-tags a{margin-right:.5rem}.pager{display:flex;justify-content:space-between;gap:1rem;margin:2rem 0}";
+
+/** ブログの一覧のひな形（0114）。割り当てが無ければ null */
+export const blogLayoutId = (l: PageLayouts, blogId: string): string | null => l.blogs[blogId] ?? null;
 
 /** 部品の最小の CSS（ひな形を使うページにだけ添える） */
 export const CURRENT_CSS =
