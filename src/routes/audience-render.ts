@@ -97,7 +97,8 @@ export function memberReader(c: Ctx, shopId: string, member: { cid: string; ep: 
     skus: (skuIds) => db.productMemberSkus({ ...who, p_sku_ids: skuIds }),
     page: (handle) => db.contentMemberRpc("page_member_get", { ...who, p_handle: handle }),
     article: (blogId, handle) => db.contentMemberRpc("article_member_get", { ...who, p_blog_id: blogId, p_handle: handle }),
-    articles: (blogId, offset, limit, tag) => db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag }),
+    // p_sort は 0116 から（sort があるのは 0116 の DB だけ。articleSortFor）
+    articles: (blogId, offset, limit, tag, sort) => db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...(sort ? { p_sort: sort } : {}) }),
   };
 }
 

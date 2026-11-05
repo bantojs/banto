@@ -500,8 +500,8 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 | --- | --- |
 | 公開中のページの一覧（並び順。本文なし） | `GET /api/shops/:shop/pages` |
 | ページ 1 つ | `GET /api/shops/:shop/pages/:handle` |
-| ブログの一覧 | `GET /api/shops/:shop/blogs` |
-| 記事の一覧（公開した日時の新しい順に 12 本ずつ、`?page=`・`?tag=`、深さは 1,200 本まで） | `GET /api/shops/:shop/blogs/:blog/articles` |
+| ブログの一覧（記事の並び順 `article_order`、フィードの `feed_url` は出さないブログで `null`。0116） | `GET /api/shops/:shop/blogs` |
+| 記事の一覧（ブログの並び順で 12 本ずつ。既定は公開した日時の新しい順。`?page=`・`?tag=`、深さは 1,200 本まで） | `GET /api/shops/:shop/blogs/:blog/articles` |
 | 記事 1 つ | `GET /api/shops/:shop/blogs/:blog/articles/:article` |
 
 - 返るのは公開中・公開の日時を過ぎた・ゴミ箱の外のものだけです。

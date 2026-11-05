@@ -31,7 +31,7 @@ import { appBlocksOf, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml,
 import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
-import { BLOG_MODULE, articlePath, articleSummary, type ArticleRow, type BlogRow } from "../blog";
+import { BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
 import { moduleEnabled } from "../modules/registry";
 import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
@@ -95,7 +95,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
         try {
           const blog = await d.sf.blogByHandle(d.shop, block.blog);
           if (!blog) return null;
-          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag: block.tag });
+          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag: block.tag, sort: articleSortFor(blog, block.sort) });
           return { block, blog, items };
         } catch (e) {
           console.error("[banto] page articles:", e);

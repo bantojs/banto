@@ -403,7 +403,7 @@ export class FakeSupabase {
 
   /** ブログ（0081） */
   addBlog(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
-    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "news", title: "お知らせ", description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, created_at: this.now(), updated_at: this.now(), ...fields };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "news", title: "お知らせ", description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...this.blogOrderDefaults(), created_at: this.now(), updated_at: this.now(), ...fields };
     this.tables.blogs.push(row);
     return row;
   }
@@ -411,8 +411,20 @@ export class FakeSupabase {
   /** 記事（0081）。既定は公開中 */
   addArticle(shopId: string, blogId: string, fields: Partial<Row> = {}): Row & { id: string } {
     const row = { id: fakeUuid(++this.seq), shop_id: shopId, blog_id: blogId, handle: "hello", title: "Hello", body: "", excerpt: null, tags: [] as string[], image_url: null, author: null, seo_title: null, seo_description: null, template_suffix: null, published: true, published_at: this.now(), deleted_at: null, created_at: this.now(), updated_at: this.now(), ...fields };
+    this.articlePosition(row);
     this.tables.articles.push(row);
     return row;
+  }
+
+  /** 0116: ブログの並び順とフィードの既定（当たる前の DB には列が無い） */
+  private blogOrderDefaults(): Row {
+    return this.appliedMigrations.includes("0116_blog_order") ? { article_order: "new", feed: true } : {};
+  }
+
+  /** 0116: 新しい記事はそのブログの最後に（本物は test/db/blog-order.test.ts） */
+  private articlePosition(row: Row): void {
+    if (!this.appliedMigrations.includes("0116_blog_order")) return;
+    if (!row["position"]) row["position"] = Math.max(0, ...this.tables.articles.filter((a) => a["blog_id"] === row["blog_id"]).map((a) => Number(a["position"] ?? 0))) + 1;
   }
 
   /** 0080: お客様に見えるページ（公開中・公開の日時を過ぎた・ゴミ箱に無い） */
@@ -830,7 +842,12 @@ export class FakeSupabase {
         const keys = order.split(",").map((part) => part.split(".") as [string, string | undefined]);
         out = [...out].sort((a, b) => {
           for (const [col, dir] of keys) {
-            const x = String(a[col]), y = String(b[col]);
+            const av = a[col], bv = b[col];
+            if (typeof av === "number" && typeof bv === "number") {
+              if (av !== bv) return (av < bv ? -1 : 1) * (dir === "desc" ? -1 : 1);
+              continue;
+            }
+            const x = String(av), y = String(bv);
             if (x !== y) return (x < y ? -1 : 1) * (dir === "desc" ? -1 : 1);
           }
           return 0;
@@ -881,8 +898,12 @@ export class FakeSupabase {
           Object.assign(row, { body: "", excerpt: null, tags: [], image_url: null, author: null, seo_title: null, seo_description: null, template_suffix: null, published: false, published_at: null, deleted_at: null, ...r });
           if (!this.tables.blogs.some((b) => b["id"] === row["blog_id"] && b["shop_id"] === row["shop_id"])) return json({ code: "23514", message: "article_blog_mismatch" }, 400);
           this.articleShape(row);
+          this.articlePosition(row);
         }
-        if (table === "blogs") Object.assign(row, { description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...r });
+        if (table === "blogs") {
+          Object.assign(row, { description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...this.blogOrderDefaults(), ...r });
+          if ("article_order" in row && !["new", "title", "manual"].includes(String(row["article_order"]))) return json({ code: "23514", message: 'new row for relation "blogs" violates check constraint "blogs_article_order_check"' }, 400);
+        }
         if (table === "product_images" && !Object.keys((row["options"] as Row | undefined) ?? {}).length) {
           row["options"] = this.imageHints.find((h) => h.product_id === row["product_id"] && String(row["storage_key"]).includes(h.tag))?.options ?? {};
         }
@@ -1419,6 +1440,22 @@ export class FakeSupabase {
       const r = rows.find((x) => this.pageLive(x) && x["audience_id"] && !x["audience_hide"]);
       return json(r && this.shopPublished(args["p_shop_id"]) ? "members" : null);
     }
+    if (fn === "article_positions_set") {
+      // 0116（本物は test/db/blog-order.test.ts）: 項目 content・このブログの記事だけ・1..1000000
+      const b = this.tables.blogs.find((x) => x["id"] === args["p_blog_id"]);
+      if (!b || !(this.hasPerm("blogs", b, uid) || this.ownedShopIds(uid).has(String(b["shop_id"])))) return json({ code: "42501", message: "forbidden" }, 403);
+      const pos = args["p_positions"] as Record<string, unknown>;
+      if (!pos || typeof pos !== "object" || Object.values(pos).some((v) => !Number.isInteger(v) || Number(v) < 1 || Number(v) > 1000000)) return json({ code: "22023", message: "invalid_positions" }, 400);
+      let n = 0;
+      for (const a of this.tables.articles) {
+        const v = pos[String(a["id"])];
+        if (a["blog_id"] === b["id"] && v !== undefined && a["position"] !== v) {
+          a["position"] = v;
+          n++;
+        }
+      }
+      return json(n);
+    }
     if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") {
       const aud = this.memberAudienceIds(args);
       const open = (x: Row) => this.pageLive(x) && (!x["audience_id"] || aud.includes(String(x["audience_id"])));
@@ -1426,7 +1463,13 @@ export class FakeSupabase {
       const arts = this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && a["blog_id"] === args["p_blog_id"] && Boolean(a["published_at"]) && open(a));
       if (fn === "article_member_get") return json(arts.find((a) => a["handle"] === args["p_handle"]) ?? null);
       const tag = args["p_tag"] as string | null;
-      const list = arts.filter((a) => !tag || ((a["tags"] ?? []) as string[]).includes(tag)).sort((x, y) => String(y["published_at"]).localeCompare(String(x["published_at"])));
+      // 0116: p_sort が無ければブログの並び順（同じなら新しい順）
+      if ("p_sort" in args && !this.appliedMigrations.includes("0116_blog_order")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
+      const sort = (args["p_sort"] as string | undefined) ?? String(this.tables.blogs.find((b) => b["id"] === args["p_blog_id"])?.["article_order"] ?? "new");
+      const newer = (x: Row, y: Row) => String(y["published_at"]).localeCompare(String(x["published_at"])) || String(y["id"]).localeCompare(String(x["id"]));
+      const cmp = (x: Row, y: Row) =>
+        (sort === "manual" ? Number(x["position"] ?? 0) - Number(y["position"] ?? 0) : 0) || (sort === "title" ? (String(x["title"]) < String(y["title"]) ? -1 : String(x["title"]) > String(y["title"]) ? 1 : 0) : 0) || newer(x, y);
+      const list = arts.filter((a) => !tag || ((a["tags"] ?? []) as string[]).includes(tag)).sort(cmp);
       return json(list.slice(Number(args["p_offset"] ?? 0), Number(args["p_offset"] ?? 0) + Number(args["p_limit"] ?? 12) + 1));
     }
     if (fn === "product_public_member_prices") {

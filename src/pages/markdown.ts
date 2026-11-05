@@ -439,7 +439,7 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       }
       const ab = parseArticlesLine(row);
       if (ab) {
-        const data = `data-banto-block="articles" data-blog="${ab.blog}" data-tag="${esc(ab.tag ?? "")}" data-limit="${ab.limit}" data-layout="${ab.layout}"${ab.style ? ` data-style="${ab.style}"` : ""}`;
+        const data = `data-banto-block="articles" data-blog="${ab.blog}" data-tag="${esc(ab.tag ?? "")}" data-limit="${ab.limit}" data-layout="${ab.layout}"${ab.sort ? ` data-sort="${ab.sort}"` : ""}${ab.style ? ` data-style="${ab.style}"` : ""}`;
         const cls = `banto-articles banto-articles--${ab.layout}${ab.style ? ` banto-style-${ab.style}` : ""}`;
         if (opts.articlesLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.articlesLabel(ab))}</div>`);
         else out.push(`<div class="${cls}" ${data}>${st.articles < ARTICLE_BLOCKS_MAX ? articlesMarker(st.articles) : ""}</div>`);

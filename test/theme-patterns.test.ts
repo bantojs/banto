@@ -115,7 +115,7 @@ describe("スタイルと記事を並べるブロックの書式", () => {
   });
 
   it("記事を並べる: 値は決まった形だけ・1 ページに 2 つまで", () => {
-    expect(parseArticlesLine("::: articles blog=news")).toEqual({ blog: "news", tag: null, limit: 3, layout: "grid", style: null });
+    expect(parseArticlesLine("::: articles blog=news")).toEqual({ blog: "news", tag: null, sort: null, limit: 3, layout: "grid", style: null });
     expect(parseArticlesLine("::: articles blog=News")).toBeNull();
     expect(parseArticlesLine("::: articles blog=news limit=13")).toBeNull();
     expect(articleBlocksOf("::: articles blog=a\n::: articles blog=b\n::: articles blog=c").map((b) => b.blog)).toEqual(["a", "b"]);

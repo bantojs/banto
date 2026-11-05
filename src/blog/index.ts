@@ -25,9 +25,37 @@ export interface BlogRow {
   template_suffix: string | null;
   nav: PageNav;
   sort_order: number;
+  /** 記事の並び順（0116。無ければ 0116 の前の DB で、新しい順） */
+  article_order?: ArticleOrder;
+  /** Atom のフィードを出すか（0116。無ければ出す） */
+  feed?: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/** 記事の並び順（0116）: 公開した日時の新しい順・題の順・手で並べる（articles.position の小さい順） */
+export const ARTICLE_ORDERS = ["new", "title", "manual"] as const;
+export type ArticleOrder = (typeof ARTICLE_ORDERS)[number];
+export const BLOG_ORDER_MIGRATION = "0116_blog_order";
+export const isArticleOrder = (v: unknown): v is ArticleOrder => typeof v === "string" && (ARTICLE_ORDERS as readonly string[]).includes(v);
+
+/**
+ * 一覧で使う並び順。ブログの設定（override があればそれ）。0116 の前の DB（ブログの行に article_order が無い）では undefined = 今までどおり新しい順
+ */
+export function articleSortFor(blog: Pick<BlogRow, "article_order">, override?: ArticleOrder | null): ArticleOrder | undefined {
+  if (!isArticleOrder(blog.article_order)) return undefined;
+  return override ?? blog.article_order;
+}
+
+/** PostgREST の order（会員の一覧の articles_member_page と同じ並び。同じなら新しい順） */
+export function articleOrderParam(sort: ArticleOrder | undefined): string {
+  if (sort === "title") return "title.asc,published_at.desc,id.desc";
+  if (sort === "manual") return "position.asc,published_at.desc,id.desc";
+  return "published_at.desc,id.desc";
+}
+
+/** フィードを出すブログか（0116 の前は出す） */
+export const blogHasFeed = (blog: Pick<BlogRow, "feed">) => blog.feed !== false;
 
 export interface ArticleRow {
   /** 会員限定（0100）: 会員の条件と、存在も隠すか */
@@ -48,6 +76,8 @@ export interface ArticleRow {
   template_suffix: string | null;
   published: boolean;
   published_at: string | null;
+  /** 手で並べるときの順（0116） */
+  position?: number;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;

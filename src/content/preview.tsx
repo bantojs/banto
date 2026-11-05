@@ -18,7 +18,7 @@ import { fillDateBlocks, fillShopBlocks } from "../pages/shop-blocks";
 import { mediaBaseUrl, publicBaseUrl } from "../routes/common";
 import type { PageRow } from "../pages";
 import type { ArticleRow, BlogRow } from "../blog";
-import { blogPath } from "../blog";
+import { blogHasFeed, blogPath } from "../blog";
 import type { CategoryRow } from "../db/types";
 import { t } from "../i18n";
 import { articleParts, fillCurrent, pageParts } from "./layouts";
@@ -84,5 +84,5 @@ export async function themedPreview(c: AdminContext, shop: ShopRow, target: Prev
   c.header("Cache-Control", "private, no-store");
   c.header("X-Robots-Tag", "noindex");
   if (target.kind === "page") return c.html(theme.ContentPage!({ ctx, page: target.page, html: notice + html }));
-  return c.html(theme.ArticlePage!({ ctx, blog: target.blog, article: target.article, html: notice + html, feedUrl: `${blogPath(shopPath, target.blog.handle)}/feed.atom` }));
+  return c.html(theme.ArticlePage!({ ctx, blog: target.blog, article: target.article, html: notice + html, feedUrl: blogHasFeed(target.blog) ? `${blogPath(shopPath, target.blog.handle)}/feed.atom` : null }));
 }

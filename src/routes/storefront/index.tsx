@@ -30,7 +30,7 @@ import { bodyBlocks } from "../../content/body-blocks";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
-import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSummary, atomFeed, blogHandleOk, blogPath, type ArticleRow, type BlogRow } from "../../blog";
+import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
@@ -234,7 +234,7 @@ async function templateSample(s: ShopScope, pageId: string, categories: Category
   const blogId = Object.entries(l.articles).find(([, p]) => p === pageId)?.[0];
   if (blogId && moduleEnabled(s.shop.settings, BLOG_MODULE)) {
     const blog = await s.sf.blogById(s.shop, blogId);
-    const article = blog ? (await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: 1 })).items[0] : undefined;
+    const article = blog ? (await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: 1, sort: articleSortFor(blog) })).items[0] : undefined;
     if (blog && article) return { kind: "article", blog, article };
   }
   const catId = Object.entries(l.productCategories).find(([, p]) => p === pageId)?.[0];
@@ -728,7 +728,7 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
 async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article: ArticleRow, body: string, raw: string, categories: CategoryRow[], o: RenderOpts & { segment?: string; layout?: PageRow | null } = {}): Promise<Response> {
   // 記事を読んだ（0107。プレビューでは積まない）
   if (!o.preview) recordShopEvent(c, { type: "article_view", value_jpy: 0, items: [], article: { id: article.id, blog: blog.handle, handle: article.handle, author: article.author ?? null, tags: (article.tags ?? []).slice(0, 20) } });
-  const feedUrl = `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom`;
+  const feedUrl = blogHasFeed(blog) ? `${blogPath(s.ctx.shopPath, blog.handle)}/feed.atom` : null;
   const dates = { published: article.published_at ?? article.updated_at, updated: article.updated_at };
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
@@ -786,14 +786,14 @@ storefront.get("/:shop/blogs/:blog", async (c: Ctx) => {
  */
 async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: string | null; pageNo: number }, categories: CategoryRow[], o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
   const { tag, pageNo } = q;
-  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag });
+  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog) });
   const path = blogPath(s.ctx.shopPath, blog.handle);
   const link = (n: number) => `${path}?${new URLSearchParams({ ...(tag ? { tag } : {}), ...(n > 1 ? { page: String(n) } : {}) }).toString()}`.replace(/\?$/, "");
   const newer = pageNo > 1 ? link(pageNo - 1) : null;
   const older = hasNext && pageNo * ARTICLES_PER_PAGE <= ARTICLES_OFFSET_MAX ? link(pageNo + 1) : null;
   const articles = items.map((article) => ({ article, summary: articleSummary(article) }));
   const tags = [...new Set(items.flatMap((a) => a.tags))].slice(0, 30);
-  const feedUrl = `${path}/feed.atom`;
+  const feedUrl = blogHasFeed(blog) ? `${path}/feed.atom` : null;
   const lt = await liquidThemeFor(c, s);
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? blogLayoutId(pageLayoutsOf(s.shop.settings), blog.id) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
@@ -836,8 +836,10 @@ storefront.get("/:shop/blogs/:blog/feed.atom", async (c: Ctx) => {
   const handle = param(c, "blog");
   if (!moduleEnabled(s.shop.settings, BLOG_MODULE) || !blogHandleOk(handle)) return notFoundPage(c, s);
   const blog = await s.sf.blogByHandle(s.shop, handle);
-  if (!blog) return notFoundPage(c, s);
-  const { items } = await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: FEED_ARTICLES });
+  // フィードを出さないブログ（0116）は無いことにする
+  if (!blog || !blogHasFeed(blog)) return notFoundPage(c, s);
+  // フィードはブログの並び順によらず新しい順
+  const { items } = await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: FEED_ARTICLES, sort: articleSortFor(blog, "new") });
   const home = shopHome(publicBaseUrl(c), s.shop);
   const blogUrl = `${home}/blogs/${encodeURIComponent(blog.handle)}`;
   const body = atomFeed({

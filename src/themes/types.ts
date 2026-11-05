@@ -297,10 +297,10 @@ export interface Theme {
    * summary は記事ごとの短い紹介（抜粋か本文の頭の文字）。tag で絞っていればその名前。newer / older はページ送りの URL
    */
   /** layout: ブログの一覧のひな形（0114）。部品（title・content・articles・filters・breadcrumb）の HTML を渡し、返った HTML を本文として描く */
-  BlogPage?(props: { ctx: ThemeContext; blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; newer: string | null; older: string | null; feedUrl: string; layout?: (parts: Record<string, string>) => string }): Rendered;
+  BlogPage?(props: { ctx: ThemeContext; blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; newer: string | null; older: string | null; /** フィードを出さないブログ（0116）は null */ feedUrl: string | null; layout?: (parts: Record<string, string>) => string }): Rendered;
   /** ブログの記事（/blogs/<ブログ>/<handle>）。html は本文を HTML にしたもの（ページと同じ。そのまま出してよい） */
   /** bare: 記事のひな形（0101）で描いた本文。テーマは記事の見出し・日付・アイキャッチ・タグを出さず、本文（html）だけを描く */
-  ArticlePage?(props: { ctx: ThemeContext; blog: BlogRow; article: ArticleRow; html: string; feedUrl: string; bare?: boolean }): Rendered;
+  ArticlePage?(props: { ctx: ThemeContext; blog: BlogRow; article: ArticleRow; html: string; feedUrl: string | null; bare?: boolean }): Rendered;
   /**
    * 決済ページから戻ってきた直後。注文確定は Webhook で行うので、status が無ければ「受付済み」の表示に留める。
    * status（0035、照会トークン付きで開いたとき）: confirmed なら orderNumber を出す、pending なら「確認中」（refresh が true なら数秒後に自動で再読み込み）、

@@ -5,7 +5,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
-import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSummary, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
+import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSortFor, articleSummary, blogHasFeed, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
@@ -117,7 +117,9 @@ contentApi.get("/shops/:shop/pages/:handle", async (c: Ctx) => {
 });
 
 function blogSummary(s: Scope, b: BlogRow) {
-  return { handle: b.handle, title: b.title, description: b.description, url: `${s.home}/blogs/${encodeURIComponent(b.handle)}`, nav: b.nav, sort_order: b.sort_order, seo_title: b.seo_title, seo_description: b.seo_description, updated_at: b.updated_at };
+  const url = `${s.home}/blogs/${encodeURIComponent(b.handle)}`;
+  // article_order: 記事の並び順（0116。前の DB は new）、feed_url: フィードを出さないブログは null
+  return { handle: b.handle, title: b.title, description: b.description, url, nav: b.nav, sort_order: b.sort_order, article_order: b.article_order ?? "new", feed_url: blogHasFeed(b) ? `${url}/feed.atom` : null, seo_title: b.seo_title, seo_description: b.seo_description, updated_at: b.updated_at };
 }
 
 function articleSummaryJson(s: Scope, blog: BlogRow, a: ArticleRow) {
@@ -155,7 +157,7 @@ contentApi.get("/shops/:shop/blogs/:blog/articles", async (c: Ctx) => {
   const tagRaw = (c.req.query("tag") ?? "").trim();
   const tag = tagRaw && tagRaw.length <= 50 ? tagRaw : null;
   const pageNo = Math.max(1, Math.min(Math.floor(ARTICLES_OFFSET_MAX / ARTICLES_PER_PAGE) + 1, Number.parseInt(c.req.query("page") ?? "1", 10) || 1));
-  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag });
+  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog) });
   return c.json({ blog: blogSummary(s, blog), articles: items.map((a) => articleSummaryJson(s, blog, a)), page: pageNo, per_page: ARTICLES_PER_PAGE, has_next: hasNext && pageNo * ARTICLES_PER_PAGE <= ARTICLES_OFFSET_MAX });
 });
 
