@@ -60,6 +60,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     swatch_cleared: "swatch.cleared",
     swatch_invalid: "swatch.invalid",
     swatch_image_invalid: "swatch.image_invalid",
+    swatch_unchanged: "swatch.unchanged",
   };
   const key = code ? map[code] : undefined;
   return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" || code === "swatch_saved" || code === "swatch_cleared" ? "ok" : "error", text: t(key) } : null;

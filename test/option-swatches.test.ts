@@ -112,20 +112,40 @@ describe("管理画面", () => {
     const old = `swatches/${shop.id}/0123456789abcdef.webp`;
     await storage.put(old, new Uint8Array([1]).buffer as ArrayBuffer, "image/webp");
     // 値の並びは SKU に出てくる順（ネイビー・チェック・ホワイト）
+    expect(page).not.toContain("kind_0");
+    // 選択欄は無い。スクリプト無しのフォームのまま: 色を変えた値は色、画像を選んだ値は画像（色も変えていても画像）、触らない値はそのまま
+    const form = { v_0: "ネイビー", color_prev_0: "#888888", v_1: "チェック", color_prev_1: "#888888", v_2: "ホワイト", color_prev_2: "#888888" };
     let res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, {
-      v_0: "ネイビー", kind_0: "color", color_0: "#112233",
-      v_1: "チェック", kind_1: "image", image_1: new File([webp(96, 96)], "c.webp", { type: "image/webp" }),
-      v_2: "ホワイト", kind_2: "none",
+      ...form,
+      color_0: "#112233",
+      color_1: "#445566", image_1: new File([webp(96, 96)], "c.webp", { type: "image/webp" }),
+      color_2: "#888888",
     });
     expect(res.headers.get("location")).toContain("flash=swatch_saved");
-    const sw = (row["option_swatches"] as Record<string, Record<string, { color?: string; image?: { key: string } }>>)["color"]!;
-    expect(sw["ネイビー"]).toEqual({ color: "#112233" });
-    expect(sw["チェック"]!.image!.key).toMatch(new RegExp(`^swatches/${shop.id}/[a-f0-9]+\\.webp$`));
-    expect(sw["ホワイト"]).toBeUndefined();
+    const table = () => (row["option_swatches"] as Record<string, Record<string, { color?: string; image?: { key: string } }>>)["color"]!;
+    expect(table()["ネイビー"]).toEqual({ color: "#112233" });
+    expect(table()["チェック"]!.image!.key).toMatch(new RegExp(`^swatches/${shop.id}/[a-f0-9]+\\.webp$`));
+    expect(table()["ホワイト"]).toBeUndefined();
     expect(storage.objects.has(old)).toBe(false);
-    // 画像を選ばずに「画像」にはできない（今の画像があれば残す）
-    res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "ホワイト", kind_0: "image" });
-    expect(res.headers.get("location")).toContain("flash=swatch_image_invalid");
+    // 置いてある灰色そのものを選んだ（スクリプトが印を付けた）ときも色として残す
+    res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "ホワイト", color_prev_0: "#888888", color_0: "#888888", color_set_0: "1" });
+    expect(res.headers.get("location")).toContain("flash=swatch_saved");
+    expect(table()["ホワイト"]).toEqual({ color: "#888888" });
+    expect(table()["ネイビー"]).toEqual({ color: "#112233" }); // フォームに無い値は今のまま
+    // 何も変えずに保存したら「保存しました」と言わない
+    res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "ネイビー", color_prev_0: "#112233", color_0: "#112233" });
+    expect(res.headers.get("location")).toContain("flash=swatch_unchanged");
+    // 色の値が壊れていれば保存しない
+    res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "ネイビー", color_prev_0: "#112233", color_0: "navy" });
+    expect(res.headers.get("location")).toContain("flash=swatch_unchanged");
+    // 「外す」で文字に戻す。画像の見本を外すと画像も置き場から消える
+    const imgKey = table()["チェック"]!.image!.key;
+    res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "チェック", color_prev_0: "#888888", color_0: "#888888", clear_0: "1" });
+    expect(res.headers.get("location")).toContain("flash=swatch_saved");
+    expect(table()["チェック"]).toBeUndefined();
+    expect(storage.objects.has(imgKey)).toBe(false);
+    res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "ネイビー", clear_0: "1", v_1: "ホワイト", clear_1: "1" });
+    expect(res.headers.get("location")).toContain("flash=swatch_cleared");
     const before = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0115_option_swatches") });
     const b2 = await Browser.loggedIn(before.app, "owner@example.com", "password-123");
     expect(await (await b2.get(`/admin/shops/${before.shop.id}/categories`)).text()).not.toContain("option-swatches/");
