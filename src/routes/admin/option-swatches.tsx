@@ -106,6 +106,9 @@ export function SwatchesEditor({ shopId, names, values, table, media }: { shopId
 
 /** 見本の画像を縮めてから送る（長い辺を SWATCH_IMAGE_SIZE まで、WebP）。失敗したら元のファイルのまま送る */
 const SWATCH_RESIZE_SCRIPT = `(function(){document.querySelectorAll("form[data-swatch-form]").forEach(function(f){var busy=false;
+// 色を選ぶ・画像を選ぶと、その行の「見本」をそれに切り替える（「無し」のまま保存して何も残らない、を防ぐ）
+f.addEventListener("input",function(e){var t=e.target;if(!t||!t.name)return;var m=/^(color|image)_(\\d+)$/.exec(t.name);if(!m)return;if(m[1]==="image"&&!(t.files&&t.files[0]))return;var k=f.querySelector("select[name=kind_"+m[2]+"]");if(k)k.value=m[1];});
+f.addEventListener("change",function(e){var t=e.target;if(!t||!t.name)return;var m=/^(color|image)_(\\d+)$/.exec(t.name);if(!m)return;if(m[1]==="image"&&!(t.files&&t.files[0]))return;var k=f.querySelector("select[name=kind_"+m[2]+"]");if(k)k.value=m[1];});
 f.addEventListener("submit",function(e){if(busy||typeof DataTransfer==="undefined")return;var inputs=[].slice.call(f.querySelectorAll("input[data-swatch-image]")).filter(function(i){return i.files&&i.files[0];});if(!inputs.length)return;e.preventDefault();busy=true;var left=inputs.length;
 function done(){if(--left===0)f.submit()}
 inputs.forEach(function(inp){var file=inp.files[0],url=URL.createObjectURL(file),im=new Image();
@@ -166,6 +169,6 @@ export function mountOptionSwatches(app: Hono<AppEnv>): void {
       if (e instanceof DbError) return fail("swatch_invalid");
       throw e;
     }
-    return c.redirect(`${back}?flash=swatch_saved#option-swatches`);
+    return c.redirect(`${back}?flash=${Object.keys(next).length > 0 ? "swatch_saved" : "swatch_cleared"}#option-swatches`);
   });
 }

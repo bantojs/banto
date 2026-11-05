@@ -359,6 +359,7 @@ export const en: Record<MessageKey, string> = {
   "swatch.image": "Image",
   "swatch.image_for": "Image for {value}",
   "swatch.image_hint": "Use an image for patterns (check, stripes). JPEG, PNG or WebP is shrunk to 96px in this browser before sending.",
+  "swatch.cleared": "Removed the swatches for this option (every value is \"None\"). To use a color, set the value's swatch to \"Color\".",
   "swatch.saved": "Saved the swatches.",
   "swatch.invalid": "Could not save the swatches (check the color format and the limit of 500).",
   "swatch.image_invalid": "Could not read the swatch image (JPEG, PNG or WebP; choose an image to use the image swatch).",
