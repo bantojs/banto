@@ -67,7 +67,7 @@ function layoutConfig(audiences: { id: string; name: string }[] = []): string {
     L["audience_label"] = t("pages.audience_label");
     for (const a of audiences) L[`opt.id.${a.id}`] = a.name;
   }
-  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "tab_title", "colors_note"] as const) L[k] = t(`layout.${k}`);
+  for (const k of ["focus_help", "group_design", "settings", "settings_none", "choose_image", "remove_image", "add_image", "parent", "depth_max", "gallery_empty", "media_empty", "acc_title", "tab_title", "colors_note", "text_wrap_help", "text_help"] as const) L[k] = t(`layout.${k}`);
   return JSON.stringify({ schema, depth: LAYOUT_DEPTH_MAX, t: L });
 }
 
@@ -342,6 +342,9 @@ export const EDITOR_CSS = `
 #body-visual .is-sel,#body-visual .is-sel:hover{box-shadow:0 0 0 1.5px var(--link)}
 #body-visual [data-slot]{min-height:1.5rem}
 #body-visual .banto-column{outline:1px dashed var(--border);outline-offset:3px}
+#body-visual .banto-text{border-left:3px solid var(--border-strong);padding-left:.75rem}
+#body-visual .banto-text[data-style]::after{content:attr(data-style);position:absolute;top:0;right:0;font-size:.7rem;line-height:1;padding:.15rem .35rem;border-radius:3px;background:var(--bg-subtle);color:var(--fg-muted);pointer-events:none}
+#body-visual .banto-text[data-style-label]::after{content:attr(data-style-label)}
 #body-visual .banto-cover:not([data-image]){background:linear-gradient(135deg,#555,#222)}
 #body-visual .banto-media__fig:empty,#body-visual .banto-gallery:empty{min-height:7rem;border:1.5px dashed var(--border-strong);border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer}
 #body-visual .banto-media__fig:empty::before,#body-visual .banto-gallery:empty::before{content:attr(data-ph);color:var(--fg-muted);font-size:.85rem}

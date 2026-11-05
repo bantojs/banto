@@ -103,13 +103,14 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     tabs:'<path d="M3 9h18v11H3z"/><path d="M3 9V5h7v4M10 5h6v4"/>',
     shop:'<path d="M3 9l1.5-5h15L21 9M3 9h18v11H3zM9 20v-6h6v6"/>',
     audience:'<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/><rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="3 2"/>',
-    parent:'<path d="M9 14l-5-5 5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v5"/>'
+    parent:'<path d="M9 14l-5-5 5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v5"/>',
+    text:'<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'
   };
   // レイアウトのブロック（src/pages/layout.ts の値と既定・文言。サーバーが data-layout に入れる）
   var LAY={}; try{ LAY=JSON.parse(form.getAttribute("data-layout")||"{}"); }catch(_){}
   var LS=LAY.schema||{}, LTX=LAY.t||{}, DEPTH=LAY.depth||4;
   function LT(k){ return LTX[k]||""; }
-  var CONT={group:1,columns:1,column:1,cover:1,media:1,gallery:1,accordion:1,audience:1,grid:1,tabs:1,tab:1};
+  var CONT={group:1,columns:1,column:1,cover:1,media:1,gallery:1,accordion:1,audience:1,grid:1,tabs:1,tab:1,text:1};
   // 文字を書けない箱（押すと選ぶ）
   var BOXES={products:1,button:1,spacer:1,gallery:1,articles:1,app:1,shop:1};
   // お店のブロック（src/pages/shop-blocks.ts。サーバーが data-shop-blocks の JSON で、名前・説明・設定の欄を渡す）
@@ -122,15 +123,17 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function appDef(app,id){ var p=null,b=null; APPS.forEach(function(x){ if(x.app===app){ p=x; (x.blocks||[]).forEach(function(y){ if(y.id===id) b=y; }); } }); return {p:p,b:b}; }
   // ブロックの一覧（一覧の順・まとまり）
   var BLOCKS=[
-    ["p","text"],["h2","text"],["h3","text"],["ul","text"],["ol","text"],["q","text"],["table","text"],["accordion","text"],
+    ["p","text"],["h2","text"],["h3","text"],["ul","text"],["ol","text"],["q","text"],["text","text"],["table","text"],["accordion","text"],
     ["img","media"],["gallery","media"],["cover","media"],["media","media"],
     ["group","design"],["columns","design"],["grid","design"],["tabs","design"],["spacer","design"],["hr","design"],["audience","design"],
     ["products","shop"],["articles","shop"],["button","shop"]
-  ].filter(function(x){ return (!(CONT[x[0]]||x[0]==="spacer")||LS[x[0]])&&(x[0]!=="articles"||HAS_ARTICLES); }).map(function(x){ var lay=!!LS[x[0]]; return {k:x[0],g:x[1],label:lay?LT("kind."+x[0]):T(x[0]),desc:lay?LT("desc."+x[0]):T("d-"+x[0])}; })
+  ].filter(function(x){ return (!(CONT[x[0]]||x[0]==="spacer")||LS[x[0]])&&(x[0]!=="articles"||HAS_ARTICLES)&&(x[0]!=="text"||hasTextStyles()); }).map(function(x){ var lay=!!LS[x[0]]; return {k:x[0],g:x[1],label:lay?LT("kind."+x[0]):T(x[0]),desc:lay?LT("desc."+x[0]):T("d-"+x[0])}; })
    .concat(Object.keys(SHOPDEF).map(function(k){ var d=SHOPDEF[k]; return {k:"shop:"+k,g:d.group||"shop",label:d.label,desc:d.desc||""}; }))
    .concat(PATTERNS.map(function(p){ return {k:"pattern:"+p.name,g:p.source==="theme"?"theme":"patterns",label:p.title,desc:p.description||"",pattern:p.name}; }))
    .concat(APPS.reduce(function(a,p){ (p.blocks||[]).forEach(function(b){ a.push({k:"app:"+p.app+":"+b.id,g:"apps",label:b.label,desc:p.name+(b.description?" — "+b.description:"")}); }); return a; },[]));
   function nameOf(k){ return LS[k]?LT("kind."+k):T(k); }
+  // 文字のスタイル（A2）は、テーマが text のスタイルを決めているときだけ出す（スタイルの無い囲みは何もしないため）
+  function hasTextStyles(){ return !!(STYLES.text&&STYLES.text.length); }
   var TEXTY={p:1,h2:1,h3:1,ul:1,ol:1,q:1};
   function kindOf(el){
     if(!el||el.nodeType!==1) return "";
@@ -158,14 +161,16 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function depthOf(x){ var d=0; for(var n=x;n&&n!==ed;n=n.parentNode){ if(n.nodeType===1&&CONT[n.getAttribute("data-banto-block")]) d++; } return d; }
   // b の中の囲みの段の数（b が囲みなら 1 から）
   function heightOf(b){ var base=depthOf(b.parentNode), m=CONT[kindOf(b)]?1:0; Array.prototype.forEach.call(b.querySelectorAll("[data-banto-block]"),function(x){ if(CONT[x.getAttribute("data-banto-block")]) m=Math.max(m,depthOf(x)-base); }); return m; }
-  function slotsOf(b){ var k=kindOf(b); if(k==="group"||k==="column"||k==="columns"||k==="grid"||k==="tabs") return [b]; var s=b.querySelector(":scope > [data-slot]"); return s?[s]:[]; }
+  function slotsOf(b){ var k=kindOf(b); if(k==="group"||k==="column"||k==="columns"||k==="grid"||k==="tabs"||k==="text") return [b]; var s=b.querySelector(":scope > [data-slot]"); return s?[s]:[]; }
   // 囲みの class（変換 src/pages/markdown.ts と同じ形）
   function cls(d){
     var k=d.getAttribute("data-banto-block"), g=function(x){ return d.getAttribute("data-"+x)||""; }, keep=d.classList.contains("is-sel");
     var c={group:"banto-group banto-bg-"+g("bg")+" banto-pad-"+g("pad"),columns:"banto-columns banto-cols-"+g("ratio")+" banto-valign-"+g("valign"),column:"banto-column",
       cover:"banto-cover banto-cover--h-"+g("height")+" banto-cover--overlay-"+g("overlay")+" banto-align-"+g("align")+" banto-valign-"+g("valign")+" banto-cover--focus-"+g("focus"),media:"banto-media banto-media--"+g("side")+" banto-valign-"+g("valign"),
-      gallery:"banto-gallery banto-gallery--"+g("cols"),grid:"banto-grid banto-grid--"+g("cols"),tabs:"banto-tabs",tab:"banto-tab",accordion:"banto-accordion banto-accordion--"+g("icon"),spacer:"banto-spacer banto-spacer--"+g("size"),audience:"banto-audience"}[k];
+      gallery:"banto-gallery banto-gallery--"+g("cols"),grid:"banto-grid banto-grid--"+g("cols"),tabs:"banto-tabs",tab:"banto-tab",text:"banto-text",accordion:"banto-accordion banto-accordion--"+g("icon"),spacer:"banto-spacer banto-spacer--"+g("size"),audience:"banto-audience"}[k];
     var stl=g("style"); if(c) d.className=c+(stl&&/^[a-z0-9][a-z0-9-]{0,29}$/.test(stl)?" banto-style-"+stl:"")+(keep?" is-sel":"");
+    // 文字のスタイルの印（編集の画面だけ。書式には書かない）: テーマの文言
+    if(k==="text"){ var lb0=""; (STYLES.text||[]).forEach(function(x){ if(x.name===stl) lb0=x.label; }); if(lb0) d.setAttribute("data-style-label",lb0); else d.removeAttribute("data-style-label"); }
   }
   var RATIO_OF={2:"1-1",3:"1-1-1",4:"1-1-1-1"};
   // タブの数に合わせる（減らすときは中身を前のタブへ寄せる）
@@ -199,7 +204,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     var d=document.createElement("div"); d.setAttribute("data-banto-block",kind);
     var sc=LS[kind]||{}; Object.keys(sc).forEach(function(k){ d.setAttribute("data-"+k,sc[k].def); });
     var slotDiv=function(c,first){ var x=el("div",c); x.setAttribute("data-slot",""); x.appendChild(first||emptyP()); return x; };
-    if(kind==="group"||kind==="column"||kind==="grid"){ d.setAttribute("data-slot",""); d.appendChild(emptyP()); if(kind==="grid") d.appendChild(emptyP()); }
+    if(kind==="group"||kind==="column"||kind==="grid"||kind==="text"){ d.setAttribute("data-slot",""); d.appendChild(emptyP()); if(kind==="grid") d.appendChild(emptyP()); }
     else if(kind==="tabs"){ d.setAttribute("data-slot","tabs"); d.setAttribute("data-count","2"); d.appendChild(mk("tab")); d.appendChild(mk("tab")); }
     else if(kind==="tab"){ var tt=el("div","banto-tab__title"); tt.setAttribute("data-acc-title",""); tt.appendChild(document.createElement("br")); d.appendChild(tt); d.appendChild(slotDiv("banto-tab__body")); }
     else if(kind==="columns"){ d.setAttribute("data-slot","cols"); syncCols(d); }
@@ -1009,7 +1014,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   syncMode();
 
   // ---------- ブロックの設定（右の欄のいちばん上。選んだレイアウトのブロックの値をその場で変える） ----------
-  var setCard=null, setFor=null;
+  var setCard=null, setFor=null, setForText=null;
   (function(){ var aside0=form.querySelector(".split > aside"); if(aside0){ setCard=el("section","card pe-blockset"); setCard.setAttribute("aria-live","polite"); aside0.insertBefore(setCard,aside0.firstChild); } })();
   function setAttr(b,key,v){ b.setAttribute("data-"+key,v); if(kindOf(b)==="audience") audienceLabel(b); if(kindOf(b)==="tabs"&&key==="count") syncTabs(b); cls(b); if(key==="ratio") syncCols(b); if(key==="alt"){ var im=b.querySelector(".banto-media__fig img"); if(im) im.alt=v; } mark(); refresh(); }
   function openSettings(){ var a0=form.querySelector(".split > aside"); if(a0&&a0.hidden&&typeof setSet==="function") setSet(true); drawSettings(true); if(setCard) setCard.scrollIntoView({block:"nearest"}); }
@@ -1018,12 +1023,25 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     // 選んだブロックがレイアウトのブロックでなければ、それを囲む一番近いもの（列ならカラム）の設定を出す
     var b=sel; while(b&&!(LS[kindOf(b)]&&kindOf(b)!=="column"&&kindOf(b)!=="tab")) b=b.parentNode===ed?null:ownerOf(b.parentNode);
     var k=b?kindOf(b):"";
-    if(!force&&setFor===b) return; setFor=b;
+    // 文字のスタイル（A2）: 選んだ段落・見出し・リストが文字のスタイルの囲みの外なら、スタイルを選ぶと囲む
+    var tb=sel&&TEXTY[kindOf(sel)]&&hasTextStyles()&&kindOf(ownerOf(sel.parentNode))!=="text"&&depthOf(sel.parentNode)<DEPTH?sel:null;
+    var key0=(b||null)===setFor&&tb===setForText;
+    if(!force&&key0) return; setFor=b; setForText=tb;
     setCard.innerHTML=""; var h=el("h2","");
-    if(!b||!LS[k]||k==="column"||k==="tab"){ h.textContent=LT("settings"); setCard.appendChild(h); var p0=el("p","muted"); p0.textContent=LT("settings_none"); setCard.appendChild(p0); return; }
+    if(tb){
+      var th=el("h2",""); th.innerHTML=svg(ICO.text); th.appendChild(document.createTextNode(LT("kind.text"))); setCard.appendChild(th);
+      var tl=el("label",""); tl.textContent=T("style"); tl.setAttribute("for","ls-text-style"); setCard.appendChild(tl);
+      var ts=document.createElement("select"); ts.id="ls-text-style"; fillStyle(ts,"text",""); setCard.appendChild(ts);
+      var tp=el("p","muted"); tp.style.fontSize=".8rem"; tp.textContent=LT("text_wrap_help"); setCard.appendChild(tp);
+      ts.addEventListener("change",function(){ var v=styleVal(ts); if(!v||!tb.parentNode) return; var d=mk("text"); d.innerHTML=""; tb.parentNode.insertBefore(d,tb); d.appendChild(tb); d.setAttribute("data-style",v); cls(d); mark(); select(tb); drawSettings(true); });
+    }
+    if(!b||!LS[k]||k==="column"||k==="tab"){ if(tb) return; h.textContent=LT("settings"); setCard.appendChild(h); var p0=el("p","muted"); p0.textContent=LT("settings_none"); setCard.appendChild(p0); return; }
     h.innerHTML=svg(ICO[k]); h.appendChild(document.createTextNode(nameOf(k))); setCard.appendChild(h);
     // テーマのスタイル（テーマが決めているブロックだけ）
-    if(STYLES[k]&&STYLES[k].length){ var ls0=el("label",""); ls0.textContent=T("style"); ls0.setAttribute("for","ls-style"); setCard.appendChild(ls0); var ss=document.createElement("select"); ss.id="ls-style"; fillStyle(ss,k,b.getAttribute("data-style")||""); ss.addEventListener("change",function(){ var v=styleVal(ss); if(v) b.setAttribute("data-style",v); else b.removeAttribute("data-style"); cls(b); mark(); refresh(); }); setCard.appendChild(ss); }
+    if(STYLES[k]&&STYLES[k].length||k==="text"){ var ls0=el("label",""); ls0.textContent=T("style"); ls0.setAttribute("for","ls-style"); setCard.appendChild(ls0); var ss=document.createElement("select"); ss.id="ls-style"; fillStyle(ss,k,b.getAttribute("data-style")||""); ss.addEventListener("change",function(){ var v=styleVal(ss);
+      // 文字のスタイルを「既定」に戻したら囲みを外す（中の段落・見出し・リストはそのまま残る）
+      if(!v&&k==="text"){ var first=null; while(b.firstChild){ var ch0=b.firstChild; if(!first&&ch0.nodeType===1) first=ch0; b.parentNode.insertBefore(ch0,b); } b.parentNode.removeChild(b); mark(); if(first) select(first); drawSettings(true); return; }
+      if(v) b.setAttribute("data-style",v); else b.removeAttribute("data-style"); cls(b); mark(); refresh(); }); setCard.appendChild(ss); if(k==="text"){ var tp2=el("p","muted"); tp2.style.fontSize=".8rem"; tp2.textContent=LT("text_help"); setCard.appendChild(tp2); } }
     var sc=LS[k];
     Object.keys(sc).forEach(function(key){
       var cur=b.getAttribute("data-"+key)||sc[key].def, id="ls-"+key;
@@ -1064,6 +1082,8 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(k==="group"||k==="cover"){ var nt=el("p","muted"); nt.style.fontSize=".8rem"; nt.textContent=LT("colors_note"); setCard.appendChild(nt); }
   }
   drawSettings(true);
+  // 開いたとき: 文字のスタイルの印にテーマの文言を
+  Array.prototype.forEach.call(ed.querySelectorAll("[data-banto-block=text]"),cls);
   // 開いたとき: 前に空のまま保存した囲みにも書き始める段落を入れる
   tidy();
   // 開いたとき: 空の画像の欄とギャラリーに案内の文字

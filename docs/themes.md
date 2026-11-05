@@ -138,11 +138,13 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 ```json
 {
   "group": [{ "name": "framed", "label": { "ja": "細い罫線で囲む", "en": "Framed" } }],
-  "button": [{ "name": "outline", "label": "線だけ" }]
+  "button": [{ "name": "outline", "label": "線だけ" }],
+  "text": [{ "name": "lead", "label": "リード文" }, { "name": "eyebrow", "label": "小見出し" }]
 }
 ```
 
-- 付けられるブロック: `group`・`columns`・`column`・`cover`・`media`・`gallery`・`accordion`・`button`・`products`・`articles`。1 つに 24 個まで、`name` は英小文字・数字・ハイフン（30 字まで）、`label` は 40 字まで。
+- 付けられるブロック: `group`・`columns`・`column`・`cover`・`media`・`gallery`・`accordion`・`button`・`products`・`articles`・`text`。
+- **`text`（文字のスタイル）**: 段落・見出し・リストの見た目（リード文・英字の小見出し・注記など）。本文は `::: text style=lead`〜`:::` の囲みになり、HTML は `<div class="banto-text banto-style-lead">` の中に今までどおりの `<p>`・`<h2>`・`<ul>` が並びます。CSS は `.banto-text.banto-style-lead p { … }` のように中の要素に書きます。テーマが `text` のスタイルを決めているときだけ、編集の画面のブロックの一覧に「文字のスタイル」が出て、段落・見出し・リストを選んだときの設定にもスタイルの欄が出ます（選ぶとその場で囲む。「既定」に戻すと囲みを外す）。1 つに 24 個まで、`name` は英小文字・数字・ハイフン（30 字まで）、`label` は 40 字まで。
 - テーマを替えて、その名前がテーマに無くなっても本文はそのまま（class が付くだけで、見た目は既定に戻る）。編集の画面では前の名前も選んだまま残ります。
 - どちらのファイルも、取り込むときに形を確かめます（誤りはファイル名と場所で知らせ、取り込まない）。
 

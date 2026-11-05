@@ -1,5 +1,5 @@
 /**
- * 本文のレイアウトのブロック（グループ・カラム・カバー・画像と文・ギャラリー・アコーディオン・スペーサー。docs/pages.md「レイアウトのブロック」）。
+ * 本文のレイアウトのブロック（グループ・カラム・カバー・画像と文・ギャラリー・アコーディオン・スペーサー・文字のスタイル。docs/pages.md「レイアウトのブロック」）。
  * メンテナの決定 2026-10-30: WordPress のよく使うブロックを、決まった書式のまま入れ子の囲みとして書けるようにする。
  *
  *   :::: columns ratio=1-2
@@ -21,7 +21,7 @@
  */
 
 /** 中に本文を持つ囲み */
-export const LAYOUT_CONTAINERS = ["group", "columns", "column", "cover", "media", "gallery", "accordion", "grid", "tabs", "tab"] as const;
+export const LAYOUT_CONTAINERS = ["group", "columns", "column", "cover", "media", "gallery", "accordion", "grid", "tabs", "tab", "text"] as const;
 /** グリッドの列の数・タブの数の上限 */
 export const GRID_COLS = ["2", "3", "4", "5", "6"] as const;
 export const TABS_MAX = 8;
@@ -58,6 +58,8 @@ export const LAYOUT_ATTRS: Record<LayoutContainer | "spacer", Record<string, rea
   grid: { cols: GRID_COLS },
   tabs: {},
   tab: {},
+  // 文字のスタイル（メンテナの決定 2026-11-05、A2）: 中の段落・見出し・リストにテーマのスタイル（style=）を当てるだけの囲み。値は持たない
+  text: {},
   spacer: { size: SPACER },
 };
 /** 既定を変えたいもの（先頭以外を既定にする） */
@@ -74,7 +76,7 @@ export interface LayoutOpen {
   style: string | null;
 }
 
-const OPEN = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion|grid|tabs|tab)(?:\s+(.*?))?\s*$/;
+const OPEN = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion|grid|tabs|tab|text)(?:\s+(.*?))?\s*$/;
 const CLOSE = /^\s{0,3}:{3,}\s*$/;
 /** 見せる相手の囲み（同梱モジュール audiences、0097。src/content/audience-blocks.ts） */
 const AUDIENCE_OPEN = /^\s{0,3}:{3,}\s*audience(?:\s+(.*?))?\s*$/;

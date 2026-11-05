@@ -267,7 +267,8 @@ const ESC_ATTR = (s: string) => esc(s);
 
 /** 囲みを HTML にする（中身は inner の行を同じ規則で描いたもの） */
 function layoutBlock(o: LayoutOpen, inner: string[], depth: number, st: RenderState): string {
-  st.layout = true;
+  // 文字のスタイルは並べ方の CSS を使わない（見た目はテーマだけ）
+  if (o.kind !== "text") st.layout = true;
   const ed = st.opts.editor === true;
   const a = o.attrs;
   const data = (extra = "") => `data-banto-block="${o.kind}"${Object.entries(a).map(([k, v]) => ` data-${k}="${ESC_ATTR(v)}"`).join("")}${o.style ? ` data-style="${o.style}"` : ""}${extra}`;
@@ -282,6 +283,9 @@ function layoutBlock(o: LayoutOpen, inner: string[], depth: number, st: RenderSt
   switch (o.kind) {
     case "group":
       return `<div class="banto-group banto-bg-${a["bg"]} banto-pad-${a["pad"]}${sty}" ${data()}${slot}>${body()}</div>`;
+    case "text":
+      // 文字のスタイル: 余白も背景も足さない。見た目はテーマの CSS（.banto-text.banto-style-<名前> の中の p・h2・ul など）
+      return `<div class="banto-text${sty}" ${data()}${slot}>${body()}</div>`;
     case "columns":
       return `<div class="banto-columns banto-cols-${a["ratio"]} banto-valign-${a["valign"]}${sty}" ${data()}${ed ? ' data-slot="cols"' : ""}>${body()}</div>`;
     case "column":
