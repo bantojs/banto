@@ -41,6 +41,7 @@ import { productPartsOf, shopBlocksOf, type ShopBlock } from "../pages/shop-bloc
 import { storeView, todayHere } from "../modules/store-tryon";
 import type { StoreView } from "../themes/types";
 import { productFields } from "../products/fields";
+import { shopImageUrl } from "../pages/markdown";
 import { PAGES_MODULE, pagePath } from "../pages";
 import { imageUrl } from "../media/images";
 import { categoryImageOf } from "../products/category-media";
@@ -288,6 +289,11 @@ function productFieldHtml(d: BodyBlocksDeps, p: ProductRow, key: string): string
   const raw = f ? (p.attributes ?? {})[key] : undefined;
   if (!f || raw === undefined || raw === null || String(raw).trim() === "") return "";
   const v = String(raw);
+  if (f.type === "image") {
+    const src = shopImageUrl(v, d.mediaBaseUrl);
+    if (!src) return "";
+    return `<div class="banto-product__field banto-product__field--${esc(key)} banto-product__field--image"><span class="banto-product__field-label">${esc(f.label)}</span><span class="banto-product__field-value"><img src="${esc(src)}" alt="${esc(f.label)}" loading="lazy"></span></div>`;
+  }
   const value = f.type === "url" && /^https?:\/\//i.test(v) ? `<a href="${esc(v)}" rel="nofollow noopener">${esc(v)}</a>` : esc(v).replace(/\n/g, "<br>");
   return `<div class="banto-product__field banto-product__field--${esc(key)}"><span class="banto-product__field-label">${esc(f.label)}</span><span class="banto-product__field-value">${value}</span></div>`;
 }

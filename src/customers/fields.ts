@@ -17,9 +17,9 @@ export function marketingConsentEnabled(settings: Record<string, unknown> | null
 
 export type CustomerField = ProductField;
 
-/** 会員の項目はお客様の画面には出さない（public は常に false。定義の private の印は無視する） */
+/** 会員の項目はお客様の画面には出さない（public は常に false。定義の private の印は無視する）。画像の種類は会員には使わない */
 export function customerFields(settings: Record<string, unknown> | null | undefined): CustomerField[] {
-  return fieldDefinitions((settings ?? {})["customer_fields"], { publicDefault: false }).map((f) => ({ ...f, public: false }));
+  return fieldDefinitions((settings ?? {})["customer_fields"], { publicDefault: false }).filter((f) => f.type !== "image").map((f) => ({ ...f, public: false }));
 }
 
 export function parseCustomerFieldDefinitions(input: string): CustomerField[] {

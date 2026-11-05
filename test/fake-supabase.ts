@@ -459,6 +459,10 @@ export class FakeSupabase {
       } else if (type === "store") {
         if (!this.tables.shop_stores.some((ss) => ss["shop_id"] === row["shop_id"] && ss["store_id"] === v)) return `article_field_invalid:${key}`;
         out[key] = String(v);
+      } else if (type === "image") {
+        // 0120: 形だけ（/media/ か http(s)、空白・引用符・山かっこ・.. なし）
+        if (typeof v !== "string" || v.length > 2000 || !/^(\/media\/|https?:\/\/)[^\s"'<>`\\]+$/.test(v) || v.includes("..")) return `article_field_invalid:${key}`;
+        out[key] = v;
       } else if (type === "product" || type === "article") {
         const list = [...new Set((Array.isArray(v) ? v : [v]).map(String))];
         if (list.length > (d["multiple"] ? 24 : 1)) return `article_field_invalid:${key}`;

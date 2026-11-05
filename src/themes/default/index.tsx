@@ -1875,7 +1875,7 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
             {attributes.map((a) => (
               <tr>
                 <th>{a.label}</th>
-                <td>{String(a.value)}</td>
+                <td>{a.type === "image" ? <img src={String(a.value)} alt={a.label} loading="lazy" style="max-width:100%;height:auto" /> : String(a.value)}</td>
               </tr>
             ))}
           </tbody>

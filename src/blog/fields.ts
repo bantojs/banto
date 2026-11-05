@@ -1,12 +1,16 @@
 /**
  * ブログの記事の独自の項目（0117_article_fields、メンテナの決定 2026-11-05、docs/blog.md「記事の項目」）。
- * 定義はブログごと（blogs.article_fields）、値は記事（articles.fields）。形と指す先は DB のトリガー（banto_article_fields_norm）が正で、
+ * 定義はブログごと（blogs.article_fields）、値は記事（articles.fields）。image は画像の URL（このショップの画像の置き場のものだけ、0120）。形と指す先は DB のトリガー（banto_article_fields_norm）が正で、
  * ここは画面の入力・表示と絞り込みの形を作るだけ。記事は公開の読み物なので、項目もすべて公開
  */
 
+import { shopImageUrl } from "../pages/markdown";
+
 export const ARTICLE_FIELDS_MIGRATION = "0117_article_fields";
+/** 画像の種類（0120、メンテナの決定 2026-11-05）。当てるまで定義に書かせない */
+export const ARTICLE_FIELD_IMAGE_MIGRATION = "0120_article_field_image";
 export const ARTICLE_FIELDS_MAX = 20;
-export const ARTICLE_FIELD_TYPES = ["text", "number", "select", "store", "product", "article"] as const;
+export const ARTICLE_FIELD_TYPES = ["text", "number", "select", "store", "product", "article", "image"] as const;
 export type ArticleFieldType = (typeof ARTICLE_FIELD_TYPES)[number];
 
 export interface ArticleFieldDef {
@@ -51,20 +55,20 @@ export function articleFieldDefs(blog: { article_fields?: unknown }): ArticleFie
 
 /**
  * ブログの設定の欄 → 定義。1 行 1 項目で「キー | 表示名 | 種類 | 補足」。種類は text / number / select / store / product / products /
- * article / articles（s が付くといくつも選べる）。補足は select の選択肢（/ 区切り）か、article の指すブログの URL の名前
+ * article / articles（s が付くといくつも選べる）/ image（画像、0120）。補足は select の選択肢（/ 区切り）か、article の指すブログの URL の名前
  *   例: height | 身長 | number
  *       store | 店舗 | store
  *       author | 書いた人 | article | staff
  *       items | 着用アイテム | products
  */
-export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[]): { defs: ArticleFieldDef[]; error: string | null } {
+export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[], opts: { image?: boolean } = {}): { defs: ArticleFieldDef[]; error: string | null } {
   const defs: ArticleFieldDef[] = [];
   for (const line of input.replace(/\r\n?/g, "\n").split("\n")) {
     if (!line.trim()) continue;
     const [key = "", label = "", typeRaw = "", extra = ""] = line.split("|").map((x) => x.trim());
     const plural = typeRaw === "products" || typeRaw === "articles";
     const type = (plural ? typeRaw.slice(0, -1) : typeRaw) as ArticleFieldType;
-    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key)) return { defs, error: line };
+    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key) || (type === "image" && opts.image !== true)) return { defs, error: line };
     const def: ArticleFieldDef = { key, label: (label || key).slice(0, 60), type };
     if (type === "select") {
       def.options = extra.split("/").map((x) => x.trim()).filter(Boolean).slice(0, 50);
@@ -100,8 +104,11 @@ export function fieldValues(v: unknown): string[] {
   return [];
 }
 
-/** 記事の編集の画面のフォーム（field_<key>）→ 値。形の検査は DB が行う（ここは入力を整えるだけ） */
-export function fieldsFromForm(defs: ArticleFieldDef[], form: Record<string, string | undefined>): Record<string, unknown> {
+/**
+ * 記事の編集の画面のフォーム（field_<key>）→ 値。形の検査は DB が行う（ここは入力を整えるだけ）。
+ * image はこのショップの画像の置き場（mediaBase）のものだけ（ほかは捨てる。src/pages/markdown.ts の shopImageUrl）
+ */
+export function fieldsFromForm(defs: ArticleFieldDef[], form: Record<string, string | undefined>, mediaBase?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const f of defs) {
     const raw = (form[`field_${f.key}`] ?? "").trim();
@@ -110,6 +117,9 @@ export function fieldsFromForm(defs: ArticleFieldDef[], form: Record<string, str
       const list = [...new Set(raw.split(/[,、\s]+/).map((x) => x.trim().toLowerCase()).filter((x) => HANDLE.test(x)))];
       if (list.length === 0) continue;
       out[f.key] = f.multiple ? list.slice(0, 24) : list[0];
+    } else if (f.type === "image") {
+      const img = shopImageUrl(raw, mediaBase);
+      if (img) out[f.key] = img;
     } else out[f.key] = raw.slice(0, 500);
   }
   return out;
