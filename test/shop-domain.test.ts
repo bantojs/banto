@@ -52,11 +52,11 @@ describe("独自ドメインのストアフロント", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("Tシャツ");
-    expect(html).toContain('href="/p/tee"');
+    expect(html).toContain('href="/products/tee"');
     expect(html).not.toContain("/my-shop");
     expect(html).toContain(`<link rel="canonical" href="${SHOP_URL}/"`);
-    const detail = await (await b.get("/p/tee")).text();
-    expect(detail).toContain(`<link rel="canonical" href="${SHOP_URL}/p/tee"`);
+    const detail = await (await b.get("/products/tee")).text();
+    expect(detail).toContain(`<link rel="canonical" href="${SHOP_URL}/products/tee"`);
     expect(detail).toContain('action="/cart/add"');
   });
 
@@ -64,7 +64,7 @@ describe("独自ドメインのストアフロント", () => {
     const { b, sb, sku } = setup();
     const add = await b.post("/cart/add", { sku_id: sku.id, qty: "1" });
     expect(add.status).toBe(302);
-    expect(add.headers.get("location")).toBe("/p/tee?added=1&sku=A&qty=1");
+    expect(add.headers.get("location")).toBe("/products/tee?added=1&sku=A&qty=1");
     expect(add.headers.getSetCookie().some((c) => c.includes("Path=/;"))).toBe(true);
     const cart = await (await b.get("/cart")).text();
     expect(cart).toContain("Tシャツ");
@@ -101,7 +101,7 @@ describe("独自ドメインのストアフロント", () => {
     for (const host of [`https://${DOMAIN}.`, `https://${DOMAIN.toUpperCase()}`]) {
       const dotted = new Browser(app, host);
       expect((await dotted.get("/admin/login")).status, host).toBe(302);
-      expect((await dotted.get("/p/tee")).status, host).toBe(200);
+      expect((await dotted.get("/products/tee")).status, host).toBe(200);
     }
     expect((await b.get("/mcp")).status).toBe(404);
     expect((await app.request(`${SHOP_URL}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(404);
@@ -118,8 +118,8 @@ describe("独自ドメインのストアフロント", () => {
     const top = await base.get("/my-shop");
     expect(top.status).toBe(302);
     expect(top.headers.get("location")).toBe(`${SHOP_URL}/`);
-    const p = await base.get("/my-shop/p/tee?x=1");
-    expect(p.headers.get("location")).toBe(`${SHOP_URL}/p/tee?x=1`);
+    const p = await base.get("/my-shop/products/tee?x=1");
+    expect(p.headers.get("location")).toBe(`${SHOP_URL}/products/tee?x=1`);
     // 独自ドメインの無いショップはそのまま
     expect((await base.get("/other")).status).toBe(200);
   });
@@ -130,7 +130,7 @@ describe("独自ドメインのストアフロント", () => {
     expect(robots).toContain(`Sitemap: ${SHOP_URL}/sitemap.xml`);
     expect(robots).toContain("Disallow: /cart");
     const own = await readSitemap(async (u) => (await b.get(new URL(u).pathname)).text(), `${SHOP_URL}/sitemap.xml`);
-    expect(own).toContain(`<loc>${SHOP_URL}/p/tee</loc>`);
+    expect(own).toContain(`<loc>${SHOP_URL}/products/tee</loc>`);
     expect(own).not.toContain("/other");
     // Banto の URL のサイトマップには、独自ドメインのショップを載せない
     const main = await readSitemap(async (u) => (await base.get(new URL(u).pathname)).text(), `${BASE}/sitemap.xml`);

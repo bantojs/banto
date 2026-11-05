@@ -71,7 +71,7 @@ describe("拡張データ（0084）: お客様の画面", () => {
     const { app, rest, issue, product } = setup();
     const tok = await issue(["app_data:write"]);
     await rest(tok, "PUT", `/products/${product.id}/app-data/reviews.v1`, { data: reviews });
-    const html = await (await app.request(`${BASE}/my-shop/p/tee`)).text();
+    const html = await (await app.request(`${BASE}/my-shop/products/tee`)).text();
     expect(html).toContain('class="reviews-summary"');
     expect(html).toContain("12 件のレビュー");
     expect(html).toContain('id="reviews"');
@@ -83,7 +83,7 @@ describe("拡張データ（0084）: お客様の画面", () => {
     expect(ld["aggregateRating"]).toMatchObject({ "@type": "AggregateRating", ratingValue: 4.5, reviewCount: 12 });
     expect((ld["review"] as unknown[]).length).toBe(2);
     await rest(tok, "PUT", `/products/${product.id}/app-data/reviews.v1`, { data: reviews, public: false });
-    const hidden = await (await app.request(`${BASE}/my-shop/p/tee`)).text();
+    const hidden = await (await app.request(`${BASE}/my-shop/products/tee`)).text();
     expect(hidden).not.toContain('id="reviews"');
     expect(hidden).not.toContain("aggregateRating");
   });
@@ -160,7 +160,7 @@ describe("拡張データの custom.v1（0085）", () => {
     const p = ((await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: Record<string, unknown> }).product;
     expect(p["app_data"]).toEqual([{ app: "reviews", kind: "custom.v1", key: "size-table", data: table }]);
     expect(p["reviews"]).toBeNull();
-    const html = await (await app.request(`${BASE}/my-shop/p/tee`)).text();
+    const html = await (await app.request(`${BASE}/my-shop/products/tee`)).text();
     expect(html).not.toContain("平置き");
     expect((await rest(tok, "DELETE", `/products/${product.id}/app-data/custom.v1/size-table`)).json).toEqual({ deleted: true });
   });

@@ -31,7 +31,8 @@ describe("商品の一覧のページ送り（0058）", () => {
     const first = await (await b.get("/my-shop")).text();
     expect(first.match(/class="card"/g)).toHaveLength(48);
     const next = /<a href="([^"]+)" rel="next">/.exec(first)?.[1]?.replace(/&amp;/g, "&");
-    expect(next).toMatch(/^\/my-shop\?after=/);
+    // トップ（ひな形が無ければすべての商品）の次のページは /products?after=
+    expect(next).toMatch(/^\/my-shop\/products\?after=/);
     expect(first).not.toContain('name="robots"');
     const second = await (await b.get(next!)).text();
     expect(second.match(/class="card"/g)).toHaveLength(12);
@@ -39,18 +40,18 @@ describe("商品の一覧のページ送り（0058）", () => {
     expect(second).toContain('<meta name="robots" content="noindex"');
     expect(second).toContain("最初のページ");
     // 壊れた cursor は 404
-    expect((await b.get("/my-shop?after=xyz")).status).toBe(404);
+    expect((await b.get("/my-shop/products?after=xyz")).status).toBe(404);
   });
 
   it("お店の画面: タグ・カテゴリーの絞り込みでもページ送りの URL に条件が残る。件数はショップ全体", async () => {
     const { app } = setup({ count: 120 });
     const b = new Browser(app);
-    const html = await (await b.get("/my-shop?tag=" + encodeURIComponent("奇数"))).text();
+    const html = await (await b.get("/my-shop/products?tag=" + encodeURIComponent("奇数"))).text();
     expect(html.match(/class="card"/g)).toHaveLength(48);
     expect(html).toContain("偶数 <span class=\"muted\">(60)</span>");
     const next = /<a href="([^"]+)" rel="next">/.exec(html)?.[1]?.replace(/&amp;/g, "&");
     expect(next).toContain("tag=%E5%A5%87%E6%95%B0");
-    const cat = await (await b.get("/my-shop?category=wear")).text();
+    const cat = await (await b.get("/my-shop/categories/wear")).text();
     expect(cat.match(/class="card"/g)).toHaveLength(40);
   });
 
@@ -114,7 +115,7 @@ describe("サイトマップの分割（0060）", () => {
     const files = [...index.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => new URL(m[1]!).pathname);
     expect(files).toEqual(["/sitemap-pages.xml", "/my-shop/sitemap-products-1.xml", "/my-shop/sitemap-products-2.xml", "/my-shop/sitemap-products-3.xml"]);
     const slugs = new Set<string>();
-    for (const f of files.slice(1)) for (const m of (await text(f)).matchAll(/\/p\/(s-\d+)<\/loc><lastmod>2026-10-01<\/lastmod>/g)) slugs.add(m[1]!);
+    for (const f of files.slice(1)) for (const m of (await text(f)).matchAll(/\/products\/(s-\d+)<\/loc><lastmod>2026-10-01<\/lastmod>/g)) slugs.add(m[1]!);
     expect(slugs.size).toBe(25000);
     expect((await app.request(`${BASE}/my-shop/sitemap-products-4.xml`)).status).toBe(404);
     expect(await text("/sitemap-pages.xml")).toContain(`<loc>${BASE}/my-shop/legal</loc>`);

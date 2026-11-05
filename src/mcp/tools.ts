@@ -56,7 +56,7 @@ const DIALOG_FIELDS: Record<string, unknown> = {
   title: s("string", "見出し（1〜100 字）"),
   body: s("string", "本文（500 字まで、文字だけ）"),
   image_url: s("string", "https:// の画像の URL"),
-  buttons: s("array", "ボタン 2 つまで。{ label, url }（url は https:// かショップの中のパス /p/…）", { items: { type: "object" } }),
+  buttons: s("array", "ボタン 2 つまで。{ label, url }（url は https:// かショップの中のパス /products/…）", { items: { type: "object" } }),
   coupon_code: s("string", "クーポンのモジュールで作った公開のコード"),
   audience: s("string", "all / guests / members / audience", { enum: ["all", "guests", "members", "audience"] }),
   audience_id: s("string", "audience のときの会員の条件の id"),

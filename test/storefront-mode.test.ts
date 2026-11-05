@@ -24,7 +24,7 @@ describe("画面の種類と転送先（src/storefront/mode.ts）", () => {
     for (const p of ["/legal", "/privacy", "/returns", "/shipping", "/orders/lookup", "/orders/receipt", "/checkout/done", "/account/verify", "/account/code", "/account/passkey", "/account/passkey.js", "/account/passkey/login/options", "/account/passkey/login", "/account/passkey/add", "/account/passkey/register/options", "/account/passkey/register", "/feed/products.xml"]) expect(pageKind(p)).toBe("system");
     // パスキーの一覧・削除は会員ページの続き（使い方の設定に従う）
     for (const p of ["/account/passkeys", "/account/passkeys/00000000-0000-4000-8000-000000000000/delete"]) expect(pageKind(p)).toBe("shopping");
-    for (const p of ["", "/", "/p/tee"]) expect(pageKind(p)).toBe("catalog");
+    for (const p of ["", "/", "/products/tee"]) expect(pageKind(p)).toBe("catalog");
     for (const p of ["/cart", "/buy", "/checkout", "/checkout/stripe", "/account", "/account/login", "/stores", "/tryon", "/coupons/x"]) expect(pageKind(p)).toBe("shopping");
   });
 
@@ -34,7 +34,7 @@ describe("画面の種類と転送先（src/storefront/mode.ts）", () => {
     expect(safeHttpsUrl("https://user:pass@example.com")).toBeNull();
     expect(safeHttpsUrl("https://wp.example/product/", { template: true })).toBeNull();
     const s = storefrontSettings({ storefront: { mode: "checkout", site_url: "https://wp.example/", product_url: "https://wp.example/product/{slug}/" } });
-    expect(blockedTarget(s, "/p/%E3%83%9E%E3%82%B0")).toBe("https://wp.example/product/%E3%83%9E%E3%82%B0/");
+    expect(blockedTarget(s, "/products/%E3%83%9E%E3%82%B0")).toBe("https://wp.example/product/%E3%83%9E%E3%82%B0/");
     expect(blockedTarget(s, "")).toBe("https://wp.example/");
     expect(blockedTarget(s, "/cart")).toBeNull();
     expect(blockedTarget({ ...s, mode: "off" }, "/cart")).toBe("https://wp.example/");
@@ -71,25 +71,25 @@ describe("お店の画面の使い方", () => {
   it("既定（full）は今までどおり。GA4 のタグも入らない", async () => {
     const { b } = setup();
     expect((await b.get("/my-shop")).status).toBe(200);
-    expect(await (await b.get("/my-shop/p/tee")).text()).not.toContain("googletagmanager");
+    expect(await (await b.get("/my-shop/products/tee")).text()).not.toContain("googletagmanager");
   });
 
   it("checkout: 商品の一覧と詳細は外のサイトへ。カート・法務・注文照会は残す。サイトマップは法務だけ", async () => {
     const { b } = setup({ storefront: { mode: "checkout", site_url: "https://wp.example/shop/", product_url: "https://wp.example/product/{slug}/" } });
     let res = await b.get("/my-shop");
     expect([res.status, res.headers.get("location")]).toEqual([302, "https://wp.example/shop/"]);
-    res = await b.get("/my-shop/p/tee?added=1");
+    res = await b.get("/my-shop/products/tee?added=1");
     expect(res.headers.get("location")).toBe("https://wp.example/product/tee/");
     for (const p of ["/my-shop/cart", "/my-shop/legal", "/my-shop/shipping", "/my-shop/orders/lookup"]) expect(`${p} ${(await b.get(p)).status}`).toBe(`${p} 200`);
     const sitemap = await readSitemap(async (u) => (await b.get(new URL(u).pathname)).text(), `${BASE}/sitemap.xml`);
     expect(sitemap).toContain("/my-shop/legal");
-    expect(sitemap).not.toContain("/my-shop/p/tee");
+    expect(sitemap).not.toContain("/my-shop/products/tee");
   });
 
   it("off: カートも外のサイトへ。POST は 404。法務・注文照会は残す。転送先が無ければ 404。サイトマップに載せない", async () => {
     const { b, teeM } = setup({ storefront: { mode: "off", site_url: "https://wp.example/" } });
     expect((await b.get("/my-shop/cart")).headers.get("location")).toBe("https://wp.example/");
-    expect((await b.get("/my-shop/p/tee")).headers.get("location")).toBe("https://wp.example/");
+    expect((await b.get("/my-shop/products/tee")).headers.get("location")).toBe("https://wp.example/");
     expect((await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" })).status).toBe(404);
     expect((await b.get("/my-shop/legal")).status).toBe(200);
     expect((await b.get("/my-shop/orders/lookup")).status).toBe(200);
@@ -108,14 +108,14 @@ describe("お店の画面の使い方", () => {
 describe("同梱モジュール ga4", () => {
   it("モジュールが OFF なら、測定 ID があってもタグは入らない（コアは何も足さない）", async () => {
     const { b } = setup({ analytics: { ga4_id: "G-TEST1234" } });
-    const html = await (await b.get("/my-shop/p/tee")).text();
+    const html = await (await b.get("/my-shop/products/tee")).text();
     expect(html).not.toContain("googletagmanager");
     expect(html).not.toContain("gtag(");
   });
 
   it("ON: お店の画面にタグと EC のイベント（view_item・add_to_cart・view_cart）。商品名は抜けられない。管理画面には入れない", async () => {
     const { b, teeM } = setup({ modules: { ga4: true }, analytics: { ga4_id: "G-TEST1234" } });
-    let html = await (await b.get("/my-shop/p/tee")).text();
+    let html = await (await b.get("/my-shop/products/tee")).text();
     expect(html).toContain("gtag/js?id=G-TEST1234");
     expect(html).toContain('gtag("event","view_item"');
     expect(html).toContain('"item_id":"TEE-M"');
@@ -172,7 +172,7 @@ describe("管理画面: 同梱モジュール ga4", () => {
 describe("お店の画面をほかのサイトの枠に入れさせない", () => {
   it("お店の画面・API は同じオリジンの枠だけ。管理画面は今までどおりどこにも入れない", async () => {
     const { b, app } = setup();
-    for (const path of ["/my-shop", "/my-shop/p/tee", "/my-shop/cart", "/my-shop/legal"]) {
+    for (const path of ["/my-shop", "/my-shop/products/tee", "/my-shop/cart", "/my-shop/legal"]) {
       const res = await b.get(path);
       expect(res.headers.get("x-frame-options"), path).toBe("SAMEORIGIN");
       expect(res.headers.get("content-security-policy"), path).toBe("frame-ancestors 'self'");

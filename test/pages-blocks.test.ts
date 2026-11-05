@@ -17,7 +17,7 @@ describe("ブロックの書式", () => {
     expect(parseProductsLine("::: products")).toEqual({ category: null, tag: null, limit: 8, layout: "grid", sort: "new", style: null });
     for (const bad of ["::: products limit=25", "::: products limit=0", "::: products layout=list", "::: products sort=random", "::: products category=Tops", "::: product"]) expect(parseProductsLine(bad), bad).toBeNull();
     expect(productsLine({ category: "tops", tag: "冬 物", limit: 12, layout: "scroll", sort: "price_asc" })).toBe('::: products category=tops tag="冬 物" limit=12 layout=scroll sort=price_asc');
-    expect(parseButtonLine("::: button [詳しく見る](/p/coat)")).toEqual({ text: "詳しく見る", url: "/p/coat", style: null });
+    expect(parseButtonLine("::: button [詳しく見る](/products/coat)")).toEqual({ text: "詳しく見る", url: "/products/coat", style: null });
   });
 
   it("「::: products slugs=…」は選んだ商品（0112）: 重なりを外し、24 個まで。絞り込み・並び順は持たない", () => {
@@ -28,11 +28,11 @@ describe("ブロックの書式", () => {
   });
 
   it("変換は商品の場所に印（3 つまで）、ボタンは決まった形。危ない URL のボタンと形の違う行は文字", () => {
-    const body = ["前の段落", "::: products tag=a", "::: products", "::: products", "::: products", "::: button [見る](/p/x)", "::: button [x](javascript:alert(1))", "::: products limit=99"].join("\n");
+    const body = ["前の段落", "::: products tag=a", "::: products", "::: products", "::: products", "::: button [見る](/products/x)", "::: button [x](javascript:alert(1))", "::: products limit=99"].join("\n");
     const html = markdownToHtml(body);
     expect(html).toContain('<p>前の段落</p>\n<div class="banto-products banto-products--grid" data-banto-block="products" data-category="" data-tag="a" data-limit="8" data-layout="grid" data-sort="new"><!--banto:products:0--></div>');
     expect(html.match(/<!--banto:products:\d-->/g)).toEqual(["<!--banto:products:0-->", "<!--banto:products:1-->", "<!--banto:products:2-->"]);
-    expect(html).toContain('<p class="banto-button"><a class="banto-button__link" href="/p/x">見る</a></p>');
+    expect(html).toContain('<p class="banto-button"><a class="banto-button__link" href="/products/x">見る</a></p>');
     expect(html).not.toContain("javascript:");
     expect(html).toContain("::: products limit=99");
     expect(productBlocksOf(body)).toHaveLength(3);
@@ -79,7 +79,7 @@ describe("お店の画面の商品のブロック", () => {
     expect(html).toMatch(/<ul class="banto-products__list grid" style="display:flex;[^"]*overflow-x:auto/);
     const names = [...html.matchAll(/<div class="body"><div>([^<]+)<\/div>/g)].map((m) => m[1]);
     expect(names).toEqual(["コート", "ニット"]);
-    expect(html).toContain('href="/my-shop/p/coat"');
+    expect(html).toContain('href="/my-shop/products/coat"');
     expect(html).toContain("¥30,000");
     expect(html).toContain('<a class="banto-button__link" href="/my-shop">すべて見る</a>');
     expect(html).not.toContain("<!--banto");
@@ -93,8 +93,8 @@ describe("お店の画面の商品のブロック", () => {
   it("Liquid のテーマ: snippets/page-products があれば products と block を渡して描く", async () => {
     const { b } = setup({ liquid: { ...theme, "snippets/page-products.liquid": '<div class="mine" data-layout="{{ block.layout }}" data-limit="{{ block.limit }}">{% for p in products %}<a href="{{ p.url }}">{{ p.title }} {{ p.price | money }}</a>{% endfor %}</div>' } });
     const html = await (await b.get("/pages/winter")).text();
-    expect(html).toContain('<div class="mine" data-layout="scroll" data-limit="2"><a href="/p/coat">コート');
-    expect(html).toContain('<a href="/p/knit">ニット');
+    expect(html).toContain('<div class="mine" data-layout="scroll" data-limit="2"><a href="/products/coat">コート');
+    expect(html).toContain('<a href="/products/knit">ニット');
     expect(html).not.toContain("banto-products__list");
   });
 
@@ -125,6 +125,6 @@ describe("お店の画面の商品のブロック", () => {
     const { b } = setup({ liquid: theme });
     const html = await (await b.get("/pages/winter")).text();
     expect(html).toContain('<ul class="banto-products__list grid"');
-    expect(html).toContain('href="/p/coat"');
+    expect(html).toContain('href="/products/coat"');
   });
 });

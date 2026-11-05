@@ -55,7 +55,7 @@ describe("画面と API は表示名を出す", () => {
 
   it("お店の画面の軸の見出し・公開 API の軸と名前の表", async () => {
     const { app } = setup();
-    const html = await (await new Browser(app).get("/my-shop/p/tee")).text();
+    const html = await (await new Browser(app).get("/my-shop/products/tee")).text();
     expect(html).toContain('data-axes="[{&quot;key&quot;:&quot;color&quot;,&quot;name&quot;:&quot;カラー&quot;},{&quot;key&quot;:&quot;size&quot;,&quot;name&quot;:&quot;サイズ&quot;}]"');
     const api = (await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: { option_axes: unknown; option_names: unknown } };
     expect(api.product.option_axes).toEqual([{ key: "color", name: "カラー", values: ["レッド", "ブルー"] }, { key: "size", name: "サイズ", values: ["S"] }]);

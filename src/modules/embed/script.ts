@@ -150,7 +150,7 @@ var tmpl=attr(host,"product-url");
 api(shop,"/products?"+q.join("&")).then(function(r){
 if(!r.ok||!r.v.products||!r.v.products.length){grid.appendChild(el("p","muted",I.empty));return}
 r.v.products.forEach(function(p){var a=el("a","card");
-var href=tmpl&&tmpl.indexOf("{slug}")>=0?safeUrl(tmpl.split("{slug}").join(encodeURIComponent(p.slug))):BASE+"/"+encodeURIComponent(shop)+"/p/"+encodeURIComponent(p.slug);a.href=href||"#";linkTarget(a);
+var href=tmpl&&tmpl.indexOf("{slug}")>=0?safeUrl(tmpl.split("{slug}").join(encodeURIComponent(p.slug))):BASE+"/"+encodeURIComponent(shop)+"/products/"+encodeURIComponent(p.slug);a.href=href||"#";linkTarget(a);
 var src=safeUrl(p.thumb||p.image||"");if(src){var img=el("img");img.src=src;img.alt=p.name;img.loading="lazy";a.appendChild(img)}
 a.addEventListener("click",function(){var d={product_id:p.id};if(p.tags&&p.tags.length)d.tags=p.tags;track("product_view",d,shop);flushAll()});
 a.appendChild(el("div","name",p.name));if(p.min_price_jpy!=null)a.appendChild(el("div","price",I.from.replace("{price}",yen(p.min_price_jpy))));grid.appendChild(a)})})}});

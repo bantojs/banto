@@ -67,28 +67,28 @@ describe("SKU ごとの画像: お店の画面", () => {
   it("?sku=<品番> でその SKU の画像を先頭に描き、選択肢もその SKU にする。並べ替えのスクリプトを付ける", async () => {
     const { app } = setup();
     const b = new Browser(app);
-    let html = await (await b.get("/my-shop/p/tee")).text();
+    let html = await (await b.get("/my-shop/products/tee")).text();
     expect(mainSrc(html)).toBe(`${BASE}/media/shops/s/all.webp`);
     expect(html).toContain("data-sku-images");
     expect(html).toContain('data-image-options="{&quot;color&quot;:&quot;レッド&quot;}"');
     expect(html).toContain('data-code="TEE-RED-L"');
     expect(html).toContain('getElementById("sku_id")');
 
-    html = await (await b.get("/my-shop/p/tee?sku=TEE-RED-L")).text();
+    html = await (await b.get("/my-shop/products/tee?sku=TEE-RED-L")).text();
     expect(mainSrc(html)).toBe(`${BASE}/media/shops/s/red-l.webp`);
     expect(html).toMatch(/<option value="[^"]+" selected="" data-options="[^"]*" data-code="TEE-RED-L">/);
     const thumbs = [...html.matchAll(/<a href="[^"]+\/media\/shops\/s\/([a-z-]+\.webp)"/g)].map((m) => m[1]);
     expect(thumbs).toEqual(["red-l.webp", "red.webp", "all.webp", "blue.webp"]);
 
     // 知らない品番は元の並び
-    html = await (await b.get("/my-shop/p/tee?sku=NOPE")).text();
+    html = await (await b.get("/my-shop/products/tee?sku=NOPE")).text();
     expect(mainSrc(html)).toBe(`${BASE}/media/shops/s/all.webp`);
   });
 
   it("SKU に結んだ画像の無い商品には、データ属性もスクリプトも付けない", async () => {
     const { sb, app } = setup();
     for (const i of sb.tables.product_images) delete i["options"];
-    const html = await (await new Browser(app).get("/my-shop/p/tee?sku=TEE-RED-L")).text();
+    const html = await (await new Browser(app).get("/my-shop/products/tee?sku=TEE-RED-L")).text();
     expect(html).not.toContain("data-sku-images");
     expect(html).not.toContain("data-image-options");
     expect(html).not.toContain(".gallery[data-sku-images]");
@@ -108,7 +108,7 @@ describe("SKU ごとの画像: お店の画面", () => {
     const xml = await (await new Browser(app).get("/my-shop/feed/products.xml")).text();
     const item = (code: string) => xml.split("<item>").find((x) => x.includes(`<g:id>${code}</g:id>`))!;
     expect(item("TEE-RED-L")).toContain(`<g:image_link>${BASE}/media/shops/s/red-l.webp</g:image_link>`);
-    expect(item("TEE-RED-L")).toContain(`<g:link>${BASE}/my-shop/p/tee?sku=TEE-RED-L</g:link>`);
+    expect(item("TEE-RED-L")).toContain(`<g:link>${BASE}/my-shop/products/tee?sku=TEE-RED-L</g:link>`);
     expect(item("TEE-RED-M")).toContain(`<g:image_link>${BASE}/media/shops/s/red.webp</g:image_link>`);
     expect(item("TEE-BLUE-M")).toContain(`<g:image_link>${BASE}/media/shops/s/blue.webp</g:image_link>`);
   });

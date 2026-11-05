@@ -30,7 +30,7 @@ describe("もっと見る", () => {
 
   it("既定のテーマ: 置いた分より件数が多く URL があれば、ボタン（URL・商品の id・続きの位置）とスクリプトを 1 回", async () => {
     const { app, product } = setup({ more: { "reviews.v1": "https://r.example/api/reviews" } });
-    const html = await (await app.request(`${BASE}/my-shop/p/tee`)).text();
+    const html = await (await app.request(`${BASE}/my-shop/products/tee`)).text();
     expect(html).toContain('<section class="reviews" data-banto-reviews id="reviews">');
     expect(html).toContain(`data-banto-more data-url="https://r.example/api/reviews" data-product="${product.id}" data-offset="2"`);
     expect(html).toContain(">もっと見る</button>");
@@ -39,7 +39,7 @@ describe("もっと見る", () => {
 
   it("URL が無い・置いた分で全部ならボタンを出さない", async () => {
     for (const s of [setup(), setup({ more: { "reviews.v1": "https://r.example/api/reviews" }, count: 2 })]) {
-      const html = await (await s.app.request(`${BASE}/my-shop/p/tee`)).text();
+      const html = await (await s.app.request(`${BASE}/my-shop/products/tee`)).text();
       expect(html).toContain("data-banto-reviews");
       expect(html).not.toContain("data-banto-more");
     }

@@ -2,7 +2,7 @@
  * 固定ページを「ひな形」として割り当てる（段 C1、0101、メンテナの決定 2026-11-03、docs/pages.md「ひな形の割り当て」）。
  *
  * - shops.settings.page_layouts = { home?: <ページ id>, articles?: { <ブログ id>: <ページ id> } }（書くのは DB の page_layouts_set だけ）
- * - トップ: 一覧の絞り込みが無いとき、そのページの本文でトップを描く（?all=1 は今までの商品の一覧）
+ * - トップ（/）: そのページの本文でトップを描く（すべての商品は /products、カテゴリーの一覧は /categories/<カテゴリー>）
  * - 記事: ひな形の本文の `::: current part=content` に記事の本文を差し込み、ひとつの本文として描く
  *   （見せる相手の囲み・ブロックの数の上限・日時のブロックが、ひな形と記事の両方にそのまま効く）。
  *   ほかの部品（タイトル・アイキャッチ・書いた人・抜粋・タグ・前後の記事）は印を置いて、描いた後に入れる
@@ -88,10 +88,6 @@ function nearest(map: Record<string, string>, categories: readonly { id: string;
   return null;
 }
 
-/** 一覧の絞り込み・ページ送りが無いトップか（そのときだけトップのひな形を使う。?all=1 は今までの一覧） */
-export function isPlainTop(query: Record<string, string>): boolean {
-  return !query["tag"] && !query["category"] && !query["after"] && query["all"] !== "1";
-}
 
 /** 囲みの名前（src/pages/layout.ts の LAYOUT_CONTAINERS と同じ。1 行のブロックではないもの） */
 const CONTAINER = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion|audience|grid|tabs|tab)\b/;

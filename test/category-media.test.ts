@@ -71,16 +71,16 @@ describe("カテゴリーの説明と画像", () => {
   it("お店の画面: カテゴリーの一覧の上に画像と説明、説明は検索エンジン向けの説明にも。格子のブロックに画像", async () => {
     const { app, sb, shop, tops, row } = setup();
     Object.assign(row(tops.id), { description: "秋冬の<羽織り>\n軽いもの", image: { key: `categories/${shop.id}/0123456789abcdef.webp`, width: 1600, height: 900 } });
-    const html = await (await new Browser(app, BASE).get("/my-shop?category=tops")).text();
+    const html = await (await new Browser(app, BASE).get("/my-shop/categories/tops")).text();
     expect(html).toContain('<div class="category-intro"><img class="category-image" src="');
     expect(html).toContain("0123456789abcdef.webp");
     expect(html).toContain('<div class="category-description">秋冬の&lt;羽織り&gt;<br>軽いもの</div>');
     expect(html).toMatch(/<meta name="description" content="秋冬の&lt;羽織り&gt; 軽いもの"/);
     // 画像も説明も無いカテゴリーは何も足さない
-    expect(await (await new Browser(app, BASE).get("/my-shop?category=bags")).text()).not.toContain('<div class="category-intro">');
+    expect(await (await new Browser(app, BASE).get("/my-shop/categories/bags")).text()).not.toContain('<div class="category-intro">');
     sb.addPage(shop.id, { handle: "cats", title: "カテゴリー", body: "::: categories layout=grid\n\n::: categories" });
     const page = await (await new Browser(app, BASE).get("/my-shop/pages/cats")).text();
-    expect(page).toMatch(/<ul class="banto-categories banto-categories--grid"><li><a href="\/my-shop\?category=tops"><img class="banto-categories__image" src="[^"]+0123456789abcdef\.webp" width="1600" height="900"/);
+    expect(page).toMatch(/<ul class="banto-categories banto-categories--grid"><li><a href="\/my-shop\/categories\/tops"><img class="banto-categories__image" src="[^"]+0123456789abcdef\.webp" width="1600" height="900"/);
     // 一覧の形には画像を出さない
     expect(page.match(/banto-categories__image" src/g)).toHaveLength(1);
   });
@@ -98,7 +98,7 @@ describe("カテゴリーの説明と画像", () => {
       "templates/collection.liquid": `<div class="d">{{ collection.description }}</div><img src="{{ collection.image.src }}" width="{{ collection.image.width }}"><i>{{ collections.tops.description }}</i>`,
     };
     await storage.put(`themes/${shop.id}/${VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
-    const html = await (await new Browser(appWith(sb, {}, storage), "https://shop.example.jp").get("/?category=tops")).text();
+    const html = await (await new Browser(appWith(sb, {}, storage), "https://shop.example.jp").get("/categories/tops")).text();
     expect(html).toContain('<meta name="description" content="秋冬の&lt;羽織り&gt; 軽いもの">');
     expect(html).toContain('<div class="d">秋冬の&lt;羽織り&gt;<br>軽いもの</div>');
     expect(html).toMatch(/<img src="[^"]+0123456789abcdef\.webp" width="1600">/);

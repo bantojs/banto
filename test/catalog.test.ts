@@ -132,19 +132,19 @@ describe("商品マスタの拡張: ストアフロントと公開 API", () => {
     const { app } = catalog();
     const b = new Browser(app);
     let html = await (await b.get("/my-shop")).text();
-    expect(html).toContain('href="/my-shop?category=wear"');
-    expect(html).toContain('href="/my-shop?category=tops"');
+    expect(html).toContain('href="/my-shop/categories/wear"');
+    expect(html).toContain('href="/my-shop/categories/tops"');
     expect(html).toContain("<s");
     expect(html).toContain("¥4,000");
-    html = await (await b.get("/my-shop?category=wear")).text();
+    html = await (await b.get("/my-shop/categories/wear")).text();
     expect(html).toContain("Tシャツ");
     expect(html).not.toContain("マグ</div>");
-    expect(html).toContain(`rel="canonical" href="${BASE}/my-shop?category=wear"`);
-    expect((await b.get("/my-shop?category=nope")).status).toBe(404);
+    expect(html).toContain(`rel="canonical" href="${BASE}/my-shop/categories/wear"`);
+    expect((await b.get("/my-shop/categories/nope")).status).toBe(404);
 
-    html = await (await b.get("/my-shop/p/tee")).text();
-    expect(html).toContain('<a href="/my-shop?category=wear">ウェア</a>');
-    expect(html).toContain('<a href="/my-shop?category=tops">トップス</a>');
+    html = await (await b.get("/my-shop/products/tee")).text();
+    expect(html).toContain('<a href="/my-shop/categories/wear">ウェア</a>');
+    expect(html).toContain('<a href="/my-shop/categories/tops">トップス</a>');
     expect(html).toContain("Banto");
     expect(html).toContain("M / 黒");
     expect(html).toContain("通常 ¥4,000");

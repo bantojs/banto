@@ -17,11 +17,12 @@ import { reviewsMoreHtml } from "../../apps/reviews-html";
 import { selectedRowValue, sizeChartLiquid, sizeChartOf } from "../../size-charts/chart";
 import { escapeHtml, SafeHtml } from "./engine";
 import { categoryDescriptionHtml } from "../../products/category-media";
+import { categoryUrl, productUrl, productsUrl } from "../../storefront/urls";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
 
 export interface UrlBase {
-  /** ドメインの上でのパス（""）。商品は `${shopPath}/p/<slug>` */
+  /** ドメインの上でのパス（""）。商品は `${shopPath}/products/<slug>`（src/storefront/urls.ts） */
   shopPath: string;
   mediaBaseUrl: string;
   /** SKU の選択肢の key → 表示名（0094）。product.options・options_with_values の name に出す */
@@ -61,7 +62,7 @@ export function productFromSummary(u: UrlBase, p: ProductSummary) {
     id: p.product.id,
     handle: p.product.slug,
     title: p.product.name,
-    url: `${u.shopPath}/p/${encodeURIComponent(p.product.slug)}`,
+    url: productUrl(u.shopPath, p.product.slug),
     price,
     price_min: price,
     price_max: price,
@@ -114,7 +115,7 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       option1: opts[0] ?? null,
       option2: opts[1] ?? null,
       option3: opts[2] ?? null,
-      url: `${u.shopPath}/p/${encodeURIComponent(p.slug)}?sku=${encodeURIComponent(s.code)}`,
+      url: productUrl(u.shopPath, p.slug, { sku: s.code }),
     };
   });
   const prices = variants.map((v) => v.price ?? 0);
@@ -125,7 +126,7 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     id: p.id,
     handle: p.slug,
     title: p.name,
-    url: `${u.shopPath}/p/${encodeURIComponent(p.slug)}`,
+    url: productUrl(u.shopPath, p.slug),
     description: descriptionHtml(p.description),
     content: descriptionHtml(p.description),
     price: prices.length ? Math.min(...prices) : null,
@@ -193,7 +194,7 @@ export function reviewsLiquid(r: ProductReviews | null) {
 }
 
 export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[] }) {
-  const url = c.handle === "all" ? u.shopPath || "/" : `${u.shopPath || ""}/?category=${encodeURIComponent(c.handle)}`;
+  const url = c.handle === "all" ? productsUrl(u.shopPath) : categoryUrl(u.shopPath, c.handle);
   return {
     id: c.handle,
     handle: c.handle,
@@ -219,7 +220,7 @@ export function collectionObject(u: UrlBase, c: { handle: string; title: string;
 export function menuFromCategories(u: UrlBase, nodes: CategoryNode[], currentSlug?: string) {
   const link = (n: CategoryNode): Record<string, unknown> => ({
     title: n.name,
-    url: `${u.shopPath || ""}/?category=${encodeURIComponent(n.slug)}`,
+    url: categoryUrl(u.shopPath, n.slug),
     handle: n.slug,
     active: n.slug === currentSlug,
     child_active: n.children.some((ch) => ch.slug === currentSlug),
@@ -257,10 +258,11 @@ export function routesObject(shopPath: string, opts: { coupons?: boolean } = {})
     cart_add_url: `${shopPath}/cart/add`,
     cart_change_url: `${shopPath}/cart/change`,
     cart_update_url: `${shopPath}/cart/update`,
-    collections_url: root,
-    all_products_collection_url: root,
-    search_url: `${shopPath}/search`,
-    predictive_search_url: `${shopPath}/search`,
+    // すべての商品（/products）。検索は /products?q=（フォームは GET で q を送る）。カテゴリーの一覧は collection.url
+    collections_url: productsUrl(shopPath),
+    all_products_collection_url: productsUrl(shopPath),
+    search_url: productsUrl(shopPath),
+    predictive_search_url: productsUrl(shopPath),
     account_url: `${shopPath}/account`,
     account_login_url: `${shopPath}/account/login`,
     account_logout_url: `${shopPath}/account/logout`,
@@ -295,7 +297,7 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
     const opts = Object.entries(l.sku.options ?? {}).map(([key, value]) => ({ name: optionLabel(u.optionNames ?? {}, key), value: String(value) }));
     const variantTitle = l.sku.name || opts.map((o) => o.value).join(" / ") || null;
     const price = money(l.sku.price_jpy)!;
-    const url = `${u.shopPath}/p/${encodeURIComponent(l.product.slug)}?sku=${encodeURIComponent(l.sku.code)}`;
+    const url = productUrl(u.shopPath, l.product.slug, { sku: l.sku.code });
     return {
       id: l.sku.id,
       key: l.sku.id,
@@ -322,7 +324,7 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
       featured_image: image,
       options_with_values: opts,
       variant: { id: l.sku.id, title: variantTitle ?? l.sku.code, sku: l.sku.code, price, available: l.sku.available > 0, options: opts.map((o) => o.value) },
-      product: { id: l.product.id, handle: l.product.slug, title: l.product.name, url: `${u.shopPath}/p/${encodeURIComponent(l.product.slug)}`, vendor: l.product.brand ?? "", tags: l.product.tags ?? [] },
+      product: { id: l.product.id, handle: l.product.slug, title: l.product.name, url: productUrl(u.shopPath, l.product.slug), vendor: l.product.brand ?? "", tags: l.product.tags ?? [] },
       requires_shipping: true,
       // 在庫が足りない行（Banto の判定。確認画面へは進めない）
       available: !l.short,

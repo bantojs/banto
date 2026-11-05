@@ -30,12 +30,12 @@ describe.skipIf(!dbAvailable)("お店の画面のダイアログ（0110_mod_dial
       name: "初回", title: "ようこそ",
       pages: { kinds: ["product", "nope"], tags: ["秋"], extra: 1 },
       trigger: { delay_s: 5.7, exit_intent: true, foo: 1 },
-      buttons: [{ label: "見る", url: "/p/tee", x: 1 }],
+      buttons: [{ label: "見る", url: "/products/tee", x: 1 }],
       audience: "guests", audience_id: "00000000-0000-4000-8000-000000000000",
     });
     expect(r.pages).toEqual({ kinds: ["product"], tags: ["秋"] });
     expect(r.trigger).toEqual({ delay_s: 5, exit_intent: true });
-    expect(r.buttons).toEqual([{ label: "見る", url: "/p/tee" }]);
+    expect(r.buttons).toEqual([{ label: "見る", url: "/products/tee" }]);
     expect(r.audience_id).toBeNull();
     for (const bad of [
       { buttons: [{ label: "x", url: "javascript:alert(1)" }] },

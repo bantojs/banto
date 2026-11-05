@@ -4,7 +4,7 @@
  *
  *   ::: products category=tops tag="冬物" limit=8 layout=grid sort=new
  *   ::: products slugs=tee,coat,knit layout=grid        （選んだ商品を書いた順に。0112、絞り込み・並べ方・数は持たない）
- *   ::: button [詳しく見る](/p/coat)
+ *   ::: button [詳しく見る](/products/coat)
  *
  * - 商品を並べる: **選ぶのは Banto**（公開中の商品だけ、一覧と同じ product_public_list・キャッシュ）、**描くのはテーマ**
  *   （Liquid のテーマは snippets/page-products.liquid、無ければ下の既定のカード）。1 ページに PRODUCT_BLOCKS_MAX まで（速度の予算）
@@ -13,6 +13,7 @@
  * - ボタン: リンクの規則（https / http / / / # / mailto / tel）は本文のリンクと同じ
  */
 import { responsiveImage } from "../media/images";
+import { productUrl } from "../storefront/urls";
 import { PRODUCT_SORTS, type ProductSort, type ProductSummary } from "../storefront/data";
 
 export type ProductsLayout = "grid" | "scroll";
@@ -212,7 +213,7 @@ export function defaultProductsHtml(items: readonly ProductSummary[], b: Product
       ? `<img src="${escapeHtml(img.src)}"${img.srcset ? ` srcset="${escapeHtml(img.srcset)}"` : ""}${img.sizes ? ` sizes="${escapeHtml(img.sizes)}"` : ""}${img.width ? ` width="${img.width}" height="${img.height}"` : ""} alt="${escapeHtml(product.name)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover">`
       : "";
     const price = minPrice !== null ? `<div class="price">${compareAt ? `<s class="muted">${escapeHtml(ctx.yen(compareAt))}</s> ` : ""}${escapeHtml(ctx.yen(minPrice))} <span class="muted">${escapeHtml(ctx.taxNote)}</span></div>` : "";
-    return `<li class="card"${itemStyle ? ` style="${itemStyle}"` : ""}><a href="${escapeHtml(`${ctx.shopPath}/p/${encodeURIComponent(product.slug)}`)}" style="display:block;color:inherit;text-decoration:none"><div class="thumb" style="aspect-ratio:1/1;overflow:hidden">${imgHtml}</div><div class="body"><div>${escapeHtml(product.name)}</div>${price}</div></a></li>`;
+    return `<li class="card"${itemStyle ? ` style="${itemStyle}"` : ""}><a href="${escapeHtml(productUrl(ctx.shopPath, product.slug))}" style="display:block;color:inherit;text-decoration:none"><div class="thumb" style="aspect-ratio:1/1;overflow:hidden">${imgHtml}</div><div class="body"><div>${escapeHtml(product.name)}</div>${price}</div></a></li>`;
   });
   return `<ul class="banto-products__list grid" style="${listStyle}">${cards.join("")}</ul>`;
 }

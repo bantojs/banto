@@ -76,19 +76,25 @@ export interface CartCoupons {
 
 export interface Theme {
   ShopIndex(props: { shops: PublicShop[] }): Rendered;
-  /** 商品一覧。tag はタグ別一覧（/:shop?tag=…）のときのタグ、tags はショップ全体のタグと件数 */
+  /** 商品一覧（お店のトップ・/products・/categories/<カテゴリー>）。tag は ?tag= で絞ったときのタグ、tags はショップ全体のタグと件数 */
   ShopHome(props: {
     ctx: ThemeContext;
     products: ProductSummary[];
     tag?: string;
     tags?: { tag: string; count: number }[];
-    /** カテゴリーの木（ナビゲーション用）と、カテゴリー別一覧（/:shop?category=…）のときのカテゴリー */
+    /** カテゴリーの木（ナビゲーション用）と、カテゴリーの一覧（/categories/<カテゴリー>）のときのカテゴリー */
     categories?: CategoryNode[];
     /** description・image は 0113（カテゴリーの説明と画像）。無ければ出さない */
     category?: { slug: string; name: string; description?: string | null; image?: CategoryImage | null };
     /** ページ送りの URL（0058）。next は次のページ、first は 2 ページ目以降のときの最初のページ。2 ページ目以降は検索エンジンに載せない */
     pagination?: { next?: string; first?: string };
-    /** 検索（/:shop/search）の案内（語が短すぎる・見つからない）。あれば商品が無いときの文言の代わりに出す */
+    /** 検索の語（?q=）。あれば検索の結果として描く */
+    q?: string;
+    /** お店のトップ（トップのひな形が無いときに、すべての商品をトップとして出す）。トップだけショップの名前と紹介文を見出しに出す */
+    top?: boolean;
+    /** この一覧のパス（canonical。トップは shopPath か /、一覧は /products?… / /categories/<カテゴリー>?…） */
+    path?: string;
+    /** 検索の案内（語が短すぎる・見つからない）。あれば商品が無いときの文言の代わりに出す */
     notice?: string;
     /** 商品一覧のひな形（0103）。部品（title・products・filters・subcategories・breadcrumb）の HTML を渡し、返った HTML を本文として描く */
     layout?: (parts: Record<string, string>) => string;

@@ -381,7 +381,7 @@ describe("WooCommerce インポーター: REST API（ブラウザから WooComme
 
     // 旧 URL → 新 URL
     expect(w.redirectsCsv(a, "https://banto.example/my-shop/")).toBe(
-      "old_url,new_url\r\nhttps://old.example/product/tee/,https://banto.example/my-shop/p/tee-01\r\nhttps://old.example/?p=20,https://banto.example/my-shop/p/mug\r\n",
+      "old_url,new_url\r\nhttps://old.example/product/tee/,https://banto.example/my-shop/products/tee-01\r\nhttps://old.example/?p=20,https://banto.example/my-shop/products/mug\r\n",
     );
   });
 

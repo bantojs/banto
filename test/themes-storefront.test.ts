@@ -60,8 +60,8 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     expect(html).toContain('<div id="shopify-section-main" class="shopify-section"><h2>おすすめ</h2>');
     expect(html).toContain("<span>Tシャツ &lt;b&gt;</span> <b>¥1,200</b>");
     expect(html).toContain(`<img src="${BASE}/media/img/tee.t.webp" alt="Tシャツ &lt;b&gt;" width="400" height="300" loading="lazy">`);
-    expect(html).toContain('href="/p/tee"');
-    expect(html).toContain('<a href="/?category=tops">トップス</a>');
+    expect(html).toContain('href="/products/tee"');
+    expect(html).toContain('<a href="/categories/tops">トップス</a>');
     expect(html).toContain('<a href="/legal">特定商取引法に基づく表記</a>');
     expect(html).toContain("--accent: #123456");
     expect(html).toContain(`<link rel="canonical" href="${DOMAIN}">`);
@@ -74,15 +74,15 @@ describe("お店の画面を Liquid のテーマで描く", () => {
   });
 
   it("カテゴリーは templates/collection（{% section %} はスキーマの既定値）", async () => {
-    const { html } = await setup().get(`${DOMAIN}/?category=tops`);
+    const { html } = await setup().get(`${DOMAIN}/categories/tops`);
     expect(html).toContain("<h1>トップス</h1>");
     expect(html).toContain('<div id="shopify-section-main-collection" class="shopify-section"><h2>商品</h2>');
-    expect(html).toContain(`<link rel="canonical" href="${DOMAIN}?category=tops">`);
+    expect(html).toContain(`<link rel="canonical" href="${DOMAIN}/categories/tops">`);
   });
 
   it("商品: バリエーション（SKU）・カートのフォーム（Shopify の名前 id / quantity）・翻訳・説明（エスケープして改行）・構造化データ", async () => {
     const { get, s1 } = setup();
-    const { html } = await get(`${DOMAIN}/p/tee`);
+    const { html } = await get(`${DOMAIN}/products/tee`);
     expect(html).toContain("<h1>Tシャツ &lt;b&gt;</h1>");
     expect(html).toContain('<div class="desc">綿 100%<br>洗えます</div>');
     expect(html).toContain('<form method="post" action="/cart/add" accept-charset="UTF-8" id="product-form"><input type="hidden" name="form_type" value="product">');
@@ -97,7 +97,7 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     const { app, s1 } = setup();
     const res = await app.request(`${DOMAIN}/cart/add`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: DOMAIN }, body: new URLSearchParams({ id: s1.id, quantity: "2", form_type: "product" }) });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/p/tee?added=1&sku=TEE-S&qty=2");
+    expect(res.headers.get("location")).toBe("/products/tee?added=1&sku=TEE-S&qty=2");
     expect(res.headers.get("set-cookie")).toContain("Path=/");
   });
 
@@ -110,8 +110,8 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     });
     const cat = sb.tables.categories[0]!;
     for (let i = 0; i < 50; i++) sb.addProduct(shop.id, { slug: `x${i}`, name: `X${i}`, published: true, category_id: cat["id"] });
-    const { html } = await get(`${DOMAIN}/?category=tops`);
-    expect(html).toContain("[/|collection|C|collection]");
+    const { html } = await get(`${DOMAIN}/categories/tops`);
+    expect(html).toContain("[/categories/tops|collection|C|collection]");
     // 51 件・48 件ずつ → 2 ページ。Banto は位置で進むので、番号の部品は今のページと「次」だけ
     expect(html).toContain('<p class="pages">2|1|1»</p>');
   });
@@ -145,18 +145,18 @@ describe("お店の画面を Liquid のテーマで描く", () => {
   it("options_with_values の選ばれた値は軸ごとに合う（SKU の options の並びに左右されない）", async () => {
     const { html } = await setup({
       bundle: theme({ "templates/product.liquid": `{% for o in product.options_with_values %}[{{ o.name }}={{ o.selected_value }}:{{ o.values | join: ',' }}]{% endfor %}` }),
-    }).get(`${DOMAIN}/p/tee?sku=TEE-M`);
+    }).get(`${DOMAIN}/products/tee?sku=TEE-M`);
     expect(html).toContain("[サイズ=M:S,M]");
   });
 
   it("見つからないページはテーマの 404（メニューも出る。canonical はスラッグなし）", async () => {
-    const { html } = await setup().get(`${DOMAIN}/p/none`);
-    expect(html).toContain('<a href="/?category=tops">トップス</a>');
-    expect(html).not.toContain("/s/p/none");
+    const { html } = await setup().get(`${DOMAIN}/products/none`);
+    expect(html).toContain('<a href="/categories/tops">トップス</a>');
+    expect(html).not.toContain("/s/products/none");
   });
 
   it("見つからないページはテーマの 404", async () => {
-    const { status, html } = await setup().get(`${DOMAIN}/p/none`);
+    const { status, html } = await setup().get(`${DOMAIN}/products/none`);
     expect(status).toBe(404);
     expect(html).toContain("<h1>見つかりません</h1>");
     expect(html).toContain('<meta name="robots" content="noindex">');
@@ -182,7 +182,7 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     expect(heavy.html).not.toContain("....");
     const noProduct = theme();
     delete (noProduct.files as Record<string, string>)["templates/product.liquid"];
-    const fallback = await setup({ bundle: noProduct }).get(`${DOMAIN}/p/tee`);
+    const fallback = await setup({ bundle: noProduct }).get(`${DOMAIN}/products/tee`);
     expect(fallback.status).toBe(200);
     expect(fallback.html).not.toContain("shopify-section");
     expect(fallback.html).toContain("Tシャツ");

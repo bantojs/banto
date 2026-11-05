@@ -63,7 +63,7 @@ describe("管理画面", () => {
 });
 
 describe("お店の画面", () => {
-  it("トップ: ひな形のページを出す。絞り込み・?all=1 は今までの一覧。非公開になれば今までの一覧", async () => {
+  it("トップ: ひな形のページを出す。絞り込み・/products は今までの一覧。非公開になれば今までの一覧", async () => {
     const { app, top, settings, sb } = setup();
     settings()["page_layouts"] = { home: top.id };
     const html = await (await new Browser(app, BASE).get("/my-shop")).text();
@@ -71,7 +71,7 @@ describe("お店の画面", () => {
     expect(html).not.toContain("<h1>トップ</h1>");
     expect(html).toContain("<title>テストの店");
     expect(html).not.toContain("Tシャツ");
-    expect(await (await new Browser(app, BASE).get("/my-shop?all=1")).text()).toContain("Tシャツ");
+    expect(await (await new Browser(app, BASE).get("/my-shop/products")).text()).toContain("Tシャツ");
     sb.tables.pages.find((p) => p["id"] === top.id)!["published"] = false;
     const app2 = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
     expect(await (await new Browser(app2, BASE).get("/my-shop")).text()).toContain("Tシャツ");
@@ -150,13 +150,13 @@ describe("商品詳細のひな形（0102）", () => {
   it("ショップ全体のひな形: 部品の並び・買うフォーム・構造化データ。記事の部品は空", async () => {
     const { app, tpl, settings } = productSetup();
     settings()["page_layouts"] = { product: tpl.id };
-    const html = await (await new Browser(app, BASE).get("/my-shop/p/tee")).text();
+    const html = await (await new Browser(app, BASE).get("/my-shop/products/tee")).text();
     const body = html.slice(html.indexOf("<body"));
     const order = ["トップス</a>", "<h1>Tシャツ</h1>", 'class="product-price"', "ひな形の案内", 'action="/my-shop/cart/add"', "綿100%のTシャツ"].map((x) => body.indexOf(x));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((x, y) => x - y)).toEqual(order);
     expect(html).toContain('"@type":"Product"');
-    expect(html).toContain('rel="canonical" href="http://localhost:8787/my-shop/p/tee"');
+    expect(html).toContain('rel="canonical" href="http://localhost:8787/my-shop/products/tee"');
     expect(html).not.toContain("<!--banto:current");
     // 買える: そのままカートに入る
     const b = new Browser(app, BASE);
@@ -167,11 +167,11 @@ describe("商品詳細のひな形（0102）", () => {
   it("カテゴリーの上書きは主カテゴリーから親へたどって近いもの。見えないページなら今までの画面", async () => {
     const { app, sb, tpl, topsTpl, tops, settings } = productSetup();
     settings()["page_layouts"] = { product: tpl.id, product_categories: { [tops.id]: topsTpl.id } };
-    expect(await (await new Browser(app, BASE).get("/my-shop/p/tee")).text()).toContain("トップス専用");
+    expect(await (await new Browser(app, BASE).get("/my-shop/products/tee")).text()).toContain("トップス専用");
     sb.tables.pages.find((p) => p["id"] === topsTpl.id)!["published"] = false;
     sb.tables.pages.find((p) => p["id"] === tpl.id)!["published"] = false;
     const app2 = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
-    const html = await (await new Browser(app2, BASE).get("/my-shop/p/tee")).text();
+    const html = await (await new Browser(app2, BASE).get("/my-shop/products/tee")).text();
     expect(html).not.toContain("トップス専用");
     expect(html).toContain('<div class="product">');
   });
@@ -194,13 +194,13 @@ describe("商品詳細のひな形（0102）", () => {
       "templates/product.liquid": `<div class="liquid-product">{{ product.title }}</div>`,
     });
     settings()["page_layouts"] = { product: tpl.id };
-    const html = await (await new Browser(app, "https://shop.example.jp").get("/p/tee")).text();
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/products/tee")).text();
     expect(html).toContain('<article class="page-default">');
     expect(html).not.toContain("liquid-product");
     expect(html).toContain("<h1>Tシャツ</h1>");
     expect(html).toContain('action="/cart/add"');
     expect(html).toContain('"@type":"Product"');
-    expect(html).toContain('rel="canonical" href="https://shop.example.jp/p/tee"');
+    expect(html).toContain('rel="canonical" href="https://shop.example.jp/products/tee"');
   });
 
   it("Liquid: テーマに snippets/part-<部品> があればその部品だけテーマで描く（product・part.default を渡す。無い部品・誤りは既定のまま）", async () => {
@@ -212,7 +212,7 @@ describe("商品詳細のひな形（0102）", () => {
       "snippets/part-price.liquid": `{% render 'missing-snippet' %}`,
     });
     settings()["page_layouts"] = { product: tpl.id };
-    const html = await (await new Browser(app, "https://shop.example.jp").get("/p/tee")).text();
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/products/tee")).text();
     expect(html).toContain('<h1 class="theme-title">Tシャツ / TEE-M / title</h1>');
     expect(html).not.toContain("<h1>Tシャツ</h1>");
     // 既定の買うフォームをテーマの枠で包める
@@ -285,26 +285,27 @@ describe("商品一覧のひな形（0103）", () => {
   it("カテゴリーの一覧: ひな形の並びで、パンくず・名前・子カテゴリー・タグ（カテゴリーのまま）・商品。商品の部品は空", async () => {
     const { app, tpl, settings } = listSetup();
     settings()["page_layouts"] = { collection: tpl.id };
-    const html = await (await new Browser(app, BASE).get("/my-shop?category=tops")).text();
+    const html = await (await new Browser(app, BASE).get("/my-shop/categories/tops")).text();
     const body = html.slice(html.indexOf("<body"));
-    const order = ["テストの店</a> ›", "<h1>トップス</h1>", "一覧の案内", 'href="/my-shop?category=shirts">シャツ</a>', 'href="/my-shop?category=tops&amp;tag=new"', "Tシャツ"].map((x) => body.indexOf(x));
+    const order = ["テストの店</a> ›", "<h1>トップス</h1>", "一覧の案内", 'href="/my-shop/categories/shirts">シャツ</a>', 'href="/my-shop/categories/tops?tag=new"', "Tシャツ"].map((x) => body.indexOf(x));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((x, y) => x - y)).toEqual(order);
     expect(html).not.toContain('action="/my-shop/cart/add"');
-    expect(html).toContain('rel="canonical" href="http://localhost:8787/my-shop?category=tops"');
+    expect(html).toContain('rel="canonical" href="http://localhost:8787/my-shop/categories/tops"');
   });
 
-  it("すべての一覧（?all=1・トップのひな形が無いときのトップ）にも効く。タグだけの一覧は今までの画面。トップのひな形があればトップはそちら", async () => {
+  it("すべての一覧（/products・トップのひな形が無いときのトップ）とタグで絞った一覧にも効く。検索の結果は今までの画面。トップのひな形があればトップはそちら", async () => {
     const { app, sb, tpl, top, settings } = listSetup();
     settings()["page_layouts"] = { collection: tpl.id };
     expect(await (await new Browser(app, BASE).get("/my-shop")).text()).toContain("<h1>すべての商品</h1>");
-    expect(await (await new Browser(app, BASE).get("/my-shop?all=1")).text()).toContain("一覧の案内");
-    expect(await (await new Browser(app, BASE).get("/my-shop?tag=new")).text()).not.toContain("一覧の案内");
+    expect(await (await new Browser(app, BASE).get("/my-shop/products")).text()).toContain("一覧の案内");
+    expect(await (await new Browser(app, BASE).get("/my-shop/products?tag=new")).text()).toContain("一覧の案内");
+    expect(await (await new Browser(app, BASE).get("/my-shop/products?q=Tシャツ")).text()).not.toContain("一覧の案内");
     // ショップ行は覚えるので、割り当てを変えたら新しい app で
     settings()["page_layouts"] = { home: top.id, collection: tpl.id };
     const app2 = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
     expect(await (await new Browser(app2, BASE).get("/my-shop")).text()).toContain("<h2>ようこそ</h2>");
-    expect(await (await new Browser(app2, BASE).get("/my-shop?all=1")).text()).toContain("一覧の案内");
+    expect(await (await new Browser(app2, BASE).get("/my-shop/products")).text()).toContain("一覧の案内");
   });
 
   it("カテゴリーの上書きは親へたどって近いもの。管理画面は 0103 が当たれば欄を出す", async () => {
@@ -313,8 +314,8 @@ describe("商品一覧のひな形（0103）", () => {
     expect(await (await b.get(`${base}/layouts`)).text()).toContain(`name="ccategory_${tops.id}"`);
     expect((await b.post(`${base}/layouts`, { collection: tpl.id, [`ccategory_${tops.id}`]: topsTpl.id })).status).toBe(302);
     expect(settings()["page_layouts"]).toEqual({ collection: tpl.id, collection_categories: { [tops.id]: topsTpl.id } });
-    expect(await (await new Browser(app, BASE).get("/my-shop?category=shirts")).text()).toContain("トップス専用の一覧");
-    expect(await (await new Browser(app, BASE).get("/my-shop?all=1")).text()).toContain("一覧の案内");
+    expect(await (await new Browser(app, BASE).get("/my-shop/categories/shirts")).text()).toContain("トップス専用の一覧");
+    expect(await (await new Browser(app, BASE).get("/my-shop/products")).text()).toContain("一覧の案内");
   });
 
   it("プレビューは割り当てたカテゴリーの一覧を見本にする", async () => {
@@ -336,12 +337,12 @@ describe("商品一覧のひな形（0103）", () => {
       "templates/collection.liquid": `<div class="liquid-collection">x</div>`,
     });
     settings()["page_layouts"] = { collection: tpl.id };
-    const html = await (await new Browser(app, "https://shop.example.jp").get("/?category=tops")).text();
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/categories/tops")).text();
     expect(html).toContain('<article class="page-default">');
     expect(html).not.toContain("liquid-collection");
     expect(html).toContain("<h1>トップス</h1>");
     expect(html).toContain("Tシャツ");
-    expect(html).toContain('rel="canonical" href="https://shop.example.jp?category=tops"');
+    expect(html).toContain('rel="canonical" href="https://shop.example.jp/categories/tops"');
   });
 
   it("Liquid: snippets/part-products は collection・products・paginate で描ける。カテゴリーの画像と説明の部品（0113）も出せる", async () => {
@@ -356,7 +357,7 @@ describe("商品一覧のひな形（0103）", () => {
     row["image"] = { key: `categories/${String(row["shop_id"])}/0123456789abcdef.webp`, width: 1600, height: 900 };
     sb.tables.pages.find((p) => p["id"] === tpl.id)!["body"] = LIST_TPL + "\n\n::: current part=image\n\n::: current part=content";
     settings()["page_layouts"] = { collection: tpl.id };
-    const html = await (await new Browser(app, "https://shop.example.jp").get("/?category=tops")).text();
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/categories/tops")).text();
     expect(html).toContain('<ul class="theme-grid" data-handle="tops" data-pages="1"><li>Tシャツ</li></ul>');
     expect(html).toContain('<div class="theme-desc">羽織りもの&lt;b&gt;<br>秋冬</div>');
     expect(html).toContain('class="category-image" src="');

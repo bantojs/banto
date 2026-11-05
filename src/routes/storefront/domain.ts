@@ -8,7 +8,7 @@ import { SLUG_RE, type Ctx } from "../common";
  * ショップごとの独自ドメイン（0015_shop_domain、docs/custom-domain.md）。
  *
  * - 独自ドメインへのアクセス（Host がショップの domain）: パスの前にスラッグを足して、いつものストアフロントのルートで処理する
- *   （https://shop.example.jp/p/tee → /<スラッグ>/p/tee）。API・Webhook・画像・/_oauth などはそのまま。
+ *   （https://shop.example.jp/products/tee → /<スラッグ>/products/tee）。API・Webhook・画像・/_oauth などはそのまま。
  * - 管理画面（/admin）はショップのドメインでは出さない: Banto 自身の URL（PUBLIC_BASE_URL）へ転送する（無ければ 404）。
  *   店主がドメインの DNS を握っているので、そこに運営者のログイン画面が出ると、そっくりの偽画面を置いて運営者を誘える
  *   （2026-10-18 のコード監査の§3「独自ドメイン上の /admin」）。運営者の入口は 1 つのオリジンに限る。

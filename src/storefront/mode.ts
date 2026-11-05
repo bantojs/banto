@@ -43,11 +43,11 @@ export function storefrontSettings(settings: Record<string, unknown> | null | un
 
 export type PageKind = "catalog" | "shopping" | "system";
 
-/** /:shop より後ろのパス（"" / "/p/tee" / "/cart" …）の種類 */
+/** /:shop より後ろのパス（"" / "/products/tee" / "/cart" …）の種類 */
 export function pageKind(rest: string): PageKind {
   const r = rest.replace(/\/+$/, "");
   // ショップのページ（同梱モジュール pages、0079）とブログ（blog、0081）も外のサイトが持つ側（checkout / off では外のサイトへ）
-  if (r === "" || r.startsWith("/p/") || r.startsWith("/pages/") || r === "/blogs" || r.startsWith("/blogs/")) return "catalog";
+  if (r === "" || r === "/products" || r.startsWith("/products/") || r.startsWith("/categories/") || r.startsWith("/pages/") || r === "/blogs" || r.startsWith("/blogs/")) return "catalog";
   if (/^\/(legal|privacy|returns|shipping)$/.test(r)) return "system";
   if (/^\/orders\/(lookup|receipt)$/.test(r)) return "system";
   if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";
@@ -68,7 +68,7 @@ export function blockedTarget(s: StorefrontSettings, rest: string): string | "no
   const kind = pageKind(rest);
   if (kind === "system" || s.mode === "full") return null;
   if (s.mode === "checkout" && kind !== "catalog") return null;
-  const product = /^\/p\/([^/]+)\/?$/.exec(rest)?.[1];
+  const product = /^\/products\/([^/]+)\/?$/.exec(rest)?.[1];
   if (product && s.productUrl) return s.productUrl.replace(/\{slug\}/g, encodeURIComponent(decodeURIComponent(product)));
   return s.siteUrl ?? "not_found";
 }

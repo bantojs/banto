@@ -79,7 +79,7 @@ GET /api/shops/<shop>/categories
 - `/categories` はカテゴリーの木です（3 段まで、`[{ "slug", "name", "count", "children": [...] }]`、`count` は子孫を含む公開中の商品数）。
 - パラメータの形が違えば `400 { "error": "invalid_request", "field": "<名前>" }` を返します。
 
-同梱テーマでも `/<shop>?category=<slug>` がカテゴリー別、`/<shop>?tag=<タグ>` がタグ別の一覧になり、商品ページにパンくず・ブランド・公開項目・タグのリンクが出ます。
+同梱テーマ（Banto のお店の画面）では、すべての商品が `/<shop>/products`、カテゴリーの一覧が `/<shop>/categories/<slug>` で、どちらにも `?tag=<タグ>`・`?q=<語>` を付けられます（docs/storefront.md「URL」）。商品ページにパンくず・ブランド・公開項目・タグのリンクが出ます。
 
 ---
 
@@ -582,7 +582,7 @@ GET  /api/shops/<shop>/inquiries               （会員）→ { inquiries: [...
   const { products } = await res.json();
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   el.innerHTML = products.map((p) => `
-    <a href="${base}/${shop}/p/${encodeURIComponent(p.slug)}" style="display:inline-block;width:12rem;margin:.5rem;color:inherit;text-decoration:none">
+    <a href="${base}/${shop}/products/${encodeURIComponent(p.slug)}" style="display:inline-block;width:12rem;margin:.5rem;color:inherit;text-decoration:none">
       ${p.thumb ? `<img src="${esc(p.thumb)}" alt="${esc(p.name)}" style="width:100%;aspect-ratio:1;object-fit:cover">` : ""}
       <div>${esc(p.name)}</div>
       ${p.min_price_jpy !== null ? `<div>¥${p.min_price_jpy.toLocaleString("ja-JP")}〜（税込）</div>` : ""}

@@ -58,21 +58,21 @@ export interface DialogPage {
   article?: { tags?: string[] };
 }
 
-const LIST_QUERY = /(^|[?&])(category|tag|brand|q|sort|page|all)=/;
 
 /**
- * ショップの中のパス（/p/tee など。ショップのスラッグは除いたもの）から、ダイアログを出してよいページの種類を決める。
+ * ショップの中のパス（/products/tee など。ショップのスラッグは除いたもの）から、ダイアログを出してよいページの種類を決める。
  * 出さないページ（レジ・会員ページ・注文照会・試着・お問い合わせ・内部の道など）は null
  */
 export function dialogPageOf(path: string, search: string, events: readonly ShopEvent[]): DialogPage | null {
   const p = path === "" ? "/" : path;
-  if (p === "/") return { kind: LIST_QUERY.test(search) ? "list" : "home" };
-  if (/^\/p\/[^/]+$/.test(p)) {
+  // お店のトップ（ひな形が無ければすべての商品だが、ダイアログの種類はトップ）。一覧は /products と /categories/<カテゴリー>（検索の語・タグを含む）
+  if (p === "/") return { kind: "home" };
+  if (p === "/products" || /^\/categories\/[^/]+$/.test(p)) return { kind: "list" };
+  if (/^\/products\/[^/]+$/.test(p)) {
     const ev = events.find((e) => e.type === "product_view" && e.product);
     const prod = ev?.product;
     return { kind: "product", ...(prod ? { product: { id: prod.id, category_id: prod.category_id ?? null, tags: prod.tags ?? [] } } : {}) };
   }
-  if (p === "/search") return { kind: "list" };
   if (/^\/blogs\/[^/]+(\/[^/]+)?$/.test(p) && !p.endsWith("/feed.atom")) {
     const ev = events.find((e) => e.type === "article_view" && e.article);
     return { kind: "article", ...(ev?.article ? { article: { tags: ev.article.tags ?? [] } } : {}) };

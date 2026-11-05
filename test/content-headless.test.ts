@@ -39,7 +39,7 @@ describe("ヘッドレスの公開 API: ページ・ブログ", () => {
     expect(page["body"]).toContain("::: products tag=new");
     // 画像はこの Banto の絶対 URL、商品のカードはショップの絶対 URL、本文のリンクは書いたまま
     expect(page["html"]).toContain(`<img src="${BASE}/media/pages/x/a.webp"`);
-    expect(page["html"]).toContain(`href="${BASE}/my-shop/p/tee"`);
+    expect(page["html"]).toContain(`href="${BASE}/my-shop/products/tee"`);
     expect(page["html"]).toContain("T シャツ");
     expect(page["html"]).toContain('<a href="/shipping">送料</a>');
     expect(page["html"]).not.toContain("<!--banto:products");

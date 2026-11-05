@@ -115,18 +115,18 @@ describe("Liquid のテーマのカート・検索・ブロック", () => {
     expect(cross.status).toBe(403);
   });
 
-  it("検索: templates/search。既定のテーマでは一覧に結果を並べる。q が無ければ結果なし", async () => {
+  it("検索（/products?q=）: テーマに templates/search があればそれ。routes.search_url は /products。既定のテーマでは一覧に結果を並べる", async () => {
     const { b } = setup();
-    const html = await (await b.get("/search?q=マグカップ")).text();
+    const html = await (await b.get("/products?q=マグカップ")).text();
     expect(html).toContain("<h1>マグカップ</h1>");
-    expect(html).toContain('<a class="hit" href="/p/mug">マグカップ</a>');
+    expect(html).toContain('<a class="hit" href="/products/mug">マグカップ</a>');
     expect(html).not.toContain("Tシャツ</a>");
-    expect(html).toContain('<form action="/search">');
-    expect(await (await b.get("/search")).text()).toContain('<p class="count">0</p>');
+    expect(html).toContain('<form action="/products">');
+    expect(html).toContain('<meta name="robots" content="noindex">');
     // 2 文字以下の語は探さない（DB を重くさせない。0058）
-    expect(await (await b.get("/search?q=マグ")).text()).toContain('<p class="count">0</p>');
+    expect(await (await b.get("/products?q=マグ")).text()).toContain('<p class="count">0</p>');
     // 既定のテーマ（テーマを公開していないショップ）
-    const tsx = await (await setup({ liquid: false }).b.get("/search?q=マグカップ")).text();
+    const tsx = await (await setup({ liquid: false }).b.get("/products?q=マグカップ")).text();
     expect(tsx).toContain("マグカップ");
     expect(tsx).not.toContain(">Tシャツ<");
   });
@@ -139,7 +139,7 @@ describe("Liquid のテーマのカート・検索・ブロック", () => {
 
   it("フォーム: contact はお問い合わせ、customer_login は会員のログインへ（Shopify の欄の名前のまま受ける）", async () => {
     const { b } = setup();
-    const html = await (await b.get("/p/tee")).text();
+    const html = await (await b.get("/products/tee")).text();
     expect(html).toContain('<form method="post" action="/inquiries/new" accept-charset="UTF-8"><input type="hidden" name="form_type" value="contact">');
     expect(html).toContain('<form method="post" action="/account/login" accept-charset="UTF-8"><input type="hidden" name="form_type" value="customer_login">');
     const inq = await b.post("/inquiries/new", { "contact[email]": "q@example.com", "contact[body]": "質問です" });
