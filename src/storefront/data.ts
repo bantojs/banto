@@ -48,6 +48,8 @@ export interface PublicShop {
   blogs_nav?: BlogNavItem[];
   /** SKU の選択肢の key → 表示名（0094。src/products/option-names.ts）。当たる前は無い */
   option_names?: Record<string, string>;
+  /** 選択肢の値ごとの見本（0115、src/products/option-swatches.ts）。0115 の前の DB では無い */
+  option_swatches?: unknown;
   /** ゲストの行動を渡す連携があるか（0108、同梱モジュール event_relay。src/modules/event-relay/relay.ts）。当たる前は無い */
   relay_guests?: boolean;
   /** お店の画面のダイアログ（0110、同梱モジュール dialogs が ON のときだけ。有効で期間内のもの）。当たる前は無い */

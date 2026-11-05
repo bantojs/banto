@@ -16,6 +16,7 @@ import type { CategoryRow } from "../../db/types";
 import { imageUrl } from "../../media/images";
 import { BANTO_VERSION } from "../../version";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
+import { optionSwatchesOf, swatchFor, swatchView, type OptionSwatches } from "../../products/option-swatches";
 import { cors } from "hono/cors";
 import { commerceApi } from "./commerce";
 import { memberCors, membersApi } from "./members";
@@ -215,8 +216,11 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       // price_jpy はこの見る人の単価（会員トークンの会員なら会員価格。0099）、regular_price_jpy は通常の価格、
       // member_price_jpy はゲストに見せる会員価格（当てはまる決まりのうちいちばん安いもの。無ければ null）
       skus: detail.skus.map((k) => ({ id: k.id, code: k.code, name: k.name, options: k.options ?? {}, gtin: k.gtin ?? null, price_jpy: k.price_jpy, regular_price_jpy: k.regular_price_jpy ?? k.price_jpy, member_price_jpy: k.member_price_jpy ?? null, compare_at_price_jpy: k.compare_at_price_jpy ?? null, in_stock: k.available > 0 })),
-      /** SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値（出てくる順）。軸の無い商品は [] */
-      option_axes: optionAxesForSelect(p.option_axes, detail.skus, optionNamesOf(shop.option_names)),
+      /**
+       * SKU を分ける軸（0065）。軸ごとの選択欄に使う。values は SKU に出てくる値（出てくる順）。軸の無い商品は []。
+       * swatches は値ごとの見本（0115。{ <値>: { color: "#rrggbb" | null, image: { url, width, height } | null } }、見本の無い値は入らない）
+       */
+      option_axes: optionAxesForSelect(p.option_axes, detail.skus, optionNamesOf(shop.option_names)).map((a) => ({ ...a, swatches: axisSwatches(d.mediaBaseUrl, optionSwatchesOf(shop.option_swatches), a.key, a.values) })),
       /** SKU の options の key → 表示名（0094） */
       option_names: optionNamesOf(shop.option_names),
       /** 外部プラグインの拡張データ（0084、公開の分だけ）。reviews はレビューの要約（無ければ null） */
@@ -248,6 +252,16 @@ function optionAxesForSelect(axes: unknown, skus: readonly { options?: Record<st
     name: optionLabel(names, a.key),
     values: [...new Set(skus.map((k) => String((k.options ?? {})[a.key] ?? "").trim()).filter(Boolean))],
   }));
+}
+
+/** 軸の値ごとの見本（見本のある値だけ。0115） */
+function axisSwatches(mediaBase: string, table: OptionSwatches, key: string, values: readonly string[]) {
+  const out: Record<string, { color: string | null; image: { url: string; width: number; height: number } | null }> = {};
+  for (const v of values) {
+    const s = swatchView(mediaBase, swatchFor(table, key, v));
+    if (s) out[v] = { color: s.color, image: s.image ? { url: s.image.url, width: s.image.width, height: s.image.height } : null };
+  }
+  return out;
 }
 
 function categoryRef(cat: CategoryRow | undefined): { slug: string; name: string } | null {

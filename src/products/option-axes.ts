@@ -155,7 +155,22 @@ export const OPTION_AXES_SCRIPT = `(function(){
     l.setAttribute("for",id);l.textContent=a.name||a.key;s.id=id;
     var vals=[];skus.forEach(function(k){var v=String(k.v[a.key]==null?"":k.v[a.key]);if(v&&vals.indexOf(v)<0)vals.push(v);});
     vals.forEach(function(v){var o=document.createElement("option");o.value=v;o.textContent=v;if(String(cur[a.key])===v)o.selected=true;s.appendChild(o);});
-    s.addEventListener("change",apply);wrap.appendChild(l);wrap.appendChild(s);pickers.push({a:a,s:s});
+    s.addEventListener("change",apply);wrap.appendChild(l);wrap.appendChild(s);
+    var x={a:a,s:s,l:l,g:null};
+    // 見本（0115）のある軸は、選択欄の代わりに見本のボタンを並べる（選択欄は隠して、ボタンはそれを動かすだけ）
+    if(a.swatches&&typeof a.swatches==="object"){
+      var g=document.createElement("div");g.className="swatches";g.setAttribute("role","radiogroup");g.setAttribute("aria-labelledby",id+"_l");l.id=id+"_l";
+      vals.forEach(function(v){
+        var b=document.createElement("button");b.type="button";b.className="swatch";b.setAttribute("role","radio");b.setAttribute("aria-label",v);b.title=v;b.setAttribute("data-value",v);
+        var sw=a.swatches[v],dot=document.createElement("span");dot.className="swatch__dot";
+        if(sw&&typeof sw.color==="string"&&/^#[0-9a-f]{6}$/.test(sw.color))dot.style.background=sw.color;
+        else if(sw&&sw.image&&typeof sw.image.src==="string"&&/^(https?:\\/\\/|\\/)[^"'()\\\\\\s]+$/.test(sw.image.src)){var im=document.createElement("img");im.src=sw.image.src;im.alt="";im.loading="lazy";dot.appendChild(im);}
+        else{dot.textContent=v;b.className="swatch swatch--text";}
+        b.appendChild(dot);b.addEventListener("click",function(){if(b.disabled)return;s.value=v;apply();});g.appendChild(b);
+      });
+      s.style.display="none";l.removeAttribute("for");wrap.appendChild(g);x.g=g;
+    }
+    pickers.push(x);
   });
   function picked(){var p={};pickers.forEach(function(x){p[x.a.key]=x.s.value;});return p;}
   function match(k,p,upto){for(var i=0;i<upto;i++){var key=pickers[i].a.key;if(String(k.v[key])!==p[key])return false;}return true;}
@@ -165,6 +180,11 @@ export const OPTION_AXES_SCRIPT = `(function(){
       [].slice.call(x.s.options).forEach(function(o){var q=Object.assign({},p);q[x.a.key]=o.value;o.disabled=!skus.some(function(k){return k.ok&&match(k,q,i+1);});});
       var now=x.s.options[x.s.selectedIndex],first=[].slice.call(x.s.options).filter(function(o){return !o.disabled;})[0];
       if(now&&now.disabled&&first)x.s.value=first.value;
+    });
+    pickers.forEach(function(x){
+      if(!x.g)return;
+      [].slice.call(x.g.children).forEach(function(b){var v=b.getAttribute("data-value"),o=[].slice.call(x.s.options).filter(function(op){return op.value===v;})[0];b.disabled=!o||o.disabled;b.setAttribute("aria-checked",x.s.value===v?"true":"false");});
+      x.l.textContent=(x.a.name||x.a.key)+": "+x.s.value;
     });
     var p=picked(),hit=skus.filter(function(k){return match(k,p,pickers.length);})[0];
     if(hit){sel.value=hit.o.value;sel.dispatchEvent(new Event("change"));}

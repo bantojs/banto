@@ -41,6 +41,9 @@ import { PAGES_MODULE, pagePath } from "../pages";
 import { imageUrl } from "../media/images";
 import { categoryImageOf } from "../products/category-media";
 import { categoryUrl, productUrl, productsUrl } from "../storefront/urls";
+import { displayOptionAxes } from "../products/option-axes";
+import { optionLabel, optionNamesOf } from "../products/option-names";
+import { optionSwatchesOf, swatchFor, swatchView } from "../products/option-swatches";
 
 export interface BodyBlocksDeps {
   sf: StorefrontData;
@@ -181,6 +184,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
         if (img) out.push(`<a href="${esc(url)}"><img src="${esc(imageUrl(d.mediaBaseUrl, img.storage_key))}" alt="${esc(p.name)}" loading="lazy" decoding="async"></a>`);
       } else if (part === "name") out.push(`<a class="banto-product__name" href="${esc(url)}">${esc(p.name)}</a>`);
       else if (part === "price" && min !== null) out.push(`<div class="banto-product__price">${esc(yen(min))}${prices.length > 1 && new Set(prices).size > 1 ? "〜" : ""}${member.length ? ` <small>（${esc(t("store.member_price"))} ${esc(yen(Math.min(...member)))}）</small>` : ""} <small>${esc(t("store.tax_included"))}</small></div>`);
+      else if (part === "options") out.push(optionsHtml(d, detail));
       else if (part === "sku") out.push(`<div class="banto-product__sku">${detail.skus.map((k) => esc(k.code)).join(" / ")}</div>`);
       else if (part === "tags" && (p.tags ?? []).length) out.push(`<div class="banto-product__tags">${(p.tags ?? []).map((x) => `<span>${esc(x)}</span>`).join(" ")}</div>`);
       else if (part === "description" && p.description) out.push(`<div class="banto-product__description">${esc(p.description.slice(0, 400))}</div>`);
@@ -199,6 +203,30 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     return `<div class="banto-product">${out.join("")}</div>`;
   }
   return "";
+}
+
+/**
+ * 商品のブロックの選択肢（show=options、0115）。軸ごとに値を並べ、見本（色・画像）があれば丸い見本、無ければ値の文字。
+ * 押すとその値を持つ SKU（在庫のあるもの、無ければ最初）を選んだ商品ページへ（?sku=<品番>）。在庫の無い値は印を付ける
+ */
+function optionsHtml(d: BodyBlocksDeps, detail: NonNullable<Awaited<ReturnType<StorefrontData["productBySlug"]>>>): string {
+  const axes = displayOptionAxes(detail.product.option_axes, detail.skus);
+  if (axes.length === 0) return "";
+  const names = optionNamesOf(d.shop.option_names);
+  const table = optionSwatchesOf(d.shop.option_swatches);
+  const rows = axes.map((a) => {
+    const values = [...new Set(detail.skus.map((k) => String((k.options ?? {})[a.key] ?? "").trim()).filter(Boolean))];
+    const items = values.map((v) => {
+      const withV = detail.skus.filter((k) => String((k.options ?? {})[a.key] ?? "").trim() === v);
+      const sku = withV.find((k) => k.available > 0) ?? withV[0]!;
+      const sw = swatchView(d.mediaBaseUrl, swatchFor(table, a.key, v));
+      const dot = sw?.color ? `<span class="banto-swatch__dot" style="background:${sw.color}"></span>` : sw?.image ? `<span class="banto-swatch__dot"><img src="${esc(sw.image.src)}" alt="" loading="lazy" decoding="async"></span>` : `<span class="banto-swatch__text">${esc(v)}</span>`;
+      const out = withV.every((k) => k.available <= 0) ? " banto-swatch--out" : "";
+      return `<a class="banto-swatch${out}" href="${esc(productUrl(d.shopPath, detail.product.slug, { sku: sku.code }))}" title="${esc(v)}" aria-label="${esc(v)}">${dot}</a>`;
+    });
+    return `<div class="banto-product__option"><span class="banto-product__option-name">${esc(optionLabel(names, a.key))}</span><span class="banto-swatches">${items.join("")}</span></div>`;
+  });
+  return `<div class="banto-product__options">${rows.join("")}</div>`;
 }
 
 function cardHtml(url: string, title: string, image: string | null, summary: string, mediaBase: string, date?: string): string {

@@ -2,6 +2,7 @@ import type { CategoryNode } from "../../products/categories";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import { categoryUrl, listUrl, productUrl, productsUrl } from "../../storefront/urls";
+import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -74,6 +75,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .card:hover{box-shadow:0 2px 12px color-mix(in srgb,CanvasText 15%,transparent)}
 .tags{display:flex;flex-wrap:wrap;gap:.4rem}.tags a{padding:.15rem .6rem;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:1rem;text-decoration:none;font-size:.9rem}.tags a.active{background:var(--accent,#1f6feb);color:#fff;border-color:transparent}
 .categories{display:flex;flex-wrap:wrap;gap:.25rem .9rem;margin:.5rem 0 1rem}.categories a{text-decoration:none}.categories a.active{font-weight:700}.categories a.sub{font-size:.9rem;margin-left:.5rem;opacity:.8}
+.swatches{display:flex;flex-wrap:wrap;gap:.5rem;margin:.25rem 0 .75rem}.swatch{padding:2px;border:2px solid transparent;border-radius:999px;background:none;cursor:pointer;line-height:0}.swatch[aria-checked=true]{border-color:currentColor}.swatch:disabled{opacity:.35;cursor:not-allowed}.swatch__dot{display:inline-block;width:2rem;height:2rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 20%,transparent)}.swatch__dot img{width:100%;height:100%;object-fit:cover}.swatch--text .swatch__dot{width:auto;height:auto;padding:.35rem .75rem;line-height:1.2;font-size:.9rem}
 .category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
@@ -1767,6 +1769,20 @@ type ProductPageProps = Parameters<Theme["ProductPage"]>[0];
  * 商品ページの部品（既定のテーマの見た目）。ふつうの商品ページと、商品詳細のひな形（0102、`::: current part=…`）の両方がここを通る。
  * 買うフォーム（SKU の選択・会員限定・在庫）はここにしか無い。値段・在庫・会員価格は渡された detail（DB の判定）のまま
  */
+/**
+ * 選択欄のスクリプトに渡す軸（表示名と、値ごとの見本 0115）。見本は決まった形（#rrggbb の色か置き場の画像の URL）だけで、
+ * スクリプトは style の背景と img の src にだけ入れる
+ */
+function axesData(ctx: ThemeContext, axes: readonly { key: string }[]) {
+  const names = optionNamesOf(ctx.shop.option_names);
+  const table = optionSwatchesOf(ctx.shop.option_swatches);
+  return axes.map((a) => {
+    const sw = table[a.key];
+    const swatches = sw ? Object.fromEntries(Object.entries(sw).map(([v, s]) => [v, swatchView(ctx.mediaBaseUrl, s)])) : null;
+    return { key: a.key, name: optionLabel(names, a.key), ...(swatches ? { swatches } : {}) };
+  });
+}
+
 export function productView({ ctx, detail, added, selectedSku, categoryPath, attributes }: Omit<ProductPageProps, "layout">) {
   const { product, skus } = detail;
   const inStock = skus.filter((s) => s.available > 0);
@@ -1880,7 +1896,7 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
       <>
         {skus.length === 0 ? <p class="muted">{t("store.unavailable")}</p> : null}
         {skus.length > 0 ? (
-          <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axes.map((a) => ({ key: a.key, name: optionLabel(optionNamesOf(ctx.shop.option_names), a.key) }))) } : {})}>
+          <form method="post" action={`${ctx.shopPath}/cart/add`} {...(axesOn ? { "data-axes": JSON.stringify(axesData(ctx, axes)) } : {})}>
             <label for="sku_id">{t("store.variant")}</label>
             <select id="sku_id" name="sku_id" required>
               {skus.map((s) => (

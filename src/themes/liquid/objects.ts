@@ -16,6 +16,9 @@ import { appDataOf, customAppData, productReviews, type ProductReviews } from ".
 import { reviewsMoreHtml } from "../../apps/reviews-html";
 import { selectedRowValue, sizeChartLiquid, sizeChartOf } from "../../size-charts/chart";
 import { escapeHtml, SafeHtml } from "./engine";
+import { Drop } from "liquidjs/dist/liquid.browser.mjs";
+import { swatchView, type OptionSwatches } from "../../products/option-swatches";
+import { displayOptionAxes } from "../../products/option-axes";
 import { categoryDescriptionHtml } from "../../products/category-media";
 import { categoryUrl, productUrl, productsUrl } from "../../storefront/urls";
 
@@ -27,6 +30,37 @@ export interface UrlBase {
   mediaBaseUrl: string;
   /** SKU の選択肢の key → 表示名（0094）。product.options・options_with_values の name に出す */
   optionNames?: OptionNames;
+  /** 選択肢の値ごとの見本（0115）。options_with_values の値の swatch に出す */
+  optionSwatches?: OptionSwatches;
+}
+
+/**
+ * 選択肢の値（product.options_with_values[].values の 1 つ。Shopify の product_option_value と同じ名前）。
+ * テンプレートからは値の名前の文字と同じに見える（`{{ value }}`・`==`・`contains`・`| json`。liquidjs の Drop の valueOf）
+ */
+export class OptionValue extends Drop {
+  readonly size: number;
+  readonly length: number;
+  constructor(
+    readonly name: string,
+    readonly swatch: ReturnType<typeof swatchView>,
+    readonly selected: boolean,
+    readonly available: boolean,
+    readonly variant: unknown,
+  ) {
+    super();
+    this.size = name.length;
+    this.length = name.length;
+  }
+  override valueOf(): string {
+    return this.name;
+  }
+  override toString(): string {
+    return this.name;
+  }
+  toJSON(): string {
+    return this.name;
+  }
 }
 
 const mediaUrl = (u: UrlBase, key: string) => `${u.mediaBaseUrl.replace(/\/+$/, "")}/${key}`;
@@ -92,8 +126,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
   const p = d.product;
   const selected = d.skus.find((s) => s.code === selectedSku) ?? null;
   const images = orderImagesForSku(d.images, selected?.options ?? null).map((img) => imageObject(u, img, p.name));
-  // 選択肢の key（並びは SKU に出てくる順）。テーマに出す名前は表示名（Shopify の product.options と同じく名前の並び）
-  const optionKeys: string[] = [];
+  // 選択肢の key（並びは商品の軸の順（0065）、軸に無い key は SKU に出てくる順）。テーマに出す名前は表示名（Shopify の product.options と同じく名前の並び）
+  const optionKeys: string[] = displayOptionAxes(p.option_axes, d.skus).map((a) => a.key);
   for (const s of d.skus) for (const k of Object.keys(s.options ?? {})) if (!optionKeys.includes(k)) optionKeys.push(k);
   const optionNames = optionKeys.map((k) => optionLabel(u.optionNames ?? {}, k));
   // 選択肢の値は、選択肢の名前の並びと同じ位置で持つ（SKU ごとに鍵が違っても、位置がずれないように）
@@ -150,12 +184,24 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     variants,
     has_only_default_variant: variants.length <= 1 && optionNames.length === 0,
     options: optionNames,
-    options_with_values: optionNames.map((name, i) => ({
-      name,
-      position: i + 1,
-      values: [...new Set(optsBySku.map((o) => o[i]).filter((x): x is string => Boolean(x)))],
-      selected_value: first ? (optsBySku[variants.indexOf(first)]?.[i] ?? null) : null,
-    })),
+    // 値は OptionValue（名前の文字に見え、swatch・selected・available・variant を持つ。0115）。variant はその値を持つ SKU のうち、
+    // 今の SKU とほかの選択肢がそろうもの、無ければ在庫のあるもの、無ければ最初のもの
+    options_with_values: optionNames.map((name, i) => {
+      const sel = first ? (optsBySku[variants.indexOf(first)]?.[i] ?? null) : null;
+      const vals = [...new Set(optsBySku.map((o) => o[i]).filter((x): x is string => Boolean(x)))];
+      return {
+        name,
+        position: i + 1,
+        selected_value: sel,
+        values: vals.map((v) => {
+          const withV = variants.filter((_, vi) => optsBySku[vi]?.[i] === v);
+          const fo = first ? optsBySku[variants.indexOf(first)] : null;
+          const near = fo ? withV.find((x) => optsBySku[variants.indexOf(x)]!.every((ov, oi) => oi === i || ov === fo[oi])) : undefined;
+          const variant = near ?? withV.find((x) => x.available) ?? withV[0] ?? null;
+          return new OptionValue(v, swatchView(u.mediaBaseUrl, u.optionSwatches?.[optionKeys[i]!]?.[v] ?? null), v === sel, withV.some((x) => x.available), variant);
+        }),
+      };
+    }),
     selected_variant: selected ? first : null,
     selected_or_first_available_variant: first,
     first_available_variant: available[0] ?? null,

@@ -199,7 +199,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
                   attributes: arr(obj({ key: str, label: str, value: {} }), "公開のカスタム項目"), updated_at: str, images: arr(str),
                   image_variants: arr(obj({ url: str, thumb: str, width: nInt, height: nInt, options: { type: "object", additionalProperties: str, description: "結んだ SKU の選択肢（0063。{} は商品全体）" } })),
                   skus: arr(obj({ id: str, code: str, name: nStr, options: { type: "object", additionalProperties: str }, gtin: nStr, price_jpy: int, compare_at_price_jpy: nInt, in_stock: bool })),
-                  option_axes: arr(obj({ key: str, name: str, values: arr(str) }), "SKU を分ける軸（0065）。軸ごとの選択欄に使う。key は英字で変わらない（skus[].options の鍵と同じ）、name は表示名（0094）。values は SKU に出てくる値。軸の無い商品は []"),
+                  option_axes: arr(obj({ key: str, name: str, values: arr(str), swatches: { type: "object", description: "値ごとの見本（0115）。見本のある値だけ", additionalProperties: { type: "object", properties: { color: { type: "string", nullable: true, description: "#rrggbb" }, image: { type: "object", nullable: true, properties: { url: str, width: int, height: int } } } } } }), "SKU を分ける軸（0065）。軸ごとの選択欄に使う。key は英字で変わらない（skus[].options の鍵と同じ）、name は表示名（0094）。values は SKU に出てくる値。swatches は値ごとの色・画像の見本（0115）。軸の無い商品は []"),
                   option_names: { type: "object", additionalProperties: str, description: "SKU の options の key → 表示名（0094）" },
                   size_chart: {
                     type: "object",

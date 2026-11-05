@@ -31,7 +31,7 @@ describe("表示名の読み替え（src/products/option-names.ts）", () => {
     const d = { product: { id: "p", slug: "tee", name: "T", description: null, tags: [], brand: null }, images: [], skus: [{ id: "s1", code: "A", name: null, price_jpy: 1000, available: 1, options: { color: "レッド", size: "M" } }] } as unknown as ProductDetail;
     const o = productFromDetail({ shopPath: "", mediaBaseUrl: "https://m.example", optionNames: names }, d);
     expect(o.options).toEqual(["カラー", "サイズ"]);
-    expect(o.options_with_values.map((x) => [x.name, x.values])).toEqual([["カラー", ["レッド"]], ["サイズ", ["M"]]]);
+    expect(o.options_with_values.map((x) => [x.name, x.values.map(String)])).toEqual([["カラー", ["レッド"]], ["サイズ", ["M"]]]);
   });
 
   it("商品フィードは key が size / color の値を g:size / g:color に載せる", () => {
@@ -58,7 +58,7 @@ describe("画面と API は表示名を出す", () => {
     const html = await (await new Browser(app).get("/my-shop/products/tee")).text();
     expect(html).toContain('data-axes="[{&quot;key&quot;:&quot;color&quot;,&quot;name&quot;:&quot;カラー&quot;},{&quot;key&quot;:&quot;size&quot;,&quot;name&quot;:&quot;サイズ&quot;}]"');
     const api = (await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: { option_axes: unknown; option_names: unknown } };
-    expect(api.product.option_axes).toEqual([{ key: "color", name: "カラー", values: ["レッド", "ブルー"] }, { key: "size", name: "サイズ", values: ["S"] }]);
+    expect(api.product.option_axes).toEqual([{ key: "color", name: "カラー", values: ["レッド", "ブルー"], swatches: {} }, { key: "size", name: "サイズ", values: ["S"], swatches: {} }]);
     expect(api.product.option_names).toEqual({ color: "カラー", size: "サイズ" });
   });
 
