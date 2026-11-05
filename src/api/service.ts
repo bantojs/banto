@@ -105,6 +105,14 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_cursor")) throw new ApiError("invalid", "invalid_cursor: pass after together with updated_since", 400);
     if (e.is("app_data_keys_full")) throw new ApiError("conflict", "app_data_keys_full: a plugin can keep up to 20 custom.v1 keys per product; delete some first", 409);
     if (e.is("app_handle_required")) throw new ApiError("conflict", "app_handle_required: give this plugin (hook endpoint) an app name in the admin screen first", 409);
+    // 記事の項目（0117・0118）: どの項目かを返す
+    if (/article_fields?_invalid/.test(e.dbMessage)) {
+      const key = /article_fields?_invalid:([a-z][a-z0-9_]*)/.exec(e.dbMessage)?.[1];
+      if (/article_fields_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `article_fields_invalid${key ? `:${key}` : ""}: up to 20 { key, label, type: text | number | select | store | product | article, options (select), blog (article: a blog of this shop), multiple (product / article) } (see docs/blog.md)`, 400);
+      throw new ApiError("invalid", `article_field_invalid${key ? `:${key}` : ""}: the value does not fit the blog's field (a select option, a number, a store this shop uses, or URL names of products / articles that exist)`, 400);
+    }
+    if (e.is("invalid_values_unknown_key")) throw new ApiError("invalid", "invalid_values_unknown_key: a blog takes title, description, nav, sort_order, seo_title, seo_description, template_suffix, article_order, feed and article_fields", 400);
+    if (/^(invalid_(article_order|feed|fields))/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
     if (e.is("handle_taken")) throw new ApiError("conflict", "handle_taken: another page (or article in this blog) outside the trash already uses this handle", 409);
     if (e.is("pii_scope_required")) throw new ApiError("unauthorized", "attachments need the orders:pii scope as well as inquiries:read", 401);
     if (e.is("too_many_attachments")) throw new ApiError("invalid", "invalid_attachment: up to 3 files per reply and 20 per inquiry", 400);
