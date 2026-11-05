@@ -736,6 +736,10 @@ export class ApiService {
   async blogsList() {
     return this.call<{ items: Record<string, unknown>[] }>("api_blogs_list", {});
   }
+  /** ブログの設定を変える（0118。題・説明・メニュー・並び順・フィード・記事の項目の定義。送らなかった鍵は今のまま） */
+  async blogUpdate(blog: string, values: Record<string, unknown>) {
+    return this.call<Record<string, unknown>>("api_blog_update", { p_blog: blog, p_values: values });
+  }
   async articlesList(blog: string, q: { status?: string | undefined; query?: string | undefined; tag?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
     return this.call<Record<string, unknown>>("api_articles_list", { p_blog: blog, p_status: q.status ?? null, p_query: q.query ?? null, p_tag: q.tag ?? null, p_limit: q.limit ?? 50, p_offset: q.offset ?? 0 });
   }

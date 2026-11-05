@@ -357,6 +357,7 @@ v1.get("/pages/:ref", async (c) => api(c).pageGet(c.req.param("ref")).then((r) =
 v1.patch("/pages/:id", async (c) => body(c).then((b) => api(c).pageSave({ ...b, id: c.req.param("id") })).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/pages/:id", async (c) => api(c).pageTrash(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/blogs", async (c) => api(c).blogsList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.patch("/blogs/:blog", async (c) => body(c).then((b) => api(c).blogUpdate(c.req.param("blog"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/blogs/:blog/articles", async (c) =>
   api(c)
     .articlesList(c.req.param("blog"), { status: c.req.query("status") || undefined, query: c.req.query("q") || undefined, tag: c.req.query("tag") || undefined, limit: int(c.req.query("limit"), 50), offset: int(c.req.query("offset"), 0) })
