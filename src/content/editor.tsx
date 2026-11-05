@@ -36,6 +36,7 @@ import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, t
 import { migrated } from "../db/migration-state";
 import { escapeHtml } from "../mail/html";
 import { productFields } from "../products/fields";
+import { FIELD_IMAGE_SCRIPT, FieldImageInput } from "../routes/admin/field-image";
 import { ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
 import { fieldValues, type ArticleFieldDef } from "../blog/fields";
 import { ICONS, ICON_NAMES } from "../pages/icons";
@@ -520,7 +521,7 @@ export interface EditorKind {
     excerpt: string;
     author: string;
     /** 記事の項目（0117）: そのブログの定義と今の値・選べる店舗・指すブログの記事 */
-    fields?: { defs: ArticleFieldDef[]; values: Record<string, unknown>; stores: { id: string; name: string }[]; articles: Record<string, { handle: string; title: string }[]> };
+    fields?: { defs: ArticleFieldDef[]; values: Record<string, unknown>; stores: { id: string; name: string }[]; articles: Record<string, { handle: string; title: string }[]>; upload?: string };
   };
 }
 
@@ -549,7 +550,7 @@ export function contentAudienceValues(f: Record<string, string>): Pick<ContentVa
 
 /** 記事の項目の入力欄（0117。形と指す先は DB が確かめる）。商品・記事は URL の名前（いくつも選べるものはカンマ区切り） */
 function ArticleFieldInputs(props: { f: NonNullable<NonNullable<EditorKind["article"]>["fields"]> }) {
-  const { defs, values, stores, articles } = props.f;
+  const { defs, values, stores, articles, upload } = props.f;
   if (defs.length === 0) return null;
   const val = (k: string) => fieldValues(values[k]).join(", ");
   return (
@@ -563,6 +564,14 @@ function ArticleFieldInputs(props: { f: NonNullable<NonNullable<EditorKind["arti
             {f.multiple ? <span class="muted"> {t("blog.fields_multiple")}</span> : null}
           </label>
         );
+        if (f.type === "image") {
+          return (
+            <>
+              {label}
+              <FieldImageInput id={id} name={id} value={val(f.key)} upload={upload ?? ""} />
+            </>
+          );
+        }
         if (f.type === "select" || f.type === "store" || (f.type === "article" && !f.multiple)) {
           const opts: [string, string][] = f.type === "select" ? (f.options ?? []).map((o) => [o, o]) : f.type === "store" ? stores.map((s) => [s.id, s.name]) : (articles[f.key] ?? []).map((a) => [a.handle, a.title]);
           return (
@@ -594,6 +603,7 @@ function ArticleFieldInputs(props: { f: NonNullable<NonNullable<EditorKind["arti
         );
       })}
       <p class="muted">{t("blog.fields_help")}</p>
+      {defs.some((f) => f.type === "image") ? <script dangerouslySetInnerHTML={{ __html: FIELD_IMAGE_SCRIPT }} /> : null}
     </fieldset>
   );
 }
