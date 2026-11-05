@@ -17,7 +17,7 @@ import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
-import { shopHome, shopOrigin } from "../../storefront/urls";
+import { productUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
 import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
@@ -396,19 +396,22 @@ export function collectionPartValues(
   return { collection, products, current_tags: p.tag ? [p.tag] : [], paginate: paginateOf(p.page, p.after, p.link) };
 }
 
-/** 一覧（トップ・カテゴリー・タグ）。トップは templates/index、絞り込みは templates/collection */
+/**
+ * 商品の一覧（お店のトップ・すべての商品・カテゴリーの一覧、タグ・検索の語・ページ送り付き）。
+ * テンプレートは、検索の語があればテーマの templates/search（任意。無ければ collection）、トップは templates/index（無ければ collection）、ほかは templates/collection。
+ * どのテンプレートにも collection・products・current_tags と、検索の語があれば search（terms・results・results_count・performed・too_short）を渡す
+ */
 export function renderListing(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; path: string },
+  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; path: string },
 ): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
-  const filtered = Boolean(p.category || p.tag);
   const collection = collectionObject(u, {
     handle: p.category?.slug ?? "all",
-    title: p.category?.name ?? (p.tag ? `#${p.tag}` : s.shop.name),
+    title: p.category?.name ?? (p.tag ? `#${p.tag}` : p.top ? s.shop.name : t("store.all_products")),
     description: p.category?.description ?? null,
     image: p.category ? categoryImageOf(p.category) : null,
     products,
@@ -417,15 +420,18 @@ export function renderListing(
     ...(p.tag ? { currentTags: [p.tag] } : {}),
   });
   const paginate = paginateOf(p.page, p.after, p.link);
-  const template: ThemeTemplate = filtered || !themeHasTemplate(choice.lt, "index") ? "collection" : "index";
+  // 短すぎる語（3 文字未満で、カテゴリー・タグでも絞っていない）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
+  const search = p.search
+    ? { performed: p.search.performed, terms: p.search.q, too_short: !p.search.performed, results: products.map((x) => ({ ...x, object_type: "product" })), results_count: p.page.total ?? products.length, types: ["product"], filters: [], sort_by: null, sort_options: [] }
+    : null;
+  const template: ThemeTemplate = search && themeHasTemplate(choice.lt, "search") ? "search" : p.top && !p.tag && !search && themeHasTemplate(choice.lt, "index") ? "index" : "collection";
   return render(c, s, choice, {
     template,
-    values: { collection, products, current_tags: p.tag ? [p.tag] : [] },
-    title: filtered ? collection.title : s.shop.name,
-    // カテゴリーの説明（0113）を検索エンジン向けの説明に（既定のテーマと同じ）
-    ...(categoryMetaDescription(p.category?.description) ? { description: categoryMetaDescription(p.category?.description)! } : {}),
+    values: { collection, products, current_tags: p.tag ? [p.tag] : [], ...(search ? { search } : {}) },
+    title: search ? (search.terms ? `${t("store.search")}: ${search.terms}` : t("store.search")) : p.top ? s.shop.name : collection.title,
+    ...(p.category && categoryMetaDescription(p.category.description) ? { description: categoryMetaDescription(p.category.description)! } : {}),
     path: p.path,
-    noindex: Boolean(p.after),
+    noindex: Boolean(p.after || search),
     categories: p.categories,
     ...(p.category ? { currentCategory: p.category.slug } : {}),
     paginate,
@@ -437,7 +443,7 @@ export function liquidProductJsonLd(c: Ctx, s: LiquidScope, p: { detail: Product
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const product = productFromDetail(u, p.detail, p.selectedSku);
   const home = shopHome(publicBaseUrl(c), s.shop);
-  const path = `/p/${encodeURIComponent(p.detail.product.slug)}`;
+  const path = productUrl("", p.detail.product.slug);
   const jsonLd = productJsonLd({
     url: `${home}${path}`,
     product: p.detail.product,
@@ -472,23 +478,6 @@ export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { li
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
   const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel) };
   return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
-}
-
-/** 検索（templates/search）。search.results は商品だけ */
-export function renderSearch(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { q: string; page: ProductListPage | null; categories: CategoryRow[]; link: (cursor: string | null) => string; after?: string }): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
-  const results = (p.page?.items ?? []).map((x) => ({ ...productFromSummary(u, x), object_type: "product" }));
-  // 短すぎる語（3 文字未満）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
-  const search = { performed: p.page !== null, terms: p.q, too_short: p.q !== "" && p.page === null, results, results_count: p.page?.total ?? results.length, types: ["product"], filters: [], sort_by: null, sort_options: [] };
-  return render(c, s, choice, {
-    template: "search",
-    values: { search },
-    title: p.q ? `${t("store.search")}: ${p.q}` : t("store.search"),
-    path: "/search",
-    noindex: true,
-    categories: p.categories,
-    paginate: p.page ? paginateOf(p.page, p.after, p.link) : null,
-  });
 }
 
 /** 配送先の画面（templates/checkout）。checkout に値・都道府県・お届け日時・誤りを渡し、{% form 'checkout_address' %} で送らせる */
@@ -626,7 +615,7 @@ function withAppBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (htm
       const b = p.apps?.[i];
       const name = names[i];
       if (!b || !name) return card;
-      const product = { id: b.product.id, handle: b.product.slug, title: b.product.name, url: `${sp}/p/${encodeURIComponent(b.product.slug)}` };
+      const product = { id: b.product.id, handle: b.product.slug, title: b.product.name, url: productUrl(sp, b.product.slug) };
       const block = { app: b.block.app, id: b.block.block, settings: b.block.settings, style: b.block.style, index: i };
       return renderThemeSnippet(choice.lt, input, name, { block, product, reviews: reviewsLiquid(b.reviews), data: b.data }) ?? card;
     });

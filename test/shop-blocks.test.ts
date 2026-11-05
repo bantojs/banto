@@ -41,14 +41,14 @@ describe("お店のブロック", () => {
   it("検索・カテゴリー（子だけ）・カード・商品（カートに入れる・今すぐ買う）を描く。無い商品は空", async () => {
     const { app, teeM } = setup();
     const html = await (await new Browser(app, BASE).get("/my-shop/pages/lp")).text();
-    expect(html).toContain('action="/my-shop/search"');
+    expect(html).toContain('action="/my-shop/products"');
     expect(html).toContain('placeholder="Tシャツを探す"');
-    expect(html).toContain('href="/my-shop?category=shirts">シャツ</a>');
+    expect(html).toContain('href="/my-shop/categories/shirts">シャツ</a>');
     expect(html).not.toContain(">バッグ</a>");
     expect(html).toContain('href="/my-shop/blogs/news/hello"');
     expect(html).toContain("ごあいさつ");
     expect(html).toContain('href="/my-shop/pages/about"');
-    expect(html).toContain('<a class="banto-product__name" href="/my-shop/p/tee">Tシャツ</a>');
+    expect(html).toContain('<a class="banto-product__name" href="/my-shop/products/tee">Tシャツ</a>');
     expect(html).toContain(`<input type="hidden" name="sku_id" value="${teeM.id}">`);
     expect(html).toContain('name="buy" value="1"');
     expect(html).toContain("banto-grid banto-grid--3");
@@ -68,7 +68,7 @@ describe("お店のブロック", () => {
   it("ヘッドレスの html にも中身が入る（リンクはショップの絶対 URL）", async () => {
     const { app } = setup();
     const j = (await (await app.request(`${BASE}/api/shops/my-shop/pages/lp`)).json()) as { page: { html: string } };
-    expect(j.page.html).toContain(`action="${BASE}/my-shop/search"`);
-    expect(j.page.html).toContain(`href="${BASE}/my-shop/p/tee"`);
+    expect(j.page.html).toContain(`action="${BASE}/my-shop/products"`);
+    expect(j.page.html).toContain(`href="${BASE}/my-shop/products/tee"`);
   });
 });

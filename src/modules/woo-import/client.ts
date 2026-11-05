@@ -1329,7 +1329,7 @@ export function wooImporter() {
   function redirectsCsv(analysis: Analysis, bantoBase: string): string {
     const q = (s: string) => (/[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
     const lines = ["old_url,new_url"];
-    for (const p of analysis.products) if (p.permalink) lines.push(`${q(p.permalink)},${q(`${bantoBase.replace(/\/+$/, "")}/p/${p.slug}`)}`);
+    for (const p of analysis.products) if (p.permalink) lines.push(`${q(p.permalink)},${q(`${bantoBase.replace(/\/+$/, "")}/products/${p.slug}`)}`);
     return `${lines.join("\r\n")}\r\n`;
   }
 

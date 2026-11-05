@@ -12,7 +12,7 @@ export type HeadTag = { kind: "script"; src: string } | { kind: "inline-script";
 export interface HeadExtra {
   member: boolean;
   base: string;
-  /** ショップの中のパス（/p/tee など。スラッグは除く。トップは ""） */
+  /** ショップの中のパス（/products/tee など。スラッグは除く。トップは ""） */
   path?: string;
   /** クエリ（? から。無ければ ""） */
   search?: string;

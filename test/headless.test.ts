@@ -394,14 +394,14 @@ describe("商品一覧の絞り込み・並べ替え・ページング（公開 
   it("ストアフロント: /:shop?tag= でタグ別一覧、商品ページにタグのリンク", async () => {
     const { app } = catalog();
     const b = new Browser(app);
-    let html = await (await b.get(`/my-shop?tag=${encodeURIComponent("夏物")}`)).text();
+    let html = await (await b.get(`/my-shop/products?tag=${encodeURIComponent("夏物")}`)).text();
     expect(html).toContain("キャップ");
     expect(html).toContain("Tシャツ");
     expect(html).not.toContain("コート</div>");
     expect(html).toContain('class="active"');
-    expect(html).toContain(`href="/my-shop?tag=${encodeURIComponent("冬物")}"`);
-    expect(html).toContain(`rel="canonical" href="${BASE}/my-shop?tag=${encodeURIComponent("夏物")}"`);
-    html = await (await b.get("/my-shop/p/tee")).text();
-    expect(html).toContain(`href="/my-shop?tag=${encodeURIComponent("トップス")}"`);
+    expect(html).toContain(`href="/my-shop/products?tag=${encodeURIComponent("冬物")}"`);
+    expect(html).toContain(`rel="canonical" href="${BASE}/my-shop/products?tag=${encodeURIComponent("夏物")}"`);
+    html = await (await b.get("/my-shop/products/tee")).text();
+    expect(html).toContain(`href="/my-shop/products?tag=${encodeURIComponent("トップス")}"`);
   });
 });

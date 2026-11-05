@@ -39,22 +39,22 @@ describe("お店の画面", () => {
     const { app, early } = setup();
     const b = new Browser(app, BASE);
     const top = await (await b.get("/my-shop")).text();
-    expect(top).toContain("/my-shop/p/tee");
-    expect(top).toContain("/my-shop/p/early");
-    expect(top).not.toContain("/my-shop/p/vip");
-    const gate = await b.get("/my-shop/p/vip");
+    expect(top).toContain("/my-shop/products/tee");
+    expect(top).toContain("/my-shop/products/early");
+    expect(top).not.toContain("/my-shop/products/vip");
+    const gate = await b.get("/my-shop/products/vip");
     expect(gate.status).toBe(200);
     const gh = await gate.text();
     expect(gh).toContain("会員の方だけ購入できます");
     expect(gh).not.toContain("VIP");
     expect(gh).toContain('content="noindex');
-    expect((await b.get("/my-shop/p/secret")).status).toBe(404);
-    const eh = await (await b.get("/my-shop/p/early")).text();
+    expect((await b.get("/my-shop/products/secret")).status).toBe(404);
+    const eh = await (await b.get("/my-shop/products/early")).text();
     expect(eh).toContain("data-members-only");
     expect(eh).toContain('href="/my-shop/account/login"');
     // カートに入れようとしても入らない
     const r = await b.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" });
-    expect(r.headers.get("location")).toBe("/my-shop/p/early");
+    expect(r.headers.get("location")).toBe("/my-shop/products/early");
     expect(await (await b.get("/my-shop/cart")).text()).not.toContain("EARLY");
   });
 
@@ -62,8 +62,8 @@ describe("お店の画面", () => {
     const { app, mail, vip, early } = setup();
     const gold = new Browser(app, BASE);
     await memberLogin(gold, mail, "/my-shop", "gold@example.com");
-    expect(await (await gold.get("/my-shop")).text()).toContain("/my-shop/p/vip");
-    expect(await (await gold.get("/my-shop/p/vip")).text()).toContain("カートに入れる");
+    expect(await (await gold.get("/my-shop")).text()).toContain("/my-shop/products/vip");
+    expect(await (await gold.get("/my-shop/products/vip")).text()).toContain("カートに入れる");
     await gold.post("/my-shop/cart/add", { sku_id: vip.k.id, qty: "1" });
     await gold.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" });
     const cart = await (await gold.get("/my-shop/cart")).text();
@@ -71,10 +71,10 @@ describe("お店の画面", () => {
     expect(cart).toContain("EARLY");
     const silver = new Browser(app, BASE);
     await memberLogin(silver, mail, "/my-shop", "silver@example.com");
-    expect((await silver.get("/my-shop/p/vip")).status).toBe(404);
-    expect(await (await silver.get("/my-shop")).text()).not.toContain("/my-shop/p/vip");
-    expect(await (await silver.get("/my-shop/p/early")).text()).toContain("対象の会員の方だけ購入できます");
-    expect((await silver.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" })).headers.get("location")).toBe("/my-shop/p/early");
+    expect((await silver.get("/my-shop/products/vip")).status).toBe(404);
+    expect(await (await silver.get("/my-shop")).text()).not.toContain("/my-shop/products/vip");
+    expect(await (await silver.get("/my-shop/products/early")).text()).toContain("対象の会員の方だけ購入できます");
+    expect((await silver.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" })).headers.get("location")).toBe("/my-shop/products/early");
   });
 
   it("モジュールが OFF なら会員の読み取りの経路を使わない（見せない商品はだれにも出ない）", async () => {
@@ -82,7 +82,7 @@ describe("お店の画面", () => {
       const { app, mail } = setup(o);
       const gold = new Browser(app, BASE);
       await memberLogin(gold, mail, "/my-shop", "gold@example.com");
-      expect(await (await gold.get("/my-shop")).text()).not.toContain("/my-shop/p/vip");
+      expect(await (await gold.get("/my-shop")).text()).not.toContain("/my-shop/products/vip");
     }
   });
 });

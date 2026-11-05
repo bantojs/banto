@@ -29,10 +29,10 @@ describe("SEO とテーマ設定", () => {
     expect(html).toContain('src="https://cdn.example/logo.png"');
     expect(html).not.toContain('name="robots"');
 
-    html = await (await b.get("/my-shop/p/tee")).text();
+    html = await (await b.get("/my-shop/products/tee")).text();
     expect(html).toContain('<meta property="og:type" content="product"');
     expect(html).toContain('<meta name="description" content="綿100%の定番"');
-    expect(html).toContain(`<link rel="canonical" href="${BASE}/my-shop/p/tee"`);
+    expect(html).toContain(`<link rel="canonical" href="${BASE}/my-shop/products/tee"`);
     expect(html).toContain('class="thumbs"');
 
     html = await (await b.get("/my-shop/cart")).text();
@@ -49,7 +49,7 @@ describe("SEO とテーマ設定", () => {
     expect(await res.text()).toContain("<sitemapindex");
     const xml = await readSitemap(async (u) => (await app.request(u)).text(), `${BASE}/sitemap.xml`);
     expect(xml).toContain(`<loc>${BASE}/my-shop</loc>`);
-    expect(xml).toContain(`<loc>${BASE}/my-shop/p/tee</loc>`);
+    expect(xml).toContain(`<loc>${BASE}/my-shop/products/tee</loc>`);
     expect(xml).toContain(`<loc>${BASE}/my-shop/shipping</loc>`);
     expect(xml).not.toContain("hidden");
   });
@@ -89,7 +89,7 @@ describe("商品画像の配信（サムネイル / srcset）", () => {
     expect(list).not.toContain("b.thumb");
     expect(list).toContain('decoding="async"');
 
-    const detail = await (await b.get("/s/p/with-thumb")).text();
+    const detail = await (await b.get("/s/products/with-thumb")).text();
     // 詳細の大きい画像も持っている段から選ばせる（0091。中間の段があればそれも）
     expect(detail).toContain(`<img src="${BASE}/media/shops/s/a.thumb.webp" width="1600" height="1200" srcset="${BASE}/media/shops/s/a.thumb.webp 400w, ${BASE}/media/shops/s/a.webp 1600w" sizes="(max-width: 40rem) 100vw, 50vw"`);
     expect(detail).toContain('fetchpriority="high"');

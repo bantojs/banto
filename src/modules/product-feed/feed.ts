@@ -101,7 +101,7 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
         ...(skus.length > 1 ? { item_group_id: p.id } : {}),
         title: clip(skuTitle(p, s, skus.length > 1), 150),
         description: clip((p.description ?? "").trim() || p.name, 5000),
-        link: skuLink(target.productLink?.(p.slug) ?? `${target.home}/p/${encodeURIComponent(p.slug)}`, skus.length > 1 && productImages.some((i) => Object.keys(imageOptionsOf(i.options)).length > 0) ? s.code : null),
+        link: skuLink(target.productLink?.(p.slug) ?? `${target.home}/products/${encodeURIComponent(p.slug)}`, skus.length > 1 && productImages.some((i) => Object.keys(imageOptionsOf(i.options)).length > 0) ? s.code : null),
         image_link: imgs[0]!,
         additional_image_link: imgs.slice(1, 11),
         availability: (stock.get(s.id) ?? 0) > 0 ? "in_stock" : "out_of_stock",

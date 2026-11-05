@@ -44,15 +44,15 @@ describe("追加カテゴリー: お店の画面と公開 API", () => {
   it("カテゴリー別一覧は追加カテゴリーでも出る（親のカテゴリーでも）。パンくずは主カテゴリーだけ", async () => {
     const { app } = setup();
     const b = new Browser(app);
-    let html = await (await b.get("/my-shop?category=sale")).text();
+    let html = await (await b.get("/my-shop/categories/sale")).text();
     expect(html).toContain("マグ");
     expect(html).not.toContain("Tシャツ");
-    html = await (await b.get("/my-shop?category=wear")).text();
+    html = await (await b.get("/my-shop/categories/wear")).text();
     expect(html).toContain("マグ");
     expect(html).toContain("Tシャツ");
-    html = await (await b.get("/my-shop/p/mug")).text();
-    expect(html).toContain('<a href="/my-shop?category=goods">雑貨</a>');
-    expect(html).not.toContain('<a href="/my-shop?category=sale">');
+    html = await (await b.get("/my-shop/products/mug")).text();
+    expect(html).toContain('<a href="/my-shop/categories/goods">雑貨</a>');
+    expect(html).not.toContain('<a href="/my-shop/categories/sale">');
   });
 
   it("公開 API: ?category= の絞り込み・件数・extra_categories", async () => {

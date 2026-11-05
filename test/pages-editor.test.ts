@@ -98,7 +98,7 @@ describe("見たままの編集 → 決まった書式", () => {
   });
 
   it("商品を並べる・ボタンのブロックは同じ 1 行に戻し、「:::」で始まる文字は逃がす", () => {
-    const body = '::: products category=tops tag="冬 物" limit=12 layout=scroll sort=price_asc\n\n::: button [見る](/p/x)\n\n\\::: products は文字';
+    const body = '::: products category=tops tag="冬 物" limit=12 layout=scroll sort=price_asc\n\n::: button [見る](/products/x)\n\n\\::: products は文字';
     const h = markdownToHtml(body, { productsLabel: () => "商品" });
     expect(h).toContain('contenteditable="false">商品</div>');
     expect(h).toContain("<p>::: products は文字</p>");

@@ -163,18 +163,28 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 
 ## 使える名前
 
+**お店の URL・管理画面の言葉・テンプレートの名前**: お客様の URL と管理画面の言葉は Banto のもの、テンプレートと渡すオブジェクトの名前は、テーマを書く人の共通の言葉として Shopify の名前を使います（docs/knowledge/02-decisions.md 2026-11-05）。
+
+| お店の URL | 管理画面の言葉 | テンプレート | 渡すオブジェクト |
+| --- | --- | --- | --- |
+| `/` | お店のトップ | `index` | `collection`（すべての商品） |
+| `/products` | すべての商品 | `collection` | `collection`（`handle` は `all`）・`products` |
+| `/categories/<カテゴリー>` | カテゴリー | `collection` | `collection`（`handle` はカテゴリーの URL の名前）・`products` |
+| `/products?q=…` | 検索 | `search`（任意）か `collection` | `search`・`collection`・`products` |
+| `/products/<商品>` | 商品 | `product` | `product`・`current_variant` |
+
 **ページの種類ごと**
 
 | ページ | テンプレート | 渡すもの |
 | --- | --- | --- |
-| トップ | `index`（無ければ `collection`） | `collection`（すべての商品の 1 ページ目）・`products` |
-| カテゴリー・タグで絞った一覧 | `collection` | `collection`・`products`・`current_tags`。カテゴリーの `collection.description`（改行を `<br>` にした HTML）と `collection.image`（`featured_image` も同じ。無ければ空）は 0113 のカテゴリーの説明と画像（docs/storefront.md） |
+| トップ（`/`。トップのひな形があればそのページ） | `index`（無ければ `collection`） | `collection`（すべての商品の 1 ページ目）・`products` |
+| すべての商品（`/products`）・カテゴリーの一覧（`/categories/<カテゴリー>`）。`?tag=` で絞ったものも | `collection` | `collection`・`products`・`current_tags`。カテゴリーの `collection.description`（改行を `<br>` にした HTML）と `collection.image`（`featured_image` も同じ。無ければ空）は 0113 のカテゴリーの説明と画像（docs/storefront.md） |
 | 商品 | `product` | `product`・`current_variant` |
 | 見つからない | `404` | — |
 | カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
 | レジ: 配送先 | `checkout` | `checkout`（`values`（入れた値）・`error`・`prefectures`（`name`・`shipping_price`）・`delivery`（お届け日時を選べるショップ）・`marketing_consent`（案内メールの欄を出すか）・`subtotal_price`・`shipping_summary`）。フォームは `{% form 'checkout_address' %}`（下の「レジ」） |
 | レジ: 最終確認 | `checkout_confirm` | `checkout.confirmation`（要約に使う値）。中身は **`{% banto_confirmation %}` が必須**（下の「レジ」） |
-| 検索（`/search?q=`） | `search` | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上で、2 文字以下は探さず `performed` が false、`too_short`（Banto の名前）が true になります（「3 文字以上で」の案内に使えます） |
+| 検索（`/products?q=`・`/categories/<カテゴリー>?q=`） | `search`（任意。無ければ `collection` に同じ `search` を渡す） | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上で、2 文字以下は探さず `performed` が false、`too_short`（Banto の名前）が true になります（「3 文字以上で」の案内に使えます） |
 | 法務（`/legal`・`/privacy`・`/returns`） | `page` | `page`（`title`・`handle`（`legal` / `privacy` / `returns`）・`url`・`content`）。`content` は Banto が文面から作ります（改行を `<br>` にしてエスケープ）。連携サイトのページに向けていればそちらへ転送します（テーマでは描きません） |
 | ショップのページ（`/pages/<名前>`、同梱モジュール「ページ」、docs/pages.md） | `page`（ページで選んだ名前があれば `page.<名前>`。テーマに無ければ `page`） | `page`（`id`・`title`・`handle`・`url`・`content`・`template_suffix`・`published_at`（予約していればその日時）・`updated_at`・`image`（アイキャッチ画像。`src`・`url`・`alt`、無ければ空）、アイキャッチがあれば `page_image`（OG の画像に使う）。`content` は Banto が本文の決まった書式から作った HTML（決まった形のタグだけ）。`template` は `page.faq` のように出て、`template.name` は `page`・`template.suffix` は `faq`。メニューに出すページは `linklists['main-menu']`（ヘッダー）の後ろと `linklists.footer` の前に入ります。本文の「商品を並べる」（`::: products`）は、テーマに `snippets/page-products.liquid` があれば `products`（一覧の形の商品）と `block`（`layout`（`grid` / `scroll`）・`limit`・`sort`・`category`・`tag`・`index`）を渡して描いた HTML が `content` のその場所に入ります（無ければ Banto の既定のカード `ul.banto-products__list`）。「ボタン」は `p.banto-button > a.banto-button__link` です。レイアウトのブロック（グループ・カラム・カバー・画像と文・ギャラリー・アコーディオン・スペーサー）は class だけの HTML と並べ方の最小の CSS で `content` に入り、色と大きさは CSS の変数（`--banto-bg-subtle`・`--banto-bg-accent`・`--banto-pad-m`・`--banto-cover-m` など、docs/pages.md「テーマで決まる値」）をテーマが決めます |
 | ブログの記事の一覧（`/blogs/<名前>`、同梱モジュール「ブログ」、docs/blog.md） | `blog`（ブログで選んだ名前があれば `blog.<名前>`） | `blog`（`id`・`handle`・`title`・`url`・`description`・`articles`（その 1 ページの記事、新しい順）・`articles_count`・`all_tags`（そのページの記事のタグ）・`template_suffix`・`comments_enabled`（いつも false））・`current_tags`（`?tag=` で絞ったとき）・`paginate`（`{% paginate %}` の外でも読めます。1 ページは 12 本で Banto が決めます） |

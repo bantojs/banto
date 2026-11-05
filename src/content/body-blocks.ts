@@ -40,6 +40,7 @@ import { productPartsOf, shopBlocksOf, type ShopBlock } from "../pages/shop-bloc
 import { PAGES_MODULE, pagePath } from "../pages";
 import { imageUrl } from "../media/images";
 import { categoryImageOf } from "../products/category-media";
+import { categoryUrl, productUrl, productsUrl } from "../storefront/urls";
 
 export interface BodyBlocksDeps {
   sf: StorefrontData;
@@ -118,7 +119,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
   const acards = ablocks.map((b) =>
     b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(d.shopPath, b.blog.handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
   );
-  const appCards = apps.map((b) => defaultAppHtml(b, b ? `${d.shopPath}/p/${encodeURIComponent(b.product.slug)}#reviews` : ""));
+  const appCards = apps.map((b) => defaultAppHtml(b, b ? `${productUrl(d.shopPath, b.product.slug)}#reviews` : ""));
   return { blocks, cards, ablocks, acards, apps, appCards, shopCards };
 }
 
@@ -132,7 +133,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
   const a = b.attrs;
   if (b.kind === "search") {
     const ph = a["placeholder"] || t("blocks.search_placeholder");
-    return `<form class="banto-search" role="search" method="get" action="${esc(`${d.shopPath}/search`)}"><input type="search" name="q" maxlength="100" placeholder="${esc(ph)}" aria-label="${esc(t("blocks.search_label"))}"><button type="submit">${esc(t("blocks.search_button"))}</button></form>`;
+    return `<form class="banto-search" role="search" method="get" action="${esc(productsUrl(d.shopPath))}"><input type="search" name="q" maxlength="100" placeholder="${esc(ph)}" aria-label="${esc(t("blocks.search_label"))}"><button type="submit">${esc(t("blocks.search_button"))}</button></form>`;
   }
   if (b.kind === "categories") {
     const parent = a["parent"] ? categories.find((c) => c.slug === a["parent"]) : null;
@@ -146,7 +147,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
         const im = a["layout"] === "grid" ? categoryImageOf(c) : null;
         return im ? `<img class="banto-categories__image" src="${esc(imageUrl(d.mediaBaseUrl, im.key))}" width="${im.width}" height="${im.height}" alt="" loading="lazy" decoding="async">` : "";
       };
-      return `<ul${depth === 0 ? ` class="banto-categories banto-categories--${a["layout"]}"` : ""}>${list.map((c) => `<li><a href="${esc(`${d.shopPath || "/"}?category=${encodeURIComponent(c.slug)}`)}">${img(c)}${esc(c.name)}</a>${a["layout"] === "grid" ? "" : tree(c.id, depth + 1)}</li>`).join("")}</ul>`;
+      return `<ul${depth === 0 ? ` class="banto-categories banto-categories--${a["layout"]}"` : ""}>${list.map((c) => `<li><a href="${esc(categoryUrl(d.shopPath, c.slug))}">${img(c)}${esc(c.name)}</a>${a["layout"] === "grid" ? "" : tree(c.id, depth + 1)}</li>`).join("")}</ul>`;
     };
     return tree(parent ? parent.id : null, 0);
   }
@@ -169,7 +170,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     if (!detail) return "";
     const p = detail.product;
     const parts = productPartsOf(b);
-    const url = `${d.shopPath}/p/${encodeURIComponent(p.slug)}`;
+    const url = productUrl(d.shopPath, p.slug);
     const prices = detail.skus.map((k) => k.price_jpy);
     const min = prices.length ? Math.min(...prices) : null;
     const member = detail.skus.map((k) => k.member_price_jpy).filter((x): x is number => typeof x === "number");

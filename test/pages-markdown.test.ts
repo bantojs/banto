@@ -21,7 +21,7 @@ describe("ページの本文の書式", () => {
     expect(md("### a\\\nb\\\nc\\\nd\\\ne")).toBe("<h3>a<br>b<br>c<br>d\\</h3>\n<p>e</p>");
     expect(md("## C:\\\\\n本文")).toBe("<h2>C:\\</h2>\n<p>本文</p>");
     expect(md("## a \\\n\nb")).toBe("<h2>a \\</h2>\n<p>b</p>");
-    expect(md("## a \\\n::: button [x](/p/x)")).toContain("<h2>a \\</h2>");
+    expect(md("## a \\\n::: button [x](/products/x)")).toContain("<h2>a \\</h2>");
   });
 
   it("箇条書き・番号付き（字下げした続きの行）・引用・表", () => {

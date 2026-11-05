@@ -90,7 +90,7 @@ describe("管理画面とお店の画面", () => {
     res = await b.post(prodBase, { own_rows: "on", rows_tsv: "サイズ\t着丈\t身幅\nS\t66\t48\nM\t70\t52" });
     expect(res.headers.get("location")).toContain("flash=saved");
 
-    const html = await (await app.request(`${BASE}/my-shop/p/tee?sku=TEE-M`)).text();
+    const html = await (await app.request(`${BASE}/my-shop/products/tee?sku=TEE-M`)).text();
     expect(html).toContain('class="size-chart"');
     expect(html).toContain("着丈（cm）");
     expect(html).toContain('data-axis="size"');
@@ -104,7 +104,7 @@ describe("管理画面とお店の画面", () => {
 
     // 商品の段で隠す
     await b.post(prodBase, { hidden: "on" });
-    expect(await (await app.request(`${BASE}/my-shop/p/tee`)).text()).not.toContain('class="size-chart"');
+    expect(await (await app.request(`${BASE}/my-shop/products/tee`)).text()).not.toContain('class="size-chart"');
   });
 
   it("チェックを付けずに入力しても消えない（スクリプトが動かない・古い画面）。この段のものを持っていてチェックを外せば上の段に戻る。上の段の行は薄い字で見せる", async () => {
@@ -121,11 +121,11 @@ describe("管理画面とお店の画面", () => {
     expect(page).toMatch(/name="row_value_0" value="" placeholder="F"/);
     expect(page).toMatch(/name="cell_0_c1" value="" placeholder="60"/);
     await b.post(prodBase, { row_value_0: "M", cell_0_c1: "70" });
-    expect(await (await app.request(`${BASE}/my-shop/p/tee`)).text()).toContain(">70<");
+    expect(await (await app.request(`${BASE}/my-shop/products/tee`)).text()).toContain(">70<");
     // 持っている行のチェックを外すと、カテゴリーの行に戻る
     await b.post(prodBase, { row_value_0: "M", cell_0_c1: "70" });
     expect(sb.tables.size_charts.some((r) => r["product_id"] === product.id && r["rows"] === null) || !sb.tables.size_charts.some((r) => r["product_id"] === product.id)).toBe(true);
-    expect(await (await app.request(`${BASE}/my-shop/p/tee`)).text()).toContain(">60<");
+    expect(await (await app.request(`${BASE}/my-shop/products/tee`)).text()).toContain(">60<");
   });
 
   it("公開 API・Liquid 用: 商品に size_chart（図は URL）。モジュールが OFF なら出さず、管理画面も開けない", async () => {

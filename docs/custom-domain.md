@@ -45,7 +45,7 @@ Workers の無料枠（1 日 10 万リクエスト）を画像で消費しなく
 1. **Cloudflare で Worker にドメインを付ける**: 2 と同じ手順で、`shop-a.example.jp` を banto の Worker に **カスタムドメイン** として追加します（ショップの数だけ追加します）。
 2. **開けることを確かめる**: ブラウザで `https://shop-a.example.jp/` を開き、Banto の画面（ショップの一覧など）が出ることを確かめます。
 3. **ショップに設定する**: 管理画面 → ショップ設定 → **独自ドメイン** に `shop-a.example.jp` を入れて保存します（反映まで 30 秒ほど）。
-   - `https://shop-a.example.jp/` がそのショップのトップ、商品は `https://shop-a.example.jp/p/<商品>` になります。
+   - `https://shop-a.example.jp/` がそのショップのトップ、商品は `https://shop-a.example.jp/products/<商品>` になります（すべての商品は `/products`、カテゴリーの一覧は `/categories/<カテゴリー>`）。
    - これまでの URL（`https://<Banto の URL>/<スラッグ>/…`）は、同じページのドメイン側へ転送されます。
    - API（`/api`）・Webhook（`/webhooks`）は、Banto の URL のままで使えます。
    - 管理画面（`/admin`）は **Banto の URL だけ** で開きます。ショップのドメインで `/admin` を開くと Banto の URL へ転送されます（`PUBLIC_BASE_URL` が未設定なら 404）。運営者のログイン画面を店主のドメインに置かないためです。AI からの操作（`/mcp`・`/api/v1`）と決済事業者の Webhook（`/webhooks`）も Banto の URL だけです（ショップのドメインでは 404。AI クライアントの接続先と Webhook の URL には Banto の URL を使ってください）。公開 API（`/api/shops/...`）と画像はどちらでも使えます。

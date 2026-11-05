@@ -37,12 +37,12 @@ describe("会員価格", () => {
   it("ゲストには「会員価格」を並べて見せ、カートは通常の価格。合う会員はカート・決済の額・予約の単価が会員価格", async () => {
     const { app, mail, teeM, stripe, sb } = setup();
     const guest = new Browser(app, BASE);
-    const gh = await (await guest.get("/my-shop/p/tee")).text();
+    const gh = await (await guest.get("/my-shop/products/tee")).text();
     expect(gh).toContain("会員価格 ¥2,400");
     expect(gh).toContain("¥3,000（会員価格 ¥2,400）");
     const gold = new Browser(app, BASE);
     await memberLogin(gold, mail, "/my-shop", "gold@example.com");
-    const mh = await (await gold.get("/my-shop/p/tee")).text();
+    const mh = await (await gold.get("/my-shop/products/tee")).text();
     expect(mh).toContain("会員価格 ¥2,400（通常 ¥3,000）");
     await gold.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "2" });
     expect(await (await gold.get("/my-shop/cart")).text()).toContain("¥4,800");
@@ -55,7 +55,7 @@ describe("会員価格", () => {
     // 合わない会員は通常の価格（ゲストに見せる会員価格は出さない）
     const silver = new Browser(app, BASE);
     await memberLogin(silver, mail, "/my-shop", "silver@example.com");
-    const sh = await (await silver.get("/my-shop/p/tee")).text();
+    const sh = await (await silver.get("/my-shop/products/tee")).text();
     expect(sh).toContain("¥3,000");
     expect(sh).not.toContain("会員価格 ¥2,400（通常");
   });

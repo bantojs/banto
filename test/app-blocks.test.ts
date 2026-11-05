@@ -108,7 +108,7 @@ describe("お店の画面のプラグインのブロック", () => {
     expect(html).not.toContain("<!--banto");
     const summary = await (await setup("::: app reviews reviews product=tee layout=summary").b.get("/my-shop/pages/voice")).text();
     expect(summary).toContain('<p class="reviews-summary">');
-    expect(summary).toContain('href="/my-shop/p/tee#reviews"');
+    expect(summary).toContain('href="/my-shop/products/tee#reviews"');
     expect(summary).not.toContain('<ol class="review-list">');
     const none = await (await setup("::: app other reviews product=tee\n\n::: app reviews reviews product=nothing").b.get("/my-shop/pages/voice")).text();
     expect(none).not.toContain('<p class="reviews-summary">');

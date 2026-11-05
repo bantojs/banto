@@ -58,14 +58,14 @@ describe("ストアフロント（Step 5）", () => {
   it("非公開ショップ・非公開商品は 404", async () => {
     const { b } = setup();
     expect((await b.get("/other-shop")).status).toBe(404);
-    expect((await b.get("/my-shop/p/hidden")).status).toBe(404);
-    expect((await b.get("/my-shop/p/nope")).status).toBe(404);
+    expect((await b.get("/my-shop/products/hidden")).status).toBe(404);
+    expect((await b.get("/my-shop/products/nope")).status).toBe(404);
     expect((await b.get("/nope")).status).toBe(404);
   });
 
   it("商品詳細: SKU・価格・在庫状況・説明", async () => {
     const { b, teeM, teeL } = setup();
-    const html = await (await b.get("/my-shop/p/tee")).text();
+    const html = await (await b.get("/my-shop/products/tee")).text();
     expect(html).toContain("綿100%");
     expect(html).toContain(`value="${teeM.id}"`);
     expect(html).toContain("M — ¥3,000 (残りわずか)");
@@ -94,13 +94,13 @@ describe("カート", () => {
     const { b, teeM, shop } = setup();
     let res = await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "2" });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/my-shop/p/tee?added=1&sku=TEE-M&qty=2");
+    expect(res.headers.get("location")).toBe("/my-shop/products/tee?added=1&sku=TEE-M&qty=2");
     const cookie = res.headers.getSetCookie()[0]!;
     expect(cookie.startsWith(`${cartCookieName(shop.id)}=`)).toBe(true);
     expect(cookie).toContain("Path=/my-shop");
     expect(cookie).toContain("HttpOnly");
 
-    let html = await (await b.get("/my-shop/p/tee?added=1")).text();
+    let html = await (await b.get("/my-shop/products/tee?added=1")).text();
     expect(html).toContain("カートに入れました");
     expect(html).toContain("カート (2)");
 

@@ -44,11 +44,11 @@ describe("検索の短すぎる語", () => {
   it("既定のテーマは「3 文字以上」の案内、見つからなければその旨。Liquid は performed: false と too_short", async () => {
     const { app } = setup({ liquid: false });
     const b = new Browser(app);
-    expect(await (await b.get("/s/search?q=%E8%B2%A1%E5%B8%83")).text()).toContain("3 文字以上で探してください。");
-    expect(await (await b.get("/s/search?q=zzzz")).text()).toContain("「zzzz」に合う商品は見つかりませんでした。");
+    expect(await (await b.get("/s/products?q=%E8%B2%A1%E5%B8%83")).text()).toContain("3 文字以上で探してください。");
+    expect(await (await b.get("/s/products?q=zzzz")).text()).toContain("「zzzz」に合う商品は見つかりませんでした。");
     const liquid = setup();
-    expect(await (await liquid.b.get("/search?q=%E8%B2%A1%E5%B8%83")).text()).toContain('<p class="s">false/true/財布</p>');
-    expect(await (await liquid.b.get("/search?q=zzzz")).text()).toContain('<p class="s">true/false/zzzz</p>');
+    expect(await (await liquid.b.get("/products?q=%E8%B2%A1%E5%B8%83")).text()).toContain('<p class="s">false/true/財布</p>');
+    expect(await (await liquid.b.get("/products?q=zzzz")).text()).toContain('<p class="s">true/false/zzzz</p>');
   });
 });
 

@@ -176,7 +176,7 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     sb.addSku(shop.id, p.id, { code: "R-S", price_jpy: 1000, available: 1, options: { カラー: "レッド", サイズ: "S" } });
     sb.addSku(shop.id, p.id, { code: "B-S", price_jpy: 1000, available: 0, options: { カラー: "ブルー", サイズ: "S" } });
     const b = new Browser(app);
-    let html = await (await b.get("/my-shop/p/tee")).text();
+    let html = await (await b.get("/my-shop/products/tee")).text();
     // 軸の見出しは表示名（0094。名前の表に無い key はそのまま）
     expect(html).toContain('data-axes="[{&quot;key&quot;:&quot;カラー&quot;,&quot;name&quot;:&quot;カラー&quot;},{&quot;key&quot;:&quot;サイズ&quot;,&quot;name&quot;:&quot;サイズ&quot;}]"');
     expect(html).toContain('data-options="{&quot;カラー&quot;:&quot;レッド&quot;,&quot;サイズ&quot;:&quot;S&quot;}"');
@@ -185,7 +185,7 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     const mug = sb.addProduct(shop.id, { slug: "mug", name: "マグ", published: true, option_axes: [] });
     sb.addSku(shop.id, mug.id, { code: "M-1", price_jpy: 1000, available: 1 });
     sb.addSku(shop.id, mug.id, { code: "M-2", price_jpy: 1000, available: 1 });
-    html = await (await b.get("/my-shop/p/mug")).text();
+    html = await (await b.get("/my-shop/products/mug")).text();
     expect(html).not.toContain("data-axes");
     // 公開 API は軸と SKU に出てくる値を返す
     const r = (await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: { option_axes: unknown } };
@@ -229,7 +229,7 @@ describe("SKU を分ける軸: お店の画面と API", () => {
     expect(detail.product.option_axes).toEqual([{ key: "長さ", name: "長さ", values: ["1,000mm", "2,000mm"] }, { key: "柄", name: "柄", values: ["赤、白のボーダー"] }]);
     expect(detail.product.skus[0]!.options).toEqual({ 長さ: "1,000mm", 柄: "赤、白のボーダー" });
     // お店の画面の軸ごとの選択欄にも、値はそのまま載る
-    const html = await (await new Browser(app).get("/my-shop/p/cable")).text();
+    const html = await (await new Browser(app).get("/my-shop/products/cable")).text();
     expect(html).toContain("1,000mm");
     expect(html).toContain('data-options="{&quot;長さ&quot;:&quot;1,000mm&quot;,&quot;柄&quot;:&quot;赤、白のボーダー&quot;}"');
   });

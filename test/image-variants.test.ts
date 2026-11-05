@@ -30,7 +30,7 @@ describe("段の決め方（src/media/variants.ts）", () => {
     expect(variantSizesFor(3200)).toEqual([800, 1600, 2048, 2560]);
     expect(variantSizesFor(819)).toEqual([800]);
     expect(variantSizesFor(700)).toEqual([]);
-    expect(variantKey("shops/s/products/p/abc.png", 800)).toBe("shops/s/products/p/abc.800.webp");
+    expect(variantKey("shops/s/products/products/abc.png", 800)).toBe("shops/s/products/products/abc.800.webp");
     expect(imageKeys({ storage_key: "k/a.webp", thumb_key: "k/a.thumb.webp", variants: [800] })).toEqual(["k/a.webp", "k/a.thumb.webp", "k/a.800.webp"]);
   });
 

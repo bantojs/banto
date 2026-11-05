@@ -83,17 +83,17 @@ describe("お店の画面", () => {
   it("会員のページにだけスクリプトを載せる（ゲスト・モジュール OFF には載せない）", async () => {
     const { app, mail } = setup();
     const guest = new Browser(app);
-    expect(await (await guest.get("/my-shop/p/tee")).text()).not.toContain("/my-shop/_x");
+    expect(await (await guest.get("/my-shop/products/tee")).text()).not.toContain("/my-shop/_x");
     const member = new Browser(app);
     await memberLogin(member, mail, "/my-shop", "m@example.com");
-    const html = await (await member.get("/my-shop/p/tee")).text();
+    const html = await (await member.get("/my-shop/products/tee")).text();
     expect(html).toContain('"/my-shop/_x"');
     expect(html).toMatch(/"type":"product_view","product_id":"[^"]+","tags":\["秋"\]/);
 
     const off = setup({ relay: false });
     const m2 = new Browser(off.app);
     await memberLogin(m2, off.mail, "/my-shop", "m@example.com");
-    expect(await (await m2.get("/my-shop/p/tee")).text()).not.toContain("_x");
+    expect(await (await m2.get("/my-shop/products/tee")).text()).not.toContain("_x");
   });
 
   it("中継: 会員の出来事を、許された種類だけ署名してプラグインへ。ゲスト・形の違い・モジュール OFF は送らずに 204", async () => {
@@ -202,7 +202,7 @@ describe("ゲストの訪問者 ID と visitor.identified（段階 4b、0108）"
   it("お店の画面: ゲストも許した連携があるショップだけ、ゲストのページにスクリプトを載せて訪問者 ID で送る", async () => {
     const { app, got } = setup({ guests: true });
     const guest = new Browser(app);
-    const html = await (await guest.get("/my-shop/p/tee")).text();
+    const html = await (await guest.get("/my-shop/products/tee")).text();
     expect(html).toContain('"/my-shop/_x"');
     expect(html).toContain("banto_v");
     expect((await relay(guest, [{ type: "product_view", product_id: "p-1" }], V1)).status).toBe(204);
@@ -216,7 +216,7 @@ describe("ゲストの訪問者 ID と visitor.identified（段階 4b、0108）"
   it("会員だけの連携しか無いショップのゲストには、スクリプトも載せず、届いても送らない", async () => {
     const { app, got } = setup();
     const guest = new Browser(app);
-    expect(await (await guest.get("/my-shop/p/tee")).text()).not.toContain("_x");
+    expect(await (await guest.get("/my-shop/products/tee")).text()).not.toContain("_x");
     expect((await relay(guest, [{ type: "product_view", product_id: "p-1" }], V1)).status).toBe(204);
     expect(got).toHaveLength(0);
   });

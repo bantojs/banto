@@ -1,6 +1,7 @@
 import type { CategoryNode } from "../../products/categories";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
+import { categoryUrl, listUrl, productUrl, productsUrl } from "../../storefront/urls";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -488,21 +489,21 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout }) {
+  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout, q, top, path }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
-    const heading = category ? category.name : tag;
+    const heading = category ? category.name : tag ? tag : q ? tf("store.search_heading", { q }) : top ? undefined : t("store.all_products");
     const firstImage = products.find((p) => p.image)?.image;
     const seo = {
-      path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home,
+      path: path ?? home,
       description: categoryMetaDescription(category?.description) ?? intro,
       image: category?.image ? imageUrl(ctx.mediaBaseUrl, category.image.key) : firstImage ? imageUrl(ctx.mediaBaseUrl, firstImage.storage_key) : undefined,
-      ...(pagination?.first ? { noindex: true } : {}),
+      ...(pagination?.first || q ? { noindex: true } : {}),
     };
     const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
     // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
     if (layout) {
-      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice });
+      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice, ...(q ? { q } : {}) });
       const html: Record<string, string> = {};
       for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
       return (
@@ -513,22 +514,24 @@ export const defaultTheme: Theme = {
     }
     return (
       <Layout title={title} ctx={ctx} seo={seo}>
-        <div class="hero">
-          <h1>{ctx.shop.name}</h1>
-          {intro ? <p>{intro}</p> : null}
-        </div>
+        {top ? (
+          <div class="hero">
+            <h1>{ctx.shop.name}</h1>
+            {intro ? <p>{intro}</p> : null}
+          </div>
+        ) : null}
         {categories && categories.length > 0 ? (
           <nav class="categories" aria-label={t("store.categories")}>
-            <a href={home} class={category ? "" : "active"}>
+            <a href={productsUrl(ctx.shopPath)} class={category ? "" : "active"}>
               {t("store.all_products")}
             </a>
             {categories.map((n) => (
               <span>
-                <a href={`${home}?category=${encodeURIComponent(n.slug)}`} class={category?.slug === n.slug ? "active" : ""}>
+                <a href={categoryUrl(ctx.shopPath, n.slug)} class={category?.slug === n.slug ? "active" : ""}>
                   {n.name}
                 </a>
                 {n.children.map((ch) => (
-                  <a href={`${home}?category=${encodeURIComponent(ch.slug)}`} class={category?.slug === ch.slug ? "active sub" : "sub"}>
+                  <a href={categoryUrl(ctx.shopPath, ch.slug)} class={category?.slug === ch.slug ? "active sub" : "sub"}>
                     {ch.name}
                   </a>
                 ))}
@@ -536,15 +539,15 @@ export const defaultTheme: Theme = {
             ))}
           </nav>
         ) : null}
-        {category ? <h2>{category.name}</h2> : null}
+        {!top && heading ? <h1>{heading}</h1> : null}
         {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
         {tags && tags.length > 0 ? (
           <p class="tags">
-            <a href={home} class={tag ? "" : "active"}>
+            <a href={listUrl(ctx.shopPath, { category: category?.slug })} class={tag ? "" : "active"}>
               {t("store.all_products")}
             </a>
             {tags.map((x) => (
-              <a href={`${home}?tag=${encodeURIComponent(x.tag)}`} class={x.tag === tag ? "active" : ""}>
+              <a href={listUrl(ctx.shopPath, { category: category?.slug, tag: x.tag })} class={x.tag === tag ? "active" : ""}>
                 {x.tag} <span class="muted">({x.count})</span>
               </a>
             ))}
@@ -619,7 +622,7 @@ export const defaultTheme: Theme = {
                 {lines.map((l) => (
                   <tr>
                     <td>
-                      <a href={`${ctx.shopPath}/p/${l.product.slug}`}>{l.product.name}</a>
+                      <a href={productUrl(ctx.shopPath, l.product.slug)}>{l.product.name}</a>
                       {l.sku.name ? <span class="muted"> / {l.sku.name}</span> : null}
                       {l.short ? (
                         <div class="error">
@@ -1783,13 +1786,13 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
   const sizeChart = sizeChartOf(product.size_chart);
   const chartAxis = Boolean(sizeChart?.axis) && skus.length > 1;
   const seo = {
-    path: `${ctx.shopPath}/p/${product.slug}`,
+    path: productUrl(ctx.shopPath, product.slug),
     type: "product" as const,
     description: product.description ?? undefined,
     image: first ? imageUrl(ctx.mediaBaseUrl, first.storage_key) : undefined,
     jsonLd: ctx.publicBaseUrl
       ? productJsonLd({
-          url: `${ctx.publicBaseUrl}${ctx.shopPath}/p/${product.slug}`,
+          url: `${ctx.publicBaseUrl}${productUrl(ctx.shopPath, product.slug)}`,
           product,
           images: images.map((img) => imageUrl(ctx.mediaBaseUrl, img.storage_key)),
           skus,
@@ -1806,7 +1809,7 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
         <a href={ctx.shopPath || "/"}>{ctx.shop.name}</a> ›{" "}
         {(categoryPath ?? []).map((cat) => (
           <span>
-            <a href={`${ctx.shopPath || "/"}?category=${encodeURIComponent(cat.slug)}`}>{cat.name}</a> ›{" "}
+            <a href={categoryUrl(ctx.shopPath, cat.slug)}>{cat.name}</a> ›{" "}
           </span>
         ))}
         {product.name}
@@ -1864,7 +1867,7 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
       (product.tags ?? []).length > 0 ? (
         <p class="tags">
           {(product.tags ?? []).map((x) => (
-            <a href={`${ctx.shopPath || "/"}?tag=${encodeURIComponent(x)}`}>{x}</a>
+            <a href={productsUrl(ctx.shopPath, { tag: x })}>{x}</a>
           ))}
         </p>
       ) : null,
@@ -1934,7 +1937,7 @@ function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"];
       <div class="grid">
         {products.map(({ product, image, minPrice, compareAt }) => (
           <div class="card">
-            <a href={`${ctx.shopPath}/p/${product.slug}`}>
+            <a href={productUrl(ctx.shopPath, product.slug)}>
               <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
               <div class="body">
                 <div>{product.name}</div>
@@ -2042,9 +2045,10 @@ function CategoryIntro({ ctx, category }: { ctx: ShopHomeProps["ctx"]; category:
   );
 }
 
-export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice }: Omit<ShopHomeProps, "layout">) {
+export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice, q: query }: Omit<ShopHomeProps, "layout">) {
   const home = ctx.shopPath || "/";
-  const q = (extra: Record<string, string>) => `${home}?${new URLSearchParams({ ...(category ? { category: category.slug } : { all: "1" }), ...extra }).toString()}`;
+  // タグで絞る・外すときも、今のカテゴリーと検索の語はそのまま
+  const q = (extra: { tag?: string }) => listUrl(ctx.shopPath, { category: category?.slug, q: query, ...extra });
   const find = (nodes: CategoryNode[], slug: string): CategoryNode | null => {
     for (const n of nodes) {
       if (n.slug === slug) return n;
@@ -2064,7 +2068,7 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
   const tree = categories ?? [];
   const children = category ? (find(tree, category.slug)?.children ?? []) : tree;
   return {
-    title: <h1>{category ? category.name : t("store.all_products")}</h1>,
+    title: <h1>{category ? category.name : query ? tf("store.search_heading", { q: query }) : t("store.all_products")}</h1>,
     image: category?.image ? <CategoryImageView ctx={ctx} category={category} /> : null,
     content: category?.description ? <div class="category-description">{raw(categoryDescriptionHtml(category.description))}</div> : null,
     products: (
@@ -2090,7 +2094,7 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
       children.length > 0 ? (
         <nav class="categories" aria-label={t("store.categories")}>
           {children.map((n) => (
-            <a href={`${home}?category=${encodeURIComponent(n.slug)}`}>{n.name}</a>
+            <a href={categoryUrl(ctx.shopPath, n.slug)}>{n.name}</a>
           ))}
         </nav>
       ) : null,
@@ -2099,7 +2103,7 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
         <a href={home}>{ctx.shop.name}</a> ›{" "}
         {(category ? (trail(tree, category.slug) ?? []).slice(0, -1) : []).map((n) => (
           <span>
-            <a href={`${home}?category=${encodeURIComponent(n.slug)}`}>{n.name}</a> ›{" "}
+            <a href={categoryUrl(ctx.shopPath, n.slug)}>{n.name}</a> ›{" "}
           </span>
         ))}
         {category ? category.name : t("store.all_products")}

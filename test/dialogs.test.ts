@@ -39,8 +39,10 @@ function setup(rows: Record<string, unknown>[] = [], modules: Record<string, boo
 describe("どのページ・だれに（サーバー）", () => {
   it("ページの種類をパスから決める。レジ・会員ページ・注文照会には出さない", () => {
     expect(dialogPageOf("", "", [])?.kind).toBe("home");
-    expect(dialogPageOf("/", "?category=tops", [])?.kind).toBe("list");
-    expect(dialogPageOf("/p/tee", "", [{ type: "product_view", value_jpy: 0, items: [], product: { id: "p-1", category_id: "c-1", tags: ["秋"] } }])).toEqual({ kind: "product", product: { id: "p-1", category_id: "c-1", tags: ["秋"] } });
+    expect(dialogPageOf("/", "", [])?.kind).toBe("home");
+    expect(dialogPageOf("/products", "?q=tee", [])?.kind).toBe("list");
+    expect(dialogPageOf("/categories/tops", "", [])?.kind).toBe("list");
+    expect(dialogPageOf("/products/tee", "", [{ type: "product_view", value_jpy: 0, items: [], product: { id: "p-1", category_id: "c-1", tags: ["秋"] } }])).toEqual({ kind: "product", product: { id: "p-1", category_id: "c-1", tags: ["秋"] } });
     expect(dialogPageOf("/blogs/news/hello", "", [])?.kind).toBe("article");
     expect(dialogPageOf("/pages/about", "", [])?.kind).toBe("page");
     expect(dialogPageOf("/cart", "", [])?.kind).toBe("cart");
@@ -69,11 +71,11 @@ describe("どのページ・だれに（サーバー）", () => {
 describe("お店の画面", () => {
   it("当てはまるダイアログだけをスクリプトに載せる。中身は JSON の中でエスケープされ、HTML として差し込まない", async () => {
     const { app } = setup([
-      { id: "d-1", title: "</script><script>alert(1)</script>", body: "初回 10% オフ", pages: { kinds: ["product"] }, audience: "guests", trigger: { delay_s: 3 }, coupon_code: "WELCOME10", buttons: [{ label: "見る", url: "/p/tee" }] },
+      { id: "d-1", title: "</script><script>alert(1)</script>", body: "初回 10% オフ", pages: { kinds: ["product"] }, audience: "guests", trigger: { delay_s: 3 }, coupon_code: "WELCOME10", buttons: [{ label: "見る", url: "/products/tee" }] },
       { id: "d-2", title: "カートの人へ", pages: { kinds: ["cart"] } },
     ]);
     const guest = new Browser(app, BASE);
-    const html = await (await guest.get("/my-shop/p/tee")).text();
+    const html = await (await guest.get("/my-shop/products/tee")).text();
     expect(html).toContain('"id":"d-1"');
     expect(html).not.toContain('"id":"d-2"');
     expect(html).not.toContain("</script><script>alert(1)");
@@ -83,13 +85,13 @@ describe("お店の画面", () => {
 
   it("会員の条件のダイアログは合う会員だけ。モジュールが OFF なら出さない", async () => {
     const { app, mail } = setup([{ id: "d-gold", title: "ゴールドの方へ", audience: "audience", audience_id: GOLD }], { dialogs: true, audiences: true });
-    expect(await (await new Browser(app, BASE).get("/my-shop/p/tee")).text()).not.toContain('"id":"d-gold"');
+    expect(await (await new Browser(app, BASE).get("/my-shop/products/tee")).text()).not.toContain('"id":"d-gold"');
     const gold = new Browser(app, BASE);
     await memberLogin(gold, mail, "/my-shop", "gold@example.com");
-    expect(await (await gold.get("/my-shop/p/tee")).text()).toContain('"id":"d-gold"');
+    expect(await (await gold.get("/my-shop/products/tee")).text()).toContain('"id":"d-gold"');
 
     const off = setup([{ id: "d-1", title: "x" }], {});
-    expect(await (await new Browser(off.app, BASE).get("/my-shop/p/tee")).text()).not.toContain('"id":"d-1"');
+    expect(await (await new Browser(off.app, BASE).get("/my-shop/products/tee")).text()).not.toContain('"id":"d-1"');
   });
 });
 
@@ -99,10 +101,10 @@ describe("管理画面", () => {
     const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const base = `/admin/shops/${shop.id}/modules/dialogs`;
     expect((await owner.get(base)).status).toBe(200);
-    const form = { name: "初回", enabled: "on", layout: "bar", title: "ようこそ", body: "初回 10% オフ", audience: "guests", kind_product: "on", products: "tee", delay_s: "5", exit_intent: "on", snooze_days: "7", priority: "10", button_label_0: "見る", button_url_0: "/p/tee", coupon_code: "WELCOME10" };
+    const form = { name: "初回", enabled: "on", layout: "bar", title: "ようこそ", body: "初回 10% オフ", audience: "guests", kind_product: "on", products: "tee", delay_s: "5", exit_intent: "on", snooze_days: "7", priority: "10", button_label_0: "見る", button_url_0: "/products/tee", coupon_code: "WELCOME10" };
     expect((await owner.post(base, form)).headers.get("location")).toBe(`${base}?flash=saved`);
     const row = sb.tables.dialogs[0]!;
-    expect(row).toMatchObject({ name: "初回", audience: "guests", pages: { kinds: ["product"], products: [tee.id] }, trigger: { delay_s: 5, exit_intent: true }, buttons: [{ label: "見る", url: "/p/tee" }], coupon_code: "WELCOME10", priority: 10 });
+    expect(row).toMatchObject({ name: "初回", audience: "guests", pages: { kinds: ["product"], products: [tee.id] }, trigger: { delay_s: 5, exit_intent: true }, buttons: [{ label: "見る", url: "/products/tee" }], coupon_code: "WELCOME10", priority: 10 });
     expect(await (await owner.get(`${base}/${row["id"]}`)).text()).toContain('value="tee"');
     expect((await owner.post(base, { ...form, products: "nope" })).status).toBe(400);
     const { kind_product: _k, ...noKind } = form;

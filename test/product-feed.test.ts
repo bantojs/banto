@@ -41,7 +41,7 @@ describe("商品フィード（src/modules/product-feed/feed.ts）", () => {
       id: "TEE-M",
       item_group_id: "p1",
       title: "Tシャツ M",
-      link: "https://shop.example.jp/p/tee",
+      link: "https://shop.example.jp/products/tee",
       image_link: "https://media.example.jp/a.webp",
       additional_image_link: ["https://media.example.jp/b.webp"],
       availability: "in_stock",
@@ -62,7 +62,7 @@ describe("商品フィード（src/modules/product-feed/feed.ts）", () => {
 
 describe("構造化データ（JSON-LD）", () => {
   it("商品と価格・在庫。</script> で抜けられない", () => {
-    const ld = productJsonLd({ url: "https://s/p/tee", product: { name: "</script><script>alert(1)</script>", description: null, brand: "B" }, images: ["https://m/a.webp"], skus: [{ code: "A", name: null, price_jpy: 1000, gtin: "4901234567894", available: 0 }] });
+    const ld = productJsonLd({ url: "https://s/products/tee", product: { name: "</script><script>alert(1)</script>", description: null, brand: "B" }, images: ["https://m/a.webp"], skus: [{ code: "A", name: null, price_jpy: 1000, gtin: "4901234567894", available: 0 }] });
     expect(ld).toMatchObject({ "@type": "Product", sku: "A", gtin13: "4901234567894", brand: { name: "B" }, offers: { price: 1000, priceCurrency: "JPY", availability: "https://schema.org/OutOfStock" } });
     const text = jsonLdText(ld);
     expect(text).not.toContain("</script>");
@@ -76,11 +76,11 @@ describe("構造化データ（JSON-LD）", () => {
     const p = sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
     sb.addSku(shop.id, p.id, { code: "A", price_jpy: 1500, available: 2 });
     sb.addSku(shop.id, p.id, { code: "B", price_jpy: 1800, available: 0 });
-    const html = await (await new Browser(appWith(sb)).get("/my-shop/p/tee")).text();
+    const html = await (await new Browser(appWith(sb)).get("/my-shop/products/tee")).text();
     const m = /<script type="application\/ld\+json">(.*?)<\/script>/s.exec(html);
     expect(m).not.toBeNull();
     const ld = JSON.parse(m![1]!) as { url: string; offers: { price: number; availability: string }[] };
-    expect(ld.url).toBe(`${BASE}/my-shop/p/tee`);
+    expect(ld.url).toBe(`${BASE}/my-shop/products/tee`);
     expect(ld.offers.map((o) => [o.price, o.availability])).toEqual([
       [1500, "https://schema.org/InStock"],
       [1800, "https://schema.org/OutOfStock"],
@@ -116,7 +116,7 @@ describe("商品フィードのモジュール（product_feed）", () => {
     expect(res.headers.get("content-type")).toContain("application/xml");
     const xml = await res.text();
     expect(xml).toContain("<g:id>A</g:id>");
-    expect(xml).toContain(`<g:link>${BASE}/my-shop/p/tee</g:link>`);
+    expect(xml).toContain(`<g:link>${BASE}/my-shop/products/tee</g:link>`);
     expect(xml).toContain(`<g:image_link>${BASE}/media/products/a.webp</g:image_link>`);
     expect(xml).not.toContain("非公開");
     expect(await (await admin.get(`/admin/shops/${shop.id}/modules/product-feed`)).text()).toContain("載せた商品 1 件");
