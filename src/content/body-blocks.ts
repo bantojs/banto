@@ -27,7 +27,7 @@ export function defaultAppHtml(b: AppBlockData | null, productUrl: string): stri
 }
 import type { CategoryRow } from "../db/types";
 import type { PublicShop, StorefrontData } from "../storefront/data";
-import { appBlocksOf, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, productBlocksOf, type AppBlock, type ArticlesBlock, type ProductBlock } from "../pages/blocks";
+import { PRODUCT_TAG, appBlocksOf, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, productBlocksOf, type AppBlock, type ArticlesBlock, type ProductBlock } from "../pages/blocks";
 import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
@@ -51,6 +51,8 @@ export interface BodyBlocksDeps {
   /** カードのリンクの起点（お店の画面は /<slug> か ""、ヘッドレスはショップの絶対 URL） */
   shopPath: string;
   mediaBaseUrl: string;
+  /** 描いている商品（商品詳細のひな形、0102）。::: articles tag=@product がこの商品の URL の名前で絞る */
+  current?: { product?: string };
 }
 
 type ProductItems = NonNullable<Awaited<ReturnType<StorefrontData["productPage"]>>>["items"];
@@ -93,10 +95,14 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
     Promise.all(
       (moduleEnabled(d.shop.settings, BLOG_MODULE) ? articleBlocksOf(body) : []).map(async (block) => {
         try {
+          // tag=@product: 描いている商品の URL の名前のタグ（商品の画面の外では何も並べない）
+          const tag = block.tag === PRODUCT_TAG ? (d.current?.product ?? null) : block.tag;
+          if (block.tag === PRODUCT_TAG && !tag) return null;
           const blog = await d.sf.blogByHandle(d.shop, block.blog);
           if (!blog) return null;
-          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag: block.tag, sort: articleSortFor(blog, block.sort) });
-          return { block, blog, items };
+          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort) });
+          // テーマ（snippets/page-articles）には置き換えた後のタグを渡す（「もっと見る」を /blogs/<ブログ>?tag=<商品> にできる）
+          return { block: { ...block, tag }, blog, items };
         } catch (e) {
           console.error("[banto] page articles:", e);
           return null;
