@@ -90,7 +90,7 @@ function nearest(map: Record<string, string>, categories: readonly { id: string;
 
 
 /** 囲みの名前（src/pages/layout.ts の LAYOUT_CONTAINERS と同じ。1 行のブロックではないもの） */
-const CONTAINER = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion|audience|grid|tabs|tab)\b/;
+const CONTAINER = /^\s{0,3}(:{3,})\s*(group|columns|column|cover|media|gallery|accordion|audience|grid|tabs|tab|text)\b/;
 const CLOSE = /^\s{0,3}(:{3,})\s*$/;
 const CONTENT_LINE = /^\s{0,3}:{3}\s*current\s+part=content\s*$/;
 

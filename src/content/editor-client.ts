@@ -203,7 +203,7 @@ export function pageEditorClient() {
   /** 囲みの値に使える文字（選択肢は英小文字・数字・ハイフン。説明・題は " と改行を外す） */
   const word = (v: string) => (/^[a-z0-9-]{1,30}$/.test(v) ? v : "");
   const quoted = (v: string) => v.replace(/["\n\r]/g, "").replace(/\s+/g, " ").trim().slice(0, 200);
-  const LAYOUT = /^(group|columns|column|cover|media|gallery|accordion|grid|tabs|tab)$/;
+  const LAYOUT = /^(group|columns|column|cover|media|gallery|accordion|grid|tabs|tab|text)$/;
   /** 囲みの中身を持つ要素（カバー・画像と文・アコーディオンは中の欄、ほかは自分） */
   function slotOf(c: MdNode, kind: string): MdNode {
     const cls = kind === "cover" ? "banto-cover__inner" : kind === "media" ? "banto-media__body" : kind === "accordion" ? "banto-accordion__body" : kind === "tab" ? "banto-tab__body" : "";
