@@ -45,6 +45,8 @@ export interface SelectOptions {
   in?: Record<string, readonly string[]>;
   /** 配列の列がこれらの値をすべて含む（PostgREST の cs.{…}。記事のタグで絞る） */
   arrayContains?: Record<string, readonly string[]>;
+  /** jsonb の列がこの形を含む（PostgREST の cs.<JSON>、@>）。記事の項目の絞り込み（0117） */
+  jsonContains?: Record<string, Record<string, unknown>>;
   /** 条件の木（すべてを満たす行だけ。PostgREST の and=(…)）。管理画面の検索とキーセットのページ送りに使う */
   where?: readonly Filter[];
   /** 例: "created_at.desc" */
@@ -113,6 +115,7 @@ function buildQuery(columns: string | undefined, opts: SelectOptions | undefined
   for (const [k, vs] of Object.entries(opts?.arrayContains ?? {})) {
     q.set(k, `cs.{${vs.map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`);
   }
+  for (const [k, v] of Object.entries(opts?.jsonContains ?? {})) q.set(k, `cs.${JSON.stringify(v)}`);
   if (opts?.where && opts.where.length > 0) q.set("and", `(${opts.where.map(filterExpr).join(",")})`);
   if (opts?.order) q.set("order", opts.order);
   if (opts?.limit !== undefined) q.set("limit", String(opts.limit));

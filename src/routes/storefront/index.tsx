@@ -27,6 +27,8 @@ import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, para
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
+import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
+import { articleFieldsReady } from "../../blog/fields";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
@@ -244,7 +246,7 @@ async function templateSample(s: ShopScope, pageId: string, categories: Category
   const blogId = Object.entries(l.articles).find(([, p]) => p === pageId)?.[0];
   if (blogId && moduleEnabled(s.shop.settings, BLOG_MODULE)) {
     const blog = await s.sf.blogById(s.shop, blogId);
-    const article = blog ? (await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: 1, sort: articleSortFor(blog) })).items[0] : undefined;
+    const article = blog ? (await s.sf.articlesPage(s.shop, blog.id, { offset: 0, limit: 1, sort: articleSortFor(blog), withFields: articleFieldsReady(blog) })).items[0] : undefined;
     if (blog && article) return { kind: "article", blog, article };
   }
   const catId = Object.entries(l.productCategories).find(([, p]) => p === pageId)?.[0];
@@ -731,6 +733,9 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
   return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), ...(layout ? { bare: true, path: `${s.ctx.shopPath}${o.layoutPath}` || "/" } : {}) }));
 }
 
+/** 記事の本文・ひな形の中のブロックに渡す「今の記事」（0117: field:<key>=@article と from=@field:<key>） */
+const articleCurrent = (a: ArticleRow): BodyBlocksDeps["current"] => ({ article: a.handle, articleFields: a.fields ?? {} });
+
 /**
  * 記事を描く（お店の画面とプレビューで同じ）。ブログに記事のひな形（0101）があれば、ひな形の本文に記事の本文を差し込んで描く。
  * body は見る人で絞った記事の本文、raw はその HTML、segment は見る人の区分（本文の HTML の覚えの鍵）
@@ -750,9 +755,12 @@ async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article:
       : pageBodyHtml({ id: `${layout.id}:${article.id}`, updated_at: `${layout.updated_at}|${article.updated_at}`, body: comp.body }, s.ctx.mediaBaseUrl, undefined, `${lview.key}|${o.segment ?? ""}`);
     const neighbors = usesPart(lview.body, "prev-next") ? await s.sf.articleNeighbors(s.shop, blog.id, article) : null;
     // 本文を差し込めなかった（囲みの中に置いた）ときは、記事の本文の HTML をそのまま入れる（その本文のお店のブロックは出ない）
-    const parts = articleParts({ shopPath: s.ctx.shopPath, mediaBase: s.ctx.mediaBaseUrl, blog, article, neighbors, ...(comp.inserted ? {} : { content: fillCurrent(raw).replace(/<!--banto:[a-z]+:\d+-->/g, "") }) });
-    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, comp.body, categories);
-    const html = (o.prefix ?? "") + `<style>${CURRENT_CSS}</style>` + fillCurrent(fillDateBlocks(fillShopBlocks(doc, shopCards), dates), parts);
+    // 記事の項目（0117）: ひな形で使っている項目の部品と、書いた人のカード
+    const used = usedFieldParts(lview.body);
+    const fieldParts = (used.fields.length > 0 || used.author) && articleFieldsReady(blog) ? await articleFieldParts({ sf: s.sf, shop: s.shop, shopPath: s.ctx.shopPath, mediaBase: s.ctx.mediaBaseUrl }, blog, article, used) : {};
+    const parts = { ...articleParts({ shopPath: s.ctx.shopPath, mediaBase: s.ctx.mediaBaseUrl, blog, article, neighbors, ...(comp.inserted ? {} : { content: fillCurrent(raw).replace(/<!--banto:[a-z]+:\d+-->/g, "") }) }), ...fieldParts };
+    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, comp.body, categories, articleCurrent(article));
+    const html = (o.prefix ?? "") + `<style>${CURRENT_CSS}${Object.keys(fieldParts).length ? ARTICLE_FIELDS_CSS : ""}</style>` + fillCurrent(fillDateBlocks(fillShopBlocks(doc, shopCards), dates), parts);
     const path = `/blogs/${encodeURIComponent(blog.handle)}/${encodeURIComponent(article.handle)}`;
     const lt = await liquidThemeFor(c, s);
     if (lt) {
@@ -763,7 +771,7 @@ async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article:
     }
     if (s.theme.ArticlePage) return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl, bare: true }));
   }
-  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories);
+  const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories, articleCurrent(article));
   const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), dates));
   const lt = await liquidThemeFor(c, s);
   if (lt) {
@@ -796,7 +804,7 @@ storefront.get("/:shop/blogs/:blog", async (c: Ctx) => {
  */
 async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: string | null; pageNo: number }, categories: CategoryRow[], o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
   const { tag, pageNo } = q;
-  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog) });
+  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog), withFields: articleFieldsReady(blog) });
   const path = blogPath(s.ctx.shopPath, blog.handle);
   const link = (n: number) => `${path}?${new URLSearchParams({ ...(tag ? { tag } : {}), ...(n > 1 ? { page: String(n) } : {}) }).toString()}`.replace(/\?$/, "");
   const newer = pageNo > 1 ? link(pageNo - 1) : null;

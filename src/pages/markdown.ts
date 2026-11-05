@@ -488,7 +488,7 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       }
       const ab = parseArticlesLine(row);
       if (ab) {
-        const data = `data-banto-block="articles" data-blog="${ab.blog}" data-tag="${esc(ab.tag ?? "")}" data-limit="${ab.limit}" data-layout="${ab.layout}"${ab.sort ? ` data-sort="${ab.sort}"` : ""}${ab.style ? ` data-style="${ab.style}"` : ""}`;
+        const data = `data-banto-block="articles" data-blog="${ab.blog}" data-tag="${esc(ab.tag ?? "")}" data-limit="${ab.limit}" data-layout="${ab.layout}"${ab.sort ? ` data-sort="${ab.sort}"` : ""}${ab.field ? ` data-field="${esc(`${ab.field.key}=${ab.field.value}`)}"` : ""}${ab.style ? ` data-style="${ab.style}"` : ""}`;
         const cls = `banto-articles banto-articles--${ab.layout}${ab.style ? ` banto-style-${ab.style}` : ""}`;
         if (opts.articlesLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.articlesLabel(ab))}</div>`);
         else out.push(`<div class="${cls}" ${data}>${st.articles < ARTICLE_BLOCKS_MAX ? articlesMarker(st.articles) : ""}</div>`);
@@ -498,7 +498,7 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       }
       const b = parseProductsLine(row);
       if (b) {
-        const data = `data-banto-block="products"${b.slugs?.length ? ` data-slugs="${b.slugs.join(",")}"` : ""}${b.related ? ' data-related="1"' : ""} data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"${b.style ? ` data-style="${b.style}"` : ""}`;
+        const data = `data-banto-block="products"${b.slugs?.length ? ` data-slugs="${b.slugs.join(",")}"` : ""}${b.related ? ' data-related="1"' : ""}${b.from ? ` data-from="${b.from}"` : ""} data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"${b.style ? ` data-style="${b.style}"` : ""}`;
         const cls = `banto-products banto-products--${b.layout}${b.style ? ` banto-style-${b.style}` : ""}`;
         // 印は先頭から PRODUCT_BLOCKS_MAX 個まで（それより後は描かない）
         if (opts.productsLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.productsLabel(b))}</div>`);

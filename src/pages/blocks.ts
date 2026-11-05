@@ -22,6 +22,8 @@ export interface ProductBlock {
   slugs?: string[] | null;
   /** 似た商品（related=@product）: 描いている商品と同じ主カテゴリー・同じタグの商品（src/content/body-blocks.ts）。category・tag は使わない */
   related?: boolean;
+  /** 記事の項目の商品（from=@field:<key>、0117）: 描いている記事のその項目の商品を書いた順に。category・tag・sort は使わない */
+  from?: string | null;
   /** カテゴリーの slug（その子孫も含む）。null ならすべて */
   category: string | null;
   /** このタグを持つ商品だけ。null なら絞らない */
@@ -74,6 +76,12 @@ export function parseProductsLine(line: string): ProductBlock | null {
     if (layout0 !== "grid" && layout0 !== "scroll") return null;
     return { slugs, category: null, tag: null, limit: slugs.length, layout: layout0, sort: "new", style: styleOf(a.get("style")) };
   }
+  const fromRaw = a.get("from");
+  if (fromRaw !== undefined) {
+    const m2 = /^@field:([a-z][a-z0-9_]{0,39})$/.exec(fromRaw);
+    if (!m2 || (layout0 !== "grid" && layout0 !== "scroll")) return null;
+    return { from: m2[1]!, category: null, tag: null, limit: PRODUCT_BLOCK_SLUGS_MAX, layout: layout0, sort: "new", style: styleOf(a.get("style")) };
+  }
   const related = a.get("related");
   if (related !== undefined && related !== PRODUCT_TAG) return null;
   const category = related ? null : a.get("category") || null;
@@ -95,6 +103,11 @@ export function productsLine(b: ProductBlock): string {
   const parts = ["::: products"];
   if (b.slugs?.length) {
     parts.push(`slugs=${b.slugs.join(",")}`, `layout=${b.layout}`);
+    if (b.style) parts.push(`style=${b.style}`);
+    return parts.join(" ");
+  }
+  if (b.from) {
+    parts.push(`from=@field:${b.from}`, `layout=${b.layout}`);
     if (b.style) parts.push(`style=${b.style}`);
     return parts.join(" ");
   }
@@ -137,6 +150,8 @@ export interface ArticlesBlock {
   tag: string | null;
   /** 並び順（0116）。null ならブログの設定どおり */
   sort: ArticlesSort | null;
+  /** 項目で絞る（field:<key>=<値 | @product | @article>、0117）。null なら絞らない */
+  field?: { key: string; value: string } | null;
   limit: number;
   layout: ArticlesLayout;
   style: string | null;
@@ -162,12 +177,17 @@ export function parseArticlesLine(line: string): ArticlesBlock | null {
   if (layout !== "grid" && layout !== "list") return null;
   const sortRaw = a.get("sort");
   if (sortRaw !== undefined && sortRaw !== "new" && sortRaw !== "title" && sortRaw !== "manual") return null;
-  return { blog, tag, sort: sortRaw ?? null, limit, layout, style: styleOf(a.get("style")) };
+  // 項目の絞り込み（1 つ）: field:<key>=<値>。値は 100 字まで、空白を含むときは引用符
+  const fm = /(?:^|\s)field:([a-z][a-z0-9_]{0,39})=(?:"([^"\n]{1,100})"|([^\s"]{1,100}))/.exec(m[1] ?? "");
+  const field = fm ? { key: fm[1]!, value: (fm[2] ?? fm[3] ?? "").trim() } : null;
+  if (field && !field.value) return null;
+  return { blog, tag, sort: sortRaw ?? null, ...(field ? { field } : {}), limit, layout, style: styleOf(a.get("style")) };
 }
 
 export function articlesLine(b: ArticlesBlock): string {
   const parts = ["::: articles", `blog=${b.blog}`];
   if (b.tag) parts.push(/^[^\s"]+$/.test(b.tag) ? `tag=${b.tag}` : `tag="${b.tag.replace(/"/g, "")}"`);
+  if (b.field) parts.push(/^[^\s"]+$/.test(b.field.value) ? `field:${b.field.key}=${b.field.value}` : `field:${b.field.key}="${b.field.value.replace(/"/g, "")}"`);
   parts.push(`limit=${b.limit}`, `layout=${b.layout}`);
   if (b.sort) parts.push(`sort=${b.sort}`);
   if (b.style) parts.push(`style=${b.style}`);

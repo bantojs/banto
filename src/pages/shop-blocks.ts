@@ -68,7 +68,8 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   product: { slug: { test: (v) => SLUG.test(v) }, show: { test: (v) => v.split(",").length <= 30 && v.split(",").every((x) => (PRODUCT_PARTS as readonly string[]).includes(x) || PRODUCT_FIELD_PART.test(x)) } },
   icon: { name: { test: (v) => Object.prototype.hasOwnProperty.call(ICONS, v) }, size: { values: ["s", "m", "l", "xl"], def: "m" }, tone: { values: ["text", "accent", "muted"], def: "text" }, label: { text: true } },
   embed: { url: { url: true, test: (v) => parseEmbedUrl(v) !== null } },
-  current: { part: { values: CURRENT_PARTS } },
+  // field:<key> は記事の項目（0117）
+  current: { part: { test: (v) => (CURRENT_PARTS as readonly string[]).includes(v) || /^field:[a-z][a-z0-9_]{0,39}$/.test(v) } },
   video: { src: { url: true, test: isVideoUrl }, poster: { url: true, test: isPosterUrl }, autoplay: { values: ["0", "1"], def: "0" }, loop: { values: ["0", "1"], def: "0" }, controls: { values: ["0", "1"], def: "1" } },
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
   toc: { levels: { values: ["2", "3"], def: "3" }, title: { text: true } },

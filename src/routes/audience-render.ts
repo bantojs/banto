@@ -98,7 +98,8 @@ export function memberReader(c: Ctx, shopId: string, member: { cid: string; ep: 
     page: (handle) => db.contentMemberRpc("page_member_get", { ...who, p_handle: handle }),
     article: (blogId, handle) => db.contentMemberRpc("article_member_get", { ...who, p_blog_id: blogId, p_handle: handle }),
     // p_sort は 0116 から（sort があるのは 0116 の DB だけ。articleSortFor）
-    articles: (blogId, offset, limit, tag, sort) => db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...(sort ? { p_sort: sort } : {}) }),
+    // p_fields は 0117 から（fields があるのは 0117 の DB だけ。src/blog/fields.ts）
+    articles: (blogId, offset, limit, tag, sort, fields) => db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...(sort ? { p_sort: sort } : {}), ...(fields ? { p_fields: fields } : {}) }),
   };
 }
 
