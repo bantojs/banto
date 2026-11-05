@@ -15,6 +15,7 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { normalizeTags } from "../../products/tags";
 import { cleanAttributes, productFields, type ProductField } from "../../products/fields";
+import { FIELD_IMAGE_SCRIPT, FieldImageInput, fieldImageUpload } from "./field-image";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
 import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices } from "../../products/images";
@@ -333,12 +334,15 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
                       </option>
                     ))}
                   </select>
+                ) : f.type === "image" ? (
+                  <FieldImageInput id={id} name={id} value={v} upload={`/admin/shops/${props.action.split("/")[3] ?? ""}/products/field-image`} />
                 ) : (
                   <input id={id} type={f.type === "number" ? "number" : f.type === "url" ? "url" : "text"} name={id} value={v} step={f.type === "number" ? "any" : undefined} maxlength={f.type === "number" ? undefined : 200} />
                 )}
               </div>
             );
           })}
+          {fields.some((f) => f.type === "image") ? <script dangerouslySetInnerHTML={{ __html: FIELD_IMAGE_SCRIPT }} /> : null}
         </section>
       ) : null}
       <div class="savebar">
@@ -364,7 +368,7 @@ products.get("/:shopId/products/new", requireOwner, async (c: AdminContext) => {
   );
 });
 
-function productValues(f: Record<string, string>, fields: ProductField[]): Partial<ProductRow> | "invalid_slug" {
+function productValues(f: Record<string, string>, fields: ProductField[], mediaBase?: string): Partial<ProductRow> | "invalid_slug" {
   const slug = (f.slug ?? "").trim();
   if (!SLUG_RE.test(slug)) return "invalid_slug";
   const description = (f.description ?? "").trim();
@@ -380,7 +384,7 @@ function productValues(f: Record<string, string>, fields: ProductField[]): Parti
     // 追加カテゴリー（0042）。主カテゴリーと同じもの・重複はトリガーが外す。ほかのショップのカテゴリーは弾く（category_not_found）
     extra_category_ids: Object.keys(f).filter((k) => k.startsWith("xcat_") && f[k] === "on").map((k) => k.slice(5)).slice(0, 20),
     brand: brand || null,
-    attributes: cleanAttributes(fields, attrInput),
+    attributes: cleanAttributes(fields, attrInput, mediaBase),
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面・当たる前の DB では列に触れない）。
     // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
@@ -400,7 +404,7 @@ products.post("/:shopId/products/new", requireOwner, async (c: AdminContext) => 
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const values = productValues(await formFields(c), productFields(shop.settings));
+  const values = productValues(await formFields(c), productFields(shop.settings), mediaBaseUrl(c));
   if (values === "invalid_slug") return c.redirect(`/admin/shops/${shopId}/products/new?flash=invalid_slug`);
   if (!values.name) return c.redirect(`/admin/shops/${shopId}/products/new?flash=generic`);
   try {
@@ -437,6 +441,13 @@ async function loadProduct(c: AdminContext, shopId: string, productId: string) {
   const skusWithStock: SkuWithStock[] = skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0 }));
   return { shop, product, skus: skusWithStock, images };
 }
+
+/** 商品のカスタム項目の画像を置く（項目 catalog。返った URL を欄に入れて、商品の保存で書く）。/:productId より先に置く */
+products.post("/:shopId/products/field-image", requireOwner, async (c: AdminContext) => {
+  const shopId = param(c, "shopId");
+  if (!(await loadShop(c, shopId, "catalog"))) return c.json({ error: t("shop.not_found") }, 404);
+  return fieldImageUpload(c, shopId);
+});
 
 products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
@@ -692,7 +703,7 @@ products.post("/:shopId/products/:productId", requireOwner, async (c: AdminConte
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const values = productValues(await formFields(c), productFields(shop.settings));
+  const values = productValues(await formFields(c), productFields(shop.settings), mediaBaseUrl(c));
   if (values === "invalid_slug") return c.redirect(`${base}?flash=invalid_slug`);
   if (!values.name) return c.redirect(`${base}?flash=generic`);
   try {

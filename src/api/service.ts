@@ -27,6 +27,7 @@ import { THEME_PREVIEW_SECONDS, themePreviewUrl } from "../themes/liquid/preview
 import { getLocale } from "../i18n";
 import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
+import { articleFieldDefs } from "../blog/fields";
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
 import { lineTokenFor } from "../plugins/line_token";
@@ -796,7 +797,27 @@ export class ApiService {
     return this.call<Record<string, unknown>>("api_article_get", { p_blog: blog, p_article: ref });
   }
   async articleSave(blog: string, values: Record<string, unknown>) {
-    return this.call<Record<string, unknown>>("api_article_save", { p_blog: blog, p_article: this.contentValues(values) });
+    return this.call<Record<string, unknown>>("api_article_save", { p_blog: blog, p_article: await this.articleImageFields(blog, this.contentValues(values)) });
+  }
+  /**
+   * 記事の項目の画像（0120）: このショップの画像の置き場のものだけ（管理画面と同じ規則。ほかのホストの /media/ はホストを外す）。
+   * 項目の値を送ったときだけ、ブログの定義を引いて確かめる（ほかの形の検査は DB のトリガー）
+   */
+  private async articleImageFields(blog: string, values: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const fields = values["fields"];
+    if (!fields || typeof fields !== "object" || Array.isArray(fields) || Object.keys(fields).length === 0) return values;
+    const b = (await this.blogsList()).items.find((x) => x["handle"] === blog || x["id"] === blog);
+    const images = articleFieldDefs(b ?? {}).filter((f) => f.type === "image");
+    if (images.length === 0) return values;
+    const out: Record<string, unknown> = { ...(fields as Record<string, unknown>) };
+    for (const f of images) {
+      const v = out[f.key];
+      if (v === undefined || v === null || v === "") continue;
+      const img = typeof v === "string" ? shopImageUrl(v, this.config.get("MEDIA_BASE_URL")) : null;
+      if (!img) throw new ApiError("invalid", `article_field_invalid:${f.key}: use an image from this shop's media library (POST /api/v1/media returns one)`, 400);
+      out[f.key] = img;
+    }
+    return { ...values, fields: out };
   }
   async articleTrash(blog: string, id: string) {
     return this.call<Record<string, unknown>>("api_article_trash", { p_blog: blog, p_article_id: uuidOr404(id) });

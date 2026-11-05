@@ -58,6 +58,9 @@ export async function articleFieldParts(d: ArticleFieldDeps, blog: BlogRow, arti
         html = b && list.length ? `<ul class="banto-field banto-field--${f.key} banto-field-links">${list.map((a) => `<li><a href="${esc(articlePath(d.shopPath, b.handle, a.handle))}">${esc(a.title)}</a></li>`).join("")}</ul>` : "";
         // 書いた人のカード（写真・名前・紹介・リンク）。最初の 1 人
         if (f === authorField(defs) && b && list[0]) out["author"] = authorCard(d, b, list[0]);
+      } else if (f.type === "image") {
+        const src = shopImageUrl(vs[0]!, d.mediaBase);
+        html = src ? `<img class="banto-field banto-field--${f.key} banto-field--image" src="${esc(src)}" alt="${esc(f.label)}" loading="lazy">` : "";
       } else html = `<span class="banto-field banto-field--${f.key}">${esc(vs.join(", "))}</span>`;
     }
     out[`field:${f.key}`] = html;

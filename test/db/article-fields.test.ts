@@ -90,4 +90,14 @@ describe.skipIf(!dbAvailable)("記事の項目（0117）", () => {
     const row = (await q<{ fields: Record<string, unknown> }>(f.ownerId, "select fields from articles where blog_id = $1 and handle = 'amada'", [staff]))[0]!;
     expect(row.fields).toMatchObject({ height: 158, mood: "きれいめ" });
   });
+  it("画像（0120）: /media/ か http(s) の形だけ。引用符・空白・javascript: ・.. は断る", async () => {
+    await setDefs(styling, [{ key: "photo", label: "写真", type: "image" }]);
+    expect((await addArticle(styling, "img-1", { photo: "/media/fields/x/a.webp" })).fields).toEqual({ photo: "/media/fields/x/a.webp" });
+    expect((await addArticle(styling, "img-2", { photo: "https://media.example.com/fields/x/a.webp" })).fields).toEqual({ photo: "https://media.example.com/fields/x/a.webp" });
+    expect((await addArticle(styling, "img-3", { photo: "" })).fields).toEqual({});
+    for (const [n, bad] of ["javascript:alert(1)", 'https://x.example/a.png" onerror="x', "https://x.example/a b.png", "/media/../secret", "data:image/png;base64,AAAA", 5].entries()) {
+      expect(await expectDbError(() => addArticle(styling, `img-bad-${n}`, { photo: bad }))).toMatch(/article_field_invalid:photo/);
+    }
+    expect(await expectDbError(() => setDefs(styling, [{ key: "photo", label: "写真", type: "image", multiple: true }]))).toMatch(/article_fields_invalid/);
+  });
 });

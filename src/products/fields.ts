@@ -3,8 +3,10 @@
  * 項目の定義は shops.settings.product_fields、値は products.attributes（0008_catalog.sql）。
  * 宣言して入力する形までで、任意のコードは動かさない。表示はテーマ、利用はモジュールが決める。
  */
-export type FieldType = "text" | "textarea" | "number" | "url" | "select";
-export const FIELD_TYPES: readonly FieldType[] = ["text", "textarea", "number", "url", "select"];
+import { shopImageUrl } from "../pages/markdown";
+/** image: 画像の URL（このショップの画像の置き場のものだけ。メンテナの決定 2026-11-05、src/routes/admin/field-image.tsx）。会員の項目には使わない */
+export type FieldType = "text" | "textarea" | "number" | "url" | "select" | "image";
+export const FIELD_TYPES: readonly FieldType[] = ["text", "textarea", "number", "url", "select", "image"];
 /** WooCommerce のメタ（洗濯表示のフラグ・サイズ寸法など）を受け止められる数。管理画面の商品フォームが長くなるので、まとめ方は今後の課題 */
 export const MAX_FIELDS = 150;
 
@@ -76,8 +78,8 @@ export function formatFieldDefinitions(fields: ProductField[]): string {
   return fields.map((f) => [f.key, f.label, f.type, (f.options ?? []).join("/"), f.public ? "" : "private"].join(" | ").replace(/( \| )+$/, "")).join("\n");
 }
 
-/** 入力値（管理画面のフォーム or API）→ 保存する値。定義に無いキーと、型に合わない値は捨てる */
-export function cleanAttributes(fields: ProductField[], input: Record<string, unknown>): Record<string, string | number> {
+/** 入力値（管理画面のフォーム or API）→ 保存する値。定義に無いキーと、型に合わない値は捨てる。image はこのショップの画像の置き場（mediaBase）のものだけ */
+export function cleanAttributes(fields: ProductField[], input: Record<string, unknown>, mediaBase?: string): Record<string, string | number> {
   const out: Record<string, string | number> = {};
   for (const f of fields) {
     const v = input[f.key];
@@ -90,6 +92,11 @@ export function cleanAttributes(fields: ProductField[], input: Record<string, un
     const s = String(v).trim().slice(0, f.type === "textarea" ? 500 : 200);
     if (!s) continue;
     if (f.type === "url" && !/^https?:\/\//.test(s)) continue;
+    if (f.type === "image") {
+      const img = shopImageUrl(String(v), mediaBase);
+      if (img) out[f.key] = img;
+      continue;
+    }
     if (f.type === "select" && !(f.options ?? []).includes(s)) continue;
     out[f.key] = s;
   }
@@ -97,7 +104,7 @@ export function cleanAttributes(fields: ProductField[], input: Record<string, un
 }
 
 /** 公開してよい項目だけ、表示名つきで返す（ストアフロント・公開 API 用） */
-export function publicAttributes(fields: ProductField[], values: Record<string, unknown> | null | undefined): { key: string; label: string; value: string | number }[] {
+export function publicAttributes(fields: ProductField[], values: Record<string, unknown> | null | undefined): { key: string; label: string; type: FieldType; value: string | number }[] {
   const v = values ?? {};
-  return fields.filter((f) => f.public && (typeof v[f.key] === "string" || typeof v[f.key] === "number")).map((f) => ({ key: f.key, label: f.label, value: v[f.key] as string | number }));
+  return fields.filter((f) => f.public && (typeof v[f.key] === "string" || typeof v[f.key] === "number")).map((f) => ({ key: f.key, label: f.label, type: f.type, value: v[f.key] as string | number }));
 }

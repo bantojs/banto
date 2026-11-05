@@ -46,14 +46,15 @@
   | `store` | このショップで使う実店舗 | — |
   | `product` / `products` | 商品の URL の名前（`products` はいくつも、24 まで） | — |
   | `article` / `articles` | 記事の URL の名前（`articles` はいくつも、24 まで） | 指すブログの URL の名前 |
+  | `image` | このショップの画像の置き場の画像の URL（0120） | — |
 
   例: `height | 身長 | number`・`store | 店舗 | store`・`author | 書いた人 | article | staff`・`items | 着用アイテム | products`
-- **値を入れる**: 記事の編集の画面の右の「ページの設定」に、そのブログの項目の欄が出ます（選択肢・店舗・指す記事は選ぶ。商品はカンマ区切りの URL の名前）。形と指す先（このショップにあるか）はデータベースが確かめ、合わなければ保存しません。定義に無い鍵・空の値は持ちません。
+- **値を入れる**: 記事の編集の画面の右の「ページの設定」に、そのブログの項目の欄が出ます（選択肢・店舗・指す記事は選ぶ。商品はカンマ区切りの URL の名前。画像は「画像を選ぶ」でブラウザで縮小して置くか、置き場の URL を貼る。ほかのサイトの画像は保存しません）。形と指す先（このショップにあるか）はデータベースが確かめ、合わなければ保存しません。定義に無い鍵・空の値は持ちません。
 - **記事は公開の読み物なので、項目もすべて公開**です（お客様の画面・ヘッドレスの API に出ます）。秘密は書かないでください。
 - **使い道**
   - 絞り込み: `::: articles blog=styling field:author=@article`（スタッフの紹介ページで「この人の着こなし」）、商品詳細のひな形で `::: articles blog=styling field:items=@product`（その商品を着た着こなし）。docs/pages.md「記事を並べる」
   - 記事の商品を並べる: 記事の本文やひな形で `::: products from=@field:items`（書いた順）
-  - 記事のひな形の部品: `::: current part=field:<キー>`（値。店舗は名前、商品と記事は名前のリンク）。キーが `author` で記事を指す項目があれば、`::: current part=author` は**指す記事の写真（アイキャッチ）・名前（題）・紹介（抜粋）・リンクのカード**になります（無ければ今までの「書いた人」の文字）
+  - 記事のひな形の部品: `::: current part=field:<キー>`（値。店舗は名前、商品と記事は名前のリンク、画像は `<img>`）。キーが `author` で記事を指す項目があれば、`::: current part=author` は**指す記事の写真（アイキャッチ）・名前（題）・紹介（抜粋）・リンクのカード**になります（無ければ今までの「書いた人」の文字）
   - Liquid: `article.fields.<キー>`（値のまま。商品と記事は URL の名前、店舗は id）と `article.field_list`（`key`・`label`・`type`・`value`）。docs/themes.md
   - ヘッドレスの API: 記事に `fields`、ブログに `article_fields`（定義）
   - AI 用 API: 記事の保存（`POST /api/v1/blogs/<ブログ>/articles`）で `fields`、定義はブログの設定（`PATCH /api/v1/blogs/<ブログ>`、0118）の `article_fields`（docs/ai-access.md §9）
