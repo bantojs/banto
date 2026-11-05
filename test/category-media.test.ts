@@ -84,4 +84,24 @@ describe("カテゴリーの説明と画像", () => {
     // 一覧の形には画像を出さない
     expect(page.match(/banto-categories__image" src/g)).toHaveLength(1);
   });
+
+  it("Liquid: collection.description・collection.image と、説明を page_description（検索エンジン向けの説明）に", async () => {
+    const { sb, shop, tops, row, storage } = setup();
+    Object.assign(row(tops.id), { description: "秋冬の<羽織り>\n軽いもの", image: { key: `categories/${shop.id}/0123456789abcdef.webp`, width: 1600, height: 900 } });
+    const VERSION = "11111111-2222-4333-8444-555555555555";
+    sb.sitePlan = "paid";
+    const s = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    s["domain"] = "shop.example.jp";
+    s["theme_public"] = { id: VERSION, storage_key: `themes/${shop.id}/${VERSION}/bundle.json`, settings: {} };
+    const files = {
+      "layout/theme.liquid": `<html><head><meta name="description" content="{{ page_description }}">{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>`,
+      "templates/collection.liquid": `<div class="d">{{ collection.description }}</div><img src="{{ collection.image.src }}" width="{{ collection.image.width }}"><i>{{ collections.tops.description }}</i>`,
+    };
+    await storage.put(`themes/${shop.id}/${VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
+    const html = await (await new Browser(appWith(sb, {}, storage), "https://shop.example.jp").get("/?category=tops")).text();
+    expect(html).toContain('<meta name="description" content="秋冬の&lt;羽織り&gt; 軽いもの">');
+    expect(html).toContain('<div class="d">秋冬の&lt;羽織り&gt;<br>軽いもの</div>');
+    expect(html).toMatch(/<img src="[^"]+0123456789abcdef\.webp" width="1600">/);
+    expect(html).toContain("<i>秋冬の&lt;羽織り&gt;<br>軽いもの</i>");
+  });
 });

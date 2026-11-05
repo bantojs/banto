@@ -29,7 +29,7 @@ import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { extendShopify, fillConfirmation, newConfirmationMark, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
-import { categoryImageOf } from "../../products/category-media";
+import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
 import { usesPart } from "../../content/layouts";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
 import type { AppBlockData } from "../../content/body-blocks";
@@ -422,6 +422,8 @@ export function renderListing(
     template,
     values: { collection, products, current_tags: p.tag ? [p.tag] : [] },
     title: filtered ? collection.title : s.shop.name,
+    // カテゴリーの説明（0113）を検索エンジン向けの説明に（既定のテーマと同じ）
+    ...(categoryMetaDescription(p.category?.description) ? { description: categoryMetaDescription(p.category?.description)! } : {}),
     path: p.path,
     noindex: Boolean(p.after),
     categories: p.categories,
