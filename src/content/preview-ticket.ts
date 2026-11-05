@@ -17,8 +17,17 @@ const key = (secret: string) => `${secret}:content_preview`;
 
 export type PreviewDraft = { kind: "page"; page: PageRow } | { kind: "article"; blog: BlogRow; article: ArticleRow };
 
-export async function sealContentPreview(secret: string, shopId: string, draft: string, now = Date.now()): Promise<string> {
-  return sealJson(key(secret), { k: "content_preview", s: shopId, h: await sha256Hex(draft), exp: Math.floor(now / 1000) + CONTENT_PREVIEW_SECONDS });
+/** frameOrigin: 編集の画面の「お店の見た目」の欄に入れるとき、枠を許すオリジン（管理画面。券に署名して結ぶ） */
+export async function sealContentPreview(secret: string, shopId: string, draft: string, now = Date.now(), frameOrigin?: string): Promise<string> {
+  return sealJson(key(secret), { k: "content_preview", s: shopId, h: await sha256Hex(draft), exp: Math.floor(now / 1000) + CONTENT_PREVIEW_SECONDS, ...(frameOrigin ? { o: frameOrigin } : {}) });
+}
+
+/** 券に結んだ、枠を許すオリジン（形の合う http(s) のオリジンだけ。無ければ null） */
+export async function contentPreviewFrameOrigin(secret: string, token: string | undefined): Promise<string | null> {
+  if (!token) return null;
+  const v = (await openJson(key(secret), token)) as { k?: unknown; o?: unknown; exp?: unknown } | null;
+  if (!v || v.k !== "content_preview" || typeof v.exp !== "number" || v.exp * 1000 < Date.now() || typeof v.o !== "string") return null;
+  return /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(v.o) ? v.o : null;
 }
 
 /** 券がこのショップのこの下書きのものなら、下書き（形の合わないものは null） */

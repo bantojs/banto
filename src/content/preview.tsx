@@ -33,12 +33,25 @@ export type PreviewTarget = { kind: "page"; page: PageRow } | { kind: "article";
  * （Liquid のテーマを含む）で描く（src/routes/storefront/index.tsx の POST /_preview/content）。
  * 非公開のショップ・サイトの秘密が無いときは、管理画面で既定のテーマで描く（themedPreview）
  */
+/**
+ * 編集の画面のスクリプトが、プレビューのタブと「お店の見た目」の欄を描き直すための形（Accept: application/json）:
+ * { kind: "post", action, token, draft }（スクリプトがお店のオリジンへ送る）か { kind: "html", html }（非公開のショップ。枠に srcdoc で入れる）
+ */
+export const wantsPreviewJson = (c: AdminContext) => (c.req.header("accept") ?? "").includes("application/json");
+
 export async function previewResponse(c: AdminContext, shop: ShopRow, target: PreviewTarget, categories: CategoryRow[]): Promise<Response | null> {
   const secret = c.get("sessionSecret");
-  if (!shop.published || !secret) return themedPreview(c, shop, target, categories);
+  const json = wantsPreviewJson(c);
+  if (!shop.published || !secret) {
+    const res = await themedPreview(c, shop, target, categories);
+    if (res && json) return c.json({ kind: "html", html: await res.text() }, 200, { "Cache-Control": "private, no-store" });
+    return res;
+  }
   const draft = JSON.stringify(target);
-  const token = await sealContentPreview(secret, shop.id, draft);
+  // 枠を許すのは、この編集の画面のオリジンだけ（券に署名して結ぶ）
+  const token = await sealContentPreview(secret, shop.id, draft, Date.now(), json ? new URL(c.req.url).origin : undefined);
   const action = `${shopHome(publicBaseUrl(c), shop)}/_preview/content`;
+  if (json) return c.json({ kind: "post", action, token, draft }, 200, { "Cache-Control": "private, no-store" });
   c.header("Cache-Control", "private, no-store");
   c.header("X-Robots-Tag", "noindex");
   // 新しいタブで開いた画面から、お店のオリジンへ送る（スクリプトが動かなければボタンで）

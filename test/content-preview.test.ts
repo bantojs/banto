@@ -81,3 +81,55 @@ describe("ページ・記事のプレビュー", () => {
     expect(html).toContain("公開すると");
   });
 });
+
+describe("編集に合わせて描き直すプレビュー（タブと「お店の見た目」の欄）", () => {
+  const postJson = (b: Browser, path: string, fields: Record<string, string>) => b.post(path, fields, { headers: { accept: "application/json" } });
+
+  it("JSON で券を受け取り、frame=1 で送ると、編集の画面のオリジンの枠にだけ入れてよい", async () => {
+    const { app, pages } = setup({ liquid: true });
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const j = (await (await postJson(owner, pages, page)).json()) as { kind: string; action: string; token: string; draft: string };
+    expect(j.kind).toBe("post");
+    expect(j.action).toBe("https://shop.example.jp/_preview/content");
+    const shopSide = new Browser(app, "https://shop.example.jp");
+    const framed = await shopSide.post("/_preview/content", { token: j.token, draft: j.draft, frame: "1" }, { origin: BASE });
+    expect(framed.status).toBe(200);
+    expect(framed.headers.get("content-security-policy")).toBe(`frame-ancestors 'self' ${BASE}`);
+    expect(await framed.text()).toContain("<h2>見出し</h2>");
+    // frame を付けなければ今までどおり（同じオリジンの枠だけ）
+    const plain = await shopSide.post("/_preview/content", { token: j.token, draft: j.draft }, { origin: BASE });
+    expect(plain.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+    // 新しいタブ向けの券（JSON でない）には枠のオリジンが無い
+    const handoff = await (await owner.post(pages, page)).text();
+    const token = /name="token" value="([^"]+)"/.exec(handoff)![1]!.replace(/&amp;/g, "&");
+    const draft = /name="draft" value="([^"]+)"/.exec(handoff)![1]!.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'");
+    const noOrigin = await shopSide.post("/_preview/content", { token, draft, frame: "1" }, { origin: BASE });
+    expect(noOrigin.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+  });
+
+  it("公開前のショップはテーマの HTML を JSON で。描けない誤りは理由だけ", async () => {
+    const { app, pages } = setup({ published: false });
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const j = (await (await postJson(owner, pages, page)).json()) as { kind: string; html: string };
+    expect(j.kind).toBe("html");
+    expect(j.html).toContain("<h2>見出し</h2>");
+    const bad = (await (await postJson(owner, pages, { ...page, title: "" })).json()) as { kind: string; message: string };
+    expect(bad.kind).toBe("error");
+    expect(bad.message.length).toBeGreaterThan(0);
+  });
+
+  it("プレビューのタブ: 空の枠だけの管理画面のページ（ログインが要る）。編集の画面は名前と URL を持つ", async () => {
+    const { app, pages, shop } = setup();
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const res = await owner.get(`${pages}/preview-window`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('<iframe name="pv"');
+    expect(html).toContain('sandbox="allow-scripts allow-forms allow-popups"');
+    expect(html).toContain("bantoPreviewReady");
+    expect((await new Browser(app, BASE).get(`${pages}/preview-window`)).status).not.toBe(200);
+    const editor = await (await owner.get(`${pages}/new`)).text();
+    expect(editor).toContain(`data-preview-window="/admin/shops/${shop.id}/modules/pages/preview-window"`);
+    expect(editor).toContain('id="pe-live"');
+  });
+});

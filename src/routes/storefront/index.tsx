@@ -43,7 +43,7 @@ import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
 import { audienceShow, filterAudienceBlocks } from "../../content/audience-blocks";
-import { openContentPreview } from "../../content/preview-ticket";
+import { contentPreviewFrameOrigin, openContentPreview } from "../../content/preview-ticket";
 import { BLOG_PARTS_CSS, CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, blogLayoutId, collectionLayoutId, composeLayout, fillCurrent, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
 import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
 import { BLOG_LIST_PARTS, COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
@@ -182,6 +182,11 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
  * 会員・お問い合わせのルート（それぞれ全パスに csrfGuard を付ける）より先に置く。
  * 見せる相手の囲み（0097）は中身ごと出す（運営者が確かめるため）
  */
+/**
+ * プレビューは編集のたびに描き直すので、読んでいた位置を残す（同じタブ・同じ枠の中だけ。保存できなければ何もしない）
+ */
+const PREVIEW_SCROLL_SCRIPT = `<script>(function(){try{var k="banto-preview-scroll",s=window.sessionStorage,y=+(s.getItem(k)||0);if(y){window.scrollTo(0,y);window.addEventListener("load",function(){window.scrollTo(0,y)})}window.addEventListener("scroll",function(){s.setItem(k,String(Math.round(window.scrollY)))},{passive:true})}catch(e){}})();</script>`;
+
 storefront.post("/:shop/_preview/content", async (c: Ctx) => {
   const secret = c.get("sessionSecret");
   const s = secret ? await scope(c) : null;
@@ -192,13 +197,18 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
   c.header("Cache-Control", "private, no-store");
   c.header("X-Robots-Tag", "noindex");
   c.header("Referrer-Policy", "no-referrer");
-  const prefix = `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))}</p>`;
+  // 編集の画面の「お店の見た目」の欄（frame=1）: 券に結んだ管理画面のオリジンの枠にだけ入れてよい
+  if (f["frame"] === "1") {
+    const origin = await contentPreviewFrameOrigin(secret, f["token"]);
+    if (origin) c.header("Content-Security-Policy", `frame-ancestors 'self' ${origin}`);
+  }
+  const prefix = PREVIEW_SCROLL_SCRIPT + `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))}</p>`;
   const categories = await s.sf.listCategories(s.shop);
   if (draft.kind === "page") {
     if (!moduleEnabled(s.shop.settings, PAGES_MODULE)) return notFoundPage(c, s);
     // ひな形に割り当てたページ（0101・0102）なら、見本の記事・商品で描く（今の記事・商品の部品の中身が見えるように）
     const sample = await templateSample(s, draft.page.id, categories);
-    const note = (what: string) => `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))} ${escapeHtml(tf("pages.preview_sample", { name: what }))}</p>`;
+    const note = (what: string) => PREVIEW_SCROLL_SCRIPT + `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))} ${escapeHtml(tf("pages.preview_sample", { name: what }))}</p>`;
     if (sample?.kind === "article") {
       const body = filterAudienceBlocks(sample.article.body, () => true).body;
       return articlePageResponse(c, s, sample.blog, sample.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix: note(sample.article.title), preview: true, layout: draft.page });

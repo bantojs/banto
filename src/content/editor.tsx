@@ -34,6 +34,7 @@ import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
 import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
 import { migrated } from "../db/migration-state";
+import { escapeHtml } from "../mail/html";
 import { ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
@@ -440,6 +441,16 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .pe-full .split>aside{width:300px;flex:none;overflow:auto;border-left:1px solid var(--border);padding:.75rem;background:var(--bg-page)}
 .pe-full .split>aside>.card{margin:0 0 .75rem}
 .pe-full .split>aside[hidden],.pe-left[hidden]{display:none}
+.pe-live{display:none}
+.pe-full .pe-live{display:flex;flex-direction:column;flex:0 0 46%;min-width:320px;border-left:1px solid var(--border);background:var(--bg-page)}
+.pe-full .pe-live[hidden]{display:none}
+.pe-live-head{display:flex;align-items:center;gap:.35rem;padding:.5rem .75rem;border-bottom:1px solid var(--border)}
+.pe-live-note{font-size:.75rem;margin:.35rem .75rem}
+.pe-live [data-live-msg]{margin:.35rem .75rem}
+.pe-live-frame{flex:1;min-height:0;display:flex;justify-content:center;background:var(--bg-subtle);padding:0}
+.pe-live-frame iframe{width:100%;height:100%;border:0;background:#fff}
+.pe-live[data-w=phone] .pe-live-frame{padding:.75rem 0}
+.pe-live[data-w=phone] .pe-live-frame iframe{width:390px;max-width:100%;border-radius:12px;box-shadow:0 0 0 1px var(--border)}
 .pe-full #blk-top{display:none}
 .pe-left{width:300px;flex:none;display:flex;flex-direction:column;border-right:1px solid var(--border);background:var(--bg);min-height:0}
 .pe-left-head{display:flex;align-items:center;gap:.25rem;padding:.4rem .5rem;border-bottom:1px solid var(--border)}
@@ -464,7 +475,7 @@ html.pe-lock,html.pe-lock body{overflow:hidden}
 .ol-picked{position:sticky;bottom:0;display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;padding:.5rem;margin-top:.5rem;background:var(--bg);border-top:1px solid var(--border);font-size:.8rem}
 #pe-msgs .notice,#pe-msgs .error{margin:0 auto 1rem}
 @media (max-width:600px){.pe-full .pe-bar{padding:.4rem .5rem;gap:.2rem}.pe-full .pe-bar button{height:32px;padding:0 .55rem;font-size:.8rem}.pe-full .pe-back,.pe-full .pe-tog{width:32px;min-width:32px;height:32px;padding:0}}
-@media (max-width:900px){.pe-full .pe-left,.pe-full .split>aside{position:absolute;top:0;bottom:0;z-index:45;width:min(320px,88vw);box-shadow:var(--shadow)}.pe-full .pe-left{left:0}.pe-full .split>aside{right:0}.pe-full .pe-bar .status{display:none}}
+@media (max-width:900px){.pe-full .pe-live{position:absolute;inset:0;z-index:44;flex:none;min-width:0}.pe-full .pe-left,.pe-full .split>aside{position:absolute;top:0;bottom:0;z-index:45;width:min(320px,88vw);box-shadow:var(--shadow)}.pe-full .pe-left{left:0}.pe-full .split>aside{right:0}.pe-full .pe-bar .status{display:none}}
 .pe-file{position:relative;display:inline-flex;align-items:center;height:32px;padding:0 .8rem;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg);cursor:pointer;font-size:.85rem;font-weight:500;overflow:hidden;margin:0}
 .pe-file input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
@@ -615,6 +626,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-pick-clear": t("pages.editor_picked_clear"),
     "data-t-lib-hint": t("pages.editor_library_hint"),
     "data-t-outline-hint": t("pages.editor_outline_hint"),
+    "data-t-live": t("pages.live_toggle"),
   };
   for (const k of ["p", "h2", "h3", "ul", "ol", "q", "hr", "table", "img", "products", "button"]) blockText[`data-t-d-${k}`] = t(`pages.blockdesc_${k}` as MessageKey);
   return (
@@ -626,7 +638,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
           {t("pages.image_ready")} <code>![]({props.image})</code>
         </p>
       ) : null}
-      <form method="post" action={props.action} id="page-form" data-reserved={RESERVED_HANDLES.join(",")} {...blockText}>
+      <form method="post" action={props.action} id="page-form" data-reserved={RESERVED_HANDLES.join(",")} data-preview-key={props.pageId ?? "new"} data-preview-window={`${props.kind.base}/preview-window`} {...blockText}>
         {/* 上のバー: 状態と、下書き保存・プレビュー（新しいタブ）・公開 / 更新。Ctrl+S は data-save のボタン */}
         <div class="pe-bar">
           <span class={`status ${state === "published" ? "" : state === "scheduled" ? "info" : "off"}`}>
@@ -705,6 +717,27 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <summary>{t("pages.syntax")}</summary>
               <pre class="muted" style="white-space:pre-wrap">{t("pages.syntax_help")}</pre>
             </details>
+          </div>
+          {/* お店の見た目（JS があるときだけ。PAGE_BLOCKS_SCRIPT が開け閉めし、お店のオリジンで描いた本物の見た目を入れる。管理画面とは別のオリジンの枠） */}
+          <div id="pe-live" class="pe-live" hidden data-w="full">
+            <div class="pe-live-head">
+              <strong>{t("pages.live_title")}</strong>
+              <span class="pe-grow" />
+              <button type="button" class="secondary small" data-live-w="full" title={t("pages.live_wide")}>
+                {t("pages.live_wide")}
+              </button>
+              <button type="button" class="secondary small" data-live-w="phone" title={t("pages.live_phone")}>
+                {t("pages.live_phone")}
+              </button>
+              <button type="button" class="secondary small" data-live-close aria-label={t("pages.live_close")} title={t("pages.live_close")}>
+                ×
+              </button>
+            </div>
+            <p class="muted pe-live-note">{t("pages.live_note")}</p>
+            <p class="error" data-live-msg hidden></p>
+            <div class="pe-live-frame">
+              <iframe name={`banto-live-${props.pageId ?? "new"}`} title={t("pages.live_title")} sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" />
+            </div>
           </div>
           <aside>
             <section class="card">
@@ -1048,6 +1081,23 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
  *   POST <base>/render   本文（決まった書式）を HTML にする（見たままの編集に切り替えるとき）
  */
 export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext) => Promise<ShopRow | null>, baseOf: (c: AdminContext, shop: ShopRow) => string): void {
+  /**
+   * プレビューのタブ（中身は空の枠だけ）。開いた・読み直したら編集の画面（opener）に知らせ、編集の画面が券を作って枠にお店の見た目を描く。
+   * テーマのコードは枠（sandbox、上の画面を動かせない）の中だけで動く
+   */
+  app.get("/preview-window", requireOwner, async (c: AdminContext) => {
+    const shop = await scope(c);
+    if (!shop) return c.notFound();
+    c.header("Cache-Control", "private, no-store");
+    c.header("X-Robots-Tag", "noindex");
+    return c.html(
+      `<!doctype html><html lang="${getLocale()}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>${escapeHtml(`${t("pages.preview")} · ${shop.name}`)}</title>` +
+        `<style>html,body{margin:0;height:100%}iframe{display:block;width:100%;height:100%;border:0}#m{font:14px/1.6 system-ui,sans-serif;padding:1rem 1.25rem;margin:0}</style></head>` +
+        `<body><p id="m" hidden>${escapeHtml(t("pages.preview_window_lost"))}</p><iframe name="pv" title="${escapeHtml(t("pages.preview"))}" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer"></iframe>` +
+        `<script>(function(){var o=null;try{o=window.opener;if(o&&o.bantoPreviewReady){o.bantoPreviewReady(window);return}}catch(e){}document.getElementById("m").hidden=false;document.querySelector("iframe").hidden=true})();</script></body></html>`,
+    );
+  });
+
 /**
  * 本文に使う画像を置く。中身の先頭のバイトで種類を決め（SVG・HTML は受けない）、pages/<ショップ>/ に置く。
  * thumb はブラウザが作った長辺 400px の縮小版（任意。メディアライブラリの一覧に使う、0082）

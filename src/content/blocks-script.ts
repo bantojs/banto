@@ -20,10 +20,51 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var ed=document.getElementById("body-visual"), ta=document.getElementById("body");
   var title=document.getElementById("title"), handle=document.getElementById("handle"), urlShow=document.getElementById("handle-show");
   var T=function(k){ return form.getAttribute("data-t-"+k)||""; };
-  var dirty=false; var mark=function(){ dirty=true; };
+  var dirty=false; var mark=function(){ dirty=true; pvSchedule(); };
   form.addEventListener("input",mark); form.addEventListener("change",mark);
   if(ed) ed.addEventListener("input",mark);
-  form.addEventListener("submit",function(){ dirty=false; });
+  // プレビューは保存ではない（保存していない変更の警告を消さない）
+  form.addEventListener("submit",function(e){ if(!(e&&e.submitter&&e.submitter.value==="preview")) dirty=false; });
+
+  // ---------- プレビューのタブと「お店の見た目」の欄（編集に合わせて描き直す） ----------
+  // 管理画面に下書きの券を作らせ（JSON）、お店のオリジンへ送って枠の中に描く。タブは管理画面の小さなページ（中に同じ枠）で、名前で 1 つにまとめる。
+  // テーマのコードは枠（sandbox、上の画面を動かせない）の中だけで動く
+  var PV_NAME="banto-preview-"+(form.getAttribute("data-preview-key")||"new"), PV_URL=form.getAttribute("data-preview-window")||"";
+  var pvWin=null, pvTimer=0, pvBusy=false, pvAgain=false;
+  var pvBtn=form.querySelector("button[name=action][value=preview]");
+  function pvLiveOn(){ var l=document.getElementById("pe-live"); return !!l&&!l.hidden; }
+  function pvTabFrame(){ try{ return pvWin&&!pvWin.closed?pvWin.document.querySelector("iframe[name=pv]"):null; }catch(_){ return null; } }
+  function pvSchedule(){ if(!pvLiveOn()&&!pvTabFrame()) return; clearTimeout(pvTimer); pvTimer=setTimeout(pvRefresh,1200); }
+  // 枠 fr に描く。お店が別のオリジンのときだけ、そのオリジンのままにする（同じオリジンなら名前の無いオリジンに閉じ込める）
+  function pvInto(fr,j){
+    var doc=fr.ownerDocument;
+    if(j.kind==="html"){ fr.setAttribute("sandbox","allow-scripts allow-popups"); fr.srcdoc=j.html; return; }
+    var cross=false; try{ cross=new URL(j.action,location.href).origin!==location.origin; }catch(_){}
+    fr.setAttribute("sandbox","allow-scripts allow-forms allow-popups"+(cross?" allow-same-origin":"")); fr.removeAttribute("srcdoc");
+    var f=doc.createElement("form"); f.method="post"; f.action=j.action; f.target=fr.name; f.style.display="none";
+    var add=function(n,v){ var x=doc.createElement("input"); x.type="hidden"; x.name=n; x.value=v; f.appendChild(x); };
+    add("token",j.token); add("draft",j.draft); add("frame","1");
+    doc.body.appendChild(f); f.submit(); doc.body.removeChild(f);
+  }
+  function pvRefresh(){
+    var live=pvLiveOn()?document.querySelector("#pe-live iframe"):null, tab=pvTabFrame(); if(!live&&!tab) return;
+    if(pvBusy){ pvAgain=true; return; } pvBusy=true;
+    if(form.bantoSync) form.bantoSync();
+    var fd=new FormData(form); fd.set("action","preview");
+    fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.json(); }).then(function(j){
+      var msg=document.querySelector("#pe-live [data-live-msg]"), bad=!j||(j.kind!=="post"&&j.kind!=="html");
+      if(msg){ msg.hidden=!bad; msg.textContent=bad&&j?String(j.message||""):""; }
+      if(bad) return;
+      if(live) pvInto(live,j);
+      if(tab) pvInto(tab,j);
+    }).catch(function(){}).then(function(){ pvBusy=false; if(pvAgain){ pvAgain=false; pvRefresh(); } });
+  }
+  // プレビューのタブ（PV_URL）が開いた・読み直したら呼ぶ
+  window.bantoPreviewReady=function(w){ pvWin=w; pvRefresh(); };
+  if(pvBtn&&PV_URL&&window.fetch&&window.FormData){
+    // 「プレビュー」: 同じタブを最新にする（無ければ開く）。スクリプトが無ければ今までどおり新しいタブで
+    pvBtn.addEventListener("click",function(e){ e.preventDefault(); var w=window.open(PV_URL,PV_NAME); if(w) pvWin=w; });
+  }
   window.addEventListener("beforeunload",function(e){ if(dirty){ e.preventDefault(); e.returnValue=""; } });
   document.addEventListener("keydown",function(e){
     if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&!e.altKey&&(e.key==="s"||e.key==="S")){
@@ -104,6 +145,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     shop:'<path d="M3 9l1.5-5h15L21 9M3 9h18v11H3zM9 20v-6h6v6"/>',
     audience:'<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/><rect x="2" y="2" width="20" height="20" rx="3" stroke-dasharray="3 2"/>',
     parent:'<path d="M9 14l-5-5 5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v5"/>',
+    eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     text:'<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'
   };
   // レイアウトのブロック（src/pages/layout.ts の値と既定・文言。サーバーが data-layout に入れる）
@@ -1134,6 +1176,17 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     tabLib.addEventListener("click",function(){ setLeft("lib"); }); tabOl.addEventListener("click",function(){ setLeft("outline"); });
     closeL.addEventListener("click",function(){ setLeft(null); });
     tSet.addEventListener("click",function(){ setSet(aside.hidden); });
+    // お店の見た目の欄（編集の画面の横。書き換えると描き直す）
+    var live=document.getElementById("pe-live");
+    if(live){
+      var tLive=btn("pe-tog","live","eye",T("live")); bar.insertBefore(tLive,tSet);
+      var setLive=function(on,keep){ live.hidden=!on; tLive.setAttribute("aria-pressed",String(on)); if(!keep) store("live",on?"1":"0"); if(on&&leftMode) setLeft(null,true); if(on) pvRefresh(); refresh(); };
+      tLive.addEventListener("click",function(){ setLive(live.hidden); });
+      var lc=live.querySelector("[data-live-close]"); if(lc) lc.addEventListener("click",function(){ setLive(false); });
+      Array.prototype.forEach.call(live.querySelectorAll("[data-live-w]"),function(b){ b.addEventListener("click",function(){ live.setAttribute("data-w",b.getAttribute("data-live-w")); store("live-w",b.getAttribute("data-live-w")); }); });
+      var lw=store("live-w"); if(lw==="phone"||lw==="full") live.setAttribute("data-w",lw);
+      if(store("live")==="1"&&wide()) setLive(true,true);
+    }
     // 前に開いていた形を覚える（広い画面だけ。狭い画面は本文だけで始める）
 
     // ブロックの一覧: 押すとカーソルの位置に、ドラッグすると置いた場所に入れる

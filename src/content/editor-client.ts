@@ -466,6 +466,10 @@ export function pageEditorClient() {
     form.addEventListener("submit", () => {
       if (mode === "visual") ta.value = toMarkdown(ed);
     });
+    // プレビュー（PAGE_BLOCKS_SCRIPT）が、送る前に本文を Markdown に直すための口
+    (form as unknown as { bantoSync?: () => void }).bantoSync = () => {
+      if (mode === "visual") ta.value = toMarkdown(ed);
+    };
     // 貼り付けは文字だけ
     ed.addEventListener("paste", (e) => {
       e.preventDefault();
