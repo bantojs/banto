@@ -111,3 +111,16 @@ Banto の本体は、分析サービスの仕様を持ちません（CLAUDE.md �
   - 本文のブロック `::: categories layout=grid` の格子（画像だけ。docs/pages.md「お店のブロック」）
   - 商品一覧のひな形の部品 `::: current part=image`・`::: current part=content`（docs/pages.md「ひな形の割り当て」）
   - Liquid のテーマの `collection.image`・`collection.description` と `collections['<スラッグ>']`（docs/themes.md「使える名前」）
+
+## 選択肢の見本（0115）
+
+SKU の選択肢の値ごとに、色か画像の見本を決められます（メンテナの決定 2026-11-05）。管理画面 → 商品 → カテゴリーの「選択肢の見本（色・画像）」で、軸ごとに値（このショップの SKU に出てくるもの）を並べて、色・画像・無しを選びます（項目 catalog。データベースの更新 `0115_option_swatches` が当たるまで欄は出ません）。
+
+- **ショップ全体で 1 つの表**です。「ネイビー」はどの商品でも同じ色になり、商品ごとに入れ直さなくて済みます。1 ショップ 500 個まで、値は 60 文字まで。
+- 画像は柄（チェック・ボーダーなど）に使います。送る前に管理画面のブラウザで 96px まで縮めます（Banto のサーバーでは画像を処理しません）。置き場は `swatches/<ショップ>/` で、置き換えた・外した画像は消します。
+- 出る場所:
+  - 既定のテーマの商品ページ: 見本のある軸は、選択欄の代わりに丸い見本のボタンになります（中は今の選択欄のまま。在庫の無い組み合わせは押せません）。スクリプトが動かないときは今までの選択欄です。
+  - 本文の商品のブロック `::: product show=options`（docs/pages.md「お店のブロック」）
+  - Liquid の `product.options_with_values[].values[].swatch`（docs/themes.md「使える名前」）
+  - ヘッドレスの公開 API の `option_axes[].swatches`（docs/headless.md）
+- Liquid の `product.options` / `options_with_values` の並びは、商品の SKU を分ける軸（0065）の順です（既定のテーマの選択欄と同じ。軸の無い商品は SKU に出てくる順）。

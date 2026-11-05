@@ -13,6 +13,8 @@ import { optionNamesOf } from "../../products/option-names";
 import { sizeChartHref } from "../../modules/size-charts/admin";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
+import { OPTION_SWATCHES_MIGRATION, optionSwatchesOf } from "../../products/option-swatches";
+import { SwatchesEditor, mountOptionSwatches, skuOptionValues } from "./option-swatches";
 import { migrated } from "../../db/migration-state";
 import { mediaBaseUrl } from "../common";
 import { MAX_IMAGE_BYTES, imageSize, imageUrl, randomKey, sniffImage } from "../../media/images";
@@ -54,9 +56,12 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     names_saved: "axes.names_saved",
     names_invalid: "axes.names_invalid",
     image_invalid: "category.image_invalid",
+    swatch_saved: "swatch.saved",
+    swatch_invalid: "swatch.invalid",
+    swatch_image_invalid: "swatch.image_invalid",
   };
   const key = code ? map[code] : undefined;
-  return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" ? "ok" : "error", text: t(key) } : null;
+  return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" || code === "swatch_saved" ? "ok" : "error", text: t(key) } : null;
 }
 
 function errorCode(e: unknown): string {
@@ -75,6 +80,8 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
   const rows = await loadCategories(db, shop.id);
   // 画像と説明（0113）。適用されるまで欄を出さない
   const media = (await migrated({ db, cache: c.get("adapters").cache }, CATEGORY_MEDIA_MIGRATION)) ? mediaBaseUrl(c) : null;
+  // 選択肢の見本（0115）。当たるまで出さない。値は SKU に出てくるもの
+  const swatches = Object.keys(names).length > 0 && (await migrated({ db, cache: c.get("adapters").cache }, OPTION_SWATCHES_MIGRATION)) ? { values: await skuOptionValues(db, shop.id), media: mediaBaseUrl(c) } : null;
   const f = flash(c.req.query("flash"));
   const applied = appliedText((k) => c.req.query(k));
   const base = `/admin/shops/${shop.id}/categories`;
@@ -231,6 +238,7 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
             </form>
           </div>
         ) : null}
+        {swatches ? <SwatchesEditor shopId={shop.id} names={names} values={swatches.values} table={optionSwatchesOf(shop.option_swatches)} media={swatches.media} /> : null}
       </section>
         <div>
           {rows.length === 0 ? (
@@ -432,3 +440,6 @@ categories.post("/:shopId/option-axes/apply", requireOwner, async (c: AdminConte
   const skipped = r.skipped.map((x) => x.slug).slice(0, 30).join(",");
   return c.redirect(`${back}?applied=${r.applied}&unchanged=${r.unchanged}&skipped=${encodeURIComponent(skipped)}#option-axes`);
 });
+
+// 選択肢の見本（0115）
+mountOptionSwatches(categories);

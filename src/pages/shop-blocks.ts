@@ -4,7 +4,7 @@
  *   ::: search placeholder="商品を探す"
  *   ::: categories parent=tops layout=list
  *   ::: card page=about            ／ ::: card article=news/hello
- *   ::: product slug=tee show=image,name,price,cart,buy
+ *   ::: product slug=tee show=image,name,price,options,cart,buy   （options は選択肢の値と見本 0115。押すとその SKU を選んだ商品ページへ）
  *   ::: icon name=truck size=m label="送料無料"
  *   ::: date of=published format=datetime label="投稿日"   （of: published 投稿日時 / updated 最終更新日時 / now 今の日時）
  *   ::: embed url="https://www.youtube.com/watch?v=…"    （YouTube・X・Instagram・TikTok・Reddit・Bluesky。押すまで外へつながない、src/pages/embeds.ts）
@@ -46,7 +46,7 @@ export type CurrentPart = (typeof CURRENT_PARTS)[number];
 export const currentMarker = (part: string) => `<!--banto:current:${part}-->`;
 
 /** 商品のブロックで出せる項目（並びはこの順で描く） */
-export const PRODUCT_PARTS = ["image", "name", "price", "sku", "tags", "description", "cart", "buy"] as const;
+export const PRODUCT_PARTS = ["image", "name", "price", "options", "sku", "tags", "description", "cart", "buy"] as const;
 export type ProductPart = (typeof PRODUCT_PARTS)[number];
 export const PRODUCT_PARTS_DEFAULT: readonly ProductPart[] = ["image", "name", "price", "cart"];
 
@@ -179,5 +179,5 @@ export const SHOP_BLOCKS_CSS = [
   ".banto-categories--grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));gap:.5rem}.banto-categories--grid>li>a{display:block;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem)}",
   ".banto-categories__image{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:calc(var(--banto-radius,.5rem) - .25rem);margin:0 0 .5rem}",
   ".banto-card{display:flex;gap:1rem;align-items:center;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem);text-decoration:none;color:inherit}.banto-card img{width:6rem;height:6rem;object-fit:cover;border-radius:.35rem}.banto-card__title{font-weight:600}",
-  ".banto-product{display:grid;gap:.5rem;max-width:28rem}.banto-product img{width:100%;height:auto;border-radius:var(--banto-radius,.5rem)}.banto-product__name{font-weight:600;font-size:1.1rem}.banto-product__price{font-weight:600}.banto-product form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}",
+  ".banto-product{display:grid;gap:.5rem;max-width:28rem}.banto-product img{width:100%;height:auto;border-radius:var(--banto-radius,.5rem)}.banto-product__name{font-weight:600;font-size:1.1rem}.banto-product__price{font-weight:600}.banto-product form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.banto-product__option{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}.banto-product__option-name{font-size:.9em;opacity:.8}.banto-swatches{display:flex;flex-wrap:wrap;gap:.35rem}.banto-swatch{display:inline-flex;text-decoration:none;color:inherit}.banto-swatch__dot{display:inline-block;width:1.5rem;height:1.5rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 25%,transparent)}.banto-swatch__dot img{width:100%;height:100%;object-fit:cover}.banto-swatch__text{padding:.15rem .6rem;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:999px;font-size:.85em}.banto-swatch--out{opacity:.4}",
 ].join("");

@@ -21,6 +21,8 @@ export interface ShopRow {
   option_axes?: unknown;
   /** 0094。SKU の選択肢の key → 表示名（src/products/option-names.ts）。0094 の前は無い */
   option_names?: unknown;
+  /** 0115。選択肢の値ごとの見本（src/products/option-swatches.ts） */
+  option_swatches?: unknown;
   created_at: string;
   updated_at: string;
 }

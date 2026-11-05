@@ -1653,6 +1653,22 @@ export class FakeSupabase {
       shop["settings"] = settings;
       return json(out);
     }
+    if (fn === "option_swatches_set") {
+      // 0115: 本物の SQL（形・上限・鍵の場所・権限）は test/db/option-swatches.test.ts
+      const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      if (!shop) return json({ code: "42501", message: "forbidden" }, 403);
+      const axis = String(args["p_axis"]);
+      if (!(axis in ((shop["option_names"] ?? {}) as Row))) return json({ code: "P0001", message: "invalid_option_swatches" }, 400);
+      const all = { ...((shop["option_swatches"] ?? {}) as Record<string, Record<string, Row>>) };
+      const old = all[axis] ?? {};
+      const values = args["p_values"] as Record<string, Row>;
+      if (Object.keys(values).length === 0) delete all[axis];
+      else all[axis] = values;
+      shop["option_swatches"] = all;
+      const keyOf = (r: Row | undefined) => ((r?.["image"] as Row | undefined)?.["key"] as string | undefined) ?? null;
+      const kept = new Set(Object.values(all[axis] ?? {}).map(keyOf));
+      return json({ swatches: all[axis] ?? {}, removed_image_keys: Object.values(old).map(keyOf).filter((k): k is string => Boolean(k) && !kept.has(k)) });
+    }
     if (fn === "option_names_set") {
       // 0094: 本物の SQL（名前の重なり・知らない key）は test/db/option-keys.test.ts
       const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
@@ -2111,6 +2127,8 @@ export class FakeSupabase {
       settings: publicShopSettings((s["settings"] ?? {}) as Record<string, unknown>),
       // 0094: SKU の選択肢の key → 表示名（テストは shops の行に option_names を置く）
       option_names: (s["option_names"] ?? {}) as Row,
+      // 0115: 選択肢の値ごとの見本
+      option_swatches: (s["option_swatches"] ?? {}) as Row,
       legal_links: this.legalLinksLive(s),
       // 0071: 公開中のテーマの版（独自ドメインのあるショップだけ）。テストは shops の行に theme_public を置く
       theme: s["domain"] && s["theme_public"] ? s["theme_public"] : null,
