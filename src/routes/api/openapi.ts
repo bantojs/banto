@@ -217,6 +217,15 @@ export function openapiDocument(origin: string, version: string): Record<string,
         delete: { summary: "ページをゴミ箱へ（content:write。30 日で消える。戻すのは管理画面）", security: bearer, parameters: idPath, responses: { 200: resp("ok", contentPage), ...errors } },
       },
       "/blogs": { get: { summary: "ブログの一覧（content:read。ゴミ箱の外の記事の数つき。ブログを作るのは管理画面）", security: bearer, responses: { 200: resp("ok", obj({ items: { type: "array", items: obj({ id: str, handle: str, title: str, description: nullableStr, articles: int }) } })), ...errors } } },
+      "/blogs/{blog}": {
+        patch: {
+          summary: "ブログの設定を変える（content:write、0118）。題・説明・メニュー・並び・SEO・テンプレート・記事の並び順・フィード・記事の項目の定義（article_fields。記事を指す項目の blog は URL の名前か id）。送らなかった鍵は今のまま",
+          security: bearer,
+          parameters: [{ name: "blog", in: "path", required: true, schema: str }],
+          requestBody: { required: true, content: { "application/json": { schema: obj({ title: str, description: nullableStr, nav: str, sort_order: int, article_order: { type: "string", enum: ["new", "title", "manual"] }, feed: { type: "boolean" }, article_fields: { type: "array", items: obj({ key: str, label: str, type: { type: "string", enum: ["text", "number", "select", "store", "product", "article"] }, options: { type: "array", items: str }, blog: str, multiple: { type: "boolean" } }) } }) } } },
+          responses: { 200: resp("ok", obj({ id: str, handle: str, title: str })), ...errors },
+        },
+      },
       "/blogs/{blog}/articles": {
         get: { summary: "ブログの記事の一覧（content:read。公開した日時の新しい順・本文なし）。status はページと同じ", security: bearer, parameters: [blogPath, { name: "status", in: "query", schema: { type: "string", enum: ["all", "published", "scheduled", "draft", "trash"] } }, { name: "q", in: "query", schema: str }, { name: "tag", in: "query", schema: str }, ...page], responses: { 200: resp("ok", obj({ blog: { type: "object" }, items: { type: "array", items: contentArticle }, total: int, limit: int, offset: int })), ...errors } },
         post: { summary: "記事を作る・直す（content:write。ページと同じ決まり）。公開して published_at が無ければ今", security: bearer, parameters: [blogPath], requestBody: { content: { "application/json": { schema: obj(contentArticleFields) } } }, responses: { 200: resp("ok", contentArticle), ...errors } },

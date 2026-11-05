@@ -36,7 +36,7 @@
 
 ブログごとに、記事に持たせる項目を決められます（メンテナの決定 2026-11-05。データベースの更新 `0117_article_fields` が当たるまで欄は出ません）。スタッフ紹介の身長・店舗、着こなしの書いた人・着用アイテムのように、**タグに入れていた「絞り込みではない情報」と「ほかの記事・商品・店舗へのつながり」**を項目で持ちます（タグは絞り込みのボタンに戻せます）。
 
-- **決め方**: ブログの設定の「記事の項目」に、1 行に 1 項目で「キー | 表示名 | 種類 | 補足」。20 項目まで。
+- **決め方**: ブログの設定の「記事の項目」（AI 用 API なら `PATCH /api/v1/blogs/<ブログ>` の `article_fields`）に、1 行に 1 項目で「キー | 表示名 | 種類 | 補足」。20 項目まで。
 
   | 種類 | 値 | 補足 |
   | --- | --- | --- |
@@ -56,7 +56,7 @@
   - 記事のひな形の部品: `::: current part=field:<キー>`（値。店舗は名前、商品と記事は名前のリンク）。キーが `author` で記事を指す項目があれば、`::: current part=author` は**指す記事の写真（アイキャッチ）・名前（題）・紹介（抜粋）・リンクのカード**になります（無ければ今までの「書いた人」の文字）
   - Liquid: `article.fields.<キー>`（値のまま。商品と記事は URL の名前、店舗は id）と `article.field_list`（`key`・`label`・`type`・`value`）。docs/themes.md
   - ヘッドレスの API: 記事に `fields`、ブログに `article_fields`（定義）
-  - AI 用 API: 記事の保存（`POST /api/v1/blogs/<ブログ>/articles`）で `fields`（docs/ai-access.md §9）
+  - AI 用 API: 記事の保存（`POST /api/v1/blogs/<ブログ>/articles`）で `fields`、定義はブログの設定（`PATCH /api/v1/blogs/<ブログ>`、0118）の `article_fields`（docs/ai-access.md §9）
 - 指す先の記事・商品の URL の名前を変えると、つながりは切れます（`::: products slugs=`・`tag=@product` と同じ）。
 
 ## 2. テーマ

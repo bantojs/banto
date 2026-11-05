@@ -116,4 +116,24 @@ describe.skipIf(!dbAvailable)("ページと記事の AI 用 API（0083）", () =
     expect(await expectDbError(() => api("api_blogs_list", [tok]))).toMatch(/module_disabled/);
     await getPool().query(`update shops set settings = jsonb_set(settings, '{modules}', '{"pages": true, "blog": true}'::jsonb) where id = $1`, [f.shopId]);
   });
+
+  it("ブログの設定（0118）: content:write で題・並び順・フィード・記事の項目の定義。指すブログは URL の名前でもよい。よそのショップのブログは指せない", async () => {
+    const tok = await issue(writer, f.shopId, ["content:read", "content:write"]);
+    const read = await issue(writer, f.shopId, ["content:read"]);
+    await getPool().query("insert into blogs (shop_id, handle, title) values ($1, 'staff', 'スタッフ')", [f.shopId]);
+    const staffId = (await getPool().query<{ id: string }>("select id from blogs where shop_id = $1 and handle = 'staff'", [f.shopId])).rows[0]!.id;
+    const b = await api<J>("api_blog_update", [tok, "news", JSON.stringify({ title: " 着こなし ", article_order: "manual", feed: false, article_fields: [{ key: "author", label: "書いた人", type: "article", blog: "staff" }, { key: "items", label: "着用アイテム", type: "product", multiple: true }] })]);
+    expect(b).toMatchObject({ handle: "news", title: "着こなし", article_order: "manual", feed: false });
+    expect(b["article_fields"]).toEqual([{ key: "author", label: "書いた人", type: "article", blog: staffId }, { key: "items", label: "着用アイテム", type: "product", multiple: true }]);
+    expect(await expectDbError(() => api("api_blog_update", [tok, "news", JSON.stringify({ article_fields: [{ key: "a", label: "x", type: "article", blog: "news-other" }] })]))).toMatch(/article_fields_invalid/);
+    expect(await expectDbError(() => api("api_blog_update", [tok, "news", JSON.stringify({ article_fields: [{ key: "Bad", label: "x", type: "text" }] })]))).toMatch(/article_fields_invalid/);
+    expect(await expectDbError(() => api("api_blog_update", [tok, "news", JSON.stringify({ owner_id: "x" })]))).toMatch(/unknown_key/);
+    expect(await expectDbError(() => api("api_blog_update", [read, "news", JSON.stringify({ title: "x" })]))).toMatch(/unauthorized|scope|forbidden/);
+    // 記事の保存で fields（0117）
+    const a = await api<J>("api_article_save", [tok, "staff", JSON.stringify({ handle: "amada", title: "天田", published: true })]);
+    expect(a["fields"]).toEqual({});
+    const look = await api<J>("api_article_save", [tok, "news", JSON.stringify({ handle: "look-1", title: "着こなし 1", fields: { author: "amada" } })]);
+    expect(look["fields"]).toEqual({ author: "amada" });
+    expect(await expectDbError(() => api("api_article_save", [tok, "news", JSON.stringify({ handle: "look-2", title: "x", fields: { author: "nobody" } })]))).toMatch(/article_field_invalid/);
+  });
 });
