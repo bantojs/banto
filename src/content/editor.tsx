@@ -995,6 +995,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             </select>
             <label for="ba-tag">{t("pages.articles_tag")}</label>
             <input id="ba-tag" name="tag" maxlength={50} />
+            <p class="muted">{t("pages.articles_tag_help")}</p>
             <label for="ba-limit">{tf("pages.articles_limit", { max: ARTICLE_BLOCK_LIMIT_MAX })}</label>
             <input id="ba-limit" name="limit" type="number" min={1} max={ARTICLE_BLOCK_LIMIT_MAX} value={String(ARTICLE_BLOCK_LIMIT_DEFAULT)} style="width:6rem" />
             <label for="ba-layout">{t("pages.articles_layout")}</label>

@@ -611,7 +611,7 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, 
   if (layout) {
     const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
     const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
+    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories, { product: detail.product.slug });
     const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
     // 商品の部品は既定のテーマのもの（買うフォームはここにしか無い。値段・在庫・会員価格は DB の判定のまま）。記事の部品は空
     const only = (parts: Record<string, string>) => Object.fromEntries(PRODUCT_LAYOUT_PARTS.map((k) => [k, parts[k] ?? ""]));
@@ -674,8 +674,8 @@ const viewerOf = (s: ShopScope): AudienceContext => ({ ...(s.ctx.member ? { memb
 const categoryProp = (c: CategoryRow) => ({ slug: c.slug, name: c.name, description: c.description ?? null, image: categoryImageOf(c) });
 
 /** 本文の中の「商品を並べる」「記事を並べる」（src/content/body-blocks.ts。ヘッドレスの API と共通） */
-function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {
-  return bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl }, body, categories);
+function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[], current?: { product?: string }) {
+  return bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl, ...(current ? { current } : {}) }, body, categories);
 }
 
 storefront.get("/:shop/pages/:handle", async (c: Ctx) => {

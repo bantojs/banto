@@ -115,3 +115,36 @@ describe("管理画面", () => {
     expect(order(await (await new Browser(app, BASE).get("/my-shop/blogs/staff")).text())).toEqual(["う 天田", "い 加藤", "あ 佐藤"]);
   });
 });
+
+describe("::: articles tag=@product（商品詳細のひな形）", () => {
+  function productSetup() {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules: { blog: true, pages: true } } });
+    const blog = sb.addBlog(shop.id, { handle: "styling", title: "着こなし" });
+    for (const slug of ["coat", "knit"]) {
+      const p = sb.addProduct(shop.id, { slug, name: slug, published: true });
+      sb.addSku(shop.id, String(p["id"]), { code: slug, name: "F", price_jpy: 1000, available: 1 });
+    }
+    sb.addArticle(shop.id, blog.id, { handle: "a1", title: "コートの着こなし", tags: ["coat", "冬"] });
+    sb.addArticle(shop.id, blog.id, { handle: "a2", title: "ニットの着こなし", tags: ["knit"] });
+    sb.addArticle(shop.id, blog.id, { handle: "a3", title: "両方の着こなし", tags: ["coat", "knit"] });
+    const tpl = sb.addPage(shop.id, { handle: "product-tpl", title: "ひな形", body: "::: current part=title\n\n::: articles blog=styling tag=@product limit=6 layout=list" });
+    (sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, unknown>)["page_layouts"] = { product: tpl.id };
+    sb.addPage(shop.id, { handle: "about", title: "About", body: "::: articles blog=styling tag=@product limit=6 layout=list", published: true });
+    return { sb, app: appWith(sb, {}, new MemoryStorage(`${BASE}/media`)) };
+  }
+  const titles = (html: string) => [...html.matchAll(/font-weight:600">([^<]+)</g)].map((m) => m[1]);
+
+  it("商品の画面では、その商品の URL の名前のタグの記事だけ。商品の画面の外では何も並べない", async () => {
+    const { app } = productSetup();
+    const b = new Browser(app, BASE);
+    expect(titles(await (await b.get("/my-shop/products/coat")).text()).sort()).toEqual(["コートの着こなし", "両方の着こなし"].sort());
+    expect(titles(await (await b.get("/my-shop/products/knit")).text()).sort()).toEqual(["ニットの着こなし", "両方の着こなし"].sort());
+    expect(titles(await (await b.get("/my-shop/pages/about")).text())).toEqual([]);
+  });
+
+  it("書き方: @product はタグとしてそのまま読む（置き換えるのは描くとき）", () => {
+    expect(parseArticlesLine("::: articles blog=styling tag=@product")?.tag).toBe("@product");
+  });
+});

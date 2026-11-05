@@ -123,9 +123,12 @@ export function parseButtonLine(line: string): { text: string; url: string; styl
 export type ArticlesLayout = "grid" | "list";
 /** 記事の並び順（src/blog の ArticleOrder と同じ。0116） */
 export type ArticlesSort = "new" | "title" | "manual";
+/** ::: articles tag=@product: 描いている商品の URL の名前をタグとして絞る（商品詳細のひな形で「この商品を着た着こなし」など） */
+export const PRODUCT_TAG = "@product";
 export interface ArticlesBlock {
   /** ブログの URL の名前 */
   blog: string;
+  /** このタグの記事だけ（PRODUCT_TAG なら描いている商品の URL の名前） */
   tag: string | null;
   /** 並び順（0116）。null ならブログの設定どおり */
   sort: ArticlesSort | null;
