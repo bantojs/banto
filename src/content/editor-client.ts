@@ -165,6 +165,8 @@ export function pageEditorClient() {
     const limit = Number(attr(n, "data-limit"));
     parts.push(`limit=${Number.isInteger(limit) && limit >= 1 && limit <= 12 ? limit : 3}`);
     parts.push(`layout=${attr(n, "data-layout") === "list" ? "list" : "grid"}`);
+    const sort = attr(n, "data-sort");
+    if (sort === "new" || sort === "title" || sort === "manual") parts.push(`sort=${sort}`);
     const st = styleName(attr(n, "data-style"));
     if (st) parts.push(`style=${st}`);
     return parts.join(" ");

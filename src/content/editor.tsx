@@ -33,6 +33,8 @@ import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
 import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
+import { migrated } from "../db/migration-state";
+import { ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
@@ -110,6 +112,8 @@ export function productsLabel(b: ProductBlock): string {
 export interface EditorExtras {
   /** 記事を並べるブロックで選ぶブログ（0081 が当たっていれば） */
   blogs: { handle: string; title: string }[];
+  /** 記事を並べるブロックで並び順を選べるか（0116 が当たっていれば） */
+  blogOrder?: boolean;
   /** ブロックの一覧の「パターン」（公開中のテーマのものと Banto の既定。本文は選んだときに …/pattern で受け取る） */
   patterns: EditorPattern[];
   /** 公開中のテーマのブロックのスタイル */
@@ -148,17 +152,18 @@ async function editorAppBlocks(c: AdminContext, shop: ShopRow): Promise<EditorAp
 export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] } & EditorExtras> {
   const db = owner(c).db;
   const deps = { db, cache: c.get("adapters").cache };
-  const [categories, rows, blogs, theme, apps, audiences] = await Promise.all([
+  const [categories, rows, blogs, theme, apps, audiences, blogOrder] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
     db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }).catch(() => []),
     editorTheme(c, shop),
     editorAppBlocks(c, shop),
     editorAudiences(c, shop),
+    migrated(deps, BLOG_ORDER_MIGRATION).catch(() => false),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
   const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, blogOrder, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
 }
 
 /** 見せる相手の囲みで選べる会員の条件（モジュールが OFF なら空。読めるのは項目 content を持つ人も） */
@@ -997,6 +1002,17 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
               <option value="grid">{t("pages.articles_layout_grid")}</option>
               <option value="list">{t("pages.articles_layout_list")}</option>
             </select>
+            {props.extras.blogOrder ? (
+              <>
+                <label for="ba-sort">{t("pages.articles_sort")}</label>
+                <select id="ba-sort" name="sort">
+                  <option value="">{t("pages.articles_sort_blog")}</option>
+                  {ARTICLE_ORDERS.map((o) => (
+                    <option value={o}>{t(`blog.order_${o}` as MessageKey)}</option>
+                  ))}
+                </select>
+              </>
+            ) : null}
             <label for="ba-style" hidden>
               {t("pages.block_style")}
             </label>

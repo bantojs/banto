@@ -22,7 +22,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
   const memberOptional = [{}, { memberBearer: [] }];
   const common = { 404: err("not_found（ショップが無い・非公開）"), 503: err("not_configured") };
   const contentPage = obj({ handle: str, title: str, url: str, nav: str, sort_order: int, template_suffix: nStr, seo_title: nStr, seo_description: nStr, image_url: nStr, published_at: str, updated_at: str });
-  const contentBlog = obj({ handle: str, title: str, description: nStr, url: str, nav: str, sort_order: int, seo_title: nStr, seo_description: nStr, updated_at: str });
+  const contentBlog = obj({ handle: str, title: str, description: nStr, url: str, nav: str, sort_order: int, article_order: { type: "string", enum: ["new", "title", "manual"], description: "記事の一覧の並び順（新しい順・題の順・手で並べる）" }, feed_url: { type: ["string", "null"], description: "Atom のフィード。出さないブログは null" }, seo_title: nStr, seo_description: nStr, updated_at: str });
   const contentArticle = obj({ handle: str, title: str, url: str, excerpt: nStr, summary: str, tags: arr(str), image_url: nStr, author: nStr, published_at: str, updated_at: str });
   const ref = obj({ slug: str, name: str });
 

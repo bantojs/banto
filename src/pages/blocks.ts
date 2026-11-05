@@ -119,12 +119,16 @@ export function parseButtonLine(line: string): { text: string; url: string; styl
 }
 
 // ---------- 記事を並べる（同梱モジュール blog の記事。1 行のブロック） ----------
-//   ::: articles blog=news tag=お知らせ limit=3 layout=grid style=card
+//   ::: articles blog=news tag=お知らせ limit=3 layout=grid style=card sort=manual
 export type ArticlesLayout = "grid" | "list";
+/** 記事の並び順（src/blog の ArticleOrder と同じ。0116） */
+export type ArticlesSort = "new" | "title" | "manual";
 export interface ArticlesBlock {
   /** ブログの URL の名前 */
   blog: string;
   tag: string | null;
+  /** 並び順（0116）。null ならブログの設定どおり */
+  sort: ArticlesSort | null;
   limit: number;
   layout: ArticlesLayout;
   style: string | null;
@@ -148,13 +152,16 @@ export function parseArticlesLine(line: string): ArticlesBlock | null {
   if (!Number.isInteger(limit) || limit < 1 || limit > ARTICLE_BLOCK_LIMIT_MAX) return null;
   const layout = a.get("layout") ?? "grid";
   if (layout !== "grid" && layout !== "list") return null;
-  return { blog, tag, limit, layout, style: styleOf(a.get("style")) };
+  const sortRaw = a.get("sort");
+  if (sortRaw !== undefined && sortRaw !== "new" && sortRaw !== "title" && sortRaw !== "manual") return null;
+  return { blog, tag, sort: sortRaw ?? null, limit, layout, style: styleOf(a.get("style")) };
 }
 
 export function articlesLine(b: ArticlesBlock): string {
   const parts = ["::: articles", `blog=${b.blog}`];
   if (b.tag) parts.push(/^[^\s"]+$/.test(b.tag) ? `tag=${b.tag}` : `tag="${b.tag.replace(/"/g, "")}"`);
   parts.push(`limit=${b.limit}`, `layout=${b.layout}`);
+  if (b.sort) parts.push(`sort=${b.sort}`);
   if (b.style) parts.push(`style=${b.style}`);
   return parts.join(" ");
 }

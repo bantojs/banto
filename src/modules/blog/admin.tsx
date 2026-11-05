@@ -17,7 +17,8 @@ import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
-import { BLOG_MODULE, articleHandleOk, blogHandleOk, parseTags, type ArticleRow, type BlogRow } from "../../blog";
+import { ARTICLE_ORDERS, BLOG_MODULE, BLOG_ORDER_MIGRATION, articleHandleOk, blogHandleOk, isArticleOrder, parseTags, type ArticleRow, type BlogRow } from "../../blog";
+import { migrated } from "../../db/migration-state";
 
 /**
  * 同梱モジュール「ブログ」の管理画面（0081_mod_blog、docs/blog.md）。扱えるのはページと同じ content の項目を持つ人（RLS が正）。
@@ -26,6 +27,7 @@ import { BLOG_MODULE, articleHandleOk, blogHandleOk, parseTags, type ArticleRow,
  *   POST …/modules/blog                       ブログを作る
  *   GET  …/modules/blog/:blogId               記事の一覧（状態のタブ・検索）
  *   GET/POST …/modules/blog/:blogId/settings  ブログの設定・POST …/:blogId/delete で消す（記事も消える）
+ *   POST …/modules/blog/:blogId/positions     手で並べる順を保存（0116、article_positions_set）
  *   GET  …/modules/blog/:blogId/articles/new  新しい記事
  *   POST …/modules/blog/:blogId/articles      記事を作る（action はページと同じ: draft / publish / update / preview）
  *   GET/POST …/modules/blog/:blogId/articles/:articleId  記事を直す・保存
@@ -66,9 +68,16 @@ const opt = (v: string | undefined, max: number) => {
 
 // ---------- ブログ ----------
 
-type BlogValues = Pick<BlogRow, "title" | "handle" | "description" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order">;
+type BlogValues = Pick<BlogRow, "title" | "handle" | "description" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "article_order" | "feed">;
 
-function blogValues(f: Record<string, string>): { values: BlogValues; error: MessageKey | null } {
+/** 0116（並び順・フィード）が当たっているか。ブログの行があれば列があるかで分かる（問い合わせない） */
+async function blogOrderReady(c: AdminContext, blog?: BlogRow | null): Promise<boolean> {
+  if (blog) return isArticleOrder(blog.article_order);
+  return migrated({ db: owner(c).db, cache: c.get("adapters").cache }, BLOG_ORDER_MIGRATION).catch(() => false);
+}
+
+/** ordered = 0116 が当たっている（並び順とフィードの欄を読む。当たる前は送らない） */
+function blogValues(f: Record<string, string>, ordered = false): { values: BlogValues; error: MessageKey | null } {
   const title = (f.title ?? "").trim();
   const typed = (f.handle ?? "").trim().toLowerCase();
   const sort = Number.parseInt(f.sort_order ?? "0", 10);
@@ -81,6 +90,8 @@ function blogValues(f: Record<string, string>): { values: BlogValues; error: Mes
     template_suffix: opt(f.template_suffix, 40)?.toLowerCase() ?? null,
     nav: (PAGE_NAVS as readonly string[]).includes(f.nav ?? "") ? (f.nav as PageNav) : "none",
     sort_order: Number.isInteger(sort) ? Math.max(-1000, Math.min(1000, sort)) : 0,
+    // 欄を出したフォーム（order_fields）からだけ読む（無いフォームで「フィード無し」にしない）
+    ...(ordered && f.order_fields === "1" ? { article_order: isArticleOrder(f.article_order) ? f.article_order : "new", feed: f.feed === "1" } : {}),
   };
   if (!title || title.length > 200) return { values, error: "pages.error_title" };
   if (!blogHandleOk(values.handle)) return { values, error: "blog.error_handle" };
@@ -95,7 +106,7 @@ function blogDbError(e: DbError): MessageKey {
   return "error.generic";
 }
 
-function BlogFields(props: { v: BlogValues }) {
+function BlogFields(props: { v: BlogValues; ordered?: boolean }) {
   const v = props.v;
   return (
     <>
@@ -118,6 +129,24 @@ function BlogFields(props: { v: BlogValues }) {
       </select>
       <label for="sort_order">{t("pages.sort_order")}</label>
       <input id="sort_order" name="sort_order" type="number" min={-1000} max={1000} value={String(v.sort_order)} style="width:6rem" />
+      {props.ordered ? (
+        <>
+          <input type="hidden" name="order_fields" value="1" />
+          <label for="article_order">{t("blog.order")}</label>
+          <select id="article_order" name="article_order">
+            {ARTICLE_ORDERS.map((o) => (
+              <option value={o} selected={(v.article_order ?? "new") === o}>
+                {t(`blog.order_${o}` as MessageKey)}
+              </option>
+            ))}
+          </select>
+          <p class="muted">{t("blog.order_help")}</p>
+          <label>
+            <input type="checkbox" name="feed" value="1" checked={v.feed !== false} /> {t("blog.feed_on")}
+          </label>
+          <p class="muted">{t("blog.feed_help")}</p>
+        </>
+      ) : null}
       <details>
         <summary>{t("pages.more")}</summary>
         <label for="seo_title">{t("pages.seo_title")}</label>
@@ -143,6 +172,7 @@ async function blogList(c: AdminContext, shop: ShopRow, opts: { values?: BlogVal
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
   const v = opts.values ?? { title: "", handle: "", description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0 };
+  const ordered = await blogOrderReady(c);
   return layout(
     c,
     shop,
@@ -199,7 +229,7 @@ async function blogList(c: AdminContext, shop: ShopRow, opts: { values?: BlogVal
         <h2>{t("blog.new_blog")}</h2>
         <p class="muted">{t("blog.new_blog_help")}</p>
         <form method="post" action={base(shop.id)}>
-          <BlogFields v={v} />
+          <BlogFields v={v} ordered={ordered} />
           <p>
             <button type="submit">{t("blog.create_blog")}</button>
           </p>
@@ -219,7 +249,7 @@ blogAdmin.get("/", requireOwner, async (c: AdminContext) => {
 blogAdmin.post("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const { values, error } = blogValues(await formFields(c));
+  const { values, error } = blogValues(await formFields(c), await blogOrderReady(c));
   if (error) return blogList(c, shop, { values, error, status: 400 });
   try {
     const [row] = await owner(c).db.from<BlogRow>("blogs").insert({ ...values, shop_id: shop.id });
@@ -240,7 +270,9 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.notFound();
   const blog = await loadBlog(c, shop);
   if (!blog) return c.notFound();
-  const all = await owner(c).db.from<ArticleRow>("articles").select("id,handle,title,tags,published,published_at,deleted_at,updated_at", { eq: { blog_id: blog.id, shop_id: shop.id }, order: "created_at.desc", limit: 5000 });
+  // 手で並べるブログ（0116）: 一覧をその順にして、順の欄を出す
+  const manual = blog.article_order === "manual";
+  const all = await owner(c).db.from<ArticleRow>("articles").select(`id,handle,title,tags,published,published_at,deleted_at,updated_at${manual ? ",position" : ""}`, { eq: { blog_id: blog.id, shop_id: shop.id }, order: "created_at.desc", limit: 5000 });
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
   const tabs = ["all", "published", "scheduled", "draft", "trash"] as const;
@@ -252,8 +284,9 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
   // 新しく公開したものから（下書きは作った順）
   const rows = states
     .filter((x) => (tab === "all" ? x.state !== "trash" : x.state === tab) && (!q || x.a.title.toLowerCase().includes(q) || x.a.handle.includes(q) || x.a.tags.some((tg) => tg.toLowerCase().includes(q))))
-    .sort((x, y) => (y.a.published_at ?? "").localeCompare(x.a.published_at ?? ""));
+    .sort((x, y) => (manual && tab !== "trash" ? (x.a.position ?? 0) - (y.a.position ?? 0) : 0) || (y.a.published_at ?? "").localeCompare(x.a.published_at ?? ""));
   const shown = rows.slice(0, 200);
+  const ordering = manual && tab !== "trash" && shown.length > 0;
   const link = (k: string) => `${base(shop.id)}/${blog.id}${k === "all" ? "" : `?status=${k}`}`;
   const at = `${base(shop.id)}/${blog.id}/articles`;
   return layout(
@@ -268,6 +301,9 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
       {flash === "trashed" ? <p class="notice">{tf("pages.trashed", { n: PAGES_TRASH_DAYS })}</p> : null}
       {flash === "restored" ? <p class="notice">{t("pages.restored")}</p> : null}
       {flash === "restore_conflict" ? <p class="error">{t("pages.restore_conflict")}</p> : null}
+      {flash === "order_saved" ? <p class="notice">{t("blog.order_saved")}</p> : null}
+      {flash === "order_unchanged" ? <p class="notice">{t("blog.order_unchanged")}</p> : null}
+      {flash === "order_invalid" ? <p class="error">{t("blog.order_invalid")}</p> : null}
       <p>
         <a class="btn" href={`${at}/new`}>
           {t("blog.new_article")}
@@ -294,9 +330,16 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
       {shown.length === 0 ? (
         <p class="muted">{all.length === 0 ? t("blog.no_articles") : t("pages.none_here")}</p>
       ) : (
+        <>
+        {ordering ? (
+          <form id="article-order" method="post" action={`${base(shop.id)}/${blog.id}/positions`}>
+            <p class="muted">{t("blog.order_manual_help")}</p>
+          </form>
+        ) : null}
         <table>
           <thead>
             <tr>
+              {ordering ? <th style="width:5.5rem">{t("blog.order_position")}</th> : null}
               <th>{t("pages.title")}</th>
               <th>{t("blog.tags")}</th>
               <th>{t("pages.state")}</th>
@@ -306,6 +349,12 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
           <tbody>
             {shown.map(({ a, state }) => (
               <tr>
+                {ordering ? (
+                  <td>
+                    <input form="article-order" type="hidden" name={`prev_${a.id}`} value={String(a.position ?? 0)} />
+                    <input form="article-order" type="number" name={`pos_${a.id}`} min={1} max={1000000} value={String(a.position ?? 0)} aria-label={tf("blog.order_position_for", { title: a.title })} style="width:5rem" />
+                  </td>
+                ) : null}
                 <td>
                   {state === "trash" ? a.title : <a href={`${at}/${a.id}`}>{a.title}</a>}
                   <div class="muted" style="font-size:.8rem">
@@ -344,9 +393,43 @@ blogAdmin.get("/:blogId", requireOwner, async (c: AdminContext) => {
             ))}
           </tbody>
         </table>
+        {ordering ? (
+          <p>
+            <button type="submit" form="article-order" class="secondary">
+              {t("blog.order_save")}
+            </button>
+          </p>
+        ) : null}
+        </>
       )}
     </>,
   );
+});
+
+/** 手で並べる順を保存する（0116）。送られた欄のうち、数が変わったものだけ（article_positions_set、項目 content） */
+blogAdmin.post("/:blogId/positions", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  const blog = shop ? await loadBlog(c, shop) : null;
+  if (!shop || !blog) return c.notFound();
+  const back = `${base(shop.id)}/${blog.id}`;
+  if (blog.article_order !== "manual") return c.redirect(back);
+  const f = await formFields(c);
+  const changed: Record<string, number> = {};
+  for (const [k, v] of Object.entries(f)) {
+    const m = /^pos_([0-9a-f-]{36})$/.exec(k);
+    if (!m) continue;
+    const n = Number(v.trim());
+    if (!Number.isInteger(n) || n < 1 || n > 1000000) return c.redirect(`${back}?flash=order_invalid`);
+    if (String(n) !== (f[`prev_${m[1]}`] ?? "").trim()) changed[m[1]!] = n;
+  }
+  if (Object.keys(changed).length === 0) return c.redirect(`${back}?flash=order_unchanged`);
+  try {
+    await owner(c).db.rpc("article_positions_set", { p_blog_id: blog.id, p_positions: changed });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${back}?flash=order_invalid`);
+    throw e;
+  }
+  return c.redirect(`${back}?flash=order_saved`);
 });
 
 // ---------- ブログの設定 ----------
@@ -362,7 +445,7 @@ async function blogSettings(c: AdminContext, shop: ShopRow, blog: BlogRow, opts:
       {c.req.query("flash") === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {opts.error ? <p class="error">{t(opts.error)}</p> : null}
       <form method="post" action={`${base(shop.id)}/${blog.id}/settings`} class="card">
-        <BlogFields v={opts.values ?? blog} />
+        <BlogFields v={opts.values ?? blog} ordered={isArticleOrder(blog.article_order)} />
         <p>
           <button type="submit">{t("pages.save")}</button>
         </p>
@@ -390,7 +473,7 @@ blogAdmin.post("/:blogId/settings", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   const blog = shop ? await loadBlog(c, shop) : null;
   if (!shop || !blog) return c.notFound();
-  const { values, error } = blogValues(await formFields(c));
+  const { values, error } = blogValues(await formFields(c), isArticleOrder(blog.article_order));
   if (error) return blogSettings(c, shop, blog, { values, error, status: 400 });
   try {
     await owner(c).db.from("blogs").update(values, { id: blog.id, shop_id: shop.id });

@@ -12,7 +12,7 @@ import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/curs
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 import { PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
-import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
+import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
 
 
 export const STOREFRONT_CACHE_TTL = 30;
@@ -153,7 +153,7 @@ export interface MemberReader {
   skus(skuIds: string[]): Promise<unknown>;
   page(handle: string): Promise<unknown>;
   article(blogId: string, handle: string): Promise<unknown>;
-  articles(blogId: string, offset: number, limit: number, tag: string | null): Promise<unknown>;
+  articles(blogId: string, offset: number, limit: number, tag: string | null, sort?: ArticleOrder): Promise<unknown>;
 }
 
 /** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
@@ -477,23 +477,23 @@ export class StorefrontData {
   }
 
   /**
-   * ブログの記事の一覧（公開中・日時を過ぎた・ゴミ箱の外は RLS）。公開した日時の新しい順、tag で絞る。
+   * ブログの記事の一覧（公開中・日時を過ぎた・ゴミ箱の外は RLS）。sort の順（無ければ公開した日時の新しい順。articleSortFor で決める）、tag で絞る。
    * 1 つ多く読んで次のページがあるかを決める。キャッシュはページごと（深さは ARTICLES_OFFSET_MAX まで）
    */
-  async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
+  async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null; sort?: ArticleOrder }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
     const offset = Math.max(0, Math.min(ARTICLES_OFFSET_MAX, Math.floor(opts.offset)));
     if (this.reader) {
-      const rows = (await this.reader.articles(blogId, offset, opts.limit, opts.tag ?? null)) as ArticleRow[] | null;
+      const rows = (await this.reader.articles(blogId, offset, opts.limit, opts.tag ?? null, opts.sort)) as ArticleRow[] | null;
       const list = Array.isArray(rows) ? rows : [];
       return { items: list.slice(0, opts.limit), hasNext: list.length > opts.limit };
     }
-    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}`;
+    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}`;
     const hit = await this.cache.get<{ items: ArticleRow[]; hasNext: boolean }>(key);
     if (hit) return hit;
     const rows = await this.db.from<ArticleRow>("articles").select(ARTICLE_LIST_COLUMNS, {
       eq: { shop_id: shop.id, blog_id: blogId, published: true },
       ...(opts.tag ? { arrayContains: { tags: [opts.tag] } } : {}),
-      order: "published_at.desc,id.desc",
+      order: articleOrderParam(opts.sort),
       limit: opts.limit + 1,
       offset,
     });

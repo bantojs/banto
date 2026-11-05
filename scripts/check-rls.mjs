@@ -80,6 +80,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "option_names_set", // 0094: SKU の選択肢の表示名を変える（中で catalog の項目を確かめる）
   "banto_option_swatches_ok", // 0115: shops.option_swatches の CHECK（値の形を見るだけ）
   "option_swatches_set", // 0115: 選択肢の値ごとの見本を変える（中で catalog の項目を確かめる）
+  "article_positions_set", // 0116: ブログの記事を手で並べる順（中で content の項目を確かめる）
   "size_chart_set", // 0095: 採寸表の 1 つの段を置き換える（中で catalog の項目を確かめる）
   "page_layouts_set", // 0101: 固定ページをトップ・記事のひな形に割り当てる（中で content の項目とショップのページ・ブログかを確かめる）
   "hook_storefront_events_set", // 0107: 連携ごとにお店の行動を渡す許し（中で integrations の項目・マニフェストの範囲を確かめ、監査ログに残す）

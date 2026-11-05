@@ -792,21 +792,23 @@ export const defaultTheme: Theme = {
       for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
       return (
         <Layout title={docTitle} ctx={ctx} seo={seo}>
-          <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+          {feedUrl ? <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} /> : null}
           <div class="page-body blog-layout">{raw(layout(html))}</div>
         </Layout>
       );
     }
     return (
       <Layout title={docTitle} ctx={ctx} seo={seo}>
-        <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+        {feedUrl ? <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} /> : null}
         {parts.title}
         {tag ? null : parts.content}
         {parts.filters}
         {parts.articles}
-        <p class="blog-meta">
-          <a href={feedUrl}>{t("blog.feed")}</a>
-        </p>
+        {feedUrl ? (
+          <p class="blog-meta">
+            <a href={feedUrl}>{t("blog.feed")}</a>
+          </p>
+        ) : null}
       </Layout>
     );
   },
@@ -815,7 +817,7 @@ export const defaultTheme: Theme = {
     if (bare)
       return (
         <Layout title={article.seo_title || article.title} ctx={ctx} seo={{ path: articlePath(ctx.shopPath, blog.handle, article.handle), ...(article.seo_description || article.excerpt ? { description: article.seo_description || article.excerpt || "" } : {}), ...(article.image_url ? { image: article.image_url } : {}) }}>
-          <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+          {feedUrl ? <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} /> : null}
           <article class="page">
             <div class="page-body">{raw(html)}</div>
           </article>
@@ -823,7 +825,7 @@ export const defaultTheme: Theme = {
       );
     return (
       <Layout title={article.seo_title || article.title} ctx={ctx} seo={{ path: articlePath(ctx.shopPath, blog.handle, article.handle), ...(article.seo_description || article.excerpt ? { description: article.seo_description || article.excerpt || "" } : {}), ...(article.image_url ? { image: article.image_url } : {}) }}>
-        <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+        {feedUrl ? <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} /> : null}
         <article class="page">
           <p class="blog-meta">
             <a href={blogPath(ctx.shopPath, blog.handle)}>{blog.title}</a>
