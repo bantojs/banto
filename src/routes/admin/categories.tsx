@@ -57,11 +57,12 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     names_invalid: "axes.names_invalid",
     image_invalid: "category.image_invalid",
     swatch_saved: "swatch.saved",
+    swatch_cleared: "swatch.cleared",
     swatch_invalid: "swatch.invalid",
     swatch_image_invalid: "swatch.image_invalid",
   };
   const key = code ? map[code] : undefined;
-  return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" || code === "swatch_saved" ? "ok" : "error", text: t(key) } : null;
+  return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" || code === "swatch_saved" || code === "swatch_cleared" ? "ok" : "error", text: t(key) } : null;
 }
 
 function errorCode(e: unknown): string {

@@ -358,6 +358,7 @@ export const ja = {
   "swatch.image": "画像",
   "swatch.image_for": "{value} の画像",
   "swatch.image_hint": "画像は柄（チェック・ボーダーなど）に。JPEG・PNG・WebP を選ぶと、このブラウザで 96px まで縮めて送ります。",
+  "swatch.cleared": "この軸の見本を外しました（どの値も「無し」です）。色を使うときは、値の「見本」を「色」にしてください。",
   "swatch.saved": "見本を保存しました。",
   "swatch.invalid": "見本を保存できませんでした（色の形・数の上限 500 を確かめてください）。",
   "swatch.image_invalid": "見本の画像を読めませんでした（JPEG・PNG・WebP。画像を選ばずに「画像」にはできません）。",
