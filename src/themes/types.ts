@@ -290,7 +290,8 @@ export interface Theme {
    * ブログの記事の一覧（同梱モジュール blog、0081、/blogs/<handle>）。articles は公開した日時の新しい順の 1 ページ分、
    * summary は記事ごとの短い紹介（抜粋か本文の頭の文字）。tag で絞っていればその名前。newer / older はページ送りの URL
    */
-  BlogPage?(props: { ctx: ThemeContext; blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; newer: string | null; older: string | null; feedUrl: string }): Rendered;
+  /** layout: ブログの一覧のひな形（0114）。部品（title・content・articles・filters・breadcrumb）の HTML を渡し、返った HTML を本文として描く */
+  BlogPage?(props: { ctx: ThemeContext; blog: BlogRow; articles: { article: ArticleRow; summary: string }[]; tag: string | null; tags: string[]; newer: string | null; older: string | null; feedUrl: string; layout?: (parts: Record<string, string>) => string }): Rendered;
   /** ブログの記事（/blogs/<ブログ>/<handle>）。html は本文を HTML にしたもの（ページと同じ。そのまま出してよい） */
   /** bare: 記事のひな形（0101）で描いた本文。テーマは記事の見出し・日付・アイキャッチ・タグを出さず、本文（html）だけを描く */
   ArticlePage?(props: { ctx: ThemeContext; blog: BlogRow; article: ArticleRow; html: string; feedUrl: string; bare?: boolean }): Rendered;

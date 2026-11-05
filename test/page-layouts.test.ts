@@ -3,6 +3,7 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, followPreview } from "./helpers";
 import { composeLayout, pageLayoutsOf } from "../src/content/layouts";
 import { forgetThemes } from "../src/themes/liquid/cache";
+import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /** ひな形の割り当て（0101、src/content/layouts.ts、docs/pages.md「ひな形の割り当て」）: お店のトップと記事 */
 
@@ -44,7 +45,7 @@ describe("ひな形に記事を差し込む", () => {
     const nested = ":::: group\n::: current part=content\n::::";
     expect(composeLayout(nested, "記事")).toEqual({ body: nested, inserted: false });
     expect(composeLayout(":::: group\nx\n::::\n\n::: current part=content", "記事").inserted).toBe(true);
-    expect(pageLayoutsOf({ page_layouts: { home: "bad", articles: { x: "y" }, product: 1, legal_pages: { cart: "11111111-2222-4333-8444-555555555555" } } })).toEqual({ home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {}, legal: null, legalPages: {} });
+    expect(pageLayoutsOf({ page_layouts: { home: "bad", articles: { x: "y" }, product: 1, legal_pages: { cart: "11111111-2222-4333-8444-555555555555" } } })).toEqual({ home: null, articles: {}, product: null, productCategories: {}, collection: null, collectionCategories: {}, legal: null, legalPages: {}, blogs: {} });
   });
 });
 
@@ -360,6 +361,100 @@ describe("商品一覧のひな形（0103）", () => {
     expect(html).toContain('<div class="theme-desc">羽織りもの&lt;b&gt;<br>秋冬</div>');
     expect(html).toContain('class="category-image" src="');
     expect(html).toContain("0123456789abcdef.webp");
+  });
+});
+
+describe("ブログの一覧のひな形（0114）", () => {
+  const BLOG_TPL = ["::: current part=breadcrumb", "", "::: current part=title", "", "::: current part=content", "", "一覧の案内", "", "::: current part=filters", "", "::: current part=articles", "", "::: current part=price"].join("\n");
+  function blogSetup(liquid?: Record<string, string>, applied?: string[]) {
+    const x = setup({ ...(liquid ? { liquid } : {}), ...(applied ? { applied } : {}) });
+    const b = x.sb.tables.blogs.find((r) => r["id"] === x.blog.id)!;
+    b["description"] = "着こなしの記録です";
+    // 本文の HTML の覚えが、ほかのテストの同じ連番の id のページと混ざらないように
+    const stamp = () => new Date(Date.UTC(2020, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
+    const listTpl = x.sb.addPage(x.shop.id, { handle: "blog-list", title: "一覧のひな形", body: BLOG_TPL, updated_at: stamp() });
+    for (let i = 4; i <= 15; i++) x.sb.addArticle(x.shop.id, x.blog.id, { handle: `a${i}`, title: `記事${i}`, body: "x", tags: i % 2 ? ["秋"] : [], published_at: `2026-04-${String(i).padStart(2, "0")}T00:00:00Z` });
+    return { ...x, listTpl };
+  }
+
+  it("管理画面: 0114 が当たればブログごとの一覧の欄を出して保存する。当たる前は出さず、送らない", async () => {
+    const { app, base, blog, listTpl, settings, sb } = blogSetup();
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    expect(await (await b.get(`${base}/layouts`)).text()).toContain(`name="bloglist_${blog.id}"`);
+    expect((await b.post(`${base}/layouts`, { [`bloglist_${blog.id}`]: listTpl.id })).status).toBe(302);
+    expect(settings()["page_layouts"]).toEqual({ blogs: { [blog.id]: listTpl.id } });
+    void sb;
+    // 当たる前: 欄を出さず、blogs の鍵を送らない（送ると断られる）
+    const old = blogSetup(undefined, BUNDLED_MIGRATIONS.filter((v) => v !== "0114_page_layouts_blogs"));
+    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
+    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain("bloglist_");
+    expect((await b2.post(`${old.base}/layouts`, { [`article_${old.blog.id}`]: old.listTpl.id })).status).toBe(302);
+  });
+
+  it("お店の画面: ひな形の並びで、パンくず・名前・説明・タグ・記事の並びとページ送り。タグで絞った一覧と 2 ページ目もひな形。商品の部品は空", async () => {
+    const { app, blog, listTpl, settings } = blogSetup();
+    settings()["page_layouts"] = { blogs: { [blog.id]: listTpl.id } };
+    const full = await (await new Browser(app, BASE).get("/my-shop/blogs/news")).text();
+    const html = full.slice(full.indexOf("blog-layout"));
+    const order = ["<h1>お知らせ</h1>", "着こなしの記録です", "一覧の案内", 'class="blog-tags"', 'class="blog-list"'].map((k) => html.indexOf(k));
+    expect(order.every((x) => x >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(html).toContain('<a href="/my-shop">テストの店</a> › お知らせ');
+    expect(html).toContain("記事15");
+    expect(html).toContain('href="/my-shop/blogs/news?page=2"');
+    expect(full).toContain('type="application/atom+xml"');
+    expect(html).not.toContain("<!--banto:current");
+    const tagged = await (await new Browser(app, BASE).get("/my-shop/blogs/news?tag=%E7%A7%8B")).text();
+    expect(tagged).toContain("一覧の案内");
+    expect(tagged).toContain("<h1>#秋 の記事</h1>".replace("#秋 の記事", tagged.match(/<h1>([^<]*秋[^<]*)<\/h1>/)?.[1] ?? "x"));
+    expect(tagged).toContain('<meta name="robots" content="noindex');
+    expect(tagged).toContain('<a href="/my-shop/blogs/news">お知らせ</a> › #秋');
+    const page2 = await (await new Browser(app, BASE).get("/my-shop/blogs/news?page=2")).text();
+    expect(page2).toContain("一覧の案内");
+    expect(page2).toContain("最初の記事");
+  });
+
+  it("記事の並びの部品が無い・見えないページなら今までの一覧", async () => {
+    const { app, blog, listTpl, settings, sb } = blogSetup();
+    settings()["page_layouts"] = { blogs: { [blog.id]: listTpl.id } };
+    const row = sb.tables.pages.find((p) => p["id"] === listTpl.id)!;
+    row["body"] = "一覧の案内\n\n::: current part=title";
+    row["updated_at"] = new Date(Date.UTC(2021, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
+    expect(await (await new Browser(app, BASE).get("/my-shop/blogs/news")).text()).not.toContain("一覧の案内");
+    row["body"] = BLOG_TPL;
+    row["published"] = false;
+    const app2 = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
+    expect(await (await new Browser(app2, BASE).get("/my-shop/blogs/news")).text()).not.toContain("一覧の案内");
+  });
+
+  it("プレビューは割り当てたブログの一覧を見本にする", async () => {
+    const { app, blog, listTpl, settings, base } = blogSetup();
+    settings()["page_layouts"] = { blogs: { [blog.id]: listTpl.id } };
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await followPreview(app, await b.post(`${base}/${listTpl.id}`, { title: "一覧のひな形", handle: "blog-list", body: "::: current part=title\n\n下書きの一覧\n\n::: current part=articles", nav: "none", sort_order: "0", action: "preview" }))).text();
+    expect(html).toContain("<h1>お知らせ</h1>");
+    expect(html).toContain("下書きの一覧");
+    expect(html).toContain("記事15");
+    expect(html).toContain("見本: 「お知らせ」");
+  });
+
+  it("Liquid: templates/page の中に描き、snippets/part-articles は blog・articles・paginate で描ける", async () => {
+    const { app, blog, listTpl, settings } = blogSetup({
+      "layout/theme.liquid": `<html><head>{{ content_for_header }}<title>{{ page_title }}</title></head><body><main>{{ content_for_layout }}</main></body></html>`,
+      "templates/index.liquid": "<h1>top</h1>",
+      "templates/page.liquid": `<article class="page-default">{{ page.content }}</article>`,
+      "templates/blog.liquid": `<div class="liquid-blog">x</div>`,
+      "snippets/part-articles.liquid": `<ul class="theme-articles" data-blog="{{ blog.handle }}" data-next="{{ paginate.next.url }}">{% for a in articles %}<li>{{ a.title }}</li>{% endfor %}</ul>`,
+    });
+    settings()["page_layouts"] = { blogs: { [blog.id]: listTpl.id } };
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/blogs/news")).text();
+    expect(html).toContain('<article class="page-default">');
+    expect(html).not.toContain("liquid-blog");
+    expect(html).toContain("<h1>お知らせ</h1>");
+    expect(html).toMatch(/<ul class="theme-articles" data-blog="news" data-next="\/blogs\/news\?page=2"><li>記事15<\/li>/);
+    expect(html).toContain('rel="canonical" href="https://shop.example.jp/blogs/news"');
+    const tagged = await (await new Browser(app, "https://shop.example.jp").get("/blogs/news?tag=%E7%A7%8B")).text();
+    expect(tagged).toContain('<meta name="robots" content="noindex">');
   });
 });
 

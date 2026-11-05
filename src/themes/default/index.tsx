@@ -776,46 +776,29 @@ export const defaultTheme: Theme = {
     );
   },
 
-  BlogPage({ ctx, blog, articles, tag, tags, newer, older, feedUrl }) {
+  BlogPage({ ctx, blog, articles, tag, tags, newer, older, feedUrl, layout }) {
     const title = tag ? tf("blog.tagged", { tag }) : blog.title;
+    const parts = blogListParts({ ctx, blog, articles, tag, tags, newer, older });
+    const seo = { path: blogPath(ctx.shopPath, blog.handle), ...(blog.seo_description || blog.description ? { description: blog.seo_description || blog.description || "" } : {}), ...(tag ? { noindex: true } : {}) };
+    const docTitle = tag ? `${title} | ${blog.title}` : blog.seo_title || blog.title;
+    // ブログの一覧のひな形（0114）: 部品を HTML にして渡し、並びはひな形が決める（SEO・フィードは同じ）
+    if (layout) {
+      const html: Record<string, string> = {};
+      for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
+      return (
+        <Layout title={docTitle} ctx={ctx} seo={seo}>
+          <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
+          <div class="page-body blog-layout">{raw(layout(html))}</div>
+        </Layout>
+      );
+    }
     return (
-      <Layout title={tag ? `${title} | ${blog.title}` : blog.seo_title || blog.title} ctx={ctx} seo={{ path: blogPath(ctx.shopPath, blog.handle), ...(blog.seo_description || blog.description ? { description: blog.seo_description || blog.description || "" } : {}), ...(tag ? { noindex: true } : {}) }}>
+      <Layout title={docTitle} ctx={ctx} seo={seo}>
         <link rel="alternate" type="application/atom+xml" title={blog.title} href={feedUrl} />
-        <h1>{title}</h1>
-        {blog.description && !tag ? <p style="max-width:44rem">{blog.description}</p> : null}
-        {tags.length > 0 ? (
-          <p class="blog-tags">
-            {tag ? <a href={blogPath(ctx.shopPath, blog.handle)}>{t("blog.all_articles")}</a> : null}
-            {tags.map((x) => (
-              <a href={`${blogPath(ctx.shopPath, blog.handle)}?tag=${encodeURIComponent(x)}`} aria-current={x === tag ? "page" : undefined}>
-                #{x}
-              </a>
-            ))}
-          </p>
-        ) : null}
-        {articles.length === 0 ? <p>{t("blog.no_published")}</p> : null}
-        <ul class="blog-list">
-          {articles.map(({ article, summary }) => (
-            <li>
-              <a href={articlePath(ctx.shopPath, blog.handle, article.handle)}>
-                {article.image_url ? <img src={article.image_url} alt="" loading="lazy" decoding="async" /> : null}
-                <div class="blog-meta">{article.published_at ? formatDateTime(article.published_at, { dateOnly: true }) : null}</div>
-                <h2>{article.title}</h2>
-                {summary ? <p>{summary}</p> : null}
-              </a>
-            </li>
-          ))}
-        </ul>
-        {newer || older ? (
-          <nav class="pager" aria-label={t("store.pagination")}>
-            {newer ? <a href={newer}>{t("blog.newer")}</a> : <span />}
-            {older ? (
-              <a href={older} rel="next">
-                {t("blog.older")}
-              </a>
-            ) : null}
-          </nav>
-        ) : null}
+        {parts.title}
+        {tag ? null : parts.content}
+        {parts.filters}
+        {parts.articles}
         <p class="blog-meta">
           <a href={feedUrl}>{t("blog.feed")}</a>
         </p>
@@ -1984,6 +1967,62 @@ function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"];
  * 商品一覧のひな形（0103、`::: current part=…`）の部品。title（カテゴリーの名前か「すべての商品」）・products（並びとページ送り）・
  * filters（タグ。カテゴリーで絞ったまま）・subcategories（子カテゴリー。すべての一覧なら上の段のカテゴリー）・breadcrumb
  */
+type BlogProps = Parameters<NonNullable<Theme["BlogPage"]>>[0];
+
+/** ブログの一覧の部品（既定のテーマの一覧と、ブログの一覧のひな形 0114 で同じ） */
+export function blogListParts({ ctx, blog, articles, tag, tags, newer, older }: Pick<BlogProps, "ctx" | "blog" | "articles" | "tag" | "tags" | "newer" | "older">) {
+  const home = ctx.shopPath || "/";
+  const path = blogPath(ctx.shopPath, blog.handle);
+  return {
+    title: <h1>{tag ? tf("blog.tagged", { tag }) : blog.title}</h1>,
+    content: blog.description ? <p class="blog-description" style="max-width:44rem">{blog.description}</p> : null,
+    filters:
+      tags.length > 0 ? (
+        <p class="blog-tags">
+          {tag ? <a href={path}>{t("blog.all_articles")}</a> : null}
+          {tags.map((x) => (
+            <a href={`${path}?tag=${encodeURIComponent(x)}`} aria-current={x === tag ? "page" : undefined}>
+              #{x}
+            </a>
+          ))}
+        </p>
+      ) : null,
+    articles: (
+      <>
+        {articles.length === 0 ? <p>{t("blog.no_published")}</p> : null}
+        <ul class="blog-list">
+          {articles.map(({ article, summary }) => (
+            <li>
+              <a href={articlePath(ctx.shopPath, blog.handle, article.handle)}>
+                {article.image_url ? <img src={article.image_url} alt="" loading="lazy" decoding="async" /> : null}
+                <div class="blog-meta">{article.published_at ? formatDateTime(article.published_at, { dateOnly: true }) : null}</div>
+                <h2>{article.title}</h2>
+                {summary ? <p>{summary}</p> : null}
+              </a>
+            </li>
+          ))}
+        </ul>
+        {newer || older ? (
+          <nav class="pager" aria-label={t("store.pagination")}>
+            {newer ? <a href={newer}>{t("blog.newer")}</a> : <span />}
+            {older ? (
+              <a href={older} rel="next">
+                {t("blog.older")}
+              </a>
+            ) : null}
+          </nav>
+        ) : null}
+      </>
+    ),
+    breadcrumb: (
+      <p>
+        <a href={home}>{ctx.shop.name}</a> › {tag ? <a href={path}>{blog.title}</a> : blog.title}
+        {tag ? ` › #${tag}` : ""}
+      </p>
+    ),
+  };
+}
+
 type ListCategory = NonNullable<ShopHomeProps["category"]>;
 
 /** カテゴリーの画像（0113）。見出しの下に横いっぱいで */

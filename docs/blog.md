@@ -27,6 +27,7 @@
 
 - 既定のテーマ: 一覧（アイキャッチ・日付・題名・紹介、タグ、ページ送り、RSS のリンク）と記事を描きます。
 - Liquid のテーマ: 一覧は `templates/blog`（ブログで選んだ名前があれば `blog.<名前>`）、記事は `templates/article`（記事で選んだ名前があれば `article.<名前>`）。渡すものは docs/themes.md の「使える名前」。テンプレートが無いテーマでは既定のテーマで描きます。
+- 一覧の並びをショップのページで組むときは、ブログの一覧のひな形（0114、docs/pages.md「ひな形の割り当て」）を使います。記事の並び・タグで絞る・ページ送りは部品として置けます。
 - 名前は Shopify の Liquid と同じ書き方（`blog.articles`・`article.content` など）です。コメントの機能はありません（`comments_enabled` は false）。
 
 - 連携サイト: ヘッドレスの公開 API（`GET /api/shops/:shop/blogs`・`/blogs/:blog/articles`・`/blogs/:blog/articles/:article`）から一覧と本文（書式と描いた HTML）を読めます（docs/headless.md「ページ・ブログ」）。
