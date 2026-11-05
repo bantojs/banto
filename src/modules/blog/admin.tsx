@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { previewResponse } from "../../content/preview";
+import { previewResponse, wantsPreviewJson } from "../../content/preview";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -606,6 +606,7 @@ async function previewArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, v: 
     const res = await previewResponse(c, shop, { kind: "article", blog, article }, categories);
     if (res) return res;
   }
+  if (wantsPreviewJson(c)) return c.json({ kind: "error", message: t(error ?? "pages.preview_note") });
   return layout(
     c,
     shop,

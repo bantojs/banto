@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { previewResponse } from "../../content/preview";
+import { previewResponse, wantsPreviewJson } from "../../content/preview";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import type { AppEnv } from "../../app";
@@ -262,6 +262,8 @@ async function previewPage(c: AdminContext, shop: ShopRow, values: PageValues, e
     const res = await previewResponse(c, shop, { kind: "page", page }, categories);
     if (res) return res;
   }
+  // 編集の画面のスクリプト（プレビューのタブ・お店の見た目の欄）には、描けない理由だけ
+  if (wantsPreviewJson(c)) return c.json({ kind: "error", message: t(error ?? "pages.preview_note") });
   return layout(
     c,
     shop,
