@@ -5,6 +5,7 @@
  * - 作るのはただのオブジェクト（テーマは自前のプロパティだけを読める）。テーマに渡すのは公開してよい値だけ
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
+import type { ProductField } from "../../products/fields";
 import { optionLabel, type OptionNames } from "../../products/option-names";
 import type { CategoryImage, CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
@@ -32,6 +33,8 @@ export interface UrlBase {
   optionNames?: OptionNames;
   /** 選択肢の値ごとの見本（0115）。options_with_values の値の swatch に出す */
   optionSwatches?: OptionSwatches;
+  /** 商品の独自項目の定義（shops.settings.product_fields）。product.fields・field_list の表示名と公開の判定 */
+  productFields?: ProductField[];
 }
 
 /**
@@ -207,6 +210,9 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     first_available_variant: available[0] ?? null,
     created_at: p.created_at,
     updated_at: p.updated_at,
+    // 商品の独自項目（公開のものだけ。値は product_public_get が公開の項目だけを返す）。{{ product.fields.material }}・
+    // 定義の順に並べた field_list（key・label・type・value）
+    ...productFieldsLiquid(u, p.attributes),
     // 外部プラグインの拡張データ（0084、docs/app-data.md）。文字は既定でエスケープして描かれる
     reviews: reviewsObject(p),
     app_data: appDataOf(p).map((x) => ({ app: x.app, kind: x.kind, key: x.key ?? "", data: x.data })),
@@ -218,6 +224,14 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       return sizeChartLiquid(chart, (k) => mediaUrl(u, k), chart ? selectedRowValue(chart, selected?.options) : null);
     })(),
   };
+}
+
+/** product.fields と product.field_list（公開の項目の定義にあって、値の入っているものだけ） */
+export function productFieldsLiquid(u: UrlBase, attributes: Record<string, unknown> | null | undefined): { fields: Record<string, unknown>; field_list: { key: string; label: string; type: string; value: unknown }[] } {
+  const defs = (u.productFields ?? []).filter((f) => f.public);
+  const a = attributes ?? {};
+  const field_list = defs.filter((f) => a[f.key] !== undefined && a[f.key] !== null && String(a[f.key]).trim() !== "").map((f) => ({ key: f.key, label: f.label, type: f.type, value: a[f.key] }));
+  return { fields: Object.fromEntries(field_list.map((f) => [f.key, f.value])), field_list };
 }
 
 /** product.reviews（レビューのプラグインが置いた要約。無ければ null） */

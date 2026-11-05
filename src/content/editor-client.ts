@@ -136,9 +136,12 @@ export function pageEditorClient() {
       if (st0) parts.push(`style=${st0}`);
       return parts.join(" ");
     }
-    const category = attr(n, "data-category");
+    // 似た商品（商品詳細のひな形）: カテゴリー・タグは持たない
+    const related = attr(n, "data-related") === "1";
+    if (related) parts.push("related=@product");
+    const category = related ? "" : attr(n, "data-category");
     if (/^[a-z0-9][a-z0-9-]{0,62}$/.test(category)) parts.push(`category=${category}`);
-    const tag = attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
+    const tag = related ? "" : attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
     if (tag) parts.push(/\s/.test(tag) ? `tag="${tag}"` : `tag=${tag}`);
     const limit = Number(attr(n, "data-limit"));
     parts.push(`limit=${Number.isInteger(limit) && limit >= 1 && limit <= 24 ? limit : 8}`);
@@ -292,7 +295,7 @@ export function pageEditorClient() {
       // お店のブロック（src/pages/shop-blocks.ts）: data-kind と data-attrs から 1 行に戻す（値の形はサーバーが描くときにも確かめる）
       if (kind === "shop") {
         const k = attr(c, "data-kind");
-        if (!/^(search|categories|card|product|icon|date|embed|video|current)$/.test(k)) continue;
+        if (!/^(search|categories|card|product|icon|date|embed|video|current|toc|stores)$/.test(k)) continue;
         let o: Record<string, unknown> = {};
         try {
           const v: unknown = JSON.parse(attr(c, "data-attrs") || "{}");
@@ -304,10 +307,11 @@ export function pageEditorClient() {
         for (const [key, raw] of Object.entries(o)) {
           if (!/^[a-z]{1,20}$/.test(key) || typeof raw !== "string" || raw === "") continue;
           // 既定の値は書かない（src/pages/shop-blocks.ts の def と同じ）
-          if ((key === "size" && raw === "m") || (key === "tone" && raw === "text") || (key === "layout" && raw === "list") || (key === "of" && raw === "published") || (key === "format" && raw === "date") || ((key === "autoplay" || key === "loop") && raw === "0") || (key === "controls" && raw === "1")) continue;
-          if (key === "placeholder" || key === "label") parts.push(`${key}="${quoted(raw).slice(0, 60)}"`);
+          if ((key === "size" && raw === "m") || (key === "tone" && raw === "text") || (key === "layout" && raw === "list") || (key === "of" && raw === "published") || (key === "format" && raw === "date") || ((key === "autoplay" || key === "loop") && raw === "0") || (key === "controls" && raw === "1") || (key === "levels" && raw === "3") || (key === "tryon" && raw === "0")) continue;
+          if (key === "placeholder" || key === "label" || key === "title") parts.push(`${key}="${quoted(raw).slice(0, 60)}"`);
           else if (key === "url" || key === "src" || key === "poster") parts.push(`${key}="${raw.replace(/["\n\r]/g, "").slice(0, 300)}"`);
-          else if (/^[a-z0-9][a-z0-9,/_-]{0,200}$/.test(raw)) parts.push(`${key}=${raw}`);
+          // 商品の独自項目（show=…,field:<key>）の「:」も通す
+          else if (/^[a-z0-9][a-z0-9,/_:-]{0,200}$/.test(raw)) parts.push(`${key}=${raw}`);
         }
         out.push(`::: ${parts.join(" ")}`);
         continue;

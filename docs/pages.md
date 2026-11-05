@@ -102,6 +102,7 @@
 | `sort` | `new`（新しい順）・`updated`・`price_asc`・`price_desc`・`name` | `new` |
 | `slugs` | 選んだ商品の URL の名前をカンマで区切って（24 個まで、0112）。**書いた順に**並べ、`category`・`tag`・`limit`・`sort` は使いません | 使わない（条件で選ぶ） |
 
+- **似た商品を並べる**（`::: products related=@product limit=4`、メンテナの決定 2026-11-05）: 商品詳細のひな形に置くと、開いている商品と同じ主カテゴリーの商品を並べ、足りなければ同じタグ（最初のタグ）の商品で埋めます（その商品は除く）。Banto は閲覧の履歴を持たないので「いっしょに見られている」ではありません（それは行動の中継を使う外部プラグインの仕事、docs/event-relay.md）。商品の画面の外では何も並べません。編集の画面では「商品を並べる」の設定の「今の商品に似た商品」です。
 - **選んだ商品を並べる**（`::: products slugs=coat,knit,tee layout=grid`、0112）: 「この着こなしの着用アイテム」のように、決まった商品を決まった順に並べます。見えない商品（非公開・会員限定で合わない人・無い URL の名前）は飛ばします。1 ページの選んだ商品のブロックは**まとめて問い合わせ 1 回**です。データベースの更新 `0112_product_pick` が当たるまでは空です。編集の画面では設定の「選んだ商品の URL の名前」に書きます。
 
 - 並ぶのは**公開中の商品だけ**です（商品の一覧と同じ選び方とキャッシュ）。値段・在庫は商品の一覧と同じく、描いた時点のものです。
@@ -233,11 +234,13 @@ WordPress のよく使うブロックを、決まった書式のまま入れ子�
 | `::: search placeholder="商品を探す"` | 商品の検索の欄（`/products?q=…` へ） |
 | `::: categories parent=tops layout=list` | カテゴリーへのリンクの一覧。`parent` を指定するとその子孫だけ、無ければすべて。`layout=grid` は 1 段だけを格子で、カテゴリーの画像（0113、docs/storefront.md）があれば名前の上に出す |
 | `::: card page=about` ／ `::: card article=news/hello` | ページか記事を 1 つ、カード（題・アイキャッチ・抜粋）で |
-| `::: product slug=tee show=image,name,price,cart,buy` | 1 つの商品。`show` に出す項目（`image`・`name`・`price`・`options`（選択肢の値と見本。押すとその SKU を選んだ商品ページへ。0115）・`sku`・`tags`・`description`・`cart`（カートに入れる）・`buy`（今すぐ買う））。省けば画像・名前・価格・カートに入れる |
+| `::: product slug=tee show=image,name,price,cart,buy` | 1 つの商品。`show` に出す項目（`image`・`name`・`price`・`options`（選択肢の値と見本。押すとその SKU を選んだ商品ページへ。0115）・`sku`・`tags`・`description`・`cart`（カートに入れる）・`buy`（今すぐ買う）・`field:<key>`（商品の独自項目。公開の項目だけ。メンテナの決定 2026-11-05））。省けば画像・名前・価格・カートに入れる |
 | `::: icon name=truck size=m tone=accent label="送料無料"` | 決まった一式のアイコン（48 個）。`size` は s / m / l / xl、`tone` は text / accent / muted。`label` は横に出す文字（読み上げにも使う。空なら飾り） |
 | `::: date of=published format=date label="投稿日"` | 日時。`of` は published（投稿日時。ページは公開した日時、無ければ作った日時）/ updated（最終更新日時）/ now（見た時点の日時）、`format` は date（日付だけ）/ datetime（日付と時刻）。時間帯はデプロイの `BANTO_TIMEZONE`。本文の HTML には印だけを置き、描くたびに入れる（本文の HTML の覚えに日時が残らない）。データは引かない |
 | `::: embed url="https://www.youtube.com/watch?v=…"` | YouTube・X・Instagram・TikTok・Reddit・Bluesky の動画や投稿。**お客様が押すまで外のサービスにつながない**（最初は枠と元の投稿へのリンクだけ。押した人のブラウザだけが相手の埋め込みのページを読み込む。サムネイルも外から取らない）。相手のスクリプトはお店の画面に読み込まず iframe だけで、iframe の URL は貼った URL から取り出した ID で Banto が組み直す。Bluesky は `at://did:…` か `did:` を含む URL だけ埋め込める（`@` の名前の URL はリンクだけ）。対応していない URL のブロックは文字のまま出る |
 | `::: video src="/media/pages/<ショップ>/<名前>.mp4" poster="…" autoplay=1 loop=1 controls=0` | 短い動画。**mp4 だけ・1 本 20MB まで**（先頭のバイトで確かめる。mov は受けない）。編集の画面で選ぶと、そのブラウザから置き場（本文の画像と同じ `pages/<ショップ>/`）へ送り、最初の場面を表紙の画像（`poster`）にする。Banto では変換しないので、スマートフォンで再生できる形（H.264）で書き出しておく。`autoplay=1` は音を消して再生（ブラウザの決まり）、`loop=1` は繰り返し、`controls=0` は再生のボタンを出さない。置き場の URL だけを受ける（ほかのホストの動画は描かない）。メディアライブラリ（画像の一覧）には載らない。再生には置き場が Range に答える必要がある: Worker の `/media/` は答える（終わりの無い範囲は 2MB ずつ）。`MEDIA_BASE_URL` に R2 のカスタムドメインを使うときは R2 が答える |
+| `::: toc levels=3 title="この記事の目次"` | 本文の見出しから作る目次（押すとその見出しへ）。`levels=3` は見出しと小見出し、`levels=2` は見出しだけ。目次のある本文では、見出しに文書の順の `id`（`h-1`, `h-2` …）が付き、`/pages/about#h-2` のようにリンクでも飛べます（目次の無い本文の HTML は変わりません）。見出しが無ければ何も出ません。データベースは引きません |
+| `::: stores tryon=1 layout=grid` | ショップで使う実店舗（店名・住所・電話・今日の営業・曜日ごとの営業時間・近い臨時休業 / 臨時営業）。`tryon=1` はお店で試着を受ける店舗だけ。店舗の情報は実店舗の設定が正なので、ここを直すとどのページの店舗の段も変わります |
 | `::: current part=title` | **ひな形**（下の「ひな形の割り当て」）の中で、今の記事・商品の部品を出す。記事: title（タイトル）/ image（アイキャッチ）/ content（本文）/ excerpt（抜粋）/ author（書いた人）/ tags（タグ）/ prev-next（同じブログの前後の記事）。商品: title（ブランドと商品名）/ image（画像）/ price（いちばん安い SKU の値段、会員価格を含む）/ buy（SKU を選んで買うフォーム）/ content（説明）/ tags / attributes（項目の表）/ breadcrumb（パンくず）/ size-chart（採寸表）/ reviews（レビュー）。商品一覧: title（カテゴリーの名前か「すべての商品」）/ image（カテゴリーの画像、0113）/ content（カテゴリーの説明、0113）/ products（商品の並びとページ送り）/ filters（タグで絞る。カテゴリーで絞ったまま）/ subcategories（子カテゴリー。すべての一覧なら上の段のカテゴリー）/ breadcrumb（パンくず）。法務のページ: title（ページの名前）/ legal（文面。ショップの設定のまま）。ブログの一覧（0114）: title（ブログの名前。タグで絞ったら「#タグ の記事」）/ content（ブログの説明）/ articles（記事の並びとページ送り）/ filters（タグで絞る）/ breadcrumb（パンくず）。合わない部品は何も出さない。ひな形でないふつうのページ（お店のトップのひな形を含む）では、title・image・excerpt がそのページ自身のタイトル・アイキャッチ・SEO の説明になる |
 
 - 見たままの編集のブロックの一覧（「お店」「デザイン」）から入れられ、右の設定の欄で選びます。
