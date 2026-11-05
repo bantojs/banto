@@ -136,4 +136,32 @@ describe.skipIf(!dbAvailable)("ページと記事の AI 用 API（0083）", () =
     expect(look["fields"]).toEqual({ author: "amada" });
     expect(await expectDbError(() => api("api_article_save", [tok, "news", JSON.stringify({ handle: "look-2", title: "x", fields: { author: "nobody" } })]))).toMatch(/article_field_invalid/);
   });
+
+  it("ひな形の割り当て（0119）: URL の名前で読み書き、送った鍵だけ変える。よそのショップのものは指せない。画像の記録はこのショップの置き場だけ", async () => {
+    const tok = await issue(writer, f.shopId, ["content:read", "content:write"]);
+    const read = await issue(writer, f.shopId, ["content:read"]);
+    await api("api_page_save", [tok, JSON.stringify({ handle: "tpl-article", title: "記事のひな形", body: "::: current part=content" })]);
+    await api("api_page_save", [tok, JSON.stringify({ handle: "tpl-product", title: "商品のひな形", body: "::: current part=buy" })]);
+    await api("api_page_save", [tok, JSON.stringify({ handle: "tpl-top", title: "トップ", body: "ようこそ" })]);
+    await getPool().query("insert into categories (shop_id, slug, name) values ($1, 'tops', 'トップス')", [f.shopId]);
+    let l = await api<J>("api_page_layouts_set", [tok, JSON.stringify({ home: "tpl-top", product: "tpl-product", articles: { news: "tpl-article" }, product_categories: { tops: "tpl-product" } })]);
+    expect(l).toEqual({ home: "tpl-top", product: "tpl-product", articles: { news: "tpl-article" }, product_categories: { tops: "tpl-product" } });
+    // 送った鍵だけ変える・null で外す
+    l = await api<J>("api_page_layouts_set", [tok, JSON.stringify({ home: null, articles: { staff: "tpl-article" } })]);
+    expect(l).toEqual({ product: "tpl-product", articles: { news: "tpl-article", staff: "tpl-article" }, product_categories: { tops: "tpl-product" } });
+    expect(await api<J>("api_page_layouts_get", [read])).toEqual(l);
+    // 管理画面と同じ形で保存されている（id）
+    const raw = (await getPool().query<{ l: J }>("select settings->'page_layouts' as l from shops where id = $1", [f.shopId])).rows[0]!.l;
+    expect(String(raw["product"])).toMatch(/^[0-9a-f-]{36}$/);
+    for (const bad of [{ home: "nope" }, { articles: { nope: "tpl-top" } }, { product_categories: { nope: "tpl-top" } }, { legal_pages: { cart: "tpl-top" } }, { cart: "tpl-top" }])
+      expect(await expectDbError(() => api("api_page_layouts_set", [tok, JSON.stringify(bad)]))).toMatch(/invalid_page_layouts/);
+    await getPool().query("insert into pages (shop_id, handle, title) values ($1, 'theirs', 'よそ')", [other.shopId]);
+    expect(await expectDbError(() => api("api_page_layouts_set", [tok, JSON.stringify({ home: "theirs" })]))).toMatch(/invalid_page_layouts/);
+    expect(await expectDbError(() => api("api_page_layouts_set", [read, JSON.stringify({ home: "tpl-top" })]))).toMatch(/unauthorized|scope|forbidden/);
+    // 画像の記録
+    const m = await api<J>("api_page_media_add", [tok, `pages/${f.shopId}/abc123.webp`, `/media/pages/${f.shopId}/abc123.webp`]);
+    expect(m["url"]).toBe(`/media/pages/${f.shopId}/abc123.webp`);
+    expect(await expectDbError(() => api("api_page_media_add", [tok, `pages/${other.shopId}/x.webp`, "/media/x.webp"]))).toMatch(/invalid_storage_key/);
+    expect(await expectDbError(() => api("api_page_media_add", [read, `pages/${f.shopId}/y.webp`, "/media/y.webp"]))).toMatch(/unauthorized|scope|forbidden/);
+  });
 });
