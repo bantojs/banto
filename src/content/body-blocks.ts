@@ -27,11 +27,12 @@ export function defaultAppHtml(b: AppBlockData | null, productUrl: string): stri
 }
 import type { CategoryRow } from "../db/types";
 import type { PublicShop, StorefrontData } from "../storefront/data";
-import { PRODUCT_TAG, appBlocksOf, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, productBlocksOf, type AppBlock, type ArticlesBlock, type ProductBlock } from "../pages/blocks";
+import { PRODUCT_BLOCK_SLUGS_MAX, PRODUCT_TAG, appBlocksOf, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, productBlocksOf, type AppBlock, type ArticlesBlock, type ProductBlock } from "../pages/blocks";
 import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
 import { BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
+import { articleFieldDefs, articleFieldsReady, fieldContains, fieldValues } from "../blog/fields";
 import { moduleEnabled } from "../modules/registry";
 import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
@@ -58,7 +59,15 @@ export interface BodyBlocksDeps {
    * 描いている商品（商品詳細のひな形、0102）。::: articles tag=@product がこの商品の URL の名前で絞り、
    * ::: products related=@product が同じ主カテゴリー・同じタグの商品を並べる（この商品は除く）
    */
-  current?: { product?: string; productId?: string; categoryId?: string | null; tags?: readonly string[] };
+  current?: {
+    product?: string;
+    productId?: string;
+    categoryId?: string | null;
+    tags?: readonly string[];
+    /** 描いている記事（0117）: ::: articles field:<key>=@article の値（URL の名前）と、::: products from=@field:<key> の材料 */
+    article?: string;
+    articleFields?: Record<string, unknown>;
+  };
 }
 
 type ProductItems = NonNullable<Awaited<ReturnType<StorefrontData["productPage"]>>>["items"];
@@ -103,7 +112,8 @@ async function relatedProducts(d: BodyBlocksDeps, block: ProductBlock, categorie
 }
 
 export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: CategoryRow[]): Promise<BodyBlocks> {
-  const pblocks = productBlocksOf(body);
+  // 記事の項目の商品（from=@field:<key>、0117）は、描いている記事のその項目の URL の名前を選んだ商品として扱う
+  const pblocks = productBlocksOf(body).map((b) => (b.from ? { ...b, slugs: fieldValues(d.current?.articleFields?.[b.from]).slice(0, PRODUCT_BLOCK_SLUGS_MAX) } : b));
   // 選んだ商品（slugs=）は、ページの全部のブロックの分をまとめて 1 回で引く（0112）
   const picked = pblocks.some((b) => b.slugs?.length)
     ? d.sf.productsBySlugs(d.shop, pblocks.flatMap((b) => b.slugs ?? [])).catch((e: unknown) => (console.error("[banto] page products (slugs):", e), [] as ProductItems))
@@ -115,6 +125,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
           const bySlug = new Map((await picked!).map((x) => [x.product.slug, x]));
           return { block, items: block.slugs.map((x) => bySlug.get(x)).filter((x): x is ProductItems[number] => x !== undefined) };
         }
+        if (block.from) return { block, items: [] as ProductItems };
         if (block.related) return { block, items: await relatedProducts(d, block, categories) };
         try {
           const r = await d.sf.productPage(d.shop, { ...(block.category ? { category: block.category } : {}), ...(block.tag ? { tag: block.tag } : {}), sort: block.sort, limit: block.limit }, categories);
@@ -133,7 +144,15 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
           if (block.tag === PRODUCT_TAG && !tag) return null;
           const blog = await d.sf.blogByHandle(d.shop, block.blog);
           if (!blog) return null;
-          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort) });
+          // 項目で絞る（0117）: @product は描いている商品、@article は描いている記事の URL の名前。定義に無い項目・値の無いときは何も並べない
+          let fields: Record<string, unknown> | null = null;
+          if (block.field) {
+            const def = articleFieldDefs(blog).find((f) => f.key === block.field!.key);
+            const v = block.field.value === PRODUCT_TAG ? (d.current?.product ?? "") : block.field.value === "@article" ? (d.current?.article ?? "") : block.field.value;
+            fields = def ? fieldContains(def, v) : null;
+            if (!fields) return { block: { ...block, tag }, blog, items: [] as ArticleRow[] };
+          }
+          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort), withFields: articleFieldsReady(blog), ...(fields ? { fields } : {}) });
           // テーマ（snippets/page-articles）には置き換えた後のタグを渡す（「もっと見る」を /blogs/<ブログ>?tag=<商品> にできる）
           return { block: { ...block, tag }, blog, items };
         } catch (e) {

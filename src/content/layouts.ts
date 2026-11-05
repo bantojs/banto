@@ -167,7 +167,9 @@ export function pageParts(o: { mediaBase: string; page: { title: string; image_u
 /** 部品の印を入れる（無い部品・トップのひな形・ふつうのページでは空） */
 export function fillCurrent(html: string, parts: Record<string, string> = {}): string {
   if (!html.includes("<!--banto:current:")) return html;
-  return CURRENT_PARTS.reduce((h, p) => h.split(currentMarker(p)).join(parts[p] ?? ""), html);
+  const out = CURRENT_PARTS.reduce((h, p) => h.split(currentMarker(p)).join(parts[p] ?? ""), html);
+  // 記事の項目（0117）: <!--banto:current:field:<key>-->
+  return out.includes("<!--banto:current:field:") ? out.replace(/<!--banto:current:(field:[a-z][a-z0-9_]{0,39})-->/g, (_, k: string) => parts[k] ?? "") : out;
 }
 
 /** 商品の部品の最小の CSS（Liquid のテーマで商品詳細のひな形を描くとき。既定のテーマは自分の CSS を持つ） */

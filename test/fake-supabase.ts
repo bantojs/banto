@@ -94,6 +94,13 @@ function firstRow(body: unknown): Record<string, unknown> {
   return row && typeof row === "object" ? (row as Record<string, unknown>) : {};
 }
 
+/** jsonb の @> の小さな写し（オブジェクトは鍵ごと、配列は要素を含むか、ほかは等しいか） */
+function jsonContainsFake(a: unknown, b: unknown): boolean {
+  if (Array.isArray(b)) return Array.isArray(a) && b.every((x) => a.some((y) => jsonContainsFake(y, x)));
+  if (b && typeof b === "object") return Boolean(a) && typeof a === "object" && !Array.isArray(a) && Object.entries(b as Record<string, unknown>).every(([k, v]) => jsonContainsFake((a as Record<string, unknown>)[k], v));
+  return a === b;
+}
+
 export class FakeSupabase {
   /** 偽の認証アプリが出す 6 桁（これだけを正しいとする） */
   static readonly TOTP_CODE = "123456";
@@ -412,13 +419,58 @@ export class FakeSupabase {
   addArticle(shopId: string, blogId: string, fields: Partial<Row> = {}): Row & { id: string } {
     const row = { id: fakeUuid(++this.seq), shop_id: shopId, blog_id: blogId, handle: "hello", title: "Hello", body: "", excerpt: null, tags: [] as string[], image_url: null, author: null, seo_title: null, seo_description: null, template_suffix: null, published: true, published_at: this.now(), deleted_at: null, created_at: this.now(), updated_at: this.now(), ...fields };
     this.articlePosition(row);
+    if (this.appliedMigrations.includes("0117_article_fields")) {
+      const r = row as Row;
+      r["fields"] ??= {};
+      const bad = this.articleFieldsNorm(r);
+      if (bad) throw new Error(bad);
+    }
     this.tables.articles.push(row);
     return row;
   }
 
   /** 0116: ブログの並び順とフィードの既定（当たる前の DB には列が無い） */
   private blogOrderDefaults(): Row {
-    return this.appliedMigrations.includes("0116_blog_order") ? { article_order: "new", feed: true } : {};
+    return {
+      ...(this.appliedMigrations.includes("0116_blog_order") ? { article_order: "new", feed: true } : {}),
+      ...(this.appliedMigrations.includes("0117_article_fields") ? { article_fields: [] } : {}),
+    };
+  }
+
+  /** 0117: 記事の項目を定義に合わせて整える（本物は test/db/article-fields.test.ts。ここは形と指す先の小さな写し） */
+  articleFieldsNorm(row: Row): string | null {
+    if (!this.appliedMigrations.includes("0117_article_fields")) return null;
+    const blog = this.tables.blogs.find((b) => b["id"] === row["blog_id"]);
+    const defs = (Array.isArray(blog?.["article_fields"]) ? blog!["article_fields"] : []) as Record<string, unknown>[];
+    const input = (row["fields"] ?? {}) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const d of defs) {
+      const key = String(d["key"]);
+      let v = input[key];
+      if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) continue;
+      const type = d["type"];
+      if (type === "number") {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return `article_field_invalid:${key}`;
+        out[key] = n;
+      } else if (type === "select") {
+        if (!((d["options"] as string[]) ?? []).includes(String(v))) return `article_field_invalid:${key}`;
+        out[key] = String(v);
+      } else if (type === "store") {
+        if (!this.tables.shop_stores.some((ss) => ss["shop_id"] === row["shop_id"] && ss["store_id"] === v)) return `article_field_invalid:${key}`;
+        out[key] = String(v);
+      } else if (type === "product" || type === "article") {
+        const list = [...new Set((Array.isArray(v) ? v : [v]).map(String))];
+        if (list.length > (d["multiple"] ? 24 : 1)) return `article_field_invalid:${key}`;
+        for (const x of list) {
+          const ok = type === "product" ? this.tables.products.some((p) => p["shop_id"] === row["shop_id"] && p["slug"] === x) : this.tables.articles.some((a) => a["blog_id"] === d["blog"] && a["handle"] === x && !a["deleted_at"]);
+          if (!ok) return `article_field_invalid:${key}`;
+        }
+        out[key] = d["multiple"] ? list : list[0];
+      } else out[key] = String(v).trim();
+    }
+    row["fields"] = out;
+    return null;
   }
 
   /** 0116: 新しい記事はそのブログの最後に（本物は test/db/blog-order.test.ts） */
@@ -773,18 +825,21 @@ export class FakeSupabase {
     const filters: [string, string][] = [];
     const inFilters: [string, Set<string>][] = [];
     const containsFilters: [string, string[]][] = [];
+    // jsonb の @>（DbClient の jsonContains、記事の項目 0117）
+    const jsonFilters: [string, Record<string, unknown>][] = [];
     for (const [k, v] of u.searchParams) {
       if (["select", "order", "limit", "offset"].includes(k)) continue;
       if (v.startsWith("eq.")) filters.push([k, v.slice(3)]);
       else if (v === "is.null") filters.push([k, "\u0000null"]);
       else if (v.startsWith("in.(") && v.endsWith(")")) inFilters.push([k, new Set(parseInList(v.slice(4, -1)))]);
+      else if (v.startsWith("cs.{\"") && /^cs\.\{"[^"]*":/.test(v)) jsonFilters.push([k, JSON.parse(v.slice(3)) as Record<string, unknown>]);
       else if (v.startsWith("cs.{") && v.endsWith("}")) containsFilters.push([k, parseInList(v.slice(4, -1))]);
     }
     // 条件の木（DbClient の where → and=(…)）
     const tree = u.searchParams.get("and");
     const logic = tree ? parseLogic(`and${tree}`) : null;
     const matches = (row: Row) =>
-      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && containsFilters.every(([k, vs]) => vs.every((x) => ((row[k] as unknown[] | undefined) ?? []).includes(x))) && (!logic || evalLogic(logic, row));
+      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && containsFilters.every(([k, vs]) => vs.every((x) => ((row[k] as unknown[] | undefined) ?? []).includes(x))) && jsonFilters.every(([k, o]) => jsonContainsFake((row[k] ?? {}) as Record<string, unknown>, o)) && (!logic || evalLogic(logic, row));
 
     if (path.startsWith("rpc/")) {
       const fn = path.slice(4);
@@ -899,6 +954,11 @@ export class FakeSupabase {
           if (!this.tables.blogs.some((b) => b["id"] === row["blog_id"] && b["shop_id"] === row["shop_id"])) return json({ code: "23514", message: "article_blog_mismatch" }, 400);
           this.articleShape(row);
           this.articlePosition(row);
+          if (this.appliedMigrations.includes("0117_article_fields")) {
+            row["fields"] ??= {};
+            const bad = this.articleFieldsNorm(row);
+            if (bad) return json({ code: "22023", message: bad }, 400);
+          }
         }
         if (table === "blogs") {
           Object.assign(row, { description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...this.blogOrderDefaults(), ...r });
@@ -934,6 +994,10 @@ export class FakeSupabase {
         }
         // 0080: タイトルか本文が変わったら前の版を残す（20 まで）
         if (table === "articles") this.articleShape(next);
+        if (table === "articles" && "fields" in values) {
+          const bad = this.articleFieldsNorm(next);
+          if (bad) return json({ code: "22023", message: bad }, 400);
+        }
         if (table === "articles" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
           this.tables.article_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], article_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
         }
@@ -1469,7 +1533,9 @@ export class FakeSupabase {
       const newer = (x: Row, y: Row) => String(y["published_at"]).localeCompare(String(x["published_at"])) || String(y["id"]).localeCompare(String(x["id"]));
       const cmp = (x: Row, y: Row) =>
         (sort === "manual" ? Number(x["position"] ?? 0) - Number(y["position"] ?? 0) : 0) || (sort === "title" ? (String(x["title"]) < String(y["title"]) ? -1 : String(x["title"]) > String(y["title"]) ? 1 : 0) : 0) || newer(x, y);
-      const list = arts.filter((a) => !tag || ((a["tags"] ?? []) as string[]).includes(tag)).sort(cmp);
+      if ("p_fields" in args && !this.appliedMigrations.includes("0117_article_fields")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
+      const pf = args["p_fields"] as Record<string, unknown> | null | undefined;
+      const list = arts.filter((a) => (!tag || ((a["tags"] ?? []) as string[]).includes(tag)) && (!pf || jsonContainsFake(a["fields"] ?? {}, pf))).sort(cmp);
       return json(list.slice(Number(args["p_offset"] ?? 0), Number(args["p_offset"] ?? 0) + Number(args["p_limit"] ?? 12) + 1));
     }
     if (fn === "product_public_member_prices") {

@@ -8,6 +8,7 @@
  * テーマが壊れている・上限を超えた・その種類のテンプレートが無いときも既定のテーマで描く（お店を止めない）。
  */
 import { productFields } from "../../products/fields";
+import { articleFieldDefs, fieldValues } from "../../blog/fields";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
 import type { Hono } from "hono";
@@ -700,6 +701,9 @@ function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: 
     image,
     tags: a.tags,
     author: a.author ?? "",
+    // 記事の項目（0117）: 値は DB が整えた形のまま（商品・記事は URL の名前、店舗は id）。field_list は定義の順に表示名つき
+    fields: a.fields ?? {},
+    field_list: articleFieldDefs(blog).filter((f) => fieldValues((a.fields ?? {})[f.key]).length > 0).map((f) => ({ key: f.key, label: f.label, type: f.type, value: (a.fields ?? {})[f.key] })),
     published_at: a.published_at ?? a.updated_at,
     created_at: a.published_at ?? a.updated_at,
     updated_at: a.updated_at,

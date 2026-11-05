@@ -16,9 +16,10 @@ import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
-import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
+import { ContentForm, type EditorKind, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
 import { ARTICLE_ORDERS, BLOG_MODULE, BLOG_ORDER_MIGRATION, articleHandleOk, blogHandleOk, isArticleOrder, parseTags, type ArticleRow, type BlogRow } from "../../blog";
 import { migrated } from "../../db/migration-state";
+import { articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
 
 /**
  * 同梱モジュール「ブログ」の管理画面（0081_mod_blog、docs/blog.md）。扱えるのはページと同じ content の項目を持つ人（RLS が正）。
@@ -434,7 +435,10 @@ blogAdmin.post("/:blogId/positions", requireOwner, async (c: AdminContext) => {
 
 // ---------- ブログの設定 ----------
 
-async function blogSettings(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: { values?: BlogValues; error?: MessageKey | null; status?: 200 | 400 | 409 } = {}) {
+async function blogSettings(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: { values?: BlogValues; error?: MessageKey | null; status?: 200 | 400 | 409; fieldsText?: string; fieldsError?: string | null } = {}) {
+  // 記事の項目（0117）: 定義の欄。記事を指す項目のために、このショップのブログの URL の名前を引く
+  const fieldsOn = articleFieldsReady(blog);
+  const blogs = fieldsOn ? await owner(c).db.from<{ id: string; handle: string }>("blogs").select("id,handle", { eq: { shop_id: shop.id }, order: "sort_order.asc", limit: 100 }) : [];
   return layout(
     c,
     shop,
@@ -450,6 +454,22 @@ async function blogSettings(c: AdminContext, shop: ShopRow, blog: BlogRow, opts:
           <button type="submit">{t("pages.save")}</button>
         </p>
       </form>
+      {fieldsOn ? (
+        <form method="post" action={`${base(shop.id)}/${blog.id}/fields`} class="card" id="article-fields">
+          <h2>{t("blog.fields")}</h2>
+          {c.req.query("flash") === "fields_saved" ? <p class="notice">{t("shop.saved")}</p> : null}
+          {opts.fieldsError ? <p class="error">{tf("blog.fields_error", { line: opts.fieldsError })}</p> : null}
+          <p class="muted">{t("blog.fields_rows_help")}</p>
+          <textarea name="rows" rows={8} style="width:100%;font-family:ui-monospace,monospace" aria-label={t("blog.fields")}>
+            {opts.fieldsText ?? formatArticleFieldRows(articleFieldDefs(blog), blogs)}
+          </textarea>
+          <p>
+            <button type="submit" class="secondary">
+              {t("pages.save")}
+            </button>
+          </p>
+        </form>
+      ) : null}
       <section class="card danger-zone">
         <h2>{t("blog.delete_blog")}</h2>
         <p class="muted">{t("blog.delete_blog_help")}</p>
@@ -484,6 +504,25 @@ blogAdmin.post("/:blogId/settings", requireOwner, async (c: AdminContext) => {
   return c.redirect(`${base(shop.id)}/${blog.id}/settings?flash=saved`);
 });
 
+/** 記事の項目の定義を保存する（0117）。形と指すブログは DB のトリガーも確かめる */
+blogAdmin.post("/:blogId/fields", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  const blog = shop ? await loadBlog(c, shop) : null;
+  if (!shop || !blog) return c.notFound();
+  if (!articleFieldsReady(blog)) return c.redirect(`${base(shop.id)}/${blog.id}/settings`);
+  const text = (await formFields(c))["rows"] ?? "";
+  const blogs = await owner(c).db.from<{ id: string; handle: string }>("blogs").select("id,handle", { eq: { shop_id: shop.id }, limit: 100 });
+  const { defs, error } = parseArticleFieldRows(text, blogs);
+  if (error !== null) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: error.slice(0, 100), status: 400 });
+  try {
+    await owner(c).db.from("blogs").update({ article_fields: defs }, { id: blog.id, shop_id: shop.id });
+  } catch (e) {
+    if (e instanceof DbError) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: e.message.replace(/^.*article_fields_invalid:?/, "") || "—", status: 400 });
+    throw e;
+  }
+  return c.redirect(`${base(shop.id)}/${blog.id}/settings?flash=fields_saved#article-fields`);
+});
+
 /** ブログは blog_delete で消す。記事の物理削除（ゴミ箱の中の「完全に削除」）は Cron の purge に任せる（0089） */
 
 blogAdmin.post("/:blogId/delete", requireOwner, async (c: AdminContext) => {
@@ -501,7 +540,7 @@ blogAdmin.post("/:blogId/delete", requireOwner, async (c: AdminContext) => {
 
 // ---------- 記事 ----------
 
-type ArticleValues = ContentValues & Pick<ArticleRow, "tags" | "excerpt" | "author">;
+type ArticleValues = ContentValues & Pick<ArticleRow, "tags" | "excerpt" | "author" | "fields">;
 
 const EMPTY: ArticleValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, published: false, published_at: null, image_url: null, tags: [], excerpt: null, author: null };
 
@@ -512,7 +551,7 @@ function randomArticleHandle(): string {
 }
 
 /** フォームの値 → 行（ページの pageValues と同じ規則に、タグ・抜粋・書いた人） */
-function articleValues(f: Record<string, string>, mediaBase: string): { values: ArticleValues; error: MessageKey | null; autoHandle: boolean } {
+function articleValues(f: Record<string, string>, mediaBase: string, defs: ArticleFieldDef[] | null = null): { values: ArticleValues; error: MessageKey | null; autoHandle: boolean } {
   const title = (f.title ?? "").trim();
   const typed = (f.handle ?? "").trim().toLowerCase();
   const autoHandle = typed === "";
@@ -530,6 +569,8 @@ function articleValues(f: Record<string, string>, mediaBase: string): { values: 
     tags: parseTags(f.tags ?? ""),
     excerpt: opt(f.excerpt, 1000),
     author: opt(f.author, 100),
+    // 記事の項目（0117。当たっている DB だけ。形と指す先は DB が確かめる）
+    ...(defs ? { fields: fieldsFromForm(defs, f) } : {}),
     ...contentAudienceValues(f),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
@@ -546,6 +587,7 @@ function articleValues(f: Record<string, string>, mediaBase: string): { values: 
 }
 
 function articleDbError(e: DbError): MessageKey {
+  if (/article_field_invalid/.test(e.message)) return "blog.error_field";
   if (/audience_display_only/.test(e.message)) return "product.audience_display_only";
   if (planLimitOf(e)) return "plan.limit_articles";
   if (e.code === "23505") return "pages.error_handle_taken";
@@ -568,6 +610,17 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
   const live = contentState(opts.values) === "published";
   const viewUrl = opts.articleId && live && shop.published ? `${shopHome(publicBaseUrl(c), shop)}/blogs/${blog.handle}/${opts.values.handle}` : null;
   const v = opts.values;
+  // 記事の項目（0117）: 定義・今の値・選べる店舗・指すブログの記事（選ぶ欄のため）
+  let fields: NonNullable<NonNullable<EditorKind["article"]>["fields"]> | undefined;
+  if (articleFieldsReady(blog)) {
+    const defs = articleFieldDefs(blog);
+    const stores = defs.some((d) => d.type === "store") ? ((await db.rpc<{ id: string; name: string }[]>("shop_store_list", { p_shop_id: shop.id }).catch(() => [])) ?? []).map((s) => ({ id: s.id, name: s.name })) : [];
+    const articles: Record<string, { handle: string; title: string }[]> = {};
+    for (const d of defs.filter((x) => x.type === "article" && x.blog)) {
+      articles[d.key] = await db.from<{ handle: string; title: string }>("articles").select("handle,title", { eq: { blog_id: d.blog!, shop_id: shop.id }, order: "title.asc", limit: 500 }).catch(() => []);
+    }
+    fields = { defs, values: v.fields ?? {}, stores, articles };
+  }
   return layout(
     c,
     shop,
@@ -578,7 +631,7 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
       <ContentForm
-        kind={{ base: base(shop.id), back: `${base(shop.id)}/${blog.id}`, urlPrefix: `/blogs/${blog.handle}/`, nav: false, article: { tags: v.tags.join(", "), excerpt: v.excerpt ?? "", author: v.author ?? "" } }}
+        kind={{ base: base(shop.id), back: `${base(shop.id)}/${blog.id}`, urlPrefix: `/blogs/${blog.handle}/`, nav: false, article: { tags: v.tags.join(", "), excerpt: v.excerpt ?? "", author: v.author ?? "", ...(fields ? { fields } : {}) } }}
         selfUrl={opts.articleId ? `${at}/${opts.articleId}` : `${at}/new`}
         revisions={revisions}
         shop={shop}
@@ -636,7 +689,7 @@ async function saveArticle(c: AdminContext, articleId: string | null) {
   const blog = shop ? await loadBlog(c, shop) : null;
   if (!shop || !blog) return c.notFound();
   const f = await formFields(c);
-  const { values, error, autoHandle } = articleValues(f, mediaBaseUrl(c));
+  const { values, error, autoHandle } = articleValues(f, mediaBaseUrl(c), articleFieldsReady(blog) ? articleFieldDefs(blog) : null);
   const one = articleId ? { articleId } : {};
   if (f.action === "preview") return previewArticle(c, shop, blog, values, error);
   const shown = (v: ArticleValues) => ({ ...v, published: f.published === "on" });

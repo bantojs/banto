@@ -29,6 +29,8 @@ export interface BlogRow {
   article_order?: ArticleOrder;
   /** Atom のフィードを出すか（0116。無ければ出す） */
   feed?: boolean;
+  /** 記事の独自の項目の定義（0117。src/blog/fields.ts） */
+  article_fields?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -78,6 +80,8 @@ export interface ArticleRow {
   published_at: string | null;
   /** 手で並べるときの順（0116） */
   position?: number;
+  /** 独自の項目の値（0117。src/blog/fields.ts） */
+  fields?: Record<string, unknown>;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;

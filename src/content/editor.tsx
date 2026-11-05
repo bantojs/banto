@@ -37,6 +37,7 @@ import { migrated } from "../db/migration-state";
 import { escapeHtml } from "../mail/html";
 import { productFields } from "../products/fields";
 import { ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
+import { fieldValues, type ArticleFieldDef } from "../blog/fields";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
 /** レイアウトのブロックの値・既定・文言（PAGE_BLOCKS_SCRIPT が data-layout の JSON で受け取る） */
@@ -514,7 +515,13 @@ export interface EditorKind {
   /** 編集の画面の左上の「戻る」の行き先（無ければ base） */
   back?: string;
   /** 記事の欄（タグ・抜粋・書いた人） */
-  article?: { tags: string; excerpt: string; author: string };
+  article?: {
+    tags: string;
+    excerpt: string;
+    author: string;
+    /** 記事の項目（0117）: そのブログの定義と今の値・選べる店舗・指すブログの記事 */
+    fields?: { defs: ArticleFieldDef[]; values: Record<string, unknown>; stores: { id: string; name: string }[]; articles: Record<string, { handle: string; title: string }[]> };
+  };
 }
 
 /** 編集の画面で扱う値（ページと記事の共通） */
@@ -538,6 +545,57 @@ export interface ContentValues {
 /** 会員限定の欄の値（欄の無い送信では列に触れない） */
 export function contentAudienceValues(f: Record<string, string>): Pick<ContentValues, "audience_id" | "audience_hide"> {
   return f.audience_present === "1" ? { audience_id: f.audience_id || null, audience_hide: f.audience_hide === "on" } : {};
+}
+
+/** 記事の項目の入力欄（0117。形と指す先は DB が確かめる）。商品・記事は URL の名前（いくつも選べるものはカンマ区切り） */
+function ArticleFieldInputs(props: { f: NonNullable<NonNullable<EditorKind["article"]>["fields"]> }) {
+  const { defs, values, stores, articles } = props.f;
+  if (defs.length === 0) return null;
+  const val = (k: string) => fieldValues(values[k]).join(", ");
+  return (
+    <fieldset class="pe-fields">
+      <legend>{t("blog.fields")}</legend>
+      {defs.map((f) => {
+        const id = `field_${f.key}`;
+        const label = (
+          <label for={id}>
+            {f.label}
+            {f.multiple ? <span class="muted"> {t("blog.fields_multiple")}</span> : null}
+          </label>
+        );
+        if (f.type === "select" || f.type === "store" || (f.type === "article" && !f.multiple)) {
+          const opts: [string, string][] = f.type === "select" ? (f.options ?? []).map((o) => [o, o]) : f.type === "store" ? stores.map((s) => [s.id, s.name]) : (articles[f.key] ?? []).map((a) => [a.handle, a.title]);
+          return (
+            <>
+              {label}
+              <select id={id} name={id}>
+                <option value="">—</option>
+                {opts.map(([v, l]) => (
+                  <option value={v} selected={val(f.key) === v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </>
+          );
+        }
+        return (
+          <>
+            {label}
+            <input id={id} name={id} value={val(f.key)} type={f.type === "number" ? "number" : "text"} step={f.type === "number" ? "any" : undefined} maxlength={f.type === "text" ? 500 : 1600} placeholder={f.type === "product" ? "tee, coat" : f.type === "article" ? "amada, kato" : undefined} list={f.type === "article" ? `${id}_list` : undefined} />
+            {f.type === "article" ? (
+              <datalist id={`${id}_list`}>
+                {(articles[f.key] ?? []).map((a) => (
+                  <option value={a.handle}>{a.title}</option>
+                ))}
+              </datalist>
+            ) : null}
+          </>
+        );
+      })}
+      <p class="muted">{t("blog.fields_help")}</p>
+    </fieldset>
+  );
 }
 
 export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: string; selfUrl: string; values: ContentValues; visual: string; categories: Pick<CategoryRow, "slug" | "name">[]; tags?: { tag: string; count: number }[]; extras?: EditorExtras; pageId?: string; viewUrl?: string | null; error?: MessageKey | null; image?: string | null; revisions: RevisionRow[] }) {
@@ -840,6 +898,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
                   </textarea>
                   <label for="author">{t("blog.author")}</label>
                   <input id="author" name="author" value={props.kind.article.author} maxlength={100} />
+                  {props.kind.article.fields ? <ArticleFieldInputs f={props.kind.article.fields} /> : null}
                 </>
               ) : null}
             </section>
@@ -941,6 +1000,9 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             <input type="checkbox" name="related" value="1" /> {t("pages.products_related")}
           </label>
           <p class="muted">{t("pages.products_related_help")}</p>
+          <label for="bp-from">{t("pages.products_from")}</label>
+          <input id="bp-from" name="from" maxlength={40} pattern="[a-z][a-z0-9_]{0,39}" placeholder="items" autocomplete="off" />
+          <p class="muted">{t("pages.products_from_help")}</p>
           <label for="bp-category">{t("pages.products_category")}</label>
           <select id="bp-category" name="category">
             <option value="">{t("pages.products_all")}</option>
@@ -1058,6 +1120,9 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             <label for="ba-tag">{t("pages.articles_tag")}</label>
             <input id="ba-tag" name="tag" maxlength={50} />
             <p class="muted">{t("pages.articles_tag_help")}</p>
+            <label for="ba-field">{t("pages.articles_field")}</label>
+            <input id="ba-field" name="field" maxlength={141} placeholder="author=@article" autocomplete="off" />
+            <p class="muted">{t("pages.articles_field_help")}</p>
             <label for="ba-limit">{tf("pages.articles_limit", { max: ARTICLE_BLOCK_LIMIT_MAX })}</label>
             <input id="ba-limit" name="limit" type="number" min={1} max={ARTICLE_BLOCK_LIMIT_MAX} value={String(ARTICLE_BLOCK_LIMIT_DEFAULT)} style="width:6rem" />
             <label for="ba-layout">{t("pages.articles_layout")}</label>

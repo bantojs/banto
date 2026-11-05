@@ -129,6 +129,14 @@ export function pageEditorClient() {
   function productsLine(n: MdNode): string {
     const parts = ["::: products"];
     // 選んだ商品（0112）: 書いた順に並べる。絞り込み・数・並び順は持たない
+    // 記事の項目の商品（0117）: from=@field:<key>
+    const from = attr(n, "data-from");
+    if (/^[a-z][a-z0-9_]{0,39}$/.test(from)) {
+      parts.push(`from=@field:${from}`, `layout=${attr(n, "data-layout") === "scroll" ? "scroll" : "grid"}`);
+      const st1 = styleName(attr(n, "data-style"));
+      if (st1) parts.push(`style=${st1}`);
+      return parts.join(" ");
+    }
     const slugs = attr(n, "data-slugs").split(",").map((x) => x.trim()).filter((x) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(x)).slice(0, 24);
     if (slugs.length) {
       parts.push(`slugs=${slugs.join(",")}`, `layout=${attr(n, "data-layout") === "scroll" ? "scroll" : "grid"}`);
@@ -165,6 +173,9 @@ export function pageEditorClient() {
     const parts = ["::: articles", `blog=${blog}`];
     const tag = attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
     if (tag) parts.push(/\s/.test(tag) ? `tag="${tag}"` : `tag=${tag}`);
+    // 項目で絞る（0117）: field:<key>=<値>
+    const fm = /^([a-z][a-z0-9_]{0,39})=(.{1,100})$/.exec(attr(n, "data-field").replace(/["\n\r]/g, "").trim());
+    if (fm) parts.push(/\s/.test(fm[2]!) ? `field:${fm[1]}="${fm[2]}"` : `field:${fm[1]}=${fm[2]}`);
     const limit = Number(attr(n, "data-limit"));
     parts.push(`limit=${Number.isInteger(limit) && limit >= 1 && limit <= 12 ? limit : 3}`);
     parts.push(`layout=${attr(n, "data-layout") === "list" ? "list" : "grid"}`);
