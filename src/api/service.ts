@@ -8,7 +8,7 @@ import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
 import { hashApiToken } from "./tokens";
 import { DIALOGS_API_MIGRATION } from "../modules/dialogs/dialogs";
-import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, productImageKey, sniffImage, thumbKey } from "../media/images";
+import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, imageUrl, productImageKey, randomKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
@@ -105,6 +105,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_cursor")) throw new ApiError("invalid", "invalid_cursor: pass after together with updated_since", 400);
     if (e.is("app_data_keys_full")) throw new ApiError("conflict", "app_data_keys_full: a plugin can keep up to 20 custom.v1 keys per product; delete some first", 409);
     if (e.is("app_handle_required")) throw new ApiError("conflict", "app_handle_required: give this plugin (hook endpoint) an app name in the admin screen first", 409);
+    // ひな形の割り当て（0119）
+    if (/invalid_page_layouts/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_page_layouts(:[a-z_]+)?).*$/s, "$1") + ": pages by URL name (or id), blogs by URL name, categories by slug; keys home, product, collection, legal, articles, blogs, product_categories, collection_categories, legal_pages (see docs/ai-access.md §9)", 400);
     // 記事の項目（0117・0118）: どの項目かを返す
     if (/article_fields?_invalid/.test(e.dbMessage)) {
       const key = /article_fields?_invalid:([a-z][a-z0-9_]*)/.exec(e.dbMessage)?.[1];
@@ -743,6 +745,45 @@ export class ApiService {
   }
   async blogsList() {
     return this.call<{ items: Record<string, unknown>[] }>("api_blogs_list", {});
+  }
+  /** ひな形の割り当て（0119）。ページは URL の名前、ブログは URL の名前、カテゴリーはスラッグの形 */
+  async pageLayoutsGet() {
+    return this.call<Record<string, unknown>>("api_page_layouts_get", {});
+  }
+  /** ひな形を割り当てる（0119）。送った鍵だけ変える。null か "" で外す。表（articles・blogs・…）は鍵ごとに混ぜる */
+  async pageLayoutsSet(changes: Record<string, unknown>) {
+    return this.call<Record<string, unknown>>("api_page_layouts_set", { p_changes: changes });
+  }
+  /**
+   * 画像を URL から取り込んでメディアライブラリに置く（0119。content:write）。商品の画像と同じ決まり（http(s)・社内のアドレス不可・5MB・画像だけ、
+   * src/media/fetch-image.ts）。返す url はページ・記事のアイキャッチ（image_url）と本文の画像に使える
+   */
+  async mediaImport(url: string): Promise<Record<string, unknown>> {
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "https:" && u.protocol !== "http:") throw new ImageFetchError("url must be http(s)");
+    } catch (e) {
+      throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "url must be an absolute http(s) URL", 400);
+    }
+    // 外に取りに行く前・置き場に書く前に、書き込みのスコープを確かめる
+    if (!(await this.call<boolean>("api_has_scope", { p_scope: "content:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
+    let image: Awaited<ReturnType<typeof fetchImage>>;
+    try {
+      image = await fetchImage(url, this.publicFetch);
+    } catch (e) {
+      if (e instanceof ImageFetchError) throw new ApiError("invalid", e.message, 400);
+      throw e;
+    }
+    const shop = await this.shopGetIdOnly();
+    const key = `pages/${shop}/${randomKey()}.${image.ext}`;
+    const base = (this.config.get("MEDIA_BASE_URL") || (this.config.get("PUBLIC_BASE_URL") ? `${this.config.get("PUBLIC_BASE_URL")!.replace(/\/+$/, "")}/media` : "/media")).replace(/\/+$/, "");
+    await this.storage.put(key, image.body, image.contentType);
+    try {
+      return await this.call<Record<string, unknown>>("api_page_media_add", { p_storage_key: key, p_url: imageUrl(base, key) });
+    } catch (e) {
+      await this.storage.delete(key).catch(() => undefined);
+      throw e;
+    }
   }
   /** ブログの設定を変える（0118。題・説明・メニュー・並び順・フィード・記事の項目の定義。送らなかった鍵は今のまま） */
   async blogUpdate(blog: string, values: Record<string, unknown>) {

@@ -273,11 +273,16 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   - 送らなかった項目は今のままです。`PATCH …/<id>` も同じです。
 - 記事の項目（0117）は記事の保存の `fields`（`{ "<キー>": 値 }`、商品・記事は URL の名前、店舗は id）。形と指す先はデータベースが確かめ、合わなければ 400 です。記事の JSON に `fields`、ブログの JSON に定義の `article_fields` が付きます。定義は管理画面のブログの設定か、`PATCH /api/v1/blogs/<ブログ>`（`content:write`、0118）の `article_fields` で変えます（記事を指す項目の `blog` は URL の名前か id）。
 - ブログの設定（`PATCH /api/v1/blogs/<ブログ>`、0118）: 題・説明・メニュー・並び・SEO・テンプレート・記事の並び順（`article_order`）・フィード（`feed`）・記事の項目の定義（`article_fields`）。送らなかった鍵は今のままで、知らない鍵は 400 です。
+- ひな形の割り当て（`GET` / `PATCH /api/v1/page-layouts`、0119、メンテナの決定 2026-11-05）: 管理画面の「ひな形」と同じ決まりです（固定ページをトップ・ブログごとの記事・ブログの一覧・商品詳細・商品一覧・法務のページのひな形にする、docs/pages.md）。読むのは `content:read`、変えるのは `content:write`、モジュール pages が要ります。
+  - 鍵は `home`・`product`・`collection`・`legal`（値はページ）と、表の `articles`・`blogs`（鍵はブログ）・`product_categories`・`collection_categories`（鍵はカテゴリー）・`legal_pages`（鍵は `legal` / `privacy` / `returns`）です。
+  - ページは URL の名前か id、ブログは URL の名前か id、カテゴリーはスラッグか id で書けます。返すときは名前（ページ・ブログ）とスラッグ（カテゴリー）です。
+  - 送った鍵だけ変わり、`null` か `""` で外します。表は中の鍵ごとに混ぜます（`{ "articles": { "staff": "staff-layout" } }` はほかのブログの割り当てを変えません）。知らない鍵・このショップに無い指す先は 400 `invalid_page_layouts` です。
+- 画像の取り込み（`POST /api/v1/media`、`{ "url": "https://…" }`、0119）: URL の画像を取り込んで、ページ・記事のメディアライブラリ（管理画面の編集の画面の「画像」）に足します。`content:write`、モジュール pages か blog が要ります。取り込みの決まりは商品の画像と同じです（http(s)・社内のアドレス不可・5MB・画像だけ、§7b）。返る `url` をアイキャッチ（`image_url`）や本文の画像に使います。サムネイルは作りません。
 - アイキャッチ（`image_url`）は、このショップの画像の置き場のものだけです（管理画面と同じ規則）。ほかのホストの `/media/…` はホストを外して保存し、外の画像は 400 `invalid_image_url` です。本文の中の外の画像は、描くときに捨てます。
 - **消すのはゴミ箱へ移すだけ**（30 日で消える。戻すのは管理画面）。ブログそのものを作る・消すのも管理画面だけです。
 - 値の誤りは `invalid_<項目>`（`invalid_handle`・`invalid_title`・`invalid_content_body` など）、`handle` の重なりは 409 `handle_taken` です。リビジョンは今までどおり保存のたびに残ります。
 - MCP: `pages_list`・`page_get`・`blogs_list`・`articles_list`・`article_get`（content:read）、`page_save`・`page_trash`・`article_save`・`article_trash`（content:write、`destructiveHint`）。
-- REST: `/api/v1/pages`・`/api/v1/pages/<id か handle>`・`/api/v1/blogs`・`/api/v1/blogs/<ブログ>/articles`・`/api/v1/blogs/<ブログ>/articles/<id か handle>`。
+- REST: `/api/v1/pages`・`/api/v1/pages/<id か handle>`・`/api/v1/page-layouts`・`/api/v1/media`・`/api/v1/blogs`・`/api/v1/blogs/<ブログ>/articles`・`/api/v1/blogs/<ブログ>/articles/<id か handle>`。
 - 公開中のページ・記事を連携サイトで出すだけなら、トークンの要らないヘッドレスの公開 API（docs/headless.md「ページ・ブログ」）を使います。
 
 ## 10. 外部プラグインの拡張データ（0084）

@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, MemoryStorage, appWith } from "./helpers";
+import { BASE, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers";
+
+afterEach(() => externalHosts.clear());
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { MCP_TOOLS } from "../src/mcp/tools";
 
@@ -13,7 +15,8 @@ function setup(modules: Record<string, boolean> = { pages: true, blog: true }) {
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "読みもの", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules } });
   sb.addBlog(shop.id, { handle: "news", title: "お知らせ" });
-  const app = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
+  const storage = new MemoryStorage(`${BASE}/media`);
+  const app = appWith(sb, {}, storage);
   const issue = async (scopes: string[]) => {
     const raw = generateApiToken();
     sb.tables.api_tokens.push({ id: `tok-${sb.tables.api_tokens.length + 1}`, shop_id: shop.id, owner_id: owner.id, name: "t", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes, expires_at: null, revoked_at: null, last_used_at: null, created_at: "" });
@@ -27,7 +30,7 @@ function setup(modules: Record<string, boolean> = { pages: true, blog: true }) {
     const res = await app.request(`${BASE}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) });
     return (await res.json()) as { result?: { content: { text: string }[]; isError?: boolean } };
   };
-  return { sb, shop, issue, rest, mcp };
+  return { sb, shop, storage, issue, rest, mcp };
 }
 
 describe("ページ・記事の AI 用 API（REST /api/v1・MCP）", () => {
@@ -68,6 +71,39 @@ describe("ページ・記事の AI 用 API（REST /api/v1・MCP）", () => {
     const moved = await rest(tok, "POST", "/pages", { handle: "b", title: "b", image_url: "https://evil.example/media/pages/x/a.webp" });
     expect(moved.json["image_url"]).toBe("/media/pages/x/a.webp");
     expect((await rest(tok, "POST", "/pages", { handle: "c", title: "c", image_url: `${BASE}/media/pages/x/c.webp` })).json["image_url"]).toBe(`${BASE}/media/pages/x/c.webp`);
+  });
+
+  it("画像の取り込み（0119）: URL から置き場へ → メディアライブラリ → アイキャッチに使える。外の悪い URL は 400、読むだけは 401", async () => {
+    const { rest, issue, storage, sb, shop } = setup();
+    const tok = await issue(["content:read", "content:write"]);
+    const png = tinyPng();
+    externalHosts.set("https://images.example/", (req) => (req.url.endsWith("page.html") ? new Response("<html>", { headers: { "content-type": "text/html" } }) : new Response(png, { headers: { "content-type": "image/png" } })));
+    const r = await rest(tok, "POST", "/media", { url: "https://images.example/a.png" });
+    expect(r.status).toBe(201);
+    const url = r.json["url"] as string;
+    expect(url).toMatch(new RegExp(`^${BASE}/media/pages/${shop.id}/[^/]+\\.png$`));
+    expect(storage.objects.size).toBe(1);
+    expect(sb.tables.page_media).toHaveLength(1);
+    expect((await rest(tok, "POST", "/pages", { handle: "with-image", title: "x", image_url: url })).json["image_url"]).toBe(url);
+    for (const bad of ["https://images.example/page.html", "http://127.0.0.1/x.png", "ftp://x/y.png", "not a url"]) {
+      const res = await rest(tok, "POST", "/media", { url: bad });
+      expect(`${bad} -> ${res.status}`).toBe(`${bad} -> 400`);
+    }
+    expect((await rest(tok, "POST", "/media", {})).status).toBe(400);
+    expect((await rest(await issue(["content:read"]), "POST", "/media", { url: "https://images.example/b.png" })).status).toBe(401);
+    expect(storage.objects.size).toBe(1);
+  });
+
+  it("ひな形の割り当て（0119）: GET / PATCH で足して消す。知らない鍵は 400、読むだけでは書けない", async () => {
+    const { rest, issue } = setup();
+    const tok = await issue(["content:read", "content:write"]);
+    expect((await rest(tok, "GET", "/page-layouts")).json).toEqual({});
+    expect((await rest(tok, "PATCH", "/page-layouts", { home: "top", articles: { news: "article-layout" } })).json).toEqual({ home: "top", articles: { news: "article-layout" } });
+    expect((await rest(tok, "PATCH", "/page-layouts", { home: null })).json).toEqual({ articles: { news: "article-layout" } });
+    const bad = await rest(tok, "PATCH", "/page-layouts", { nope: "x" });
+    expect(bad.status).toBe(400);
+    expect(bad.json.error?.message).toMatch(/^invalid_page_layouts/);
+    expect((await rest(await issue(["content:read"]), "PATCH", "/page-layouts", { home: "x" })).status).toBe(401);
   });
 
   it("スコープ不足は 401、モジュールが OFF は 409 module_disabled", async () => {

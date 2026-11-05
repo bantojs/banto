@@ -216,6 +216,18 @@ export function openapiDocument(origin: string, version: string): Record<string,
         patch: { summary: "ページを直す（content:write）。渡した項目だけ変わる", security: bearer, parameters: idPath, requestBody: { content: { "application/json": { schema: obj(contentPageFields) } } }, responses: { 200: resp("ok", contentPage), ...errors } },
         delete: { summary: "ページをゴミ箱へ（content:write。30 日で消える。戻すのは管理画面）", security: bearer, parameters: idPath, responses: { 200: resp("ok", contentPage), ...errors } },
       },
+      "/page-layouts": {
+        get: { summary: "ひな形の割り当て（content:read、モジュール pages、0119）。ページは URL の名前、articles / blogs の鍵はブログの URL の名前、*_categories の鍵はカテゴリーのスラッグ、legal_pages の鍵は legal / privacy / returns", security: bearer, responses: { 200: resp("ok", { type: "object" }), ...errors } },
+        patch: {
+          summary: "ひな形を割り当てる（content:write、0119）。送った鍵だけ変わり、null か \"\" で外す。表（articles・blogs・product_categories・collection_categories・legal_pages）は中の鍵ごとに混ぜる。ページは URL の名前か id、ブログは URL の名前か id、カテゴリーはスラッグか id。知らない鍵・無い指す先は 400 invalid_page_layouts",
+          security: bearer,
+          requestBody: { required: true, content: { "application/json": { schema: obj({ home: nullableStr, product: nullableStr, collection: nullableStr, legal: nullableStr, articles: { type: "object" }, blogs: { type: "object" }, product_categories: { type: "object" }, collection_categories: { type: "object" }, legal_pages: { type: "object" } }) } } },
+          responses: { 200: resp("ok", { type: "object" }), ...errors },
+        },
+      },
+      "/media": {
+        post: { summary: "画像を URL から取り込んでページ・記事のメディアライブラリに足す（content:write、モジュール pages か blog、0119）。商品の画像と同じ決まり（http(s)・社内のアドレス不可・5MB・画像だけ）。返る url をアイキャッチ（image_url）や本文に使う", security: bearer, requestBody: { required: true, content: { "application/json": { schema: obj({ url: str }, ["url"]) } } }, responses: { 201: resp("created", obj({ id: str, url: str })), ...errors } },
+      },
       "/blogs": { get: { summary: "ブログの一覧（content:read。ゴミ箱の外の記事の数つき。ブログを作るのは管理画面）", security: bearer, responses: { 200: resp("ok", obj({ items: { type: "array", items: obj({ id: str, handle: str, title: str, description: nullableStr, articles: int }) } })), ...errors } } },
       "/blogs/{blog}": {
         patch: {

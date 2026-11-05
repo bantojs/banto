@@ -2538,10 +2538,34 @@ export class FakeSupabase {
     }
     // 0083: ページ・記事（スコープ・モジュール・ショップの限定と、作る / 直すの振り分けだけ再現。値の検査は test/db/content-api.test.ts）
     if (/^api_(pages?|blogs?|articles?)_/.test(fn)) {
-      if (!need(/save|trash/.test(fn) ? "content:write" : "content:read")) return unauthorized();
+      if (!need(/save|trash|_set|_add/.test(fn) ? "content:write" : "content:read")) return unauthorized();
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const mods = ((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined) ?? {};
+      // 0119: 画像の取り込みはページかブログのどちらかが ON なら
+      if (fn === "api_page_media_add") {
+        if (mods["pages"] !== true && mods["blog"] !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+        const key = String(args["p_storage_key"] ?? "");
+        if (!key.startsWith(`pages/${shopId}/`)) return json({ code: "22023", message: "invalid_storage_key" }, 400);
+        const row: Row = { id: fakeUuid(++this.seq), shop_id: shopId, storage_key: key, url: args["p_url"], created_at: this.now() };
+        this.tables.page_media.push(row);
+        return json({ id: row["id"], url: row["url"] });
+      }
       const mod = /page/.test(fn) ? "pages" : "blog";
-      if (((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.[mod] !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+      if (mods[mod] !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+      // 0119: ひな形の割り当て（名前のまま覚えるだけ。名前と id の読み替え・検査は test/db/content-api.test.ts）
+      if (fn === "api_page_layouts_get" || fn === "api_page_layouts_set") {
+        const settings = (shop["settings"] ??= {}) as Row;
+        const cur = { ...((settings["page_layouts_api"] as Row | undefined) ?? {}) };
+        if (fn === "api_page_layouts_set") {
+          for (const [k, v] of Object.entries((args["p_changes"] ?? {}) as Row)) {
+            if (!["home", "articles", "product", "product_categories", "collection", "collection_categories", "legal", "legal_pages", "blogs"].includes(k)) return json({ code: "22023", message: "invalid_page_layouts:unknown_key" }, 400);
+            if (v === null || v === "") delete cur[k];
+            else cur[k] = v;
+          }
+          settings["page_layouts_api"] = cur;
+        }
+        return json(cur);
+      }
       const status = (r: Row) => (r["deleted_at"] ? "trash" : !r["published"] ? "draft" : r["published_at"] && Date.parse(String(r["published_at"])) > Date.now() ? "scheduled" : "published");
       const view = (r: Row, body: boolean): Row => { const { body: b, ...rest } = r; return { ...rest, status: status(r), ...(body ? { body: b } : {}) }; };
       const save = (table: "pages" | "articles", base: Row, values: Row) => {

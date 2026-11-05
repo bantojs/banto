@@ -357,6 +357,17 @@ v1.get("/pages/:ref", async (c) => api(c).pageGet(c.req.param("ref")).then((r) =
 v1.patch("/pages/:id", async (c) => body(c).then((b) => api(c).pageSave({ ...b, id: c.req.param("id") })).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/pages/:id", async (c) => api(c).pageTrash(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/blogs", async (c) => api(c).blogsList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/page-layouts", async (c) => api(c).pageLayoutsGet().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.patch("/page-layouts", async (c) => body(c).then((b) => api(c).pageLayoutsSet(b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/media", async (c) =>
+  body(c)
+    .then((b) => {
+      if (typeof b["url"] !== "string") throw new ApiError("invalid", "url is required", 400);
+      return api(c).mediaImport(b["url"]);
+    })
+    .then((r) => c.json(r, 201))
+    .catch((e) => errorJson(c, e)),
+);
 v1.patch("/blogs/:blog", async (c) => body(c).then((b) => api(c).blogUpdate(c.req.param("blog"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/blogs/:blog/articles", async (c) =>
   api(c)
