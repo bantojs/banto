@@ -84,7 +84,16 @@ export interface CategoryRow {
   sort_order: number;
   /** 0065。SKU を分ける軸のひな形（null = 親・ショップを引き継ぐ） */
   option_axes?: unknown;
+  /** 0113。説明（文字だけ、2,000 字まで）と画像（置き場の categories/<ショップ>/） */
+  description?: string | null;
+  image?: CategoryImage | null;
   created_at: string;
+}
+
+export interface CategoryImage {
+  key: string;
+  width: number;
+  height: number;
 }
 
 export interface InventoryRow {

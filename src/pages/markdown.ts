@@ -201,6 +201,8 @@ const lines = (ls: string[], opts: MarkdownOptions) => ls.map((l) => inline(l.tr
 const LIST_UL = /^\s{0,3}[-*+]\s+(.*)$/;
 const LIST_OL = /^\s{0,3}\d{1,9}[.)]\s+(.*)$/;
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
+/** 見出しの中の行の数の上限（行の末尾の「\」で続ける） */
+export const HEADING_LINES_MAX = 4;
 const RULE = /^\s{0,3}(?:-\s*){3,}$|^\s{0,3}(?:\*\s*){3,}$|^\s{0,3}(?:_\s*){3,}$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;
 const TABLE_SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
@@ -447,7 +449,7 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       }
       const b = parseProductsLine(row);
       if (b) {
-        const data = `data-banto-block="products" data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"${b.style ? ` data-style="${b.style}"` : ""}`;
+        const data = `data-banto-block="products"${b.slugs?.length ? ` data-slugs="${b.slugs.join(",")}"` : ""} data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"${b.style ? ` data-style="${b.style}"` : ""}`;
         const cls = `banto-products banto-products--${b.layout}${b.style ? ` banto-style-${b.style}` : ""}`;
         // 印は先頭から PRODUCT_BLOCKS_MAX 個まで（それより後は描かない）
         if (opts.productsLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.productsLabel(b))}</div>`);
@@ -475,8 +477,15 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       while (k > 0 && text[k - 1] === "#") k--;
       // 「C#」のような語の中の # は残す（前が空白か行の頭のときだけ閉じの #）
       if (k < text.length && (k === 0 || text[k - 1] === " ")) text = text.slice(0, k);
-      out.push(`<h${level}>${inline(text.trimEnd(), opts)}</h${level}>`);
+      // 見出しの中の改行: 行の末尾の「\」で次の行に続ける（HEADING_LINES_MAX 行まで。\\ は文字の \）
+      const parts = [text.trimEnd()];
       i++;
+      while (parts.length < HEADING_LINES_MAX && /(^|[^\\])\\$/.test(parts[parts.length - 1]!) && i < rows.length && rows[i]!.trim() !== "" && !BLOCK_LINE.test(rows[i]!)) {
+        parts[parts.length - 1] = parts[parts.length - 1]!.slice(0, -1).trimEnd();
+        parts.push(rows[i]!.trim());
+        i++;
+      }
+      out.push(`<h${level}>${parts.map((x) => inline(x, opts)).join("<br>")}</h${level}>`);
       continue;
     }
     if (RULE.test(row)) {

@@ -36,8 +36,8 @@ export const CURRENT_PARTS = ["title", "image", "price", "buy", "content", "exce
 /** 記事のひな形で使える部品・商品詳細のひな形で使える部品（ほかの部品は空） */
 export const ARTICLE_PARTS: readonly CurrentPart[] = ["title", "image", "content", "excerpt", "author", "tags", "prev-next"];
 export const PRODUCT_LAYOUT_PARTS: readonly CurrentPart[] = ["title", "image", "price", "buy", "content", "tags", "attributes", "breadcrumb", "size-chart", "reviews"];
-/** 商品一覧のひな形で使える部品（0103） */
-export const COLLECTION_PARTS: readonly CurrentPart[] = ["title", "products", "filters", "subcategories", "breadcrumb"];
+/** 商品一覧のひな形で使える部品（0103。image・content はカテゴリーの画像と説明、0113） */
+export const COLLECTION_PARTS: readonly CurrentPart[] = ["title", "image", "content", "products", "filters", "subcategories", "breadcrumb"];
 /** 法務のページのひな形で使える部品（0104）。legal（文面）が見える本文に無ければひな形を使わない */
 export const LEGAL_PARTS: readonly CurrentPart[] = ["title", "legal"];
 export type CurrentPart = (typeof CURRENT_PARTS)[number];
@@ -175,6 +175,7 @@ export const SHOP_BLOCKS_CSS = [
   ".banto-shop{margin:1.25rem 0}.banto-search{display:flex;gap:.5rem;max-width:32rem}.banto-search input{flex:1;font:inherit;padding:.5rem .65rem}",
   ".banto-categories{list-style:none;padding:0;margin:0}.banto-categories ul{list-style:none;padding-left:1.25rem}.banto-categories a{text-decoration:none}",
   ".banto-categories--grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));gap:.5rem}.banto-categories--grid>li>a{display:block;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem)}",
+  ".banto-categories__image{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:calc(var(--banto-radius,.5rem) - .25rem);margin:0 0 .5rem}",
   ".banto-card{display:flex;gap:1rem;align-items:center;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem);text-decoration:none;color:inherit}.banto-card img{width:6rem;height:6rem;object-fit:cover;border-radius:.35rem}.banto-card__title{font-weight:600}",
   ".banto-product{display:grid;gap:.5rem;max-width:28rem}.banto-product img{width:100%;height:auto;border-radius:var(--banto-radius,.5rem)}.banto-product__name{font-weight:600;font-size:1.1rem}.banto-product__price{font-weight:600}.banto-product form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}",
 ].join("");

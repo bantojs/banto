@@ -100,6 +100,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | `snippets/*.liquid` | 部品（`{% render 'card', product: product %}`） |
 | `snippets/page-products.liquid`（任意） | ショップのページの「商品を並べる」ブロックの見た目（下の「使える名前」のショップのページ） |
 | `snippets/app-<連携>-<ブロック>.liquid`・`snippets/app-<ブロック>.liquid`（任意） | 外部プラグインのブロック（`::: app`、0086）の見た目。`block`・`product`・`reviews`・`data` を渡す。無ければ Banto の既定の見た目（レビューだけ）。docs/app-data.md §6 |
+| `snippets/part-<部品>.liquid`（任意） | ショップのページを商品詳細・商品一覧の**ひな形**にしたとき（docs/pages.md「ひな形の割り当て」）の部品（`::: current part=<部品>`）の見た目。下の「ひな形の部品」 |
 | `snippets/page-articles.liquid`（任意） | ショップのページ・記事の「記事を並べる」ブロックの見た目。`articles`（記事の一覧の形）・`blog`・`block`（`layout`（`grid` / `list`）・`limit`・`tag`・`style`・`index`）を渡す。無ければ Banto の既定のカード（`ul.banto-articles__list`） |
 | `config/banto_patterns.json`（任意） | 編集の画面のブロックの一覧に出す「パターン」（下の「パターンとブロックのスタイル」） |
 | `config/banto_block_styles.json`（任意） | ブロックごとの見た目の選択肢（下の「パターンとブロックのスタイル」） |
@@ -141,9 +142,23 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 }
 ```
 
-- 付けられるブロック: `group`・`columns`・`column`・`cover`・`media`・`gallery`・`accordion`・`button`・`products`・`articles`。1 つに 12 個まで、`name` は英小文字・数字・ハイフン（30 字まで）、`label` は 40 字まで。
+- 付けられるブロック: `group`・`columns`・`column`・`cover`・`media`・`gallery`・`accordion`・`button`・`products`・`articles`。1 つに 24 個まで、`name` は英小文字・数字・ハイフン（30 字まで）、`label` は 40 字まで。
 - テーマを替えて、その名前がテーマに無くなっても本文はそのまま（class が付くだけで、見た目は既定に戻る）。編集の画面では前の名前も選んだまま残ります。
 - どちらのファイルも、取り込むときに形を確かめます（誤りはファイル名と場所で知らせ、取り込まない）。
+
+## ひな形の部品
+
+ショップのページを商品詳細・商品一覧のひな形にしたとき（docs/pages.md「ひな形の割り当て」）、本文の部品（`::: current part=buy` など）は、テーマに `snippets/part-<部品>.liquid` があればそれで描きます。無い部品は既定のテーマの見た目のままです（色の見本・お店で試着のボタン・下に固定のバー・テーマの商品カードを、部品ごとにテーマに合わせられます）。
+
+| ひな形 | 部品 | snippet に渡すもの |
+| --- | --- | --- |
+| 商品詳細 | `title`・`image`・`price`・`buy`・`content`・`tags`・`attributes`・`breadcrumb`・`size-chart`・`reviews` | `product`・`current_variant`（`templates/product` と同じ） |
+| 商品一覧 | `title`・`image`・`content`・`products`・`filters`・`subcategories`・`breadcrumb` | `collection`・`products`・`current_tags`・`paginate`（`templates/collection` と同じ） |
+
+- どの部品にも `part`（`name` = 部品の名前、`default` = Banto の既定の部品の HTML）を渡します。`{{ part.default }}` を出せば、既定の部品をテーマの枠で包めます（例: `part-buy` で色の見本を足し、買うフォームは Banto のまま）。
+- 買うフォームを自分で描くときは `{% form 'product' %}`（`templates/product` と同じ）です。値段・在庫・会員価格・買えるかは今までどおりカートと最終確認で Banto が引き直すので、テーマの部品からは変えられません。
+- 描くのは本文で使っている部品だけです。snippet に誤りがある・上限を超えたときは、その部品だけ既定の見た目に戻します（ページは止まりません）。
+- 置き方はテーマの版ごとです。テーマを替えて snippet が無くなっても、本文はそのまま既定の見た目で出ます。
 
 ## 使える名前
 
@@ -152,7 +167,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | ページ | テンプレート | 渡すもの |
 | --- | --- | --- |
 | トップ | `index`（無ければ `collection`） | `collection`（すべての商品の 1 ページ目）・`products` |
-| カテゴリー・タグで絞った一覧 | `collection` | `collection`・`products`・`current_tags` |
+| カテゴリー・タグで絞った一覧 | `collection` | `collection`・`products`・`current_tags`。カテゴリーの `collection.description`（改行を `<br>` にした HTML）と `collection.image`（`featured_image` も同じ。無ければ空）は 0113 のカテゴリーの説明と画像（docs/storefront.md） |
 | 商品 | `product` | `product`・`current_variant` |
 | 見つからない | `404` | — |
 | カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
@@ -166,7 +181,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | 購入の完了（`/checkout/done`） | `checkout_done` | `checkout`（`status`（`confirmed`・`pending`・`released`・`not_found`・`unknown`）・`order_number`（確定していれば）・`message`（既定のテーマと同じ文言）・`free`・`inquiry_url`・`continue_url`）。確定を待つあいだは数秒ごとに読み込み直します |
 | 会員ページ（`/account`） | `customers/account`（`templates/customers/account.liquid`） | `customer`（`email`・`name`・`default_address`・`accepts_marketing`・`orders`（`name`（`#1001`）・`order_number`・`created_at`・`status`・`status_label`・`total_price`・`url`（注文照会））・`orders_count`）。住所の保存・ログインの方法・クーポン・ログアウト・退会などは **`{% banto_account %}`** が Banto の部品として描きます。住所が載るので、レジと同じ CSP を付けます |
 
-**どのページでも**: `shop`・`settings`・`routes`・`request`（`page_type` は `page.faq` でも `page`）・`cart`（`item_count`・`items`・`total_price` など。どのページでも読めるので、ヘッダーのカートの一覧に使えます）・`customer`（ログイン中の会員の `email`。同梱モジュール「会員の条件」が ON なら `logged_in`・`attributes`（条件で使っている独自項目の値だけ）・`audiences`（合う条件の名前）も。docs/audiences.md）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前と URL だけ）・`page_title`・`page_description`・`canonical_url`・`template`。これらは `{% render %}` で描く snippet の中でも見えます（Shopify と同じ。ページの変数（`product` など）と親で `assign` した値は見えないので、引数で渡します）。
+**どのページでも**: `shop`・`settings`・`routes`・`request`（`page_type` は `page.faq` でも `page`）・`cart`（`item_count`・`items`・`total_price` など。どのページでも読めるので、ヘッダーのカートの一覧に使えます）・`customer`（ログイン中の会員の `email`。同梱モジュール「会員の条件」が ON なら `logged_in`・`attributes`（条件で使っている独自項目の値だけ）・`audiences`（合う条件の名前）も。docs/audiences.md）・`linklists['main-menu']`（カテゴリーの木から作ります）・`linklists.footer`（法務と送料のページ）・`collections['<カテゴリーのスラッグ>']`（名前・URL・説明・画像。商品は入りません）・`page_title`・`page_description`・`canonical_url`・`template`。これらは `{% render %}` で描く snippet の中でも見えます（Shopify と同じ。ページの変数（`product` など）と親で `assign` した値は見えないので、引数で渡します）。
 
 **商品**（`product`）: `id`・`handle`（スラッグ）・`title`・`url`・`description`（改行を `<br>` にした HTML）・`price` / `price_min` / `price_max` / `price_varies`・`compare_at_price`・`available`・`vendor`（ブランド）・`tags`・`featured_image`・`images`・`variants`（SKU。`id`・`title`・`sku`・`price`・`available`・`options`・`option1`〜`3`）・`options`・`options_with_values`・`selected_or_first_available_variant`・`reviews`（外部プラグインのレビューの要約。`rating`・`rating_count`・`items`（`rating`・`title`・`body`・`author`・`created_at`・`verified_purchase`・`incentivized`）・`more_url`・`more_html`（「もっと見る」のボタンとスクリプト。`[data-banto-reviews]` の中の `ol.review-list` に足す。0087）。無ければ `nil`。構造化データは Banto が入れる。docs/app-data.md）・`apps`（`custom.v1` を `product.apps['<プラグイン>']['<名前>']` で。0085）・`app_data`（公開の拡張データすべて）・`size_chart`（採寸表。同梱モジュール size_charts が ON で表があるときだけ。`columns`・`rows`（`cells` は列と同じ並び、`selected` は選んだ SKU の行）・`note`・`image`。docs/size-charts.md）。在庫は「あるか」だけで、数は渡しません。一覧（`collection.products`）の `available` は「値段のついた SKU があるか」で、在庫の有無は商品のページでだけ分かります（一覧で在庫を引かないため）。
 

@@ -201,6 +201,26 @@ describe("商品詳細のひな形（0102）", () => {
     expect(html).toContain('"@type":"Product"');
     expect(html).toContain('rel="canonical" href="https://shop.example.jp/p/tee"');
   });
+
+  it("Liquid: テーマに snippets/part-<部品> があればその部品だけテーマで描く（product・part.default を渡す。無い部品・誤りは既定のまま）", async () => {
+    const { app, tpl, settings } = productSetup({
+      "layout/theme.liquid": `<html><head>{{ content_for_header }}</head><body><main>{{ content_for_layout }}</main></body></html>`,
+      "templates/page.liquid": `<article class="page-default">{{ page.content }}</article>`,
+      "snippets/part-title.liquid": `<h1 class="theme-title">{{ product.title }} / {{ current_variant.sku }} / {{ part.name }}</h1>`,
+      "snippets/part-buy.liquid": `<div class="theme-buy"><span class="swatches">{% for v in product.variants %}{{ v.title }}{% endfor %}</span>{{ part.default }}</div>`,
+      "snippets/part-price.liquid": `{% render 'missing-snippet' %}`,
+    });
+    settings()["page_layouts"] = { product: tpl.id };
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/p/tee")).text();
+    expect(html).toContain('<h1 class="theme-title">Tシャツ / TEE-M / title</h1>');
+    expect(html).not.toContain("<h1>Tシャツ</h1>");
+    // 既定の買うフォームをテーマの枠で包める
+    expect(html).toMatch(/<div class="theme-buy"><span class="swatches">M<\/span>[\s\S]*action="\/cart\/add"/);
+    // 誤りのある部品は既定のまま（お店は止まらない）
+    expect(html).toContain("¥3,000");
+    // snippet の無い部品（パンくず）は既定
+    expect(html).toContain("トップス");
+  });
 });
 
 describe("今の記事・商品の部品: ページ自身とひな形のプレビュー", () => {
@@ -321,6 +341,25 @@ describe("商品一覧のひな形（0103）", () => {
     expect(html).toContain("<h1>トップス</h1>");
     expect(html).toContain("Tシャツ");
     expect(html).toContain('rel="canonical" href="https://shop.example.jp?category=tops"');
+  });
+
+  it("Liquid: snippets/part-products は collection・products・paginate で描ける。カテゴリーの画像と説明の部品（0113）も出せる", async () => {
+    const { app, tpl, settings, sb, tops } = listSetup({
+      "layout/theme.liquid": `<html><head>{{ content_for_header }}</head><body><main>{{ content_for_layout }}</main></body></html>`,
+      "templates/page.liquid": `<article class="page-default">{{ page.content }}</article>`,
+      "snippets/part-products.liquid": `<ul class="theme-grid" data-handle="{{ collection.handle }}" data-pages="{{ paginate.pages }}">{% for p in products %}<li>{{ p.title }}</li>{% endfor %}</ul>`,
+      "snippets/part-content.liquid": `<div class="theme-desc">{{ collection.description }}</div>`,
+    });
+    const row = sb.tables.categories.find((c) => c["id"] === tops.id)!;
+    row["description"] = "羽織りもの<b>\n秋冬";
+    row["image"] = { key: `categories/${String(row["shop_id"])}/0123456789abcdef.webp`, width: 1600, height: 900 };
+    sb.tables.pages.find((p) => p["id"] === tpl.id)!["body"] = LIST_TPL + "\n\n::: current part=image\n\n::: current part=content";
+    settings()["page_layouts"] = { collection: tpl.id };
+    const html = await (await new Browser(app, "https://shop.example.jp").get("/?category=tops")).text();
+    expect(html).toContain('<ul class="theme-grid" data-handle="tops" data-pages="1"><li>Tシャツ</li></ul>');
+    expect(html).toContain('<div class="theme-desc">羽織りもの&lt;b&gt;<br>秋冬</div>');
+    expect(html).toContain('class="category-image" src="');
+    expect(html).toContain("0123456789abcdef.webp");
   });
 });
 

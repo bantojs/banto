@@ -53,6 +53,8 @@ const ANON_FUNCTIONS = new Set([
   "product_public_member_prices",
   // 0100: 会員限定のページ・記事にゲストが URL で来たとき「会員の方だけ」と出してよいか（'members' か null だけ。中身は返さない）
   "content_public_gate",
+  // 0112: 本文の「商品を並べる」で選んだ商品（公開中で見える商品だけ。一覧と同じ列）
+  "product_public_pick",
 ]);
 
 /** authenticated（運営者・スタッフの JWT）が呼べる関数。anon の分を含む */

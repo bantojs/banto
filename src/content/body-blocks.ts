@@ -1,7 +1,8 @@
 /**
  * 本文の中の「商品を並べる」「記事を並べる」のデータと既定のカード。お店の画面（既定のテーマ・Liquid）と
  * ヘッドレスの公開 API（src/routes/api/content.ts）の両方がここを通る。
- * - 商品: 1 ページに 3 つまで、ブロックごとに一覧と同じ問い合わせ 1 回・キャッシュ。取れなければそのブロックは空
+ * - 商品: 1 ページに 3 つまで、ブロックごとに一覧と同じ問い合わせ 1 回・キャッシュ。取れなければそのブロックは空。
+ *   選んだ商品（slugs=、0112）はページの全部のブロックの分をまとめて 1 回
  * - 記事: 1 ページに 2 つまで（ブログ・記事の一覧と同じ問い合わせ・キャッシュ）。ブログのモジュールが OFF なら空
  * - 外部プラグインのブロック（0086）: 1 ページに 2 つまで、ブロックごとに商品の拡張データを 1 回・キャッシュ。
  *   既定の見た目は reviews.v1 だけ（custom.v1 は形を知らないので、テーマの snippet が無ければ何も出さない）
@@ -38,6 +39,7 @@ import { yen } from "../routes/common";
 import { productPartsOf, shopBlocksOf, type ShopBlock } from "../pages/shop-blocks";
 import { PAGES_MODULE, pagePath } from "../pages";
 import { imageUrl } from "../media/images";
+import { categoryImageOf } from "../products/category-media";
 
 export interface BodyBlocksDeps {
   sf: StorefrontData;
@@ -63,9 +65,18 @@ export interface BodyBlocks {
 }
 
 export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: CategoryRow[]): Promise<BodyBlocks> {
+  const pblocks = productBlocksOf(body);
+  // 選んだ商品（slugs=）は、ページの全部のブロックの分をまとめて 1 回で引く（0112）
+  const picked = pblocks.some((b) => b.slugs?.length)
+    ? d.sf.productsBySlugs(d.shop, pblocks.flatMap((b) => b.slugs ?? [])).catch((e: unknown) => (console.error("[banto] page products (slugs):", e), [] as ProductItems))
+    : null;
   const [blocks, ablocks, apps, shopCards] = await Promise.all([
     Promise.all(
-      productBlocksOf(body).map(async (block) => {
+      pblocks.map(async (block) => {
+        if (block.slugs?.length) {
+          const bySlug = new Map((await picked!).map((x) => [x.product.slug, x]));
+          return { block, items: block.slugs.map((x) => bySlug.get(x)).filter((x): x is ProductItems[number] => x !== undefined) };
+        }
         try {
           const r = await d.sf.productPage(d.shop, { ...(block.category ? { category: block.category } : {}), ...(block.tag ? { tag: block.tag } : {}), sort: block.sort, limit: block.limit }, categories);
           return { block, items: r?.items ?? [] };
@@ -130,7 +141,12 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     const tree = (id: string | null, depth: number): string => {
       const list = kids(id);
       if (list.length === 0 || depth > 4) return "";
-      return `<ul${depth === 0 ? ` class="banto-categories banto-categories--${a["layout"]}"` : ""}>${list.map((c) => `<li><a href="${esc(`${d.shopPath || "/"}?category=${encodeURIComponent(c.slug)}`)}">${esc(c.name)}</a>${a["layout"] === "grid" ? "" : tree(c.id, depth + 1)}</li>`).join("")}</ul>`;
+        // 格子はカテゴリーの画像（0113）があれば名前の上に出す
+      const img = (c: CategoryRow) => {
+        const im = a["layout"] === "grid" ? categoryImageOf(c) : null;
+        return im ? `<img class="banto-categories__image" src="${esc(imageUrl(d.mediaBaseUrl, im.key))}" width="${im.width}" height="${im.height}" alt="" loading="lazy" decoding="async">` : "";
+      };
+      return `<ul${depth === 0 ? ` class="banto-categories banto-categories--${a["layout"]}"` : ""}>${list.map((c) => `<li><a href="${esc(`${d.shopPath || "/"}?category=${encodeURIComponent(c.slug)}`)}">${img(c)}${esc(c.name)}</a>${a["layout"] === "grid" ? "" : tree(c.id, depth + 1)}</li>`).join("")}</ul>`;
     };
     return tree(parent ? parent.id : null, 0);
   }

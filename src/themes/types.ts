@@ -3,7 +3,7 @@ import type { HtmlEscapedString } from "hono/utils/html";
 /** JSX 要素（c.html() にそのまま渡せる型） */
 export type Rendered = HtmlEscapedString | Promise<HtmlEscapedString>;
 import type { ProductDetail, ProductSummary, PublicShop, SkuWithStock } from "../storefront/data";
-import type { ProductRow } from "../db/types";
+import type { CategoryImage, ProductRow } from "../db/types";
 import type { Confirmation } from "../commerce/checkout";
 import type { CategoryNode } from "../products/categories";
 import type { PageRow } from "../pages";
@@ -84,7 +84,8 @@ export interface Theme {
     tags?: { tag: string; count: number }[];
     /** カテゴリーの木（ナビゲーション用）と、カテゴリー別一覧（/:shop?category=…）のときのカテゴリー */
     categories?: CategoryNode[];
-    category?: { slug: string; name: string };
+    /** description・image は 0113（カテゴリーの説明と画像）。無ければ出さない */
+    category?: { slug: string; name: string; description?: string | null; image?: CategoryImage | null };
     /** ページ送りの URL（0058）。next は次のページ、first は 2 ページ目以降のときの最初のページ。2 ページ目以降は検索エンジンに載せない */
     pagination?: { next?: string; first?: string };
     /** 検索（/:shop/search）の案内（語が短すぎる・見つからない）。あれば商品が無いときの文言の代わりに出す */

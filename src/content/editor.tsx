@@ -19,7 +19,7 @@ import { MAX_VIDEO_BYTES, sniffMp4 } from "../media/video";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
-import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../pages/blocks";
+import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, PRODUCT_BLOCK_SLUGS_MAX, type ProductBlock } from "../pages/blocks";
 import { PRODUCT_SORTS, toPublicShop, type ProductSort } from "../storefront/data";
 import { storefrontData } from "../routes/storefront/domain";
 import { tagCounts } from "../products/tags";
@@ -95,6 +95,7 @@ export function featuredImageUrl(url: string, mediaBase: string): string | null 
 
 /** 見たままの編集での商品のブロックの説明（例: 商品を並べる — カテゴリー: tops・8 件・グリッド・新しい順） */
 export function productsLabel(b: ProductBlock): string {
+  if (b.slugs?.length) return `${t("pages.block_products")} — ${[tf("pages.products_label_slugs", { n: b.slugs.length }), t(`pages.layout_${b.layout}` as MessageKey)].join("・")}`;
   const parts = [
     b.category ? tf("pages.products_label_category", { v: b.category }) : t("pages.products_all"),
     ...(b.tag ? [tf("pages.products_label_tag", { v: b.tag })] : []),
@@ -540,6 +541,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-products-max": tf("pages.products_max", { n: PRODUCT_BLOCKS_MAX }),
     "data-t-products-all": t("pages.products_all"),
     "data-t-products-items": t("pages.products_label_items"),
+    "data-t-products-slugs": t("pages.products_label_slugs"),
     "data-t-ph": t("pages.block_placeholder"),
     "data-t-search": t("pages.block_search"),
     "data-t-more": t("pages.block_more"),
@@ -868,6 +870,10 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
       <dialog id="blk-products" aria-labelledby="blk-products-title">
         <form method="dialog">
           <h2 id="blk-products-title">{t("pages.block_products")}</h2>
+          {/* 選んだ商品（0112）。書くと下の絞り込み・数・並び順は使わず、書いた順に並べる */}
+          <label for="bp-slugs">{tf("pages.products_slugs", { max: PRODUCT_BLOCK_SLUGS_MAX })}</label>
+          <input id="bp-slugs" name="slugs" maxlength={1600} placeholder="tee,coat,knit" autocomplete="off" />
+          <p class="muted">{t("pages.products_slugs_help")}</p>
           <label for="bp-category">{t("pages.products_category")}</label>
           <select id="bp-category" name="category">
             <option value="">{t("pages.products_all")}</option>
@@ -1109,6 +1115,11 @@ export function mountEditorEndpoints(app: Hono<AppEnv>, scope: (c: AdminContext)
   const sf = storefrontData(c);
   if (!shop.published || !sf) return c.json({ unpublished: true, total: 0, items: [] });
   const q = c.req.query();
+  const slugs = (q.slugs ?? "").split(",").map((x) => x.trim()).filter((x) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(x)).slice(0, PRODUCT_BLOCK_SLUGS_MAX);
+  if (slugs.length) {
+    const picked = await sf.productsBySlugs(toPublicShop(shop), slugs);
+    return c.json({ total: picked.length, items: picked.slice(0, 6).map((x) => ({ name: x.product.name, image: x.image ? responsiveImage(mediaBaseUrl(c), x.image).src : null })) });
+  }
   const sort = (PRODUCT_SORTS as readonly string[]).includes(q.sort ?? "") ? (q.sort as ProductSort) : "new";
   const n = Number(q.limit);
   const limit = Number.isInteger(n) && n >= 1 && n <= PRODUCT_BLOCK_LIMIT_MAX ? n : PRODUCT_BLOCK_LIMIT_DEFAULT;

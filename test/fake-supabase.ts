@@ -200,6 +200,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** product_public_pick / product_member_pick を引いた回数（0112。ページのブロックをまとめて 1 回で引くか） */
+  pickCalls = 0;
   /** 0070 のパスキーの追加の券 */
   passkeyTickets: Row[] = [];
   /** 0067 の order_lookup_failures（外れた照会） */
@@ -1226,6 +1228,28 @@ export class FakeSupabase {
     });
   }
 
+  /** 0112: 選んだ slug の商品を書いた順に（一覧と同じ列。見えない商品は飛ばす） */
+  private productPick(args: Record<string, unknown>, aud: readonly string[] = []): Response {
+    const shopId = args["p_shop_id"];
+    const slugs = Array.isArray(args["p_slugs"]) ? (args["p_slugs"] as string[]) : [];
+    if (slugs.length > 100) return json({ code: "22023", message: "too_many_slugs" }, 400);
+    if (!this.shopPublished(shopId)) return json({ items: [] });
+    this.pickCalls++;
+    const items = slugs.flatMap((slug) => {
+      const p = this.tables.products.find((x) => x["shop_id"] === shopId && x["slug"] === slug && x["published"] === true && this.productOpen(x, aud));
+      if (!p) return [];
+      const lp = this.listPrice(p["id"]);
+      const img = this.tables.product_images.filter((i) => i["product_id"] === p["id"]).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"]))[0];
+      return [{
+        id: p["id"], slug: p["slug"], name: p["name"], brand: p["brand"] ?? null, category_id: p["category_id"] ?? null,
+        extra_category_ids: p["extra_category_ids"] ?? [], tags: Array.isArray(p["tags"]) ? p["tags"] : [], created_at: p["created_at"], updated_at: p["updated_at"],
+        min_price_jpy: lp.price, compare_at_price_jpy: lp.compareAt,
+        image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
+      }];
+    });
+    return json({ items });
+  }
+
   private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number> } {
     if (!this.shopPublished(shopId)) return { tags: [], categories: {} };
     const products = this.tables.products.filter((p) => p["shop_id"] === shopId && p["published"] === true);
@@ -1387,6 +1411,8 @@ export class FakeSupabase {
       return json(p && this.shopPublished(args["p_shop_id"]) && p["audience_id"] && p["audience_mode"] !== "buy" && !p["audience_hide"] ? "members" : null);
     }
     if (fn === "product_member_list") return this.productPublicList(args, this.memberAudienceIds(args));
+    if (fn === "product_public_pick") return this.productPick(args);
+    if (fn === "product_member_pick") return this.productPick(args, this.memberAudienceIds(args));
     // 0100: 会員限定のページ・記事
     if (fn === "content_public_gate") {
       const rows = args["p_kind"] === "page" ? this.tables.pages.filter((p) => p["shop_id"] === args["p_shop_id"] && p["handle"] === args["p_handle"]) : this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && a["blog_id"] === args["p_blog_id"] && a["handle"] === args["p_handle"]);

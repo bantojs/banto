@@ -145,6 +145,8 @@ export interface ProductDetail {
 export interface MemberReader {
   member: { cid: string; ep: number; sid: string };
   list(args: Record<string, unknown>): Promise<unknown>;
+  /** 0112: 選んだ slug の商品（product_member_pick） */
+  pick(slugs: string[]): Promise<unknown>;
   get(slug: string): Promise<unknown>;
   skus(skuIds: string[]): Promise<unknown>;
   page(handle: string): Promise<unknown>;
@@ -257,12 +259,7 @@ export class StorefrontData {
     if (hit) return hit;
     type ListResult = { items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean };
     const r = reader ? ((await reader.list(args)) as ListResult) : await this.db.rpc<ListResult>("product_public_list", args);
-    const items = r.items.map((x): ProductSummary => ({
-      product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },
-      image: x.image,
-      minPrice: x.min_price_jpy,
-      compareAt: x.compare_at_price_jpy,
-    }));
+    const items = r.items.map(summaryOf);
     const out: ProductListPage = {
       items,
       total: r.total ?? null,
@@ -273,6 +270,23 @@ export class StorefrontData {
       nextCursor: r.next ? encodeCursor({ s: sort, k: r.next.k, id: r.next.id }) : null,
     };
     if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    return out;
+  }
+
+  /**
+   * 選んだ slug の商品を、その順で（本文の ::: products slugs=…、0112 の product_public_pick、問い合わせ 1 回）。
+   * 見えない商品（非公開・会員限定で合わない）は飛ばす。0112 の前の DB では空
+   */
+  async productsBySlugs(shop: PublicShop, slugs: readonly string[]): Promise<ProductSummary[]> {
+    const list = [...new Set(slugs)].slice(0, PRODUCT_PICK_MAX);
+    if (list.length === 0 || !(await this.migratedTo(PRODUCT_PICK_MIGRATION))) return [];
+    const reader = this.reader;
+    const key = `ppick:${shop.id}:${list.join(",")}`;
+    const hit = reader ? null : await this.cache.get<ProductSummary[]>(key);
+    if (hit) return hit;
+    const r = (reader ? await reader.pick(list) : await this.db.rpc<unknown>("product_public_pick", { p_shop_id: shop.id, p_slugs: list })) as { items?: ListItem[] } | null;
+    const out = (Array.isArray(r?.items) ? r.items : []).map(summaryOf);
+    if (!reader) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
   }
 
@@ -675,6 +689,17 @@ export interface ProductFacets {
   /** カテゴリーの id → 公開中の商品の数（子孫を含む） */
   categories: Record<string, number>;
 }
+
+/** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */
+export const PRODUCT_PICK_MAX = 100;
+export const PRODUCT_PICK_MIGRATION = "0112_product_pick";
+
+const summaryOf = (x: ListItem): ProductSummary => ({
+  product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },
+  image: x.image,
+  minPrice: x.min_price_jpy,
+  compareAt: x.compare_at_price_jpy,
+});
 
 /** product_public_list の 1 行 */
 interface ListItem extends ProductListRow {

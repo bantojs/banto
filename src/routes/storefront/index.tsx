@@ -44,11 +44,12 @@ import { markdownToHtml } from "../../pages/markdown";
 import { audienceShow, filterAudienceBlocks } from "../../content/audience-blocks";
 import { openContentPreview } from "../../content/preview-ticket";
 import { CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, collectionLayoutId, composeLayout, fillCurrent, isPlainTop, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
+import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
 import { COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } from "../../pages/shop-blocks";
 import { listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, liquidProductJsonLd, liquidThemeFor, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
+import { cartImagesFor, cartSections, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderSearch } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -442,7 +443,7 @@ storefront.get("/:shop", async (c: Ctx) => {
       tag,
       tags: facets.tags,
       categories: categoryTree(categories),
-      ...(category ? { category: { slug: category.slug, name: category.name } } : {}),
+      ...(category ? { category: categoryProp(category) } : {}),
       pagination: { ...(page.nextCursor ? { next: link(page.nextCursor) } : {}), ...(after ? { first: link(null) } : {}) },
     }),
   );
@@ -493,7 +494,7 @@ async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: Rende
     ...(d.tag ? { tag: d.tag } : {}),
     tags: d.facets.tags,
     categories: categoryTree(d.categories),
-    ...(d.category ? { category: { slug: d.category.slug, name: d.category.name } } : {}),
+    ...(d.category ? { category: categoryProp(d.category) } : {}),
     pagination: { ...(d.page.nextCursor ? { next: d.link(d.page.nextCursor) } : {}), ...(d.after ? { first: d.link(null) } : {}) },
   };
   const only = (parts: Record<string, string>) => Object.fromEntries(COLLECTION_PARTS.map((k) => [k, parts[k] ?? ""]));
@@ -502,8 +503,11 @@ async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: Rende
     const parts: Record<string, string> = {};
     for (const [k, node] of Object.entries(listParts(props))) parts[k] = node === null ? "" : String(node);
     const qs = new URLSearchParams({ ...(d.category ? { category: d.category.slug } : d.all ? { all: "1" } : {}), ...(d.tag ? { tag: d.tag } : {}) }).toString();
-    const page: PageRow = { ...layout, title: d.category ? d.category.name : t("store.all_products"), seo_title: null, seo_description: null, image_url: null };
-    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, only(parts)), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: qs ? `?${qs}` : "" });
+    const page: PageRow = { ...layout, title: d.category ? d.category.name : t("store.all_products"), seo_title: null, seo_description: d.category ? categoryMetaDescription(d.category.description) : null, image_url: null };
+    // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
+    const values = collectionPartValues(c, s, { page: d.page, ...(d.category ? { category: d.category } : {}), ...(d.tag ? { tag: d.tag } : {}), tags: d.facets.tags, link: d.link, ...(d.after ? { after: d.after } : {}) });
+    const themed = themeLayoutParts(c, s, lt, { body: view.body, names: COLLECTION_PARTS, defaults: only(parts), values, title: page.title, path: qs ? `?${qs}` : "", categories: d.categories });
+    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: qs ? `?${qs}` : "" });
     if (res) return res;
   }
   const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
@@ -569,8 +573,10 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, 
       for (const [k, node] of Object.entries(view2.parts)) parts[k] = node === null ? "" : String(node);
       parts["buy"] = (parts["added"] ?? "") + (parts["buy"] ?? "");
       const { jsonLd, path } = liquidProductJsonLd(c, s, { detail, categoryNames: props.categoryPath.map((x) => x.name), selectedSku: props.selectedSku });
+      // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
+      const themed = themeLayoutParts(c, s, lt, { body: view.body, names: PRODUCT_LAYOUT_PARTS, defaults: only(parts), values: productPartValues(c, s, detail, props.selectedSku), title: detail.product.name, path, categories });
       const page: PageRow = { ...layout, title: detail.product.name, seo_title: null, seo_description: detail.product.description ? detail.product.description.slice(0, 200) : null, image_url: null };
-      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, only(parts)), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd });
+      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd });
       if (res) return res;
     }
     const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
@@ -615,6 +621,9 @@ async function membersOnlyGate(c: Ctx, s: ShopScope, kind: "page" | "article", h
 
 /** 見る人（ログイン中の会員なら独自項目の値も）。見せる相手の囲み（0097）の判定に使う */
 const viewerOf = (s: ShopScope): AudienceContext => ({ ...(s.ctx.member ? { member: true, attrs: s.ctx.member.attrs ?? {} } : GUEST), ...s.query });
+
+/** テーマに渡すカテゴリー（説明と画像は 0113。無ければ出さない） */
+const categoryProp = (c: CategoryRow) => ({ slug: c.slug, name: c.name, description: c.description ?? null, image: categoryImageOf(c) });
 
 /** 本文の中の「商品を並べる」「記事を並べる」（src/content/body-blocks.ts。ヘッドレスの API と共通） */
 function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[]) {

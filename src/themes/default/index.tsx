@@ -24,6 +24,7 @@ function PasskeyButton({ ctx, kind, returnTo }: { ctx: ThemeContext; kind: "logi
 
 const PROVIDER_LABELS = { line: "LINE", google: "Google" } as const;
 import { imageUrl, responsiveImage } from "../../media/images";
+import { categoryDescriptionHtml, categoryMetaDescription } from "../../products/category-media";
 import { optionLabel, optionNamesOf } from "../../products/option-names";
 import { jsonLdText, productJsonLd } from "../../storefront/structured-data";
 import { yen } from "../../routes/common";
@@ -72,6 +73,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .card:hover{box-shadow:0 2px 12px color-mix(in srgb,CanvasText 15%,transparent)}
 .tags{display:flex;flex-wrap:wrap;gap:.4rem}.tags a{padding:.15rem .6rem;border:1px solid color-mix(in srgb,CanvasText 20%,transparent);border-radius:1rem;text-decoration:none;font-size:.9rem}.tags a.active{background:var(--accent,#1f6feb);color:#fff;border-color:transparent}
 .categories{display:flex;flex-wrap:wrap;gap:.25rem .9rem;margin:.5rem 0 1rem}.categories a{text-decoration:none}.categories a.active{font-weight:700}.categories a.sub{font-size:.9rem;margin-left:.5rem;opacity:.8}
+.category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
 ${REVIEWS_CSS}
@@ -490,7 +492,13 @@ export const defaultTheme: Theme = {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
     const heading = category ? category.name : tag;
-    const seo = { path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home, description: intro, image: products.find((p) => p.image)?.image ? imageUrl(ctx.mediaBaseUrl, products.find((p) => p.image)!.image!.storage_key) : undefined, ...(pagination?.first ? { noindex: true } : {}) };
+    const firstImage = products.find((p) => p.image)?.image;
+    const seo = {
+      path: category ? `${home}?category=${encodeURIComponent(category.slug)}` : tag ? `${home}?tag=${encodeURIComponent(tag)}` : home,
+      description: categoryMetaDescription(category?.description) ?? intro,
+      image: category?.image ? imageUrl(ctx.mediaBaseUrl, category.image.key) : firstImage ? imageUrl(ctx.mediaBaseUrl, firstImage.storage_key) : undefined,
+      ...(pagination?.first ? { noindex: true } : {}),
+    };
     const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
     // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
     if (layout) {
@@ -529,6 +537,7 @@ export const defaultTheme: Theme = {
           </nav>
         ) : null}
         {category ? <h2>{category.name}</h2> : null}
+        {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
         {tags && tags.length > 0 ? (
           <p class="tags">
             <a href={home} class={tag ? "" : "active"}>
@@ -1975,6 +1984,25 @@ function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"];
  * 商品一覧のひな形（0103、`::: current part=…`）の部品。title（カテゴリーの名前か「すべての商品」）・products（並びとページ送り）・
  * filters（タグ。カテゴリーで絞ったまま）・subcategories（子カテゴリー。すべての一覧なら上の段のカテゴリー）・breadcrumb
  */
+type ListCategory = NonNullable<ShopHomeProps["category"]>;
+
+/** カテゴリーの画像（0113）。見出しの下に横いっぱいで */
+function CategoryImageView({ ctx, category }: { ctx: ShopHomeProps["ctx"]; category: ListCategory }) {
+  if (!category.image) return null;
+  return <img class="category-image" src={imageUrl(ctx.mediaBaseUrl, category.image.key)} width={category.image.width} height={category.image.height} alt="" decoding="async" />;
+}
+
+/** 一覧の上のカテゴリーの画像と説明（0113。どちらも無ければ何も出さない） */
+function CategoryIntro({ ctx, category }: { ctx: ShopHomeProps["ctx"]; category: ListCategory }) {
+  if (!category.image && !category.description) return null;
+  return (
+    <div class="category-intro">
+      <CategoryImageView ctx={ctx} category={category} />
+      {category.description ? <div class="category-description">{raw(categoryDescriptionHtml(category.description))}</div> : null}
+    </div>
+  );
+}
+
 export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice }: Omit<ShopHomeProps, "layout">) {
   const home = ctx.shopPath || "/";
   const q = (extra: Record<string, string>) => `${home}?${new URLSearchParams({ ...(category ? { category: category.slug } : { all: "1" }), ...extra }).toString()}`;
@@ -1998,6 +2026,8 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
   const children = category ? (find(tree, category.slug)?.children ?? []) : tree;
   return {
     title: <h1>{category ? category.name : t("store.all_products")}</h1>,
+    image: category?.image ? <CategoryImageView ctx={ctx} category={category} /> : null,
+    content: category?.description ? <div class="category-description">{raw(categoryDescriptionHtml(category.description))}</div> : null,
     products: (
       <>
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}

@@ -92,6 +92,7 @@ export function memberReader(c: Ctx, shopId: string, member: { cid: string; ep: 
   return {
     member,
     list: (args) => db.productMemberList({ ...args, ...who }),
+    pick: (slugs) => db.productMemberPick({ ...who, p_slugs: slugs }),
     get: (slug) => db.productMemberGet({ ...who, p_slug: slug }),
     skus: (skuIds) => db.productMemberSkus({ ...who, p_sku_ids: skuIds }),
     page: (handle) => db.contentMemberRpc("page_member_get", { ...who, p_handle: handle }),

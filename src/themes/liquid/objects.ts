@@ -6,7 +6,7 @@
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
 import { optionLabel, type OptionNames } from "../../products/option-names";
-import type { CategoryRow, ProductImageRow } from "../../db/types";
+import type { CategoryImage, CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
 import type { CartLine } from "../types";
 import type { CategoryNode } from "../../products/categories";
@@ -16,6 +16,7 @@ import { appDataOf, customAppData, productReviews, type ProductReviews } from ".
 import { reviewsMoreHtml } from "../../apps/reviews-html";
 import { selectedRowValue, sizeChartLiquid, sizeChartOf } from "../../size-charts/chart";
 import { escapeHtml, SafeHtml } from "./engine";
+import { categoryDescriptionHtml } from "../../products/category-media";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
 
@@ -191,13 +192,16 @@ export function reviewsLiquid(r: ProductReviews | null) {
   };
 }
 
-export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[] }) {
+export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[] }) {
   const url = c.handle === "all" ? u.shopPath || "/" : `${u.shopPath || ""}/?category=${encodeURIComponent(c.handle)}`;
   return {
     id: c.handle,
     handle: c.handle,
     title: c.title,
-    description: c.description ?? "",
+    // カテゴリーの説明と画像（0113）。説明はエスケープして改行を <br> にした HTML（商品の説明と同じ）
+    description: new SafeHtml(categoryDescriptionHtml(c.description)),
+    image: c.image ? imageObject(u, { storage_key: c.image.key, thumb_key: null, width: c.image.width, height: c.image.height, variants: [], thumb_width: null }, c.title) : null,
+    featured_image: c.image ? imageObject(u, { storage_key: c.image.key, thumb_key: null, width: c.image.width, height: c.image.height, variants: [], thumb_width: null }, c.title) : null,
     url,
     products: c.products,
     products_count: c.count ?? c.products.length,

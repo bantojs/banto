@@ -3,6 +3,7 @@
  * 本文は決まった書式のまま、1 行で書く 2 つの形を足す:
  *
  *   ::: products category=tops tag="冬物" limit=8 layout=grid sort=new
+ *   ::: products slugs=tee,coat,knit layout=grid        （選んだ商品を書いた順に。0112、絞り込み・並べ方・数は持たない）
  *   ::: button [詳しく見る](/p/coat)
  *
  * - 商品を並べる: **選ぶのは Banto**（公開中の商品だけ、一覧と同じ product_public_list・キャッシュ）、**描くのはテーマ**
@@ -16,6 +17,8 @@ import { PRODUCT_SORTS, type ProductSort, type ProductSummary } from "../storefr
 
 export type ProductsLayout = "grid" | "scroll";
 export interface ProductBlock {
+  /** 選んだ商品の slug（書いた順に並べる。0112）。あれば category・tag・sort は使わず、limit は数と同じ */
+  slugs?: string[] | null;
   /** カテゴリーの slug（その子孫も含む）。null ならすべて */
   category: string | null;
   /** このタグを持つ商品だけ。null なら絞らない */
@@ -38,6 +41,9 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ESC[ch]!);
 export const PRODUCT_BLOCKS_MAX = 3;
 export const PRODUCT_BLOCK_LIMIT_MAX = 24;
 export const PRODUCT_BLOCK_LIMIT_DEFAULT = 8;
+/** slugs= に書ける商品の数（1 つのブロック） */
+export const PRODUCT_BLOCK_SLUGS_MAX = 24;
+const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 const LINE = /^\s{0,3}:::\s*products(?:\s+(.*))?$/;
 const BUTTON = /^\s{0,3}:::\s*button(?:\s+style=([a-z0-9][a-z0-9-]{0,29}))?\s+\[([^\]\n]{1,100})\]\(([^)\s]{1,2000})\)\s*$/;
@@ -47,7 +53,7 @@ export const BLOCK_LINE = /^\s{0,3}:::/;
 /** key=value / key="値" の並び（値に " と改行は入らない） */
 function attrs(s: string): Map<string, string> {
   const out = new Map<string, string>();
-  const re = /([a-z]+)=(?:"([^"\n]{0,100})"|([^\s"]{1,100}))/g;
+  const re = /([a-z]+)=(?:"([^"\n]{0,100})"|([^\s"]{1,1600}))/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(s))) out.set(m[1]!, m[2] ?? m[3] ?? "");
   return out;
@@ -58,6 +64,13 @@ export function parseProductsLine(line: string): ProductBlock | null {
   const m = LINE.exec(line);
   if (!m) return null;
   const a = attrs(m[1] ?? "");
+  const layout0 = a.get("layout") ?? "grid";
+  if (a.has("slugs") || /(^|\s)slugs=/.test(m[1] ?? "")) {
+    const slugs = [...new Set((a.get("slugs") ?? "").split(",").map((x) => x.trim()).filter(Boolean))];
+    if (slugs.length === 0 || slugs.length > PRODUCT_BLOCK_SLUGS_MAX || !slugs.every((x) => SLUG.test(x))) return null;
+    if (layout0 !== "grid" && layout0 !== "scroll") return null;
+    return { slugs, category: null, tag: null, limit: slugs.length, layout: layout0, sort: "new", style: styleOf(a.get("style")) };
+  }
   const category = a.get("category") || null;
   if (category !== null && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(category)) return null;
   const tag = a.get("tag")?.trim() || null;
@@ -75,6 +88,11 @@ export function parseProductsLine(line: string): ProductBlock | null {
 /** ブロック → 1 行（見たままの編集が書き戻す形と同じ） */
 export function productsLine(b: ProductBlock): string {
   const parts = ["::: products"];
+  if (b.slugs?.length) {
+    parts.push(`slugs=${b.slugs.join(",")}`, `layout=${b.layout}`);
+    if (b.style) parts.push(`style=${b.style}`);
+    return parts.join(" ");
+  }
   if (b.category) parts.push(`category=${b.category}`);
   if (b.tag) parts.push(/^[^\s"]+$/.test(b.tag) ? `tag=${b.tag}` : `tag="${b.tag.replace(/"/g, "")}"`);
   parts.push(`limit=${b.limit}`, `layout=${b.layout}`, `sort=${b.sort}`);

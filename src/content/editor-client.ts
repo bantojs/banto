@@ -128,6 +128,14 @@ export function pageEditorClient() {
   /** 商品を並べるブロックの箱 → 「::: products …」の 1 行（値は blocks.ts の parseProductsLine が受ける形だけ） */
   function productsLine(n: MdNode): string {
     const parts = ["::: products"];
+    // 選んだ商品（0112）: 書いた順に並べる。絞り込み・数・並び順は持たない
+    const slugs = attr(n, "data-slugs").split(",").map((x) => x.trim()).filter((x) => /^[a-z0-9][a-z0-9-]{0,62}$/.test(x)).slice(0, 24);
+    if (slugs.length) {
+      parts.push(`slugs=${slugs.join(",")}`, `layout=${attr(n, "data-layout") === "scroll" ? "scroll" : "grid"}`);
+      const st0 = styleName(attr(n, "data-style"));
+      if (st0) parts.push(`style=${st0}`);
+      return parts.join(" ");
+    }
     const category = attr(n, "data-category");
     if (/^[a-z0-9][a-z0-9-]{0,62}$/.test(category)) parts.push(`category=${category}`);
     const tag = attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
@@ -334,7 +342,15 @@ export function pageEditorClient() {
       }
       if (/^H[1-6]$/.test(tag)) {
         // 見出しはもともと太いので、中の太字は外す（ブラウザは太字のまま見出しにすることがある）
-        const text = Array.from(c.childNodes, (x) => inline(x, false)).join("").replace(/(?<!\\)\*\*/g, "").replace(/\s+/g, " ").trim();
+        // 見出しの中の改行（Shift + Enter）は、行の末尾の「\」で次の行に続ける（4 行まで。src/pages/markdown.ts）
+        const text = Array.from(c.childNodes, (x) => inline(x, false))
+          .join("")
+          .replace(/(?<!\\)\*\*/g, "")
+          .split("\n")
+          .map((x) => x.replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 4)
+          .join(" \\\n");
         // h1・h2 は ##、h3 は ###、それより下は ####（変換は # を h2 にするため、h1 は使わない）
         if (text) out.push(`${tag === "H1" || tag === "H2" ? "##" : tag === "H3" ? "###" : "####"} ${text}`);
       } else if (tag === "UL" || tag === "OL") {

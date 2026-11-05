@@ -364,6 +364,8 @@ export interface PrivilegedDb {
   /** 0098: 会員の読み取りの経路（会員のセッションを確かめ、合う会員の条件の商品を足す）。形は product_public_list / 詳細 / カート */
   productMemberList(args: Record<string, unknown>): Promise<unknown>;
   productMemberGet(args: Record<string, unknown>): Promise<unknown>;
+  /** 0112: 選んだ slug の商品（product_member_pick） */
+  productMemberPick(args: Record<string, unknown>): Promise<unknown>;
   productMemberSkus(args: Record<string, unknown>): Promise<unknown>;
   /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page） */
   contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page", args: Record<string, unknown>): Promise<unknown>;
@@ -626,6 +628,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     },
     productMemberList: (args) => rpc<unknown>("product_member_list", args),
     productMemberGet: (args) => rpc<unknown>("product_member_get", args),
+    productMemberPick: (args) => rpc<unknown>("product_member_pick", args),
     productMemberSkus: (args) => rpc<unknown>("product_member_skus", args),
     contentMemberRpc: (fn, args) => rpc<unknown>(fn, args),
     shopAudiencesRender: async (shopId) => {

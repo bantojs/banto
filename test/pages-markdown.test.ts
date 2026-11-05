@@ -16,6 +16,14 @@ describe("ページの本文の書式", () => {
     expect(md("snake_case_name")).toBe("<p>snake_case_name</p>");
   });
 
+  it("見出しの中の改行: 行の末尾の「\\」で次の行に続ける（4 行まで。\\\\ は文字の \\、空の行・ブロックの行では止まる）", () => {
+    expect(md("## SPRING \\\n春の装い")).toBe("<h2>SPRING<br>春の装い</h2>");
+    expect(md("### a\\\nb\\\nc\\\nd\\\ne")).toBe("<h3>a<br>b<br>c<br>d\\</h3>\n<p>e</p>");
+    expect(md("## C:\\\\\n本文")).toBe("<h2>C:\\</h2>\n<p>本文</p>");
+    expect(md("## a \\\n\nb")).toBe("<h2>a \\</h2>\n<p>b</p>");
+    expect(md("## a \\\n::: button [x](/p/x)")).toContain("<h2>a \\</h2>");
+  });
+
   it("箇条書き・番号付き（字下げした続きの行）・引用・表", () => {
     expect(md("- りんご\n- みかん\n  （小）\n\n1. 一\n2. 二")).toBe("<ul><li>りんご</li><li>みかん<br>（小）</li></ul>\n<ol><li>一</li><li>二</li></ol>");
     expect(md("> 引用の 1 行目\n> 2 行目")).toBe("<blockquote><p>引用の 1 行目<br>2 行目</p></blockquote>");

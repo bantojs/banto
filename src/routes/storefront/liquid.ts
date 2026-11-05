@@ -29,6 +29,8 @@ import { loadTheme, type LoadedTheme } from "../../themes/liquid/cache";
 import { extendShopify, fillConfirmation, newConfirmationMark, type Paginate } from "../../themes/liquid/shopify";
 import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnippet, themeHasTemplate, themeSettings, type ThemeTemplate } from "../../themes/liquid/page";
 import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
+import { categoryImageOf } from "../../products/category-media";
+import { usesPart } from "../../content/layouts";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
 import type { AppBlockData } from "../../content/body-blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
@@ -218,7 +220,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
       shopPath,
       page.currentPage,
     ),
-    collections: Object.fromEntries([["all", collectionObject(u, { handle: "all", title: s.shop.name, products: [], count: null, allTags: [] })], ...page.categories.map((cat) => [cat.slug, collectionObject(u, { handle: cat.slug, title: cat.name, products: [], count: null, allTags: [] })])]),
+    collections: Object.fromEntries([["all", collectionObject(u, { handle: "all", title: s.shop.name, products: [], count: null, allTags: [] })], ...page.categories.map((cat) => [cat.slug, collectionObject(u, { handle: cat.slug, title: cat.name, description: cat.description ?? null, image: categoryImageOf(cat), products: [], count: null, allTags: [] })])]),
     page_title: page.title,
     page_description: page.description ?? intro ?? "",
     canonical_url: canonical,
@@ -332,6 +334,68 @@ function paginateOf(page: ProductListPage, after: string | undefined, link: (cur
   };
 }
 
+/**
+ * ひな形の部品（::: current part=…）をテーマの snippets/part-<部品> で描く（docs/themes.md「ひな形の部品」）。
+ * ひな形の本文で使っている部品のうち、テーマに snippet があるものだけを描き、無い・誤りのある・空を返さなかった部品は既定の見た目（defaults）のまま。
+ * snippet には今の値（商品詳細は product・current_variant、商品一覧は collection・products・current_tags・paginate）と
+ * part（name と、Banto の既定の HTML の default）を渡す。part.default を出せば、既定の部品（買うフォームなど）をテーマの枠で包める。
+ * 値段・在庫・会員価格・買えるかの判定は今までどおり DB（カートと最終確認で引き直す）で、テーマの部品からは変えられない
+ */
+export function themeLayoutParts(
+  c: Ctx,
+  s: LiquidScope,
+  choice: LiquidChoice,
+  p: { body: string; names: readonly string[]; defaults: Record<string, string>; values: Record<string, unknown>; title: string; path: string; categories: CategoryRow[] },
+): Record<string, string> {
+  const out = { ...p.defaults };
+  const want = p.names.filter((n) => usesPart(p.body, n) && themeHasSnippet(choice.lt, `part-${n}`));
+  if (want.length === 0) return out;
+  let input: ReturnType<typeof pageInput>;
+  try {
+    input = pageInput(c, s, choice, { template: "page", values: p.values, title: p.title, path: p.path, categories: p.categories });
+  } catch (e) {
+    console.error("[banto] theme layout parts:", e instanceof Error ? e.message : e);
+    return out;
+  }
+  for (const n of want) {
+    try {
+      const html = renderThemeSnippet(choice.lt, input, `part-${n}`, { ...p.values, part: { name: n, default: new SafeHtml(p.defaults[n] ?? "") } });
+      if (html !== null) out[n] = html;
+    } catch (e) {
+      console.error(`[banto] theme part-${n}:`, e instanceof ThemeError ? `${e.kind}: ${e.message}` : e instanceof Error ? e.message : e);
+    }
+  }
+  return out;
+}
+
+/** 商品詳細のひな形の部品に渡す値（templates/product と同じ product・current_variant） */
+export function productPartValues(c: Ctx, s: LiquidScope, detail: ProductDetail, selectedSku: string | null): Record<string, unknown> {
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
+  const product = productFromDetail(u, detail, selectedSku);
+  return { product, current_variant: product.selected_or_first_available_variant };
+}
+
+/** 商品一覧のひな形の部品に渡す値（templates/collection と同じ collection・products・current_tags と paginate） */
+export function collectionPartValues(
+  c: Ctx,
+  s: LiquidScope,
+  p: { page: ProductListPage; category?: CategoryRow; tag?: string; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string },
+): Record<string, unknown> {
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names) };
+  const products = p.page.items.map((x) => productFromSummary(u, x));
+  const collection = collectionObject(u, {
+    handle: p.category?.slug ?? "all",
+    title: p.category?.name ?? t("store.all_products"),
+    description: p.category?.description ?? null,
+    image: p.category ? categoryImageOf(p.category) : null,
+    products,
+    count: p.page.total,
+    allTags: p.tags.map((x) => x.tag),
+    ...(p.tag ? { currentTags: [p.tag] } : {}),
+  });
+  return { collection, products, current_tags: p.tag ? [p.tag] : [], paginate: paginateOf(p.page, p.after, p.link) };
+}
+
 /** 一覧（トップ・カテゴリー・タグ）。トップは templates/index、絞り込みは templates/collection */
 export function renderListing(
   c: Ctx,
@@ -345,6 +409,8 @@ export function renderListing(
   const collection = collectionObject(u, {
     handle: p.category?.slug ?? "all",
     title: p.category?.name ?? (p.tag ? `#${p.tag}` : s.shop.name),
+    description: p.category?.description ?? null,
+    image: p.category ? categoryImageOf(p.category) : null,
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),

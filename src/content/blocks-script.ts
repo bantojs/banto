@@ -929,15 +929,17 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var PREVIEW=form.getAttribute("data-preview");
   function productsText(d){
     var f=dlg?dlg.querySelector("form"):null; var opt=function(name,v){ var o=f&&f.querySelector("[name="+name+"] option[value='"+String(v).replace(/['\\]/g,"")+"']"); return o&&name!=="tag"?o.textContent:v; };
+    if(d.slugs) return T("products")+" \u2014 "+T("products-slugs").replace("{n}",String(d.slugs.split(",").length))+"\u30fb"+opt("layout",d.layout);
     var parts=[d.category?opt("category",d.category):T("products-all")];
     if(d.tag) parts.push("#"+d.tag);
     parts.push(d.limit+" "+T("products-items"),opt("layout",d.layout),opt("sort",d.sort));
     return T("products")+" \u2014 "+parts.join("\u30fb");
   }
-  function dataOf(box){ return {category:box.getAttribute("data-category")||"",tag:box.getAttribute("data-tag")||"",limit:parseInt(box.getAttribute("data-limit")||"8",10)||8,layout:box.getAttribute("data-layout")==="scroll"?"scroll":"grid",sort:SORTS[box.getAttribute("data-sort")]?box.getAttribute("data-sort"):"new",style:box.getAttribute("data-style")||""}; }
+  function slugsOf(v){ var seen={}; return String(v||"").split(",").map(function(x){ return x.trim().toLowerCase(); }).filter(function(x){ if(!/^[a-z0-9][a-z0-9-]{0,62}$/.test(x)||seen[x]) return false; seen[x]=1; return true; }).slice(0,24).join(","); }
+  function dataOf(box){ return {slugs:slugsOf(box.getAttribute("data-slugs")),category:box.getAttribute("data-category")||"",tag:box.getAttribute("data-tag")||"",limit:parseInt(box.getAttribute("data-limit")||"8",10)||8,layout:box.getAttribute("data-layout")==="scroll"?"scroll":"grid",sort:SORTS[box.getAttribute("data-sort")]?box.getAttribute("data-sort"):"new",style:box.getAttribute("data-style")||""}; }
   function fetchPreview(d){
     if(!PREVIEW||!window.fetch) return Promise.resolve(null);
-    var q="?category="+encodeURIComponent(d.category)+"&tag="+encodeURIComponent(d.tag)+"&limit="+d.limit+"&sort="+d.sort;
+    var q="?slugs="+encodeURIComponent(d.slugs||"")+"&category="+encodeURIComponent(d.category)+"&tag="+encodeURIComponent(d.tag)+"&limit="+d.limit+"&sort="+d.sort;
     return fetch(PREVIEW+q,{credentials:"same-origin",headers:{Accept:"application/json"}}).then(function(r){ return r.ok?r.json():null; }).catch(function(){ return null; });
   }
   // 見本を描く（名前と画像。画像はサーバーが返した置き場の URL だけ）
@@ -958,15 +960,16 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   function setBox(box,d){
     box.className="banto-products banto-products--"+d.layout+(d.style?" banto-style-"+d.style:""); box.setAttribute("data-banto-block","products"); box.setAttribute("contenteditable","false");
     if(d.style) box.setAttribute("data-style",d.style); else box.removeAttribute("data-style");
+    if(d.slugs) box.setAttribute("data-slugs",d.slugs); else box.removeAttribute("data-slugs");
     box.setAttribute("data-category",d.category); box.setAttribute("data-tag",d.tag); box.setAttribute("data-limit",String(d.limit)); box.setAttribute("data-layout",d.layout); box.setAttribute("data-sort",d.sort);
     box.textContent=""; var head=el("div",""); head.textContent=productsText(d); box.appendChild(head);
     if(sel===box) box.classList.add("is-sel");
-    fetchPreview(d).then(function(j){ if(box.getAttribute("data-tag")===d.tag&&box.getAttribute("data-category")===d.category) drawPreview(box,j,true); });
+    fetchPreview(d).then(function(j){ if(box.getAttribute("data-tag")===d.tag&&box.getAttribute("data-category")===d.category&&(box.getAttribute("data-slugs")||"")===(d.slugs||"")) drawPreview(box,j,true); });
   }
   // 開いたときに、置いてある商品のブロックにも見本を出す
   Array.prototype.forEach.call(ed.querySelectorAll("[data-banto-block=products]"),function(b){ setBox(b,dataOf(b)); });
   var pv=document.getElementById("bp-preview"), pvTimer=0;
-  function dlgData(){ var f=dlg.querySelector("form"); var n=parseInt(f.elements.limit.value,10); var cat=/^[a-z0-9][a-z0-9-]{0,62}$/.test(f.elements.category.value)?f.elements.category.value:""; return {category:cat,tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=24)?n:8,layout:f.elements.layout.value==="scroll"?"scroll":"grid",sort:SORTS[f.elements.sort.value]?f.elements.sort.value:"new",style:styleVal(f.elements.style)}; }
+  function dlgData(){ var f=dlg.querySelector("form"); var n=parseInt(f.elements.limit.value,10); var cat=/^[a-z0-9][a-z0-9-]{0,62}$/.test(f.elements.category.value)?f.elements.category.value:""; return {slugs:slugsOf(f.elements.slugs?f.elements.slugs.value:""),category:cat,tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=24)?n:8,layout:f.elements.layout.value==="scroll"?"scroll":"grid",sort:SORTS[f.elements.sort.value]?f.elements.sort.value:"new",style:styleVal(f.elements.style)}; }
   function dlgPreview(){ if(!pv) return; pv.textContent=T("pv-loading"); clearTimeout(pvTimer); pvTimer=setTimeout(function(){ var d=dlgData(); fetchPreview(d).then(function(j){ pv.textContent=""; drawPreview(pv,j,false); }); },250); }
   if(dlg){ dlg.querySelector("form").addEventListener("change",dlgPreview); dlg.querySelector("form").addEventListener("input",dlgPreview); }
   function openProducts(box,blk){
@@ -978,6 +981,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     // 一覧に無いタグ（公開中の商品に無い・前に手で入れた）は、そうと分かる形で選択肢に足す
     if(tag.tagName==="SELECT"){ Array.prototype.forEach.call(tag.querySelectorAll("option[data-missing]"),function(o){ o.remove(); }); if(tv&&!Array.prototype.some.call(tag.options,function(o){ return o.value===tv; })){ var o=document.createElement("option"); o.value=tv; o.setAttribute("data-missing","1"); o.textContent=(tag.getAttribute("data-missing")||"{v}").replace("{v}",tv); tag.appendChild(o); } }
     fillStyle(f.elements.style,"products",g("style",""));
+    if(f.elements.slugs) f.elements.slugs.value=g("slugs","");
     f.elements.category.value=g("category",""); tag.value=tv; f.elements.limit.value=g("limit","8"); f.elements.layout.value=g("layout","grid"); f.elements.sort.value=g("sort","new");
     dlg.returnValue=""; dlgPreview();
     var done=function(){

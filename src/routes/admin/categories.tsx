@@ -13,6 +13,10 @@ import { optionNamesOf } from "../../products/option-names";
 import { sizeChartHref } from "../../modules/size-charts/admin";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
+import { migrated } from "../../db/migration-state";
+import { mediaBaseUrl } from "../common";
+import { MAX_IMAGE_BYTES, imageSize, imageUrl, randomKey, sniffImage } from "../../media/images";
+import { CATEGORY_DESCRIPTION_MAX, CATEGORY_IMAGE_WIDTH, CATEGORY_MEDIA_MIGRATION, categoryDescriptionFromForm, categoryImageKey, categoryImageOf } from "../../products/category-media";
 
 /**
  * カテゴリーの管理（0008_catalog.sql、3 段まで）。owner の JWT で RLS 経由で書く。
@@ -49,6 +53,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     axes_mismatch: "axes.mismatch",
     names_saved: "axes.names_saved",
     names_invalid: "axes.names_invalid",
+    image_invalid: "category.image_invalid",
   };
   const key = code ? map[code] : undefined;
   return key ? { kind: code === "saved" || code === "axes_saved" || code === "names_saved" ? "ok" : "error", text: t(key) } : null;
@@ -68,6 +73,8 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const names = optionNamesOf(shop.option_names);
   const rows = await loadCategories(db, shop.id);
+  // 画像と説明（0113）。適用されるまで欄を出さない
+  const media = (await migrated({ db, cache: c.get("adapters").cache }, CATEGORY_MEDIA_MIGRATION)) ? mediaBaseUrl(c) : null;
   const f = flash(c.req.query("flash"));
   const applied = appliedText((k) => c.req.query(k));
   const base = `/admin/shops/${shop.id}/categories`;
@@ -123,6 +130,35 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
             </details>
           </td>
           <td>
+            {media !== null ? (
+              <details>
+                <summary>
+                  {t("category.media")}
+                  {categoryImageOf(row) || row.description ? ` ✓` : ""}
+                </summary>
+                <form method="post" action={`${base}/${n.id}/media`} enctype="multipart/form-data" data-category-media>
+                  <label for={`desc-${n.id}`}>{t("category.description")}</label>
+                  <textarea id={`desc-${n.id}`} name="description" rows={4} maxlength={CATEGORY_DESCRIPTION_MAX} style="width:100%">
+                    {row.description ?? ""}
+                  </textarea>
+                  <label for={`img-${n.id}`}>{t("category.image")}</label>
+                  {categoryImageOf(row) ? (
+                    <p>
+                      <img src={imageUrl(media, categoryImageOf(row)!.key)} alt="" style="max-width:12rem;height:auto" loading="lazy" />
+                      <br />
+                      <label>
+                        <input type="checkbox" name="image_remove" value="on" /> {t("category.image_remove")}
+                      </label>
+                    </p>
+                  ) : null}
+                  <input id={`img-${n.id}`} type="file" name="image" accept="image/jpeg,image/png,image/webp" />
+                  <p class="muted">{t("category.image_hint")}</p>
+                  <button type="submit" class="secondary small">
+                    {t("shop.save")}
+                  </button>
+                </form>
+              </details>
+            ) : null}
             {sizeChartHref(shop, { category: n.id }) ? (
               <p>
                 <a href={sizeChartHref(shop, { category: n.id })!}>{t("sizechart.link")}</a>
@@ -225,9 +261,18 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
         </div>
       {/* チップの入力（値の候補）。ページのすべての入力欄ができてから動かす */}
       <ChipsScript />
+      {media !== null ? <script dangerouslySetInnerHTML={{ __html: RESIZE_SCRIPT }} /> : null}
     </AdminLayout>,
   );
 });
+
+/** カテゴリーの画像を縮小してから送る（横幅 CATEGORY_IMAGE_WIDTH・高さ 4096 まで、WebP）。失敗したら元のファイルのまま送る */
+const RESIZE_SCRIPT = `(function(){document.querySelectorAll("form[data-category-media]").forEach(function(f){var inp=f.querySelector("input[name=image]");var busy=false;
+f.addEventListener("submit",function(e){if(busy||!inp||!inp.files||!inp.files[0]||typeof DataTransfer==="undefined")return;e.preventDefault();busy=true;var file=inp.files[0];var url=URL.createObjectURL(file);var im=new Image();
+function go(){f.submit()}
+im.onload=function(){var W=im.naturalWidth,H=im.naturalHeight;var r=Math.min(1,${CATEGORY_IMAGE_WIDTH}/W,4096/H);var w=Math.max(1,Math.round(W*r)),h=Math.max(1,Math.round(H*r));var c=document.createElement("canvas");c.width=w;c.height=h;var x=c.getContext("2d");if(!x){go();return}x.drawImage(im,0,0,w,h);
+c.toBlob(function(b){URL.revokeObjectURL(url);if(b&&b.type==="image/webp"){var dt=new DataTransfer();dt.items.add(new File([b],"category.webp",{type:"image/webp"}));inp.files=dt.files}go()},"image/webp",0.85)};
+im.onerror=function(){go()};im.src=url})})})();`;
 
 function categoryValues(f: Record<string, string>, shopId: string): Partial<CategoryRow> | "invalid_slug" | "generic" {
   const slug = (f.slug ?? "").trim();
@@ -269,13 +314,57 @@ categories.post("/:shopId/categories/:categoryId", requireOwner, async (c: Admin
   return c.redirect(`${base}?flash=saved`);
 });
 
-/** 削除: 子は最上位に、商品は未分類になる（外部キーの on delete set null） */
+/**
+ * 画像と説明（0113）。画像はブラウザで縮小したものを受け取り、形と大きさを確かめて置き場の categories/<ショップ>/ に置く。
+ * 新しい画像 > 外す > 今のまま。置き換えた・外した前の画像は行を書いた後に消す
+ */
+categories.post("/:shopId/categories/:categoryId/media", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const categoryId = param(c, "categoryId");
+  const base = `/admin/shops/${shopId}/categories`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const [row] = await db.from<CategoryRow>("categories").select("*", { eq: { id: categoryId, shop_id: shopId }, limit: 1 });
+  if (!row) return c.notFound();
+  const body = await c.req.parseBody();
+  const storage = c.get("adapters").storage;
+  const prev = categoryImageOf(row);
+  let image = prev;
+  let uploaded: string | null = null;
+  const file = body["image"];
+  if (file instanceof File && file.size > 0) {
+    if (file.size > MAX_IMAGE_BYTES) return c.redirect(`${base}?flash=image_invalid`);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const kind = sniffImage(bytes);
+    const dim = kind ? imageSize(bytes, kind.contentType) : null;
+    if (!kind || !dim || dim.width > 4096 || dim.height > 4096) return c.redirect(`${base}?flash=image_invalid`);
+    uploaded = categoryImageKey(shopId, randomKey(), kind.ext);
+    await storage.put(uploaded, bytes.buffer as ArrayBuffer, kind.contentType);
+    image = { key: uploaded, width: dim.width, height: dim.height };
+  } else if (body["image_remove"] === "on") {
+    image = null;
+  }
+  const description = categoryDescriptionFromForm(typeof body["description"] === "string" ? body["description"] : "");
+  try {
+    await db.from<CategoryRow>("categories").update({ description, image }, { id: categoryId, shop_id: shopId });
+  } catch (e) {
+    if (uploaded) await storage.delete(uploaded).catch(() => undefined);
+    return c.redirect(`${base}?flash=${errorCode(e)}`);
+  }
+  if (prev && prev.key !== image?.key) await storage.delete(prev.key).catch((e: unknown) => console.error("[banto] category image:", e));
+  return c.redirect(`${base}?flash=saved`);
+});
+
+/** 削除: 子は最上位に、商品は未分類になる（外部キーの on delete set null）。カテゴリーの画像（0113）も消す */
 categories.post("/:shopId/categories/:categoryId/delete", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
   const categoryId = param(c, "categoryId");
   if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const [row] = await db.from<CategoryRow>("categories").select("*", { eq: { id: categoryId, shop_id: shopId }, limit: 1 });
   await db.from("categories").delete({ id: categoryId, shop_id: shopId });
+  const img = categoryImageOf(row);
+  if (img) await c.get("adapters").storage.delete(img.key).catch((e: unknown) => console.error("[banto] category image:", e));
   return c.redirect(`/admin/shops/${shopId}/categories?flash=saved`);
 });
 

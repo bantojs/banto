@@ -20,6 +20,13 @@ describe("ブロックの書式", () => {
     expect(parseButtonLine("::: button [詳しく見る](/p/coat)")).toEqual({ text: "詳しく見る", url: "/p/coat", style: null });
   });
 
+  it("「::: products slugs=…」は選んだ商品（0112）: 重なりを外し、24 個まで。絞り込み・並び順は持たない", () => {
+    expect(parseProductsLine("::: products slugs=coat,tee,coat layout=scroll style=big category=tops")).toEqual({ slugs: ["coat", "tee"], category: null, tag: null, limit: 2, layout: "scroll", sort: "new", style: "big" });
+    for (const bad of ["::: products slugs=", "::: products slugs=Coat", "::: products slugs=a,,b layout=list", `::: products slugs=${Array.from({ length: 25 }, (_, i) => `p${i}`).join(",")}`]) expect(parseProductsLine(bad), bad).toBeNull();
+    expect(productsLine({ slugs: ["coat", "tee"], category: null, tag: null, limit: 2, layout: "grid", sort: "new", style: null })).toBe("::: products slugs=coat,tee layout=grid");
+    expect(markdownToHtml("::: products slugs=coat,tee")).toContain('data-banto-block="products" data-slugs="coat,tee"');
+  });
+
   it("変換は商品の場所に印（3 つまで）、ボタンは決まった形。危ない URL のボタンと形の違う行は文字", () => {
     const body = ["前の段落", "::: products tag=a", "::: products", "::: products", "::: products", "::: button [見る](/p/x)", "::: button [x](javascript:alert(1))", "::: products limit=99"].join("\n");
     const html = markdownToHtml(body);
@@ -89,6 +96,29 @@ describe("お店の画面の商品のブロック", () => {
     expect(html).toContain('<div class="mine" data-layout="scroll" data-limit="2"><a href="/p/coat">コート');
     expect(html).toContain('<a href="/p/knit">ニット');
     expect(html).not.toContain("banto-products__list");
+  });
+
+  it("選んだ商品（slugs=）は書いた順に。ページの全部のブロックの分をまとめて 1 回で引き、見えない・無い商品は飛ばす", async () => {
+    const { sb, b } = setup();
+    const page = sb.tables.pages.find((p) => p["handle"] === "winter")!;
+    page["body"] = "::: products slugs=tee,nope,coat\n\n::: products slugs=knit layout=scroll";
+    page["updated_at"] = new Date(Date.UTC(2021, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
+    const html = await (await b.get("/my-shop/pages/winter")).text();
+    const names = [...html.matchAll(/<div class="body"><div>([^<]+)<\/div>/g)].map((m) => m[1]);
+    expect(names).toEqual(["T シャツ", "コート", "ニット"]);
+    expect(sb.pickCalls).toBe(1);
+  });
+
+  it("選んだ商品は 0112 が当たるまで空（問い合わせない）", async () => {
+    const { sb, b } = setup();
+    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0112_product_pick");
+    const page = sb.tables.pages.find((p) => p["handle"] === "winter")!;
+    page["body"] = "前\n\n::: products slugs=tee,coat";
+    page["updated_at"] = new Date(Date.UTC(2021, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
+    const html = await (await b.get("/my-shop/pages/winter")).text();
+    expect(html).toContain("<p>前</p>");
+    expect(html).not.toContain("T シャツ");
+    expect(sb.pickCalls).toBe(0);
   });
 
   it("Liquid のテーマ: snippet が無ければ既定のカード", async () => {

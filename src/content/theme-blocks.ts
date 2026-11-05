@@ -13,7 +13,7 @@ import { t, type MessageKey } from "../i18n";
 export const PATTERNS_FILE = "config/banto_patterns.json";
 export const STYLES_FILE = "config/banto_block_styles.json";
 export const PATTERN_LIMITS = { count: 40, body: 20000, title: 60, description: 160 } as const;
-export const STYLE_LIMITS = { perKind: 12, label: 40 } as const;
+export const STYLE_LIMITS = { perKind: 24, label: 40 } as const;
 /** スタイルを付けられるブロック */
 export const STYLABLE = ["group", "columns", "column", "cover", "media", "gallery", "accordion", "button", "products", "articles"] as const;
 
