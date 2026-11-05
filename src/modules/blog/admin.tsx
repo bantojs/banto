@@ -19,7 +19,8 @@ import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import { ContentForm, type EditorKind, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
 import { ARTICLE_ORDERS, BLOG_MODULE, BLOG_ORDER_MIGRATION, articleHandleOk, blogHandleOk, isArticleOrder, parseTags, type ArticleRow, type BlogRow } from "../../blog";
 import { migrated } from "../../db/migration-state";
-import { articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
+import { ARTICLE_FIELD_IMAGE_MIGRATION, articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
+import { fieldImageUpload } from "../../routes/admin/field-image";
 
 /**
  * 同梱モジュール「ブログ」の管理画面（0081_mod_blog、docs/blog.md）。扱えるのはページと同じ content の項目を持つ人（RLS が正）。
@@ -504,6 +505,13 @@ blogAdmin.post("/:blogId/settings", requireOwner, async (c: AdminContext) => {
   return c.redirect(`${base(shop.id)}/${blog.id}/settings?flash=saved`);
 });
 
+/** 記事の項目の画像を置く（0120、項目 content）。返った URL を欄に入れて、記事の保存で書く */
+blogAdmin.post("/field-image", requireOwner, async (c: AdminContext) => {
+  const shop = await scope(c);
+  if (!shop) return c.json({ error: t("shop.not_found") }, 404);
+  return fieldImageUpload(c, shop.id);
+});
+
 /** 記事の項目の定義を保存する（0117）。形と指すブログは DB のトリガーも確かめる */
 blogAdmin.post("/:blogId/fields", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
@@ -512,7 +520,8 @@ blogAdmin.post("/:blogId/fields", requireOwner, async (c: AdminContext) => {
   if (!articleFieldsReady(blog)) return c.redirect(`${base(shop.id)}/${blog.id}/settings`);
   const text = (await formFields(c))["rows"] ?? "";
   const blogs = await owner(c).db.from<{ id: string; handle: string }>("blogs").select("id,handle", { eq: { shop_id: shop.id }, limit: 100 });
-  const { defs, error } = parseArticleFieldRows(text, blogs);
+  const image = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, ARTICLE_FIELD_IMAGE_MIGRATION).catch(() => false);
+  const { defs, error } = parseArticleFieldRows(text, blogs, { image });
   if (error !== null) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: error.slice(0, 100), status: 400 });
   try {
     await owner(c).db.from("blogs").update({ article_fields: defs }, { id: blog.id, shop_id: shop.id });
@@ -570,7 +579,7 @@ function articleValues(f: Record<string, string>, mediaBase: string, defs: Artic
     excerpt: opt(f.excerpt, 1000),
     author: opt(f.author, 100),
     // 記事の項目（0117。当たっている DB だけ。形と指す先は DB が確かめる）
-    ...(defs ? { fields: fieldsFromForm(defs, f) } : {}),
+    ...(defs ? { fields: fieldsFromForm(defs, f, mediaBase) } : {}),
     ...contentAudienceValues(f),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
@@ -619,7 +628,7 @@ async function editArticle(c: AdminContext, shop: ShopRow, blog: BlogRow, opts: 
     for (const d of defs.filter((x) => x.type === "article" && x.blog)) {
       articles[d.key] = await db.from<{ handle: string; title: string }>("articles").select("handle,title", { eq: { blog_id: d.blog!, shop_id: shop.id }, order: "title.asc", limit: 500 }).catch(() => []);
     }
-    fields = { defs, values: v.fields ?? {}, stores, articles };
+    fields = { defs, values: v.fields ?? {}, stores, articles, upload: `${base(shop.id)}/field-image` };
   }
   return layout(
     c,
