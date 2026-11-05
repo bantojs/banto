@@ -10,6 +10,8 @@
  *   ::: embed url="https://www.youtube.com/watch?v=…"    （YouTube・X・Instagram・TikTok・Reddit・Bluesky。押すまで外へつながない、src/pages/embeds.ts）
  *   ::: current part=title    （ひな形に割り当てたページの中で、今の記事・商品の部品。CURRENT_PARTS。src/content/layouts.ts）
  *   ::: video src="/media/pages/<ショップ>/<名前>.mp4" poster="…" autoplay=1 loop=1 controls=0   （置き場の mp4 だけ、src/media/video.ts）
+ *   ::: toc levels=3 title="この記事の目次"   （本文の見出しから。データは引かない。見出しには id を振る）
+ *   ::: stores tryon=1 layout=grid   （ショップで使う実店舗。店名・住所・電話・今日の営業・曜日ごとの営業時間・臨時休業）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
  * - アイコンは決まった一式（src/pages/icons.ts）から選び、その場で SVG を描く（データを引かない）
@@ -24,10 +26,10 @@ import { formatDateTime } from "../i18n/time";
 import { parseEmbedUrl } from "./embeds";
 import { isPosterUrl, isVideoUrl } from "../media/video";
 
-export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed" | "video" | "current";
-export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed", "video", "current"];
+export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed" | "video" | "current" | "toc" | "stores";
+export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed", "video", "current", "toc", "stores"];
 /** データを引かないブロック（印を数えない・body-blocks に渡さない） */
-export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed", "video", "current"];
+export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed", "video", "current", "toc"];
 /** データを引くブロックの数の上限（1 ページ） */
 export const SHOP_BLOCKS_MAX = 8;
 
@@ -48,6 +50,9 @@ export const currentMarker = (part: string) => `<!--banto:current:${part}-->`;
 /** 商品のブロックで出せる項目（並びはこの順で描く） */
 export const PRODUCT_PARTS = ["image", "name", "price", "options", "sku", "tags", "description", "cart", "buy"] as const;
 export type ProductPart = (typeof PRODUCT_PARTS)[number];
+/** 商品の独自項目（shops.settings.product_fields の公開の項目）を出す部品: field:<key> */
+export const PRODUCT_FIELD_PART = /^field:[a-z][a-z0-9_]{0,39}$/;
+export type ProductShowPart = ProductPart | `field:${string}`;
 export const PRODUCT_PARTS_DEFAULT: readonly ProductPart[] = ["image", "name", "price", "cart"];
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -60,12 +65,14 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   search: { placeholder: { text: true } },
   categories: { parent: { test: (v) => SLUG.test(v) }, layout: { values: ["list", "grid"], def: "list" } },
   card: { page: { test: (v) => SLUG.test(v) }, article: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}\/[a-z0-9][a-z0-9-]{0,62}$/.test(v) } },
-  product: { slug: { test: (v) => SLUG.test(v) }, show: { test: (v) => v.split(",").every((x) => (PRODUCT_PARTS as readonly string[]).includes(x)) } },
+  product: { slug: { test: (v) => SLUG.test(v) }, show: { test: (v) => v.split(",").length <= 30 && v.split(",").every((x) => (PRODUCT_PARTS as readonly string[]).includes(x) || PRODUCT_FIELD_PART.test(x)) } },
   icon: { name: { test: (v) => Object.prototype.hasOwnProperty.call(ICONS, v) }, size: { values: ["s", "m", "l", "xl"], def: "m" }, tone: { values: ["text", "accent", "muted"], def: "text" }, label: { text: true } },
   embed: { url: { url: true, test: (v) => parseEmbedUrl(v) !== null } },
   current: { part: { values: CURRENT_PARTS } },
   video: { src: { url: true, test: isVideoUrl }, poster: { url: true, test: isPosterUrl }, autoplay: { values: ["0", "1"], def: "0" }, loop: { values: ["0", "1"], def: "0" }, controls: { values: ["0", "1"], def: "1" } },
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
+  toc: { levels: { values: ["2", "3"], def: "3" }, title: { text: true } },
+  stores: { tryon: { values: ["0", "1"], def: "0" }, layout: { values: ["list", "grid"], def: "list" } },
 };
 
 export interface ShopBlock {
@@ -74,7 +81,7 @@ export interface ShopBlock {
   attrs: Record<string, string>;
 }
 
-const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed|video|current)(?:\s+(.*?))?\s*$/;
+const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed|video|current|toc|stores)(?:\s+(.*?))?\s*$/;
 
 /** 1 行を読む。形が違えば null（その行は文字として出る）。必須の値が無いもの（商品の slug など）も null */
 export function parseShopBlock(line: string): ShopBlock | null {
@@ -132,7 +139,10 @@ export function fillShopBlocks(html: string, rendered: readonly string[]): strin
   return html.replace(/<!--banto:shop:(\d+)-->/g, (_, n: string) => rendered[Number(n)] ?? "");
 }
 
-export const productPartsOf = (b: ShopBlock): ProductPart[] => (b.attrs["show"] ? (b.attrs["show"].split(",") as ProductPart[]) : [...PRODUCT_PARTS_DEFAULT]);
+export const productPartsOf = (b: ShopBlock): ProductShowPart[] => (b.attrs["show"] ? (b.attrs["show"].split(",") as ProductShowPart[]) : [...PRODUCT_PARTS_DEFAULT]);
+
+/** 目次の印（見出しは描き終わってから集めるので、本文の HTML には印だけを置く。markdownToHtml が入れる） */
+export const tocMarker = (i: number) => `<!--banto:toc:${i}-->`;
 
 /** アイコンの SVG（決まった一式だけ。label があれば読み上げる、無ければ飾り） */
 export function iconHtml(b: ShopBlock): string {
@@ -179,5 +189,8 @@ export const SHOP_BLOCKS_CSS = [
   ".banto-categories--grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));gap:.5rem}.banto-categories--grid>li>a{display:block;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem)}",
   ".banto-categories__image{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:calc(var(--banto-radius,.5rem) - .25rem);margin:0 0 .5rem}",
   ".banto-card{display:flex;gap:1rem;align-items:center;padding:.75rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem);text-decoration:none;color:inherit}.banto-card img{width:6rem;height:6rem;object-fit:cover;border-radius:.35rem}.banto-card__title{font-weight:600}",
+  ".banto-toc{margin:1.25rem 0;padding:.75rem 1rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem)}.banto-toc__title{font-weight:600;margin:0 0 .35rem}.banto-toc ol{margin:0;padding-left:1.25rem}.banto-toc ol ol{margin:.15rem 0}",
+  ".banto-stores{list-style:none;padding:0;margin:0;display:grid;gap:.75rem}.banto-stores--grid{grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))}.banto-store{padding:.75rem 1rem;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:var(--banto-radius,.5rem)}.banto-store__name{font-weight:600;margin:0 0 .25rem}.banto-store p{margin:.15rem 0}.banto-store__today{font-weight:600}.banto-store table{font-size:.9em}.banto-store__specials{font-size:.9em;opacity:.8;padding-left:1.1rem;margin:.25rem 0 0}",
+  ".banto-product__field-label{font-size:.85em;opacity:.75;margin-right:.35em}",
   ".banto-product{display:grid;gap:.5rem;max-width:28rem}.banto-product img{width:100%;height:auto;border-radius:var(--banto-radius,.5rem)}.banto-product__name{font-weight:600;font-size:1.1rem}.banto-product__price{font-weight:600}.banto-product form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}.banto-product__option{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}.banto-product__option-name{font-size:.9em;opacity:.8}.banto-swatches{display:flex;flex-wrap:wrap;gap:.35rem}.banto-swatch{display:inline-flex;text-decoration:none;color:inherit}.banto-swatch__dot{display:inline-block;width:1.5rem;height:1.5rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 25%,transparent)}.banto-swatch__dot img{width:100%;height:100%;object-fit:cover}.banto-swatch__text{padding:.15rem .6rem;border:1px solid color-mix(in srgb,currentColor 25%,transparent);border-radius:999px;font-size:.85em}.banto-swatch--out{opacity:.4}",
 ].join("");

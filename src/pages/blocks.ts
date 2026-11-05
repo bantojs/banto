@@ -20,6 +20,8 @@ export type ProductsLayout = "grid" | "scroll";
 export interface ProductBlock {
   /** 選んだ商品の slug（書いた順に並べる。0112）。あれば category・tag・sort は使わず、limit は数と同じ */
   slugs?: string[] | null;
+  /** 似た商品（related=@product）: 描いている商品と同じ主カテゴリー・同じタグの商品（src/content/body-blocks.ts）。category・tag は使わない */
+  related?: boolean;
   /** カテゴリーの slug（その子孫も含む）。null ならすべて */
   category: string | null;
   /** このタグを持つ商品だけ。null なら絞らない */
@@ -72,9 +74,11 @@ export function parseProductsLine(line: string): ProductBlock | null {
     if (layout0 !== "grid" && layout0 !== "scroll") return null;
     return { slugs, category: null, tag: null, limit: slugs.length, layout: layout0, sort: "new", style: styleOf(a.get("style")) };
   }
-  const category = a.get("category") || null;
+  const related = a.get("related");
+  if (related !== undefined && related !== PRODUCT_TAG) return null;
+  const category = related ? null : a.get("category") || null;
   if (category !== null && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(category)) return null;
-  const tag = a.get("tag")?.trim() || null;
+  const tag = related ? null : a.get("tag")?.trim() || null;
   if (tag !== null && tag.length > 50) return null;
   const limitRaw = a.get("limit");
   const limit = limitRaw === undefined ? PRODUCT_BLOCK_LIMIT_DEFAULT : Number(limitRaw);
@@ -83,7 +87,7 @@ export function parseProductsLine(line: string): ProductBlock | null {
   if (layout !== "grid" && layout !== "scroll") return null;
   const sort = (a.get("sort") ?? "new") as ProductSort;
   if (!PRODUCT_SORTS.includes(sort)) return null;
-  return { category, tag, limit, layout, sort, style: styleOf(a.get("style")) };
+  return { ...(related ? { related: true } : {}), category, tag, limit, layout, sort, style: styleOf(a.get("style")) };
 }
 
 /** ブロック → 1 行（見たままの編集が書き戻す形と同じ） */
@@ -94,6 +98,7 @@ export function productsLine(b: ProductBlock): string {
     if (b.style) parts.push(`style=${b.style}`);
     return parts.join(" ");
   }
+  if (b.related) parts.push(`related=${PRODUCT_TAG}`);
   if (b.category) parts.push(`category=${b.category}`);
   if (b.tag) parts.push(/^[^\s"]+$/.test(b.tag) ? `tag=${b.tag}` : `tag="${b.tag.replace(/"/g, "")}"`);
   parts.push(`limit=${b.limit}`, `layout=${b.layout}`, `sort=${b.sort}`);

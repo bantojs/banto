@@ -26,7 +26,7 @@ import { t, tf, type MessageKey } from "../../i18n";
 import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
 import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
-import { bodyBlocks } from "../../content/body-blocks";
+import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
@@ -621,7 +621,7 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, 
   if (layout) {
     const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
     const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
-    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories, { product: detail.product.slug });
+    const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories, { product: detail.product.slug, productId: detail.product.id, categoryId: detail.product.category_id ?? null, tags: detail.product.tags ?? [] });
     const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
     // 商品の部品は既定のテーマのもの（買うフォームはここにしか無い。値段・在庫・会員価格は DB の判定のまま）。記事の部品は空
     const only = (parts: Record<string, string>) => Object.fromEntries(PRODUCT_LAYOUT_PARTS.map((k) => [k, parts[k] ?? ""]));
@@ -684,7 +684,7 @@ const viewerOf = (s: ShopScope): AudienceContext => ({ ...(s.ctx.member ? { memb
 const categoryProp = (c: CategoryRow) => ({ slug: c.slug, name: c.name, description: c.description ?? null, image: categoryImageOf(c) });
 
 /** 本文の中の「商品を並べる」「記事を並べる」（src/content/body-blocks.ts。ヘッドレスの API と共通） */
-function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[], current?: { product?: string }) {
+function bodyProducts(s: ShopScope, body: string, categories: CategoryRow[], current?: BodyBlocksDeps["current"]) {
   return bodyBlocks({ sf: s.sf, shop: s.shop, shopPath: s.ctx.shopPath, mediaBaseUrl: s.ctx.mediaBaseUrl, ...(current ? { current } : {}) }, body, categories);
 }
 

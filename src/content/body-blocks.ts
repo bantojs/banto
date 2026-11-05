@@ -37,6 +37,9 @@ import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
 import { yen } from "../routes/common";
 import { productPartsOf, shopBlocksOf, type ShopBlock } from "../pages/shop-blocks";
+import { storeView, todayHere } from "../modules/store-tryon";
+import type { StoreView } from "../themes/types";
+import { productFields } from "../products/fields";
 import { PAGES_MODULE, pagePath } from "../pages";
 import { imageUrl } from "../media/images";
 import { categoryImageOf } from "../products/category-media";
@@ -51,8 +54,11 @@ export interface BodyBlocksDeps {
   /** カードのリンクの起点（お店の画面は /<slug> か ""、ヘッドレスはショップの絶対 URL） */
   shopPath: string;
   mediaBaseUrl: string;
-  /** 描いている商品（商品詳細のひな形、0102）。::: articles tag=@product がこの商品の URL の名前で絞る */
-  current?: { product?: string };
+  /**
+   * 描いている商品（商品詳細のひな形、0102）。::: articles tag=@product がこの商品の URL の名前で絞り、
+   * ::: products related=@product が同じ主カテゴリー・同じタグの商品を並べる（この商品は除く）
+   */
+  current?: { product?: string; productId?: string; categoryId?: string | null; tags?: readonly string[] };
 }
 
 type ProductItems = NonNullable<Awaited<ReturnType<StorefrontData["productPage"]>>>["items"];
@@ -70,6 +76,32 @@ export interface BodyBlocks {
   shopCards: string[];
 }
 
+/**
+ * 似た商品（::: products related=@product）: 描いている商品の主カテゴリーの商品、足りなければ最初のタグの商品で埋める（この商品は除く）。
+ * 閲覧の履歴は持たない（「いっしょに見られている」は行動の中継を使う外部プラグインの仕事）。商品の画面の外では何も並べない
+ */
+async function relatedProducts(d: BodyBlocksDeps, block: ProductBlock, categories: CategoryRow[]): Promise<ProductItems> {
+  const cur = d.current;
+  if (!cur?.productId) return [];
+  const take = async (o: { category?: string; tag?: string }) => {
+    try {
+      return (await d.sf.productPage(d.shop, { ...o, sort: block.sort, limit: block.limit + 1 }, categories))?.items ?? [];
+    } catch (e) {
+      console.error("[banto] related products:", e);
+      return [] as ProductItems;
+    }
+  };
+  const out: ProductItems = [];
+  const add = (list: ProductItems) => {
+    for (const x of list) if (x.product.id !== cur.productId && !out.some((y) => y.product.id === x.product.id) && out.length < block.limit) out.push(x);
+  };
+  const main = cur.categoryId ? categories.find((c) => c.id === cur.categoryId) : undefined;
+  if (main) add(await take({ category: main.slug }));
+  const tag = cur.tags?.[0];
+  if (out.length < block.limit && tag) add(await take({ tag }));
+  return out;
+}
+
 export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: CategoryRow[]): Promise<BodyBlocks> {
   const pblocks = productBlocksOf(body);
   // 選んだ商品（slugs=）は、ページの全部のブロックの分をまとめて 1 回で引く（0112）
@@ -83,6 +115,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
           const bySlug = new Map((await picked!).map((x) => [x.product.slug, x]));
           return { block, items: block.slugs.map((x) => bySlug.get(x)).filter((x): x is ProductItems[number] => x !== undefined) };
         }
+        if (block.related) return { block, items: await relatedProducts(d, block, categories) };
         try {
           const r = await d.sf.productPage(d.shop, { ...(block.category ? { category: block.category } : {}), ...(block.tag ? { tag: block.tag } : {}), sort: block.sort, limit: block.limit }, categories);
           return { block, items: r?.items ?? [] };
@@ -174,6 +207,21 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     if (!blog || !art) return "";
     return cardHtml(articlePath(d.shopPath, blog.handle, art.handle), art.title, art.image_url ?? null, articleSummary(art, 80), d.mediaBaseUrl, formatDateTime(art.published_at ?? art.updated_at, { dateOnly: true }));
   }
+  if (b.kind === "stores") {
+    // ショップで使う実店舗（shop_store_list、キャッシュ済み）。tryon=1 ならお店で試着を受ける店舗だけ
+    const today = todayHere();
+    const list = (await d.sf.listStores(d.shop)).filter((st) => a["tryon"] !== "1" || st.tryon).map((st) => storeView(st, today));
+    if (list.length === 0) return "";
+    const card = (st: StoreView) => {
+      const addr = st.address ? `<p class="banto-store__address">${st.postal_code ? `〒${esc(st.postal_code)} ` : ""}${esc(st.address)}</p>` : "";
+      const tel = st.phone ? `<p class="banto-store__phone"><a href="tel:${esc(st.phone.replace(/[^0-9+]/g, ""))}">${esc(st.phone)}</a></p>` : "";
+      const week = `<details class="banto-store__hours"><summary>${esc(t("tryon.hours"))}</summary><table><tbody>${st.week.map((w) => `<tr><th>${esc(w.day)}</th><td>${esc(w.text)}</td></tr>`).join("")}</tbody></table></details>`;
+      const specials = st.specials.length ? `<ul class="banto-store__specials">${st.specials.map((x) => `<li>${esc(x.date)} ${esc(x.text)}</li>`).join("")}</ul>` : "";
+      const note = st.note ? `<p class="banto-store__note">${esc(st.note)}</p>` : "";
+      return `<li class="banto-store"><p class="banto-store__name">${esc(st.name)}</p>${addr}${tel}<p class="banto-store__today">${esc(st.today)}</p>${week}${specials}${note}</li>`;
+    };
+    return `<ul class="banto-stores banto-stores--${a["layout"] === "grid" ? "grid" : "list"}">${list.map(card).join("")}</ul>`;
+  }
   if (b.kind === "product") {
     const detail = await d.sf.productBySlug(d.shop, a["slug"] ?? "");
     if (!detail) return "";
@@ -194,6 +242,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
       else if (part === "sku") out.push(`<div class="banto-product__sku">${detail.skus.map((k) => esc(k.code)).join(" / ")}</div>`);
       else if (part === "tags" && (p.tags ?? []).length) out.push(`<div class="banto-product__tags">${(p.tags ?? []).map((x) => `<span>${esc(x)}</span>`).join(" ")}</div>`);
       else if (part === "description" && p.description) out.push(`<div class="banto-product__description">${esc(p.description.slice(0, 400))}</div>`);
+      else if (part.startsWith("field:")) out.push(productFieldHtml(d, p, part.slice(6)));
     }
     const cart = parts.includes("cart"), buy = parts.includes("buy");
     if ((cart || buy) && detail.skus.length > 0) {
@@ -209,6 +258,19 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     return `<div class="banto-product">${out.join("")}</div>`;
   }
   return "";
+}
+
+/**
+ * 商品の独自項目（show=field:<key>）。公開の項目だけ（値は product_public_get が公開の項目だけを返す）。
+ * 値は文字として出し、URL の項目は http(s) のときだけリンクにする
+ */
+function productFieldHtml(d: BodyBlocksDeps, p: ProductRow, key: string): string {
+  const f = productFields(d.shop.settings).find((x) => x.key === key && x.public);
+  const raw = f ? (p.attributes ?? {})[key] : undefined;
+  if (!f || raw === undefined || raw === null || String(raw).trim() === "") return "";
+  const v = String(raw);
+  const value = f.type === "url" && /^https?:\/\//i.test(v) ? `<a href="${esc(v)}" rel="nofollow noopener">${esc(v)}</a>` : esc(v).replace(/\n/g, "<br>");
+  return `<div class="banto-product__field banto-product__field--${esc(key)}"><span class="banto-product__field-label">${esc(f.label)}</span><span class="banto-product__field-value">${value}</span></div>`;
 }
 
 /**

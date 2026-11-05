@@ -35,6 +35,7 @@ import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } f
 import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
 import { migrated } from "../db/migration-state";
 import { escapeHtml } from "../mail/html";
+import { productFields } from "../products/fields";
 import { ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
@@ -190,7 +191,7 @@ async function editorTheme(c: AdminContext, shop: ShopRow): Promise<{ patterns: 
 }
 
 /** お店のブロックの編集の画面の定義（名前・説明・欄）。値の形は src/pages/shop-blocks.ts と同じ（サーバーが描くときにも確かめる） */
-export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) {
+export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[], fields: { key: string; label: string }[] = []) {
   const opt = (pairs: [string, string][]) => pairs.map(([value, label]) => ({ value, label }));
   const slug = "^[a-z0-9][a-z0-9-]{0,62}$";
   return {
@@ -221,7 +222,26 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[]) 
       group: "shop",
       fields: [
         { key: "slug", label: t("blocks.product_slug"), type: "text", required: true, pattern: slug, placeholder: "tee" },
-        { key: "show", label: t("blocks.product_show"), type: "checks", default: PRODUCT_PARTS_DEFAULT.join(","), options: opt(PRODUCT_PARTS.map((x): [string, string] => [x, t(`blocks.part_${x}` as MessageKey)])) },
+        // 商品の独自項目（公開のもの）も選べる（field:<key>）
+        { key: "show", label: t("blocks.product_show"), type: "checks", default: PRODUCT_PARTS_DEFAULT.join(","), options: opt([...PRODUCT_PARTS.map((x): [string, string] => [x, t(`blocks.part_${x}` as MessageKey)]), ...fields.map((f): [string, string] => [`field:${f.key}`, `${t("blocks.part_field")}: ${f.label}`])]) },
+      ],
+    },
+    toc: {
+      label: t("blocks.toc"),
+      desc: t("blocks.toc_desc"),
+      group: "text",
+      fields: [
+        { key: "levels", label: t("blocks.toc_levels"), type: "select", options: opt([["3", t("blocks.toc_levels_3")], ["2", t("blocks.toc_levels_2")]]), default: "3" },
+        { key: "title", label: t("blocks.toc_title"), type: "text", placeholder: t("blocks.toc_title_placeholder") },
+      ],
+    },
+    stores: {
+      label: t("blocks.stores"),
+      desc: t("blocks.stores_desc"),
+      group: "shop",
+      fields: [
+        { key: "tryon", label: t("blocks.stores_tryon"), type: "select", options: opt([["0", t("blocks.stores_all")], ["1", t("blocks.stores_tryon_only")]]), default: "0" },
+        { key: "layout", label: t("blocks.layout"), type: "select", options: opt([["list", t("blocks.layout_list")], ["grid", t("blocks.layout_grid")]]), default: "list" },
       ],
     },
     icon: {
@@ -561,6 +581,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-products-all": t("pages.products_all"),
     "data-t-products-items": t("pages.products_label_items"),
     "data-t-products-slugs": t("pages.products_label_slugs"),
+    "data-t-products-related": t("pages.products_label_related"),
     "data-t-ph": t("pages.block_placeholder"),
     "data-t-search": t("pages.block_search"),
     "data-t-more": t("pages.block_more"),
@@ -595,7 +616,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-d-articles": t("pages.blockdesc_articles"),
     "data-t-articles-max": tf("pages.articles_max", { n: ARTICLE_BLOCKS_MAX }),
     // お店のブロック（src/pages/shop-blocks.ts）の名前・説明・設定の欄
-    "data-shop-blocks": JSON.stringify(shopBlockDefs(props.categories)),
+    "data-shop-blocks": JSON.stringify(shopBlockDefs(props.categories, productFields(props.shop.settings).filter((f) => f.public))),
     // 動画のブロックの置き場（mp4、1 本の上限）
     "data-video-upload": `${props.kind.base}/videos`,
     "data-video-max": String(MAX_VIDEO_BYTES),
@@ -915,6 +936,11 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
           <label for="bp-slugs">{tf("pages.products_slugs", { max: PRODUCT_BLOCK_SLUGS_MAX })}</label>
           <input id="bp-slugs" name="slugs" maxlength={1600} placeholder="tee,coat,knit" autocomplete="off" />
           <p class="muted">{t("pages.products_slugs_help")}</p>
+          {/* 似た商品（商品詳細のひな形で、今の商品と同じ主カテゴリー・タグ）。選ぶとカテゴリー・タグは使わない */}
+          <label>
+            <input type="checkbox" name="related" value="1" /> {t("pages.products_related")}
+          </label>
+          <p class="muted">{t("pages.products_related_help")}</p>
           <label for="bp-category">{t("pages.products_category")}</label>
           <select id="bp-category" name="category">
             <option value="">{t("pages.products_all")}</option>

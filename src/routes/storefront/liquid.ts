@@ -7,6 +7,7 @@
  *   - CPU の上限を気にしなくてよい（Workers の有料プラン = サイトの設定 workers_plan が paid、か Node）
  * テーマが壊れている・上限を超えた・その種類のテンプレートが無いときも既定のテーマで描く（お店を止めない）。
  */
+import { productFields } from "../../products/fields";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
 import type { Hono } from "hono";
@@ -193,7 +194,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
   const home = shopHome(publicBaseUrl(c), s.shop);
   const origin = shopOrigin(publicBaseUrl(c), s.shop);
   const shopPath = s.ctx.shopPath;
-  const u = { shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const tree: CategoryNode[] = categoryTree(page.categories);
   const canonical = `${home}${page.path}`;
   const head = [
@@ -264,7 +265,7 @@ export async function cartSections(c: Ctx, s: LiquidScope, raw: unknown, lines: 
   if (ids.length === 0) return null;
   const choice = await liquidThemeFor(c, s, { cartLines: lines });
   if (!choice) return null;
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const [categories, setup] = await Promise.all([s.sf.listCategories(s.shop), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
   const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel) };
   const input = pageInput(c, s, choice, { template: "cart", values: { cart }, title: t("store.cart"), path: "/cart", noindex: true, categories });
@@ -371,7 +372,7 @@ export function themeLayoutParts(
 
 /** 商品詳細のひな形の部品に渡す値（templates/product と同じ product・current_variant） */
 export function productPartValues(c: Ctx, s: LiquidScope, detail: ProductDetail, selectedSku: string | null): Record<string, unknown> {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const product = productFromDetail(u, detail, selectedSku);
   return { product, current_variant: product.selected_or_first_available_variant };
 }
@@ -382,7 +383,7 @@ export function collectionPartValues(
   s: LiquidScope,
   p: { page: ProductListPage; category?: CategoryRow; tag?: string; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string },
 ): Record<string, unknown> {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
   const collection = collectionObject(u, {
     handle: p.category?.slug ?? "all",
@@ -408,7 +409,7 @@ export function renderListing(
   choice: LiquidChoice,
   p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; path: string },
 ): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
   const collection = collectionObject(u, {
     handle: p.category?.slug ?? "all",
@@ -441,7 +442,7 @@ export function renderListing(
 
 /** 商品の構造化データ（Liquid の商品ページと、商品詳細のひな形で同じ） */
 export function liquidProductJsonLd(c: Ctx, s: LiquidScope, p: { detail: ProductDetail; categoryNames: string[]; selectedSku: string | null }): { jsonLd: unknown; path: string } {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const product = productFromDetail(u, p.detail, p.selectedSku);
   const home = shopHome(publicBaseUrl(c), s.shop);
   const path = productUrl("", p.detail.product.slug);
@@ -457,7 +458,7 @@ export function liquidProductJsonLd(c: Ctx, s: LiquidScope, p: { detail: Product
 }
 
 export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { detail: ProductDetail; categories: CategoryRow[]; categoryNames: string[]; selectedSku: string | null }): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const product = productFromDetail(u, p.detail, p.selectedSku);
   const { jsonLd, path } = liquidProductJsonLd(c, s, p);
   return render(c, s, choice, {
@@ -476,7 +477,7 @@ const paymentLabel = (p: "stripe" | "komoju"): string => t(p === "stripe" ? "sto
 
 /** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く）。payments は使える決済手段（cart.banto_payment_methods） */
 export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean }; error?: string; categories: CategoryRow[] }): Response | null {
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel) };
   return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
 }
@@ -656,7 +657,7 @@ type BodyBlocks = { block: ProductBlock; items: ProductSummary[] }[];
  */
 function withProductBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, blocks?: BodyBlocks, cards?: string[]): string {
   if (!blocks?.length) return fillProductBlocks(html, []);
-  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches) };
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   let rendered = cards ?? [];
   if (themeHasSnippet(choice.lt, "page-products")) {
     try {

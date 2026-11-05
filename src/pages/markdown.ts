@@ -14,7 +14,7 @@
 import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, BLOCK_LINE, PRODUCT_BLOCKS_MAX, appMarker, articlesMarker, parseAppLine, parseArticlesLine, type AppBlock, parseButtonLine, parseProductsLine, productsMarker, type ArticlesBlock, type ProductBlock } from "./blocks";
 import { t } from "../i18n";
 import { EMBED_CSS, EMBED_SCRIPT, embedHtml, parseEmbedUrl } from "./embeds";
-import { currentMarker, LOCAL_SHOP_BLOCKS, SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, dateHtml, iconHtml, parseShopBlock, shopMarker, type ShopBlock } from "./shop-blocks";
+import { currentMarker, LOCAL_SHOP_BLOCKS, SHOP_BLOCKS_CSS, SHOP_BLOCKS_MAX, dateHtml, iconHtml, parseShopBlock, shopMarker, tocMarker, type ShopBlock } from "./shop-blocks";
 import { LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, isLayoutClose, layoutEnd, parseAudienceOpen, parseLayoutOpen, parseSpacerLine, type LayoutOpen } from "./layout";
 
 export interface MarkdownOptions {
@@ -248,6 +248,10 @@ interface RenderState {
   embed: boolean;
   /** タブの数（ラジオの名前を重ねないため） */
   tabs: number;
+  /** 見出し（目次のため。目次のある本文のお店の画面だけ id を振る）と目次のブロック */
+  ids: boolean;
+  headings: { level: number; id: string; text: string }[];
+  tocs: { levels: number; title: string }[];
 }
 
 const blank = (l: string | undefined) => l === undefined || l.trim() === "";
@@ -255,12 +259,49 @@ const startsBlock = (l: string) => BLOCK_LINE.test(l) || HEADING.test(l) || RULE
 
 export function markdownToHtml(source: string, opts: MarkdownOptions = {}): string {
   const rows = source.replace(/\r\n?/g, "\n").split("\n");
-  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false, shop: 0, shopCss: false, embed: false, tabs: 0 };
-  const html = render(rows, 0, st).join("\n");
+  const st: RenderState = { opts, products: 0, articles: 0, apps: 0, layout: false, shop: 0, shopCss: false, embed: false, tabs: 0, ids: !opts.editor && TOC_LINE.test(source), headings: [], tocs: [] };
+  let html = render(rows, 0, st).join("\n");
+  if (st.tocs.length) html = html.replace(/<!--banto:toc:(\d+)-->/g, (_, n: string) => tocHtml(st.tocs[Number(n)], st.headings));
   if (html.length > BODY_HTML_MAX) return `<p class="banto-too-large">${esc(t("pages.body_too_large"))}</p>`;
   const css = !opts.editor && opts.layoutCss !== false ? `${st.layout ? LAYOUT_CSS : ""}${st.shopCss ? SHOP_BLOCKS_CSS : ""}${st.embed ? EMBED_CSS : ""}` : "";
   const script = st.embed && !opts.editor ? `\n<script>${EMBED_SCRIPT}</script>` : "";
   return (css ? `<style>${css}</style>\n${html}` : html) + script;
+}
+
+/** 目次のブロックの行（ある本文だけ見出しに id を振る。無い本文の HTML は今までと同じ） */
+const TOC_LINE = /^\s{0,3}:{3}\s*toc(\s|$)/m;
+
+/**
+ * 目次（::: toc）: 本文の見出し（levels までの深さ）を入れ子の番号付きリストに。見出しが無ければ何も出さない。
+ * 文字は描いた見出しの中身（エスケープ済み）からタグを外したもの
+ */
+function tocHtml(toc: { levels: number; title: string } | undefined, headings: readonly { level: number; id: string; text: string }[]): string {
+  if (!toc) return "";
+  const list = headings.filter((h) => h.level <= toc.levels && h.text);
+  if (list.length === 0) return "";
+  let html = "<ol>";
+  let li = false;
+  let sub = false;
+  for (const h of list) {
+    const item = `<a href="#${h.id}">${h.text}</a>`;
+    if (h.level === 2) {
+      if (sub) html += "</ol>";
+      if (li) html += "</li>";
+      html += `<li>${item}`;
+      li = true;
+      sub = false;
+    } else {
+      // 小見出し（h2 より前にあれば空の項目の下に）
+      if (!li) html += "<li>";
+      if (!sub) html += "<ol>";
+      html += `<li>${item}</li>`;
+      li = true;
+      sub = true;
+    }
+  }
+  html += `${sub ? "</ol>" : ""}${li ? "</li>" : ""}</ol>`;
+  const title = toc.title ? `<p class="banto-toc__title">${esc(toc.title)}</p>` : "";
+  return `<nav class="banto-toc"${toc.title ? ` aria-label="${esc(toc.title)}"` : ""}>${title}${html}</nav>`;
 }
 
 const ESC_ATTR = (s: string) => esc(s);
@@ -424,6 +465,10 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
             out.push(embedHtml(e));
           }
         } else if (sb.kind === "date" && !opts.editor) out.push(`<p class="banto-shop banto-shop--date">${dateHtml(sb)}</p>`);
+        else if (sb.kind === "toc" && !opts.editor) {
+          out.push(tocMarker(st.tocs.length));
+          st.tocs.push({ levels: sb.attrs["levels"] === "2" ? 2 : 3, title: sb.attrs["title"] ?? "" });
+        }
         else if (opts.editor) out.push(`<div class="banto-shop banto-shop--${sb.kind}" ${data} contenteditable="false">${esc(opts.shopLabel ? opts.shopLabel(sb) : sb.kind)}</div>`);
         else out.push(`<div class="banto-shop banto-shop--${sb.kind}">${st.shop < SHOP_BLOCKS_MAX ? shopMarker(st.shop) : ""}</div>`);
         if (!LOCAL_SHOP_BLOCKS.includes(sb.kind)) st.shop++;
@@ -453,7 +498,7 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       }
       const b = parseProductsLine(row);
       if (b) {
-        const data = `data-banto-block="products"${b.slugs?.length ? ` data-slugs="${b.slugs.join(",")}"` : ""} data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"${b.style ? ` data-style="${b.style}"` : ""}`;
+        const data = `data-banto-block="products"${b.slugs?.length ? ` data-slugs="${b.slugs.join(",")}"` : ""}${b.related ? ' data-related="1"' : ""} data-category="${esc(b.category ?? "")}" data-tag="${esc(b.tag ?? "")}" data-limit="${b.limit}" data-layout="${b.layout}" data-sort="${b.sort}"${b.style ? ` data-style="${b.style}"` : ""}`;
         const cls = `banto-products banto-products--${b.layout}${b.style ? ` banto-style-${b.style}` : ""}`;
         // 印は先頭から PRODUCT_BLOCKS_MAX 個まで（それより後は描かない）
         if (opts.productsLabel) out.push(`<div class="${cls}" ${data} contenteditable="false">${esc(opts.productsLabel(b))}</div>`);
@@ -489,7 +534,14 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
         parts.push(rows[i]!.trim());
         i++;
       }
-      out.push(`<h${level}>${parts.map((x) => inline(x, opts)).join("<br>")}</h${level}>`);
+      const inner = parts.map((x) => inline(x, opts)).join("<br>");
+      if (!st.ids) out.push(`<h${level}>${inner}</h${level}>`);
+      else {
+        // 目次（::: toc）とリンクで飛べるように id を振る（文書の順の番号。見出しの文字を変えても変わらない）
+        const id = `h-${st.headings.length + 1}`;
+        st.headings.push({ level, id, text: inner.replace(/<br>/g, " ").replace(/<[^>]*>/g, "").trim() });
+        out.push(`<h${level} id="${id}">${inner}</h${level}>`);
+      }
       continue;
     }
     if (RULE.test(row)) {
