@@ -6,6 +6,8 @@ import { raw } from "hono/html";
 import { categoryUrl, listUrl, productUrl, productsUrl } from "../../storefront/urls";
 import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
+import { cardAttributes, productFields } from "../../products/fields";
+import { shopImageUrl } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
@@ -80,7 +82,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .swatches{display:flex;flex-wrap:wrap;gap:.5rem;margin:.25rem 0 .75rem}.swatch{padding:2px;border:2px solid transparent;border-radius:999px;background:none;cursor:pointer;line-height:0}.swatch[aria-checked=true]{border-color:currentColor}.swatch:disabled{opacity:.35;cursor:not-allowed}.swatch__dot{display:inline-block;width:2rem;height:2rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 20%,transparent)}.swatch__dot img{width:100%;height:100%;object-fit:cover}.swatch--text .swatch__dot{width:auto;height:auto;padding:.35rem .75rem;line-height:1.2;font-size:.9rem}
 .category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
-.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
+.card-fields{list-style:none;margin:.25rem 0;padding:0;font-size:.85rem}.card-fields img{max-height:1.5rem;width:auto;vertical-align:middle}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
 ${REVIEWS_CSS}
 ${SIZE_CHART_CSS}
@@ -1954,16 +1956,19 @@ type ShopHomeProps = Parameters<Theme["ShopHome"]>[0];
 
 /** 商品の並び（カード）とページ送り。ふつうの一覧と、商品一覧のひな形（0103）の両方 */
 function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"]; products: ShopHomeProps["products"]; pagination?: ShopHomeProps["pagination"] }) {
+  // カードに出す独自項目（0121。定義で card を付けた公開の項目）
+  const cardFields = productFields(ctx.shop.settings).filter((f) => f.card);
   return (
     <>
       <div class="grid">
-        {products.map(({ product, image, minPrice, compareAt }) => (
+        {products.map(({ product, image, minPrice, compareAt, attributes }) => (
           <div class="card">
             <a href={productUrl(ctx.shopPath, product.slug)}>
               <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
               <div class="body">
                 <div>{product.name}</div>
                 {product.brand ? <div class="muted">{product.brand}</div> : null}
+                {cardFields.length > 0 ? <CardFields ctx={ctx} items={cardAttributes(cardFields, attributes)} /> : null}
                 {minPrice !== null ? (
                   <div class="price">
                     {compareAt ? <s class="muted">{yen(compareAt)}</s> : null} {yen(minPrice)}〜 <span class="muted">{t("store.tax_included")}</span>
@@ -1985,6 +1990,26 @@ function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"];
         </nav>
       ) : null}
     </>
+  );
+}
+
+/** カードの独自項目（文字は「表示名: 値」、画像は小さな画像。src/products/fields.ts の cardAttributes） */
+function CardFields({ ctx, items }: { ctx: ThemeContext; items: { key: string; label: string; type: string; value: string | number }[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul class="card-fields">
+      {items.map((a) => (
+        <li class={`card-field card-field--${a.key}`}>
+          {a.type === "image" ? (
+            <img src={shopImageUrl(String(a.value), ctx.mediaBaseUrl) ?? ""} alt={a.label} loading="lazy" />
+          ) : (
+            <>
+              <span class="muted">{a.label}</span> {String(a.value)}
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

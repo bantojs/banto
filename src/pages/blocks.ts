@@ -13,6 +13,8 @@
  * - ボタン: リンクの規則（https / http / / / # / mailto / tel）は本文のリンクと同じ
  */
 import { responsiveImage } from "../media/images";
+import { cardAttributes, type ProductField } from "../products/fields";
+import { shopImageUrl } from "./markdown";
 import { productUrl } from "../storefront/urls";
 import { PRODUCT_SORTS, type ProductSort, type ProductSummary } from "../storefront/data";
 
@@ -223,6 +225,17 @@ export function defaultArticlesHtml(items: readonly { title: string; url: string
   return `<ul class="banto-articles__list" style="${listStyle}">${cards.join("")}</ul>`;
 }
 
+/** カードの独自項目（0121。既定のテーマの一覧の CardFields と同じ形） */
+export function cardFieldsHtml(fields: readonly ProductField[], values: Record<string, unknown> | undefined, mediaBase: string): string {
+  const items = cardAttributes(fields.filter((f) => f.card), values);
+  if (items.length === 0) return "";
+  const li = items.map((a) => {
+    const body = a.type === "image" ? `<img src="${escapeHtml(shopImageUrl(String(a.value), mediaBase) ?? "")}" alt="${escapeHtml(a.label)}" loading="lazy">` : `<span class="muted">${escapeHtml(a.label)}</span> ${escapeHtml(String(a.value))}`;
+    return `<li class="card-field card-field--${escapeHtml(a.key)}">${body}</li>`;
+  });
+  return `<ul class="card-fields" style="list-style:none;margin:.25rem 0;padding:0;font-size:.85em">${li.join("")}</ul>`;
+}
+
 /** 商品を入れる場所の印（変換が置き、描くときに中身と入れ替える） */
 export const productsMarker = (i: number) => `<!--banto:products:${i}-->`;
 
@@ -235,20 +248,20 @@ export function fillProductBlocks(html: string, rendered: readonly string[]): st
  * 既定のカード（既定のテーマと、snippets/page-products.liquid の無い Liquid のテーマ）。
  * 既定のテーマの一覧と同じクラス（grid / card）に、テーマの CSS が無くても崩れない最小の style を添える
  */
-export function defaultProductsHtml(items: readonly ProductSummary[], b: ProductBlock, ctx: { shopPath: string; mediaBaseUrl: string; taxNote: string; yen: (n: number) => string }): string {
+export function defaultProductsHtml(items: readonly ProductSummary[], b: ProductBlock, ctx: { shopPath: string; mediaBaseUrl: string; taxNote: string; yen: (n: number) => string; cardFields?: readonly ProductField[] }): string {
   if (items.length === 0) return "";
   const listStyle =
     b.layout === "scroll"
       ? "display:flex;gap:1rem;overflow-x:auto;scroll-snap-type:x mandatory;padding:0 0 .5rem;margin:0;list-style:none"
       : "display:grid;grid-template-columns:repeat(auto-fill,minmax(10rem,1fr));gap:1rem;padding:0;margin:0;list-style:none";
   const itemStyle = b.layout === "scroll" ? "flex:0 0 min(14rem,70%);scroll-snap-align:start" : "";
-  const cards = items.map(({ product, image, minPrice, compareAt }) => {
+  const cards = items.map(({ product, image, minPrice, compareAt, attributes }) => {
     const img = image ? responsiveImage(ctx.mediaBaseUrl, image) : null;
     const imgHtml = img
       ? `<img src="${escapeHtml(img.src)}"${img.srcset ? ` srcset="${escapeHtml(img.srcset)}"` : ""}${img.sizes ? ` sizes="${escapeHtml(img.sizes)}"` : ""}${img.width ? ` width="${img.width}" height="${img.height}"` : ""} alt="${escapeHtml(product.name)}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover">`
       : "";
     const price = minPrice !== null ? `<div class="price">${compareAt ? `<s class="muted">${escapeHtml(ctx.yen(compareAt))}</s> ` : ""}${escapeHtml(ctx.yen(minPrice))} <span class="muted">${escapeHtml(ctx.taxNote)}</span></div>` : "";
-    return `<li class="card"${itemStyle ? ` style="${itemStyle}"` : ""}><a href="${escapeHtml(productUrl(ctx.shopPath, product.slug))}" style="display:block;color:inherit;text-decoration:none"><div class="thumb" style="aspect-ratio:1/1;overflow:hidden">${imgHtml}</div><div class="body"><div>${escapeHtml(product.name)}</div>${price}</div></a></li>`;
+    return `<li class="card"${itemStyle ? ` style="${itemStyle}"` : ""}><a href="${escapeHtml(productUrl(ctx.shopPath, product.slug))}" style="display:block;color:inherit;text-decoration:none"><div class="thumb" style="aspect-ratio:1/1;overflow:hidden">${imgHtml}</div><div class="body"><div>${escapeHtml(product.name)}</div>${cardFieldsHtml(ctx.cardFields ?? [], attributes, ctx.mediaBaseUrl)}${price}</div></a></li>`;
   });
   return `<ul class="banto-products__list grid" style="${listStyle}">${cards.join("")}</ul>`;
 }

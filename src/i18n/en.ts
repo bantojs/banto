@@ -150,7 +150,7 @@ export const en: Record<MessageKey, string> = {
   "product.section_organize": "Organization and tax",
   "fields.private": "private",
   "fields.title": "Custom product fields",
-  "fields.intro": "Define fields entered per product (like WooCommerce custom fields). One per line: \"key | label | type | options | private\". Types: text / textarea / number / url / select / image (an image chosen on the product screen); options are /-separated for select; \"private\" shows the field only in the admin and the AI API.",
+  "fields.intro": "Define fields entered per product (like WooCommerce custom fields). One per line: \"key | label | type | options | flag\". Types: text / textarea / number / url / select / image (an image chosen on the product screen); options are /-separated for select; the flag \"private\" shows the field only in the admin and the AI API, and \"card\" also shows it on product list cards (e.g. material | Material | text | | card).",
   "fields.hint": "Keys start with a lowercase letter and use lowercase letters, digits and _ (up to 40). Up to 30 fields. Removing a definition keeps the stored values (they just stop showing).",
   "fields.saved": "Custom fields saved.",
   "customer_fields.title": "Customer fields (for an external customer master)",
