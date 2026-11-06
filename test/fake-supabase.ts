@@ -260,6 +260,8 @@ export class FakeSupabase {
     }
     if (!req.url.startsWith(this.url)) return new Response("unknown host", { status: 502 });
     if (req.headers.get("apikey") !== this.anonKey && req.headers.get("apikey") !== this.serviceRoleKey) return json({ message: "Invalid API key" }, 401);
+    // 新しいキー（sb_publishable_ / sb_secret_）は JWT ではないので、Supabase の入口は Bearer に載せたものを受けない（apikey だけで役割が決まる）
+    if (/^Bearer sb_/.test(req.headers.get("authorization") ?? "")) return json({ message: "Invalid authorization: new API keys go in the apikey header" }, 401);
     if (u.pathname.startsWith("/auth/v1/")) return this.auth(req, u);
     if (u.pathname.startsWith("/rest/v1/")) return this.rest(req, u);
     return new Response("not found", { status: 404 });
@@ -813,7 +815,10 @@ export class FakeSupabase {
   }
 
   private isService(req: Request): boolean {
-    return (req.headers.get("authorization") ?? "") === `Bearer ${this.serviceRoleKey}`;
+    const auth = req.headers.get("authorization") ?? "";
+    // 今までのキー: Bearer に service_role の JWT。新しいキー: Bearer なしで apikey が sb_secret_（入口が service_role として通す）
+    if (auth === `Bearer ${this.serviceRoleKey}`) return true;
+    return auth === "" && this.serviceRoleKey.startsWith("sb_secret_") && req.headers.get("apikey") === this.serviceRoleKey;
   }
 
   private async rest(req: Request, u: URL): Promise<Response> {

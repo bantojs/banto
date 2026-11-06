@@ -62,8 +62,11 @@ export const ja = {
   "setup.env.add_secret": "種類「シークレット」で追加。",
   "setup.env.cli": "コマンドで設定する場合（開発者向け）",
   "setup.env.where.SUPABASE_URL": "値は Supabase の プロジェクト設定 → Data API → Project URL。",
-  "setup.env.where.SUPABASE_ANON_KEY": "値は Supabase の プロジェクト設定 → API Keys → anon public。",
-  "setup.env.where.SUPABASE_SERVICE_ROLE_KEY": "値は Supabase の プロジェクト設定 → API Keys → service_role（絶対に公開しない）。",
+  "setup.env.where.SUPABASE_ANON_KEY": "値は Supabase の プロジェクト設定 → API Keys の Publishable key（sb_publishable_ で始まる）。今までの anon public のキー（eyJ で始まる）も使えますが、Supabase は 2026 年末に廃止する予定です。",
+  "setup.env.where.SUPABASE_SERVICE_ROLE_KEY": "値は Supabase の プロジェクト設定 → API Keys の Secret key（sb_secret_ で始まる。絶対に公開しない）。今までの service_role のキー（eyJ で始まる）も使えますが、Supabase は 2026 年末に廃止する予定です。",
+  "setup.env.misplaced": "取り違え",
+  "setup.env.misplaced.SUPABASE_ANON_KEY": "秘密のキー（sb_secret_ か service_role）が入っています。このままではお客様の画面から権限の確認を通らずにデータが読めてしまうので、Banto は動きません。公開のキーに入れ替えてください。",
+  "setup.env.misplaced.SUPABASE_SERVICE_ROLE_KEY": "公開のキー（sb_publishable_ か anon）が入っています。秘密のキーに入れ替えてください。",
   "setup.env.where.SESSION_SECRET": "値は 32 文字以上のランダムな文字列（セッション・会員のログイン・暗号化の鍵のもと。誰にも見せない）。次の値をそのまま貼ってください（この画面を開くたびに新しく作ります。貼ったあとは変えないでください）:",
   "setup.db.ok": "接続できました。",
   "setup.db.unreachable": "Supabase に接続できません。SUPABASE_URL と SUPABASE_ANON_KEY を確認してください。",
@@ -102,7 +105,7 @@ export const ja = {
   "dashboard.slug_taken": "同じスラッグのショップが既にあります。",
   "dashboard.release_notes": "リリースノート",
   "dashboard.signup_warning": "セットアップが完了したので、Supabase の Authentication → Providers → Email で「Allow new users to sign up」を無効にすることを推奨します。",
-  "dashboard.session_secret_warning": "SESSION_SECRET が設定されていません（service_role キーから導出して動いています）。service_role キーを作り直すと、ログイン・会員のセッション・hooks の署名・暗号化した LINE のトークンと LINE / Google のシークレットがすべて無効になります。Cloudflare の「変数とシークレット」に SESSION_SECRET（32 文字以上のランダムな文字列）を追加してください。追加すると全員がログアウトし、暗号化して保存した LINE のトークン・LINE / Google のシークレット・hooks の署名の値は入れ直しになります（docs/env.md）。",
+  "dashboard.session_secret_warning": "SESSION_SECRET が設定されていません（service_role キーから導出して動いています）。service_role キーを作り直す・新しい Secret key（sb_secret_）に切り替えると、ログイン・会員のセッション・hooks の署名・暗号化した LINE のトークンと LINE / Google のシークレットがすべて無効になります。Cloudflare の「変数とシークレット」に SESSION_SECRET（32 文字以上のランダムな文字列）を追加してください。追加すると全員がログアウトし、暗号化して保存した LINE のトークン・LINE / Google のシークレット・hooks の署名の値は入れ直しになります（docs/env.md）。",
 
 
   "shop.settings": "ショップ設定",

@@ -47,6 +47,7 @@ cp .env.example .env
 
 - `JWT_SECRET` … PostgREST と GoTrue が共有する署名の秘密。`ANON_KEY` と `SERVICE_ROLE_KEY` はこれで署名した鍵です（Supabase の画面で見る 2 つの鍵の代わり）
 - `SERVICE_ROLE_KEY` … **RLS を素通りする鍵**。Banto の設定（Secret）と `.env` 以外に置かない
+- Supabase の新しいキー（`sb_publishable_` / `sb_secret_`）は Supabase の入口の仕組みで、自前の構成にはありません。ここでは今までの形（JWT）の 2 つの鍵を使い続けます（Banto は先頭の文字で見分けるので、設定は変わりません。docs/env.md「Supabase のキー」）
 - `.env` はリポジトリに入れない（`.gitignore` 済み）
 
 ## 2-A. `app`: この VPS で Banto も動かす

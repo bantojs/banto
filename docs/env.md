@@ -3,8 +3,8 @@
 | 名前 | 種類 | 必須 | 値の場所・意味 |
 | --- | --- | --- | --- |
 | `SUPABASE_URL` | 変数または Secret | 必須 | Supabase → Project Settings → Data API → Project URL |
-| `SUPABASE_ANON_KEY` | 変数または Secret | 必須 | Supabase → Project Settings → API Keys → anon public |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Secret**（`.dev.vars.example`） | 必須 | Supabase → Project Settings → API Keys → service_role。誰にも見せない |
+| `SUPABASE_ANON_KEY` | 変数または Secret | 必須 | Supabase → Project Settings → API Keys の **Publishable key**（`sb_publishable_…`）。今までの anon public（`eyJ…`）も使える（下の「Supabase のキー」） |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Secret**（`.dev.vars.example`） | 必須 | Supabase → Project Settings → API Keys の **Secret key**（`sb_secret_…`）。今までの service_role（`eyJ…`）も使える。誰にも見せない |
 | `SESSION_SECRET` | **Secret**（`.dev.vars.example`） | 新しい導入では必須 | 32 文字以上のランダム文字列（セットアップ画面が作って出す）。セッション・会員のログイン・hooks の署名・暗号化（LINE のトークン、LINE / Google のシークレット）の鍵のもと。**導入後は変えない**。2026-10-18 より前の導入で未設定なら service_role キーから導出して動き続ける（ダッシュボードに案内が出る。後から設定すると全員がログアウトし、暗号化した秘密は入れ直し） |
 | `PUBLIC_BASE_URL` | 変数 | 任意 | 独自ドメインを使うとき `https://shop.example.com`。未設定ならアクセスされた URL から自動 |
 | `MEDIA_BASE_URL` | 変数 | 任意 | R2 のカスタムドメインから画像を配信するとき `https://media.example.com`（docs/setup.md §7） |
@@ -34,3 +34,24 @@
 - Secret は Cloudflare の **Workers & Pages → banto → 設定 → 変数とシークレット** で種類「シークレット」として追加します（コマンドなら `npx wrangler secret put 名前`）。
 - Node で動かす場合はすべてを環境変数として渡します（docs/run-on-node.md）。
 - セットアップ画面（`/admin/setup`）が未設定の項目を検出して、この表と同じ案内を出します。
+
+## Supabase のキー
+
+Supabase の API キーには 2 つの形があります（メンテナの決定 2026-11-06）。**Supabase は今までのキー（JWT の anon / service_role）を 2026 年末に廃止する予定**なので、新しい導入は新しいキーを使ってください。
+
+| 入れる欄 | 新しいキー | 今までのキー |
+| --- | --- | --- |
+| `SUPABASE_ANON_KEY` | Publishable key（`sb_publishable_…`） | anon public（`eyJ…`） |
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret key（`sb_secret_…`） | service_role（`eyJ…`） |
+
+- 欄の名前は変えていません。どちらの形の値も入れられ、Banto が先頭の文字で見分けます（`src/db/api-keys.ts`）。新しいキーは Supabase に `apikey` の見出しだけで送り（JWT ではないので `Authorization: Bearer` には載せない）、今までのキーは今までどおり両方に載せます。
+- 2 つの欄を同じ形にそろえる必要はありません（片方だけ先に切り替えても動きます）。
+- **取り違えると止まります**: `SUPABASE_ANON_KEY` に秘密のキー（`sb_secret_…` か service_role）が入っていると、お客様の画面から権限の確認を通らずに読めてしまうため、Banto は動きません。セットアップ画面に「取り違え」と出ます。
+- 自前で立てた PostgREST + GoTrue（docs/self-hosted-db.md）には新しいキーがありません。`.env` の `ANON_KEY` / `SERVICE_ROLE_KEY`（今までの形）のままで動きます。
+
+### 今までのキーから切り替える
+
+1. **`SESSION_SECRET` が入っているか確かめます**（ダッシュボードに「SESSION_SECRET が設定されていません」と出ていないか）。入っていないと、ログイン・会員のセッション・hooks の署名・暗号化した LINE のトークンと LINE / Google のシークレットが service_role キーから作られているので、キーを替えた時点ですべて無効になります。先に `SESSION_SECRET` を入れて、入れ直しを済ませてから進めます。
+2. Supabase の **Project Settings → API Keys** で Publishable key と Secret key を作ります（作っても今までのキーは止まりません）。
+3. Cloudflare の **変数とシークレット** で、`SUPABASE_ANON_KEY` を Publishable key に、`SUPABASE_SERVICE_ROLE_KEY` を Secret key に替えます（Node なら環境変数）。
+4. お店の画面と管理画面が動くことを確かめてから、Supabase の画面で今までのキーを止めます（Supabase の「Disable legacy API keys」）。

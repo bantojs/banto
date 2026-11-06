@@ -256,6 +256,10 @@ GitHub Releases のリリースノートに「手動対応」の項があれば�
 - Cloudflare の「変数とシークレット」に項目を追加する
 - Stripe の Webhook で購読するイベントを追加する
 
+### Supabase の新しい API キー（2026 年末まで）
+
+Supabase は今までの API キー（JWT の anon / service_role）を 2026 年末に廃止する予定です。廃止の前に、`SUPABASE_ANON_KEY` を Publishable key（`sb_publishable_…`）に、`SUPABASE_SERVICE_ROLE_KEY` を Secret key（`sb_secret_…`）に替えてください。新しいキーを読めるのはこの版からです。**先に `SESSION_SECRET` が入っていることを確かめます**（入っていないと、キーを替えた時点でログインや暗号化した秘密が無効になります）。手順は docs/env.md「今までのキーから切り替える」。自前で立てた PostgREST + GoTrue はそのままです。
+
 ## バージョニングの約束
 
 - セマンティックバージョニング（MAJOR.MINOR.PATCH）
