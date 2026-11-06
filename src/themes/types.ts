@@ -187,6 +187,11 @@ export interface Theme {
      * cancellable なら「取り消す」は POST `${shopPath}/account/tryon/<番号>/cancel`
      */
     tryon?: { number: number; status: string; store_name: string; /** 表示用の日付（「10月24日（土）」） */ visit_label: string | null; hold_label: string | null; created_at: string; items: { name: string | null; sku: string | null; qty: number }[]; cancellable: boolean }[] | null;
+    /**
+     * お気に入り（同梱モジュール favorites、0123）。null なら欄を出さない。新しい順。
+     * 「外す」は POST `${shopPath}/account/favorites/remove`（product_id）
+     */
+    favorites?: ProductSummary[] | null;
     /** ログイン中の端末の画面がある（0045）。true なら GET `${shopPath}/account/sessions` へのリンクを出す */
     sessions?: boolean;
     /** パスキーの画面がある（同梱モジュール passkey、0046）。true なら GET `${shopPath}/account/passkeys` へのリンクを出す */

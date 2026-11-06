@@ -22,6 +22,7 @@
 | `checkout_start` | 購入手続きを始めた | `value_jpy` |
 | `purchase` | 購入を終えた（完了画面） | `order_number`・`value_jpy` |
 | `dialog_view`・`dialog_close`・`dialog_click` | お店の画面のダイアログを見た・閉じた・ボタンを押した（docs/dialogs.md、0110） | `dialog_id` |
+| `favorite_add`・`favorite_remove` | 商品をお気に入りに足した・外した（docs/favorites.md、0123） | `product_id` |
 
 どの行動にも `type` と `at`（ISO 8601）が付きます。作り手（テーマ・連携サイト）が足した **独自の情報 `meta`** が付くこともあります（下の「独自の情報と独自の出来事」）。**「何を見たか」はブラウザの申告**なので、本人なら偽れます（会員 ID は偽れません）。プラグインは、偽られても困らない範囲のアプローチにしてください（クーポンは 1 人 1 回にする、購入は注文の API で確かめる、など）。
 

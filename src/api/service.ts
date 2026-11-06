@@ -709,6 +709,29 @@ export class ApiService {
     });
   };
   customerGet = async (id: string) => this.call<Record<string, unknown>>("api_customer_get", { p_customer_id: uuidOr404(id) });
+  /** 会員のお気に入り（0123、新しい順）。customers:read */
+  customerFavorites = async (id: string) => {
+    await this.requireMigration("0123_mod_favorites");
+    return this.call<{ items: Record<string, unknown>[] }>("api_customer_favorites", { p_customer_id: uuidOr404(id) });
+  };
+  /** お気に入りを足した順にたどる（0123）。商品で絞れる。続きは前の応答の cursor（since と after） */
+  async favoritesList(q: { product?: string | undefined; since?: string | undefined; after?: string | undefined; limit?: number | undefined } = {}) {
+    await this.requireMigration("0123_mod_favorites");
+    const [afterCustomer, afterProduct] = q.after ? q.after.split(":") : [undefined, undefined];
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (q.after !== undefined && (!q.since || !afterCustomer || !afterProduct || !uuid.test(afterCustomer) || !uuid.test(afterProduct))) {
+      throw new ApiError("invalid", "invalid_cursor: pass since and after together (both from the previous response's cursor)", 400);
+    }
+    if (q.product !== undefined && !uuid.test(q.product)) throw new ApiError("invalid", "invalid_product: pass a product id", 400);
+    if (q.since !== undefined && Number.isNaN(Date.parse(q.since))) throw new ApiError("invalid", "invalid_since: pass an ISO 8601 date-time", 400);
+    return this.call<{ items: Record<string, unknown>[]; has_more: boolean; cursor: { since: string; after: string } | null }>("api_favorites_list", {
+      p_product_id: q.product ?? null,
+      p_since: q.since ?? null,
+      p_after_customer: afterCustomer ?? null,
+      p_after_product: afterProduct ?? null,
+      p_limit: q.limit ?? 100,
+    });
+  }
   customerCreate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_create", { p_values: values });
   customerUpdate = async (id: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_customer_update", { p_customer_id: uuidOr404(id), p_values: values });
   /** メールアドレスで引いて、あれば渡した鍵だけ更新、無ければ作る（外部のマスタからの同期の窓口。email は変えない） */

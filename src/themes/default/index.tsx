@@ -7,6 +7,7 @@ import { categoryUrl, listUrl, productUrl, productsUrl } from "../../storefront/
 import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { cardAttributes, productFields } from "../../products/fields";
+import { favoritesEnabled } from "../../modules/favorites";
 import { shopImageUrl } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
@@ -82,6 +83,8 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .swatches{display:flex;flex-wrap:wrap;gap:.5rem;margin:.25rem 0 .75rem}.swatch{padding:2px;border:2px solid transparent;border-radius:999px;background:none;cursor:pointer;line-height:0}.swatch[aria-checked=true]{border-color:currentColor}.swatch:disabled{opacity:.35;cursor:not-allowed}.swatch__dot{display:inline-block;width:2rem;height:2rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 20%,transparent)}.swatch__dot img{width:100%;height:100%;object-fit:cover}.swatch--text .swatch__dot{width:auto;height:auto;padding:.35rem .75rem;line-height:1.2;font-size:.9rem}
 .category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
+.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
+.card{position:relative}.banto-fav{background:none;border:0;padding:.25rem;cursor:pointer;font-size:1.25rem;line-height:1;color:color-mix(in srgb,currentColor 35%,transparent)}.banto-fav[aria-pressed="true"]{color:#d33}.card .banto-fav{position:absolute;top:.35rem;right:.35rem;z-index:1}
 .card-fields{list-style:none;margin:.25rem 0;padding:0;font-size:.85rem}.card-fields img{max-height:1.5rem;width:auto;vertical-align:middle}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
 ${REVIEWS_CSS}
@@ -261,7 +264,7 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
   return list.length > 0 ? `${t("store.member_price")} ${yen(Math.min(...list))}` : null;
 }
 
-export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
+export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
   const field = (name: string, label: string, value: string, type = "text", required = true) => (
@@ -294,6 +297,29 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
               <button type="submit">{t("member.coupon_use")}</button>
             </form>
           ))}
+        </section>
+      ) : null}
+      {favorites ? (
+        <section id="favorites">
+          <h2>{t("member.favorites")}</h2>
+          {favorites.length === 0 ? <p>{t("member.favorites_none")}</p> : null}
+          <div class="grid">
+            {favorites.map(({ product, image, minPrice }) => (
+              <div class="card">
+                <a href={productUrl(ctx.shopPath, product.slug)}>
+                  <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
+                  <div class="body">
+                    <div>{product.name}</div>
+                    {minPrice !== null ? <div class="price">{yen(minPrice)}〜</div> : null}
+                  </div>
+                </a>
+                <form method="post" action={`${ctx.shopPath}/account/favorites/remove`}>
+                  <input type="hidden" name="product_id" value={product.id} />
+                  <button type="submit" class="secondary">{t("member.favorite_remove")}</button>
+                </form>
+              </div>
+            ))}
+          </div>
         </section>
       ) : null}
       {tryon && tryon.length > 0 ? (
@@ -1862,6 +1888,7 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
       <>
         {product.brand ? <p class="muted">{product.brand}</p> : null}
         <h1>{product.name}</h1>
+        <FavoriteButton ctx={ctx} productId={product.id} />
       </>
     ),
     // ひな形だけで使う: いちばん安い SKU の値段（会員価格を含む。SKU で値段が違えば「〜」）
@@ -1955,6 +1982,16 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
 type ShopHomeProps = Parameters<Theme["ShopHome"]>[0];
 
 /** 商品の並び（カード）とページ送り。ふつうの一覧と、商品一覧のひな形（0103）の両方 */
+/** お気に入りのボタン（同梱モジュール favorites、0123）。押せるようにするのはモジュールのスクリプト（data-banto-favorite） */
+function FavoriteButton({ ctx, productId }: { ctx: ThemeContext; productId: string }) {
+  if (!favoritesEnabled(ctx.shop)) return null;
+  return (
+    <button type="button" class="banto-fav" data-banto-favorite={productId} aria-pressed="false" aria-label={t("store.favorite")} title={t("store.favorite")}>
+      <span aria-hidden="true">♥</span>
+    </button>
+  );
+}
+
 function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"]; products: ShopHomeProps["products"]; pagination?: ShopHomeProps["pagination"] }) {
   // カードに出す独自項目（0121。定義で card を付けた公開の項目）
   const cardFields = productFields(ctx.shop.settings).filter((f) => f.card);
@@ -1963,6 +2000,7 @@ function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"];
       <div class="grid">
         {products.map(({ product, image, minPrice, compareAt, attributes }) => (
           <div class="card">
+            <FavoriteButton ctx={ctx} productId={product.id} />
             <a href={productUrl(ctx.shopPath, product.slug)}>
               <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
               <div class="body">

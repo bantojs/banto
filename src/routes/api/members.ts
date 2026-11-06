@@ -19,6 +19,7 @@ import { PrivilegedRpcError, type PrivilegedDb } from "../../db/privileged";
 import { PASSKEY_MODULE } from "../../modules/passkey";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
 import { receiptAvailable, receiptData } from "../../modules/receipt/data";
+import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
 
 /**
  * ヘッドレスの会員（docs/headless.md「会員」、設計は docs/knowledge/10-members-identity.md）。
@@ -305,6 +306,62 @@ membersApi.post("/shops/:shop/members/marketing-consent", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   const ok = await db.memberSetMarketingConsent(s.shop.id, s.member.id, s.member.epoch, consent);
   return ok ? c.json({ ok: true, marketing_consent: consent }) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+// ---------- お気に入り（同梱モジュール favorites、0123、docs/favorites.md） ----------
+
+/** 会員のお気に入りの口の共通（モジュール・会員トークン・セッションの行） */
+async function favoriteScope(c: Ctx): Promise<{ s: Exclude<Awaited<ReturnType<typeof bearerMember>>, Response>; db: PrivilegedDb; sid: string } | Response> {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!favoritesEnabled(s.shop)) return c.json({ error: "module_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  if (!s.member.sid) return c.json({ error: "invalid_member_token" }, 401);
+  return { s, db, sid: s.member.sid };
+}
+
+const favoriteError = (c: Ctx, e: unknown): Response => {
+  if (e instanceof PrivilegedRpcError && e.is("product_not_found")) return c.json({ error: "not_found" }, 404);
+  if (e instanceof PrivilegedRpcError && e.is("favorites_full")) return c.json({ error: "favorites_full", limit: FAVORITES_MAX }, 409);
+  throw e;
+};
+
+/** 本人のお気に入り（新しい順。公開中で見える商品だけ。商品の中身は公開の商品 API で） */
+membersApi.get("/shops/:shop/members/favorites", async (c: Ctx) => {
+  const f = await favoriteScope(c);
+  if (f instanceof Response) return f;
+  const list = await f.db.memberFavorites(f.s.shop.id, f.s.member.id, f.s.member.epoch, f.sid);
+  if (!list) return c.json({ error: "invalid_member_token" }, 401);
+  return c.json({ items: list, limit: FAVORITES_MAX });
+});
+
+/** 足す・外す（{ product_id, on }） */
+membersApi.post("/shops/:shop/members/favorites", async (c: Ctx) => {
+  const f = await favoriteScope(c);
+  if (f instanceof Response) return f;
+  const parsed = parseFavoriteBody(await body(c));
+  if (parsed?.kind !== "set") return c.json({ error: "invalid_request", field: "product_id" }, 400);
+  try {
+    const ok = await f.db.memberFavoriteSet(f.s.shop.id, f.s.member.id, f.s.member.epoch, f.sid, parsed.productId, parsed.on);
+    return ok === null ? c.json({ error: "invalid_member_token" }, 401) : c.json({ ok: true, product_id: parsed.productId, favorite: parsed.on });
+  } catch (e) {
+    return favoriteError(c, e);
+  }
+});
+
+/** 連携サイトがブラウザに覚えたゲストのお気に入りを、ログインした会員へ移す（{ product_ids: [...] }、50 まで） */
+membersApi.post("/shops/:shop/members/favorites/merge", async (c: Ctx) => {
+  const f = await favoriteScope(c);
+  if (f instanceof Response) return f;
+  const parsed = parseFavoriteBody({ merge: (await body(c))["product_ids"] });
+  if (parsed?.kind !== "merge") return c.json({ error: "invalid_request", field: "product_ids" }, 400);
+  try {
+    const n = await f.db.memberFavoritesMerge(f.s.shop.id, f.s.member.id, f.s.member.epoch, f.sid, parsed.productIds);
+    return n === null ? c.json({ error: "invalid_member_token" }, 401) : c.json({ ok: true, merged: n });
+  } catch (e) {
+    return favoriteError(c, e);
+  }
 });
 
 /** 退会（会員ページの「退会する」と同じ: 会員の行を消す。注文は残る）。取り消せないので { confirm: true } が要る */

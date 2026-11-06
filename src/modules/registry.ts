@@ -52,6 +52,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "event_relay", name: "mod.event_relay.name", description: "mod.event_relay.description" },
   // お店の画面のダイアログ（今の訪問・今のページで分かることだけで出す。0110_mod_dialogs、docs/dialogs.md）
   { id: "dialogs", name: "mod.dialogs.name", description: "mod.dialogs.description", adminPath: "dialogs" },
+  // 会員のお気に入り（本人・運営者・AI 用 API と連携。ゲストはブラウザに覚えてログインで移す。0123_mod_favorites、docs/favorites.md）
+  { id: "favorites", name: "mod.favorites.name", description: "mod.favorites.description", migration: "0123_mod_favorites" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

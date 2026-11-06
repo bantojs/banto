@@ -5,6 +5,7 @@
  * - 作るのはただのオブジェクト（テーマは自前のプロパティだけを読める）。テーマに渡すのは公開してよい値だけ
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
+import { moduleEnabled } from "../../modules/registry";
 import type { ProductField } from "../../products/fields";
 import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
 import { t } from "../../i18n";
@@ -311,6 +312,8 @@ export function shopObject(shop: PublicShop, home: string, intro: string | undef
     money_with_currency_format: "¥{{amount_no_decimals}} JPY",
     locale: getLocale(),
     enabled_currencies: [{ iso_code: "JPY", symbol: "¥" }],
+    // Banto の名前: 同梱モジュール favorites（0123）が ON か。ON なら data-banto-favorite="{{ product.id }}" の要素が押せる
+    favorites_enabled: moduleEnabled(shop.settings, "favorites"),
   };
 }
 

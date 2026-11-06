@@ -604,6 +604,13 @@ export const MCP_TOOLS: McpTool[] = [
   },
   // ---- 会員（0036。個人情報。メールアドレスは変えられない）----
   {
+    name: "favorites_list",
+    description: "会員のお気に入り（同梱モジュール favorites、0123）。customer_id を渡すとその会員のお気に入り（新しい順）、無ければ足した順にたどる一覧（product で商品を絞る。続きは前の応答の cursor の since と after）。会員 ID と商品 ID だけで個人情報は含まない。書き込みは無い（本人の行為だけ）。スコープ customers:read。" + DATA_NOTE,
+    inputSchema: obj({ customer_id: s("string", "会員の id"), product: s("string", "商品の id で絞る"), since: s("string", "ISO 8601 の日時（cursor の since）"), after: s("string", "cursor の after"), limit: s("integer", "1〜500、既定 100") }),
+    readOnly: true,
+    run: (api, a) => (str(a, "customer_id") ? api.customerFavorites(str(a, "customer_id")!) : api.favoritesList({ product: str(a, "product"), since: str(a, "since"), after: str(a, "after"), limit: num(a, "limit") })),
+  },
+  {
     name: "customers_list",
     description: "会員の一覧・検索（メールアドレス・氏名・住所・独自項目・外部の ID・注文の件数と合計）。個人情報を含む。最大 100 件/回。updated_since を渡すとその時刻以後に変わった会員だけを updated_at の昇順で返す（同期の取り込み向け）。スコープ customers:read。" + DATA_NOTE,
     inputSchema: obj({ query: s("string", "メールアドレス・氏名の部分一致"), email: s("string", "メールアドレスの完全一致"), external_provider: s("string", "external_ref.provider の完全一致"), external_id: s("string", "external_ref.id の完全一致（external_provider と一緒に）"), updated_since: s("string", "ISO 8601 の日時"), marketing_consent: s("boolean", "案内メールの同意で絞る（true = 受け取る、false = 受け取らない。省けば全部）"), limit: s("integer", "1〜100、既定 50"), offset: s("integer", "既定 0") }),

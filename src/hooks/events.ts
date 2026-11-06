@@ -18,6 +18,9 @@ export const HOOK_EVENTS = [
   // お問い合わせ（同梱モジュール inquiries、0061）: アドレスが確かめられた・やり取りと状態の変化（change: message / status）
   "inquiry.created",
   "inquiry.updated",
+  // 会員のお気に入り（同梱モジュール favorites、0123）: 足した・外した。ペイロードは会員 ID と商品 ID だけ
+  "favorite.added",
+  "favorite.removed",
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];

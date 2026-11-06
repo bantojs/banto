@@ -329,3 +329,13 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - 形が合わなければ 400（`invalid_dialog:<欄>`）。決められるのは今の訪問・今のページで分かることだけです（だれに・どのページ・きっかけ）。履歴でお客様を選ぶときは、会員の独自項目（§7）に写してから「会員の条件」で選びます。
 - データベースの更新 `0111_dialogs_api` が要ります。当たるまでは 409（`migration_required`）で、発行の画面にもスコープが出ません。
 
+
+## 15. 会員のお気に入り（0123、メンテナの決定 2026-11-06）
+
+- スコープ `customers:read`（項目 `customers`）で、会員のお気に入り（docs/favorites.md）を読めます。新しいスコープは作っていません。
+- `GET /api/v1/customers/{id}/favorites`: その会員のお気に入り（新しい順、200 まで）。
+- `GET /api/v1/favorites`: 足した順にたどる一覧。`product` で商品を絞り、`limit` は 1〜500（既定 100）。続きは応答の `cursor` の `since` と `after` を渡します（`has_more` が false になるまで）。外したことは hooks の `favorite.removed` で知ります。
+- MCP は `favorites_list`（`customer_id` を渡すとその会員の分）。
+- 返すのは会員 ID・商品 ID・商品の URL の名前・足した日時だけです（個人情報が要るときは `customers:read` の会員の口で）。
+- **書き込みの口はありません**。お気に入りは本人の行為だけです。
+- データベースの更新 `0123_mod_favorites` が要ります。当たるまでは 409（`migration_required`）です。
