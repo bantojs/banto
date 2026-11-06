@@ -6,6 +6,8 @@
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
 import type { ProductField } from "../../products/fields";
+import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
+import { t } from "../../i18n";
 import { optionLabel, type OptionNames } from "../../products/option-names";
 import type { CategoryImage, CategoryRow, ProductImageRow } from "../../db/types";
 import type { ProductDetail, ProductSummary, PublicShop } from "../../storefront/data";
@@ -255,7 +257,7 @@ export function reviewsLiquid(r: ProductReviews | null) {
   };
 }
 
-export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[] }) {
+export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[]; sortBy?: string }) {
   const url = c.handle === "all" ? productsUrl(u.shopPath) : categoryUrl(u.shopPath, c.handle);
   return {
     id: c.handle,
@@ -272,8 +274,10 @@ export function collectionObject(u: UrlBase, c: { handle: string; title: string;
     all_tags: c.allTags,
     tags: c.allTags,
     current_tags: c.currentTags ?? [],
-    sort_by: "created-descending",
+    // 並べ方（?sort_by= の Shopify の名前。src/storefront/list-sort.ts）。sort_options は Dawn などの並べ替えの選択肢
+    sort_by: c.sortBy ?? "created-descending",
     default_sort_by: "created-descending",
+    sort_options: LIST_SORT_OPTIONS.map((o) => ({ name: t(o.label), value: o.shopify })),
     filters: [],
   };
 }

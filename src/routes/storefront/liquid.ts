@@ -8,6 +8,7 @@
  * テーマが壊れている・上限を超えた・その種類のテンプレートが無いときも既定のテーマで描く（お店を止めない）。
  */
 import { productFields } from "../../products/fields";
+import { shopifySortName } from "../../storefront/list-sort";
 import { articleFieldDefs, fieldValues } from "../../blog/fields";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
@@ -18,7 +19,7 @@ import { getLocale, t, tf, type MessageKey } from "../../i18n";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { productReviews } from "../../apps/app-data";
-import { type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
+import { type ProductDetail, type ProductListPage, type ProductSort, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
 import { productUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
@@ -408,7 +409,7 @@ export function renderListing(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; path: string },
+  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
 ): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
@@ -421,6 +422,7 @@ export function renderListing(
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
     ...(p.tag ? { currentTags: [p.tag] } : {}),
+    sortBy: shopifySortName(p.sort),
   });
   const paginate = paginateOf(p.page, p.after, p.link);
   // 短すぎる語（3 文字未満で、カテゴリー・タグでも絞っていない）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
