@@ -144,6 +144,7 @@ npm run deploy
 - **0118_api_blog_update（ブログの設定の AI 用 API）**: `PATCH /api/v1/blogs/<ブログ>` でブログの設定と記事の項目の定義を変えられるようになります（docs/ai-access.md §9）。当てるまでは 409 `migration_required` です。
 - **0119_api_layouts_media（ひな形の割り当て・画像の取り込みの AI 用 API）**: `GET` / `PATCH /api/v1/page-layouts` でひな形を割り当て、`POST /api/v1/media` で URL の画像をページ・記事のメディアライブラリに取り込めるようになります（docs/ai-access.md §9）。当てるまでは 409 `migration_required` です。管理画面のひな形の割り当ては今までどおりです。
 - **0120_article_field_image（記事の項目の画像）**: ブログの「記事の項目」に種類 `image` を足せるようになります（docs/blog.md「記事の項目」）。当てるまでは `image` の行を保存しません。商品のカスタム項目の `image` はデータベースの更新なしで使えます。
+- **0121_list_card_fields（一覧のカードの独自項目）**: 商品のカスタム項目の定義に `card` の印（「キー | 表示名 | 種類 | 選択肢 | card」）を付けた公開の項目が、商品の一覧のカード・本文の「商品を並べる」・ヘッドレスの一覧・Liquid の一覧の `product.fields` に出るようになります。当てるまでは印を付けても出ません。
 - **お店の画面の URL を変えました（2026-11-05、マイグレーションなし）**: すべての商品は `/products`、商品は `/products/<商品>`、カテゴリーの一覧は `/categories/<カテゴリー>`、検索は `/products?q=` です（docs/storefront.md「URL」）。前の `/p/<商品>`・`/search`・`/?category=`・`/?all=1` は転送しません。テーマ・本文のリンクで前の URL を書いている所は直してください（Liquid のテーマは `product.url`・`collection.url`・`routes.*` を使っていればそのままで動きます）。
 - **0114_page_layouts_blogs（ブログの一覧のひな形）**: ブログごとに一覧（`/blogs/<ブログ>`）のひな形を割り当てられるようになります（docs/pages.md「ひな形の割り当て」）。当てるまでは割り当ての欄が出ません。
 - **0113_category_media（カテゴリーの画像と説明）**: カテゴリーに説明と画像を付けられるようになります（docs/storefront.md「カテゴリーの画像と説明」）。当てるまでは管理画面に欄が出ません。

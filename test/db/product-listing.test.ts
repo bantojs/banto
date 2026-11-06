@@ -9,7 +9,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
   let a: Fixture;
   let b: Fixture;
 
-  type Item = { id: string; slug: string; name: string; min_price_jpy: number | null; compare_at_price_jpy: number | null; image: { storage_key: string } | null; tags: string[] };
+  type Item = { id: string; slug: string; name: string; min_price_jpy: number | null; compare_at_price_jpy: number | null; image: { storage_key: string } | null; tags: string[]; attributes?: Record<string, unknown> };
   type Page = { items: Item[]; next: { k: unknown; id: string } | null; total?: number; total_capped?: boolean };
   type Args = { sort?: string; limit?: number; after?: unknown; offset?: number; tag?: string; categories?: string[] | null; brand?: string; q?: string; since?: string; count?: boolean };
 
@@ -150,7 +150,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect(counted).toMatchObject({ total, total_capped: false });
   });
 
-  it("絞り込み: タグ・カテゴリー（どれか 1 つ）・ブランド・検索（日本語・記号はそのまま）・更新日時。返す列に attributes は無い", async () => {
+  it("絞り込み: タグ・カテゴリー（どれか 1 つ）・ブランド・検索（日本語・記号はそのまま）・更新日時。返す列の attributes はカードの項目だけ（0121。定義に無い・card の無い値は出さない）", async () => {
     const shop = await createShopFixture({ email: "pl-d@example.com", slug: "pl-d", publish: true });
     const c1 = await category(shop, "d-c1");
     const c2 = await category(shop, "d-c2");
@@ -179,7 +179,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect(await slugs({ tag: "冬", q: "ニット" })).toEqual(["d-3"]);
     expect(await slugs({ since: "2999-01-01T00:00:00Z" })).toEqual([]);
     const one = (await list(shop.shopId, { q: "麦わら" })).items[0]!;
-    expect(one).not.toHaveProperty("attributes");
+    expect(one.attributes).toEqual({});
     expect(one).not.toHaveProperty("description");
   });
 

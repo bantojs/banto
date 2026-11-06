@@ -11,7 +11,7 @@ import { createDbClient } from "../../db/client";
 import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
-import { productFields, publicAttributes } from "../../products/fields";
+import { cardAttributes, productFields, publicAttributes } from "../../products/fields";
 import type { CategoryRow } from "../../db/types";
 import { imageUrl } from "../../media/images";
 import { BANTO_VERSION } from "../../version";
@@ -120,8 +120,9 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const [page, facets] = await Promise.all([sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
   if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
   const catById = new Map(categories.map((x) => [x.id, x]));
+  const cardFields = productFields(shop.settings).filter((f) => f.card);
   return c.json({
-    products: page.items.map(({ product, image, minPrice, compareAt }) => ({
+    products: page.items.map(({ product, image, minPrice, compareAt, attributes }) => ({
       id: product.id,
       slug: product.slug,
       name: product.name,
@@ -133,6 +134,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
       thumb: image ? imageUrl(d.mediaBaseUrl, image.thumb_key ?? image.storage_key) : null,
       min_price_jpy: minPrice,
       compare_at_price_jpy: compareAt ?? null,
+      /** カードに出す独自項目（0121。定義で card を付けた公開の項目、表示名つき） */
+      attributes: cardAttributes(cardFields, attributes),
       created_at: product.created_at,
       updated_at: product.updated_at,
     })),

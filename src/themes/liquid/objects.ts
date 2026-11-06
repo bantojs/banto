@@ -121,6 +121,8 @@ export function productFromSummary(u: UrlBase, p: ProductSummary) {
     options_with_values: [],
     created_at: p.product.created_at,
     updated_at: p.product.updated_at,
+    // 一覧のカードの独自項目（0121。定義で card を付けた公開の項目だけが一覧に来る）
+    ...productFieldsLiquid(u, p.attributes),
   };
 }
 

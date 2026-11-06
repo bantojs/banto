@@ -149,7 +149,7 @@ export const ja = {
   "product.section_organize": "分類と税",
   "fields.private": "非公開",
   "fields.title": "カスタム項目（商品）",
-  "fields.intro": "商品ごとに入力する項目を定義します（WooCommerce のカスタムフィールドに相当）。1 行に 1 項目で「キー | 表示名 | 種類 | 選択肢 | private」。種類は text / textarea / number / url / select / image（画像。商品の画面で選んで置けます）、選択肢は select のときに / 区切り、private を付けると管理画面と AI 用 API だけに出ます。",
+  "fields.intro": "商品ごとに入力する項目を定義します（WooCommerce のカスタムフィールドに相当）。1 行に 1 項目で「キー | 表示名 | 種類 | 選択肢 | 印」。種類は text / textarea / number / url / select / image（画像。商品の画面で選んで置けます）、選択肢は select のときに / 区切り、印の private は管理画面と AI 用 API だけに出し、card は商品の一覧のカードにも出します（例: material | 素材 | text | | card）。",
   "fields.hint": "キーは英小文字で始まる英小文字・数字・_（40 文字まで）。30 項目まで。定義を消しても、入力済みの値はそのまま残ります（表示されなくなるだけ）。",
   "fields.saved": "カスタム項目を保存しました。",
   "customer_fields.title": "会員の項目（外部の顧客マスタ向け）",
