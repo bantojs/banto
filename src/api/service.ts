@@ -247,6 +247,11 @@ export class ApiService {
     return this.migrationState ? migrated(this.migrationState, version) : Promise.resolve(false);
   }
 
+  /** 当てていない DB の更新を使う口は 409 migration_required（関数が無いまま呼んで 502 にしない） */
+  private async requireMigration(version: string): Promise<void> {
+    if (!(await this.migratedTo(version))) throw new ApiError("migration_required", `this needs the database update ${version}; apply it from the admin screen (Update)`, 409);
+  }
+
   private async call<T>(fn: `api_${string}`, args: Record<string, unknown>): Promise<T> {
     try {
       return await this.db.apiRpc<T>(fn, { p_token_hash: this.tokenHash, ...args });
@@ -749,10 +754,12 @@ export class ApiService {
   }
   /** ひな形の割り当て（0119）。ページは URL の名前、ブログは URL の名前、カテゴリーはスラッグの形 */
   async pageLayoutsGet() {
+    await this.requireMigration("0119_api_layouts_media");
     return this.call<Record<string, unknown>>("api_page_layouts_get", {});
   }
   /** ひな形を割り当てる（0119）。送った鍵だけ変える。null か "" で外す。表（articles・blogs・…）は鍵ごとに混ぜる */
   async pageLayoutsSet(changes: Record<string, unknown>) {
+    await this.requireMigration("0119_api_layouts_media");
     return this.call<Record<string, unknown>>("api_page_layouts_set", { p_changes: changes });
   }
   /**
@@ -766,6 +773,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "url must be an absolute http(s) URL", 400);
     }
+    await this.requireMigration("0119_api_layouts_media");
     // 外に取りに行く前・置き場に書く前に、書き込みのスコープを確かめる
     if (!(await this.call<boolean>("api_has_scope", { p_scope: "content:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     let image: Awaited<ReturnType<typeof fetchImage>>;
@@ -788,6 +796,7 @@ export class ApiService {
   }
   /** ブログの設定を変える（0118。題・説明・メニュー・並び順・フィード・記事の項目の定義。送らなかった鍵は今のまま） */
   async blogUpdate(blog: string, values: Record<string, unknown>) {
+    await this.requireMigration("0118_api_blog_update");
     return this.call<Record<string, unknown>>("api_blog_update", { p_blog: blog, p_values: values });
   }
   async articlesList(blog: string, q: { status?: string | undefined; query?: string | undefined; tag?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
