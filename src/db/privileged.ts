@@ -5,6 +5,7 @@
  * テーブルを直接読み書きする汎用メソッドは意図的に用意しない。
  */
 import { AuthError } from "../auth/supabase";
+import { supabaseHeaders } from "./api-keys";
 
 export interface PrivilegedDbOptions {
   url: string;
@@ -499,8 +500,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
   const doFetch = opts.fetch ?? fetch;
   const base = opts.url.replace(/\/+$/, "");
   const headers: Record<string, string> = {
-    apikey: opts.serviceRoleKey,
-    Authorization: `Bearer ${opts.serviceRoleKey}`,
+    ...supabaseHeaders(opts.serviceRoleKey),
     "Content-Type": "application/json",
   };
   if (opts.actor) headers["X-Banto-Actor"] = opts.actor;
@@ -766,7 +766,7 @@ export function createPrivilegedAuth(opts: PrivilegedDbOptions): PrivilegedAuth 
     async createConfirmedUser(email, password) {
       const res = await doFetch(`${base}/auth/v1/admin/users`, {
         method: "POST",
-        headers: { apikey: opts.serviceRoleKey, Authorization: `Bearer ${opts.serviceRoleKey}`, "Content-Type": "application/json" },
+        headers: { ...supabaseHeaders(opts.serviceRoleKey), "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, email_confirm: true }),
       });
       const text = await res.text();
@@ -787,7 +787,7 @@ export function createPrivilegedAuth(opts: PrivilegedDbOptions): PrivilegedAuth 
       return { id: u.id, email: u.email };
     },
     async deleteAllFactors(userId) {
-      const headers = { apikey: opts.serviceRoleKey, Authorization: `Bearer ${opts.serviceRoleKey}` };
+      const headers = supabaseHeaders(opts.serviceRoleKey);
       const uid = encodeURIComponent(userId);
       const res = await doFetch(`${base}/auth/v1/admin/users/${uid}`, { headers });
       if (!res.ok) throw new AuthError(await res.text(), res.status);

@@ -6,9 +6,11 @@
 
 # Supabase -> Project Settings -> Data API -> Project URL (https://xxxx.supabase.co)
 SUPABASE_URL=REPLACE_ME
-# Supabase -> Project Settings -> API Keys -> anon public (safe to expose)
+# Supabase -> Project Settings -> API Keys -> Publishable key (sb_publishable_..., safe to expose).
+# The legacy anon public key (eyJ...) also works until Supabase retires it (end of 2026). docs/env.md
 SUPABASE_ANON_KEY=REPLACE_ME
-# Supabase -> Project Settings -> API Keys -> service_role. Never expose it.
+# Supabase -> Project Settings -> API Keys -> Secret key (sb_secret_...). Never expose it.
+# The legacy service_role key (eyJ...) also works until Supabase retires it.
 SUPABASE_SERVICE_ROLE_KEY=REPLACE_ME
 # A random string of 32+ characters you make up (e.g. `openssl rand -base64 32`). Root of the session, member-login and
 # encryption keys. Never expose it and never change it after setup (the setup screen also generates one for you).

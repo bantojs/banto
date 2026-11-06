@@ -8,7 +8,7 @@ description: Banto をコマンドラインから導入する（wrangler + Supab
 前提: Node.js 22、`npx wrangler` と `npx supabase` が使えること。利用者から次を受け取る（チャットに貼られたら、使用後に失効を促す）。
 
 - Cloudflare API トークン（権限: Workers Scripts:Edit、Workers R2 Storage:Edit、Account Settings:Read）→ `CLOUDFLARE_API_TOKEN`
-- Supabase の Project URL、anon キー、service_role キー、接続文字列（Transaction pooler）
+- Supabase の Project URL、Publishable key（`sb_publishable_…`。今までの anon キーでも可）、Secret key（`sb_secret_…`。今までの service_role キーでも可）、接続文字列（Transaction pooler）
 - Stripe のシークレットキーと Webhook 署名シークレット（決済を使う場合）
 
 ## 手順

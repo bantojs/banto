@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { supabaseKeyMisplaced } from "../../db/api-keys";
 import type { AppEnv } from "../../app";
 import { AuthError } from "../../auth/supabase";
 import { DbError } from "../../db/client";
@@ -29,6 +30,8 @@ interface EnvCheck {
   name: string;
   ok: boolean;
   secret: boolean;
+  /** 公開のキーと秘密のキーの取り違え（src/db/api-keys.ts）。秘密のキーを公開側に入れると RLS を通らずに読めるので止める */
+  misplaced?: boolean;
 }
 
 interface DbState {
@@ -52,12 +55,17 @@ function checkEnv(c: AdminContext): { checks: EnvCheck[]; ok: boolean } {
     ...REQUIRED_PUBLIC_VARS.map((name) => ({ name, ok: Boolean(cfg.get(name)), secret: false })),
     ...REQUIRED_SECRETS.map((name) => ({ name, ok: Boolean(cfg.get(name)), secret: true })),
   ];
+  const wrong = supabaseKeyMisplaced(cfg.get("SUPABASE_ANON_KEY"), cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
+  for (const x of checks) if (x.name === wrong) Object.assign(x, { ok: false, misplaced: true });
   return { checks, ok: checks.every((x) => x.ok) };
 }
 
 async function checkDb(c: AdminContext): Promise<DbState> {
-  const db = dbClient(c);
   const empty: DbState = { status: "skipped", applied: [], pending: [], hasOwner: false, shopCount: 0 };
+  const cfg = c.get("adapters").config;
+  // キーの取り違えがあるあいだは DB に触らない（環境変数の欄で直し方を出す）
+  if (supabaseKeyMisplaced(cfg.get("SUPABASE_ANON_KEY"), cfg.get("SUPABASE_SERVICE_ROLE_KEY"))) return empty;
+  const db = dbClient(c);
   if (!db) return empty;
   try {
     const s = await db.rpc<SetupStateResponse>("banto_setup_state");
@@ -105,7 +113,7 @@ function EnvSection(props: { checks: EnvCheck[]; ok: boolean }) {
                 <Copyable inline value={x.name} />
                 {x.secret ? <span class="badge">Secret</span> : null}
               </td>
-              <td class={x.ok ? "" : "error"}>{x.ok ? t("setup.env.ok") : t("setup.env.missing")}</td>
+              <td class={x.ok ? "" : "error"}>{x.ok ? t("setup.env.ok") : x.misplaced ? t("setup.env.misplaced") : t("setup.env.missing")}</td>
             </tr>
           ))}
         </tbody>
@@ -116,7 +124,7 @@ function EnvSection(props: { checks: EnvCheck[]; ok: boolean }) {
           <ol>
             {missing.map((x) => (
               <li>
-                <Copyable inline value={x.name} />: {x.secret ? t("setup.env.add_secret") : t("setup.env.add_var")} {t(`setup.env.where.${x.name}` as MessageKey)}
+                <Copyable inline value={x.name} />: {x.misplaced ? t(`setup.env.misplaced.${x.name}` as MessageKey) : x.secret ? t("setup.env.add_secret") : t("setup.env.add_var")} {t(`setup.env.where.${x.name}` as MessageKey)}
                 {x.name === "SESSION_SECRET" ? <Copyable value={generateSecret()} name="SESSION_SECRET" /> : null}
               </li>
             ))}

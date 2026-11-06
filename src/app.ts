@@ -99,6 +99,8 @@ export function createApp(
   app.onError((err, c) => {
     console.error(`[banto] ${c.req.method} ${c.req.path}:`, err);
     const path = c.req.path;
+    // 公開側の欄に秘密のキー（src/db/client.ts が止める）: 管理画面はセットアップの画面へ（直し方を出す）
+    if (err instanceof Error && err.message.startsWith("SUPABASE_ANON_KEY holds") && path.startsWith("/admin") && !path.startsWith("/admin/setup")) return c.redirect("/admin/setup");
     if (path.startsWith("/api") || path.startsWith("/webhooks") || path.startsWith("/mcp")) return c.json({ error: "internal_error" }, 500);
     return c.html(errorPage(), 500);
   });

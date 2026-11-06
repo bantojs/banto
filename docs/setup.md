@@ -37,9 +37,10 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 1. Supabase にログインし、**New project** を押します。
 2. 名前は何でも構いません（例: `banto`）。**Database Password** は自分で決めて、**必ずメモしてください**（あとで使います）。Region は **Northeast Asia (Tokyo)** を選びます。
 3. 作成が終わったら、左メニューの **Project Settings（歯車）→ Data API** を開き、**Project URL** をメモします。
-4. 同じく **Project Settings → API Keys** を開き、次の2つをメモします。
-   - **anon** **public** の長い文字列
-   - **service_role** の長い文字列（**誰にも見せない。公開したら Supabase の画面で再発行する**）
+4. 同じく **Project Settings → API Keys** を開き、次の2つをメモします（無ければ「Create new API keys」で作ります）。
+   - **Publishable key**（`sb_publishable_` で始まる）
+   - **Secret key**（`sb_secret_` で始まる。**誰にも見せない。公開したら Supabase の画面で作り直す**）
+   - 「Legacy API keys」の **anon** / **service_role**（`eyJ` で始まる長い文字列）でも動きますが、Supabase は 2026 年末に廃止する予定です（docs/env.md「Supabase のキー」）
 
 ## 2. Cloudflare に置く
 
@@ -72,8 +73,8 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 | 名前 | 種類 | 貼る値 |
 | --- | --- | --- |
 | `SUPABASE_URL` | テキスト | Supabase の Project URL |
-| `SUPABASE_ANON_KEY` | テキスト | anon public の文字列 |
-| `SUPABASE_SERVICE_ROLE_KEY` | **シークレット** | service_role の文字列 |
+| `SUPABASE_ANON_KEY` | テキスト | Publishable key（`sb_publishable_…`） |
+| `SUPABASE_SERVICE_ROLE_KEY` | **シークレット** | Secret key（`sb_secret_…`） |
 
 3. **デプロイ（Deploy）** を押して保存します。ここで入れた値は、以後 GitHub 側を更新して再ビルドしても消えません（`wrangler.jsonc` の `keep_vars`）。
 
@@ -235,7 +236,7 @@ Banto は、決済ページを作れなかった・Webhook の金額が合わな
 | --- | --- |
 | 概要に「No URLs enabled」、ショップの URL が無い | **ビルドが Success / Ready なら、アカウントに workers.dev のサブドメインがまだ無いのが原因**です（新しいアカウントで起きる）。Cloudflare の左メニュー **Workers & Pages → 概要（Overview）** の右側 **「あなたのサブドメイン（Your subdomain）」** で `好きな名前.workers.dev` を決めて保存し、Worker の **設定 → ドメインとルート → workers.dev** を有効にする（または Deployments から再デプロイ）。ビルドが失敗していれば Deployments → View build history でビルドの成否を見る。失敗なら: Worker 名を Deploy の画面で変えた場合は `wrangler.jsonc` の `name` と一致しているか（Cloudflare が書き換えるはずだが、違えば合わせる）。ログに `wrangler: not found` とあれば Settings → Builds の Deploy command を `npx wrangler deploy` にする。成功しているのに URL が無ければ 設定 → ドメインとルート → workers.dev を有効化 |
 | 設定画面にシークレットの欄が出なかった | 配置後に **設定 → 変数とシークレット → 追加** で `SUPABASE_SERVICE_ROLE_KEY`（種類: シークレット）を登録すれば同じです |
-| セットアップ画面で「Supabase に接続できません」 | `SUPABASE_URL` の末尾に `/` が付いていないか。anon キーが正しいか（service_role と取り違えていないか） |
+| セットアップ画面で「Supabase に接続できません」 | `SUPABASE_URL` の末尾に `/` が付いていないか。Publishable key（anon キー）が正しいか（Secret key・service_role と取り違えていないか） |
 | 「データベースに接続できませんでした … Connection terminated unexpectedly」 | 接続文字列の方法は Cloudflare からだと TLS の制約で切られることがあります。上の **アクセストークン** の方法を使ってください |
 | 「アクセストークンが正しくないか、期限切れです」 | `sbp_` で始まる値をそのまま貼ったか。Supabase の Access Tokens 画面で新しく作り直す |
 | 「データベースに接続できませんでした」（接続文字列の方法） | 接続文字列の `[YOUR-PASSWORD]` を置き換えたか（角括弧ごと置き換える）。**Direct connection**（`db.〜.supabase.co`）ではなく **Session pooler** の文字列か。Supabase のプロジェクトが一時停止（Paused）になっていないか |
@@ -265,7 +266,7 @@ npm run deploy
 ```
 
 マイグレーションは `npx supabase db push` でも、セットアップ画面からでも適用できます。
-ローカル開発は `cp .dev.vars.example .dev.vars`（service_role キーを貼る。`SUPABASE_URL` 等は `.dev.vars` に追記するか `wrangler.jsonc` の `vars`）→ `npx supabase start` → `npx supabase db reset` → `npm run dev`。
+ローカル開発は `cp .dev.vars.example .dev.vars`（Secret key（`sb_secret_…`）か service_role キーを貼る。`SUPABASE_URL` 等は `.dev.vars` に追記するか `wrangler.jsonc` の `vars`）→ `npx supabase start` → `npx supabase db reset` → `npm run dev`。
 
 環境変数と Secret の一覧は [docs/env.md](env.md)。任意の環境変数: `BANTO_LOCALE`（`en` で英語 UI）、`PUBLIC_BASE_URL`（独自ドメインを使うとき）、`MEDIA_BASE_URL`（R2 の公開ドメインから画像を配信するとき）、
 `MASK_ORDERS_AFTER_DAYS`（既定 180）。`SESSION_SECRET` は必須（セットアップ画面が値を作って出します。導入後は変えないでください）。
