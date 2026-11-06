@@ -10,6 +10,8 @@
 | `MEDIA_BASE_URL` | 変数 | 任意 | R2 のカスタムドメインから画像を配信するとき `https://media.example.com`（docs/setup.md §7） |
 | `BANTO_LOCALE` | 変数 | 任意 | `en` で英語 UI。既定は日本語 |
 | `BANTO_TIMEZONE` | 変数 | 任意 | 管理画面・CSV・メールの日時表示と、売上集計の日別・月別の区切りの時間帯（IANA 名、例 `Asia/Tokyo`、`America/Los_Angeles`）。既定 `Asia/Tokyo` |
+| `BANTO_ADMIN_NAME` | 変数 | 任意 | 管理画面の左上とタブの題名に出す名前（40 文字まで）。導入した会社の名前など。既定は「Banto（番頭）」。アイコンの画像が無いときは、名前の最初の 1 文字をアイコンにする。お店の画面には使わない（お店の画面はショップの名前） |
+| `BANTO_ADMIN_ICON_URL` | 変数 | 任意 | 管理画面の左上のアイコンの画像（28px の正方形に収める）。`https://` の URL か、このサイトのパス（例: 管理画面で上げた画像の `/media/…`）。それ以外の形は使わず、文字のアイコンのまま |
 | `BANTO_PLACEMENT` | **ビルドの変数**（Settings → Builds） | 任意 | Worker を動かす場所（Cloudflare の Placement）。`aws:<Supabase のリージョン>`（例 `aws:ap-northeast-1`）か `smart`。Deploy command を `npm run deploy` にしたときだけ効く（docs/setup.md §8）。実行中の Worker からは読まない |
 | `BANTO_OBSERVABILITY` | **ビルドの変数**（Settings → Builds） | 任意 | `off` で Worker のログ（Workers Logs）を切る。既定は ON（`wrangler.jsonc`）。Deploy command を `npm run deploy` にしたときだけ効く（docs/setup.md §9）。実行中の Worker からは読まない |
 | `MASK_ORDERS_AFTER_DAYS` | 変数 | 任意 | 発送から何日で個人情報をマスクするか。既定 180 |
