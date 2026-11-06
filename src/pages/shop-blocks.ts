@@ -12,6 +12,7 @@
  *   ::: video src="/media/pages/<ショップ>/<名前>.mp4" poster="…" autoplay=1 loop=1 controls=0   （置き場の mp4 だけ、src/media/video.ts）
  *   ::: toc levels=3 title="この記事の目次"   （本文の見出しから。データは引かない。見出しには id を振る）
  *   ::: stores tryon=1 layout=grid   （ショップで使う実店舗。店名・住所・電話・今日の営業・曜日ごとの営業時間・臨時休業）
+ *   ::: include page=footer-note   （部品のページの本文をここに差し込む。0122。描く前に src/content/include.ts が置き換える）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
  * - アイコンは決まった一式（src/pages/icons.ts）から選び、その場で SVG を描く（データを引かない）
@@ -26,10 +27,10 @@ import { formatDateTime } from "../i18n/time";
 import { parseEmbedUrl } from "./embeds";
 import { isPosterUrl, isVideoUrl } from "../media/video";
 
-export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed" | "video" | "current" | "toc" | "stores";
-export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed", "video", "current", "toc", "stores"];
+export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed" | "video" | "current" | "toc" | "stores" | "include";
+export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed", "video", "current", "toc", "stores", "include"];
 /** データを引かないブロック（印を数えない・body-blocks に渡さない） */
-export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed", "video", "current", "toc"];
+export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed", "video", "current", "toc", "include"];
 /** データを引くブロックの数の上限（1 ページ） */
 export const SHOP_BLOCKS_MAX = 8;
 
@@ -74,6 +75,7 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
   toc: { levels: { values: ["2", "3"], def: "3" }, title: { text: true } },
   stores: { tryon: { values: ["0", "1"], def: "0" }, layout: { values: ["list", "grid"], def: "list" } },
+  include: { page: { test: (v) => SLUG.test(v) } },
 };
 
 export interface ShopBlock {
@@ -82,7 +84,7 @@ export interface ShopBlock {
   attrs: Record<string, string>;
 }
 
-const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed|video|current|toc|stores)(?:\s+(.*?))?\s*$/;
+const LINE = /^\s{0,3}:{3}\s*(search|categories|card|product|icon|date|embed|video|current|toc|stores|include)(?:\s+(.*?))?\s*$/;
 
 /** 1 行を読む。形が違えば null（その行は文字として出る）。必須の値が無いもの（商品の slug など）も null */
 export function parseShopBlock(line: string): ShopBlock | null {
@@ -107,6 +109,7 @@ export function parseShopBlock(line: string): ShopBlock | null {
   if (kind === "embed" && !attrs["url"]) return null;
   if (kind === "video" && !attrs["src"]) return null;
   if (kind === "current" && !attrs["part"]) return null;
+  if (kind === "include" && !attrs["page"]) return null;
   if (kind === "card" && !attrs["page"] && !attrs["article"]) return null;
   if (kind === "card" && attrs["page"] && attrs["article"]) delete attrs["article"];
   return { kind, attrs };

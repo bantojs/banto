@@ -306,7 +306,7 @@ export function pageEditorClient() {
       // お店のブロック（src/pages/shop-blocks.ts）: data-kind と data-attrs から 1 行に戻す（値の形はサーバーが描くときにも確かめる）
       if (kind === "shop") {
         const k = attr(c, "data-kind");
-        if (!/^(search|categories|card|product|icon|date|embed|video|current|toc|stores)$/.test(k)) continue;
+        if (!/^(search|categories|card|product|icon|date|embed|video|current|toc|stores|include)$/.test(k)) continue;
         let o: Record<string, unknown> = {};
         try {
           const v: unknown = JSON.parse(attr(c, "data-attrs") || "{}");

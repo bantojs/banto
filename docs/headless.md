@@ -509,6 +509,7 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 - ページと記事 1 つには、本文が 2 つの形で入ります。
   - `body`: 元の書式（Markdown の一部と、`::: 名前 …` のブロック。docs/pages.md）。連携サイトで描き直すときに使います。
   - `html`: Banto が描いた HTML。そのまま差し込めます。
+- 部品のページ（0122、docs/pages.md「部品のページ」）は一覧にも 1 つにも出ません（404）。`::: include page=<handle>` の行は、`body` でも `html` でも部品の本文に置き換えてあります。
 - 本文の見せる相手の囲み（同梱モジュール「会員の条件」、docs/audiences.md「本文のブロック」）は、`body` からも `html` からも、見る人に合わせて外してあります。会員に合わせるときは `Authorization: Bearer <会員トークン>` を付けます（付けなければゲスト、壊れたトークンは 401 `invalid_member_token`）。囲みのある本文の応答には `Vary: Authorization` が付きます。URL のパラメータの条件には、見る人の URL の値を `p.<名前>`（`?p.ref=insta`）で渡します。
 - `html` の中身:
   - レイアウトのブロックの並べ方の CSS（`<style>`）。色と大きさは CSS の変数 `--banto-*` で、連携サイトの CSS で上書きできます。

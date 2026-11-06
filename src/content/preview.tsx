@@ -12,6 +12,7 @@ import { resolveTheme } from "../themes";
 import type { ThemeContext } from "../themes/types";
 import { markdownToHtml } from "../pages/markdown";
 import { filterAudienceBlocks } from "./audience-blocks";
+import { previewBody } from "../routes/audience-render";
 import { bodyBlocks } from "./body-blocks";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../pages/blocks";
 import { fillDateBlocks, fillShopBlocks } from "../pages/shop-blocks";
@@ -83,7 +84,8 @@ export async function themedPreview(c: AdminContext, shop: ShopRow, target: Prev
     themeSettings: typeof (shop.settings ?? {})["theme_settings"] === "object" && (shop.settings ?? {})["theme_settings"] ? ((shop.settings ?? {})["theme_settings"] as Record<string, unknown>) : {},
   };
   const source = target.kind === "page" ? target.page.body : target.article.body;
-  const body = filterAudienceBlocks(source, () => true).body;
+  // 部品の差し込み（0122）と、見せる相手の囲みは中身ごと
+  const body = sf ? (await previewBody(sf, pub, source)).body : filterAudienceBlocks(source, () => true).body;
   const dates = target.kind === "page" ? { published: target.page.published_at ?? target.page.created_at, updated: target.page.updated_at } : { published: target.article.published_at ?? target.article.updated_at, updated: target.article.updated_at };
   // 今の記事・商品の部品: ページはそのページ自身、記事は記事のもの（ひな形の見本はお店の画面のプレビューで）
   const parts = target.kind === "page" ? pageParts({ mediaBase, page: target.page }) : articleParts({ shopPath, mediaBase, blog: target.blog, article: target.article });

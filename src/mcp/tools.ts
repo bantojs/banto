@@ -464,9 +464,9 @@ export const MCP_TOOLS: McpTool[] = [
     name: "page_save",
     description:
       "【書き込み】ページを作る・直す。id があればそのページ、無ければ handle が同じページを直し、無ければ作る（作るときは handle と title が要る）。送らなかった項目は今のまま。published: true でお店の画面に出る（published_at が未来なら予約公開）。本文に生の HTML は書けない。画像はこのショップの画像の置き場のものだけ。スコープ content:write。",
-    inputSchema: obj({ id: s("string", "直すページの id"), handle: s("string", "URL の名前（英小文字・数字・ハイフン。/pages/<handle>）"), ...CONTENT_FIELDS, nav: s("string", "メニューに出すか", { enum: ["none", "header", "footer"] }), sort_order: s("integer", "並び順（小さいほど先）") }),
+    inputSchema: obj({ id: s("string", "直すページの id"), handle: s("string", "URL の名前（英小文字・数字・ハイフン。/pages/<handle>）"), ...CONTENT_FIELDS, nav: s("string", "メニューに出すか", { enum: ["none", "header", "footer"] }), sort_order: s("integer", "並び順（小さいほど先）"), is_part: s("boolean", "部品のページ（0122）。本文の ::: include page=<handle> で差し込むだけで、/pages/<handle>・メニュー・サイトマップに出さない") }),
     readOnly: false,
-    run: (api, a) => api.pageSave(pick(a, ["id", "handle", ...Object.keys(CONTENT_FIELDS), "nav", "sort_order"])),
+    run: (api, a) => api.pageSave(pick(a, ["id", "handle", ...Object.keys(CONTENT_FIELDS), "nav", "sort_order", "is_part"])),
   },
   {
     name: "page_trash",

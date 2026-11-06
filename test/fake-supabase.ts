@@ -399,7 +399,8 @@ export class FakeSupabase {
 
   /** ショップのページ（0079）。既定は公開中・メニューに出さない */
   addPage(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
-    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "about", title: "About", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: true, created_at: this.now(), updated_at: this.now(), ...fields };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "about", title: "About", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: true, is_part: false, created_at: this.now(), updated_at: this.now(), ...fields };
+    if (row["is_part"] === true) row["nav"] = "none";
     this.tables.pages.push(row);
     return row;
   }
@@ -953,7 +954,9 @@ export class FakeSupabase {
         if (table === "skus") this.tables.inventory.push({ sku_id: row["id"], shop_id: row["shop_id"], available: 0, updated_at: this.now() });
         if (table === "pages") {
           // 0079 の既定値と CHECK（本物は test/db/pages.test.ts）
-          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...r });
+          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...(this.appliedMigrations.includes("0122_page_parts") ? { is_part: false } : {}), ...r });
+          // 0122: 部品のページはメニューに出さない
+          if (row["is_part"] === true) row["nav"] = "none";
           if (!pageHandleOk(String(row["handle"]))) return json({ code: "23514", message: 'new row for relation "pages" violates check constraint "pages_handle_check"' }, 400);
           if (this.tables.pages.filter((x) => x["shop_id"] === row["shop_id"]).length >= 100) return json({ code: "P0001", message: "pages_full" }, 400);
         }
@@ -1010,6 +1013,7 @@ export class FakeSupabase {
         if (table === "articles" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
           this.tables.article_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], article_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
         }
+        if (table === "pages" && next["is_part"] === true) next["nav"] = "none";
         if (table === "pages" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
           this.tables.page_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], page_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
           const mine = this.tables.page_revisions.filter((x) => x["page_id"] === r["id"]);
@@ -2597,6 +2601,8 @@ export class FakeSupabase {
         }
         Object.assign(row, Object.fromEntries(Object.entries(values).filter(([k]) => k !== "id")), { updated_at: this.now() });
         if (row["published"] && !row["published_at"] && table === "articles") row["published_at"] = this.now();
+        // 0122: 部品のページはメニューに出さない
+        if (table === "pages" && row["is_part"] === true) row["nav"] = "none";
         return json(view(row, true));
       };
       const blog = this.tables.blogs.find((b) => b["shop_id"] === shopId && b["handle"] === args["p_blog"]);

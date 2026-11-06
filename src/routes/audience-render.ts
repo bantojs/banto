@@ -12,6 +12,7 @@ import { AUDIENCES_MODULE, queryParamsOf, rememberedParams, type AudienceContext
 import { audienceShow, filterAudienceBlocks, hasAudienceBlocks, type RenderAudience } from "../content/audience-blocks";
 import type { MemberReader, PublicShop, StorefrontData } from "../storefront/data";
 import { memberFromRequest } from "./api/members";
+import { withIncludes } from "../content/include";
 
 /** 覚えておく秒数（管理画面で直した条件が効くまでの長さ） */
 export const AUDIENCES_CACHE_TTL = 60;
@@ -35,11 +36,22 @@ export async function shopAudiences(c: Ctx, shop: { id: string; settings?: Recor
   }
 }
 
-/** 見る人に合わせて本文の囲みを外す（囲みが無ければ何も引かない）。key は HTML のキャッシュの区分け */
-export async function viewerBody(c: Ctx, shop: { id: string; settings?: Record<string, unknown> | null }, body: string, viewer: AudienceContext): Promise<{ body: string; key: string }> {
-  if (!hasAudienceBlocks(body)) return { body, key: "" };
+/**
+ * 見る人に合わせた本文: 部品を差し込み（`::: include`、0122）、見せる相手の囲みを外す（どちらも無ければ何も引かない）。
+ * key は HTML のキャッシュの区分け（差し込んだ部品と、外した囲みの組み合わせ）
+ */
+export async function viewerBody(c: Ctx, sf: StorefrontData, shop: PublicShop, body: string, viewer: AudienceContext): Promise<{ body: string; key: string }> {
+  const inc = await withIncludes(sf, shop, body);
+  if (!hasAudienceBlocks(inc.body)) return inc;
   const list = await shopAudiences(c, shop);
-  return filterAudienceBlocks(body, audienceShow(list, viewer));
+  const out = filterAudienceBlocks(inc.body, audienceShow(list, viewer));
+  return { body: out.body, key: inc.key ? `${inc.key}|${out.key}` : out.key };
+}
+
+/** プレビュー: 部品を差し込み、見せる相手の囲みは中身ごと見せる */
+export async function previewBody(sf: StorefrontData, shop: PublicShop, body: string): Promise<{ body: string; key: string }> {
+  const inc = await withIncludes(sf, shop, body);
+  return { body: filterAudienceBlocks(inc.body, () => true).body, key: inc.key };
 }
 
 /** 同じ訪問のあいだ覚える URL のパラメータの Cookie（remember の条件のものだけ。値はだれでも付けられる URL の値なので署名しない） */
