@@ -482,6 +482,12 @@ const FORM_ACTIONS: Readonly<Record<string, string>> = {
   customer_login: "/account/login",
   create_customer: "/account/login",
   recover_customer_password: "/account/login",
+  // Banto の名前（メンテナの決定 2026-11-06）: 会員のログインの続き（templates/customers/login）とお店で試着（templates/tryon）
+  customer_code: "/account/code",
+  customer_verify: "/account/verify",
+  customer_password_login: "/account/password-login",
+  tryon_details: "/tryon/confirm",
+  tryon_submit: "/tryon/submit",
 };
 
 /**
@@ -676,7 +682,15 @@ export function registerShopifyTags(liquid: Liquid): void {
           .filter(([k, v]) => /^[a-z][a-z0-9_-]*$/.test(k) && v !== undefined && k !== "return_to")
           .map(([k, v]) => attr(k.replace(/_/g, "-"), v))
           .join("");
-        emitter.write(`<form method="post" action="${escapeHtml(action ?? "#")}" accept-charset="UTF-8"${extra}><input type="hidden" name="form_type" value="${escapeHtml(this.formType)}">`);
+        // Banto が決める隠しの値（試着の確かめた値・ログインのリンクの券など）。テーマの変数からは書き換えられない（globals の __banto_forms）
+        const fixed = isObject(e.globals["__banto_forms"]) ? (e.globals["__banto_forms"] as Record<string, unknown>)[this.formType] : undefined;
+        const hidden = isObject(fixed)
+          ? Object.entries(fixed)
+              .filter(([k, v]) => /^[a-z][a-z0-9_]*$/.test(k) && (typeof v === "string" || typeof v === "number"))
+              .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(String(v))}">`)
+              .join("")
+          : "";
+        emitter.write(`<form method="post" action="${escapeHtml(action ?? "#")}" accept-charset="UTF-8"${extra}><input type="hidden" name="form_type" value="${escapeHtml(this.formType)}">${hidden}`);
         ctx.push({ form: { errors: null, posted_successfully: false } });
         yield this.liquid.renderer.renderTemplates(this.templates, ctx, emitter);
         ctx.pop();

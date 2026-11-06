@@ -21,7 +21,7 @@ import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
 import { productUrl, shopHome, shopOrigin } from "../../storefront/urls";
-import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, ThemeContext } from "../../themes/types";
+import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
 import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
 import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
@@ -151,7 +151,7 @@ interface PageParts {
    * 住所・連絡先が載る画面（レジの配送先・最終確認、会員ページ）: 外のスクリプトを止め（CSP）、覚えさせず、切り離したプレビューではテーマで描かない。
    * confirm は {% banto_confirmation %} を描いたときだけ
    */
-  checkout?: "address" | "confirm" | "account";
+  checkout?: "address" | "confirm" | "account" | "login" | "tryon";
   /** 最終確認画面: Banto が描いた表示（特商法の項目と確定のボタン）。{% banto_confirmation %} の印の場所に、描き終えてから入れる */
   confirmation?: string;
   /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
@@ -575,6 +575,108 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
     ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
+}
+
+/** 会員のログイン（templates/customers/login）の段: email（アドレスを入れる）・code（届いた 6 桁）・verify（メールのリンクを開いた先の確かめ） */
+export interface CustomerLoginInput {
+  step: "email" | "code" | "verify";
+  email?: string;
+  error?: string;
+  info?: string;
+  options?: { password?: boolean; providers?: ("line" | "google")[]; passkey?: boolean };
+  /** verify だけ: リンクの券（{% form 'customer_verify' %} が隠しの値で送る） */
+  challenge?: string;
+  token?: string;
+}
+
+/**
+ * 会員のログイン（templates/customers/login、メンテナの決定 2026-11-06）。フォームは {% form 'customer_login' %}（email）・
+ * {% form 'customer_code' %}（code）・{% form 'customer_verify' %}（券は Banto が隠しの値で入れる）・{% form 'customer_password_login' %}（email・password）。
+ * 連絡先が載る画面なので、レジと同じく外のスクリプトを止める（CSP）。テーマに無ければ既定のテーマ
+ */
+export async function renderCustomerLogin(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: CustomerLoginInput): Promise<Response | null> {
+  const shopPath = s.ctx.shopPath;
+  const names: Record<string, string> = { line: "LINE", google: "Google" };
+  const login = {
+    step: p.step,
+    email: p.email ?? "",
+    error: p.error ?? null,
+    info: p.info ?? null,
+    password: Boolean(p.options?.password),
+    providers: (p.options?.providers ?? []).map((id) => ({ id, name: names[id] ?? id, url: `${shopPath}/account/oauth/${id}` })),
+    passkey_url: p.options?.passkey ? `${shopPath}/account/passkey` : null,
+    login_url: `${shopPath}/account/login`,
+  };
+  const forms = p.step === "verify" ? { customer_verify: { c: p.challenge ?? "", t: p.token ?? "" } } : {};
+  return render(c, s, choice, {
+    template: "customers/login",
+    values: { login, __banto_forms: forms },
+    title: t("member.login_title"),
+    path: "/account/login",
+    noindex: true,
+    categories: await s.sf.listCategories(s.shop),
+    checkout: "login",
+  });
+}
+
+/** お店で試着（templates/tryon）の材料。step は store（店舗を選ぶ）・details（連絡先と日時）・confirm（確かめ）・done（受け付けた） */
+export interface TryonInput {
+  step: "store" | "details" | "confirm" | "done";
+  lines: CartLine[];
+  stores: StoreView[];
+  store?: StoreView | null;
+  dates?: { value: string; label: string }[];
+  settings: { mode: "shop" | "visit"; hold_days: number; max_items: number; notice: string };
+  values: TryonFormValues;
+  visitLabel?: string | null;
+  error?: string;
+  number?: number;
+  status?: 200 | 400 | 409;
+}
+
+/**
+ * お店で試着の申し込み（同梱モジュール store_tryon、templates/tryon、メンテナの決定 2026-11-06）。決済は無く、在庫は申し込みのときに Banto が押さえる。
+ * フォームは {% form 'tryon_details' %}（customer_name・customer_email・customer_phone・visit_date・note。店舗は Banto が隠しの値で入れる）と
+ * {% form 'tryon_submit' %}（確かめた値はすべて Banto が隠しの値で入れる。テーマはボタンだけ置く）。連絡先が載るので CSP を付ける
+ */
+export async function renderTryon(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: TryonInput): Promise<Response | null> {
+  const shopPath = s.ctx.shopPath;
+  const u = { shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
+  const storeObj = (st: StoreView) => ({ ...st, select_url: `${shopPath}/tryon?store=${encodeURIComponent(st.id)}` });
+  const v = p.values;
+  const tryon = {
+    step: p.step,
+    items: p.lines.length > 0 ? cartObject(u, p.lines, null, choice.cartImages).items : [],
+    stores: p.stores.map(storeObj),
+    store: p.store ? storeObj(p.store) : null,
+    dates: p.dates ?? [],
+    mode: p.settings.mode,
+    hold_days: p.settings.hold_days,
+    max_items: p.settings.max_items,
+    notice: p.settings.notice,
+    values: { store: v.store ?? "", visit_date: v.visit_date ?? "", customer_name: v.customer_name ?? "", customer_email: v.customer_email ?? "", customer_phone: v.customer_phone ?? "", note: v.note ?? "" },
+    visit_label: p.visitLabel ?? null,
+    error: p.error ?? null,
+    number: p.number ?? null,
+    change_store_url: `${shopPath}/tryon`,
+    edit_url: `${shopPath}/tryon?store=${encodeURIComponent(v.store ?? "")}`,
+    cart_url: `${shopPath}/cart`,
+    continue_url: shopPath || "/",
+  };
+  const forms = {
+    tryon_details: { store: v.store ?? "" },
+    tryon_submit: { store: v.store ?? "", visit_date: v.visit_date ?? "", customer_name: v.customer_name ?? "", customer_email: v.customer_email ?? "", customer_phone: v.customer_phone ?? "", note: v.note ?? "" },
+  };
+  return render(c, s, choice, {
+    template: "tryon",
+    values: { tryon, __banto_forms: forms },
+    title: t("tryon.title"),
+    path: "/tryon",
+    noindex: true,
+    categories: await s.sf.listCategories(s.shop),
+    checkout: "tryon",
+    ...(p.status ? { status: p.status } : {}),
+  });
 }
 
 /** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
