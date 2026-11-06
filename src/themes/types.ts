@@ -2,7 +2,7 @@ import type { HtmlEscapedString } from "hono/utils/html";
 
 /** JSX 要素（c.html() にそのまま渡せる型） */
 export type Rendered = HtmlEscapedString | Promise<HtmlEscapedString>;
-import type { ProductDetail, ProductSummary, PublicShop, SkuWithStock } from "../storefront/data";
+import type { ProductDetail, ProductSummary, PublicShop, SkuWithStock, ProductSort } from "../storefront/data";
 import type { CategoryImage, ProductRow } from "../db/types";
 import type { Confirmation } from "../commerce/checkout";
 import type { CategoryNode } from "../products/categories";
@@ -90,6 +90,8 @@ export interface Theme {
     pagination?: { next?: string; first?: string };
     /** 検索の語（?q=）。あれば検索の結果として描く */
     q?: string;
+    /** 並べ方（?sort=、src/storefront/list-sort.ts。既定の新しい順なら無し） */
+    sort?: ProductSort;
     /** お店のトップ（トップのひな形が無いときに、すべての商品をトップとして出す）。トップだけショップの名前と紹介文を見出しに出す */
     top?: boolean;
     /** この一覧のパス（canonical。トップは shopPath か /、一覧は /products?… / /categories/<カテゴリー>?…） */

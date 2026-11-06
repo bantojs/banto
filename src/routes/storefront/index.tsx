@@ -10,7 +10,7 @@ import { DIALOGS_MODULE } from "../../modules/dialogs/dialogs";
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
-import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage } from "../../storefront/data";
+import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, type ProductSort } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { categoryUrl, listUrl, productUrl, productsUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -53,6 +53,7 @@ import { blogListParts, listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon } from "./liquid";
+import { listSortOf } from "../../storefront/list-sort";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -456,18 +457,20 @@ storefront.get("/:shop/categories/:category", async (c: Ctx) => {
 });
 
 /** 一覧の条件（タグは 50 文字まで、検索の語は 100 文字まで。文字で数える。UTF-16 の単位で切ると絵文字の途中で切れる） */
-function listQueryOf(c: Ctx): { tag?: string; q?: string; after?: string } {
+function listQueryOf(c: Ctx): { tag?: string; q?: string; after?: string; sort?: ProductSort } {
   const tag = (c.req.query("tag") ?? "").trim().slice(0, 50);
   const q = [...(c.req.query("q") ?? "").trim()].slice(0, 100).join("");
   const after = c.req.query("after") || "";
-  return { ...(tag ? { tag } : {}), ...(q ? { q } : {}), ...(after ? { after } : {}) };
+  // 並べ方（?sort=、Shopify のテーマの ?sort_by= も読む）。既定の新しい順は持たない
+  const sort = listSortOf(c.req.query("sort"), c.req.query("sort_by"));
+  return { ...(tag ? { tag } : {}), ...(q ? { q } : {}), ...(after ? { after } : {}), ...(sort ? { sort } : {}) };
 }
 
 /**
  * 商品の一覧を描く（お店のトップ・すべての商品・カテゴリーの一覧、タグ・検索の語・ページ送り付き）。
  * 商品一覧のひな形（0103）はカテゴリーの一覧（近い割り当て、無ければ共通）・すべての商品・トップ（トップのひな形が無いとき）に効く。検索の語があれば今までの画面
  */
-async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?: string; tag?: string; q?: string; after?: string }): Promise<Response> {
+async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?: string; tag?: string; q?: string; after?: string; sort?: ProductSort }): Promise<Response> {
   // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）
   const categories = await s.sf.listCategories(s.shop);
   const category = o.category ? categories.find((x) => x.slug === o.category) : undefined;
@@ -476,7 +479,7 @@ async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?:
   const colLayout = colId ? await s.sf.layoutPage(s.shop, colId) : null;
   // Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
   const lt = await liquidThemeFor(c, s);
-  const list = await listingData(s, { categories, ...(category ? { category } : {}), ...(o.tag ? { tag: o.tag } : {}), ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), top: Boolean(o.top), count: Boolean(lt) });
+  const list = await listingData(s, { categories, ...(category ? { category } : {}), ...(o.tag ? { tag: o.tag } : {}), ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), ...(o.sort ? { sort: o.sort } : {}), top: Boolean(o.top), count: Boolean(lt) });
   if (!list) return notFoundPage(c, s);
   if (colLayout) return collectionResponse(c, s, list, { layout: colLayout });
   const { page, facets, link } = list;
@@ -491,6 +494,7 @@ async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?:
       tags: facets.tags,
       link,
       ...(o.after ? { after: o.after } : {}),
+      ...(o.sort ? { sort: o.sort } : {}),
       path: list.path,
     });
     if (res) return res;
@@ -506,6 +510,8 @@ interface ListingData {
   tag?: string;
   q?: string;
   after?: string;
+  /** 並べ方（既定の new は持たない） */
+  sort?: ProductSort;
   /** お店のトップ（トップのひな形が無いときに、すべての商品をトップとして出す） */
   top: boolean;
   /** 検索の語を探したか（語が短く、カテゴリー・タグでも絞っていなければ探さない） */
@@ -517,17 +523,18 @@ interface ListingData {
 }
 
 /** 商品の一覧の材料（お店のトップ・すべての商品・カテゴリーの一覧・商品一覧のひな形のプレビューで同じ） */
-async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; tag?: string; q?: string; after?: string; top: boolean; count: boolean }): Promise<ListingData | null> {
+async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; tag?: string; q?: string; after?: string; sort?: ProductSort; top: boolean; count: boolean }): Promise<ListingData | null> {
   // 2 文字以下の語は、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0058 の q_too_short）
   const searchable = !q.q || [...q.q].length >= PRODUCT_SEARCH_MIN_CHARS || Boolean(q.tag || q.category);
-  const query = { tag: q.tag, category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), limit: STORE_PAGE_SIZE };
+  const query = { tag: q.tag, category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), ...(q.sort ? { sort: q.sort } : {}), limit: STORE_PAGE_SIZE };
   const empty: ProductListPage = { items: [], total: 0, totalCapped: false, limit: STORE_PAGE_SIZE, offset: 0, nextOffset: null, nextCursor: null };
   const [page, facets] = await Promise.all([searchable ? s.sf.productPage(s.shop, query, q.categories, { cursor: q.after, ...(q.count ? { count: true } : {}) }) : Promise.resolve(empty), s.sf.productFacets(s.shop, q.categories)]);
   if (!page) return null;
   const cond = { category: q.category?.slug, tag: q.tag, q: q.q };
-  const link = (cursor: string | null) => listUrl(s.ctx.shopPath, { ...cond, after: cursor });
+  // ページ送りは並べ方を保つ。canonical（path）は並べ方を外す（並べ替えただけの同じ一覧を別のページにしない）
+  const link = (cursor: string | null) => listUrl(s.ctx.shopPath, { ...cond, sort: q.sort, after: cursor });
   const path = q.top && !q.after ? "" : listUrl("", cond);
-  return { page, facets, categories: q.categories, ...(q.category ? { category: q.category } : {}), ...(q.tag ? { tag: q.tag } : {}), ...(q.q ? { q: q.q } : {}), ...(q.after ? { after: q.after } : {}), top: q.top, searchable, path, link };
+  return { page, facets, categories: q.categories, ...(q.category ? { category: q.category } : {}), ...(q.tag ? { tag: q.tag } : {}), ...(q.q ? { q: q.q } : {}), ...(q.after ? { after: q.after } : {}), ...(q.sort ? { sort: q.sort } : {}), top: q.top, searchable, path, link };
 }
 
 /** 既定のテーマの一覧に渡すもの（一覧と商品一覧のひな形で同じ） */
@@ -543,6 +550,7 @@ function listProps(s: ShopScope, d: ListingData) {
     ...(d.category ? { category: categoryProp(d.category) } : {}),
     path: `${s.ctx.shopPath}${d.path}` || "/",
     pagination: { ...(d.page.nextCursor ? { next: d.link(d.page.nextCursor) } : {}), ...(d.after ? { first: d.link(null) } : {}) },
+    ...(d.sort ? { sort: d.sort } : {}),
     ...(d.q && !d.searchable ? { notice: t("store.search_too_short") } : d.q && d.page.items.length === 0 ? { notice: tf("store.search_none", { q: d.q }) } : {}),
   };
 }
