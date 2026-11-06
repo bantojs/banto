@@ -16,9 +16,6 @@ import type { ShopEvent } from "../../storefront/events";
 import type { HeadTag, StorefrontHeadContributor } from "../../storefront/head";
 
 export const DIALOGS_MODULE = "dialogs";
-export const DIALOGS_MIGRATION = "0110_mod_dialogs";
-/** AI 用 API とつないだプラグインの口（スコープ dialogs:write、連携に結ぶ） */
-export const DIALOGS_API_MIGRATION = "0111_dialogs_api";
 
 export const DIALOG_PAGE_KINDS = ["all", "home", "product", "list", "article", "page", "cart"] as const;
 export type DialogPageKind = (typeof DIALOG_PAGE_KINDS)[number];

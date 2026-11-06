@@ -276,17 +276,6 @@ describe("AI 用 API とつないだプラグイン（段階 2、0111）", () =>
     expect(await (await owner.get(base)).text()).toContain("連携「テスト MA」が作ったもの");
     expect(await (await owner.get(`${base}/d-p`)).text()).toContain("プラグインが後から書き直すことがあります");
   });
-
-  it("発行の画面: 0111 を当てるまで dialogs:write を出さない", async () => {
-    const { BUNDLED_MIGRATIONS } = await import("../src/db/migrations");
-    for (const [applied, shown] of [[BUNDLED_MIGRATIONS, true], [BUNDLED_MIGRATIONS.filter((v) => v !== "0111_dialogs_api"), false]] as const) {
-      const sb = new FakeSupabase({ appliedMigrations: [...applied] });
-      const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
-      const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
-      const b = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-      expect((await (await b.get(`/admin/shops/${shop.id}/tokens`)).text()).includes('value="dialogs:write"')).toBe(shown);
-    }
-  });
 });
 
 describe("ヘッドレスと貼れるタグ（段階 3）", () => {
