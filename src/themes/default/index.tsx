@@ -1,9 +1,13 @@
 import type { CategoryNode } from "../../products/categories";
+import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
+import type { ProductSort } from "../../storefront/data";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import { categoryUrl, listUrl, productUrl, productsUrl } from "../../storefront/urls";
 import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
+import { cardAttributes, productFields } from "../../products/fields";
+import { shopImageUrl } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
@@ -78,6 +82,8 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .swatches{display:flex;flex-wrap:wrap;gap:.5rem;margin:.25rem 0 .75rem}.swatch{padding:2px;border:2px solid transparent;border-radius:999px;background:none;cursor:pointer;line-height:0}.swatch[aria-checked=true]{border-color:currentColor}.swatch:disabled{opacity:.35;cursor:not-allowed}.swatch__dot{display:inline-block;width:2rem;height:2rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 20%,transparent)}.swatch__dot img{width:100%;height:100%;object-fit:cover}.swatch--text .swatch__dot{width:auto;height:auto;padding:.35rem .75rem;line-height:1.2;font-size:.9rem}
 .category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
+.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
+.card-fields{list-style:none;margin:.25rem 0;padding:0;font-size:.85rem}.card-fields img{max-height:1.5rem;width:auto;vertical-align:middle}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
 ${REVIEWS_CSS}
 ${SIZE_CHART_CSS}
@@ -491,7 +497,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout, q, top, path }) {
+  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout, q, top, path, sort }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
     const heading = category ? category.name : tag ? tag : q ? tf("store.search_heading", { q }) : top ? undefined : t("store.all_products");
@@ -505,7 +511,7 @@ export const defaultTheme: Theme = {
     const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
     // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
     if (layout) {
-      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice, ...(q ? { q } : {}) });
+      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
       const html: Record<string, string> = {};
       for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
       return (
@@ -545,16 +551,17 @@ export const defaultTheme: Theme = {
         {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
         {tags && tags.length > 0 ? (
           <p class="tags">
-            <a href={listUrl(ctx.shopPath, { category: category?.slug })} class={tag ? "" : "active"}>
+            <a href={listUrl(ctx.shopPath, { category: category?.slug, sort })} class={tag ? "" : "active"}>
               {t("store.all_products")}
             </a>
             {tags.map((x) => (
-              <a href={listUrl(ctx.shopPath, { category: category?.slug, tag: x.tag })} class={x.tag === tag ? "active" : ""}>
+              <a href={listUrl(ctx.shopPath, { category: category?.slug, tag: x.tag, sort })} class={x.tag === tag ? "active" : ""}>
                 {x.tag} <span class="muted">({x.count})</span>
               </a>
             ))}
           </p>
         ) : null}
+        {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} tag={tag} q={q} sort={sort} /> : null}
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </Layout>
@@ -1950,16 +1957,19 @@ type ShopHomeProps = Parameters<Theme["ShopHome"]>[0];
 
 /** 商品の並び（カード）とページ送り。ふつうの一覧と、商品一覧のひな形（0103）の両方 */
 function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"]; products: ShopHomeProps["products"]; pagination?: ShopHomeProps["pagination"] }) {
+  // カードに出す独自項目（0121。定義で card を付けた公開の項目）
+  const cardFields = productFields(ctx.shop.settings).filter((f) => f.card);
   return (
     <>
       <div class="grid">
-        {products.map(({ product, image, minPrice, compareAt }) => (
+        {products.map(({ product, image, minPrice, compareAt, attributes }) => (
           <div class="card">
             <a href={productUrl(ctx.shopPath, product.slug)}>
               <div class="thumb">{image ? <img {...responsiveImage(ctx.mediaBaseUrl, image)} alt={product.name} loading="lazy" decoding="async" /> : null}</div>
               <div class="body">
                 <div>{product.name}</div>
                 {product.brand ? <div class="muted">{product.brand}</div> : null}
+                {cardFields.length > 0 ? <CardFields ctx={ctx} items={cardAttributes(cardFields, attributes)} /> : null}
                 {minPrice !== null ? (
                   <div class="price">
                     {compareAt ? <s class="muted">{yen(compareAt)}</s> : null} {yen(minPrice)}〜 <span class="muted">{t("store.tax_included")}</span>
@@ -1981,6 +1991,26 @@ function ProductGrid({ ctx, products, pagination }: { ctx: ShopHomeProps["ctx"];
         </nav>
       ) : null}
     </>
+  );
+}
+
+/** カードの独自項目（文字は「表示名: 値」、画像は小さな画像。src/products/fields.ts の cardAttributes） */
+function CardFields({ ctx, items }: { ctx: ThemeContext; items: { key: string; label: string; type: string; value: string | number }[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul class="card-fields">
+      {items.map((a) => (
+        <li class={`card-field card-field--${a.key}`}>
+          {a.type === "image" ? (
+            <img src={shopImageUrl(String(a.value), ctx.mediaBaseUrl) ?? ""} alt={a.label} loading="lazy" />
+          ) : (
+            <>
+              <span class="muted">{a.label}</span> {String(a.value)}
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -2063,10 +2093,25 @@ function CategoryIntro({ ctx, category }: { ctx: ShopHomeProps["ctx"]; category:
   );
 }
 
-export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice, q: query }: Omit<ShopHomeProps, "layout">) {
+/** 一覧の並べ替え（?sort=、src/storefront/list-sort.ts）。今のカテゴリー・タグ・検索の語はそのまま、ページ送りは最初に戻す */
+function SortLinks({ ctx, category, tag, q, sort }: { ctx: ThemeContext; category?: { slug: string } | undefined; tag?: string | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
+  const now = sort ?? "new";
+  return (
+    <p class="sort" aria-label={t("store.sort_label")}>
+      <span class="muted">{t("store.sort_label")}:</span>{" "}
+      {LIST_SORT_OPTIONS.map((o) => (
+        <a href={listUrl(ctx.shopPath, { category: category?.slug, tag, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
+          {t(o.label)}
+        </a>
+      ))}
+    </p>
+  );
+}
+
+export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
   const home = ctx.shopPath || "/";
   // タグで絞る・外すときも、今のカテゴリーと検索の語はそのまま
-  const q = (extra: { tag?: string }) => listUrl(ctx.shopPath, { category: category?.slug, q: query, ...extra });
+  const q = (extra: { tag?: string }) => listUrl(ctx.shopPath, { category: category?.slug, q: query, sort, ...extra });
   const find = (nodes: CategoryNode[], slug: string): CategoryNode | null => {
     for (const n of nodes) {
       if (n.slug === slug) return n;
@@ -2108,6 +2153,7 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
           ))}
         </p>
       ) : null,
+    sort: products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} tag={tag} q={query} sort={sort} /> : null,
     subcategories:
       children.length > 0 ? (
         <nav class="categories" aria-label={t("store.categories")}>

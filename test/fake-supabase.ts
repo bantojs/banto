@@ -1316,6 +1316,7 @@ export class FakeSupabase {
         id: e.p["id"], slug: e.p["slug"], name: e.p["name"], brand: e.p["brand"] ?? null, category_id: e.p["category_id"] ?? null,
         extra_category_ids: e.p["extra_category_ids"] ?? [], tags: tagsOf(e.p), created_at: e.p["created_at"], updated_at: e.p["updated_at"],
         min_price_jpy: e.price, compare_at_price_jpy: e.compareAt,
+        ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(e.p) } : {}),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
       };
     });
@@ -1324,6 +1325,14 @@ export class FakeSupabase {
       next: rows.length > limit && last ? { k: last.key, id: last.p["id"] } : null,
       ...(args["p_count"] ? { total: Math.min(total, 10000), total_capped: total > 10000 } : {}),
     });
+  }
+
+  /** 0121: カードに出す独自項目（定義で card を付けた公開の項目だけ。banto_card_product_attributes の写し） */
+  private cardAttributes(p: Row): Row {
+    const shop = this.tables.shops.find((x) => x["id"] === p["shop_id"]);
+    const defs = (((shop?.["settings"] as Row | undefined)?.["product_fields"] ?? []) as Row[]).filter((f) => f && f["public"] !== false && f["card"] === true);
+    const attrs = (p["attributes"] ?? {}) as Row;
+    return Object.fromEntries(Object.entries(attrs).filter(([k]) => defs.some((f) => f["key"] === k)));
   }
 
   /** 0112: 選んだ slug の商品を書いた順に（一覧と同じ列。見えない商品は飛ばす） */
@@ -1342,6 +1351,7 @@ export class FakeSupabase {
         id: p["id"], slug: p["slug"], name: p["name"], brand: p["brand"] ?? null, category_id: p["category_id"] ?? null,
         extra_category_ids: p["extra_category_ids"] ?? [], tags: Array.isArray(p["tags"]) ? p["tags"] : [], created_at: p["created_at"], updated_at: p["updated_at"],
         min_price_jpy: lp.price, compare_at_price_jpy: lp.compareAt,
+        ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(p) } : {}),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
       }];
     });

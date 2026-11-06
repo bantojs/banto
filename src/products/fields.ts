@@ -19,6 +19,8 @@ export interface ProductField {
   options?: string[];
   /** ストアフロントと公開 API に出すか（false なら管理画面と AI 用 API だけ） */
   public: boolean;
+  /** 一覧のカードにも出すか（0121、公開の項目だけ。一覧が重くならないよう選んだものだけ） */
+  card?: boolean;
 }
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
@@ -43,15 +45,15 @@ export function fieldDefinitions(raw: unknown, opts: { publicDefault?: boolean }
     const label = typeof o["label"] === "string" && o["label"].trim() ? o["label"].trim().slice(0, 60) : key;
     const options = type === "select" && Array.isArray(o["options"]) ? o["options"].filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim().slice(0, 60)).slice(0, 50) : undefined;
     const pub = opts.publicDefault === false ? o["public"] === true : o["public"] !== false;
-    out.push({ key, label, type, ...(options ? { options } : {}), public: pub });
+    out.push({ key, label, type, ...(options ? { options } : {}), public: pub, ...(pub && o["card"] === true ? { card: true } : {}) });
     if (out.length >= MAX_FIELDS) break;
   }
   return out;
 }
 
 /**
- * 管理画面の項目定義フォーム → 定義の配列。1 行 1 項目で「キー | 表示名 | 種類 | 選択肢（/ 区切り）| 非公開」。
- * 例: material | 素材 | text
+ * 管理画面の項目定義フォーム → 定義の配列。1 行 1 項目で「キー | 表示名 | 種類 | 選択肢（/ 区切り）| 印」。印は private（非公開）か card（一覧のカードにも出す）。
+ * 例: material | 素材 | text | | card
  *     origin | 原産国 | select | 日本/中国/ベトナム
  *     cost | 原価 | number | | private
  */
@@ -65,17 +67,21 @@ export function parseFieldRows(input: string): Record<string, unknown>[] {
     .split(/\r?\n/)
     .map((line) => line.split("|").map((x) => x.trim()))
     .filter((cols) => cols[0])
-    .map(([key, label, type, options, flag]) => ({
-      key,
-      label: label || key,
-      type: (FIELD_TYPES as readonly string[]).includes(type ?? "") ? type : "text",
-      options: options ? options.split("/") : undefined,
-      public: flag !== "private",
-    }));
+    .map(([key, label, type, options, flag]) => {
+      const flags = (flag ?? "").split(/[\s,]+/).filter(Boolean);
+      return {
+        key,
+        label: label || key,
+        type: (FIELD_TYPES as readonly string[]).includes(type ?? "") ? type : "text",
+        options: options ? options.split("/") : undefined,
+        public: !flags.includes("private"),
+        ...(flags.includes("card") ? { card: true } : {}),
+      };
+    });
 }
 
 export function formatFieldDefinitions(fields: ProductField[]): string {
-  return fields.map((f) => [f.key, f.label, f.type, (f.options ?? []).join("/"), f.public ? "" : "private"].join(" | ").replace(/( \| )+$/, "")).join("\n");
+  return fields.map((f) => [f.key, f.label, f.type, (f.options ?? []).join("/"), f.public ? (f.card ? "card" : "") : "private"].join(" | ").replace(/( \| )+$/, "")).join("\n");
 }
 
 /** 入力値（管理画面のフォーム or API）→ 保存する値。定義に無いキーと、型に合わない値は捨てる。image はこのショップの画像の置き場（mediaBase）のものだけ */
@@ -101,6 +107,11 @@ export function cleanAttributes(fields: ProductField[], input: Record<string, un
     out[f.key] = s;
   }
   return out;
+}
+
+/** 一覧のカードに出す項目（0121。定義で card を付けた公開の項目で、値のあるもの。順は定義の順） */
+export function cardAttributes(fields: ProductField[], values: Record<string, unknown> | null | undefined): { key: string; label: string; type: FieldType; value: string | number }[] {
+  return publicAttributes(fields.filter((f) => f.card), values);
 }
 
 /** 公開してよい項目だけ、表示名つきで返す（ストアフロント・公開 API 用） */

@@ -175,7 +175,7 @@ describe("ヘッドレス API", () => {
     expect(shop.shop).not.toHaveProperty("stripe_account_id");
 
     const list = (await (await app.request(`${BASE}/api/shops/my-shop/products`)).json()) as { products: Record<string, unknown>[] };
-    expect(list.products).toEqual([{ id: tee.id, slug: "tee", name: "Tシャツ", brand: null, category: null, extra_categories: [], tags: [], compare_at_price_jpy: null, image: `${BASE}/media/shops/x/tee.png`, thumb: `${BASE}/media/shops/x/tee.png`, min_price_jpy: 3000, created_at: expect.any(String), updated_at: expect.any(String) }]);
+    expect(list.products).toEqual([{ id: tee.id, slug: "tee", name: "Tシャツ", brand: null, category: null, extra_categories: [], tags: [], compare_at_price_jpy: null, attributes: [], image: `${BASE}/media/shops/x/tee.png`, thumb: `${BASE}/media/shops/x/tee.png`, min_price_jpy: 3000, created_at: expect.any(String), updated_at: expect.any(String) }]);
 
     const detail = (await (await app.request(`${BASE}/api/shops/my-shop/products/tee`)).json()) as { product: { skus: Record<string, unknown>[] } };
     expect(detail.product.skus).toEqual([

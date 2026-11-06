@@ -126,6 +126,8 @@ export interface ProductSummary {
   minPrice: number | null;
   /** 最安 SKU の通常価格（セール中なら minPrice より高い）。無ければ null */
   compareAt?: number | null;
+  /** カードに出す独自項目の値（0121。定義で card を付けた公開の項目だけ。当てる前の DB では無い） */
+  attributes?: Record<string, unknown>;
 }
 
 export interface SkuWithStock extends SkuRow {
@@ -735,6 +737,7 @@ const summaryOf = (x: ListItem): ProductSummary => ({
   image: x.image,
   minPrice: x.min_price_jpy,
   compareAt: x.compare_at_price_jpy,
+  ...(x.attributes && typeof x.attributes === "object" ? { attributes: x.attributes } : {}),
 });
 
 /** product_public_list の 1 行 */
@@ -742,6 +745,8 @@ interface ListItem extends ProductListRow {
   min_price_jpy: number | null;
   compare_at_price_jpy: number | null;
   image: ProductListImage | null;
+  /** 0121: カードに出す独自項目 */
+  attributes?: Record<string, unknown>;
 }
 
 /**
