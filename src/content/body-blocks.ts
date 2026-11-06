@@ -217,7 +217,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     if (a["page"]) {
       if (!moduleEnabled(d.shop.settings, PAGES_MODULE)) return "";
       const page = await d.sf.pageByHandle(d.shop, a["page"]);
-      if (!page) return "";
+      if (!page || page.is_part) return "";
       return cardHtml(pagePath(d.shopPath, page.handle), page.title, page.image_url ?? null, page.seo_description ?? "", d.mediaBaseUrl);
     }
     const [blogHandle, handle] = (a["article"] ?? "").split("/");

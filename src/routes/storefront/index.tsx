@@ -30,7 +30,7 @@ import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
 import { articleFieldsReady } from "../../blog/fields";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
-import { memberReader, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
+import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
@@ -44,7 +44,7 @@ import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
-import { audienceShow, filterAudienceBlocks } from "../../content/audience-blocks";
+import { audienceShow } from "../../content/audience-blocks";
 import { contentPreviewFrameOrigin, openContentPreview } from "../../content/preview-ticket";
 import { BLOG_PARTS_CSS, CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, blogLayoutId, collectionLayoutId, composeLayout, fillCurrent, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
 import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
@@ -212,7 +212,7 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
     const sample = await templateSample(s, draft.page.id, categories);
     const note = (what: string) => PREVIEW_SCROLL_SCRIPT + `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))} ${escapeHtml(tf("pages.preview_sample", { name: what }))}</p>`;
     if (sample?.kind === "article") {
-      const body = filterAudienceBlocks(sample.article.body, () => true).body;
+      const body = (await previewBody(s.sf, s.shop, sample.article.body)).body;
       return articlePageResponse(c, s, sample.blog, sample.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix: note(sample.article.title), preview: true, layout: draft.page });
     }
     if (sample?.kind === "product") return productPageResponse(c, s, sample.detail, categories, { prefix: note(sample.detail.product.name), preview: true, layout: draft.page });
@@ -222,11 +222,11 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
       const list = await listingData(s, { categories, ...(sample.category ? { category: sample.category } : {}), top: false, count: Boolean(await liquidThemeFor(c, s)) });
       if (list) return collectionResponse(c, s, list, { prefix: note(sample.category ? sample.category.name : t("store.all_products")), preview: true, layout: draft.page });
     }
-    const body = filterAudienceBlocks(draft.page.body, () => true).body;
+    const body = (await previewBody(s.sf, s.shop, draft.page.body)).body;
     return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
   }
   if (!moduleEnabled(s.shop.settings, BLOG_MODULE)) return notFoundPage(c, s);
-  const body = filterAudienceBlocks(draft.article.body, () => true).body;
+  const body = (await previewBody(s.sf, s.shop, draft.article.body)).body;
   return articlePageResponse(c, s, draft.blog, draft.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
 });
 
@@ -434,7 +434,7 @@ storefront.get("/:shop", async (c: Ctx) => {
   const home = homeId ? await s.sf.layoutPage(s.shop, homeId) : null;
   if (home) {
     const categories = await s.sf.listCategories(s.shop);
-    const view = await viewerBody(c, s.shop, home.body, viewerOf(s));
+    const view = await viewerBody(c, s.sf, s.shop, home.body, viewerOf(s));
     const raw = pageBodyHtml({ ...home, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     return contentPageResponse(c, s, { ...home, seo_title: home.seo_title || s.shop.name }, view.body, raw, categories, { layoutPath: "" });
   }
@@ -553,7 +553,7 @@ function listProps(s: ShopScope, d: ListingData) {
  */
 async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: RenderOpts & { layout: PageRow }): Promise<Response> {
   const layout = o.layout;
-  const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+  const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
   const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, d.categories);
   const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(layout), updated: layout.updated_at });
@@ -621,7 +621,7 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, 
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? productLayoutId(pageLayoutsOf(s.shop.settings), categories, detail.product.category_id) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories, { product: detail.product.slug, productId: detail.product.id, categoryId: detail.product.category_id ?? null, tags: detail.product.tags ?? [] });
     const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
@@ -698,7 +698,9 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return (await membersOnlyGate(c, s, "page", handle)) ?? notFoundPage(c, s);
-  const view = await viewerBody(c, s.shop, page.body, viewerOf(s));
+  // 部品のページ（0122）はほかの本文に差し込むだけで、単独では見せない
+  if (page.is_part) return notFoundPage(c, s);
+  const view = await viewerBody(c, s.sf, s.shop, page.body, viewerOf(s));
   const raw = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   return contentPageResponse(c, s, page, view.body, raw, categories);
 });
@@ -748,7 +750,7 @@ async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article:
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const lview = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const lview = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     const comp = composeLayout(lview.body, body);
     const doc = o.preview
       ? markdownToHtml(comp.body, { mediaBase: s.ctx.mediaBaseUrl })
@@ -816,7 +818,7 @@ async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: s
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? blogLayoutId(pageLayoutsOf(s.shop.settings), blog.id) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout && s.theme.BlogPage) {
-    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     if (usesPart(view.body, "articles")) {
       const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
       const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
@@ -881,7 +883,7 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   if (!blog) return notFoundPage(c, s);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return (await membersOnlyGate(c, s, "article", ah, blog.id)) ?? notFoundPage(c, s);
-  const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
+  const view = await viewerBody(c, s.sf, s.shop, article.body, viewerOf(s));
   const raw = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   return articlePageResponse(c, s, blog, article, view.body, raw, categories, { segment: view.key });
 });
@@ -908,7 +910,7 @@ async function legalResponse(c: Ctx, s: ShopScope, kind: LegalKind, o: RenderOpt
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? legalLayoutId(pageLayoutsOf(s.shop.settings), kind) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     if (usesPart(view.body, "legal")) {
       const categories = await s.sf.listCategories(s.shop);
       const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);

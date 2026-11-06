@@ -28,14 +28,14 @@ export function openapiDocument(origin: string, version: string): Record<string,
     published: bool,
     published_at: { ...nullableStr, description: "公開する日時（ISO 8601）。未来なら予約公開" },
   };
-  const contentPageFields = { id: str, handle: { ...str, description: "URL の名前（英小文字・数字・ハイフン）" }, ...contentCommon, nav: { type: "string", enum: ["none", "header", "footer"] }, sort_order: int };
+  const contentPageFields = { id: str, handle: { ...str, description: "URL の名前（英小文字・数字・ハイフン）" }, ...contentCommon, nav: { type: "string", enum: ["none", "header", "footer"] }, sort_order: int, is_part: { ...bool, description: "部品のページ（0122）。本文の ::: include page=<handle> で差し込むだけで、単独の URL・メニュー・サイトマップに出さない" } };
   const contentArticleFields = { id: str, handle: str, ...contentCommon, excerpt: nullableStr, tags, author: nullableStr };
   const reviewItem = obj({ id: str, rating: int, title: nullableStr, body: str, author_display: str, created_at: str, incentivized: bool, verified_purchase: bool }, ["id", "rating", "body", "author_display", "created_at"]);
   const reviewsV1 = obj({ rating_avg: { type: "number" }, rating_count: int, items: { type: "array", items: reviewItem, maxItems: 20 } }, ["rating_avg", "rating_count"]);
   const appDataRow = obj({ app: str, product_id: str, kind: str, key: str, public: bool, data: { type: "object" }, updated_at: str });
   const kindPath = { name: "kind", in: "path", required: true, schema: { type: "string", enum: ["reviews.v1", "custom.v1"] } };
   const keyPath = { name: "key", in: "path", required: true, schema: { type: "string", pattern: "^[a-z]([a-z0-9-]{0,38}[a-z0-9])?$" }, description: "custom.v1 の名前" };
-  const contentPage = obj({ id: str, handle: str, title: str, body: str, nav: str, sort_order: int, status: { type: "string", enum: ["published", "scheduled", "draft", "trash"] }, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
+  const contentPage = obj({ id: str, handle: str, title: str, body: str, nav: str, sort_order: int, is_part: bool, status: { type: "string", enum: ["published", "scheduled", "draft", "trash"] }, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
   const contentArticle = obj({ id: str, blog: str, handle: str, title: str, body: str, excerpt: nullableStr, tags, author: nullableStr, status: str, published: bool, published_at: nullableStr, image_url: nullableStr, updated_at: str });
   const page = [{ name: "limit", in: "query", schema: int }, { name: "offset", in: "query", schema: int }];
   const ids = { type: "array", items: str };
