@@ -50,7 +50,7 @@
 
 - `0025_store_tryon.sql`: `stores`（組織の実店舗。anon には読ませない）・`shop_stores`（ショップで使う店舗）・`org_member_stores`（スタッフの項目 tryon / hours）、`shop_store_list`（お客様の画面、公開の列だけ）、`store_set_hours`・`stores_set_special_days`（営業時間・まとめての登録）、`tryon_requests`・`tryon_items`（書くのは関数だけ）、`tryon_request`（service_role）・`tryon_request_detail`・`tryon_update`（ショップの stores か実店舗の tryon）・`tryon_restock`（ショップの stores だけ）・`tryon_expire`・`mask_tryon_requests`（Cron）・`tryon_contact`・`tryon_line_recipient`（プラグイン）。
 - 営業日の計算は `src/modules/store-tryon/index.ts`（データ取得なし。日付はショップの時間帯）。メールの文は `mail.ts`、管理画面は `admin.tsx`（ショップ）・`stores-admin.tsx`（組織の実店舗・スタッフ、`/admin/stores`）・`requests.tsx`（申し込みの一覧と 1 件、共通）、ストアフロントは `src/routes/storefront/index.tsx` の `/tryon`・`/stores`。
-- テーマ: `StoresPage`・`TryonPage` は任意（省略したテーマでは出ません）。営業時間はルートが計算して `StoreView` で渡します。
+- テーマ: `StoresPage`・`TryonPage` は任意（省略したテーマでは出ません）。Liquid のテーマは `templates/tryon` で申し込みの画面を描けます（docs/themes.md、メンテナの決定 2026-11-06）。営業時間はルートが計算して `StoreView` で渡します。
 - ヘッドレス API（`/api/shops/<shop>/stores`・`/tryon`・会員の `/members/tryon`、docs/headless.md「お店で試着」）と AI 用の操作（docs/ai-access.md、0026）。会員ページには自分の申し込みが出て、取り置きが終わる前なら取り消せます（在庫はショップの担当者が「EC の在庫に戻す」を押したときに戻ります）。
 - `0027_tryon_shop_names.sql`: `tryon_store_shops`（スタッフの申し込みの一覧に出すショップ名。その店舗の tryon の項目を持つ人に、名前と id だけ）。
 - `0026_tryon_api.sql`: `api_tryon_*`・`api_stores_list`・`api_tryon_request_restock`（AI）、`member_tryon_requests`・`member_tryon_cancel`（会員）。状態の遷移は `banto_tryon_transition`、在庫を戻すのは `banto_tryon_restock` の 1 か所ずつ（管理画面と AI が同じものを通る）。在庫を EC に戻せるのは、ショップの「実店舗・お店で試着」の項目を持つ人と、orders:write の AI 用トークン（実店舗のスタッフは不可）。

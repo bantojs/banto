@@ -53,7 +53,7 @@ import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
 import type { AccountPageProps, AddressFormValues } from "../../themes/types";
-import { liquidThemeFor, renderAccount } from "./liquid";
+import { liquidThemeFor, renderAccount, renderCustomerLogin, type CustomerLoginInput } from "./liquid";
 import { type PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
 import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
@@ -415,22 +415,44 @@ members.get("/:shop/account/orders/:number{[0-9]+}/receipt", async (c: Ctx) => {
   return c.html(renderReceipt({ shopName: s.shop.name, settings: receiptSettings(s.shop), shopSettings: s.shop.settings, order, addressee: name, issuedAt: new Date(), nameForm: { action: `${s.shopPath}/account/orders/${number}/receipt`, method: "get", hidden: {} } }));
 });
 
+/**
+ * ログインの画面（login・code・verify）: Liquid のテーマに templates/customers/login があればそれ（メンテナの決定 2026-11-06）、
+ * 無ければ・描けなければ既定のテーマ
+ */
+async function authPage(c: Ctx, s: Scope, props: Parameters<Scope["theme"]["MemberAuthPage"]>[0]): Promise<Response> {
+  const step: CustomerLoginInput["step"] | null = props.mode === "login" ? "email" : props.mode === "code" ? "code" : props.mode === "verify" ? "verify" : null;
+  const sf = step ? storefrontData(c) : null;
+  const ls = sf ? { shop: s.shop, sf, ctx: props.ctx } : null;
+  const lt = ls ? await liquidThemeFor(c, ls) : null;
+  if (step && ls && lt) {
+    const res = await renderCustomerLogin(c, ls, lt, {
+      step,
+      ...(props.email !== undefined ? { email: props.email } : {}),
+      ...(props.error !== undefined ? { error: props.error } : {}),
+      ...(props.info !== undefined ? { info: props.info } : {}),
+      ...(props.options ? { options: props.options } : {}),
+      ...(props.challenge !== undefined ? { challenge: props.challenge } : {}),
+      ...(props.token !== undefined ? { token: props.token } : {}),
+    });
+    if (res) return res;
+  }
+  return c.html(s.theme.MemberAuthPage(props));
+}
+
 members.get("/:shop/account/login", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   if (s.session) return c.redirect(`${s.shopPath}/account`);
   const key = LOGIN_ERRORS[c.req.query("error") ?? ""];
   privatePage(c);
-  return c.html(
-    s.theme.MemberAuthPage({
-      ctx: ctxOf(s),
-      mode: "login",
-      options: await loginOptions(c, s.shop),
-      email: (c.req.query("email") ?? "").slice(0, 254),
-      error: key ? t(key) : undefined,
-      info: c.req.query("info") === "logged_out_all" ? t("member.logged_out_all") : undefined,
-    }),
-  );
+  return authPage(c, s, {
+    ctx: ctxOf(s),
+    mode: "login",
+    options: await loginOptions(c, s.shop),
+    email: (c.req.query("email") ?? "").slice(0, 254),
+    error: key ? t(key) : undefined,
+    info: c.req.query("info") === "logged_out_all" ? t("member.logged_out_all") : undefined,
+  });
 });
 
 members.post("/:shop/account/login", async (c: Ctx) => {
@@ -503,7 +525,7 @@ members.get("/:shop/account/code", async (c: Ctx) => {
   const pending = await pendingOf(c, s);
   if (!pending) return c.redirect(`${s.shopPath}/account/login`);
   privatePage(c);
-  return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "code", email: pending.email, error: c.req.query("error") === "failed" ? t("member.code_failed") : undefined }));
+  return authPage(c, s, { ctx: ctxOf(s), mode: "code", email: pending.email, error: c.req.query("error") === "failed" ? t("member.code_failed") : undefined });
 });
 
 members.post("/:shop/account/code", async (c: Ctx) => {
@@ -533,7 +555,7 @@ members.get("/:shop/account/verify", async (c: Ctx) => {
   const email = deps ? await peekLogin(deps, s.shop.id, challenge, token) : null;
   if (!email) return c.redirect(`${s.shopPath}/account/login?error=link`);
   privatePage(c);
-  return c.html(s.theme.MemberAuthPage({ ctx: ctxOf(s), mode: "verify", email: maskEmail(email), challenge, token }));
+  return authPage(c, s, { ctx: ctxOf(s), mode: "verify", email: maskEmail(email), challenge, token });
 });
 
 members.post("/:shop/account/verify", async (c: Ctx) => {

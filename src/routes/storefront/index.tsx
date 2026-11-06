@@ -52,7 +52,7 @@ import { BLOG_LIST_PARTS, COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } 
 import { blogListParts, listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct } from "./liquid";
+import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon } from "./liquid";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -1019,17 +1019,34 @@ function tryonCartError(lines: CartLine[], max: number): MessageKey | null {
   return null;
 }
 
-function tryonPage(c: Ctx, s: ShopScope, tr: NonNullable<Awaited<ReturnType<typeof tryonScope>>["t"]>, props: Partial<Parameters<NonNullable<ShopScope["theme"]["TryonPage"]>>[0]>, status: 200 | 400 | 409 = 200) {
-  const page = s.theme.TryonPage!({
-    ctx: s.ctx,
-    step: "store",
-    lines: tr.lines,
-    stores: tr.stores.map((st) => storeView(st, tr.today)),
-    settings: { mode: tr.settings.mode, hold_days: tr.settings.hold_days, max_items: tr.settings.max_items, notice: tr.settings.notice },
-    values: {},
-    ...props,
-  });
-  return c.html(page, status);
+type TryonProps = Parameters<NonNullable<ShopScope["theme"]["TryonPage"]>>[0];
+
+/** 試着の画面: Liquid のテーマに templates/tryon があればそれ（メンテナの決定 2026-11-06）、無ければ・描けなければ既定のテーマ */
+async function tryonRender(c: Ctx, s: ShopScope, props: TryonProps, status: 200 | 400 | 409 = 200): Promise<Response> {
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const { ctx: _ctx, ...rest } = props;
+    const res = await renderTryon(c, s, lt, { ...rest, status });
+    if (res) return res;
+  }
+  return c.html(s.theme.TryonPage!(props), status);
+}
+
+function tryonPage(c: Ctx, s: ShopScope, tr: NonNullable<Awaited<ReturnType<typeof tryonScope>>["t"]>, props: Partial<TryonProps>, status: 200 | 400 | 409 = 200) {
+  return tryonRender(
+    c,
+    s,
+    {
+      ctx: s.ctx,
+      step: "store",
+      lines: tr.lines,
+      stores: tr.stores.map((st) => storeView(st, tr.today)),
+      settings: { mode: tr.settings.mode, hold_days: tr.settings.hold_days, max_items: tr.settings.max_items, notice: tr.settings.notice },
+      values: {},
+      ...props,
+    },
+    status,
+  );
 }
 
 storefront.get("/:shop/tryon", async (c: Ctx) => {
@@ -1118,18 +1135,16 @@ storefront.get("/:shop/tryon/done", async (c: Ctx) => {
   const today = todayHere();
   const store = (await s.sf.listStores(s.shop)).find((x) => x.id === c.req.query("store"));
   const settings = tryonSettings(s.shop.settings);
-  return c.html(
-    s.theme.TryonPage({
-      ctx: s.ctx,
-      step: "done",
-      lines: [],
-      stores: [],
-      store: store ? storeView(store, today) : null,
-      settings: { mode: settings.mode, hold_days: settings.hold_days, max_items: settings.max_items, notice: settings.notice },
-      values: {},
-      number,
-    }),
-  );
+  return tryonRender(c, s, {
+    ctx: s.ctx,
+    step: "done",
+    lines: [],
+    stores: [],
+    store: store ? storeView(store, today) : null,
+    settings: { mode: settings.mode, hold_days: settings.hold_days, max_items: settings.max_items, notice: settings.notice },
+    values: {},
+    number,
+  });
 });
 
 /** クーポンのコードを入れる / 外す（使えるかどうかはカートの表示のたびに判定する） */
