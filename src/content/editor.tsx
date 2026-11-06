@@ -246,6 +246,12 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[], 
         { key: "layout", label: t("blocks.layout"), type: "select", options: opt([["list", t("blocks.layout_list")], ["grid", t("blocks.layout_grid")]]), default: "list" },
       ],
     },
+    include: {
+      label: t("blocks.include"),
+      desc: t("blocks.include_desc"),
+      group: "text",
+      fields: [{ key: "page", label: t("blocks.include_page"), type: "text", required: true, pattern: slug, placeholder: "footer-note", help: t("blocks.include_help") }],
+    },
     icon: {
       label: t("blocks.icon"),
       desc: t("blocks.icon_desc"),
@@ -513,6 +519,8 @@ export interface EditorKind {
   urlPrefix: string;
   /** メニュー・並び順の欄（ページだけ） */
   nav: boolean;
+  /** 「部品として使う」の欄（ページだけ。0122 が当たってから） */
+  part?: boolean;
   /** 編集の画面の左上の「戻る」の行き先（無ければ base） */
   back?: string;
   /** 記事の欄（タグ・抜粋・書いた人） */
@@ -538,6 +546,8 @@ export interface ContentValues {
   image_url?: string | null;
   nav?: PageNav;
   sort_order?: number;
+  /** 部品のページ（0122）。欄があったときだけ書く */
+  is_part?: boolean;
   /** 会員限定（0100）。欄があったときだけ書く */
   audience_id?: string | null;
   audience_hide?: boolean;
@@ -895,6 +905,15 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
                   </select>
                   <label for="sort_order">{t("pages.sort_order")}</label>
                   <input id="sort_order" name="sort_order" type="number" min={-1000} max={1000} value={String(v.sort_order ?? 0)} style="width:6rem" />
+                  {props.kind.part ? (
+                    <>
+                      <input type="hidden" name="is_part_present" value="1" />
+                      <label style="display:block;margin-top:.5rem">
+                        <input type="checkbox" name="is_part" value="on" checked={v.is_part === true} /> {t("pages.is_part")}
+                      </label>
+                      <p class="muted">{t("pages.is_part_help")}</p>
+                    </>
+                  ) : null}
                 </>
               ) : null}
               {props.kind.article ? (

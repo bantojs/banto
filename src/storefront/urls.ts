@@ -56,7 +56,7 @@ export function memberAccountUrl(baseUrl: string, shop: ShopUrlParts & { setting
 
 // ---------- お店の画面の商品の URL（メンテナの決定 2026-11-05、docs/storefront.md「URL」） ----------
 // すべての商品は /products、商品の詳細は /products/<商品>、カテゴリーの一覧は /categories/<カテゴリー>。
-// タグ・検索の語・ページ送りは、どの一覧にも ?tag= ?q= ?after= で付ける。shopPath はドメインの上なら ""、無ければ /<スラッグ>。
+// タグ・検索の語・並べ方・ページ送りは、どの一覧にも ?tag= ?q= ?sort= ?after= で付ける。shopPath はドメインの上なら ""、無ければ /<スラッグ>。
 // URL はここでだけ組む（テーマ・本文のブロック・パンくず・サイトマップ・メール・構造化データが同じものを使う）
 
 /** 一覧の条件（タグ・検索の語・ページ送りの位置） */
@@ -64,6 +64,8 @@ export interface ListQuery {
   tag?: string | null | undefined;
   q?: string | null | undefined;
   after?: string | null | undefined;
+  /** 並べ方（src/storefront/list-sort.ts。既定の new は渡さない） */
+  sort?: string | null | undefined;
 }
 
 const enc = encodeURIComponent;
@@ -81,12 +83,12 @@ export function productUrl(shopPath: string, slug: string, extra: Record<string,
 
 /** すべての商品の一覧 */
 export function productsUrl(shopPath: string, q: ListQuery = {}): string {
-  return withQuery(`${shopPath}/products`, { tag: q.tag, q: q.q, after: q.after });
+  return withQuery(`${shopPath}/products`, { tag: q.tag, q: q.q, sort: q.sort, after: q.after });
 }
 
 /** カテゴリーの一覧（子のカテゴリーの商品も含む） */
 export function categoryUrl(shopPath: string, slug: string, q: ListQuery = {}): string {
-  return withQuery(`${shopPath}/categories/${enc(slug)}`, { tag: q.tag, q: q.q, after: q.after });
+  return withQuery(`${shopPath}/categories/${enc(slug)}`, { tag: q.tag, q: q.q, sort: q.sort, after: q.after });
 }
 
 /** 一覧（カテゴリーがあればカテゴリーの一覧、無ければすべての商品） */

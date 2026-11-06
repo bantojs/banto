@@ -11,7 +11,8 @@ import { descendantIds } from "../products/categories";
 import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
-import { PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
+import { PAGE_PARTS_MIGRATION, PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
+import type { IncludePart } from "../content/include";
 import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
 
 
@@ -125,6 +126,8 @@ export interface ProductSummary {
   minPrice: number | null;
   /** 最安 SKU の通常価格（セール中なら minPrice より高い）。無ければ null */
   compareAt?: number | null;
+  /** カードに出す独自項目の値（0121。定義で card を付けた公開の項目だけ。当てる前の DB では無い） */
+  attributes?: Record<string, unknown>;
 }
 
 export interface SkuWithStock extends SkuRow {
@@ -414,6 +417,21 @@ export class StorefrontData {
     return page;
   }
 
+  /**
+   * 本文に差し込む部品（`::: include`、0122、src/content/include.ts）。いつも匿名の読み取り（公開中のページだけ。会員限定・下書き・予約・ゴミ箱は見えない）。
+   * 本文の差し込みの分をまとめて 1 回。短時間キャッシュ
+   */
+  async includeParts(shop: PublicShop, handles: readonly string[]): Promise<IncludePart[]> {
+    const list = [...new Set(handles)].sort();
+    if (list.length === 0) return [];
+    const key = `include:${shop.id}:${list.join(",")}`;
+    const hit = await this.cache.get<IncludePart[]>(key);
+    if (hit) return hit;
+    const rows = await this.db.from<IncludePart>("pages").select("id,handle,body,updated_at", { eq: { shop_id: shop.id, published: true }, in: { handle: list }, limit: list.length });
+    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    return rows;
+  }
+
   /** ブログ（id で。ひな形のプレビューの見本だけが使う。匿名の読み取り） */
   async blogById(shop: PublicShop, id: string): Promise<BlogRow | null> {
     if (!/^[0-9a-f-]{36}$/.test(id)) return null;
@@ -445,7 +463,9 @@ export class StorefrontData {
     const hit = await this.cache.get<Omit<PageRow, "body">[]>(key);
     if (hit) return hit;
     const cols = "id,shop_id,handle,title,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at,published_at,image_url";
-    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc,id.asc", limit: 100 });
+    // 部品のページ（0122）は一覧に出さない
+    const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
+    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc,id.asc", limit: 100 });
     await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
     return rows;
   }
@@ -462,7 +482,9 @@ export class StorefrontData {
 
   /** サイトマップに載せるページ（公開中のものの handle と更新日時） */
   async pageHandles(shop: PublicShop): Promise<{ handle: string; updated_at: string }[]> {
-    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true }, order: "sort_order.asc", limit: 1000 });
+    // 部品のページ（0122）は載せない
+    const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
+    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc", limit: 1000 });
   }
 
   /** ブログ（同梱モジュール blog、0081）。公開中のショップのものだけ（RLS）。短時間キャッシュ */
@@ -715,6 +737,7 @@ const summaryOf = (x: ListItem): ProductSummary => ({
   image: x.image,
   minPrice: x.min_price_jpy,
   compareAt: x.compare_at_price_jpy,
+  ...(x.attributes && typeof x.attributes === "object" ? { attributes: x.attributes } : {}),
 });
 
 /** product_public_list の 1 行 */
@@ -722,6 +745,8 @@ interface ListItem extends ProductListRow {
   min_price_jpy: number | null;
   compare_at_price_jpy: number | null;
   image: ProductListImage | null;
+  /** 0121: カードに出す独自項目 */
+  attributes?: Record<string, unknown>;
 }
 
 /**

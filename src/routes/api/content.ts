@@ -13,6 +13,7 @@ import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
 import { hasAudienceBlocks } from "../../content/audience-blocks";
 import { apiViewerData, viewerBody } from "../audience-render";
+import { withIncludes } from "../../content/include";
 import { GUEST, queryParamsOf } from "../../members/audience";
 import { memberFromRequest } from "./members";
 
@@ -60,13 +61,14 @@ const absImage = (s: Scope, url: string | null | undefined) => (url ? (url.start
  * トークンが無ければゲスト、壊れていれば 401
  */
 async function viewBody(c: Ctx, s: Scope, row: Pick<PageRow, "id" | "updated_at" | "body">, published: string | null): Promise<{ body: string; html: string } | Response> {
-  let view = { body: row.body, key: "" };
-  if (hasAudienceBlocks(row.body)) {
+  // 部品の差し込み（0122）の後に、見せる相手の囲みがあれば見る人で外す
+  let view = await withIncludes(s.sf, s.shop, row.body);
+  if (hasAudienceBlocks(view.body)) {
     const m = await memberFromRequest(c, s.shop);
     if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
     // 連携サイトの見る人の URL のクエリは p.<名前> で受け取る（覚えた値も連携サイトが同じ形で渡す）
     const params = queryParamsOf([...new URL(c.req.url).searchParams.entries()].filter(([k]) => k.startsWith("p.")).map(([k, v]): [string, string] => [k.slice(2), v]));
-    view = await viewerBody(c, s.shop, row.body, { ...(m.member ? { member: true, attrs: m.member.attrs ?? {} } : GUEST), params });
+    view = await viewerBody(c, s.sf, s.shop, row.body, { ...(m.member ? { member: true, attrs: m.member.attrs ?? {} } : GUEST), params });
     c.header("Vary", "Authorization");
   }
   // 日時のブロックは描くたびに入れる（本文の HTML の覚えに日時を入れない）
@@ -112,6 +114,8 @@ contentApi.get("/shops/:shop/pages/:handle", async (c: Ctx) => {
     if (!c.req.header("authorization") && (await s.sf.contentGate(s.shop, "page", handle))) return c.json({ error: "members_only" }, 403);
     return c.json({ error: "not_found" }, 404);
   }
+  // 部品のページ（0122）は単独では返さない（差し込んだ本文に入る）
+  if (page.is_part) return c.json({ error: "not_found" }, 404);
   const v = await viewBody(c, s, page, pagePublishedAt(page));
   if (v instanceof Response) return v;
   return c.json({ page: { ...pageSummary(s, page), body: v.body, html: v.html } });

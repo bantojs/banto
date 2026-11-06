@@ -399,7 +399,8 @@ export class FakeSupabase {
 
   /** ショップのページ（0079）。既定は公開中・メニューに出さない */
   addPage(shopId: string, fields: Partial<Row> = {}): Row & { id: string } {
-    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "about", title: "About", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: true, created_at: this.now(), updated_at: this.now(), ...fields };
+    const row = { id: fakeUuid(++this.seq), shop_id: shopId, handle: "about", title: "About", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: true, is_part: false, created_at: this.now(), updated_at: this.now(), ...fields };
+    if (row["is_part"] === true) row["nav"] = "none";
     this.tables.pages.push(row);
     return row;
   }
@@ -953,7 +954,9 @@ export class FakeSupabase {
         if (table === "skus") this.tables.inventory.push({ sku_id: row["id"], shop_id: row["shop_id"], available: 0, updated_at: this.now() });
         if (table === "pages") {
           // 0079 の既定値と CHECK（本物は test/db/pages.test.ts）
-          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...r });
+          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...(this.appliedMigrations.includes("0122_page_parts") ? { is_part: false } : {}), ...r });
+          // 0122: 部品のページはメニューに出さない
+          if (row["is_part"] === true) row["nav"] = "none";
           if (!pageHandleOk(String(row["handle"]))) return json({ code: "23514", message: 'new row for relation "pages" violates check constraint "pages_handle_check"' }, 400);
           if (this.tables.pages.filter((x) => x["shop_id"] === row["shop_id"]).length >= 100) return json({ code: "P0001", message: "pages_full" }, 400);
         }
@@ -1010,6 +1013,7 @@ export class FakeSupabase {
         if (table === "articles" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
           this.tables.article_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], article_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
         }
+        if (table === "pages" && next["is_part"] === true) next["nav"] = "none";
         if (table === "pages" && (next["title"] !== r["title"] || next["body"] !== r["body"])) {
           this.tables.page_revisions.push({ id: fakeUuid(++this.seq), shop_id: r["shop_id"], page_id: r["id"], title: r["title"], body: r["body"], created_by: uid, created_at: this.now() });
           const mine = this.tables.page_revisions.filter((x) => x["page_id"] === r["id"]);
@@ -1312,6 +1316,7 @@ export class FakeSupabase {
         id: e.p["id"], slug: e.p["slug"], name: e.p["name"], brand: e.p["brand"] ?? null, category_id: e.p["category_id"] ?? null,
         extra_category_ids: e.p["extra_category_ids"] ?? [], tags: tagsOf(e.p), created_at: e.p["created_at"], updated_at: e.p["updated_at"],
         min_price_jpy: e.price, compare_at_price_jpy: e.compareAt,
+        ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(e.p) } : {}),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
       };
     });
@@ -1320,6 +1325,14 @@ export class FakeSupabase {
       next: rows.length > limit && last ? { k: last.key, id: last.p["id"] } : null,
       ...(args["p_count"] ? { total: Math.min(total, 10000), total_capped: total > 10000 } : {}),
     });
+  }
+
+  /** 0121: カードに出す独自項目（定義で card を付けた公開の項目だけ。banto_card_product_attributes の写し） */
+  private cardAttributes(p: Row): Row {
+    const shop = this.tables.shops.find((x) => x["id"] === p["shop_id"]);
+    const defs = (((shop?.["settings"] as Row | undefined)?.["product_fields"] ?? []) as Row[]).filter((f) => f && f["public"] !== false && f["card"] === true);
+    const attrs = (p["attributes"] ?? {}) as Row;
+    return Object.fromEntries(Object.entries(attrs).filter(([k]) => defs.some((f) => f["key"] === k)));
   }
 
   /** 0112: 選んだ slug の商品を書いた順に（一覧と同じ列。見えない商品は飛ばす） */
@@ -1338,6 +1351,7 @@ export class FakeSupabase {
         id: p["id"], slug: p["slug"], name: p["name"], brand: p["brand"] ?? null, category_id: p["category_id"] ?? null,
         extra_category_ids: p["extra_category_ids"] ?? [], tags: Array.isArray(p["tags"]) ? p["tags"] : [], created_at: p["created_at"], updated_at: p["updated_at"],
         min_price_jpy: lp.price, compare_at_price_jpy: lp.compareAt,
+        ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(p) } : {}),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
       }];
     });
@@ -2587,6 +2601,8 @@ export class FakeSupabase {
         }
         Object.assign(row, Object.fromEntries(Object.entries(values).filter(([k]) => k !== "id")), { updated_at: this.now() });
         if (row["published"] && !row["published_at"] && table === "articles") row["published_at"] = this.now();
+        // 0122: 部品のページはメニューに出さない
+        if (table === "pages" && row["is_part"] === true) row["nav"] = "none";
         return json(view(row, true));
       };
       const blog = this.tables.blogs.find((b) => b["shop_id"] === shopId && b["handle"] === args["p_blog"]);

@@ -68,6 +68,18 @@ describe.skipIf(!dbAvailable)("ページと記事の AI 用 API（0083）", () =
     expect(await expectDbError(() => api("api_page_save", [tok, JSON.stringify({ id: sch["id"], title: "x" })]))).toMatch(/not_found/);
   });
 
+  it("部品のページ（0122）: is_part を読み書きし、部品はメニューに出さない（nav はいつも none）", async () => {
+    const tok = await issue(writer, f.shopId, ["content:read", "content:write"]);
+    const p = await api<J>("api_page_save", [tok, JSON.stringify({ handle: "notice-part", title: "お知らせの部品", body: "休業日", nav: "header", is_part: true, published: true })]);
+    expect(p).toMatchObject({ is_part: true, nav: "none" });
+    expect(await api<J>("api_page_save", [tok, JSON.stringify({ id: p["id"], nav: "footer" })])).toMatchObject({ is_part: true, nav: "none" });
+    expect(await api<J>("api_page_save", [tok, JSON.stringify({ id: p["id"], is_part: false, nav: "footer" })])).toMatchObject({ is_part: false, nav: "footer" });
+    expect(await expectDbError(() => api("api_page_save", [tok, JSON.stringify({ id: p["id"], is_part: "yes" })]))).toMatch(/invalid_is_part/);
+    // お客様（匿名）は公開中の部品を読める（ほかの本文に差し込むため）。メニューに出すかは nav
+    await getPool().query("update pages set is_part = true where id = $1", [p["id"]]);
+    expect((await asAnon((c) => c.query("select is_part, nav from pages where id = $1", [p["id"]]))).rows).toEqual([{ is_part: true, nav: "none" }]);
+  });
+
   it("値の誤りは invalid_<鍵>。作るときは handle と title が要る", async () => {
     const tok = await issue(f.ownerId, f.shopId, ["content:write"]);
     const bad = (v: J) => expectDbError(() => api("api_page_save", [tok, JSON.stringify(v)]));

@@ -10,7 +10,7 @@ import { DIALOGS_MODULE } from "../../modules/dialogs/dialogs";
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
-import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage } from "../../storefront/data";
+import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, type ProductSort } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { categoryUrl, listUrl, productUrl, productsUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -30,7 +30,7 @@ import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
 import { articleFieldsReady } from "../../blog/fields";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
-import { memberReader, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
+import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
@@ -44,7 +44,7 @@ import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
-import { audienceShow, filterAudienceBlocks } from "../../content/audience-blocks";
+import { audienceShow } from "../../content/audience-blocks";
 import { contentPreviewFrameOrigin, openContentPreview } from "../../content/preview-ticket";
 import { BLOG_PARTS_CSS, CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, blogLayoutId, collectionLayoutId, composeLayout, fillCurrent, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
 import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
@@ -53,6 +53,7 @@ import { blogListParts, listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
 import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon } from "./liquid";
+import { listSortOf } from "../../storefront/list-sort";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
@@ -212,7 +213,7 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
     const sample = await templateSample(s, draft.page.id, categories);
     const note = (what: string) => PREVIEW_SCROLL_SCRIPT + `<p class="banto-preview-note" style="padding:.5rem .75rem;border:1px dashed currentColor;border-radius:.4rem;opacity:.85">${escapeHtml(t("pages.preview_theme_note"))} ${escapeHtml(tf("pages.preview_sample", { name: what }))}</p>`;
     if (sample?.kind === "article") {
-      const body = filterAudienceBlocks(sample.article.body, () => true).body;
+      const body = (await previewBody(s.sf, s.shop, sample.article.body)).body;
       return articlePageResponse(c, s, sample.blog, sample.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix: note(sample.article.title), preview: true, layout: draft.page });
     }
     if (sample?.kind === "product") return productPageResponse(c, s, sample.detail, categories, { prefix: note(sample.detail.product.name), preview: true, layout: draft.page });
@@ -222,11 +223,11 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
       const list = await listingData(s, { categories, ...(sample.category ? { category: sample.category } : {}), top: false, count: Boolean(await liquidThemeFor(c, s)) });
       if (list) return collectionResponse(c, s, list, { prefix: note(sample.category ? sample.category.name : t("store.all_products")), preview: true, layout: draft.page });
     }
-    const body = filterAudienceBlocks(draft.page.body, () => true).body;
+    const body = (await previewBody(s.sf, s.shop, draft.page.body)).body;
     return contentPageResponse(c, s, draft.page, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
   }
   if (!moduleEnabled(s.shop.settings, BLOG_MODULE)) return notFoundPage(c, s);
-  const body = filterAudienceBlocks(draft.article.body, () => true).body;
+  const body = (await previewBody(s.sf, s.shop, draft.article.body)).body;
   return articlePageResponse(c, s, draft.blog, draft.article, body, markdownToHtml(body, { mediaBase: s.ctx.mediaBaseUrl }), categories, { prefix, preview: true });
 });
 
@@ -434,7 +435,7 @@ storefront.get("/:shop", async (c: Ctx) => {
   const home = homeId ? await s.sf.layoutPage(s.shop, homeId) : null;
   if (home) {
     const categories = await s.sf.listCategories(s.shop);
-    const view = await viewerBody(c, s.shop, home.body, viewerOf(s));
+    const view = await viewerBody(c, s.sf, s.shop, home.body, viewerOf(s));
     const raw = pageBodyHtml({ ...home, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     return contentPageResponse(c, s, { ...home, seo_title: home.seo_title || s.shop.name }, view.body, raw, categories, { layoutPath: "" });
   }
@@ -456,18 +457,20 @@ storefront.get("/:shop/categories/:category", async (c: Ctx) => {
 });
 
 /** 一覧の条件（タグは 50 文字まで、検索の語は 100 文字まで。文字で数える。UTF-16 の単位で切ると絵文字の途中で切れる） */
-function listQueryOf(c: Ctx): { tag?: string; q?: string; after?: string } {
+function listQueryOf(c: Ctx): { tag?: string; q?: string; after?: string; sort?: ProductSort } {
   const tag = (c.req.query("tag") ?? "").trim().slice(0, 50);
   const q = [...(c.req.query("q") ?? "").trim()].slice(0, 100).join("");
   const after = c.req.query("after") || "";
-  return { ...(tag ? { tag } : {}), ...(q ? { q } : {}), ...(after ? { after } : {}) };
+  // 並べ方（?sort=、Shopify のテーマの ?sort_by= も読む）。既定の新しい順は持たない
+  const sort = listSortOf(c.req.query("sort"), c.req.query("sort_by"));
+  return { ...(tag ? { tag } : {}), ...(q ? { q } : {}), ...(after ? { after } : {}), ...(sort ? { sort } : {}) };
 }
 
 /**
  * 商品の一覧を描く（お店のトップ・すべての商品・カテゴリーの一覧、タグ・検索の語・ページ送り付き）。
  * 商品一覧のひな形（0103）はカテゴリーの一覧（近い割り当て、無ければ共通）・すべての商品・トップ（トップのひな形が無いとき）に効く。検索の語があれば今までの画面
  */
-async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?: string; tag?: string; q?: string; after?: string }): Promise<Response> {
+async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?: string; tag?: string; q?: string; after?: string; sort?: ProductSort }): Promise<Response> {
   // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）
   const categories = await s.sf.listCategories(s.shop);
   const category = o.category ? categories.find((x) => x.slug === o.category) : undefined;
@@ -476,7 +479,7 @@ async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?:
   const colLayout = colId ? await s.sf.layoutPage(s.shop, colId) : null;
   // Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
   const lt = await liquidThemeFor(c, s);
-  const list = await listingData(s, { categories, ...(category ? { category } : {}), ...(o.tag ? { tag: o.tag } : {}), ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), top: Boolean(o.top), count: Boolean(lt) });
+  const list = await listingData(s, { categories, ...(category ? { category } : {}), ...(o.tag ? { tag: o.tag } : {}), ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), ...(o.sort ? { sort: o.sort } : {}), top: Boolean(o.top), count: Boolean(lt) });
   if (!list) return notFoundPage(c, s);
   if (colLayout) return collectionResponse(c, s, list, { layout: colLayout });
   const { page, facets, link } = list;
@@ -491,6 +494,7 @@ async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?:
       tags: facets.tags,
       link,
       ...(o.after ? { after: o.after } : {}),
+      ...(o.sort ? { sort: o.sort } : {}),
       path: list.path,
     });
     if (res) return res;
@@ -506,6 +510,8 @@ interface ListingData {
   tag?: string;
   q?: string;
   after?: string;
+  /** 並べ方（既定の new は持たない） */
+  sort?: ProductSort;
   /** お店のトップ（トップのひな形が無いときに、すべての商品をトップとして出す） */
   top: boolean;
   /** 検索の語を探したか（語が短く、カテゴリー・タグでも絞っていなければ探さない） */
@@ -517,17 +523,18 @@ interface ListingData {
 }
 
 /** 商品の一覧の材料（お店のトップ・すべての商品・カテゴリーの一覧・商品一覧のひな形のプレビューで同じ） */
-async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; tag?: string; q?: string; after?: string; top: boolean; count: boolean }): Promise<ListingData | null> {
+async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; tag?: string; q?: string; after?: string; sort?: ProductSort; top: boolean; count: boolean }): Promise<ListingData | null> {
   // 2 文字以下の語は、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0058 の q_too_short）
   const searchable = !q.q || [...q.q].length >= PRODUCT_SEARCH_MIN_CHARS || Boolean(q.tag || q.category);
-  const query = { tag: q.tag, category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), limit: STORE_PAGE_SIZE };
+  const query = { tag: q.tag, category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), ...(q.sort ? { sort: q.sort } : {}), limit: STORE_PAGE_SIZE };
   const empty: ProductListPage = { items: [], total: 0, totalCapped: false, limit: STORE_PAGE_SIZE, offset: 0, nextOffset: null, nextCursor: null };
   const [page, facets] = await Promise.all([searchable ? s.sf.productPage(s.shop, query, q.categories, { cursor: q.after, ...(q.count ? { count: true } : {}) }) : Promise.resolve(empty), s.sf.productFacets(s.shop, q.categories)]);
   if (!page) return null;
   const cond = { category: q.category?.slug, tag: q.tag, q: q.q };
-  const link = (cursor: string | null) => listUrl(s.ctx.shopPath, { ...cond, after: cursor });
+  // ページ送りは並べ方を保つ。canonical（path）は並べ方を外す（並べ替えただけの同じ一覧を別のページにしない）
+  const link = (cursor: string | null) => listUrl(s.ctx.shopPath, { ...cond, sort: q.sort, after: cursor });
   const path = q.top && !q.after ? "" : listUrl("", cond);
-  return { page, facets, categories: q.categories, ...(q.category ? { category: q.category } : {}), ...(q.tag ? { tag: q.tag } : {}), ...(q.q ? { q: q.q } : {}), ...(q.after ? { after: q.after } : {}), top: q.top, searchable, path, link };
+  return { page, facets, categories: q.categories, ...(q.category ? { category: q.category } : {}), ...(q.tag ? { tag: q.tag } : {}), ...(q.q ? { q: q.q } : {}), ...(q.after ? { after: q.after } : {}), ...(q.sort ? { sort: q.sort } : {}), top: q.top, searchable, path, link };
 }
 
 /** 既定のテーマの一覧に渡すもの（一覧と商品一覧のひな形で同じ） */
@@ -543,6 +550,7 @@ function listProps(s: ShopScope, d: ListingData) {
     ...(d.category ? { category: categoryProp(d.category) } : {}),
     path: `${s.ctx.shopPath}${d.path}` || "/",
     pagination: { ...(d.page.nextCursor ? { next: d.link(d.page.nextCursor) } : {}), ...(d.after ? { first: d.link(null) } : {}) },
+    ...(d.sort ? { sort: d.sort } : {}),
     ...(d.q && !d.searchable ? { notice: t("store.search_too_short") } : d.q && d.page.items.length === 0 ? { notice: tf("store.search_none", { q: d.q }) } : {}),
   };
 }
@@ -553,7 +561,7 @@ function listProps(s: ShopScope, d: ListingData) {
  */
 async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: RenderOpts & { layout: PageRow }): Promise<Response> {
   const layout = o.layout;
-  const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+  const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
   const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, d.categories);
   const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(layout), updated: layout.updated_at });
@@ -621,7 +629,7 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, 
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? productLayoutId(pageLayoutsOf(s.shop.settings), categories, detail.product.category_id) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories, { product: detail.product.slug, productId: detail.product.id, categoryId: detail.product.category_id ?? null, tags: detail.product.tags ?? [] });
     const doc = (o.prefix ?? "") + fillDateBlocks(fillShopBlocks(raw, shopCards), { published: detail.product.created_at, updated: detail.product.updated_at });
@@ -698,7 +706,9 @@ storefront.get("/:shop/pages/:handle", async (c: Ctx) => {
   if (!moduleEnabled(s.shop.settings, PAGES_MODULE) || !pageHandleOk(handle)) return notFoundPage(c, s);
   const [page, categories] = await Promise.all([s.sf.pageByHandle(s.shop, handle), s.sf.listCategories(s.shop)]);
   if (!page) return (await membersOnlyGate(c, s, "page", handle)) ?? notFoundPage(c, s);
-  const view = await viewerBody(c, s.shop, page.body, viewerOf(s));
+  // 部品のページ（0122）はほかの本文に差し込むだけで、単独では見せない
+  if (page.is_part) return notFoundPage(c, s);
+  const view = await viewerBody(c, s.sf, s.shop, page.body, viewerOf(s));
   const raw = pageBodyHtml({ ...page, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   return contentPageResponse(c, s, page, view.body, raw, categories);
 });
@@ -748,7 +758,7 @@ async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article:
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).articles[blog.id] : undefined;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const lview = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const lview = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     const comp = composeLayout(lview.body, body);
     const doc = o.preview
       ? markdownToHtml(comp.body, { mediaBase: s.ctx.mediaBaseUrl })
@@ -816,7 +826,7 @@ async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: s
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? blogLayoutId(pageLayoutsOf(s.shop.settings), blog.id) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout && s.theme.BlogPage) {
-    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     if (usesPart(view.body, "articles")) {
       const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
       const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, view.body, categories);
@@ -881,7 +891,7 @@ storefront.get("/:shop/blogs/:blog/:article", async (c: Ctx) => {
   if (!blog) return notFoundPage(c, s);
   const article = await s.sf.articleByHandle(s.shop, blog.id, ah);
   if (!article) return (await membersOnlyGate(c, s, "article", ah, blog.id)) ?? notFoundPage(c, s);
-  const view = await viewerBody(c, s.shop, article.body, viewerOf(s));
+  const view = await viewerBody(c, s.sf, s.shop, article.body, viewerOf(s));
   const raw = pageBodyHtml({ ...article, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
   return articlePageResponse(c, s, blog, article, view.body, raw, categories, { segment: view.key });
 });
@@ -908,7 +918,7 @@ async function legalResponse(c: Ctx, s: ShopScope, kind: LegalKind, o: RenderOpt
   const layoutId = o.layout === undefined && moduleEnabled(s.shop.settings, PAGES_MODULE) ? legalLayoutId(pageLayoutsOf(s.shop.settings), kind) : null;
   const layout = o.layout !== undefined ? o.layout : layoutId ? await s.sf.layoutPage(s.shop, layoutId) : null;
   if (layout) {
-    const view = o.preview ? filterAudienceBlocks(layout.body, () => true) : await viewerBody(c, s.shop, layout.body, viewerOf(s));
+    const view = o.preview ? await previewBody(s.sf, s.shop, layout.body) : await viewerBody(c, s.sf, s.shop, layout.body, viewerOf(s));
     if (usesPart(view.body, "legal")) {
       const categories = await s.sf.listCategories(s.shop);
       const raw = o.preview ? markdownToHtml(view.body, { mediaBase: s.ctx.mediaBaseUrl }) : pageBodyHtml({ ...layout, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);

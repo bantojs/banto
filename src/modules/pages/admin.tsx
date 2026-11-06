@@ -15,7 +15,7 @@ import { MAX_IMAGE_BYTES, imageUrl, randomKey, sniffImage } from "../../media/im
 import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
-import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, PAGES_TRASH_DAYS, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
+import { PAGE_LIMITS, PAGE_NAVS, PAGE_PARTS_MIGRATION, PAGES_MODULE, PAGES_TRASH_DAYS, RESERVED_HANDLES, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { formatDateTime, isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { markdownToHtml } from "../../pages/markdown";
 import { PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, type ProductBlock } from "../../pages/blocks";
@@ -45,7 +45,7 @@ async function scope(c: AdminContext): Promise<ShopRow | null> {
   return shop && moduleEnabled(shop.settings, PAGES_MODULE) ? shop : null;
 }
 
-type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url" | "audience_id" | "audience_hide">;
+type PageValues = Pick<PageRow, "title" | "handle" | "body" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "published" | "published_at" | "image_url" | "audience_id" | "audience_hide" | "is_part">;
 
 const EMPTY: PageValues = { title: "", handle: "", body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, published: false, published_at: null, image_url: null };
 
@@ -78,6 +78,8 @@ function pageValues(f: Record<string, string>, opts: { mediaBase: string }): { v
     published_at: f.published_at ? zonedInputToIso(f.published_at) : null,
     image_url: (f.image_url ?? "").trim() || null,
     ...contentAudienceValues(f),
+    // 部品のページ（0122）。欄があったときだけ書く（当たる前の DB に列を送らない）
+    ...(f.is_part_present === "1" ? { is_part: f.is_part === "on" } : {}),
   };
   if (f.published_at && !values.published_at) return { values, error: "pages.error_published_at", autoHandle };
   if (values.image_url) {
@@ -116,7 +118,8 @@ function layout(c: AdminContext, shop: ShopRow, title: string, crumbs: { label: 
 pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const cols = "id,handle,title,nav,sort_order,published,published_at,deleted_at,updated_at";
+  const parts = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_PARTS_MIGRATION);
+  const cols = `id,handle,title,nav,sort_order,published,published_at,deleted_at,updated_at${parts ? ",is_part" : ""}`;
   const all = await owner(c).db.from<PageRow>("pages").select(cols, { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" });
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
@@ -193,7 +196,7 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
                     <span class="muted">/pages/{p.handle}</span>
                   )}
                 </td>
-                <td>{t(`pages.nav_${p.nav}` as MessageKey)}</td>
+                <td>{p.is_part ? <span class="badge">{t("pages.part_badge")}</span> : t(`pages.nav_${p.nav}` as MessageKey)}</td>
                 <td>
                   {t(`pages.state_${state}` as MessageKey)}
                   {state === "scheduled" && p.published_at ? <span class="muted"> {formatDateTime(p.published_at)}</span> : null}
@@ -227,7 +230,7 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
 async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
   // 商品を並べるブロックで選ぶカテゴリーとタグ
   const db = owner(c).db;
-  const catalog = await editorCatalog(c, shop);
+  const [catalog, parts] = await Promise.all([editorCatalog(c, shop), migrated({ db, cache: c.get("adapters").cache }, PAGE_PARTS_MIGRATION)]);
   // リビジョン（0080。新しい順に 20 まで）
   const revisions = opts.pageId ? await db.from<RevisionRow>("page_revisions").select("id,title,created_at", { eq: { page_id: opts.pageId, shop_id: shop.id }, order: "created_at.desc", limit: 20 }) : [];
   const title = opts.pageId ? opts.values.title || t("pages.edit") : t("pages.new");
@@ -245,7 +248,7 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
-      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} extras={catalog} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true, part: parts }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} extras={catalog} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
   );

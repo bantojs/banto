@@ -439,6 +439,11 @@ function render(rows: readonly string[], depth: number, st: RenderState): string
       }
       // お店のブロック（src/pages/shop-blocks.ts）。アイコンはその場で描き、ほかは印だけ（中身は src/content/body-blocks.ts）
       const sb = parseShopBlock(row);
+      // 部品の差し込み（0122）は描く前に本文を置き換えてある。ここまで来たもの（差し込まない使い方）は何も出さない
+      if (sb?.kind === "include" && !opts.editor) {
+        i++;
+        continue;
+      }
       if (sb) {
         st.shopCss = true;
         const data = `data-banto-block="shop" data-kind="${sb.kind}" data-attrs="${esc(JSON.stringify(sb.attrs))}"`;

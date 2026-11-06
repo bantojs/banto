@@ -70,6 +70,7 @@ GET /api/shops/<shop>/categories
 - `compare_at_price_jpy` は最安 SKU の通常価格です。`min_price_jpy` より高ければセール中として表示できます。
 - 詳細（`/products/<slug>`）は説明・画像（幅と高さつき）に加え、次を返します。
   - `brand`、`category`、`category_path`（最上位から主カテゴリーまで。パンくず用）、`extra_categories`（追加カテゴリー。主カテゴリーのほかに並ぶ棚）、`tags`、`updated_at`
+  - 一覧（`/products`）の各商品の `attributes`（0121）は、定義で `card` を付けた公開の項目だけです（カードに出す分）。
   - `attributes`: カスタム項目のうち公開するもの（`[{ "key", "label", "type", "value" }]`、`type` が `image` なら value は画像の URL、管理画面で private にした項目は出ない）。公開にした項目の値はそのまま誰にでも見えるので、原価や仕入先など内部の値は private にする
   - `skus[]`: `code`・`name`・`options`（例: `{ "サイズ": "M", "色": "黒" }`）・`gtin`・`price_jpy`・`compare_at_price_jpy`・`in_stock`
   - `option_axes`: SKU を分ける軸（0065。`[{ "key": "color", "name": "カラー", "values": ["レッド", "ブルー"] }, …]`。`key` は英字で変わらない鍵で `skus[].options` の鍵と同じ、`name` は表示名（0094。選択欄の見出しはこちら）、`values` は SKU に出てくる値、`swatches` は値ごとの見本（0115。`{ "ネイビー": { "color": "#1f2a44", "image": null } }`。見本の無い値は入らない））。商品の `option_names`（`{ "color": "カラー", … }`）でも key から表示名を引けます。軸ごとの選択欄（カラー → サイズ）を作り、選んだ値が `skus[].options` とすべて合う SKU の `id` をカートに入れてください。軸の無い商品は `[]`（SKU を 1 つの選択欄で選ぶ）。値は配列・オブジェクトのまま返すので、カンマや読点を含む値（`1,000mm`）も 1 つの値です（文字で区切って読まないでください）
@@ -508,6 +509,7 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 - ページと記事 1 つには、本文が 2 つの形で入ります。
   - `body`: 元の書式（Markdown の一部と、`::: 名前 …` のブロック。docs/pages.md）。連携サイトで描き直すときに使います。
   - `html`: Banto が描いた HTML。そのまま差し込めます。
+- 部品のページ（0122、docs/pages.md「部品のページ」）は一覧にも 1 つにも出ません（404）。`::: include page=<handle>` の行は、`body` でも `html` でも部品の本文に置き換えてあります。
 - 本文の見せる相手の囲み（同梱モジュール「会員の条件」、docs/audiences.md「本文のブロック」）は、`body` からも `html` からも、見る人に合わせて外してあります。会員に合わせるときは `Authorization: Bearer <会員トークン>` を付けます（付けなければゲスト、壊れたトークンは 401 `invalid_member_token`）。囲みのある本文の応答には `Vary: Authorization` が付きます。URL のパラメータの条件には、見る人の URL の値を `p.<名前>`（`?p.ref=insta`）で渡します。
 - `html` の中身:
   - レイアウトのブロックの並べ方の CSS（`<style>`）。色と大きさは CSS の変数 `--banto-*` で、連携サイトの CSS で上書きできます。

@@ -177,7 +177,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
     ),
     Promise.all(shopBlocksOf(body).map((b) => shopBlockHtml(d, b, categories).catch((e: unknown) => (console.error("[banto] shop block:", e), "")))),
   ]);
-  const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: d.shopPath, mediaBaseUrl: d.mediaBaseUrl, taxNote: t("store.tax_included"), yen }));
+  const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: d.shopPath, mediaBaseUrl: d.mediaBaseUrl, taxNote: t("store.tax_included"), yen, cardFields: productFields(d.shop.settings) }));
   const acards = ablocks.map((b) =>
     b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(d.shopPath, b.blog.handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
   );
@@ -217,7 +217,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     if (a["page"]) {
       if (!moduleEnabled(d.shop.settings, PAGES_MODULE)) return "";
       const page = await d.sf.pageByHandle(d.shop, a["page"]);
-      if (!page) return "";
+      if (!page || page.is_part) return "";
       return cardHtml(pagePath(d.shopPath, page.handle), page.title, page.image_url ?? null, page.seo_description ?? "", d.mediaBaseUrl);
     }
     const [blogHandle, handle] = (a["article"] ?? "").split("/");
