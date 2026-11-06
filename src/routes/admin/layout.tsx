@@ -2,6 +2,7 @@ import { raw } from "hono/html";
 import type { Child } from "hono/jsx";
 import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
+import { adminBrand } from "./brand";
 import { moduleEnabled } from "../../modules/registry";
 
 /**
@@ -40,6 +41,7 @@ p a:hover,li a:hover,td a:hover{text-decoration-color:currentColor}
   background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:saturate(180%) blur(8px);border-bottom:1px solid var(--border)}
 .brand{display:flex;align-items:center;gap:.6rem;white-space:nowrap;font-weight:600;text-decoration:none;color:var(--fg);letter-spacing:-.01em}
 .brand .mark{display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--accent);color:var(--accent-fg);font-size:14px;font-weight:700}
+.brand img.mark{background:none;object-fit:contain}
 .topbar .sep{color:var(--border-strong);font-size:1.25rem;font-weight:300}
 .topbar .spacer{flex:1}
 .topbar .menu{display:flex;align-items:center;gap:.25rem}
@@ -360,6 +362,7 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
   const crumbs: Crumb[] = [...(props.crumbs ?? [])];
   if (crumbs.length === 0 || crumbs[crumbs.length - 1]!.href) crumbs.push({ label: props.title });
   const tabs = props.shopTabs;
+  const brand = adminBrand();
   return (
     <html lang={getLocale()}>
       <head>
@@ -367,17 +370,21 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="robots" content="noindex" />
         <title>
-          {props.title} · {t("app.name")}
+          {props.title} · {brand.name}
         </title>
         <style>{raw(css)}</style>
       </head>
       <body>
         <header class="topbar">
           <a class="brand" href="/admin">
-            <span class="mark" aria-hidden="true">
-              番
-            </span>
-            {t("app.name")}
+            {brand.icon ? (
+              <img class="mark" src={brand.icon} alt="" width={28} height={28} />
+            ) : (
+              <span class="mark" aria-hidden="true">
+                {brand.mark}
+              </span>
+            )}
+            {brand.name}
           </a>
           <nav class="crumbs" aria-label="breadcrumb">
             {crumbs.map((cr) => (

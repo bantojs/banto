@@ -17,6 +17,7 @@ import type { DbClient } from "./db/client";
 import type { ApiService } from "./api/service";
 import { resolveSessionSecret, type SessionData } from "./auth/session";
 import { getLocale, setLocale, t } from "./i18n";
+import { setAdminBrand } from "./routes/admin/brand";
 import { setTimeZone } from "./i18n/time";
 
 /**
@@ -68,6 +69,7 @@ export function createApp(
     c.set("sessionSecret", await resolveSessionSecret(adapters.config));
     setLocale(adapters.config.get("BANTO_LOCALE"));
     setTimeZone(adapters.config.get("BANTO_TIMEZONE"));
+    setAdminBrand(adapters.config.get("BANTO_ADMIN_NAME"), adapters.config.get("BANTO_ADMIN_ICON_URL"));
     await next();
   });
 
