@@ -7,7 +7,6 @@ import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
 import type { StorageAdapter } from "../adapters/types";
 import { hashApiToken } from "./tokens";
-import { DIALOGS_API_MIGRATION } from "../modules/dialogs/dialogs";
 import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, imageUrl, productImageKey, randomKey, sniffImage, thumbKey } from "../media/images";
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
@@ -496,23 +495,16 @@ export class ApiService {
   };
 
   // ---- お店の画面のダイアログ（0111。dialogs:write、モジュール dialogs が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
-  private async dialogsReady(): Promise<void> {
-    if (!(await this.migratedTo(DIALOGS_API_MIGRATION))) throw new ApiError("migration_required", "dialogs need the database update 0111_dialogs_api", 409);
-  }
   dialogsList = async () => {
-    await this.dialogsReady();
     return { items: await this.call<Record<string, unknown>[]>("api_dialogs_list", {}) };
   };
   dialogCreate = async (values: Record<string, unknown>) => {
-    await this.dialogsReady();
     return this.call<Record<string, unknown>>("api_dialog_create", { p_values: values });
   };
   dialogUpdate = async (id: string, values: Record<string, unknown>) => {
-    await this.dialogsReady();
     return this.call<Record<string, unknown>>("api_dialog_update", { p_id: uuidOr404(id), p_values: values });
   };
   dialogDelete = async (id: string) => {
-    await this.dialogsReady();
     await this.call<boolean>("api_dialog_delete", { p_id: uuidOr404(id) });
     return { deleted: true };
   };

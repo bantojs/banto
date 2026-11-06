@@ -51,7 +51,7 @@ export const MODULES: readonly ModuleDef[] = [
   // お店の行動（商品を見た・記事を読んだ・カートに入れた…）を、つないだ外部プラグインへ渡す。何を渡すかは連携ごとに運営者が許す（0107_mod_event_relay、docs/event-relay.md）
   { id: "event_relay", name: "mod.event_relay.name", description: "mod.event_relay.description" },
   // お店の画面のダイアログ（今の訪問・今のページで分かることだけで出す。0110_mod_dialogs、docs/dialogs.md）
-  { id: "dialogs", name: "mod.dialogs.name", description: "mod.dialogs.description", adminPath: "dialogs", migration: "0110_mod_dialogs" },
+  { id: "dialogs", name: "mod.dialogs.name", description: "mod.dialogs.description", adminPath: "dialogs" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

@@ -156,7 +156,7 @@ export function ConnectionCard(props: { shopId: string; endpointId: string; conn
 /** 券を作ってプラグインへ移す（つなぐ・つなぎ直す共通） */
 async function beginAndRedirect(c: AdminContext, shopId: string, endpointId: string, scopes: ApiScope[], connectUrl: string): Promise<Response | string> {
   const ticket = randomToken(32);
-  // 当てるまで DB が受け付けないスコープ（0111 の dialogs:write など）は付けずにつなぐ
+  // 当てるまで DB が受け付けないスコープ（SCOPE_MIGRATION）は付けずにつなぐ
   const ready: ApiScope[] = [];
   for (const s of scopes) {
     const v = SCOPE_MIGRATION[s];

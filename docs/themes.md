@@ -155,7 +155,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | ひな形 | 部品 | snippet に渡すもの |
 | --- | --- | --- |
 | 商品詳細 | `title`・`image`・`price`・`buy`・`content`・`tags`・`attributes`・`breadcrumb`・`size-chart`・`reviews` | `product`・`current_variant`（`templates/product` と同じ） |
-| 商品一覧 | `title`・`image`・`content`・`products`・`filters`・`subcategories`・`breadcrumb` | `collection`・`products`・`current_tags`・`paginate`（`templates/collection` と同じ） |
+| 商品一覧 | `title`・`image`・`content`・`products`・`filters`・`sort`・`subcategories`・`breadcrumb` | `collection`・`products`・`current_tags`・`paginate`（`templates/collection` と同じ） |
 | ブログの一覧（0114） | `title`・`content`・`articles`・`filters`・`breadcrumb` | `blog`・`articles`（その 1 ページの記事）・`current_tags`・`paginate`（`templates/blog` と同じ） |
 
 - どの部品にも `part`（`name` = 部品の名前、`default` = Banto の既定の部品の HTML）を渡します。`{{ part.default }}` を出せば、既定の部品をテーマの枠で包めます（例: `part-buy` で色の見本を足し、買うフォームは Banto のまま）。
@@ -170,7 +170,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | お店の URL | 管理画面の言葉 | テンプレート | 渡すオブジェクト |
 | --- | --- | --- | --- |
 | `/` | お店のトップ | `index` | `collection`（すべての商品） |
-| `/products` | すべての商品 | `collection` | `collection`（`handle` は `all`）・`products` |
+| `/products` | すべての商品 | `collection` | `collection`（`handle` は `all`。並べ替えは `collection.sort_by`（今の並べ方、Shopify の名前）・`sort_options`（`name`・`value`）。`?sort_by=` か `?sort=` で並びます）・`products` |
 | `/categories/<カテゴリー>` | カテゴリー | `collection` | `collection`（`handle` はカテゴリーの URL の名前）・`products` |
 | `/products?q=…` | 検索 | `search`（任意）か `collection` | `search`・`collection`・`products` |
 | `/products/<商品>` | 商品 | `product` | `product`・`current_variant` |
