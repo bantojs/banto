@@ -15,7 +15,7 @@ Banto（番頭）は、個人・中小事業者向けの **セルフホスト型
 1. **Cloudflare 固有機能を直接使わない。** R2 / Secret / Cron / Cache はすべて `src/adapters/` のインターフェース経由で使う。
    デプロイの設定の Placement（Worker を DB の近くで動かす）は使ってよい（コードは変わらない。メンテナの決定 2026-10-29）。`wrangler.jsonc` には書かず、ビルドの変数 `BANTO_PLACEMENT` から `scripts/deploy.mjs` が足す（docs/setup.md §8）。
 2. **Workers KV・Durable Objects・Hyperdrive・D1 は使わない。** 便利でも使わない。可搬性を優先する。
-3. **`service_role` キーは `src/db/privileged.ts` でのみ使う。** 通常の CRUD から呼べる構造にしない。AI 用トークン経由の操作は `apiRpc()` から `api_*` RPC だけを呼び、トークン・スコープ・ショップ所有の検証は SQL 側（`0003_api.sql` の `api_require`）で行う（docs/ai-access.md）。
+3. **`service_role` キーは `src/db/privileged.ts` でのみ使う。** Supabase の見出しは `src/db/api-keys.ts` の `supabaseHeaders` だけで組む（新しいキー `sb_publishable_` / `sb_secret_` は `apikey` だけ、今までの JWT のキーは Bearer にも。欄の名前は今のまま。メンテナの決定 2026-11-06、docs/env.md「Supabase のキー」）。 通常の CRUD から呼べる構造にしない。AI 用トークン経由の操作は `apiRpc()` から `api_*` RPC だけを呼び、トークン・スコープ・ショップ所有の検証は SQL 側（`0003_api.sql` の `api_require`）で行う（docs/ai-access.md）。
 4. **RLS のないテーブルを作らない。** 全テーブルに `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` と最低1つのポリシーを付ける。CI で検査する。
 5. **外部 API のシークレットを DB に保存しない。** Stripe は Connect（OAuth）で接続済みアカウント ID だけを持つ。KOMOJU 等の API キーは Workers Secret。
    例外: **ショップごとの LINE・Google の秘密**。(a) 会員のログインに使う提供元の秘密（複数のショップを運営するとき同意画面にショップ名を出すため、メンテナの決定 2026-10-16、`shop_oauth_clients`）、(b) LINE 公式アカウントの Messaging API のチャネルアクセストークン（ショップの公式アカウントから購入者に知らせるため、メンテナの決定 2026-10-17、`shop_secret_boxes`）。Worker がサイトの秘密から作った鍵で AES-GCM で暗号化し（`src/members/secret-box.ts`、ショップと用途を追加認証データに入れる）、暗号文だけを置く。鍵は DB に置かない。運営者にも暗号文の列を読ませない。

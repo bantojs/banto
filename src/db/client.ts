@@ -3,6 +3,7 @@
  * 管理画面・ストアフロントはこちらを使う。service_role は privileged.ts のみ（CLAUDE.md §1-3）。
  * ルートから直接 fetch で PostgREST を叩かず、必ずここを通す（CLAUDE.md §11）。
  */
+import { supabaseHeaders, supabaseKeyMisplaced } from "./api-keys";
 
 export type Row = object;
 export type Scalar = string | number | boolean | null;
@@ -143,9 +144,11 @@ async function toDbError(res: Response): Promise<DbError> {
 export function createDbClient(opts: DbClientOptions): DbClient {
   const doFetch = opts.fetch ?? fetch;
   const base = opts.url.replace(/\/+$/, "");
+  // 公開側の欄に秘密のキー（新しい sb_secret_ / 今までの service_role の JWT）があれば動かさない（RLS を通らずに読めてしまう。src/db/api-keys.ts）
+  if (supabaseKeyMisplaced(opts.anonKey, undefined)) throw new Error("SUPABASE_ANON_KEY holds a secret (service role) key. Put the publishable or anon key there.");
+  const auth = supabaseHeaders(opts.anonKey, opts.userJwt);
   const headers = (extra?: Record<string, string>): Record<string, string> => ({
-    apikey: opts.anonKey,
-    Authorization: `Bearer ${opts.userJwt ?? opts.anonKey}`,
+    ...auth,
     "Content-Type": "application/json",
     ...extra,
   });
