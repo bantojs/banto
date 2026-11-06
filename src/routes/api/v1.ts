@@ -441,6 +441,14 @@ v1.post("/customers/upsert", async (c) =>
     .then((r) => c.json(r, r["created"] === true ? 201 : 200))
     .catch((e) => errorJson(c, e)),
 );
+// お気に入り（同梱モジュール favorites、0123）。customers:read。書き込みは無い（本人の行為だけ）
+v1.get("/customers/:id/favorites", async (c) => api(c).customerFavorites(c.req.param("id")).then((r) => c.json(r, 200, { "cache-control": "no-store" })).catch((e) => errorJson(c, e)));
+v1.get("/favorites", async (c) =>
+  api(c)
+    .favoritesList({ product: c.req.query("product") || undefined, since: c.req.query("since") || undefined, after: c.req.query("after") || undefined, limit: int(c.req.query("limit"), 100) })
+    .then((r) => c.json(r, 200, { "cache-control": "no-store" }))
+    .catch((e) => errorJson(c, e)),
+);
 v1.get("/customers/:id", async (c) => api(c).customerGet(c.req.param("id")).then((r) => c.json(r, 200, { "cache-control": "no-store" })).catch((e) => errorJson(c, e)));
 v1.patch("/customers/:id", async (c) => body(c).then((b) => api(c).customerUpdate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/customers/:id", async (c) => api(c).customerDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));

@@ -24,6 +24,7 @@ import { sizeChartHref } from "../../modules/size-charts/admin";
 import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./option-axes";
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 import { moduleEnabled } from "../../modules/registry";
+import { FAVORITES_MODULE } from "../../modules/favorites";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
 
 export const products = new Hono<AppEnv>();
@@ -121,6 +122,8 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
   const page = splitPage(q ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters: state ? { state } : {}, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : (await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 })), (p) => p.created_at);
   const rows = page.rows;
+  // お気に入りの人数（同梱モジュール favorites、0123）。だれかは出さない。表示している行の分だけ 1 回で
+  const favorites = moduleEnabled(shop.settings, FAVORITES_MODULE) && rows.length > 0 ? await db.rpc<Record<string, number>>("product_favorite_counts", { p_shop_id: shopId, p_product_ids: rows.map((p) => p.id) }).catch(() => null) : null;
   const filtered = Boolean(q || state || after);
   const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;
   return c.html(
@@ -164,6 +167,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
             <tr>
               <th>{t("product.name")}</th>
               <th>slug</th>
+              {favorites ? <th>{t("products.favorites")}</th> : null}
               <th></th>
             </tr>
           </thead>
@@ -176,6 +180,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
                 <td>
                   <code>{p.slug}</code>
                 </td>
+                {favorites ? <td>{favorites[p.id] ?? 0}</td> : null}
                 <td>
                   <span class={p.published ? "status on" : "status"}>{p.published ? t("dashboard.published") : t("dashboard.unpublished")}</span>
                 </td>

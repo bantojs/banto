@@ -46,7 +46,11 @@ import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, pr
 import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, yen, type Ctx } from "../common";
+import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
+import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
+import { memberReader } from "../audience-render";
+import { AUDIENCES_MODULE } from "../../members/audience";
+import type { ProductSummary } from "../../storefront/data";
 import { GUEST, audienceAttrsOf, type AudienceContext } from "../../members/audience";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
@@ -298,13 +302,16 @@ members.get("/:shop/account", async (c: Ctx) => {
   const withCoupons = Boolean(db) && moduleEnabled(s.shop.settings, "coupons");
   // お店で試着の申し込み（同梱モジュール store_tryon、0026）。モジュールが OFF なら DB に問い合わせない
   const withTryon = Boolean(db) && moduleEnabled(s.shop.settings, TRYON_MODULE);
-  const [rec, coupons, tryon] = db
+  // お気に入り（同梱モジュール favorites、0123）。モジュールが OFF なら DB に問い合わせない
+  const withFavorites = Boolean(db) && favoritesEnabled(s.shop);
+  const [rec, coupons, tryon, favorites] = db
     ? await Promise.all([
         db.memberGet(s.shop.id, s.session.cid, s.session.ep, true),
         withCoupons ? db.memberCoupons(s.shop.id, s.session.cid, s.session.ep).catch(() => null) : Promise.resolve(null),
         withTryon ? db.memberTryonRequests(s.shop.id, s.session.cid, s.session.ep).catch(() => null) : Promise.resolve(null),
+        withFavorites ? favoriteProducts(c, s, s.session).catch(() => null) : Promise.resolve(null),
       ])
-    : [null, null, null];
+    : [null, null, null, null];
   if (!rec) {
     // 退会済み・全端末からログアウトした後の古いセッション
     await writeSession(c, s, null);
@@ -325,6 +332,7 @@ members.get("/:shop/account", async (c: Ctx) => {
       flash: c.req.query("flash"),
       security,
       error: errorKey ? t(errorKey) : undefined,
+      favorites: withFavorites ? (favorites ?? []) : null,
       sessions: Boolean(s.session.sid && s.theme.MemberSessionsPage),
       passkeys: opts.passkey && Boolean(s.theme.MemberPasskeysPage),
       receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE),
@@ -607,6 +615,77 @@ async function withMember(c: Ctx, s: Scope, fn: (db: PrivilegedDb, session: Memb
   if (!ok) await writeSession(c, s, null);
   return ok;
 }
+
+// ---------- お気に入り（同梱モジュール favorites、0123、docs/favorites.md） ----------
+
+/** 本人のお気に入りの商品（新しい順）。会員の条件（0097）が ON なら会員の読み取りの経路で（会員限定の商品も） */
+async function favoriteProducts(c: Ctx, s: Scope, session: MemberSession): Promise<ProductSummary[] | null> {
+  const db = privilegedFor(c);
+  const base = storefrontData(c);
+  if (!db || !base || !session.sid) return null;
+  const list = await db.memberFavorites(s.shop.id, session.cid, session.ep, session.sid);
+  if (!list) return null;
+  const reader = moduleEnabled(s.shop.settings, AUDIENCES_MODULE) ? memberReader(c, s.shop.id, { cid: session.cid, ep: session.ep, sid: session.sid }) : null;
+  const sf = reader ? base.withMember(reader) : base;
+  const slugs = list.map((f) => f.slug);
+  const chunks = [slugs.slice(0, 100), slugs.slice(100, FAVORITES_MAX)].filter((x) => x.length > 0);
+  return (await Promise.all(chunks.map((x) => sf.productsBySlugs(s.shop, x)))).flat();
+}
+
+/** お店の画面のスクリプトが読む本人のお気に入り（商品 id）。ゲスト・古いセッションは空 */
+members.get("/:shop/account/favorites.json", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !favoritesEnabled(s.shop)) return notFound(c);
+  c.header("Cache-Control", "private, no-store");
+  const db = privilegedFor(c);
+  if (!s.session?.sid || !db) return c.json({ ids: [], member: false });
+  const list = await db.memberFavorites(s.shop.id, s.session.cid, s.session.ep, s.session.sid);
+  return c.json({ ids: (list ?? []).map((f) => f.product_id), member: list !== null });
+});
+
+/** 足す・外す（{ product_id, on }）・ゲストの分を移す（{ merge: [...] }）。お店の画面のスクリプトから（同じオリジンの fetch。csrfGuard が Origin を確かめる） */
+members.post("/:shop/account/favorites", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !favoritesEnabled(s.shop)) return notFound(c);
+  c.header("Cache-Control", "private, no-store");
+  const raw = await readBodyLimited(c.req.raw, 4096);
+  let body: ReturnType<typeof parseFavoriteBody> = null;
+  try {
+    body = raw ? parseFavoriteBody(JSON.parse(new TextDecoder().decode(raw))) : null;
+  } catch {
+    body = null;
+  }
+  if (!body) return c.json({ error: "invalid_body" }, 400);
+  const db = privilegedFor(c);
+  const m = s.session;
+  if (!m?.sid || !db) return c.json({ error: "login_required" }, 401);
+  try {
+    const r = body.kind === "merge" ? await db.memberFavoritesMerge(s.shop.id, m.cid, m.ep, m.sid, body.productIds) : await db.memberFavoriteSet(s.shop.id, m.cid, m.ep, m.sid, body.productId, body.on);
+    if (r === null) return c.json({ error: "login_required" }, 401);
+    return c.json(body.kind === "merge" ? { ok: true, merged: r } : { ok: true });
+  } catch (e) {
+    if (e instanceof PrivilegedRpcError && e.is("product_not_found")) return c.json({ error: "not_found" }, 404);
+    if (e instanceof PrivilegedRpcError && e.is("favorites_full")) return c.json({ error: "favorites_full", limit: FAVORITES_MAX }, 409);
+    throw e;
+  }
+});
+
+/** 会員ページの「外す」（スクリプトなしのフォーム） */
+members.post("/:shop/account/favorites/remove", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !favoritesEnabled(s.shop)) return notFound(c);
+  const body = parseFavoriteBody({ product_id: (await formFields(c))["product_id"] ?? "", on: false });
+  const m = s.session;
+  const db = privilegedFor(c);
+  if (body?.kind === "set" && m?.sid && db) {
+    const ok = await db.memberFavoriteSet(s.shop.id, m.cid, m.ep, m.sid, body.productId, false);
+    if (ok === null) {
+      await writeSession(c, s, null);
+      return c.redirect(`${s.shopPath}/account/login`);
+    }
+  }
+  return c.redirect(`${s.shopPath}/account#favorites`);
+});
 
 /** 会員の既定の住所（会員ページとヘッドレスの会員 API で同じ形。都道府県でない値は null） */
 export function memberAddressFrom(f: Record<string, unknown>): { name: string; address: Record<string, unknown> } {

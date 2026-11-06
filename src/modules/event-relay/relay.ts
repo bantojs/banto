@@ -35,7 +35,7 @@ export const RELAY_PER_MINUTE = 120;
 export const RELAY_TARGETS_TTL = 60;
 const FORWARD_TIMEOUT_MS = 5000;
 
-export const RELAY_EVENT_TYPES = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase", "dialog_view", "dialog_close", "dialog_click"] as const;
+export const RELAY_EVENT_TYPES = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase", "dialog_view", "dialog_close", "dialog_click", "favorite_add", "favorite_remove"] as const;
 export type RelayEventType = (typeof RELAY_EVENT_TYPES)[number];
 /** ログインした会員と、それまでの訪問者 ID を結ぶ知らせ（0108）。許しの種類ではなく、ゲストも許した連携にだけ渡す */
 export const VISITOR_IDENTIFIED = "visitor.identified";

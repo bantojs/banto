@@ -38,7 +38,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs" | "customer_favorites";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -150,6 +150,7 @@ export class FakeSupabase {
     size_charts: [],
     audiences: [],
     dialogs: [],
+    customer_favorites: [],
     price_rules: [],
     shops: [],
     categories: [],
@@ -1519,6 +1520,12 @@ export class FakeSupabase {
       return json(p && this.shopPublished(args["p_shop_id"]) && p["audience_id"] && p["audience_mode"] !== "buy" && !p["audience_hide"] ? "members" : null);
     }
     if (fn === "product_member_list") return this.productPublicList(args, this.memberAudienceIds(args));
+    // 0123: 商品ごとのお気に入りの人数（本物は catalog か customers の項目を確かめる。test/db/favorites.test.ts）
+    if (fn === "product_favorite_counts") {
+      const out: Record<string, number> = {};
+      for (const f of this.tables.customer_favorites) if (f["shop_id"] === args["p_shop_id"] && ((args["p_product_ids"] as string[] | undefined) ?? []).includes(String(f["product_id"]))) out[String(f["product_id"])] = (out[String(f["product_id"])] ?? 0) + 1;
+      return json(out);
+    }
     if (fn === "product_public_pick") return this.productPick(args);
     if (fn === "product_member_pick") return this.productPick(args, this.memberAudienceIds(args));
     // 0100: 会員限定のページ・記事
@@ -2744,6 +2751,11 @@ export class FakeSupabase {
           this.tables.customers.push(row);
           return json({ ...member(row), created: true });
         }
+        case "api_customer_favorites": {
+          if (!members.some((x) => x["id"] === args["p_customer_id"])) return notFound();
+          const slug = (id: unknown) => this.tables.products.find((p) => p["id"] === id)?.["slug"] ?? null;
+          return json({ items: this.tables.customer_favorites.filter((x) => x["customer_id"] === args["p_customer_id"]).map((x) => ({ customer_id: x["customer_id"], product_id: x["product_id"], product_slug: slug(x["product_id"]), created_at: x["created_at"] })) });
+        }
         case "api_customer_get": {
           const c = members.find((x) => x["id"] === args["p_customer_id"]);
           return c ? json(member(c)) : notFound();
@@ -3390,6 +3402,34 @@ export class FakeSupabase {
           : [];
         const providers = this.memberIdentities.filter((i) => i["shop_id"] === shopId && i["customer_id"] === c["id"]).map((i) => String(i["provider"]));
         return json({ customer: { id: c["id"], shop_id: shopId, email: c["email"] ?? null, name: c["name"] ?? null, default_address: c["default_address"] ?? null, marketing_consent: c["marketing_consent"] ?? null, has_password: Boolean(c["password_hash"] || c["legacy_password_hash"]), providers }, orders });
+      }
+      // 0123: お気に入り（本物は test/db/favorites.test.ts。会員の条件は見ない・上限は 200）
+      case "member_favorites":
+      case "member_favorite_set":
+      case "member_favorites_merge": {
+        if (!this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return json(null);
+        const mine = () => this.tables.customer_favorites.filter((x) => x["customer_id"] === args["p_customer_id"]);
+        const visible = (id: unknown) => this.tables.products.find((p) => p["id"] === id && p["shop_id"] === shopId && p["published"] === true);
+        if (fn === "member_favorites") {
+          const rows = mine().map((x) => ({ f: x, p: visible(x["product_id"]) })).filter((x) => x.p);
+          rows.sort((a, b) => String(b.f["created_at"]).localeCompare(String(a.f["created_at"])));
+          return json(rows.map((x) => ({ product_id: x.p!["id"], slug: x.p!["slug"], created_at: x.f["created_at"] })));
+        }
+        const add = (id: unknown): boolean => {
+          if (!visible(id) || mine().some((x) => x["product_id"] === id)) return false;
+          if (mine().length >= 200) return false;
+          this.tables.customer_favorites.push({ shop_id: shopId, customer_id: args["p_customer_id"], product_id: id, created_at: new Date(Date.now() + this.tables.customer_favorites.length).toISOString() });
+          return true;
+        };
+        if (fn === "member_favorites_merge") return json(((args["p_product_ids"] as string[] | undefined) ?? []).filter((id) => add(id)).length);
+        if (args["p_on"] !== true) {
+          this.tables.customer_favorites = this.tables.customer_favorites.filter((x) => !(x["customer_id"] === args["p_customer_id"] && x["product_id"] === args["p_product_id"]));
+          return json(true);
+        }
+        if (!visible(args["p_product_id"])) return json({ code: "P0001", message: "product_not_found" }, 400);
+        if (mine().length >= 200 && !mine().some((x) => x["product_id"] === args["p_product_id"])) return json({ code: "P0001", message: "favorites_full" }, 400);
+        add(args["p_product_id"]);
+        return json(true);
       }
       case "member_set_marketing_consent": {
         const c = findCustomer(args["p_customer_id"], args["p_epoch"]);

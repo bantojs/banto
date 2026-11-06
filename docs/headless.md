@@ -493,6 +493,10 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 ---
 
+## お気に入り（同梱モジュール favorites）
+
+会員トークンで、本人のお気に入りを読み書きできます（`GET /api/shops/:shop/members/favorites`・`POST …/members/favorites`（`{ product_id, on }`）・`POST …/members/favorites/merge`（ゲストのときブラウザに覚えた分を、ログインしたら移す。50 まで））。詳しくは docs/favorites.md「ヘッドレス」。
+
 ## ページ・ブログ（同梱モジュール pages・blog）
 
 「私たちについて」などのページと、ブログの記事を、連携サイトのデザインで出せます（docs/pages.md・docs/blog.md）。お店の画面の使い方（`settings.storefront`）が `off` のショップでも読めます。モジュールが OFF のショップは 404 です。

@@ -17,6 +17,7 @@ export function openapiDocument(origin: string, version: string): Record<string,
   const tryon = obj({ id: str, number: int, status: str, store_id: str, store_name: str, visit_date: { type: ["string", "null"] }, hold_until: { type: ["string", "null"] }, items: { type: "array" }, customer: { type: "object", description: "orders:pii スコープがあるときだけ（email・name・phone・note）" } });
   const theme = obj({ id: str, name: str, complete: bool, published: bool, size_bytes: int, file_count: int, manifest: { type: "object" }, created_at: str, assets: { type: "array", items: str, description: "POST /themes の応答だけ: 置く資産の名前" } });
   const idPath = [{ name: "id", in: "path", required: true, schema: str }];
+  const favorite = obj({ customer_id: str, product_id: str, product_slug: nullableStr, created_at: str });
   const blogPath = { name: "blog", in: "path", required: true, schema: str, description: "ブログの handle" };
   const contentCommon = {
     title: { ...str, description: "1〜200 文字" },
@@ -282,6 +283,22 @@ export function openapiDocument(origin: string, version: string): Record<string,
         get: { summary: "会員を取得（customers:read）", security: bearer, parameters: idPath, responses: { 200: resp("ok", customer), ...errors } },
         patch: { summary: "会員の氏名・住所・独自項目・外部の ID を更新（customers:write）。email は変えられない（400 email_change_not_allowed）", security: bearer, parameters: idPath, requestBody: { content: { "application/json": { schema: obj({ name: nullableStr, default_address: address, external_ref: externalRef, attributes, marketing_consent: consentWrite }) } } }, responses: { 200: resp("ok", customer), ...errors } },
         delete: { summary: "会員を削除（退会。customers:write）。注文は残る", security: bearer, parameters: idPath, responses: { 200: resp("ok"), ...errors } },
+      },
+      "/customers/{id}/favorites": {
+        get: { summary: "会員のお気に入り（同梱モジュール favorites、0123。customers:read）。新しい順・200 まで。会員 ID・商品 ID・URL の名前・足した日時だけ", security: bearer, parameters: idPath, responses: { 200: resp("ok", obj({ items: { type: "array", items: favorite } })), ...errors } },
+      },
+      "/favorites": {
+        get: {
+          summary: "お気に入りを足した順にたどる（0123。customers:read）。product で商品を絞る。続きは前の応答の cursor の since と after を渡す。外したものは hooks の favorite.removed で知る",
+          security: bearer,
+          parameters: [
+            { name: "product", in: "query", schema: str, description: "商品の id" },
+            { name: "since", in: "query", schema: str, description: "ISO 8601（cursor の since）" },
+            { name: "after", in: "query", schema: str, description: "cursor の after" },
+            { name: "limit", in: "query", schema: int, description: "1〜500、既定 100" },
+          ],
+          responses: { 200: resp("ok", obj({ items: { type: "array", items: favorite }, has_more: bool, cursor: { type: ["object", "null"] } })), ...errors },
+        },
       },
       "/customers/{id}/line-message": {
         post: {

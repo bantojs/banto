@@ -5,6 +5,7 @@ import { blockedTarget, storefrontSettings } from "../../storefront/mode";
 import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../storefront/events";
 import { injectHead, renderHeadTags } from "../../storefront/head";
 import { STOREFRONT_HEAD_CONTRIBUTORS } from "../../modules/head";
+import { FAVORITES_MODULE } from "../../modules/favorites";
 import { EVENT_RELAY_MODULE, VISITOR_RE } from "../../modules/event-relay/relay";
 import { DIALOGS_MODULE } from "../../modules/dialogs/dialogs";
 import { acceptRelay } from "../../modules/event-relay/routes";
@@ -118,7 +119,7 @@ storefront.use("*", async (c, next) => {
   const events = c.get("shopEvents") ?? [];
   // 会員かどうか（お店の行動の中継・ダイアログの「だれに」）。要るモジュールが ON のときだけ確かめる
   const dialogsOn = contributors.some((h) => h.module === DIALOGS_MODULE) && (shop.dialogs ?? []).length > 0;
-  const session = dialogsOn || contributors.some((h) => h.module === EVENT_RELAY_MODULE) ? await customerSession(c, { shop }).catch(() => null) : null;
+  const session = dialogsOn || contributors.some((h) => h.module === EVENT_RELAY_MODULE || h.module === FAVORITES_MODULE) ? await customerSession(c, { shop }).catch(() => null) : null;
   const member = Boolean(session);
   // 会員の条件のダイアログ（0110）があるときだけ条件の一覧を引く（キャッシュ済み）
   const audienceOk = dialogsOn && (shop.dialogs ?? []).some((d) => d.audience === "audience") ? audienceShow(await shopAudiences(c, shop), { ...(session ? { member: true, attrs: session.at ?? {} } : GUEST), params: queryParamsOf(new URL(c.req.url).searchParams.entries()) }) : undefined;

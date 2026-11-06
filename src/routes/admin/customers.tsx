@@ -17,6 +17,7 @@ import { tf } from "../../i18n";
 import { createMailer, sendMail } from "../../mail/send";
 import { moduleEnabled } from "../../modules/registry";
 import { PASSKEY_MODULE } from "../../modules/passkey";
+import { FAVORITES_MODULE } from "../../modules/favorites";
 import { attributeRows, attributesFromForm, customerFields, externalRef, type CustomerField } from "../../customers/fields";
 
 /**
@@ -94,6 +95,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const editable = fields.length > 0;
   const query = new URLSearchParams({ ...(q ? { q } : {}), ...(f ? { f, v } : {}), ...(consent ? { consent } : {}) }).toString();
   const passkeys = moduleEnabled(shop.settings, PASSKEY_MODULE);
+  const favoritesOn = moduleEnabled(shop.settings, FAVORITES_MODULE);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("customers.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "customers" }}>
       <PageHead title={t("customers.title")} />
@@ -241,6 +243,11 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                           </button>
                         </form>
                       ) : null}
+                      {favoritesOn ? (
+                        <p>
+                          <a href={`/admin/shops/${shop.id}/customers/${r.id}/favorites`}>{t("customers.favorites")}</a>
+                        </p>
+                      ) : null}
                       <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/delete`}>
                         <button type="submit" class="small">
                           {t("customers.delete")}
@@ -255,6 +262,54 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </>
       )}
       <Pager base={`/admin/shops/${shop.id}/customers${query ? `?${query}` : ""}`} next={page.next} paged={Boolean(after)} />
+    </AdminLayout>,
+  );
+});
+
+/** 会員のお気に入り（同梱モジュール favorites、0123）。読めるのは項目 customers（RLS）。新しい順 */
+customers.get("/:shopId/customers/:customerId/favorites", requireOwner, async (c: AdminContext) => {
+  const shopId = param(c, "shopId");
+  const shop = await loadShop(c, shopId, "customers");
+  if (!shop || !moduleEnabled(shop.settings, FAVORITES_MODULE)) return c.text(t("shop.not_found"), 404);
+  const customerId = param(c, "customerId");
+  if (!/^[0-9a-f-]{36}$/.test(customerId)) return c.text(t("shop.not_found"), 404);
+  const db = owner(c).db;
+  const customer = await db.from<{ id: string; email: string | null; name: string | null }>("customers").selectOne("id,email,name", { eq: { shop_id: shopId, id: customerId } });
+  if (!customer) return c.text(t("shop.not_found"), 404);
+  const favs = await db.from<{ product_id: string; created_at: string }>("customer_favorites").select("product_id,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 200 });
+  const products = favs.length
+    ? await db.from<{ id: string; name: string; slug: string; published: boolean }>("products").select("id,name,slug,published", { eq: { shop_id: shopId }, in: { id: favs.map((x) => x.product_id) } })
+    : [];
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const who = customer.name ? `${customer.name}（${customer.email ?? "-"}）` : (customer.email ?? "-");
+  return c.html(
+    <AdminLayout title={`${shop.name} · ${t("customers.favorites")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title"), href: `/admin/shops/${shop.id}/customers` }, { label: t("customers.favorites") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "customers" }}>
+      <PageHead title={t("customers.favorites")} sub={who} />
+      {favs.length === 0 ? <p>{t("customers.favorites_none")}</p> : null}
+      {favs.length > 0 ? (
+        <table>
+          <thead>
+            <tr>
+              <th>{t("product.name")}</th>
+              <th>{t("customers.favorite_added")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {favs.map((x) => {
+              const p = byId.get(x.product_id);
+              return (
+                <tr>
+                  <td>
+                    {p ? <a href={`/admin/shops/${shop.id}/products/${p.id}`}>{p.name}</a> : "-"}
+                    {p && !p.published ? <span class="muted"> （{t("dashboard.unpublished")}）</span> : null}
+                  </td>
+                  <td>{formatDateTime(x.created_at)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : null}
     </AdminLayout>,
   );
 });

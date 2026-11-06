@@ -573,8 +573,11 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
     total_price: money(Number(o["total_jpy"] ?? 0)),
     url: `${s.ctx.shopPath}/orders/lookup?banto_order=${encodeURIComponent(String(o["number"]))}&banto_member=1`,
   }));
+  // お気に入り（0123）: 一覧と同じ product の形。外すのは POST <shopPath>/account/favorites/remove（product_id）
+  const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
+  const favorites = props.favorites ? props.favorites.map((x) => productFromSummary(u, x)) : null;
   const customer = props.customer
-    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true }
+    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove` }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
 }

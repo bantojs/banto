@@ -328,6 +328,12 @@ export interface PrivilegedDb {
   memberSaveAddress(shopId: string, customerId: string, epoch: number, name: string | null, address: Record<string, unknown>): Promise<boolean>;
   /** 「お得な情報やセールの案内を受け取る」を本人が変える（0050。世代を確かめる） */
   memberSetMarketingConsent(shopId: string, customerId: string, epoch: number, consent: boolean): Promise<boolean>;
+  /** 本人のお気に入り（0123、新しい順・見える商品だけ）。セッションが生きていなければ null */
+  memberFavorites(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ product_id: string; slug: string; created_at: string }[] | null>;
+  /** お気に入りに足す・外す（0123）。セッションが生きていなければ null。見えない商品は product_not_found、上限は favorites_full */
+  memberFavoriteSet(shopId: string, customerId: string, epoch: number, sessionId: string, productId: string, on: boolean): Promise<boolean | null>;
+  /** ゲストのお気に入りを会員へ移す（0123、50 まで）。移した数。セッションが生きていなければ null */
+  memberFavoritesMerge(shopId: string, customerId: string, epoch: number, sessionId: string, productIds: readonly string[]): Promise<number | null>;
   /**
    * 退会・全端末からログアウト・連携を外す・パスキーを消す: sessionId を渡すと（0090 が当たっている DB だけ）、
    * ログインを確かめてから 15 分以内のセッションでなければ reauth_required を投げる（盗まれた Cookie から消されない）
@@ -577,6 +583,9 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       rpc("order_lookup", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, ...(emailHash !== undefined ? { p_email_hash: emailHash } : {}) }),
     memberOrder: (shopId, customerId, epoch, number) => rpc("member_order", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),
     memberSetMarketingConsent: (shopId, customerId, epoch, consent) => rpc<boolean>("member_set_marketing_consent", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_consent: consent }),
+    memberFavorites: (shopId, customerId, epoch, sessionId) => rpc("member_favorites", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
+    memberFavoriteSet: (shopId, customerId, epoch, sessionId, productId, on) => rpc("member_favorite_set", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_product_id: productId, p_on: on }),
+    memberFavoritesMerge: (shopId, customerId, epoch, sessionId, productIds) => rpc("member_favorites_merge", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_product_ids: [...productIds] }),
     memberSaveAddress: (shopId, customerId, epoch, name, address) =>
       rpc("member_save_address", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_name: name, p_address: address }),
     memberWithdraw: async (shopId, customerId, epoch, sessionId) => {

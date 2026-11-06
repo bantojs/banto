@@ -62,7 +62,7 @@ export interface PluginManifest {
 }
 
 /** お店の行動の種類（src/modules/event-relay/relay.ts の RELAY_EVENT_TYPES と同じ） */
-export const MANIFEST_STOREFRONT_EVENTS = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase", "dialog_view", "dialog_close", "dialog_click"] as const;
+export const MANIFEST_STOREFRONT_EVENTS = ["product_view", "article_view", "page_view", "cart_add", "cart_view", "checkout_start", "purchase", "dialog_view", "dialog_close", "dialog_click", "favorite_add", "favorite_remove"] as const;
 
 /** マニフェストの capabilities に書いてよい値 */
 export const MANIFEST_CAPABILITIES = ["images"] as const;

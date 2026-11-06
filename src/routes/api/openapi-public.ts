@@ -320,6 +320,11 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       "/shops/{shop}/members/me": { get: { summary: "会員（名前・既定の住所・案内メールの同意）と注文の一覧（注文の住所は返さない）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ id: str, email: str, name: nStr, address: { type: ["object", "null"], description: "既定の住所（name・phone・postal_code・state・city・line1・line2・country）" }, marketing_consent: { type: ["boolean", "null"], description: "ショップが案内メールの欄を使うときだけ（null = 未回答）" }, orders: arr(obj({ number: int, status: str, total_jpy: int, shipping_jpy: int, discount_jpy: int, created_at: str, shipped_at: nStr })) })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/address": { post: { summary: "既定の住所を保存する（会員ページと同じ。チェックアウトの欄の初期値）", security: member, parameters: [shopPath], requestBody: body(obj({ customer_name: str, phone: str, postal_code: str, state: { ...str, description: "都道府県（それ以外は null として保存）" }, city: str, line1: str, line2: str })), responses: { 200: ok(obj({ ok: bool, name: nStr, address: any("保存した住所") })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/marketing-consent": { post: { summary: "案内メールを受け取る・受け取らない（会員本人の操作。ショップが欄を使うときだけ）", security: member, parameters: [shopPath], requestBody: body(obj({ consent: bool }, ["consent"])), responses: { 200: ok(obj({ ok: bool, marketing_consent: bool })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("consent_disabled・not_found") } } },
+      "/shops/{shop}/members/favorites": {
+        get: { summary: "本人のお気に入り（同梱モジュール favorites、0123。新しい順・公開中で見える商品だけ。商品の中身は公開の商品 API で）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ items: { type: "array", items: obj({ product_id: str, slug: str, created_at: str }) }, limit: int })), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } },
+        post: { summary: "お気に入りに足す（on: true）・外す（on: false）。商品の id。200 個まで", security: member, parameters: [shopPath], requestBody: body(obj({ product_id: str, on: bool }, ["product_id", "on"])), responses: { 200: ok(obj({ ok: bool, product_id: str, favorite: bool })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), 409: err("favorites_full"), ...common, 404: err("not_found・module_disabled") } },
+      },
+      "/shops/{shop}/members/favorites/merge": { post: { summary: "連携サイトのブラウザに覚えたゲストのお気に入りを、ログインした会員へ移す（50 まで。見えない・重なる商品は捨てる）", security: member, parameters: [shopPath], requestBody: body(obj({ product_ids: { type: "array", items: str, maxItems: 50 } }, ["product_ids"])), responses: { 200: ok(obj({ ok: bool, merged: int })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } } },
       "/shops/{shop}/members/withdraw": { post: { summary: "退会する（会員の行を消す。注文は残る。取り消せない）", security: member, parameters: [shopPath], requestBody: body(obj({ confirm: { type: "boolean", enum: [true] } }, ["confirm"])), responses: { 200: ok(obj({ ok: bool })), 400: err("confirm_required"), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/password-login": {
         post: { summary: "パスワードでログイン（ショップがパスワードを使うときだけ）", parameters: [shopPath], requestBody: body(obj({ email: str, password: str }, ["email", "password"])), responses: { 200: ok(loggedIn), 401: err("invalid_password"), 409: err("password_disabled"), 429: err("locked"), ...common } },
@@ -457,6 +462,9 @@ const OPERATION_IDS: Record<string, string> = {
   "get /shops/{shop}/members/me": "getMember",
   "post /shops/{shop}/members/address": "saveMemberAddress",
   "post /shops/{shop}/members/marketing-consent": "setMemberMarketingConsent",
+  "get /shops/{shop}/members/favorites": "listMemberFavorites",
+  "post /shops/{shop}/members/favorites": "setMemberFavorite",
+  "post /shops/{shop}/members/favorites/merge": "mergeMemberFavorites",
   "post /shops/{shop}/members/withdraw": "withdrawMember",
   "post /shops/{shop}/members/password-login": "loginMemberWithPassword",
   "post /shops/{shop}/members/password": "setMemberPassword",
