@@ -29,7 +29,7 @@ import { formatDateTime } from "../../i18n/time";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
-import { articleFieldsReady } from "../../blog/fields";
+import { articleFieldsReady, blogFieldSort } from "../../blog/fields";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
@@ -815,7 +815,7 @@ storefront.get("/:shop/blogs/:blog", async (c: Ctx) => {
  */
 async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: string | null; pageNo: number }, categories: CategoryRow[], o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
   const { tag, pageNo } = q;
-  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog), withFields: articleFieldsReady(blog) });
+  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog), fieldSort: blogFieldSort(blog), withFields: articleFieldsReady(blog) });
   const path = blogPath(s.ctx.shopPath, blog.handle);
   const link = (n: number) => `${path}?${new URLSearchParams({ ...(tag ? { tag } : {}), ...(n > 1 ? { page: String(n) } : {}) }).toString()}`.replace(/\?$/, "");
   const newer = pageNo > 1 ? link(pageNo - 1) : null;

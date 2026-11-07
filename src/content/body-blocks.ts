@@ -32,7 +32,7 @@ import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
 import { BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
-import { articleFieldDefs, articleFieldsReady, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
+import { articleFieldDefs, articleFieldsReady, blogFieldSort, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
 import { moduleEnabled } from "../modules/registry";
 import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
@@ -154,7 +154,8 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
             if (!fields) return { block: { ...block, tag }, blog, items: [] as ArticleRow[] };
           }
           // 日付の項目の順・今日以降だけ（0124）。日付・日時の項目でなければ何も並べない
-          const fieldSort = block.fieldSort ? fieldSortOf(blog, block.fieldSort, block.from === "today") : null;
+          // ブロックに並べ方が無ければブログの並び順（日付の項目の順なら、その順と今日以降だけ）
+          const fieldSort = block.fieldSort ? fieldSortOf(blog, block.fieldSort, block.from === "today") : block.sort ? null : blogFieldSort(blog);
           if (block.fieldSort && !fieldSort) return { block: { ...block, tag }, blog, items: [] as ArticleRow[] };
           const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort), withFields: articleFieldsReady(blog), ...(fields ? { fields } : {}), ...(fieldSort ? { fieldSort } : {}) });
           // テーマ（snippets/page-articles）には置き換えた後のタグを渡す（「もっと見る」を /blogs/<ブログ>?tag=<商品> にできる）
@@ -201,7 +202,7 @@ async function storeArticles(d: BodyBlocksDeps, spec: string, storeIds: readonly
   const def = keyRaw ? storeDefs.find((f) => f.key === keyRaw) : storeDefs.length === 1 ? storeDefs[0] : undefined;
   if (!def) return null;
   // 日付の項目の順・今日以降だけ（sort=field:<key> from=today、0124）。日付・日時の項目でなければ添えない
-  const fieldSort = sort?.startsWith("field:") ? fieldSortOf(blog, sort.slice(6), fromToday) : null;
+  const fieldSort = sort?.startsWith("field:") ? fieldSortOf(blog, sort.slice(6), fromToday) : blogFieldSort(blog);
   if (sort?.startsWith("field:") && !fieldSort) return null;
   const rows = await d.sf.articlesForStores(d.shop, blog.id, def.key, storeIds, articleSortFor(blog, null), fieldSort);
   const byStore = new Map<string, ArticleRow[]>();

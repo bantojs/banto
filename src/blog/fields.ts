@@ -169,3 +169,10 @@ export function fieldSortQuery(fs: FieldSort): { order: string; where: { col: st
 export function fieldDateLabel(type: "date" | "datetime", v: string, format: (iso: string, opts?: { dateOnly?: boolean }) => string): string {
   return type === "date" ? format(`${v}T12:00:00Z`, { dateOnly: true }) : format(v);
 }
+
+/** ブログの並び順が日付の項目の順（0124、article_order = field:<キー>）なら、その並べ方（article_from_today なら今日以降だけ） */
+export function blogFieldSort(blog: { article_fields?: unknown; article_order?: unknown; article_from_today?: unknown }, now: number = Date.now()): FieldSort | null {
+  const o = blog.article_order;
+  if (typeof o !== "string" || !o.startsWith("field:")) return null;
+  return fieldSortOf(blog, o.slice(6), blog.article_from_today === true, now);
+}
