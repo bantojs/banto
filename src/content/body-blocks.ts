@@ -185,6 +185,35 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
   return { blocks, cards, ablocks, acards, apps, appCards, shopCards };
 }
 
+/**
+ * 実店舗に添える記事（`::: stores articles=<ブログ>[:<キー>]`）。記事の「実店舗」の項目（キーを省けばブログに 1 つだけあるもの）が店舗を指す記事を、
+ * 店舗の分まとめて 1 回で引き、店舗ごとに limit 本までのカード（既定の記事のカードの list）にする。店舗 id → HTML
+ */
+async function storeArticles(d: BodyBlocksDeps, spec: string, storeIds: readonly string[], limit: number): Promise<Map<string, string> | null> {
+  if (!moduleEnabled(d.shop.settings, BLOG_MODULE)) return null;
+  const [handle, keyRaw] = spec.split(":");
+  const blog = handle ? await d.sf.blogByHandle(d.shop, handle) : null;
+  if (!blog || !articleFieldsReady(blog)) return null;
+  const storeDefs = articleFieldDefs(blog).filter((f) => f.type === "store");
+  const def = keyRaw ? storeDefs.find((f) => f.key === keyRaw) : storeDefs.length === 1 ? storeDefs[0] : undefined;
+  if (!def) return null;
+  const rows = await d.sf.articlesForStores(d.shop, blog.id, def.key, storeIds, articleSortFor(blog, null));
+  const byStore = new Map<string, ArticleRow[]>();
+  for (const r of rows) {
+    const v = r.fields?.[def.key];
+    if (typeof v !== "string") continue;
+    const list = byStore.get(v) ?? [];
+    if (list.length < limit) list.push(r);
+    byStore.set(v, list);
+  }
+  const block: ArticlesBlock = { blog: blog.handle, tag: null, sort: null, limit, layout: "list", style: null };
+  const out = new Map<string, string>();
+  for (const [id, list] of byStore) {
+    out.set(id, defaultArticlesHtml(list.map((x) => ({ title: x.title, url: articlePath(d.shopPath, blog.handle, x.handle), image: x.image_url, date: formatDateTime(x.published_at ?? x.updated_at, { dateOnly: true }), summary: articleSummary(x, 80) })), block));
+  }
+  return out;
+}
+
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /**
@@ -232,13 +261,15 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     const today = todayHere();
     const list = (await d.sf.listStores(d.shop)).filter((st) => a["tryon"] !== "1" || st.tryon).map((st) => storeView(st, today));
     if (list.length === 0) return "";
+    const attached = a["articles"] ? await storeArticles(d, a["articles"], list.map((st) => st.id), Number(a["limit"] ?? "3")) : null;
     const card = (st: StoreView) => {
       const addr = st.address ? `<p class="banto-store__address">${st.postal_code ? `〒${esc(st.postal_code)} ` : ""}${esc(st.address)}</p>` : "";
       const tel = st.phone ? `<p class="banto-store__phone"><a href="tel:${esc(st.phone.replace(/[^0-9+]/g, ""))}">${esc(st.phone)}</a></p>` : "";
       const week = `<details class="banto-store__hours"><summary>${esc(t("tryon.hours"))}</summary><table><tbody>${st.week.map((w) => `<tr><th>${esc(w.day)}</th><td>${esc(w.text)}</td></tr>`).join("")}</tbody></table></details>`;
       const specials = st.specials.length ? `<ul class="banto-store__specials">${st.specials.map((x) => `<li>${esc(x.date)} ${esc(x.text)}</li>`).join("")}</ul>` : "";
       const note = st.note ? `<p class="banto-store__note">${esc(st.note)}</p>` : "";
-      return `<li class="banto-store"><p class="banto-store__name">${esc(st.name)}</p>${addr}${tel}<p class="banto-store__today">${esc(st.today)}</p>${week}${specials}${note}</li>`;
+      const arts = attached?.get(st.id) ?? "";
+      return `<li class="banto-store"><p class="banto-store__name">${esc(st.name)}</p>${addr}${tel}<p class="banto-store__today">${esc(st.today)}</p>${week}${specials}${note}${arts ? `<div class="banto-store__articles">${arts}</div>` : ""}</li>`;
     };
     return `<ul class="banto-stores banto-stores--${a["layout"] === "grid" ? "grid" : "list"}">${list.map(card).join("")}</ul>`;
   }

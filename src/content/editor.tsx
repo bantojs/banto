@@ -244,6 +244,9 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[], 
       fields: [
         { key: "tryon", label: t("blocks.stores_tryon"), type: "select", options: opt([["0", t("blocks.stores_all")], ["1", t("blocks.stores_tryon_only")]]), default: "0" },
         { key: "layout", label: t("blocks.layout"), type: "select", options: opt([["list", t("blocks.layout_list")], ["grid", t("blocks.layout_grid")]]), default: "list" },
+        // 店舗ごとに添える記事（記事の「実店舗」の項目で店舗を指す記事。ブログの URL の名前、項目が 2 つ以上なら :<キー>）
+        { key: "articles", label: t("blocks.stores_articles"), type: "text", pattern: "^[a-z0-9][a-z0-9-]{0,62}(:[a-z][a-z0-9_]{0,39})?$", placeholder: "events", help: t("blocks.stores_articles_help") },
+        { key: "limit", label: t("blocks.stores_articles_limit"), type: "select", options: opt(["1", "2", "3", "4", "5", "6"].map((n): [string, string] => [n, n])), default: "3" },
       ],
     },
     include: {

@@ -538,6 +538,26 @@ export class StorefrontData {
     return rows;
   }
 
+  /**
+   * 実店舗に添える記事（`::: stores articles=<ブログ>`）: 記事の「実店舗」の項目 key が、並べる店舗のどれかを指すもの。
+   * 店舗の分をまとめて 1 回（RLS・匿名の読み取り。会員限定の記事は入らない）。ブログの並び順で STORE_ARTICLES_MAX 本まで。短時間キャッシュ
+   */
+  async articlesForStores(shop: PublicShop, blogId: string, key: string, storeIds: readonly string[], sort: ArticleOrder | undefined): Promise<(ArticleRow & { fields?: Record<string, unknown> | null })[]> {
+    const ids = [...new Set(storeIds)].sort();
+    if (ids.length === 0 || !/^[a-z][a-z0-9_]{0,39}$/.test(key)) return [];
+    const cacheKey = `store-articles:${blogId}:${key}:${sort ?? ""}:${ids.join(",")}`;
+    const hit = await this.cache.get<(ArticleRow & { fields?: Record<string, unknown> | null })[]>(cacheKey);
+    if (hit) return hit;
+    const rows = await this.db.from<ArticleRow & { fields?: Record<string, unknown> | null }>("articles").select(`${ARTICLE_LIST_COLUMNS},fields`, {
+      eq: { shop_id: shop.id, blog_id: blogId, published: true },
+      in: { [`fields->>${key}`]: ids },
+      order: articleOrderParam(sort),
+      limit: STORE_ARTICLES_MAX,
+    });
+    await this.cache.set(cacheKey, rows, STOREFRONT_CACHE_TTL);
+    return rows;
+  }
+
   /** 記事 1 つ（公開中のものだけ、RLS） */
   async articleByHandle(shop: PublicShop, blogId: string, handle: string): Promise<ArticleRow | null> {
     if (this.reader) {
@@ -730,6 +750,8 @@ export interface ProductFacets {
 
 /** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */
 export const PRODUCT_PICK_MAX = 100;
+/** 実店舗に添える記事を 1 つのブロックで読む数（`::: stores articles=`。店舗ごとの数は limit） */
+export const STORE_ARTICLES_MAX = 300;
 export const PRODUCT_PICK_MIGRATION = "0112_product_pick";
 
 const summaryOf = (x: ListItem): ProductSummary => ({

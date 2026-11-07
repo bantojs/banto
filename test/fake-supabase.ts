@@ -850,7 +850,7 @@ export class FakeSupabase {
     const tree = u.searchParams.get("and");
     const logic = tree ? parseLogic(`and${tree}`) : null;
     const matches = (row: Row) =>
-      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(row[k]))) && containsFilters.every(([k, vs]) => vs.every((x) => ((row[k] as unknown[] | undefined) ?? []).includes(x))) && jsonFilters.every(([k, o]) => jsonContainsFake((row[k] ?? {}) as Record<string, unknown>, o)) && (!logic || evalLogic(logic, row));
+      filters.every(([k, v]) => (v === "\u0000null" ? row[k] === null : String(row[k]) === v)) && inFilters.every(([k, vs]) => vs.has(String(jsonPathValue(row, k)))) && containsFilters.every(([k, vs]) => vs.every((x) => ((row[k] as unknown[] | undefined) ?? []).includes(x))) && jsonFilters.every(([k, o]) => jsonContainsFake((row[k] ?? {}) as Record<string, unknown>, o)) && (!logic || evalLogic(logic, row));
 
     if (path.startsWith("rpc/")) {
       const fn = path.slice(4);
@@ -4369,6 +4369,15 @@ function evalLogic(l: Logic, row: Row): boolean {
 /** SKU の id（本物と同じ UUID の形。お店の画面は UUID でない SKU の id を DB に問い合わせない） */
 function fakeUuid(n: number): string {
   return `00000000-0000-4000-a000-${String(n).padStart(12, "0")}`;
+}
+
+/** 列の値。PostgREST の JSON の道 `fields->>store`（文字で取り出す）も読む（記事の項目で絞る、::: stores articles=） */
+function jsonPathValue(row: Row, k: string): unknown {
+  const m = /^([a-z_]+)->>([a-z][a-z0-9_]*)$/.exec(k);
+  if (!m) return row[k];
+  const o = row[m[1]!];
+  const v = o && typeof o === "object" ? (o as Row)[m[2]!] : undefined;
+  return v === undefined || v === null ? "\u0000none" : typeof v === "string" ? v : JSON.stringify(v);
 }
 
 /** PostgREST の in.(…) の中身。"…" で囲んだ値（\\ と \\" のエスケープ）と、囲まない値の両方を読む */
