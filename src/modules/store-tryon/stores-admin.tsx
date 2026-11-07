@@ -8,6 +8,10 @@ import { requireOwner } from "../../routes/admin/auth";
 import { myOrgs, type MyOrg } from "../../routes/admin/access";
 import { formatRanges, formatSpecialDays, parseRanges, parseSpecialDays, specialDays, todayHere, weekdayLabel, weeklyHours, type OrgStore, type StorePerm, type TimeRange } from "./index";
 import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, type RequestRow } from "./requests";
+import { migrated } from "../../db/migration-state";
+import { mediaBaseUrl } from "../../routes/common";
+import type { ProductField } from "../../products/fields";
+import { STORE_FIELDS_MIGRATION, formatStoreFieldRows, parseStoreFieldRows, storeFieldDefs, storeFieldsForDb, storeFieldsFromForm } from "../../stores/fields";
 
 /**
  * 組織の実店舗（0025 の stores。正本）と、実店舗のスタッフの画面（docs/store-tryon.md、docs/knowledge/11-organizations.md）。
@@ -47,6 +51,14 @@ async function storeAccess(c: AdminContext, storeId: string): Promise<{ store: O
   return mine ? { store, admin: false, perms: mine.perms } : null;
 }
 
+/** 組織の実店舗の独自項目の定義（0126。当たる前は null = 欄を出さない） */
+async function orgStoreFields(c: AdminContext, orgId: string): Promise<ProductField[] | null> {
+  const { db } = owner(c);
+  if (!(await migrated({ db, cache: c.get("adapters").cache }, STORE_FIELDS_MIGRATION).catch(() => false))) return null;
+  const row = await db.from<{ store_fields: unknown }>("organizations").selectOne("store_fields", { eq: { id: orgId } }).catch(() => null);
+  return storeFieldDefs(row?.store_fields);
+}
+
 function crumbs(here?: string): Crumb[] {
   return here ? [{ label: t("stores.title"), href: "/admin/stores" }, { label: here }] : [{ label: t("stores.title") }];
 }
@@ -58,6 +70,7 @@ storesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const org: MyOrg | undefined = adminOrgs.find((o) => o.org_id === c.req.query("org")) ?? adminOrgs[0];
   if (!org && mine.length === 0) return c.redirect("/admin?flash=forbidden");
   const stores = org ? await db.from<OrgStore>("stores").select("*", { eq: { org_id: org.org_id }, order: "sort_order.asc" }) : [];
+  const defs = org ? await orgStoreFields(c, org.org_id) : null;
   // まとめての登録の対象: owner / admin なら組織の店舗、スタッフなら hours の項目を持つ店舗
   const bulkTargets = org ? stores : mine.filter((s) => s.perms.includes("hours"));
   const bulkOrg = org?.org_id ?? bulkTargets[0]?.org_id;
@@ -111,6 +124,20 @@ storesAdmin.get("/", requireOwner, async (c: AdminContext) => {
               {t("tryon.store_new")}
             </a>
           </p>
+          {defs ? (
+            <details open={defs.length > 0}>
+              <summary>{t("stores.fields")}</summary>
+              <form method="post" action={`/admin/stores/fields?org=${org.org_id}`}>
+                <textarea name="rows" rows={6} style="width:100%" placeholder={"parking | 駐車場 | select | あり/なし\nbrands | 取扱ブランド | text\nmanager | 担当者 | text | | private"}>
+                  {formatStoreFieldRows(defs)}
+                </textarea>
+                <p class="muted">{t("stores.fields_help")}</p>
+                <p>
+                  <button type="submit">{t("tryon.save")}</button>
+                </p>
+              </form>
+            </details>
+          ) : null}
         </>
       ) : null}
 
@@ -172,7 +199,7 @@ storesAdmin.post("/special-days", requireOwner, async (c: AdminContext) => {
 });
 
 // ---------- 実店舗 ----------
-function StoreForm({ store, orgId, values, error, hoursOnly }: { store: OrgStore | null; orgId?: string; values?: Record<string, string | undefined>; error?: string; hoursOnly?: boolean }) {
+function StoreForm({ store, orgId, values, error, hoursOnly, defs }: { store: OrgStore | null; orgId?: string; values?: Record<string, string | undefined>; error?: string; hoursOnly?: boolean; defs?: ProductField[] | null }) {
   const hours = weeklyHours(store?.hours);
   const v = (k: string, fallback: string) => values?.[k] ?? fallback;
   const text = (name: string, label: MessageKey, value: string, max: number, type = "text") => (
@@ -225,6 +252,44 @@ function StoreForm({ store, orgId, values, error, hoursOnly }: { store: OrgStore
           </textarea>
           <label for="sort_order">{t("tryon.store_sort_order")}</label>
           <input id="sort_order" type="number" name="sort_order" value={v("sort_order", String(store?.sort_order ?? 0))} style="width:6rem" />
+          {defs ? (
+            <fieldset>
+              <legend>{t("stores.fields")}</legend>
+              <input type="hidden" name="fields_present" value="1" />
+              {defs.map((fd) => {
+                const id = `sf_${fd.key}`;
+                const cur = store?.fields?.[fd.key];
+                const val = v(id, typeof cur === "string" || typeof cur === "number" ? String(cur) : "");
+                return (
+                  <>
+                    <label for={id}>
+                      {fd.label}
+                      {fd.public ? null : <span class="muted"> {t("fields.private")}</span>}
+                    </label>
+                    {fd.type === "select" ? (
+                      <select id={id} name={id}>
+                        <option value="">-</option>
+                        {(fd.options ?? []).map((o) => (
+                          <option value={o} selected={o === val}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    ) : fd.type === "textarea" ? (
+                      <textarea id={id} name={id} rows={3}>
+                        {val}
+                      </textarea>
+                    ) : (
+                      <input id={id} name={id} value={val} type={fd.type === "number" ? "number" : fd.type === "url" ? "url" : "text"} step={fd.type === "number" ? "any" : undefined} placeholder={fd.type === "image" ? "/media/…" : undefined} />
+                    )}
+                  </>
+                );
+              })}
+              <label for="external_ref">{t("stores.external_ref")}</label>
+              <input id="external_ref" name="external_ref" value={v("external_ref", store?.external_ref ?? "")} maxlength={64} pattern="[A-Za-z0-9._:\-]{1,64}" />
+              <p class="muted">{t("stores.external_ref_help")}</p>
+            </fieldset>
+          ) : null}
         </>
       )}
       <p>
@@ -248,7 +313,7 @@ function hoursFromForm(f: Record<string, string | undefined>): { hours: Record<s
 }
 
 /** フォーム → 実店舗の行（owner / admin） */
-function storeFromForm(f: Record<string, string | undefined>): { row: Partial<OrgStore>; error: string | null } {
+function storeFromForm(f: Record<string, string | undefined>, defs: ProductField[] | null = null, mediaBase?: string): { row: Partial<OrgStore>; error: string | null } {
   const h = hoursFromForm(f);
   if (h.error) return { row: {}, error: h.error };
   const name = (f.name ?? "").trim().slice(0, 100);
@@ -270,18 +335,35 @@ function storeFromForm(f: Record<string, string | undefined>): { row: Partial<Or
       special_days: h.special_days,
       note: opt("note", 500),
       sort_order: Number.isInteger(sort) ? Math.max(-1000, Math.min(1000, sort)) : 0,
+      // 独自項目と外部コード（0126）。欄があったフォームからだけ
+      ...(defs && f.fields_present === "1" ? { fields: storeFieldsFromForm(defs, f, mediaBase), external_ref: (f.external_ref ?? "").trim() || null } : {}),
     },
     error: null,
   };
 }
 
+/** 実店舗の独自項目の定義（0126、組織の owner / admin。形は DB が確かめる） */
+storesAdmin.post("/fields", requireOwner, async (c: AdminContext) => {
+  const org = (await myOrgs(c)).find((o) => o.org_id === c.req.query("org") && o.role !== "member");
+  if (!org) return c.redirect("/admin?flash=forbidden");
+  const defs = parseStoreFieldRows((await formFields(c))["rows"] ?? "");
+  try {
+    await owner(c).db.rpc("store_fields_set", { p_org_id: org.org_id, p_defs: storeFieldsForDb(defs) });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`/admin/stores?org=${org.org_id}&flash=generic`);
+    throw e;
+  }
+  return c.redirect(`/admin/stores?org=${org.org_id}&flash=saved`);
+});
+
 storesAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   const org = (await myOrgs(c)).find((o) => o.org_id === c.req.query("org") && o.role !== "member");
   if (!org) return c.redirect("/admin?flash=forbidden");
+  const defs = await orgStoreFields(c, org.org_id);
   return c.html(
     <AdminLayout title={t("tryon.store_new")} nav crumbs={crumbs(t("tryon.store_new"))}>
       <PageHead title={t("tryon.store_new")} />
-      <StoreForm store={null} orgId={org.org_id} />
+      <StoreForm store={null} orgId={org.org_id} defs={defs} />
     </AdminLayout>,
   );
 });
@@ -290,12 +372,13 @@ storesAdmin.post("/", requireOwner, async (c: AdminContext) => {
   const org = (await myOrgs(c)).find((o) => o.org_id === c.req.query("org") && o.role !== "member");
   if (!org) return c.redirect("/admin?flash=forbidden");
   const f = await formFields(c);
-  const { row, error } = storeFromForm(f);
+  const defs = await orgStoreFields(c, org.org_id);
+  const { row, error } = storeFromForm(f, defs, mediaBaseUrl(c));
   if (error) {
     return c.html(
       <AdminLayout title={t("tryon.store_new")} nav crumbs={crumbs(t("tryon.store_new"))}>
         <PageHead title={t("tryon.store_new")} />
-        <StoreForm store={null} orgId={org.org_id} values={f} error={error} />
+        <StoreForm store={null} orgId={org.org_id} values={f} error={error} defs={defs} />
       </AdminLayout>,
       400,
     );
@@ -318,7 +401,7 @@ storesAdmin.get("/:storeId", requireOwner, async (c: AdminContext) => {
     <AdminLayout title={a.store.name} nav crumbs={crumbs(a.store.name)}>
       <PageHead title={a.store.name} />
       <Flash code={c.req.query("flash")} />
-      <StoreForm store={a.store} hoursOnly={!a.admin} />
+      <StoreForm store={a.store} hoursOnly={!a.admin} defs={a.admin ? await orgStoreFields(c, a.store.org_id) : null} />
     </AdminLayout>,
   );
 });
@@ -328,20 +411,28 @@ storesAdmin.post("/:storeId", requireOwner, async (c: AdminContext) => {
   if (!a || (!a.admin && !a.perms.includes("hours"))) return c.notFound();
   const f = await formFields(c);
   const back = `/admin/stores/${a.store.id}`;
+  const defs = a.admin ? await orgStoreFields(c, a.store.org_id) : null;
   const fail = (error: string) =>
     c.html(
       <AdminLayout title={a.store.name} nav crumbs={crumbs(a.store.name)}>
         <PageHead title={a.store.name} />
-        <StoreForm store={a.store} values={f} error={error} hoursOnly={!a.admin} />
+        <StoreForm store={a.store} values={f} error={error} hoursOnly={!a.admin} defs={defs} />
       </AdminLayout>,
       400,
     );
   const { db } = owner(c);
   try {
     if (a.admin) {
-      const { row, error } = storeFromForm(f);
+      const { row, error } = storeFromForm(f, defs, mediaBaseUrl(c));
       if (error) return fail(error);
-      await db.from<OrgStore>("stores").update({ ...row, updated_at: new Date().toISOString() } as Partial<OrgStore>, { id: a.store.id });
+      try {
+        await db.from<OrgStore>("stores").update({ ...row, updated_at: new Date().toISOString() } as Partial<OrgStore>, { id: a.store.id });
+      } catch (e) {
+        // 外部コードの重なり・項目の値の形（0126）
+        if (e instanceof DbError && e.code === "23505") return fail(t("stores.external_ref_taken"));
+        if (e instanceof DbError && /store_field_invalid/.test(e.message)) return fail(t("stores.field_invalid"));
+        throw e;
+      }
     } else {
       const h = hoursFromForm(f);
       if (h.error) return fail(h.error);

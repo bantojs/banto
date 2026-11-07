@@ -339,3 +339,14 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - 返すのは会員 ID・商品 ID・商品の URL の名前・足した日時だけです（個人情報が要るときは `customers:read` の会員の口で）。
 - **書き込みの口はありません**。お気に入りは本人の行為だけです。
 - データベースの更新 `0123_mod_favorites` が要ります。当たるまでは 409（`migration_required`）です。
+
+## 16. 実店舗の独自項目と外部コード（0126、メンテナの決定 2026-11-07）
+
+- スコープ `stores:write`（項目 `stores`）。社内のシステムが持つ店舗の情報（取扱ブランド・駐車場・イベントの案内のページなど）を、実店舗の独自項目（docs/store-tryon.md「店舗の独自項目と外部コード」）に写すための口です。
+- `GET /api/v1/stores`（`shop:read`）は、店舗ごとに `external_ref`・`fields`（非公開の項目も）・`field_defs`（定義）を返します。
+- `PATCH /api/v1/stores/{ref}`: `ref` は店舗の id か `ext:<外部コード>`。本文は `{ "fields": { "<キー>": 値 | null }, "external_ref": "S-001" | null }` だけです。`fields` は足し合わせで、`null` はその項目を消します。
+  - このトークンのショップが **使っている店舗** だけ（ほかは 404 `not_found`）。組織の店舗でも、ショップで使っていない店舗は書けません。
+  - 店舗名・住所・営業時間・ご案内などの決まった欄は書けません（400 `invalid_store_values`）。定義に無い鍵・形の違う値は 400 `store_field_invalid`、外部コードが組織の中で重なれば 409 `external_ref_taken`。
+- MCP は `store_update`（書き込み、`destructiveHint`）。
+- 発行できるのは、そのショップの「実店舗・お店で試着」（`stores`）の項目を持つ人だけです。
+- データベースの更新 `0126_store_fields` が要ります。当たるまでは 409（`migration_required`）で、トークンの発行の画面にもスコープを出しません。

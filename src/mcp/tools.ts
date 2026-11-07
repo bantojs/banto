@@ -327,6 +327,13 @@ export const MCP_TOOLS: McpTool[] = [
     run: (api) => api.storesList(),
   },
   {
+    name: "store_update",
+    description: "【書き込み】実店舗の独自項目の値と外部コード（社内システムの店舗コード）を書く（0126）。store は id か ext:<外部コード>。このショップで使っている店舗だけ。fields は渡した鍵だけ重ね、null で消す。店名・住所・営業時間は変えられない。スコープ stores:write。" + DATA_NOTE,
+    inputSchema: obj({ store: s("string", "実店舗の id か ext:<外部コード>"), fields: s("object", "独自項目の値（キーは組織の定義にあるもの）"), external_ref: s(["string", "null"], "外部コード（英数字と . _ : -、64 文字まで）。null で外す") }, ["store"]),
+    readOnly: false,
+    run: (api, a) => api.storeUpdate(str(a, "store", true)!, pick(a, ["fields", "external_ref"])),
+  },
+  {
     name: "tryon_requests_list",
     description: "お店で試着の申し込みの一覧（新しい順）。お客様の名前・メール・電話はトークンに orders:pii があるときだけ返る。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ status: s("string", "requested | sent | ready | purchased | not_purchased | expired | cancelled", { enum: ["requested", "sent", "ready", "purchased", "not_purchased", "expired", "cancelled"] }), store_id: s("string", "実店舗の id（stores_list）"), limit: s("integer"), offset: s("integer") }),

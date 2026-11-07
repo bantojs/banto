@@ -405,7 +405,7 @@ GET  /api/shops/<shop>/stores
 POST /api/shops/<shop>/tryon   { "cart": "<カートのトークン>", "store": "<店舗の id>", "visit_date": "2026-10-24", "customer_name": "...", "customer_email": "...", "customer_phone": "...", "note": "..." }
 ```
 
-- `/stores` は、このショップで使う実店舗（住所・電話・ご案内・`hours`（曜日ごと、キーは 0 = 日曜）・`special_days`・表示用の `week`・`today`（`open`・`hours`・`text`）・`specials`）と、試着の設定（`tryon.mode`・`max_items`・`hold_days`・`notice`）を返します。店舗のメールアドレスは返しません。
+- `/stores` は、このショップで使う実店舗（住所・電話・ご案内・`hours`（曜日ごと、キーは 0 = 日曜）・`special_days`・表示用の `week`・`today`（`open`・`hours`・`text`）・`specials`）と、試着の設定（`tryon.mode`・`max_items`・`hold_days`・`notice`）を返します。店舗のメールアドレスは返しません。実店舗の独自項目（0126）は `fields`（公開の項目だけ、`key`・`label`・`type`・`value` の配列。外部コードは返しません）。
   - `tryon: false` の店舗は案内だけ（試着は受けません）。
   - 来店日を選ぶ形（`mode: "visit"`）のときは、試着を受ける店舗ごとに選べる日（`visit_dates`。定休日・臨時休業を除く）が付きます。
 - `/tryon` はカート API のトークンの中身を申し込みます。在庫はこの時点で減ります。応答は `201 { "number": 受付番号, "store": {…}, "visit_date", "cart": "<商品を外したトークン>", "member" }`。クーポンはカートに残します。

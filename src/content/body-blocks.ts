@@ -39,6 +39,7 @@ import { t } from "../i18n";
 import { yen } from "../routes/common";
 import { productPartsOf, shopBlocksOf, type ShopBlock } from "../pages/shop-blocks";
 import { storeView, todayHere } from "../modules/store-tryon";
+import { storeFieldView } from "../stores/fields";
 import type { StoreView } from "../themes/types";
 import { productFields } from "../products/fields";
 import { shopImageUrl } from "../pages/markdown";
@@ -191,6 +192,14 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
   return { blocks, cards, ablocks, acards, apps, appCards, shopCards };
 }
 
+/** 実店舗の独自項目の行（dl。画像は <img>） */
+function storeFieldsHtml(items: { key: string; label: string; type: string; value: string | number }[], mediaBase: string): string {
+  if (items.length === 0) return "";
+  const dd = (x: (typeof items)[number]) =>
+    x.type === "image" ? `<img src="${esc(shopImageUrl(String(x.value), mediaBase) ?? "")}" alt="${esc(x.label)}" loading="lazy">` : x.type === "url" ? `<a href="${esc(String(x.value))}" rel="noopener">${esc(String(x.value))}</a>` : esc(String(x.value));
+  return `<dl class="banto-store__fields">${items.map((x) => `<div class="banto-store__field banto-store__field--${esc(x.key)}"><dt>${esc(x.label)}</dt><dd>${dd(x)}</dd></div>`).join("")}</dl>`;
+}
+
 /**
  * 実店舗に添える記事（`::: stores articles=<ブログ>[:<キー>]`）。記事の「実店舗」の項目（キーを省けばブログに 1 つだけあるもの）が店舗を指す記事を、
  * 店舗の分まとめて 1 回で引き、店舗ごとに limit 本までのカード（既定の記事のカードの list）にする。店舗 id → HTML
@@ -268,7 +277,9 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
   if (b.kind === "stores") {
     // ショップで使う実店舗（shop_store_list、キャッシュ済み）。tryon=1 ならお店で試着を受ける店舗だけ
     const today = todayHere();
-    const list = (await d.sf.listStores(d.shop)).filter((st) => a["tryon"] !== "1" || st.tryon).map((st) => storeView(st, today));
+    const rows = (await d.sf.listStores(d.shop)).filter((st) => a["tryon"] !== "1" || st.tryon);
+    const storeRows = new Map(rows.map((st) => [st.id, st]));
+    const list = rows.map((st) => storeView(st, today));
     if (list.length === 0) return "";
     const attached = a["articles"] ? await storeArticles(d, a["articles"], list.map((st) => st.id), Number(a["limit"] ?? "3"), a["sort"] ?? null, a["from"] === "today", a["until"]?.slice(6) ?? null) : null;
     const card = (st: StoreView) => {
@@ -277,8 +288,12 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
       const week = `<details class="banto-store__hours"><summary>${esc(t("tryon.hours"))}</summary><table><tbody>${st.week.map((w) => `<tr><th>${esc(w.day)}</th><td>${esc(w.text)}</td></tr>`).join("")}</tbody></table></details>`;
       const specials = st.specials.length ? `<ul class="banto-store__specials">${st.specials.map((x) => `<li>${esc(x.date)} ${esc(x.text)}</li>`).join("")}</ul>` : "";
       const note = st.note ? `<p class="banto-store__note">${esc(st.note)}</p>` : "";
+      // 実店舗の独自項目（0126。show=field:<key> で選んだ公開の項目だけ、選んだ順）
+      const show = a["show"] ? a["show"].split(",").map((x) => x.slice(6)) : null;
+      const raw = show ? storeRows.get(st.id) : undefined;
+      const fieldsHtml = show && raw ? storeFieldsHtml(storeFieldView(raw.field_defs, raw.fields, show), d.mediaBaseUrl) : "";
       const arts = attached?.get(st.id) ?? "";
-      return `<li class="banto-store"><p class="banto-store__name">${esc(st.name)}</p>${addr}${tel}<p class="banto-store__today">${esc(st.today)}</p>${week}${specials}${note}${arts ? `<div class="banto-store__articles">${arts}</div>` : ""}</li>`;
+      return `<li class="banto-store"><p class="banto-store__name">${esc(st.name)}</p>${addr}${tel}<p class="banto-store__today">${esc(st.today)}</p>${week}${specials}${note}${fieldsHtml}${arts ? `<div class="banto-store__articles">${arts}</div>` : ""}</li>`;
     };
     return `<ul class="banto-stores banto-stores--${a["layout"] === "grid" ? "grid" : "list"}">${list.map(card).join("")}</ul>`;
   }
