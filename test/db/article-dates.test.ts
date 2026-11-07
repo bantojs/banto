@@ -60,4 +60,16 @@ describe.skipIf(!dbAvailable)("記事の日付の項目（0124）", () => {
     expect(r).toMatchObject({ article_order: "field:opens", article_from_today: false });
     expect(await expectDbError(() => asService((c) => c.query("select api_blog_update($1, 'events', $2)", [h, JSON.stringify({ article_from_today: "yes" })])))).toMatch(/invalid_article_from_today/);
   });
+
+  it("0125 いつまで出すか: 終了日があればその値で、無ければ並び順の項目で今日以降を決める。終了日の項目は日付・日時だけ", async () => {
+    await q("update blogs set article_order = 'new', article_fields = $2 where id = $1", [blog, JSON.stringify([{ key: "starts", label: "開催日", type: "date" }, { key: "opens", label: "開場", type: "datetime" }, { key: "ends", label: "終了日", type: "date" }])]);
+    await add("run", { starts: "2026-11-10", ends: "2026-11-30" }, 6);
+    const page = async (untilKey: string | null, untilFrom: string | null) =>
+      (await asService(async (c) => (await c.query<{ r: { handle: string }[] }>("select articles_member_page($1, $2, 0, 12, null, $3, 0, $4, 'field:starts', null, '2026-11-15', $5, $6) as r", [f.shopId, blog, cid, sid, untilKey, untilFrom])).rows[0]!.r)).map((x) => x.handle);
+    expect(await page(null, null)).toEqual(["a", "e1"]);
+    expect(await page("ends", "2026-11-15")).toEqual(["run", "a", "e1"]);
+    expect(await expectDbError(() => page("ends", null))).toMatch(/invalid_until/);
+    expect(await expectDbError(() => q("update blogs set article_until = 'nothing' where id = $1", [blog]))).toMatch(/invalid_article_until/);
+    await q("update blogs set article_until = 'ends' where id = $1", [blog]);
+  });
 });

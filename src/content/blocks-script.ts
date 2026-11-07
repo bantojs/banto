@@ -952,11 +952,12 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     box.setAttribute("data-blog",d.blog); box.setAttribute("data-tag",d.tag); box.setAttribute("data-limit",String(d.limit)); box.setAttribute("data-layout",d.layout);
     if(d.sort) box.setAttribute("data-sort",d.sort); else box.removeAttribute("data-sort");
     if(d.from&&FSORT.test(d.sort||"")) box.setAttribute("data-from",d.from); else box.removeAttribute("data-from");
+    if(d.until&&d.from&&FSORT.test(d.sort||"")&&FSORT.test(d.until)) box.setAttribute("data-until",d.until); else box.removeAttribute("data-until");
     if(d.field) box.setAttribute("data-field",d.field); else box.removeAttribute("data-field");
     if(d.style) box.setAttribute("data-style",d.style); else box.removeAttribute("data-style");
     box.textContent=articlesText(d)+(d.field?" \u30fb "+d.field:"");
   }
-  Array.prototype.forEach.call(ed.querySelectorAll("[data-banto-block=articles]"),function(b){ setArticlesBox(b,{blog:b.getAttribute("data-blog")||"",tag:b.getAttribute("data-tag")||"",limit:parseInt(b.getAttribute("data-limit")||"3",10)||3,layout:b.getAttribute("data-layout")==="list"?"list":"grid",sort:okSort(b.getAttribute("data-sort"))?b.getAttribute("data-sort"):"",from:b.getAttribute("data-from")==="today"?"today":"",field:b.getAttribute("data-field")||"",style:b.getAttribute("data-style")||""}); });
+  Array.prototype.forEach.call(ed.querySelectorAll("[data-banto-block=articles]"),function(b){ setArticlesBox(b,{blog:b.getAttribute("data-blog")||"",tag:b.getAttribute("data-tag")||"",limit:parseInt(b.getAttribute("data-limit")||"3",10)||3,layout:b.getAttribute("data-layout")==="list"?"list":"grid",sort:okSort(b.getAttribute("data-sort"))?b.getAttribute("data-sort"):"",from:b.getAttribute("data-from")==="today"?"today":"",until:b.getAttribute("data-until")||"",field:b.getAttribute("data-field")||"",style:b.getAttribute("data-style")||""}); });
   function openArticles(box,blk){
     if(!adlg||!adlg.showModal){ window.alert(T("articles-none")); return; }
     if(!box&&ed.querySelectorAll("[data-banto-block=articles]").length>=2){ window.alert(T("articles-max")); if(blk){ caretIn(blk); select(blk); } return; }
@@ -965,6 +966,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(f.elements.sort) f.elements.sort.value=ASORT[g("sort","")]?g("sort",""):"";
     if(f.elements.fsort) f.elements.fsort.value=FSORT.test(g("sort",""))?g("sort","").slice(6):"";
     if(f.elements.from) f.elements.from.checked=g("from","")==="today";
+    if(f.elements.funtil) f.elements.funtil.value=FSORT.test(g("until",""))?g("until","").slice(6):"";
     if(f.elements.field) f.elements.field.value=g("field","");
     fillStyle(f.elements.style,"articles",g("style",""));
     adlg.returnValue="";
@@ -972,7 +974,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       adlg.removeEventListener("close",done);
       if(adlg.returnValue!=="ok"){ if(blk){ caretIn(blk); select(blk); } return; }
       var n=parseInt(f.elements.limit.value,10);
-      var d={blog:/^[a-z0-9][a-z0-9-]{0,63}$/.test(f.elements.blog.value)?f.elements.blog.value:"",tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=12)?n:3,layout:f.elements.layout.value==="list"?"list":"grid",sort:f.elements.fsort&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.fsort.value||"").trim())?"field:"+String(f.elements.fsort.value).trim():(f.elements.sort&&ASORT[f.elements.sort.value]?f.elements.sort.value:""),from:f.elements.from&&f.elements.from.checked?"today":"",field:f.elements.field&&/^[a-z][a-z0-9_]{0,39}=[^"\n\r]{1,100}$/.test(String(f.elements.field.value||"").trim())?String(f.elements.field.value).trim():"",style:styleVal(f.elements.style)};
+      var d={blog:/^[a-z0-9][a-z0-9-]{0,63}$/.test(f.elements.blog.value)?f.elements.blog.value:"",tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=12)?n:3,layout:f.elements.layout.value==="list"?"list":"grid",sort:f.elements.fsort&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.fsort.value||"").trim())?"field:"+String(f.elements.fsort.value).trim():(f.elements.sort&&ASORT[f.elements.sort.value]?f.elements.sort.value:""),from:f.elements.from&&f.elements.from.checked?"today":"",until:f.elements.funtil&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.funtil.value||"").trim())?"field:"+String(f.elements.funtil.value).trim():"",field:f.elements.field&&/^[a-z][a-z0-9_]{0,39}=[^"\n\r]{1,100}$/.test(String(f.elements.field.value||"").trim())?String(f.elements.field.value).trim():"",style:styleVal(f.elements.style)};
       if(!d.blog) return;
       if(box){ setArticlesBox(box,d); mark(); select(box); }
       else { var nb=document.createElement("div"); setArticlesBox(nb,d); place2(nb,blk); }

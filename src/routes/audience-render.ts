@@ -111,9 +111,9 @@ export function memberReader(c: Ctx, shopId: string, member: { cid: string; ep: 
     article: (blogId, handle) => db.contentMemberRpc("article_member_get", { ...who, p_blog_id: blogId, p_handle: handle }),
     // p_sort は 0116 から（sort があるのは 0116 の DB だけ。articleSortFor）
     // p_fields は 0117 から（fields があるのは 0117 の DB だけ。src/blog/fields.ts）
-    // 日付の項目の順（0124）は p_sort = field:<key>・p_field_from（日付の項目は 0124 の DB にしか無いので、渡すのは当たっている DB だけ）
+    // 日付の項目の順（0124）は p_sort = field:<key>・p_field_from、いつまで出すか（0125）は p_until_key・p_until_from（どれも当たっている DB でしか作られない）
     articles: (blogId, offset, limit, tag, sort, fields, fieldSort) =>
-      db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...(fieldSort ? { p_sort: `field:${fieldSort.key}`, ...(fieldSort.from ? { p_field_from: fieldSort.from } : {}) } : sort ? { p_sort: sort } : {}), ...(fields ? { p_fields: fields } : {}) }),
+      db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...(fieldSort ? { p_sort: `field:${fieldSort.key}`, ...(fieldSort.from ? { p_field_from: fieldSort.from } : {}), ...(fieldSort.until ? { p_until_key: fieldSort.until.key, p_until_from: fieldSort.until.from } : {}) } : sort ? { p_sort: sort } : {}), ...(fields ? { p_fields: fields } : {}) }),
   };
 }
 

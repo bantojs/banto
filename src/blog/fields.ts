@@ -6,6 +6,7 @@
 
 import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone, zonedInputToIso } from "../i18n/time";
+import type { Filter } from "../db/client";
 
 export const ARTICLE_FIELDS_MIGRATION = "0117_article_fields";
 /** 画像の種類（0120、メンテナの決定 2026-11-05）。当てるまで定義に書かせない */
@@ -146,23 +147,41 @@ export function fieldContains(def: ArticleFieldDef, value: string): Record<strin
 export interface FieldSort {
   key: string;
   from: string | null;
+  /** いつまで出すかの項目（終了日、0125）。値のある記事はこの項目で、無い記事は key で「今日以降」を決める（from があるときだけ） */
+  until?: { key: string; from: string } | null;
 }
+/** ブログの並び順を日付の項目の順に・いつまで出すかの項目（0125）。当てるまで出さない */
+export const BLOG_DATE_ORDER_MIGRATION = "0125_blog_date_order";
 
 /** ブログの定義に日付・日時の項目 key があれば並べ方を作る（無ければ null = 何も並べない）。今日はデプロイの時間帯で決める */
-export function fieldSortOf(blog: { article_fields?: unknown }, key: string, fromToday: boolean, now: number = Date.now()): FieldSort | null {
-  const def = articleFieldDefs(blog).find((f) => f.key === key);
-  if (!def || (def.type !== "date" && def.type !== "datetime")) return null;
+export function fieldSortOf(blog: { article_fields?: unknown }, key: string, fromToday: boolean, now: number = Date.now(), untilKey: string | null = null): FieldSort | null {
+  const defs = articleFieldDefs(blog);
+  const isDate = (k: string) => defs.find((f) => f.key === k && (f.type === "date" || f.type === "datetime"));
+  const def = isDate(key);
+  if (!def) return null;
   if (!fromToday) return { key, from: null };
-  // 今日（デプロイの時間帯の YYYY-MM-DD。en-CA はこの並びで出る）
+  const from = todayBound(def.type as "date" | "datetime", now);
+  const u = untilKey && untilKey !== key ? isDate(untilKey) : undefined;
+  return { key, from, ...(u && from ? { until: { key: u.key, from: todayBound(u.type as "date" | "datetime", now)! } } : {}) };
+}
+
+/** 今日の下限: date は今日の日付（デプロイの時間帯の YYYY-MM-DD。en-CA はこの並び）、datetime は今日の 0 時の UTC の日時 */
+function todayBound(type: "date" | "datetime", now: number): string | null {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: getTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-  if (def.type === "date") return { key, from: today };
+  if (type === "date") return today;
   const start = zonedInputToIso(`${today}T00:00`);
-  return { key, from: start ? `${new Date(start).toISOString().slice(0, 19)}Z` : null };
+  return start ? `${new Date(start).toISOString().slice(0, 19)}Z` : null;
 }
 
 /** PostgREST の order と絞り込み（articles_member_page と同じ並び: その値の早い順、値の無い記事は後ろ、同じなら新しい順） */
-export function fieldSortQuery(fs: FieldSort): { order: string; where: { col: string; op: "gte"; value: string }[] } {
-  return { order: `fields->>${fs.key}.asc.nullslast,published_at.desc,id.desc`, where: fs.from ? [{ col: `fields->>${fs.key}`, op: "gte", value: fs.from }] : [] };
+export function fieldSortQuery(fs: FieldSort): { order: string; where: Filter[] } {
+  const order = `fields->>${fs.key}.asc.nullslast,published_at.desc,id.desc`;
+  if (!fs.from) return { order, where: [] };
+  const byKey: Filter = { col: `fields->>${fs.key}`, op: "gte", value: fs.from };
+  if (!fs.until) return { order, where: [byKey] };
+  // 終了日があればその日付で、無ければ並び順の項目で（articles_member_page と同じ）
+  const u = `fields->>${fs.until.key}`;
+  return { order, where: [{ or: [{ col: u, op: "gte", value: fs.until.from }, { and: [{ col: u, op: "is", value: null }, byKey] }] }] };
 }
 
 /** 日付・日時の値の見せ方（日付は時間帯でずらさない） */
@@ -171,8 +190,8 @@ export function fieldDateLabel(type: "date" | "datetime", v: string, format: (is
 }
 
 /** ブログの並び順が日付の項目の順（0124、article_order = field:<キー>）なら、その並べ方（article_from_today なら今日以降だけ） */
-export function blogFieldSort(blog: { article_fields?: unknown; article_order?: unknown; article_from_today?: unknown }, now: number = Date.now()): FieldSort | null {
+export function blogFieldSort(blog: { article_fields?: unknown; article_order?: unknown; article_from_today?: unknown; article_until?: unknown }, now: number = Date.now()): FieldSort | null {
   const o = blog.article_order;
   if (typeof o !== "string" || !o.startsWith("field:")) return null;
-  return fieldSortOf(blog, o.slice(6), blog.article_from_today === true, now);
+  return fieldSortOf(blog, o.slice(6), blog.article_from_today === true, now, typeof blog.article_until === "string" ? blog.article_until : null);
 }

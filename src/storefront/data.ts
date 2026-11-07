@@ -511,7 +511,7 @@ export class StorefrontData {
       return { items: list.slice(0, opts.limit), hasNext: list.length > opts.limit };
     }
     const fs = opts.fieldSort ? fieldSortQuery(opts.fieldSort) : null;
-    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}:${opts.fields ? JSON.stringify(opts.fields) : ""}:${opts.withFields ? 1 : 0}:${opts.fieldSort ? `${opts.fieldSort.key}>${opts.fieldSort.from ?? ""}` : ""}`;
+    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}:${opts.fields ? JSON.stringify(opts.fields) : ""}:${opts.withFields ? 1 : 0}:${opts.fieldSort ? `${opts.fieldSort.key}>${opts.fieldSort.from ?? ""}>${opts.fieldSort.until ? `${opts.fieldSort.until.key}>${opts.fieldSort.until.from}` : ""}` : ""}`;
     const hit = await this.cache.get<{ items: ArticleRow[]; hasNext: boolean }>(key);
     if (hit) return hit;
     // 項目（0117）は当たっている DB だけで読む・絞る（withFields はブログの行に定義の列があるとき）
@@ -550,7 +550,7 @@ export class StorefrontData {
     const ids = [...new Set(storeIds)].sort();
     if (ids.length === 0 || !/^[a-z][a-z0-9_]{0,39}$/.test(key)) return [];
     const fs = fieldSort ? fieldSortQuery(fieldSort) : null;
-    const cacheKey = `store-articles:${blogId}:${key}:${sort ?? ""}:${fieldSort ? `${fieldSort.key}>${fieldSort.from ?? ""}` : ""}:${ids.join(",")}`;
+    const cacheKey = `store-articles:${blogId}:${key}:${sort ?? ""}:${fieldSort ? `${fieldSort.key}>${fieldSort.from ?? ""}>${fieldSort.until ? `${fieldSort.until.key}>${fieldSort.until.from}` : ""}` : ""}:${ids.join(",")}`;
     const hit = await this.cache.get<(ArticleRow & { fields?: Record<string, unknown> | null })[]>(cacheKey);
     if (hit) return hit;
     const rows = await this.db.from<ArticleRow & { fields?: Record<string, unknown> | null }>("articles").select(`${ARTICLE_LIST_COLUMNS},fields`, {

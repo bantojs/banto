@@ -1590,6 +1590,15 @@ export class FakeSupabase {
         return typeof v === "string" ? v : null;
       };
       const from = args["p_field_from"] as string | undefined;
+      // 0125: いつまで出すかの項目（値があればその値で、無ければ並び順の項目で今日以降を決める）
+      if ("p_until_key" in args && !this.appliedMigrations.includes("0125_blog_date_order")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
+      const ukey = args["p_until_key"] as string | undefined;
+      const ufrom = args["p_until_from"] as string | undefined;
+      const live = (a: Row): boolean => {
+        const u = ukey ? ((a["fields"] ?? {}) as Row)[ukey] : undefined;
+        if (ukey && typeof u === "string") return u >= String(ufrom);
+        return fv(a) !== null && (fv(a) ?? "") >= String(from);
+      };
       const fcmp = (x: Row, y: Row) => {
         const a = fv(x), b = fv(y);
         if (a === b) return newer(x, y);
@@ -1597,7 +1606,7 @@ export class FakeSupabase {
         if (b === null) return -1;
         return a < b ? -1 : 1;
       };
-      const list = arts.filter((a) => (!tag || ((a["tags"] ?? []) as string[]).includes(tag)) && (!pf || jsonContainsFake(a["fields"] ?? {}, pf)) && (!from || ((fv(a) ?? "") >= from && fv(a) !== null))).sort(fkey ? fcmp : cmp);
+      const list = arts.filter((a) => (!tag || ((a["tags"] ?? []) as string[]).includes(tag)) && (!pf || jsonContainsFake(a["fields"] ?? {}, pf)) && (!from || live(a))).sort(fkey ? fcmp : cmp);
       return json(list.slice(Number(args["p_offset"] ?? 0), Number(args["p_offset"] ?? 0) + Number(args["p_limit"] ?? 12) + 1));
     }
     if (fn === "product_public_member_prices") {
