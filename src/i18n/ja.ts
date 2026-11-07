@@ -2150,6 +2150,7 @@ export const ja = {
   "blog.order_until": "いつまで出すかの項目（今日以降だけのとき）",
   "blog.order_until_none": "並び順の項目のまま",
   "blog.order_until_help": "何日も続くイベントは終了日の項目を選ぶと、終了日まで一覧に出ます。終了日の無い記事は並び順の項目で決めます。",
+  "blog.fields_used_by_order": "並び順か「いつまで出すかの項目」に使っている日付の項目です。先にブログの並び順を変えてから消してください",
   "blog.feed_on": "フィード（RSS・Atom）を出す",
   "blog.feed_help": "スタッフ紹介のような、お知らせではないブログは外せます。外すと /blogs/…/feed.atom は無くなり、ページにも載せません。",
   "blog.order_manual_help": "「順」の小さい記事から並びます（同じ数なら新しい順）。数を書き換えて「並び順を保存」を押してください。",

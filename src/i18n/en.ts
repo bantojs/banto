@@ -2143,6 +2143,7 @@ export const en: Record<MessageKey, string> = {
   "blog.order_until": "Field that decides until when (with \"from today on\")",
   "blog.order_until_none": "Same as the order field",
   "blog.order_until_help": "For events that run several days, choose the end date field to keep them listed until they end. Articles without an end date use the order field.",
+  "blog.fields_used_by_order": "This date field is used by the article order or \"until when\". Change the blog's order first, then remove it",
   "blog.feed_on": "Publish a feed (RSS / Atom)",
   "blog.feed_help": "Turn this off for blogs that are not news, such as staff profiles. Without it, /blogs/…/feed.atom is gone and pages do not link it.",
   "blog.order_manual_help": "Articles with a smaller \"Order\" come first (ties are newest first). Change the numbers and press \"Save order\".",
