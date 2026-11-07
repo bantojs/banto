@@ -300,6 +300,8 @@ v1.post("/inquiries/:number{[0-9]+}/status", async (c) =>
     .catch((e) => errorJson(c, e)),
 );
 
+// 実店舗の独自項目の値と外部コード（0126、stores:write）。:ref は id か ext:<外部コード>
+v1.patch("/stores/:ref", async (c) => body(c).then((b) => api(c).storeUpdate(c.req.param("ref"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/stores", async (c) => api(c).storesList().then((r) => c.json({ stores: r })).catch((e) => errorJson(c, e)));
 v1.get("/tryon-requests", async (c) =>
   api(c)

@@ -84,6 +84,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "size_chart_set", // 0095: 採寸表の 1 つの段を置き換える（中で catalog の項目を確かめる）
   "page_layouts_set", // 0101: 固定ページをトップ・記事のひな形に割り当てる（中で content の項目とショップのページ・ブログかを確かめる）
   "hook_storefront_events_set", // 0107: 連携ごとにお店の行動を渡す許し（中で integrations の項目・マニフェストの範囲を確かめ、監査ログに残す）
+  "store_fields_set", // 0126: 実店舗の独自項目の定義（中で組織の owner / admin かを確かめる）
   "product_favorite_counts", // 0123: 商品ごとのお気に入りの人数だけ（中で catalog か customers の項目を確かめる。だれかは返さない）
   "order_annotate", // 0106: 注文の印と社内のメモを書く（中で orders の項目とショップの注文かを確かめる）
   "line_marketing_usage", // 0105: LINE の宣伝のメッセージの今月の数と上限（中で marketing の項目を確かめる）
@@ -138,6 +139,8 @@ const REQUIRED_TRIGGERS = [
   ["shops", "shops_theme_guard"], // 0071: 公開中のテーマは theme_publish だけが変える
   ["theme_versions", "theme_versions_plan_limit"], // 0073: テーマの版の数のプランの上限
   ["customer_favorites", "customer_favorites_guard"], // 0123: お気に入りは 1 人 200 個まで
+  ["organizations", "organizations_store_fields"], // 0126: 実店舗の独自項目の定義の形
+  ["stores", "stores_fields_norm"], // 0126: 実店舗の独自項目の値は定義にある鍵だけ・形を整える
   ["pages", "pages_plan_limit"], ["pages", "pages_shop_limit"], ["articles", "articles_plan_limit"], ["articles", "articles_shop_limit"], ["articles", "articles_shape"], ["blogs", "blogs_shop_limit"], // 0081: ブログと記事
   // 0079: ページの数のプランの上限と 1 ショップの上限
   // 0075: SKU・商品の画像・在庫を変えたときの product.updated（連携サイトのキャッシュの入れ替え）

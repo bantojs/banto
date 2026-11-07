@@ -59,6 +59,8 @@ function storeJson(st: StoreRow, today: string, visit: string[] | null) {
     phone: st.phone,
     note: st.note,
     tryon: st.tryon,
+    /** 公開の独自項目（0126。{ key, label, type, value }、定義の順） */
+    ...(v.fields ? { fields: v.fields } : {}),
     /** 曜日ごとの営業時間（キーは曜日、0 = 日曜。空の配列は定休日） */
     hours: st.hours,
     special_days: st.special_days,

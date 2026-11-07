@@ -27,6 +27,7 @@ export const API_SCOPES = [
   "app_data:write",
   "line:send",
   "dialogs:write",
+  "stores:write",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -37,7 +38,7 @@ export const DEFAULT_SCOPES: readonly ApiScope[] = ["products:read", "orders:rea
  * スコープに対応する、ショップの権限の項目（0028 の banto_scope_perm と同じ。判定は DB が行い、ここは画面の出し分け用）。
  * 発行者がその項目を持たないスコープは付けられず、項目を外すとそのスコープだけ効かなくなる。shop:read は発行できる人なら誰でも。
  */
-export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support" | "design" | "content" | "apps"> = {
+export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "integrations" | "settings" | "reports" | "marketing" | "support" | "design" | "content" | "apps" | "stores"> = {
   "products:read": "catalog",
   "products:write": "catalog",
   "orders:read": "orders",
@@ -59,10 +60,11 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "app_data:write": "apps",
   "line:send": "marketing",
   "dialogs:write": "marketing",
+  "stores:write": "stores",
 };
 
 /** 当てるまで出さないスコープ（そのマイグレーションが DB の api_tokens_scopes_valid に足す） */
-export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = {};
+export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = { "stores:write": "0126_store_fields" };
 
 /** 発行できるスコープ（DB がまだ受け付けないものを除く。発行の画面・つなぐ画面） */
 export async function issuableScopes(isMigrated: (version: string) => Promise<boolean>): Promise<ApiScope[]> {

@@ -334,6 +334,8 @@ export interface StoreView {
   today: string;
   /** 近い臨時休業・臨時営業（日付の表示・内容） */
   specials: { date: string; text: string }[];
+  /** 公開の独自項目（0126。表示名つき、定義の順。private は入らない） */
+  fields?: { key: string; label: string; type: string; value: string | number }[];
 }
 
 export interface TryonFormValues {

@@ -58,6 +58,7 @@ const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "app_data:write": "tokens.scope.app_data_write",
   "line:send": "tokens.scope.line_send",
   "dialogs:write": "tokens.scope.dialogs_write",
+  "stores:write": "tokens.scope.stores_write",
 };
 
 /** 発行できるスコープ（当てるまで出さないものを除く。0111 の dialogs:write など） */

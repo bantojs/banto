@@ -113,6 +113,11 @@ function mapRpcError(e: unknown): never {
       if (/article_fields_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `article_fields_invalid${key ? `:${key}` : ""}: up to 20 { key, label, type: text | number | select | store | product | article | image | date | datetime, options (select), blog (article: a blog of this shop), multiple (product / article) } (see docs/blog.md)`, 400);
       throw new ApiError("invalid", `article_field_invalid${key ? `:${key}` : ""}: the value does not fit the blog's field (a select option, a number, a store this shop uses, or URL names of products / articles that exist)`, 400);
     }
+    // 実店舗（0126）
+    if (e.is("invalid_store_values")) throw new ApiError("invalid", "invalid_store_values: a store takes only fields and external_ref (name, address, hours… are changed in the admin screen)", 400);
+    if (/store_field_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `${e.dbMessage.replace(/^.*?(store_field_invalid(:[a-z0-9_]+)?).*$/s, "$1")}: the key must be one of the organization's store fields and the value must fit its type`, 400);
+    if (e.is("invalid_external_ref")) throw new ApiError("invalid", "invalid_external_ref: letters, digits and . _ : - (up to 64), or null", 400);
+    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another store of the organization uses this external code", 409);
     if (e.is("invalid_values_unknown_key")) throw new ApiError("invalid", "invalid_values_unknown_key: a blog takes title, description, nav, sort_order, seo_title, seo_description, template_suffix, article_order, article_from_today, article_until, feed and article_fields", 400);
     // 0125: 並び順・今日以降だけ・いつまで出すか（field:<キー> と article_until は日付・日時の項目だけ）
     if (/invalid_article_(order|until)/.test(e.dbMessage)) throw new ApiError("invalid", `${/invalid_article_until/.test(e.dbMessage) ? "invalid_article_until" : "invalid_article_order"}: new | title | manual | field:<key of a date or datetime field>; article_until is the key of a date or datetime field or null`, 400);
@@ -587,6 +592,14 @@ export class ApiService {
   /** 終わった申し込み（購入なし・期限切れ・取り消し）の在庫を EC に戻す。2 回目は何もしない */
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
+  /** 実店舗の独自項目の値と外部コード（0126、stores:write）。店舗は id か ext:<外部コード> */
+  storeUpdate = async (ref: string, values: Record<string, unknown>) => {
+    await this.requireMigration("0126_store_fields");
+    // id（uuid）か ext:<外部コード>。外部コードは大文字・小文字を区別する
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
+    if (!uuid && !/^ext:[A-Za-z0-9._:-]{1,64}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
+    return this.call<Record<string, unknown>>("api_store_update", { p_store: uuid ? ref.toLowerCase() : ref, p_values: values });
+  };
 
   // ---- お問い合わせ（0061。inquiries:read / inquiries:write、モジュール inquiries が ON のショップだけ）----
   /** assignee: "none"（未割り当て）か担当者の user_id */

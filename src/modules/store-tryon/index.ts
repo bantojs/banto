@@ -6,6 +6,7 @@
 import { t, tf, type MessageKey } from "../../i18n";
 import { getTimeZone } from "../../i18n/time";
 import { dateLabel, todayIn } from "../delivery-time";
+import { storeFieldView } from "../../stores/fields";
 import type { StoreView } from "../../themes/types";
 
 export const TRYON_MODULE = "store_tryon";
@@ -38,6 +39,9 @@ export interface StoreRow {
   notify_email?: boolean;
   active: boolean;
   sort_order: number;
+  /** 公開の独自項目の値と定義（0126。private は入らない） */
+  fields?: Record<string, unknown>;
+  field_defs?: { key: string; label: string; type: string }[];
 }
 
 /** 組織の実店舗（0025 の stores。正本。運営側だけが読める） */
@@ -55,6 +59,10 @@ export interface OrgStore {
   note: string | null;
   active: boolean;
   sort_order: number;
+  /** 独自項目の値（0126） */
+  fields?: Record<string, unknown>;
+  /** 社内システムの店舗コード（0126。組織の中で重ならない、お客様には出さない） */
+  external_ref?: string | null;
 }
 
 /** ショップで使う実店舗（0025 の shop_stores） */
@@ -272,6 +280,7 @@ export function storeView(store: StoreRow, today: string): StoreView {
     week: weeklyLines(store),
     today: now.open ? tf("tryon.today_open", { hours: formatRanges(now.ranges).replace(/-/g, "〜") }) : t("tryon.today_closed"),
     specials: upcomingSpecialDays(store, today).map((d) => ({ date: dateLabel(d.date), text: [text(d.closed, d.hours), d.note].filter(Boolean).join(" ") })),
+    ...(store.field_defs ? { fields: storeFieldView(store.field_defs, store.fields) } : {}),
   };
 }
 

@@ -317,7 +317,7 @@ export class FakeSupabase {
     const found = this.orgMembers.find((m) => m.user_id === userId && m.role === "owner");
     if (found) return found.org_id;
     const org = `org-${++this.seq}`;
-    this.organizations.push({ id: org, name: "マイ組織", created_at: this.now() });
+    this.organizations.push({ id: org, name: "マイ組織", created_at: this.now(), store_fields: [] });
     this.orgMembers.push({ org_id: org, user_id: userId, role: "owner", created_at: this.now() });
     return org;
   }
@@ -1406,8 +1406,22 @@ export class FakeSupabase {
           .map((ss) => ({ ss, st: this.tables.stores.find((x) => x["id"] === ss["store_id"] && x["active"] !== false) }))
           .filter((x) => x.st)
           .sort((a, b) => Number(a.ss["sort_order"] ?? 0) - Number(b.ss["sort_order"] ?? 0))
-          .map(({ ss, st }) => ({ id: st!["id"], shop_id: ss["shop_id"], name: st!["name"], postal_code: st!["postal_code"] ?? null, address: st!["address"] ?? null, phone: st!["phone"] ?? null, hours: st!["hours"] ?? {}, special_days: st!["special_days"] ?? [], note: st!["note"] ?? null, tryon: ss["tryon"] !== false, active: true, sort_order: ss["sort_order"] ?? 0 })),
+          .map(({ ss, st }) => {
+            // 0126: 公開の独自項目（private を除く）と、その定義（表示名・種類）
+            const defs = ((this.organizations.find((o) => o["id"] === st!["org_id"])?.["store_fields"] ?? []) as Row[]).filter((d) => d["private"] !== true);
+            const values = (st!["fields"] ?? {}) as Row;
+            const fields = Object.fromEntries(defs.filter((d) => values[String(d["key"])] !== undefined).map((d) => [String(d["key"]), values[String(d["key"])]]));
+            return { id: st!["id"], shop_id: ss["shop_id"], name: st!["name"], postal_code: st!["postal_code"] ?? null, address: st!["address"] ?? null, phone: st!["phone"] ?? null, hours: st!["hours"] ?? {}, special_days: st!["special_days"] ?? [], note: st!["note"] ?? null, tryon: ss["tryon"] !== false, active: true, sort_order: ss["sort_order"] ?? 0, fields, field_defs: defs.map((d) => ({ key: d["key"], label: d["label"], type: d["type"] })) };
+          }),
       );
+    }
+    // 0126: 実店舗の独自項目の定義（組織の owner / admin）。形の検査は本物のトリガー（test/db/store-fields.test.ts）
+    if (fn === "store_fields_set") {
+      const org = this.organizations.find((o) => o["id"] === args["p_org_id"]);
+      if (!org || !this.orgMembers.some((m) => m.org_id === org["id"] && m.user_id === uid && m.role !== "member")) return json({ code: "P0001", message: "org_not_found" }, 400);
+      if (!Array.isArray(args["p_defs"])) return json({ code: "P0001", message: "store_fields_invalid" }, 400);
+      org["store_fields"] = args["p_defs"];
+      return json(null);
     }
     // 0030: 運営者のセッションの世代
     if (fn === "banto_admin_me") {
@@ -2878,6 +2892,22 @@ export class FakeSupabase {
       case "api_stores_list":
         if (!need("shop:read")) return unauthorized();
         return json(this.tables.shop_stores.filter((l) => l["shop_id"] === shopId).map((l) => ({ ...this.tables.stores.find((x) => x["id"] === l["store_id"]), tryon: l["tryon"], sort_order: l["sort_order"] })));
+      // 0126: 使っている店舗の独自項目と外部コードだけ（値の形・重なりは test/db/store-fields.test.ts）
+      case "api_store_update": {
+        if (!need("stores:write")) return unauthorized();
+        const ref = String(args["p_store"] ?? "");
+        const st = this.tables.shop_stores.filter((l) => l["shop_id"] === shopId).map((l) => this.tables.stores.find((x) => x["id"] === l["store_id"])).find((x) => x && (ref.startsWith("ext:") ? x["external_ref"] === ref.slice(4) : x["id"] === ref));
+        if (!st) return notFound();
+        const v = (args["p_values"] ?? {}) as Row;
+        if (Object.keys(v).some((k) => k !== "fields" && k !== "external_ref")) return json({ code: "P0001", message: "invalid_store_values" }, 400);
+        if ("external_ref" in v) st["external_ref"] = v["external_ref"];
+        if (v["fields"] && typeof v["fields"] === "object") {
+          const next = { ...((st["fields"] ?? {}) as Row) };
+          for (const [k, x] of Object.entries(v["fields"] as Row)) if (x === null) delete next[k]; else next[k] = x;
+          st["fields"] = next;
+        }
+        return json({ id: st["id"], name: st["name"], external_ref: st["external_ref"] ?? null, fields: st["fields"] ?? {} });
+      }
       case "api_token_shop": return json({ shop_id: shopId, scopes, name: tok["name"], stripe_account_id: this.tables.shops.find((x) => x["id"] === shopId)?.["stripe_account_id"] ?? null });
       case "api_shop_get": {
         if (!need("shop:read")) return unauthorized();
