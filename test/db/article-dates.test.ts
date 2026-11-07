@@ -44,4 +44,20 @@ describe.skipIf(!dbAvailable)("記事の日付の項目（0124）", () => {
     expect(await expectDbError(() => page("new", "2026-11-15"))).toMatch(/invalid_field_from/);
     expect(await expectDbError(() => page("field:Bad", null))).toMatch(/invalid_sort/);
   });
+
+  it("ブログの並び順 field:<キー> は日付・日時の項目だけ。会員の一覧は p_sort が無ければその順。API で article_from_today も", async () => {
+    expect(await expectDbError(() => q("update blogs set article_order = 'field:nothing' where id = $1", [blog]))).toMatch(/invalid_article_order/);
+    await q("update blogs set article_order = 'field:starts', article_from_today = true where id = $1", [blog]);
+    const list = (await asService(async (c) => (await c.query<{ r: { handle: string }[] }>("select articles_member_page($1, $2, 0, 12, null, $3, 0, $4) as r", [f.shopId, blog, cid, sid])).rows[0]!.r)).map((x) => x.handle);
+    expect(list).toEqual(["e2", "a", "e1", "e3"]);
+    // 項目を消すと並び順と合わなくなるので断る
+    expect(await expectDbError(() => q("update blogs set article_fields = '[]' where id = $1", [blog]))).toMatch(/invalid_article_order/);
+    const raw = `banto_${crypto.randomUUID()}`;
+    const { createHash } = await import("node:crypto");
+    const h = createHash("sha256").update(raw).digest("hex");
+    await q("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, '{content:read,content:write}')", [f.shopId, f.ownerId, h, raw.slice(0, 12)]);
+    const r = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select api_blog_update($1, 'events', $2) as r", [h, JSON.stringify({ article_order: "field:opens", article_from_today: false })])).rows[0]!.r);
+    expect(r).toMatchObject({ article_order: "field:opens", article_from_today: false });
+    expect(await expectDbError(() => asService((c) => c.query("select api_blog_update($1, 'events', $2)", [h, JSON.stringify({ article_from_today: "yes" })])))).toMatch(/invalid_article_from_today/);
+  });
 });

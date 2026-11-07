@@ -5,7 +5,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
-import { articleFieldDefs, articleFieldsReady } from "../../blog/fields";
+import { articleFieldDefs, articleFieldsReady, blogFieldSort } from "../../blog/fields";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSortFor, articleSummary, blogHasFeed, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
@@ -124,7 +124,7 @@ contentApi.get("/shops/:shop/pages/:handle", async (c: Ctx) => {
 function blogSummary(s: Scope, b: BlogRow) {
   const url = `${s.home}/blogs/${encodeURIComponent(b.handle)}`;
   // article_order: 記事の並び順（0116。前の DB は new）、feed_url: フィードを出さないブログは null
-  return { handle: b.handle, title: b.title, description: b.description, url, nav: b.nav, sort_order: b.sort_order, article_order: b.article_order ?? "new", feed_url: blogHasFeed(b) ? `${url}/feed.atom` : null, ...(articleFieldsReady(b) ? { article_fields: articleFieldDefs(b).map(({ key, label, type, options, multiple }) => ({ key, label, type, ...(options ? { options } : {}), ...(multiple ? { multiple } : {}) })) } : {}), seo_title: b.seo_title, seo_description: b.seo_description, updated_at: b.updated_at };
+  return { handle: b.handle, title: b.title, description: b.description, url, nav: b.nav, sort_order: b.sort_order, article_order: b.article_order ?? "new", ...(typeof b.article_from_today === "boolean" ? { article_from_today: b.article_from_today } : {}), feed_url: blogHasFeed(b) ? `${url}/feed.atom` : null, ...(articleFieldsReady(b) ? { article_fields: articleFieldDefs(b).map(({ key, label, type, options, multiple }) => ({ key, label, type, ...(options ? { options } : {}), ...(multiple ? { multiple } : {}) })) } : {}), seo_title: b.seo_title, seo_description: b.seo_description, updated_at: b.updated_at };
 }
 
 function articleSummaryJson(s: Scope, blog: BlogRow, a: ArticleRow) {
@@ -164,7 +164,7 @@ contentApi.get("/shops/:shop/blogs/:blog/articles", async (c: Ctx) => {
   const tagRaw = (c.req.query("tag") ?? "").trim();
   const tag = tagRaw && tagRaw.length <= 50 ? tagRaw : null;
   const pageNo = Math.max(1, Math.min(Math.floor(ARTICLES_OFFSET_MAX / ARTICLES_PER_PAGE) + 1, Number.parseInt(c.req.query("page") ?? "1", 10) || 1));
-  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog), withFields: articleFieldsReady(blog) });
+  const { items, hasNext } = await s.sf.articlesPage(s.shop, blog.id, { offset: (pageNo - 1) * ARTICLES_PER_PAGE, limit: ARTICLES_PER_PAGE, tag, sort: articleSortFor(blog), fieldSort: blogFieldSort(blog), withFields: articleFieldsReady(blog) });
   return c.json({ blog: blogSummary(s, blog), articles: items.map((a) => articleSummaryJson(s, blog, a)), page: pageNo, per_page: ARTICLES_PER_PAGE, has_next: hasNext && pageNo * ARTICLES_PER_PAGE <= ARTICLES_OFFSET_MAX });
 });
 

@@ -26,7 +26,10 @@ export interface BlogRow {
   nav: PageNav;
   sort_order: number;
   /** 記事の並び順（0116。無ければ 0116 の前の DB で、新しい順） */
-  article_order?: ArticleOrder;
+  /** 並び順（0116）。0124 から field:<キー>（日付・日時の項目の早い順）も */
+  article_order?: ArticleOrder | `field:${string}`;
+  /** 0124: 日付の項目の順のとき、今日以降の記事だけ一覧に出す */
+  article_from_today?: boolean;
   /** Atom のフィードを出すか（0116。無ければ出す） */
   feed?: boolean;
   /** 記事の独自の項目の定義（0117。src/blog/fields.ts） */
@@ -45,9 +48,15 @@ export const isArticleOrder = (v: unknown): v is ArticleOrder => typeof v === "s
  * 一覧で使う並び順。ブログの設定（override があればそれ）。0116 の前の DB（ブログの行に article_order が無い）では undefined = 今までどおり新しい順
  */
 export function articleSortFor(blog: Pick<BlogRow, "article_order">, override?: ArticleOrder | null): ArticleOrder | undefined {
+  if (override && blogOrderReady(blog)) return override;
   if (!isArticleOrder(blog.article_order)) return undefined;
   return override ?? blog.article_order;
 }
+
+/** 0116 が当たっているか（ブログの行に並び順の列がある。0124 の field:<キー> も含む） */
+export const blogOrderReady = (blog: Pick<BlogRow, "article_order">): boolean => typeof blog.article_order === "string";
+/** ブログの並び順として書けるか（0124 の field:<キー> を含む。日付の項目かは DB が確かめる） */
+export const isBlogOrder = (v: unknown): v is ArticleOrder | `field:${string}` => isArticleOrder(v) || (typeof v === "string" && /^field:[a-z][a-z0-9_]{0,39}$/.test(v));
 
 /** PostgREST の order（会員の一覧の articles_member_page と同じ並び。同じなら新しい順） */
 export function articleOrderParam(sort: ArticleOrder | undefined): string {

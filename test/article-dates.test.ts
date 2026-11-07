@@ -41,6 +41,8 @@ async function page(s: ReturnType<typeof setup>, body: string) {
   return (await new Browser(s.app, BASE).get(`/my-shop/pages/${handle}`)).text();
 }
 const titles = (html: string) => [...html.matchAll(/font-weight:600">([^<]+)</g)].map((m) => m[1]);
+/** ブログの一覧のページの記事の題（既定のテーマ） */
+const titles2 = (html: string) => [...html.matchAll(/<h2>([^<]+)<\/h2><\/a><\/li>/g)].map((m) => m[1]);
 
 describe("::: articles sort=field:<key> from=today", () => {
   it("日付の早い順（値の無い記事は後ろ）。from=today で昨日より前を出さない", async () => {
@@ -67,6 +69,36 @@ describe("::: articles sort=field:<key> from=today", () => {
     const plain = parseArticlesLine("::: articles blog=events sort=new from=today")!;
     expect([plain.sort, plain.from ?? null]).toEqual(["new", null]);
     expect(parseArticlesLine("::: articles blog=events from=tomorrow")).toBeNull();
+  });
+});
+
+describe("ブログの並び順を日付の項目の順に（article_order = field:<key>、article_from_today）", () => {
+  it("一覧・ページ送り・ヘッドレス・::: articles の既定がその順。今日以降だけなら終わったものを出さない。記事のページは開ける", async () => {
+    const s = setup();
+    const blog = s.sb.tables.blogs.find((b) => b["handle"] === "events")!;
+    Object.assign(blog, { article_order: "field:starts", article_from_today: true });
+    const b = new Browser(s.app, BASE);
+    expect(titles2(await (await b.get("/my-shop/blogs/events")).text())).toEqual(["今日の古着市", "明日のフェア", "来月の試着会"]);
+    const api = (await (await s.app.request(`${BASE}/api/shops/my-shop/blogs/events/articles`)).json()) as { articles: { handle: string }[] };
+    expect(api.articles.map((a) => a.handle)).toEqual(["today", "tomorrow", "next-month"]);
+    expect(titles(await page(s, "::: articles blog=events limit=6"))).toEqual(["今日の古着市", "明日のフェア", "来月の試着会"]);
+    // ブロックで sort を書けばそちらが先
+    expect(titles(await page(s, "::: articles blog=events sort=title limit=2"))).toEqual(["今日の古着市", "日付なし"]);
+    expect((await b.get("/my-shop/blogs/events/yesterday")).status).toBe(200);
+  });
+
+  it("管理画面: 並び順に日付の項目が出て保存できる。今日以降だけの欄", async () => {
+    const s = setup();
+    const blog = s.sb.tables.blogs.find((x) => x["handle"] === "events")!;
+    Object.assign(blog, { article_order: "new", feed: true, article_from_today: false });
+    const owner = await Browser.loggedIn(s.app, "owner@example.com", "password-123");
+    const url = `/admin/shops/${s.shop.id}/modules/blog/${String(blog["id"])}/settings`;
+    const html = await (await owner.get(url)).text();
+    expect(html).toContain('<option value="field:starts">開催日の早い順（日付の項目）</option>');
+    expect(html).not.toContain('value="field:store"');
+    expect(html).toContain('name="article_from_today"');
+    await owner.post(url, { title: "イベント", handle: "events", nav: "none", sort_order: "0", order_fields: "1", article_order: "field:starts", feed: "1", from_today_present: "1", article_from_today: "1" });
+    expect(blog).toMatchObject({ article_order: "field:starts", article_from_today: true });
   });
 });
 
