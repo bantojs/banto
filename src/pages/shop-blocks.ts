@@ -12,7 +12,8 @@
  *   ::: video src="/media/pages/<ショップ>/<名前>.mp4" poster="…" autoplay=1 loop=1 controls=0   （置き場の mp4 だけ、src/media/video.ts）
  *   ::: toc levels=3 title="この記事の目次"   （本文の見出しから。データは引かない。見出しには id を振る）
  *   ::: stores tryon=1 layout=grid articles=events limit=3   （ショップで使う実店舗。店名・住所・電話・今日の営業・曜日ごとの営業時間・臨時休業。
- *                                       articles: その店舗を記事の「実店舗」の項目で指す記事を店舗ごとに添える）
+ *                                       articles: その店舗を記事の「実店舗」の項目で指す記事を店舗ごとに添える。
+ *                                       sort=field:<key> from=today で添える記事を日付の項目の早い順・今日以降だけに、0124）
  *   ::: include page=footer-note   （部品のページの本文をここに差し込む。0122。描く前に src/content/include.ts が置き換える）
  *
  * - 値は決まった形だけ（下の SCHEMA）。知らない鍵・形の違う値は捨てる。生の HTML は入らない
@@ -76,7 +77,7 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
   toc: { levels: { values: ["2", "3"], def: "3" }, title: { text: true } },
   // articles: 店舗ごとに添える記事のブログ（:<キー> は記事の「実店舗」の項目。1 つしか無ければ省ける）。limit は店舗ごとの数
-  stores: { tryon: { values: ["0", "1"], def: "0" }, layout: { values: ["list", "grid"], def: "list" }, articles: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}(?::[a-z][a-z0-9_]{0,39})?$/.test(v) }, limit: { values: ["1", "2", "3", "4", "5", "6"], def: "3" } },
+  stores: { tryon: { values: ["0", "1"], def: "0" }, layout: { values: ["list", "grid"], def: "list" }, articles: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}(?::[a-z][a-z0-9_]{0,39})?$/.test(v) }, limit: { values: ["1", "2", "3", "4", "5", "6"], def: "3" }, sort: { test: (v) => /^field:[a-z][a-z0-9_]{0,39}$/.test(v) }, from: { values: ["today"] } },
   include: { page: { test: (v) => SLUG.test(v) } },
 };
 

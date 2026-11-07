@@ -5,12 +5,15 @@
  */
 
 import { shopImageUrl } from "../pages/markdown";
+import { getTimeZone, zonedInputToIso } from "../i18n/time";
 
 export const ARTICLE_FIELDS_MIGRATION = "0117_article_fields";
 /** 画像の種類（0120、メンテナの決定 2026-11-05）。当てるまで定義に書かせない */
 export const ARTICLE_FIELD_IMAGE_MIGRATION = "0120_article_field_image";
 export const ARTICLE_FIELDS_MAX = 20;
-export const ARTICLE_FIELD_TYPES = ["text", "number", "select", "store", "product", "article", "image"] as const;
+/** 日付・日時の種類と、その順での並べ替え・今日以降だけ（0124、メンテナの決定 2026-11-07）。当てるまで定義に書かせない */
+export const ARTICLE_FIELD_DATES_MIGRATION = "0124_article_field_dates";
+export const ARTICLE_FIELD_TYPES = ["text", "number", "select", "store", "product", "article", "image", "date", "datetime"] as const;
 export type ArticleFieldType = (typeof ARTICLE_FIELD_TYPES)[number];
 
 export interface ArticleFieldDef {
@@ -61,14 +64,14 @@ export function articleFieldDefs(blog: { article_fields?: unknown }): ArticleFie
  *       author | 書いた人 | article | staff
  *       items | 着用アイテム | products
  */
-export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[], opts: { image?: boolean } = {}): { defs: ArticleFieldDef[]; error: string | null } {
+export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[], opts: { image?: boolean; dates?: boolean } = {}): { defs: ArticleFieldDef[]; error: string | null } {
   const defs: ArticleFieldDef[] = [];
   for (const line of input.replace(/\r\n?/g, "\n").split("\n")) {
     if (!line.trim()) continue;
     const [key = "", label = "", typeRaw = "", extra = ""] = line.split("|").map((x) => x.trim());
     const plural = typeRaw === "products" || typeRaw === "articles";
     const type = (plural ? typeRaw.slice(0, -1) : typeRaw) as ArticleFieldType;
-    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key) || (type === "image" && opts.image !== true)) return { defs, error: line };
+    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key) || (type === "image" && opts.image !== true) || ((type === "date" || type === "datetime") && opts.dates !== true)) return { defs, error: line };
     const def: ArticleFieldDef = { key, label: (label || key).slice(0, 60), type };
     if (type === "select") {
       def.options = extra.split("/").map((x) => x.trim()).filter(Boolean).slice(0, 50);
@@ -120,6 +123,10 @@ export function fieldsFromForm(defs: ArticleFieldDef[], form: Record<string, str
     } else if (f.type === "image") {
       const img = shopImageUrl(raw, mediaBase);
       if (img) out[f.key] = img;
+    } else if (f.type === "datetime") {
+      // 画面の日時（デプロイの時間帯の「日付と時刻」）→ 時差つき。時差つきで来たものはそのまま（DB が UTC にそろえる）
+      const iso = /(Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : zonedInputToIso(raw);
+      if (iso) out[f.key] = iso;
     } else out[f.key] = raw.slice(0, 500);
   }
   return out;
@@ -133,4 +140,32 @@ export function fieldContains(def: ArticleFieldDef, value: string): Record<strin
     return Number.isFinite(n) ? { [def.key]: n } : null;
   }
   return { [def.key]: def.multiple ? [value] : value };
+}
+
+/** 日付の項目の順（::: articles sort=field:<key>、0124）。from は「今日以降だけ」のときの下限（date は今日の日付、datetime は今日の始まりの UTC の日時） */
+export interface FieldSort {
+  key: string;
+  from: string | null;
+}
+
+/** ブログの定義に日付・日時の項目 key があれば並べ方を作る（無ければ null = 何も並べない）。今日はデプロイの時間帯で決める */
+export function fieldSortOf(blog: { article_fields?: unknown }, key: string, fromToday: boolean, now: number = Date.now()): FieldSort | null {
+  const def = articleFieldDefs(blog).find((f) => f.key === key);
+  if (!def || (def.type !== "date" && def.type !== "datetime")) return null;
+  if (!fromToday) return { key, from: null };
+  // 今日（デプロイの時間帯の YYYY-MM-DD。en-CA はこの並びで出る）
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: getTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  if (def.type === "date") return { key, from: today };
+  const start = zonedInputToIso(`${today}T00:00`);
+  return { key, from: start ? `${new Date(start).toISOString().slice(0, 19)}Z` : null };
+}
+
+/** PostgREST の order と絞り込み（articles_member_page と同じ並び: その値の早い順、値の無い記事は後ろ、同じなら新しい順） */
+export function fieldSortQuery(fs: FieldSort): { order: string; where: { col: string; op: "gte"; value: string }[] } {
+  return { order: `fields->>${fs.key}.asc.nullslast,published_at.desc,id.desc`, where: fs.from ? [{ col: `fields->>${fs.key}`, op: "gte", value: fs.from }] : [] };
+}
+
+/** 日付・日時の値の見せ方（日付は時間帯でずらさない） */
+export function fieldDateLabel(type: "date" | "datetime", v: string, format: (iso: string, opts?: { dateOnly?: boolean }) => string): string {
+  return type === "date" ? format(`${v}T12:00:00Z`, { dateOnly: true }) : format(v);
 }

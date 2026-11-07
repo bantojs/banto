@@ -147,6 +147,7 @@ npm run deploy
 - **0121_list_card_fields（一覧のカードの独自項目）**: 商品のカスタム項目の定義に `card` の印（「キー | 表示名 | 種類 | 選択肢 | card」）を付けた公開の項目が、商品の一覧のカード・本文の「商品を並べる」・ヘッドレスの一覧・Liquid の一覧の `product.fields` に出るようになります。当てるまでは印を付けても出ません。
 - **0122_page_parts（部品のページ）**: ページに「部品として使う」（`pages.is_part`）を足します（docs/pages.md「部品のページ」）。部品のページは単独の URL・メニュー・サイトマップに出さず、`::: include page=<handle>` でほかの本文に差し込みます。当てるまでは「部品として使う」の欄を出しません（`::: include` で公開中のふつうのページを差し込むのは当てる前から使えます）。
 - **0123_mod_favorites（会員のお気に入り）**: 同梱モジュール「お気に入り」の表と関数（docs/favorites.md）。当てるまでモジュールの一覧に出ず、ON にできません。AI 用 API の `/api/v1/favorites`・`/api/v1/customers/{id}/favorites` は 409 `migration_required` です。
+- **0124_article_field_dates（記事の日付の項目）**: 記事の項目に `date` / `datetime` を足し、`::: articles` と `::: stores articles=` の `sort=field:<キー>`・`from=today` で開催日の順・今日以降だけにできます（docs/blog.md）。当てるまでは定義に日付の種類を書けません（ほかは今までどおり）。
 - **お店の画面の URL を変えました（2026-11-05、マイグレーションなし）**: すべての商品は `/products`、商品は `/products/<商品>`、カテゴリーの一覧は `/categories/<カテゴリー>`、検索は `/products?q=` です（docs/storefront.md「URL」）。前の `/p/<商品>`・`/search`・`/?category=`・`/?all=1` は転送しません。テーマ・本文のリンクで前の URL を書いている所は直してください（Liquid のテーマは `product.url`・`collection.url`・`routes.*` を使っていればそのままで動きます）。
 - **0114_page_layouts_blogs（ブログの一覧のひな形）**: ブログごとに一覧（`/blogs/<ブログ>`）のひな形を割り当てられるようになります（docs/pages.md「ひな形の割り当て」）。当てるまでは割り当ての欄が出ません。
 - **0113_category_media（カテゴリーの画像と説明）**: カテゴリーに説明と画像を付けられるようになります（docs/storefront.md「カテゴリーの画像と説明」）。当てるまでは管理画面に欄が出ません。

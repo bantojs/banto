@@ -13,6 +13,7 @@ import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
 import { PAGE_PARTS_MIGRATION, PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
 import type { IncludePart } from "../content/include";
+import { fieldSortQuery, type FieldSort } from "../blog/fields";
 import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
 
 
@@ -156,7 +157,7 @@ export interface MemberReader {
   skus(skuIds: string[]): Promise<unknown>;
   page(handle: string): Promise<unknown>;
   article(blogId: string, handle: string): Promise<unknown>;
-  articles(blogId: string, offset: number, limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null): Promise<unknown>;
+  articles(blogId: string, offset: number, limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
 }
 
 /** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
@@ -502,14 +503,15 @@ export class StorefrontData {
    * ブログの記事の一覧（公開中・日時を過ぎた・ゴミ箱の外は RLS）。sort の順（無ければ公開した日時の新しい順。articleSortFor で決める）、tag で絞る。
    * 1 つ多く読んで次のページがあるかを決める。キャッシュはページごと（深さは ARTICLES_OFFSET_MAX まで）
    */
-  async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null; sort?: ArticleOrder; fields?: Record<string, unknown> | null; withFields?: boolean }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
+  async articlesPage(shop: PublicShop, blogId: string, opts: { offset: number; limit: number; tag?: string | null; sort?: ArticleOrder; fields?: Record<string, unknown> | null; withFields?: boolean; fieldSort?: FieldSort | null }): Promise<{ items: ArticleRow[]; hasNext: boolean }> {
     const offset = Math.max(0, Math.min(ARTICLES_OFFSET_MAX, Math.floor(opts.offset)));
     if (this.reader) {
-      const rows = (await this.reader.articles(blogId, offset, opts.limit, opts.tag ?? null, opts.sort, opts.fields ?? null)) as ArticleRow[] | null;
+      const rows = (await this.reader.articles(blogId, offset, opts.limit, opts.tag ?? null, opts.sort, opts.fields ?? null, opts.fieldSort ?? null)) as ArticleRow[] | null;
       const list = Array.isArray(rows) ? rows : [];
       return { items: list.slice(0, opts.limit), hasNext: list.length > opts.limit };
     }
-    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}:${opts.fields ? JSON.stringify(opts.fields) : ""}:${opts.withFields ? 1 : 0}`;
+    const fs = opts.fieldSort ? fieldSortQuery(opts.fieldSort) : null;
+    const key = `articles:${blogId}:${offset}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}:${opts.fields ? JSON.stringify(opts.fields) : ""}:${opts.withFields ? 1 : 0}:${opts.fieldSort ? `${opts.fieldSort.key}>${opts.fieldSort.from ?? ""}` : ""}`;
     const hit = await this.cache.get<{ items: ArticleRow[]; hasNext: boolean }>(key);
     if (hit) return hit;
     // 項目（0117）は当たっている DB だけで読む・絞る（withFields はブログの行に定義の列があるとき）
@@ -517,7 +519,9 @@ export class StorefrontData {
       eq: { shop_id: shop.id, blog_id: blogId, published: true },
       ...(opts.tag ? { arrayContains: { tags: [opts.tag] } } : {}),
       ...(opts.fields && opts.withFields ? { jsonContains: { fields: opts.fields } } : {}),
-      order: articleOrderParam(opts.sort),
+      // 日付の項目の順・今日以降だけ（0124）
+      ...(fs?.where.length ? { where: fs.where } : {}),
+      order: fs ? fs.order : articleOrderParam(opts.sort),
       limit: opts.limit + 1,
       offset,
     });
@@ -542,16 +546,18 @@ export class StorefrontData {
    * 実店舗に添える記事（`::: stores articles=<ブログ>`）: 記事の「実店舗」の項目 key が、並べる店舗のどれかを指すもの。
    * 店舗の分をまとめて 1 回（RLS・匿名の読み取り。会員限定の記事は入らない）。ブログの並び順で STORE_ARTICLES_MAX 本まで。短時間キャッシュ
    */
-  async articlesForStores(shop: PublicShop, blogId: string, key: string, storeIds: readonly string[], sort: ArticleOrder | undefined): Promise<(ArticleRow & { fields?: Record<string, unknown> | null })[]> {
+  async articlesForStores(shop: PublicShop, blogId: string, key: string, storeIds: readonly string[], sort: ArticleOrder | undefined, fieldSort: FieldSort | null = null): Promise<(ArticleRow & { fields?: Record<string, unknown> | null })[]> {
     const ids = [...new Set(storeIds)].sort();
     if (ids.length === 0 || !/^[a-z][a-z0-9_]{0,39}$/.test(key)) return [];
-    const cacheKey = `store-articles:${blogId}:${key}:${sort ?? ""}:${ids.join(",")}`;
+    const fs = fieldSort ? fieldSortQuery(fieldSort) : null;
+    const cacheKey = `store-articles:${blogId}:${key}:${sort ?? ""}:${fieldSort ? `${fieldSort.key}>${fieldSort.from ?? ""}` : ""}:${ids.join(",")}`;
     const hit = await this.cache.get<(ArticleRow & { fields?: Record<string, unknown> | null })[]>(cacheKey);
     if (hit) return hit;
     const rows = await this.db.from<ArticleRow & { fields?: Record<string, unknown> | null }>("articles").select(`${ARTICLE_LIST_COLUMNS},fields`, {
       eq: { shop_id: shop.id, blog_id: blogId, published: true },
       in: { [`fields->>${key}`]: ids },
-      order: articleOrderParam(sort),
+      ...(fs?.where.length ? { where: fs.where } : {}),
+      order: fs ? fs.order : articleOrderParam(sort),
       limit: STORE_ARTICLES_MAX,
     });
     await this.cache.set(cacheKey, rows, STOREFRONT_CACHE_TTL);

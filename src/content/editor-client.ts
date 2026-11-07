@@ -180,7 +180,9 @@ export function pageEditorClient() {
     parts.push(`limit=${Number.isInteger(limit) && limit >= 1 && limit <= 12 ? limit : 3}`);
     parts.push(`layout=${attr(n, "data-layout") === "list" ? "list" : "grid"}`);
     const sort = attr(n, "data-sort");
-    if (sort === "new" || sort === "title" || sort === "manual") parts.push(`sort=${sort}`);
+    // 日付の項目の順（0124）: sort=field:<key>、from=today はそのときだけ
+    if (sort === "new" || sort === "title" || sort === "manual" || /^field:[a-z][a-z0-9_]{0,39}$/.test(sort)) parts.push(`sort=${sort}`);
+    if (sort.startsWith("field:") && attr(n, "data-from") === "today") parts.push("from=today");
     const st = styleName(attr(n, "data-style"));
     if (st) parts.push(`style=${st}`);
     return parts.join(" ");
