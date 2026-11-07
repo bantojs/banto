@@ -272,7 +272,7 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   - それも無ければ作ります（作るときは `handle` と `title` が要ります）。
   - 送らなかった項目は今のままです。`PATCH …/<id>` も同じです。
   - ページの `is_part`（0122）は部品のページ（`::: include page=<handle>` で差し込むだけで、単独の URL・メニュー・サイトマップに出さない。docs/pages.md「部品のページ」）。
-- 記事の項目（0117）は記事の保存の `fields`（`{ "<キー>": 値 }`、商品・記事は URL の名前、店舗は id、画像（0120）はこのショップの画像の置き場の URL。外の画像は `POST /api/v1/media` で取り込んでから使います）。形と指す先はデータベースが確かめ、合わなければ 400 です。記事の JSON に `fields`、ブログの JSON に定義の `article_fields` が付きます。定義は管理画面のブログの設定か、`PATCH /api/v1/blogs/<ブログ>`（`content:write`、0118）の `article_fields` で変えます（記事を指す項目の `blog` は URL の名前か id）。
+- 記事の項目（0117）は記事の保存の `fields`（`{ "<キー>": 値 }`、商品・記事は URL の名前、店舗は id、画像（0120）はこのショップの画像の置き場の URL。外の画像は `POST /api/v1/media` で取り込んでから使います。日付（0124）は `2026-11-20`、日時は時差つきの ISO 8601 で、UTC にそろえて返ります）。形と指す先はデータベースが確かめ、合わなければ 400 です。記事の JSON に `fields`、ブログの JSON に定義の `article_fields` が付きます。定義は管理画面のブログの設定か、`PATCH /api/v1/blogs/<ブログ>`（`content:write`、0118）の `article_fields` で変えます（記事を指す項目の `blog` は URL の名前か id）。
 - ブログの設定（`PATCH /api/v1/blogs/<ブログ>`、0118）: 題・説明・メニュー・並び・SEO・テンプレート・記事の並び順（`article_order`）・フィード（`feed`）・記事の項目の定義（`article_fields`）。送らなかった鍵は今のままで、知らない鍵は 400 です。
 - ひな形の割り当て（`GET` / `PATCH /api/v1/page-layouts`、0119、メンテナの決定 2026-11-05）: 管理画面の「ひな形」と同じ決まりです（固定ページをトップ・ブログごとの記事・ブログの一覧・商品詳細・商品一覧・法務のページのひな形にする、docs/pages.md）。読むのは `content:read`、変えるのは `content:write`、モジュール pages が要ります。
   - 鍵は `home`・`product`・`collection`・`legal`（値はページ）と、表の `articles`・`blogs`（鍵はブログ）・`product_categories`・`collection_categories`（鍵はカテゴリー）・`legal_pages`（鍵は `legal` / `privacy` / `returns`）です。

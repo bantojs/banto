@@ -32,7 +32,7 @@ import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
 import { BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
-import { articleFieldDefs, articleFieldsReady, fieldContains, fieldValues } from "../blog/fields";
+import { articleFieldDefs, articleFieldsReady, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
 import { moduleEnabled } from "../modules/registry";
 import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
@@ -153,7 +153,10 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
             fields = def ? fieldContains(def, v) : null;
             if (!fields) return { block: { ...block, tag }, blog, items: [] as ArticleRow[] };
           }
-          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort), withFields: articleFieldsReady(blog), ...(fields ? { fields } : {}) });
+          // 日付の項目の順・今日以降だけ（0124）。日付・日時の項目でなければ何も並べない
+          const fieldSort = block.fieldSort ? fieldSortOf(blog, block.fieldSort, block.from === "today") : null;
+          if (block.fieldSort && !fieldSort) return { block: { ...block, tag }, blog, items: [] as ArticleRow[] };
+          const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort), withFields: articleFieldsReady(blog), ...(fields ? { fields } : {}), ...(fieldSort ? { fieldSort } : {}) });
           // テーマ（snippets/page-articles）には置き換えた後のタグを渡す（「もっと見る」を /blogs/<ブログ>?tag=<商品> にできる）
           return { block: { ...block, tag }, blog, items };
         } catch (e) {
@@ -189,7 +192,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
  * 実店舗に添える記事（`::: stores articles=<ブログ>[:<キー>]`）。記事の「実店舗」の項目（キーを省けばブログに 1 つだけあるもの）が店舗を指す記事を、
  * 店舗の分まとめて 1 回で引き、店舗ごとに limit 本までのカード（既定の記事のカードの list）にする。店舗 id → HTML
  */
-async function storeArticles(d: BodyBlocksDeps, spec: string, storeIds: readonly string[], limit: number): Promise<Map<string, string> | null> {
+async function storeArticles(d: BodyBlocksDeps, spec: string, storeIds: readonly string[], limit: number, sort: string | null, fromToday: boolean): Promise<Map<string, string> | null> {
   if (!moduleEnabled(d.shop.settings, BLOG_MODULE)) return null;
   const [handle, keyRaw] = spec.split(":");
   const blog = handle ? await d.sf.blogByHandle(d.shop, handle) : null;
@@ -197,7 +200,10 @@ async function storeArticles(d: BodyBlocksDeps, spec: string, storeIds: readonly
   const storeDefs = articleFieldDefs(blog).filter((f) => f.type === "store");
   const def = keyRaw ? storeDefs.find((f) => f.key === keyRaw) : storeDefs.length === 1 ? storeDefs[0] : undefined;
   if (!def) return null;
-  const rows = await d.sf.articlesForStores(d.shop, blog.id, def.key, storeIds, articleSortFor(blog, null));
+  // 日付の項目の順・今日以降だけ（sort=field:<key> from=today、0124）。日付・日時の項目でなければ添えない
+  const fieldSort = sort?.startsWith("field:") ? fieldSortOf(blog, sort.slice(6), fromToday) : null;
+  if (sort?.startsWith("field:") && !fieldSort) return null;
+  const rows = await d.sf.articlesForStores(d.shop, blog.id, def.key, storeIds, articleSortFor(blog, null), fieldSort);
   const byStore = new Map<string, ArticleRow[]>();
   for (const r of rows) {
     const v = r.fields?.[def.key];
@@ -261,7 +267,7 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     const today = todayHere();
     const list = (await d.sf.listStores(d.shop)).filter((st) => a["tryon"] !== "1" || st.tryon).map((st) => storeView(st, today));
     if (list.length === 0) return "";
-    const attached = a["articles"] ? await storeArticles(d, a["articles"], list.map((st) => st.id), Number(a["limit"] ?? "3")) : null;
+    const attached = a["articles"] ? await storeArticles(d, a["articles"], list.map((st) => st.id), Number(a["limit"] ?? "3"), a["sort"] ?? null, a["from"] === "today") : null;
     const card = (st: StoreView) => {
       const addr = st.address ? `<p class="banto-store__address">${st.postal_code ? `〒${esc(st.postal_code)} ` : ""}${esc(st.address)}</p>` : "";
       const tel = st.phone ? `<p class="banto-store__phone"><a href="tel:${esc(st.phone.replace(/[^0-9+]/g, ""))}">${esc(st.phone)}</a></p>` : "";

@@ -463,6 +463,14 @@ export class FakeSupabase {
       } else if (type === "store") {
         if (!this.tables.shop_stores.some((ss) => ss["shop_id"] === row["shop_id"] && ss["store_id"] === v)) return `article_field_invalid:${key}`;
         out[key] = String(v);
+      } else if (type === "date") {
+        // 0124: YYYY-MM-DD（ありえない日付は断る）
+        if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v) || new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) !== v) return `article_field_invalid:${key}`;
+        out[key] = v;
+      } else if (type === "datetime") {
+        // 0124: 時差つきだけ。UTC の YYYY-MM-DDTHH:MI:SSZ にそろえる
+        if (typeof v !== "string" || !/(Z|[+-]\d{2}:?\d{2})$/.test(v) || Number.isNaN(Date.parse(v))) return `article_field_invalid:${key}`;
+        out[key] = `${new Date(v).toISOString().slice(0, 19)}Z`;
       } else if (type === "image") {
         // 0120: 形だけ（/media/ か http(s)、空白・引用符・山かっこ・.. なし）
         if (typeof v !== "string" || v.length > 2000 || !/^(\/media\/|https?:\/\/)[^\s"'<>`\\]+$/.test(v) || v.includes("..")) return `article_field_invalid:${key}`;
@@ -905,10 +913,19 @@ export class FakeSupabase {
       const order = u.searchParams.get("order");
       if (order) {
         // created_at.desc,id.desc のような複数の列（同じ値なら次の列で）
-        const keys = order.split(",").map((part) => part.split(".") as [string, string | undefined]);
+        const keys = order.split(",").map((part) => part.split(".") as [string, string | undefined, string | undefined]);
+        // 列は jsonb の 1 段の鍵（fields->>starts）も。.nullslast は値の無い行を後ろへ（0124）
+        const colValue = (r: Row, col: string): unknown => {
+          const [base, key] = col.split("->>") as [string, string | undefined];
+          if (key === undefined) return r[base];
+          const o = r[base];
+          const v = o && typeof o === "object" ? (o as Row)[key] : undefined;
+          return v === undefined || v === null ? null : typeof v === "string" ? v : JSON.stringify(v);
+        };
         out = [...out].sort((a, b) => {
-          for (const [col, dir] of keys) {
-            const av = a[col], bv = b[col];
+          for (const [col, dir, nulls] of keys) {
+            const av = colValue(a, col), bv = colValue(b, col);
+            if (nulls === "nullslast" && (av === null) !== (bv === null)) return av === null ? 1 : -1;
             if (typeof av === "number" && typeof bv === "number") {
               if (av !== bv) return (av < bv ? -1 : 1) * (dir === "desc" ? -1 : 1);
               continue;
@@ -1565,7 +1582,22 @@ export class FakeSupabase {
         (sort === "manual" ? Number(x["position"] ?? 0) - Number(y["position"] ?? 0) : 0) || (sort === "title" ? (String(x["title"]) < String(y["title"]) ? -1 : String(x["title"]) > String(y["title"]) ? 1 : 0) : 0) || newer(x, y);
       if ("p_fields" in args && !this.appliedMigrations.includes("0117_article_fields")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
       const pf = args["p_fields"] as Record<string, unknown> | null | undefined;
-      const list = arts.filter((a) => (!tag || ((a["tags"] ?? []) as string[]).includes(tag)) && (!pf || jsonContainsFake(a["fields"] ?? {}, pf))).sort(cmp);
+      // 0124: p_sort = field:<key>（その値の早い順・値の無い記事は後ろ）と p_field_from（その値以降だけ）
+      if (("p_field_from" in args || sort.startsWith("field:")) && !this.appliedMigrations.includes("0124_article_field_dates")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
+      const fkey = sort.startsWith("field:") ? sort.slice(6) : null;
+      const fv = (a: Row): string | null => {
+        const v = ((a["fields"] ?? {}) as Row)[fkey ?? ""];
+        return typeof v === "string" ? v : null;
+      };
+      const from = args["p_field_from"] as string | undefined;
+      const fcmp = (x: Row, y: Row) => {
+        const a = fv(x), b = fv(y);
+        if (a === b) return newer(x, y);
+        if (a === null) return 1;
+        if (b === null) return -1;
+        return a < b ? -1 : 1;
+      };
+      const list = arts.filter((a) => (!tag || ((a["tags"] ?? []) as string[]).includes(tag)) && (!pf || jsonContainsFake(a["fields"] ?? {}, pf)) && (!from || ((fv(a) ?? "") >= from && fv(a) !== null))).sort(fkey ? fcmp : cmp);
       return json(list.slice(Number(args["p_offset"] ?? 0), Number(args["p_offset"] ?? 0) + Number(args["p_limit"] ?? 12) + 1));
     }
     if (fn === "product_public_member_prices") {

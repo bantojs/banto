@@ -5,7 +5,8 @@
  */
 import type { PublicShop, StorefrontData } from "../storefront/data";
 import { articlePath, articleSummary, type ArticleRow, type BlogRow } from "../blog";
-import { articleFieldDefs, fieldValues, type ArticleFieldDef } from "../blog/fields";
+import { articleFieldDefs, fieldDateLabel, fieldValues, type ArticleFieldDef } from "../blog/fields";
+import { formatDateTime } from "../i18n/time";
 import { productUrl } from "../storefront/urls";
 import { shopImageUrl } from "../pages/markdown";
 
@@ -58,6 +59,9 @@ export async function articleFieldParts(d: ArticleFieldDeps, blog: BlogRow, arti
         html = b && list.length ? `<ul class="banto-field banto-field--${f.key} banto-field-links">${list.map((a) => `<li><a href="${esc(articlePath(d.shopPath, b.handle, a.handle))}">${esc(a.title)}</a></li>`).join("")}</ul>` : "";
         // 書いた人のカード（写真・名前・紹介・リンク）。最初の 1 人
         if (f === authorField(defs) && b && list[0]) out["author"] = authorCard(d, b, list[0]);
+      } else if (f.type === "date" || f.type === "datetime") {
+        // 日付・日時（0124）: <time> に機械の読める値も入れる
+        html = `<time class="banto-field banto-field--${f.key}" datetime="${esc(vs[0]!)}">${esc(fieldDateLabel(f.type, vs[0]!, formatDateTime))}</time>`;
       } else if (f.type === "image") {
         const src = shopImageUrl(vs[0]!, d.mediaBase);
         html = src ? `<img class="banto-field banto-field--${f.key} banto-field--image" src="${esc(src)}" alt="${esc(f.label)}" loading="lazy">` : "";
