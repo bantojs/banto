@@ -553,6 +553,8 @@ blogAdmin.post("/:blogId/fields", requireOwner, async (c: AdminContext) => {
   try {
     await owner(c).db.from("blogs").update({ article_fields: defs }, { id: blog.id, shop_id: shop.id });
   } catch (e) {
+    // 並び順・いつまで出すかに使っている日付の項目は消せない（0125）
+    if (e instanceof DbError && /invalid_article_(order|until)/.test(e.message)) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: t("blog.fields_used_by_order"), status: 400 });
     if (e instanceof DbError) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: e.message.replace(/^.*article_fields_invalid:?/, "") || "—", status: 400 });
     throw e;
   }
