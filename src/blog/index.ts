@@ -26,10 +26,12 @@ export interface BlogRow {
   nav: PageNav;
   sort_order: number;
   /** 記事の並び順（0116。無ければ 0116 の前の DB で、新しい順） */
-  /** 並び順（0116）。0124 から field:<キー>（日付・日時の項目の早い順）も */
+  /** 並び順（0116）。0125 から field:<キー>（日付・日時の項目の早い順）も */
   article_order?: ArticleOrder | `field:${string}`;
-  /** 0124: 日付の項目の順のとき、今日以降の記事だけ一覧に出す */
+  /** 0125: 日付の項目の順のとき、今日以降の記事だけ一覧に出す */
   article_from_today?: boolean;
+  /** 0125: いつまで出すかの項目（終了日のキー）。値の無い記事は並び順の項目で決める */
+  article_until?: string | null;
   /** Atom のフィードを出すか（0116。無ければ出す） */
   feed?: boolean;
   /** 記事の独自の項目の定義（0117。src/blog/fields.ts） */

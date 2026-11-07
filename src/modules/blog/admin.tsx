@@ -70,7 +70,7 @@ const opt = (v: string | undefined, max: number) => {
 
 // ---------- ブログ ----------
 
-type BlogValues = Pick<BlogRow, "title" | "handle" | "description" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "article_order" | "feed" | "article_from_today">;
+type BlogValues = Pick<BlogRow, "title" | "handle" | "description" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "article_order" | "feed" | "article_from_today" | "article_until">;
 
 /** 0116（並び順・フィード）が当たっているか。ブログの行があれば列があるかで分かる（問い合わせない） */
 async function blogOrderReady(c: AdminContext, blog?: BlogRow | null): Promise<boolean> {
@@ -95,7 +95,7 @@ function blogValues(f: Record<string, string>, ordered = false): { values: BlogV
     // 欄を出したフォーム（order_fields）からだけ読む（無いフォームで「フィード無し」にしない）
     ...(ordered && f.order_fields === "1" ? { article_order: isBlogOrder(f.article_order) ? f.article_order : "new", feed: f.feed === "1" } : {}),
     // 0124: 日付の項目の順のとき今日以降だけ（欄を出したフォームからだけ読む）
-    ...(ordered && f.from_today_present === "1" ? { article_from_today: f.article_from_today === "1" } : {}),
+    ...(ordered && f.from_today_present === "1" ? { article_from_today: f.article_from_today === "1", article_until: /^[a-z][a-z0-9_]{0,39}$/.test(f.article_until ?? "") ? f.article_until! : null } : {}),
   };
   if (!title || title.length > 200) return { values, error: "pages.error_title" };
   if (!blogHandleOk(values.handle)) return { values, error: "blog.error_handle" };
@@ -143,7 +143,7 @@ function BlogFields(props: { v: BlogValues; ordered?: boolean; dateFields?: { ke
                 {t(`blog.order_${o}` as MessageKey)}
               </option>
             ))}
-            {(props.dateFields ?? []).map((f) => (
+            {(typeof v.article_from_today === "boolean" ? (props.dateFields ?? []) : []).map((f) => (
               <option value={`field:${f.key}`} selected={v.article_order === `field:${f.key}`}>
                 {tf("blog.order_field", { label: f.label })}
               </option>
@@ -157,6 +157,16 @@ function BlogFields(props: { v: BlogValues; ordered?: boolean; dateFields?: { ke
                 <input type="checkbox" name="article_from_today" value="1" checked={v.article_from_today} /> {t("blog.order_from_today")}
               </label>
               <p class="muted">{t("blog.order_from_today_help")}</p>
+              <label for="article_until">{t("blog.order_until")}</label>
+              <select id="article_until" name="article_until">
+                <option value="">{t("blog.order_until_none")}</option>
+                {(props.dateFields ?? []).map((f) => (
+                  <option value={f.key} selected={v.article_until === f.key}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+              <p class="muted">{t("blog.order_until_help")}</p>
             </>
           ) : null}
           <label>
@@ -466,7 +476,7 @@ async function blogSettings(c: AdminContext, shop: ShopRow, blog: BlogRow, opts:
       {c.req.query("flash") === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {opts.error ? <p class="error">{t(opts.error)}</p> : null}
       <form method="post" action={`${base(shop.id)}/${blog.id}/settings`} class="card">
-        <BlogFields v={{ ...(opts.values ?? blog), ...(typeof blog.article_from_today === "boolean" && typeof (opts.values ?? blog).article_from_today !== "boolean" ? { article_from_today: blog.article_from_today } : {}) }} ordered={blogRowOrdered(blog)} dateFields={articleFieldDefs(blog).filter((f) => f.type === "date" || f.type === "datetime")} />
+        <BlogFields v={{ ...(opts.values ?? blog), ...(typeof blog.article_from_today === "boolean" && typeof (opts.values ?? blog).article_from_today !== "boolean" ? { article_from_today: blog.article_from_today, article_until: blog.article_until ?? null } : {}) }} ordered={blogRowOrdered(blog)} dateFields={articleFieldDefs(blog).filter((f) => f.type === "date" || f.type === "datetime")} />
         <p>
           <button type="submit">{t("pages.save")}</button>
         </p>

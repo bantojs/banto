@@ -249,6 +249,7 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[], 
         { key: "limit", label: t("blocks.stores_articles_limit"), type: "select", options: opt(["1", "2", "3", "4", "5", "6"].map((n): [string, string] => [n, n])), default: "3" },
         { key: "sort", label: t("blocks.stores_articles_sort"), type: "text", pattern: "^field:[a-z][a-z0-9_]{0,39}$", placeholder: "field:starts", help: t("blocks.stores_articles_sort_help") },
         { key: "from", label: t("pages.articles_from_today"), type: "select", options: opt([["", t("blocks.no")], ["today", t("blocks.yes")]]) },
+        { key: "until", label: t("pages.articles_until"), type: "text", pattern: "^field:[a-z][a-z0-9_]{0,39}$", placeholder: "field:ends", help: t("blocks.stores_articles_until_help") },
       ],
     },
     include: {
@@ -1189,6 +1190,8 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
             <label style="display:block;margin-top:.25rem">
               <input type="checkbox" name="from" value="today" /> {t("pages.articles_from_today")}
             </label>
+            <label for="ba-funtil">{t("pages.articles_until")}</label>
+            <input id="ba-funtil" name="funtil" pattern="[a-z][a-z0-9_]{0,39}" maxlength={40} placeholder="ends" />
             <p class="muted">{t("pages.articles_fsort_help")}</p>
             <label for="ba-style" hidden>
               {t("pages.block_style")}

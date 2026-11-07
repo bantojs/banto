@@ -182,7 +182,11 @@ export function pageEditorClient() {
     const sort = attr(n, "data-sort");
     // 日付の項目の順（0124）: sort=field:<key>、from=today はそのときだけ
     if (sort === "new" || sort === "title" || sort === "manual" || /^field:[a-z][a-z0-9_]{0,39}$/.test(sort)) parts.push(`sort=${sort}`);
-    if (sort.startsWith("field:") && attr(n, "data-from") === "today") parts.push("from=today");
+    if (sort.startsWith("field:") && attr(n, "data-from") === "today") {
+      parts.push("from=today");
+      const until = attr(n, "data-until");
+      if (/^field:[a-z][a-z0-9_]{0,39}$/.test(until)) parts.push(`until=${until}`);
+    }
     const st = styleName(attr(n, "data-style"));
     if (st) parts.push(`style=${st}`);
     return parts.join(" ");

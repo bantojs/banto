@@ -140,7 +140,7 @@ export function parseButtonLine(line: string): { text: string; url: string; styl
 
 // ---------- 記事を並べる（同梱モジュール blog の記事。1 行のブロック） ----------
 //   ::: articles blog=news tag=お知らせ limit=3 layout=grid style=card sort=manual
-//   ::: articles blog=events sort=field:starts from=today   （日付の項目の早い順・今日以降だけ。0124）
+//   ::: articles blog=events sort=field:starts from=today until=field:ends   （日付の項目の早い順・今日以降だけ（0124）・終了日で決める（0125））
 export type ArticlesLayout = "grid" | "list";
 /** 記事の並び順（src/blog の ArticleOrder と同じ。0116） */
 export type ArticlesSort = "new" | "title" | "manual";
@@ -162,6 +162,8 @@ export interface ArticlesBlock {
   fieldSort?: string | null;
   /** from=today: 日付の項目（fieldSort）が今日以降のものだけ（0124） */
   from?: "today" | null;
+  /** until=field:<key>: 「今日以降」を決める項目（終了日、0125）。値の無い記事は fieldSort で決める */
+  until?: string | null;
 }
 /** 1 ページに置ける記事のブロック（これより後のものは描かない） */
 export const ARTICLE_BLOCKS_MAX = 2;
@@ -190,11 +192,14 @@ export function parseArticlesLine(line: string): ArticlesBlock | null {
   const fromRaw = a.get("from");
   if (fromRaw !== undefined && fromRaw !== "today") return null;
   const from = fieldSort && fromRaw === "today" ? ("today" as const) : null;
+  const untilRaw = a.get("until");
+  if (untilRaw !== undefined && !/^field:[a-z][a-z0-9_]{0,39}$/.test(untilRaw)) return null;
+  const until = from && untilRaw ? untilRaw.slice(6) : null;
   // 項目の絞り込み（1 つ）: field:<key>=<値>。値は 100 字まで、空白を含むときは引用符
   const fm = /(?:^|\s)field:([a-z][a-z0-9_]{0,39})=(?:"([^"\n]{1,100})"|([^\s"]{1,100}))/.exec(m[1] ?? "");
   const field = fm ? { key: fm[1]!, value: (fm[2] ?? fm[3] ?? "").trim() } : null;
   if (field && !field.value) return null;
-  return { blog, tag, sort: sortRaw ?? null, ...(field ? { field } : {}), ...(fieldSort ? { fieldSort } : {}), ...(from ? { from } : {}), limit, layout, style: styleOf(a.get("style")) };
+  return { blog, tag, sort: sortRaw ?? null, ...(field ? { field } : {}), ...(fieldSort ? { fieldSort } : {}), ...(from ? { from } : {}), ...(until ? { until } : {}), limit, layout, style: styleOf(a.get("style")) };
 }
 
 export function articlesLine(b: ArticlesBlock): string {
@@ -205,6 +210,7 @@ export function articlesLine(b: ArticlesBlock): string {
   if (b.fieldSort) parts.push(`sort=field:${b.fieldSort}`);
   else if (b.sort) parts.push(`sort=${b.sort}`);
   if (b.fieldSort && b.from) parts.push(`from=${b.from}`);
+  if (b.fieldSort && b.from && b.until) parts.push(`until=field:${b.until}`);
   if (b.style) parts.push(`style=${b.style}`);
   return parts.join(" ");
 }

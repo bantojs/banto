@@ -77,7 +77,7 @@ export const SHOP_BLOCK_SCHEMA: Record<ShopBlockKind, Record<string, Field>> = {
   date: { of: { values: ["published", "updated", "now"], def: "published" }, format: { values: ["date", "datetime"], def: "date" }, label: { text: true } },
   toc: { levels: { values: ["2", "3"], def: "3" }, title: { text: true } },
   // articles: 店舗ごとに添える記事のブログ（:<キー> は記事の「実店舗」の項目。1 つしか無ければ省ける）。limit は店舗ごとの数
-  stores: { tryon: { values: ["0", "1"], def: "0" }, layout: { values: ["list", "grid"], def: "list" }, articles: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}(?::[a-z][a-z0-9_]{0,39})?$/.test(v) }, limit: { values: ["1", "2", "3", "4", "5", "6"], def: "3" }, sort: { test: (v) => /^field:[a-z][a-z0-9_]{0,39}$/.test(v) }, from: { values: ["today"] } },
+  stores: { tryon: { values: ["0", "1"], def: "0" }, layout: { values: ["list", "grid"], def: "list" }, articles: { test: (v) => /^[a-z0-9][a-z0-9-]{0,62}(?::[a-z][a-z0-9_]{0,39})?$/.test(v) }, limit: { values: ["1", "2", "3", "4", "5", "6"], def: "3" }, sort: { test: (v) => /^field:[a-z][a-z0-9_]{0,39}$/.test(v) }, from: { values: ["today"] }, until: { test: (v) => /^field:[a-z][a-z0-9_]{0,39}$/.test(v) } },
   include: { page: { test: (v) => SLUG.test(v) } },
 };
 
