@@ -250,6 +250,8 @@ export function shopBlockDefs(categories: Pick<CategoryRow, "slug" | "name">[], 
         { key: "sort", label: t("blocks.stores_articles_sort"), type: "text", pattern: "^field:[a-z][a-z0-9_]{0,39}$", placeholder: "field:starts", help: t("blocks.stores_articles_sort_help") },
         { key: "from", label: t("pages.articles_from_today"), type: "select", options: opt([["", t("blocks.no")], ["today", t("blocks.yes")]]) },
         { key: "until", label: t("pages.articles_until"), type: "text", pattern: "^field:[a-z][a-z0-9_]{0,39}$", placeholder: "field:ends", help: t("blocks.stores_articles_until_help") },
+        // 実店舗の独自項目（0126、公開の項目だけ・書いた順で 10 個まで）
+        { key: "show", label: t("blocks.stores_show"), type: "text", pattern: "^field:[a-z][a-z0-9_]{0,39}(,field:[a-z][a-z0-9_]{0,39}){0,9}$", placeholder: "field:parking,field:brands", help: t("blocks.stores_show_help") },
       ],
     },
     include: {

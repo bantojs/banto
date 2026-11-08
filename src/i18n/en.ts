@@ -638,6 +638,8 @@ export const en: Record<MessageKey, string> = {
   "blocks.stores_articles_limit": "Articles per store",
   "blocks.stores_articles_sort": "Order of the articles (date field)",
   "blocks.stores_articles_sort_help": "field:<field key> (e.g. field:starts) lists the earliest by that \"date\" or \"date and time\" article field first. Leave empty for the blog's order.",
+  "blocks.stores_show": "Store custom fields",
+  "blocks.stores_show_help": "field:<field key> separated by commas (e.g. field:parking,field:brands). Up to 10, in the order written. Fields are defined on the Stores page; private fields are never shown.",
   "blocks.stores_articles_until_help": "field:<end date field key> (e.g. field:ends). With \"only from today on\", an article is shown while its end date is today or later (for events that run several days). Articles without an end date use the order field.",
   "pages.products_related": "Products similar to the current one (in a product detail layout)",
   "pages.products_related_help": "Lists products in the same main category as the product being viewed, then fills up with products sharing its tag (the product itself is left out). Shows nothing on ordinary pages.",
