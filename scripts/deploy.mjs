@@ -3,6 +3,7 @@
  * デプロイ（`npm run deploy`）。デプロイごとに違う設定を、ビルドの変数で選ぶ。
  *   BANTO_PLACEMENT … Worker を動かす場所（Cloudflare の Placement、docs/setup.md §8）
  *   BANTO_OBSERVABILITY=off … ログ（Workers Logs）を切る（既定は wrangler.jsonc のとおり ON、docs/setup.md §9）
+ *   BANTO_MINIFY=off … Worker を縮めずに送る（既定は wrangler.jsonc のとおり縮める。読みやすさを優先するとき、docs/setup.md §11）
  *   BANTO_WORKER_NAME / BANTO_MEDIA_BUCKET / BANTO_PRIVATE_BUCKET … Worker 名と R2 のバケット名（既定は wrangler.jsonc の banto / banto-media / banto-private）。
  *     同じアカウントに Banto を 2 つ以上立てる（お店ごと・確認用など）ときに、それぞれのデプロイの設定で変える（docs/setup.md §10）
  * リポジトリの wrangler.jsonc は書き換えない（アップデートで競合しない）。変えた写しを同じ場所に作り、それで wrangler deploy する。
@@ -36,6 +37,22 @@ export function observabilityOff(raw) {
   if (v === "" || v === "on") return false;
   if (v === "off") return true;
   throw new Error(`BANTO_OBSERVABILITY の形が違います: "${v}"（off で切る）`);
+}
+
+/** BANTO_MINIFY の値 → 縮めずに送るか。未設定・on は false（wrangler.jsonc のまま縮める）、off は true、ほかは例外 */
+export function minifyOff(raw) {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (v === "" || v === "on") return false;
+  if (v === "off") return true;
+  throw new Error(`BANTO_MINIFY の形が違います: "${v}"（off で縮めずに送る）`);
+}
+
+/** wrangler.jsonc の "minify": true を false に、"keep_names": false を true に（関数の名前も残す）。どちらも 1 行で書かれたものだけ。無ければ例外 */
+export function withoutMinify(text) {
+  const min = /^(\s*)"minify"\s*:\s*true(\s*,?)/m;
+  const keep = /^(\s*)"keep_names"\s*:\s*false(\s*,?)/m;
+  if (!min.test(text) || !keep.test(text)) throw new Error('wrangler.jsonc に "minify": true と "keep_names": false がありません');
+  return text.replace(min, '$1"minify": false$2').replace(keep, '$1"keep_names": true$2');
 }
 
 const WORKER_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -89,12 +106,14 @@ export function withoutObservability(text) {
 function main() {
   let placement;
   let obsOff;
+  let noMinify;
   let workerName;
   let mediaBucket;
   let privateBucket;
   try {
     placement = placementFor(process.env.BANTO_PLACEMENT);
     obsOff = observabilityOff(process.env.BANTO_OBSERVABILITY);
+    noMinify = minifyOff(process.env.BANTO_MINIFY);
     workerName = workerNameFor(process.env.BANTO_WORKER_NAME);
     mediaBucket = bucketNameFor(process.env.BANTO_MEDIA_BUCKET, "BANTO_MEDIA_BUCKET");
     privateBucket = bucketNameFor(process.env.BANTO_PRIVATE_BUCKET, "BANTO_PRIVATE_BUCKET");
@@ -103,12 +122,13 @@ function main() {
     return 1;
   }
   const args = ["deploy", ...process.argv.slice(2)];
-  const copy = placement !== null || obsOff || workerName !== null || mediaBucket !== null || privateBucket !== null;
+  const copy = placement !== null || obsOff || noMinify || workerName !== null || mediaBucket !== null || privateBucket !== null;
   if (copy) {
     let text = readFileSync("wrangler.jsonc", "utf8");
     try {
       if (placement) text = withPlacement(text, placement);
       if (obsOff) text = withoutObservability(text);
+      if (noMinify) text = withoutMinify(text);
       if (workerName) text = withWorkerName(text, workerName);
       if (mediaBucket) text = withBucket(text, "MEDIA", mediaBucket);
       if (privateBucket) text = withBucket(text, "PRIVATE", privateBucket);
@@ -122,6 +142,7 @@ function main() {
   console.log(placement ? `deploy: placement ${JSON.stringify(placement)}` : "deploy: BANTO_PLACEMENT が無いので、placement は wrangler.jsonc のまま");
   if (workerName) console.log(`deploy: Worker 名 ${workerName}`);
   if (mediaBucket || privateBucket) console.log(`deploy: R2 のバケット MEDIA=${mediaBucket ?? "（wrangler.jsonc のまま）"} PRIVATE=${privateBucket ?? "（wrangler.jsonc のまま）"}`);
+  console.log(noMinify ? "deploy: BANTO_MINIFY=off なので、縮めずに送る（大きさの上限に気をつける）" : "deploy: wrangler.jsonc のとおり縮めて送る");
   console.log(obsOff ? "deploy: BANTO_OBSERVABILITY=off なので、ログ（observability）を切る" : "deploy: ログ（observability）は wrangler.jsonc のまま");
   try {
     // npm run から呼ぶので、wrangler は node_modules/.bin のもの（Windows は npx.cmd のためシェルを通す）

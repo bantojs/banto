@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { bucketNameFor, observabilityOff, placementFor, withBucket, withWorkerName, withoutObservability, withPlacement, workerNameFor } from "../scripts/deploy.mjs";
+import { bucketNameFor, minifyOff, observabilityOff, placementFor, withBucket, withWorkerName, withoutMinify, withoutObservability, withPlacement, workerNameFor } from "../scripts/deploy.mjs";
 
-/** デプロイの設定（scripts/deploy.mjs、BANTO_PLACEMENT・BANTO_OBSERVABILITY） */
+/** デプロイの設定（scripts/deploy.mjs、BANTO_PLACEMENT・BANTO_OBSERVABILITY・BANTO_MINIFY） */
 describe("scripts/deploy.mjs", () => {
   it("BANTO_PLACEMENT の値: リージョン・smart・未設定。形が違えば止める", () => {
     expect(placementFor("aws:ap-northeast-1")).toEqual({ mode: "targeted", region: "aws:ap-northeast-1" });
@@ -20,6 +20,21 @@ describe("scripts/deploy.mjs", () => {
     expect(out).toContain('"name": "banto"');
     expect(out.replace(/\n {2}\/\/ scripts\/deploy\.mjs[^\n]*\n {2}"placement"[^\n]*/, "")).toBe(text);
     expect(() => withPlacement(out, { mode: "smart" })).toThrow(/もう placement/);
+  });
+
+  it("wrangler.jsonc は既定で縮める（関数の名前の補助なし）。BANTO_MINIFY=off の写しだけ縮めず名前も残す", () => {
+    expect(minifyOff(undefined)).toBe(false);
+    expect(minifyOff("on")).toBe(false);
+    expect(minifyOff(" OFF ")).toBe(true);
+    expect(() => minifyOff("no")).toThrow(/BANTO_MINIFY/);
+    const text = readFileSync("wrangler.jsonc", "utf8");
+    expect(text).toMatch(/^ {2}"minify": true,$/m);
+    expect(text).toMatch(/^ {2}"keep_names": false,$/m);
+    const out = withoutMinify(text);
+    expect(out).toMatch(/^ {2}"minify": false,$/m);
+    expect(out).toMatch(/^ {2}"keep_names": true,$/m);
+    expect(out.replace('"minify": false', '"minify": true').replace('"keep_names": true', '"keep_names": false')).toBe(text);
+    expect(() => withoutMinify(out)).toThrow(/minify/);
   });
 
   it("ログは wrangler.jsonc で既定 ON。BANTO_OBSERVABILITY=off の写しだけ切る", () => {

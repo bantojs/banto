@@ -9,6 +9,10 @@
   // ショップの URL を https://banto.<account>.workers.dev で公開する（独自ドメインは後から追加。docs/custom-domain.md）
   "workers_dev": true,
   "upload_source_maps": true,
+  // 縮めて送る（Worker の大きさの上限のため。メンテナの決定 2026-11-08、docs/setup.md §11）。読みやすいまま送るならビルドの変数 BANTO_MINIFY=off
+  "minify": true,
+  // 名前を残す補助（__name）は縮めると名前が変わり、管理画面に toString() で埋め込むブラウザのコードが壊れるので付けない（エラーの名前は各クラスが this.name で持つ）
+  "keep_names": false,
 
   // ログ（Workers Logs）。運営者自身の Cloudflare アカウントに数日だけ残り、開発チームには届かない（テレメトリではない）。
   // issues は失敗（例外・5xx・console.error）をまとめて見せる。traces は既定で切っておく（すべての fetch を記録するので、要るときだけ）。
