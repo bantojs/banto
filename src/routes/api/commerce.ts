@@ -6,7 +6,7 @@ import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
-import { STATUS_QUERY_PARAM, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
+import { anyProvider, STATUS_QUERY_PARAM, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
@@ -111,7 +111,7 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
     payments: setup.options,
     /** 配送日時の選択肢（同梱モジュール delivery_time が OFF なら null）。チェックアウトの配送先の delivery_date / delivery_slot に value を渡す */
     delivery: deliveryOptions(s.shop.settings),
-    can_checkout: priced.lines.length > 0 && !short && (setup.options.stripe || setup.options.komoju),
+    can_checkout: priced.lines.length > 0 && !short && anyProvider(setup.options),
     /** 会員として判定したか（Authorization: Bearer が有効なら会員 ID） */
     member: s.member ? { id: s.member.id } : null,
     /** 同梱テーマのレジ（配送先 → 最終確認 → 決済）で続けるときの URL */
@@ -214,6 +214,8 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
     discount: check.discount,
     successUrl: statusToken ? withQueryParam(successUrl, successUrl.startsWith(`${shopUrl}/checkout/done`) ? "s" : STATUS_QUERY_PARAM, statusToken) : successUrl,
     cancelUrl: safeReturnUrl(body.cancel_url, allowed, `${shopUrl}/cart`),
+    // Amazon Pay は Banto の中継ページ（ショップのドメイン）を通ってから Amazon Pay の画面へ移る
+    shopUrl,
     // 会員の注文として紐づける（会員は自分の注文を /members/me や会員ページで読める）
     ...(s.member ? { customerId: s.member.id, customerEpoch: s.member.epoch } : {}),
     limits: await reserveLimits(s.secret, quote, await clientIpFor(c, s.shop), s.member ? { id: s.member.id } : null),

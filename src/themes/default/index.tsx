@@ -633,7 +633,7 @@ export const defaultTheme: Theme = {
   },
 
   CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon }) {
-    const checkoutEnabled = payments.stripe || payments.komoju;
+    const checkoutEnabled = payments.stripe || payments.komoju || payments.amazon_pay;
     const short = lines.some((l) => l.short);
     return (
       <Layout title={t("store.cart")} ctx={ctx} seo={{ noindex: true }}>
@@ -741,17 +741,27 @@ export const defaultTheme: Theme = {
                     <input type="hidden" name="provider" value="stripe" />
                     <p>
                       <button type="submit" disabled={short}>
-                        {payments.komoju ? t("store.pay_with_stripe") : t("store.checkout")}
+                        {payments.komoju || payments.amazon_pay ? t("store.pay_with_stripe") : t("store.checkout")}
                       </button>
                     </p>
                   </form>
                 ) : null}
                 {payments.komoju ? (
-                  <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block">
+                  <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
                     <input type="hidden" name="provider" value="komoju" />
                     <p>
                       <button type="submit" disabled={short}>
                         {t("store.pay_with_komoju")}
+                      </button>
+                    </p>
+                  </form>
+                ) : null}
+                {payments.amazon_pay ? (
+                  <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block">
+                    <input type="hidden" name="provider" value="amazon_pay" />
+                    <p>
+                      <button type="submit" disabled={short}>
+                        {t("store.pay_with_amazon_pay")}
                       </button>
                     </p>
                   </form>
@@ -991,7 +1001,8 @@ export const defaultTheme: Theme = {
         <ul>
           {payments.stripe ? <li>{t("store.pay_with_stripe")}</li> : null}
           {payments.komoju ? <li>{t("store.pay_with_komoju")}</li> : null}
-          {!payments.stripe && !payments.komoju ? <li>{t("store.checkout_unavailable")}</li> : null}
+          {payments.amazon_pay ? <li>{t("store.pay_with_amazon_pay")}</li> : null}
+          {!payments.stripe && !payments.komoju && !payments.amazon_pay ? <li>{t("store.checkout_unavailable")}</li> : null}
         </ul>
       </Layout>
     );

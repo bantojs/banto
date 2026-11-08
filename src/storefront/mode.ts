@@ -50,6 +50,8 @@ export function pageKind(rest: string): PageKind {
   if (r === "" || r === "/products" || r.startsWith("/products/") || r.startsWith("/categories/") || r.startsWith("/pages/") || r === "/blogs" || r.startsWith("/blogs/")) return "catalog";
   if (/^\/(legal|privacy|returns|shipping)$/.test(r)) return "system";
   if (/^\/orders\/(lookup|receipt)$/.test(r)) return "system";
+  // Amazon Pay の中継ページ・戻り（同梱プラグイン amazon_pay）: ヘッドレスの決済も通るので、どの使い方でも残す
+  if (/^\/checkout\/amazon-pay\/(start|return|cancel|relay\.js)$/.test(r)) return "system";
   if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";
   if (/^\/account\/(verify|code)$/.test(r)) return "system";
   // パスキーでのログイン・追加（同梱モジュール passkey）: ヘッドレスのログインと追加もショップのドメインのこの画面を通るので、どの使い方でも残す

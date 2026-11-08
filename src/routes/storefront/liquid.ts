@@ -476,10 +476,10 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
 }
 
 /** 決済手段の表示名（既定のテーマのカートのボタンと同じ文言） */
-const paymentLabel = (p: "stripe" | "komoju"): string => t(p === "stripe" ? "store.pay_with_stripe" : "store.pay_with_komoju");
+const paymentLabel = (p: "stripe" | "komoju" | "amazon_pay"): string => t(p === "stripe" ? "store.pay_with_stripe" : p === "amazon_pay" ? "store.pay_with_amazon_pay" : "store.pay_with_komoju");
 
 /** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く）。payments は使える決済手段（cart.banto_payment_methods） */
-export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean }; error?: string; categories: CategoryRow[] }): Response | null {
+export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean; amazon_pay: boolean }; error?: string; categories: CategoryRow[] }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel) };
   return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });

@@ -84,14 +84,14 @@ export function appWith(supabase: FakeSupabase, overrides: Record<string, string
 export const ADDRESS = { customer_name: "山田 太郎", customer_email: "buyer@example.com", phone: "0312345678", postal_code: "100-0001", state: "東京都", city: "千代田区", line1: "千代田1-1", line2: "" };
 
 /** 「購入手続きへ」→ 配送先入力 → 最終確認 → 決済ページへ転送、までを行い、最後の応答を返す */
-export async function checkout(b: Browser, shopPath: string, provider: "stripe" | "komoju" = "stripe", address: Record<string, string> = ADDRESS): Promise<Response> {
+export async function checkout(b: Browser, shopPath: string, provider: "stripe" | "komoju" | "amazon_pay" = "stripe", address: Record<string, string> = ADDRESS): Promise<Response> {
   const step1 = await b.post(`${shopPath}/checkout`, { provider });
   if (step1.status !== 200) return step1;
   return confirmAddress(b, shopPath, provider, address);
 }
 
 /** 配送先を送って最終確認画面を出し、そのまま「注文を確定する」を押す */
-export async function confirmAddress(b: Browser, shopPath: string, provider: "stripe" | "komoju", address: Record<string, string>): Promise<Response> {
+export async function confirmAddress(b: Browser, shopPath: string, provider: "stripe" | "komoju" | "amazon_pay", address: Record<string, string>): Promise<Response> {
   const review = await b.post(`${shopPath}/checkout/${provider}`, address);
   if (review.status !== 200) return review;
   return b.post(`${shopPath}/checkout/${provider}`, { quote: quoteFrom(await review.text()) });

@@ -18,6 +18,8 @@ import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { StripeError, type StripeClient } from "../payments/stripe";
 import { KomojuError, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
+import { amazonPayConfigured } from "../plugins/amazon_pay";
+import { AMAZON_PAY_URL_MAX, sealAmazonPayTicket } from "../payments/amazon-pay";
 import { t, type MessageKey } from "../i18n";
 import { EMPTY_DISCOUNT, couponSubject, customerAttributesOf, evaluateDiscounts, parseCampaigns, type DiscountLine, type DiscountResult, type RejectedCoupon } from "./discounts";
 import { marketingConsentEnabled } from "../customers/fields";
@@ -25,11 +27,11 @@ import { shopHome } from "../storefront/urls";
 import { checkDelivery, deliveryText, isDeliverySlot } from "../modules/delivery-time";
 import { rateFor, shopTaxRates, taxBreakdown, taxClassOf, taxRoundingOf, type TaxGroup } from "./tax";
 
-export type Provider = "stripe" | "komoju";
-export const PROVIDERS: readonly Provider[] = ["stripe", "komoju"];
+export type Provider = "stripe" | "komoju" | "amazon_pay";
+export const PROVIDERS: readonly Provider[] = ["stripe", "komoju", "amazon_pay"];
 
 export function isProvider(s: unknown): s is Provider {
-  return s === "stripe" || s === "komoju";
+  return s === "stripe" || s === "komoju" || s === "amazon_pay";
 }
 
 /**
@@ -294,9 +296,9 @@ export interface Confirmation {
 }
 
 export function paymentDescription(provider: Provider): { method: string; timing: string } {
-  return provider === "stripe"
-    ? { method: t("confirm.method_stripe"), timing: t("confirm.timing_stripe") }
-    : { method: t("confirm.method_komoju"), timing: t("confirm.timing_komoju") };
+  if (provider === "stripe") return { method: t("confirm.method_stripe"), timing: t("confirm.timing_stripe") };
+  if (provider === "amazon_pay") return { method: t("confirm.method_amazon_pay"), timing: t("confirm.timing_amazon_pay") };
+  return { method: t("confirm.method_komoju"), timing: t("confirm.timing_komoju") };
 }
 
 // ---------- quote（署名付き） ----------
@@ -527,9 +529,11 @@ export function stripeMode(shop: PublicShop, bundled: BundledOption[], cfg: Conf
 }
 
 export interface PaymentSetup {
-  options: { stripe: boolean; komoju: boolean };
+  options: { stripe: boolean; komoju: boolean; amazon_pay: boolean };
   komoju: BundledOption | null;
   stripe: StripeMode;
+  /** 同梱プラグイン「Amazon Pay」が有効 + 設定が揃っている（0130） */
+  amazonPay: BundledOption | null;
 }
 
 /** 有効な決済手段。同梱プラグインの有効状態と Secret の有無から決める */
@@ -543,11 +547,20 @@ export async function paymentSetup(sf: StorefrontData, shop: PublicShop, cfg: Co
   const komoju = bundled.find((o) => o.id === "komoju") ?? null;
   const komojuReady = komoju !== null && Boolean(cfg.get("KOMOJU_SECRET_KEY") && cfg.get("KOMOJU_WEBHOOK_SECRET") && cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
   const stripe = cfg.get("SUPABASE_SERVICE_ROLE_KEY") ? stripeMode(shop, bundled, cfg) : null;
-  return { options: { stripe: stripe !== null, komoju: komojuReady }, komoju: komojuReady ? komoju : null, stripe };
+  const amazon = bundled.find((o) => o.id === "amazon_pay") ?? null;
+  const amazonReady = amazon !== null && amazonPayConfigured(cfg) && Boolean(cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
+  return { options: { stripe: stripe !== null, komoju: komojuReady, amazon_pay: amazonReady }, komoju: komojuReady ? komoju : null, stripe, amazonPay: amazonReady ? amazon : null };
 }
 
 export function providerAvailable(setup: PaymentSetup, provider: Provider): boolean {
-  return provider === "stripe" ? setup.stripe !== null : setup.komoju !== null;
+  if (provider === "stripe") return setup.stripe !== null;
+  if (provider === "amazon_pay") return setup.amazonPay !== null;
+  return setup.komoju !== null;
+}
+
+/** どれか 1 つでも決済手段が使えるか */
+export function anyProvider(options: PaymentSetup["options"]): boolean {
+  return options.stripe || options.komoju || options.amazon_pay;
 }
 
 // ---------- 注文の確定（在庫予約 → 決済ページ） ----------
@@ -556,6 +569,8 @@ export interface PlaceOrderDeps {
   privileged: PrivilegedDb;
   stripe: StripeClient | null;
   komoju: ReturnType<typeof createKomojuClient> | null;
+  /** Amazon Pay の中継ページの券に署名する秘密（サイトの秘密）。Amazon Pay を使わないなら null */
+  amazonPay?: { secret: string } | null;
   setup: PaymentSetup;
   /** 会員限定の商品を予約のときに DB でも確かめる（reserve_stock の p_customer_id）のは 0129 が当たってから。null なら渡さない */
   migrationState?: MigrationStateDeps | null;
@@ -578,6 +593,8 @@ export interface PlaceOrderInput {
   customerEpoch?: number;
   /** 予約の上限（0029、reserveLimits() で作る） */
   limits?: ReserveLimits | null;
+  /** ショップの外向きの URL（shopHome）。Amazon Pay の中継ページ（<shopUrl>/checkout/amazon-pay/start）に使う */
+  shopUrl?: string;
 }
 
 /** free: 0 円の注文で、決済なしで確定した（url は完了画面、orderId は確定した注文） */
@@ -702,6 +719,21 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       });
       if (!session.url) throw new Error("checkout session has no url");
       return { ok: true, url: session.url, reservationId };
+    }
+    if (quote.provider === "amazon_pay") {
+      // Amazon Pay の画面へは Banto の中継ページから移る（Amazon の checkout.js を読むのはその画面だけ。src/payments/amazon-pay.ts）。
+      // 券にはどの予約を・いくらで・どこへ戻すかだけを入れる。支払ったかは戻りで Amazon Pay の API に確かめる
+      if (!deps.amazonPay || !input.shopUrl) throw new Error("amazon pay not configured");
+      const token = await sealAmazonPayTicket(deps.amazonPay.secret, {
+        shopId: shop.id,
+        reservationId,
+        amountJpy: input.subtotal + quote.shipping - discount.total,
+        successUrl: input.successUrl,
+        cancelUrl: input.cancelUrl,
+      });
+      // 戻りの URL（券を付ける）は Amazon Pay の上限 1024 文字に収める
+      if (`${input.shopUrl}/checkout/amazon-pay/return?t=${token}&amazonCheckoutSessionId=`.length + 100 > AMAZON_PAY_URL_MAX || input.cancelUrl.length > AMAZON_PAY_URL_MAX) throw new Error("amazon pay return url is too long");
+      return { ok: true, url: `${input.shopUrl}/checkout/amazon-pay/start?t=${encodeURIComponent(token)}`, reservationId };
     }
     if (!deps.komoju) throw new Error("komoju not configured");
     // クーポンが支払い方法を絞っていれば、決済ページに出す種類もそれだけにする（設定の種類と重ねる）

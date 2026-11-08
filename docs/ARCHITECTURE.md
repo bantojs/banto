@@ -103,7 +103,8 @@ service\_role を使う処理は専用モジュールに閉じ込め、通常の
 | --- | --- | --- |
 | 決済（Stripe） | Stripe Connect Standard（OAuth）。運営者が自分のStripeアカウントを接続し、本システムは接続済みアカウントIDだけを保持 | シークレットキーの預かりを廃止。鍵漏洩時の被害範囲をゼロにする |
 | 決済（KOMOJU） | 現時点ではAPIキー方式。Workers Secret に保存し、DBには置かない | 同上。OAuth相当の仕組みが提供されれば移行 |
-| クレジットカード情報 | Stripe Checkout / KOMOJU ホスト型決済ページへリダイレクト | カード番号は一切通過させない（PCI DSS SAQ A 相当） |
+| 決済（Amazon Pay） | API v2。秘密鍵を Workers Secret に置き、要求ごとに RSA-PSS で署名する（SDK なし）。DB には置かない | 確定は戻りで API に確かめてから（Amazon Pay の作り。docs/knowledge/02-decisions.md 2026-11-08） |
+| クレジットカード情報 | Stripe Checkout / KOMOJU / Amazon Pay のホスト型決済ページへリダイレクト | カード番号は一切通過させない（PCI DSS SAQ A 相当） |
 | CRM / MA | HubSpot、Klaviyo、LINE 等へ注文・顧客イベントをWebhookで送信。APIキーは Workers Secret | 変更なし。送信先の増減はプラグイン形式で |
 | メール送信 | 運営者の Resend / SendGrid / Amazon SES、または運営者自身の SMTP サーバー（`MAIL_TRANSPORT` で 1 つ選ぶ。docs/email.md）。注文確認メールを CRM 側に委ねる選択肢も残す | 当初は「コアに SMTP 実装を持たない」としていたが、レンタルサーバー・VPS の利用者が自分のメールサーバーを使えるように、ライブラリなしの小さな SMTP クライアントを入れた（メンテナの決定 2026-10-23）。接続は SocketAdapter の背後 |
 | ストアフロント | ヘッドレスAPI（公開読み取り + 署名付きカートAPI） | 変更なし。Next.js 等の外部フロントを接続可能 |
@@ -141,7 +142,7 @@ CRM・メール・分析はコアの `hooks`（order.created、order.paid、cust
 | 拡張点 | 内容 | 実装するモジュールの例 |
 | --- | --- | --- |
 | hooks の受け手 | イベントを非同期で受ける（既存） | メール、LINE 通知 |
-| 決済 | 決済ページの作成と Webhook 受信（既存） | Stripe、KOMOJU |
+| 決済 | 決済ページの作成と Webhook 受信（既存） | Stripe、KOMOJU、Amazon Pay |
 | 値引き | quote に調整行（値引き・手数料）を足す。確認画面の表示と確定時の照合はコアが行う | クーポン |
 | 配送 | 送料と配送の選択肢（国を受け取れる形）。今の「全国一律 / 都道府県別」は標準実装 | 配送日時指定、店頭受け取り、将来の海外配送 |
 | 読み取り出力 | 公開データを別の形式で出す URL（Cron で生成して StorageAdapter に置く） | 商品フィード、構造化データ |

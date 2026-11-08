@@ -5,6 +5,7 @@
 import type { PrivilegedDb } from "../db/privileged";
 import { createStripeClient } from "../payments/stripe";
 import { createKomojuClient } from "../plugins/komoju";
+import { amazonPayFromConfig, parseJpy } from "../plugins/amazon_pay";
 import type { ConfigAdapter } from "../adapters/types";
 
 /** orders.payment_account（0090）の API キー方式の印（Connect の接続先ではなく運営者自身のアカウントで決済した） */
@@ -49,6 +50,16 @@ export async function refundPayment(
     const secretKey = opts.config.get("KOMOJU_SECRET_KEY");
     if (!secretKey) throw new CancelError("refund_failed", "KOMOJU_SECRET_KEY is not configured");
     await createKomojuClient({ secretKey, fetch: opts.fetch }).refundPayment(info.payment_ref, opts.idempotencyKey);
+    return true;
+  }
+  if (info.payment_provider === "amazon_pay") {
+    const client = amazonPayFromConfig(opts.config, opts.fetch);
+    if (!client) throw new CancelError("refund_failed", "Amazon Pay is not configured (AMAZON_PAY_*)");
+    // 返す額は Amazon Pay が売り上げた額から返金済みの額を引いたもの（Banto は一部の返金をしないので、ふつうは全額）
+    const charge = await client.getCharge(info.payment_ref);
+    const remaining = (parseJpy(charge.captureAmount) ?? 0) - (parseJpy(charge.refundedAmount) ?? 0);
+    if (remaining <= 0) return true;
+    await client.createRefund(info.payment_ref, remaining, opts.idempotencyKey);
     return true;
   }
   return false;

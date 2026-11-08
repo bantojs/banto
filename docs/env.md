@@ -22,6 +22,9 @@
 | `STRIPE_CLIENT_ID` | Secret | Connect を使うなら | Stripe → Connect の設定 → クライアント ID（上級者向け） |
 | `STRIPE_CONTEXT` | 変数 | 組織キーを使うなら | Stripe の「組織」で発行した API キーを使うとき、対象アカウントの ID（`acct_…`、Stripe → 設定 → ビジネス → アカウント ID）。アカウント内で発行したキーなら不要 |
 | `KOMOJU_SECRET_KEY` / `KOMOJU_WEBHOOK_SECRET` | Secret | KOMOJU を使うなら | KOMOJU の管理画面 |
+| `AMAZON_PAY_PRIVATE_KEY` | Secret | Amazon Pay を使うなら | Amazon Pay の Seller Central → インテグレーションセントラルで作った秘密鍵（`.pem` の中身。docs/plugins.md「Amazon Pay」） |
+| `AMAZON_PAY_PUBLIC_KEY_ID` / `AMAZON_PAY_MERCHANT_ID` / `AMAZON_PAY_STORE_ID` | 変数 | Amazon Pay を使うなら | 同じ画面の公開鍵 ID・出品者 ID・ストア ID |
+| `AMAZON_PAY_SANDBOX` | 変数 | 任意 | 公開鍵 ID が `SANDBOX-` / `LIVE-` で始まらない鍵で、テスト環境を使うときだけ `true` |
 | `MAIL_TRANSPORT` | 変数 | 任意 | メールの送り手: `resend`（既定）/ `smtp` / `sendgrid` / `ses`（docs/email.md §1）。注文メール・会員のログインのコード・招待がすべてこれで送られる |
 | `RESEND_API_KEY` | Secret | `resend` のとき | Resend → API Keys（docs/email.md） |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_TLS` | `SMTP_HOST` は Secret 扱い、他は変数（`SMTP_PASS` は Secret） | `smtp` のとき | 自分のメールサーバーや SMTP リレー。`SMTP_PORT` は既定 587（`SMTP_TLS=on` なら 465）、`SMTP_TLS` は `starttls`（既定）/ `on` / `off`。**25 番は使えない**（Cloudflare が塞ぐ） |

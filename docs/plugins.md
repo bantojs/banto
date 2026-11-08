@@ -5,7 +5,7 @@
 API キー等のシークレットは DB に置かず、Cloudflare の **変数とシークレット**（Workers & Pages → banto → 設定）に
 種類「シークレット」で登録します（CLAUDE.md §1-5）。以下の `npx wrangler secret put ...` は開発者向けの同じ操作です。
 
-同梱プラグイン一覧: Stripe 決済（カード）、KOMOJU 決済、メール通知、LINE 通知。
+同梱プラグイン一覧: Stripe 決済（カード）、KOMOJU 決済、Amazon Pay、メール通知、LINE 通知。
 
 ## Stripe 決済（カード）
 
@@ -78,3 +78,58 @@ npx wrangler secret put KOMOJU_WEBHOOK_SECRET
 
 KOMOJU の API キーは Workers Secret（デプロイ単位）なので、同じデプロイ内の全ショップで同じ KOMOJU アカウントに入金されます。
 ショップごとに別のアカウントが必要な場合は、Stripe Connect（ショップごとに接続）を使ってください。
+
+## Amazon Pay
+
+お客様が Amazon アカウントに登録済みの支払い方法で払えるようにします（[Amazon Pay](https://pay.amazon.co.jp/) のホスト型の画面。日本・円）。Stripe・KOMOJU と併用できます。
+お届け先は Banto 側で入力してから Amazon Pay へ移ります（Amazon Pay には「支払いだけ」を頼みます。カード番号は Banto を通りません）。
+
+### 準備（Amazon Pay の Seller Central）
+
+1. Amazon Pay の加盟店の登録を済ませ、**Seller Central** を開きます（最初は画面上部の切り替えで **テスト環境（Sandbox）** にしておくと安全です）。
+2. **インテグレーション → インテグレーションセントラル** で、次を控えます。
+   - **出品者 ID（Merchant ID）**
+   - **ストア ID**（`amzn1.application-oa2-client.…`）
+3. 同じ画面で **API キー（公開鍵 ID と秘密鍵）を作成** します。秘密鍵のファイル（`.pem`）がダウンロードされます。**公開鍵 ID**（`SANDBOX-…` / `LIVE-…` で始まるもの）を控えます。秘密鍵は再発行できないので、なくさないように保管してください。
+4. ストアの設定の **JavaScript の許可するオリジン** に、お店の URL のオリジンを足します（例: `https://<Worker の URL>`、独自ドメインのショップは `https://shop.example.jp` も）。ここに無いオリジンでは支払いボタンが出ません。
+5. **即時支払い通知（IPN）の設定** の **加盟店 URL** に `https://<Worker の URL>/webhooks/amazon-pay` を入れます（テスト環境と本番は別々に設定します）。
+
+### 準備（Cloudflare）
+
+Cloudflare の「変数とシークレット」に入れます。
+
+| 名前 | 種類 | 値 |
+| --- | --- | --- |
+| `AMAZON_PAY_PRIVATE_KEY` | シークレット | 手順 3 の `.pem` ファイルの中身をそのまま貼る（`-----BEGIN PRIVATE KEY-----` から `-----END PRIVATE KEY-----` まで） |
+| `AMAZON_PAY_PUBLIC_KEY_ID` | 変数 | 公開鍵 ID |
+| `AMAZON_PAY_MERCHANT_ID` | 変数 | 出品者 ID |
+| `AMAZON_PAY_STORE_ID` | 変数 | ストア ID |
+| `AMAZON_PAY_SANDBOX` | 変数（任意） | 公開鍵 ID が `SANDBOX-` / `LIVE-` で始まらない古い鍵のときだけ。テスト環境なら `true` |
+
+```bash
+# 開発者向け
+npx wrangler secret put AMAZON_PAY_PRIVATE_KEY < AmazonPay_privateKey.pem
+```
+
+管理画面 → ショップ設定 → プラグイン → **Amazon Pay** を有効にすると、カートに「Amazon Pay で支払う」が出ます（足りない設定があるあいだは出ません）。
+本番に切り替えるときは、Seller Central の本番環境で同じ手順（API キー・許可するオリジン・IPN）をやり直し、`LIVE-` の公開鍵 ID と秘密鍵に入れ替えます。
+
+### 流れと確定のしかた
+
+1. カート → お届け先 → 最終確認（特商法の表示）→ 在庫を予約 → **Banto の中継ページ**（Amazon Pay のボタン）
+2. ボタンを押すと Amazon Pay の画面へ。支払い方法を選んで「支払う」
+3. お店に戻ったとき、Banto が **Amazon Pay の API で状態と金額を確かめてから** 支払いを確定し（`CompleteCheckoutSession`）、売上が確定していれば注文を確定します
+4. 戻る前にブラウザを閉じても、Amazon Pay の **IPN** が届けば同じ確かめ方で注文を確定します
+
+- 戻りの URL に付いてくる値は合図にしか使いません。どの予約か・いくらかは Banto が署名した券、支払ったかどうかは Amazon Pay の API の答えで決めます。IPN も、届いた中身ではなく API で引き直した Charge で判断します。
+- 確定と返金の冪等の鍵は Amazon Pay の Charge ID です（戻りと IPN のどちらが先に届いても、注文も返金も 1 回だけ）。
+- 在庫の予約は Stripe と同じ 40 分です。期限が切れた後に支払いが済んだときは、在庫があれば確定し、無ければ自動で返金します。
+- Amazon Pay の画面で「戻る」を押すと、予約を戻してカートに戻ります。断られたときも予約を戻し、カートに「お支払いが完了しませんでした」と出します。
+- Amazon Pay の画面へ移る中継ページだけが Amazon のスクリプト（`https://static-fe.payments-amazon.com/checkout.js`）を読みます。お店の画面・レジ（Liquid のテーマを含む）の CSP は変わりません。
+- 注文のキャンセル（管理画面・AI 用 API）は、Amazon Pay で返金してから在庫を戻します（売り上げた額から返金済みの額を引いた額）。
+- クーポンの条件「使える支払い方法」に **Amazon Pay** があります（マイグレーション `0130_amazon_pay` が要ります）。
+- ヘッドレス: `provider: "amazon_pay"` で quote を作り、`checkout` の `payment_url`（Banto の中継ページ）へ購入者を移します。戻り先は `success_url` / `cancel_url` のとおりです（docs/headless.md）。
+
+### 1 デプロイ = 1 Amazon Pay アカウント
+
+Amazon Pay の鍵はデプロイ単位なので、同じデプロイの全ショップで同じ Amazon Pay の加盟店に入金されます。

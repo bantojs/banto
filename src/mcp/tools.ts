@@ -91,7 +91,7 @@ const COUPON_FIELDS: Record<string, unknown> = {
     exclude_tags: s("array", "除くタグ（どれか 1 つを持つ商品を除く）", { items: { type: "string" } }),
     brands: s("array", "対象のブランド（商品のブランドがどれかに合う商品。20 個まで）", { items: { type: "string" } }),
     exclude_brands: s("array", "除くブランド", { items: { type: "string" } }),
-    payment_methods: s("array", "使える支払い方法: stripe / komoju（すべて）/ komoju:<種類>（credit_card・paypay・konbini など）。空なら制限なし", { items: { type: "string" } }),
+    payment_methods: s("array", "使える支払い方法: stripe / komoju（すべて）/ komoju:<種類>（credit_card・paypay・konbini など）/ amazon_pay。空なら制限なし", { items: { type: "string" } }),
     attributes: { type: "object", description: "会員の独自項目の条件（0049）: { \"<鍵>\": [\"値\", ...] }。ログイン中の会員のその項目の値がどれかに合うときだけ使える（鍵が複数なら全部。ゲストには使えない）。鍵はショップの設定「会員の項目」にあるものだけ（10 個まで、値は 20 個まで）", additionalProperties: { type: "array", items: { type: ["string", "number"] }, maxItems: 20 } },
     exclude_sale: s("boolean", "セール品を除く"),
     min_subtotal_jpy: s("integer", "対象商品の合計の下限（円）"),

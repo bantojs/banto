@@ -35,11 +35,12 @@ import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewe
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { amazonPayCancel, amazonPayRelayScript, amazonPayReturn, amazonPayStart } from "./amazon-pay";
 import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
-import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
@@ -974,6 +975,7 @@ function paymentOptions(c: Ctx, s: ShopScope): Promise<PaymentSetup> {
 const CART_ERRORS: Record<string, MessageKey> = {
   stock: "store.checkout_error_stock",
   payment: "store.checkout_error_payment",
+  unpaid: "store.checkout_error_unpaid",
   config: "store.checkout_error_config",
   expired: "confirm.expired",
   quote_used: "confirm.expired",
@@ -1441,7 +1443,7 @@ storefront.post("/:shop/checkout", async (c: Ctx) => {
 async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): Promise<Response> {
   const cartUrl = `${s.ctx.shopPath}/cart`;
   const setup = await paymentOptions(c, s);
-  const provider = f.provider ?? (["stripe", "komoju"] as const).find((p) => providerAvailable(setup, p)) ?? "stripe";
+  const provider = f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe";
   if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
   const { lines, total } = await cartLines(s);
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
@@ -1477,7 +1479,7 @@ async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation
  *   配送先（住所の項目）を受け取ったら → 最終確認画面（署名付きの quote を埋め込む）
  *   quote を受け取ったら → 内容を引き直して一致すれば在庫を予約し、決済ページへ転送する
  */
-storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
+storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const cartUrl = `${s.ctx.shopPath}/cart`;
@@ -1525,6 +1527,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
     // 決済の後はショップのドメインへ戻す（独自ドメインがあればそちら）。照会トークン（0035）を付けて、完了画面で注文番号を出す
     successUrl: statusToken ? withQueryParam(`${shopHome(base, s.shop)}/checkout/done`, "s", statusToken) : `${shopHome(base, s.shop)}/checkout/done`,
     cancelUrl: `${shopHome(base, s.shop)}/cart`,
+    shopUrl: shopHome(base, s.shop),
     ...(member ? { customerId: member.cid, customerEpoch: member.ep } : {}),
     limits: await reserveLimits(secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
   });
@@ -1533,6 +1536,27 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   if (!placed.ok) return c.redirect(`${cartUrl}?error=${placed.error}`);
   // 0 円の注文はこの時点で確定している
   return c.redirect(placed.free ? withQueryParam(placed.url, "free", "1") : placed.url, 303);
+});
+
+// ---------- Amazon Pay の中継ページ・戻り（同梱プラグイン amazon_pay。src/routes/storefront/amazon-pay.ts） ----------
+// テーマは描かない。ショップの行だけを引く（カート・会員は見ない）
+async function amazonPayShop(c: Ctx): Promise<{ shop: PublicShop; shopUrl: string } | null> {
+  const sf = data(c);
+  const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
+  return shop ? { shop, shopUrl: shopHome(publicBaseUrl(c), shop) } : null;
+}
+storefront.get("/:shop/checkout/amazon-pay/start", async (c: Ctx) => {
+  const s = await amazonPayShop(c);
+  return s ? amazonPayStart(c, s.shop, s.shopUrl) : notFound(c);
+});
+storefront.get("/:shop/checkout/amazon-pay/relay.js", (c: Ctx) => amazonPayRelayScript(c));
+storefront.get("/:shop/checkout/amazon-pay/return", async (c: Ctx) => {
+  const s = await amazonPayShop(c);
+  return s ? amazonPayReturn(c, s.shop, s.shopUrl) : notFound(c);
+});
+storefront.get("/:shop/checkout/amazon-pay/cancel", async (c: Ctx) => {
+  const s = await amazonPayShop(c);
+  return s ? amazonPayCancel(c, s.shop, s.shopUrl) : notFound(c);
 });
 
 // ---------- 送料ページ・注文照会 ----------

@@ -35,7 +35,7 @@ WooCommerce の取り込みで「要確認」になったクーポンも、こ�
 | `category_slugs` / `exclude_category_slugs` | 対象・除くカテゴリーのスラッグ（子孫のカテゴリーと、追加カテゴリーで入っている商品を含む） |
 | `tags` / `exclude_tags` | 対象・除くタグ（`;` で区切る。どれか 1 つを持つ商品） |
 | `brands` / `exclude_brands` | 対象・除くブランド（`;` で区切る。商品のブランドと、前後の空白・大文字小文字を区別せずに比べる。0044） |
-| `payment_methods` | 使える支払い方法（`;` かスペースで区切る）: `stripe` / `komoju`（KOMOJU のすべて）/ `komoju:credit_card`・`komoju:paypay` など。空ならどれでも（docs/coupons.md「支払い方法の条件」。0044） |
+| `payment_methods` | 使える支払い方法（`;` かスペースで区切る）: `stripe` / `komoju`（KOMOJU のすべて）/ `komoju:credit_card`・`komoju:paypay` など / `amazon_pay`（0130）。空ならどれでも（docs/coupons.md「支払い方法の条件」。0044） |
 | `active` | 有効にするか（`true` / `false`。既定 `true`） |
 | `ref` | 取り込み元での ID（例: `woocommerce:123`、100 文字まで）。同じ `ref` のクーポンが既にあれば作りません |
 | `note` | メモ。取り込みでは読みません |

@@ -50,7 +50,7 @@ export interface OrderInput {
   amount_paid_jpy?: number | null;
   /** 決済事業者の通貨（jpy 以外なら amount_mismatch） */
   currency?: string | null;
-  /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"）。返金はこの口座で行う */
+  /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"、Amazon Pay は "amazon_pay"）。返金はこの口座で行う */
   payment_account?: string | null;
 }
 

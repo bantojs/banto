@@ -1,5 +1,5 @@
 /**
- * 決済の Webhook から注文を確定する流れ（Stripe と KOMOJU で共通）。
+ * 決済の Webhook から注文を確定する流れ（Stripe・KOMOJU・Amazon Pay で共通。Amazon Pay は戻りと IPN の両方がここを通る）。
  *
  * - 処理に成功したイベントだけ record_webhook_event に記録し、失敗は例外（500）で決済事業者に再送させる
  * - 記録済みのイベント（webhook_event_seen、0128）は何もしない。再配信（Stripe の再送・KOMOJU は署名に時刻が無い）で、
@@ -14,7 +14,7 @@ import { PrivilegedRpcError, type OrderInput, type PrivilegedDb } from "../db/pr
 
 export interface WebhookConfirmArgs {
   db: PrivilegedDb;
-  provider: "stripe" | "komoju";
+  provider: "stripe" | "komoju" | "amazon_pay";
   eventId: string;
   reservationId: string;
   shopId: string;

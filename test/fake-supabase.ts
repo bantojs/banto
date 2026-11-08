@@ -2310,11 +2310,11 @@ export class FakeSupabase {
     return n;
   }
 
-  /** 0028: 決済プラグイン（stripe / komoju）の、表示に要る設定だけ */
+  /** 0028: 決済プラグイン（stripe / komoju / amazon_pay（0130））の、表示に要る設定だけ */
   paymentOptions(shopId: unknown): Row[] {
     const prefix = "https://banto.invalid/plugins/";
     return this.tables.hook_endpoints
-      .filter((e) => e["shop_id"] === shopId && e["enabled"] === true && ["stripe", "komoju"].includes(String(e["url"]).slice(prefix.length)) && this.shopPublished(shopId))
+      .filter((e) => e["shop_id"] === shopId && e["enabled"] === true && ["stripe", "komoju", "amazon_pay"].includes(String(e["url"]).slice(prefix.length)) && this.shopPublished(shopId))
       .map((e) => {
         const settings = (e["settings"] ?? {}) as Record<string, unknown>;
         const pick: Record<string, unknown> = {};

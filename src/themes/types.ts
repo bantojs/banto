@@ -34,6 +34,8 @@ export interface ThemeContext {
 export interface PaymentOptions {
   stripe: boolean;
   komoju: boolean;
+  /** 同梱プラグイン Amazon Pay（0130） */
+  amazon_pay: boolean;
 }
 
 export interface ShippingInfo {

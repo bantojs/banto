@@ -204,7 +204,7 @@ POST /api/shops/<shop>/checkout/quote
 }
 ```
 
-`provider` は `stripe` か `komoju`（カートの `payments` で true のもの）。`state` は都道府県名。`line2` 以外は必須です。
+`provider` は `stripe`・`komoju`・`amazon_pay` のどれか（カートの `payments` で true のもの）。`amazon_pay` の `payment_url` は Banto の中継ページ（ショップのドメインの `/checkout/amazon-pay/start`）で、そこから Amazon Pay の画面へ移ります（docs/plugins.md「Amazon Pay」）。`state` は都道府県名。`line2` 以外は必須です。
 
 応答:
 
