@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, appWith, memberLogin, memberMail } from "./helpers";
+import { BASE, Browser, appWith, checkout, memberLogin, memberMail } from "./helpers";
+import { FakeStripe } from "./fake-stripe";
+import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { issueTokens } from "../src/members/auth";
 
 /** 会員限定の商品（0098、docs/audiences.md「会員限定の商品」）: お店の画面・カート・ヘッドレス・管理画面 */
@@ -12,10 +14,10 @@ afterEach(() => {
   dispose = null;
 });
 
-function setup(opts: { applied?: string[]; modules?: Record<string, boolean> } = {}) {
+function setup(opts: { applied?: string[]; modules?: Record<string, boolean>; stripe?: FakeStripe } = {}) {
   const sb = new FakeSupabase(opts.applied ? { appliedMigrations: opts.applied } : {});
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
-  const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { members_enabled: true, modules: opts.modules ?? { audiences: true }, customer_fields: [{ key: "rank", label: "ランク", type: "select", options: ["gold", "silver"] }], headless: { return_origins: ["https://wp.example.com"] } } });
+  const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", ...(opts.stripe ? { stripe_account_id: "acct_connected" } : {}), settings: { members_enabled: true, modules: opts.modules ?? { audiences: true }, customer_fields: [{ key: "rank", label: "ランク", type: "select", options: ["gold", "silver"] }], headless: { return_origins: ["https://wp.example.com"] } } });
   sb.tables.audiences.push({ id: GOLD, shop_id: shop.id, name: "ゴールド", condition: { all: [{ member: true }, { attr: "rank", in: ["gold"] }] } });
   const add = (slug: string, fields: Record<string, unknown>) => {
     const p = sb.addProduct(shop.id, { slug, name: slug.toUpperCase(), published: true, ...fields });
@@ -30,9 +32,26 @@ function setup(opts: { applied?: string[]; modules?: Record<string, boolean> } =
   sb.tables.customers.push({ id: crypto.randomUUID(), shop_id: shop.id, email: "silver@example.com", session_epoch: 0, attributes: { rank: "silver" } });
   const mail = memberMail(sb, shop.id);
   dispose = mail.dispose;
-  const app = appWith(sb, { RESEND_API_KEY: "re_test" });
+  const app = appWith(sb, { RESEND_API_KEY: "re_test" }, undefined, opts.stripe);
   return { sb, shop, app, mail, tee, vip, early, secret };
 }
+
+describe("会員限定の商品の予約（reserve_stock の会員 id）", () => {
+  it("合う会員は予約でも会員 id を渡して確かめる。0129 が当たるまでの DB には渡さない（会員の注文が止まらない）", async () => {
+    for (const applied of [undefined, BUNDLED_MIGRATIONS.filter((m) => m !== "0129_security_hardening_5")]) {
+      const stripe = new FakeStripe();
+      const { app, mail, sb, vip } = setup({ stripe, ...(applied ? { applied } : {}) });
+      const gold = new Browser(app, BASE);
+      await memberLogin(gold, mail, "/my-shop", "gold@example.com");
+      await gold.post("/my-shop/cart/add", { sku_id: vip.k.id, qty: "1" });
+      const res = await checkout(gold, "/my-shop");
+      expect(res.status, applied ? "0129 の前" : "0129 の後").toBe(303);
+      expect(res.headers.get("location")).toMatch(/^https:\/\/checkout\.stripe\.com\//);
+      expect(sb.tables.reservations).toHaveLength(1);
+      expect(sb.tables.reservations[0]!["customer_id"]).toBeTruthy();
+    }
+  });
+});
 
 describe("お店の画面", () => {
   it("ゲスト: 見せない商品は一覧に出ず、URL では「会員の方だけ」（存在も隠す商品は 404）。buy の商品は見えるが買えない", async () => {

@@ -1,4 +1,4 @@
-import type { Ctx } from "./common";
+import { migrationStateFor, type Ctx } from "./common";
 import { createPrivilegedDb, type PrivilegedDb } from "../db/privileged";
 import { createStripeClient, type StripeClient } from "../payments/stripe";
 import { createKomojuClient } from "../plugins/komoju";
@@ -31,7 +31,8 @@ export function privilegedFor(c: Ctx): PrivilegedDb | null {
 export function placeOrderDeps(c: Ctx, setup: PaymentSetup): PlaceOrderDeps | null {
   const privileged = privilegedFor(c);
   if (!privileged) return null;
-  return { privileged, stripe: stripeFor(c), komoju: komojuFor(c), setup };
+  const url = c.get("adapters").config.get("SUPABASE_URL") ?? "";
+  return { privileged, stripe: stripeFor(c), komoju: komojuFor(c), setup, migrationState: migrationStateFor(c, url) };
 }
 
 /**

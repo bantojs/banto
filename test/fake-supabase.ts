@@ -4088,6 +4088,10 @@ export class FakeSupabase {
       return json(r["items"]);
     }
     if (fn === "reserve_stock") {
+      // 0129 の前の DB の関数は p_customer_id を知らない（渡すと PostgREST は関数が無いと言う）
+      if ("p_customer_id" in args && !this.appliedMigrations.includes("0129_security_hardening_5")) {
+        return json({ code: "PGRST202", message: "Could not find the function public.reserve_stock(p_customer_id, ...) in the schema cache" }, 404);
+      }
       const items = args["p_items"] as { sku_id: string; qty: number }[];
       if (!Array.isArray(items) || items.length === 0) return fail("empty_items");
       const shopId = args["p_shop_id"];
@@ -4099,7 +4103,8 @@ export class FakeSupabase {
         if (!sku || !this.productPublished(sku["product_id"])) return fail("sku_not_available");
         // 0129: 会員限定の商品は条件に合う会員だけ
         const prod = this.tables.products.find((p) => p["id"] === sku["product_id"]);
-        if (prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
+        // 0129 から: 会員限定の商品は予約でも確かめる（それまでの DB は見ない。買えるかは Worker の priceCart だけ）
+        if (this.appliedMigrations.includes("0129_security_hardening_5") && prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
         if (!Number.isInteger(it.qty) || it.qty <= 0) return fail("invalid_item");
         if ((inv(it.sku_id)!["available"] as number) < it.qty) return fail("insufficient_stock");
       }
