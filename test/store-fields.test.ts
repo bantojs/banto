@@ -93,6 +93,14 @@ describe("管理画面（組織の実店舗）", () => {
     expect(s.sb.tables.stores[0]).toMatchObject({ fields: { parking: "なし", manager: "佐藤" }, external_ref: "S-001" });
   });
 
+  it("ページの編集の画面: 店舗のブロックに独自項目の欄（show）", async () => {
+    const s = setup();
+    const admin = await Browser.loggedIn(s.app, "owner@example.com", "password-123");
+    const html = await (await admin.get(`/admin/shops/${s.shop.id}/modules/pages/new`)).text();
+    expect(html).toContain("field:parking,field:brands");
+    expect(html).toContain("店舗の独自項目");
+  });
+
   it("0126 が当たるまで欄を出さない", async () => {
     const s = setup();
     s.sb.appliedMigrations = s.sb.appliedMigrations.filter((m) => m !== "0126_store_fields");

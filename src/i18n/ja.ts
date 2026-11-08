@@ -638,6 +638,8 @@ export const ja = {
   "blocks.stores_articles_limit": "店舗ごとの記事の数",
   "blocks.stores_articles_sort": "添える記事の並び（日付の項目）",
   "blocks.stores_articles_sort_help": "field:<項目のキー>（例: field:starts）で、記事の「日付」「日時」の項目の早い順に添えます。空ならブログの並び順です。",
+  "blocks.stores_show": "店舗の独自項目",
+  "blocks.stores_show_help": "field:<項目のキー> をカンマで区切って並べます（例: field:parking,field:brands）。書いた順に 10 個まで。項目は「実店舗」の画面で決め、非公開の項目は出ません。",
   "blocks.stores_articles_until_help": "field:<終了日の項目のキー>（例: field:ends）。「今日以降だけ」のとき、終了日が今日以降なら出します（何日も続くイベント向け）。終了日の無い記事は並び順の項目で決めます。",
   "pages.products_related": "今の商品に似た商品（商品詳細のひな形で）",
   "pages.products_related_help": "開いている商品と同じ主カテゴリーの商品を並べ、足りなければ同じタグの商品で埋めます（その商品は除く）。ふつうのページでは何も出ません。",
