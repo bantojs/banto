@@ -161,6 +161,9 @@ v1.put("/products/:id/images/order", async (c) => {
     return errorJson(c, e);
   }
 });
+// 洗濯表示（0127、同梱モジュール care_labels。products:write）。本文は { symbols, notes }、{} で外す
+v1.put("/products/:ref/care", async (c) => body(c).then((b) => api(c).careSet("product", c.req.param("ref"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.put("/categories/:ref/care", async (c) => body(c).then((b) => api(c).careSet("category", c.req.param("ref"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 // 採寸表（0095、同梱モジュール size_charts）。?product_id= / ?category_id= / どちらも無ければショップ全体。GET は products:read、PUT は products:write
 const sizeChartLevel = (c: Ctx) => ({ product_id: c.req.query("product_id") ?? null, category_id: c.req.query("category_id") ?? null });
 v1.get("/size-chart", async (c) => api(c).sizeChartGet(sizeChartLevel(c)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));

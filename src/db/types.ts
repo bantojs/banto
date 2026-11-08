@@ -23,6 +23,8 @@ export interface ShopRow {
   option_names?: unknown;
   /** 0115。選択肢の値ごとの見本（src/products/option-swatches.ts） */
   option_swatches?: unknown;
+  /** 0127。洗濯表示の記号の絵（記号番号 → 置き場の画像。運営者が持ち込む。src/care-labels/care.ts） */
+  care_symbols?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +48,8 @@ export interface ProductRow {
   app_data?: unknown;
   /** 0095。採寸表（同梱モジュール size_charts。product_public_get がモジュールが ON のときだけ、上の段を含めて決めたものを返す。src/size-charts/chart.ts） */
   size_chart?: unknown;
+  /** 0127。洗濯表示（同梱モジュール care_labels。{ symbols: 記号番号[], notes } か null = カテゴリーのものを使う。src/care-labels/care.ts） */
+  care?: unknown;
   /** 0017_tax。税の区分（standard 標準 / reduced 軽減 / exempt 非課税）。src/commerce/tax.ts */
   tax_class?: "standard" | "reduced" | "exempt";
   /** 0065。SKU を分ける軸（null = 決めていない）と、商品で上書きしたか。src/products/option-axes.ts */
@@ -89,6 +93,8 @@ export interface CategoryRow {
   /** 0113。説明（文字だけ、2,000 字まで）と画像（置き場の categories/<ショップ>/） */
   description?: string | null;
   image?: CategoryImage | null;
+  /** 0127。洗濯表示（同梱モジュール care_labels。この段で決めていなければ null） */
+  care?: unknown;
   created_at: string;
 }
 

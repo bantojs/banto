@@ -127,6 +127,24 @@ export function openapiDocument(origin: string, version: string): Record<string,
           responses: { 200: resp("product", product), ...errors, 409: resp("データベースの更新（0078）が要る") },
         },
       },
+      "/products/{ref}/care": {
+        put: {
+          summary: "商品の洗濯表示を置き換える（products:write、0127、同梱モジュール care_labels）。ref は ID か URL の名前。本文は { symbols: [JIS L 0001:2024 の記号番号、区分（1 桁目）ごとに 1 つ・7 つまで], notes: [付記、8 つまで・40 文字まで] }。{} で外す（外すとカテゴリーのものを使う）。docs/care-labels.md",
+          security: bearer,
+          parameters: [{ name: "ref", in: "path", required: true, schema: str }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { symbols: { type: "array", items: str }, notes: { type: "array", items: str } } } } } },
+          responses: { 200: resp("care", obj({ target: str, id: str, care: { type: "object", nullable: true } })), ...errors, 409: resp("データベースの更新（0127）が要る") },
+        },
+      },
+      "/categories/{ref}/care": {
+        put: {
+          summary: "カテゴリーの洗濯表示を置き換える（products:write、0127）。ref は ID か URL の名前。本文は商品と同じ。子のカテゴリーと商品は、自分で決めていなければ近い親のものを使う",
+          security: bearer,
+          parameters: [{ name: "ref", in: "path", required: true, schema: str }],
+          requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties: { symbols: { type: "array", items: str }, notes: { type: "array", items: str } } } } } },
+          responses: { 200: resp("care", obj({ target: str, id: str, care: { type: "object", nullable: true } })), ...errors, 409: resp("データベースの更新（0127）が要る") },
+        },
+      },
       "/size-chart": {
         get: {
           summary: "採寸表を読む（products:read、0095、同梱モジュール size_charts）。?product_id= か ?category_id=（どちらも無ければショップ全体の段）。own はその段に置いたもの、effective は上の段を含めて決めた表示される表（列・図・軸は列を決めた近い段、行・注記はそこから近い段）。docs/size-charts.md",

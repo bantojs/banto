@@ -21,6 +21,7 @@ import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
 import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices } from "../../products/images";
 import { MAX_COMBINATIONS, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
 import { sizeChartHref } from "../../modules/size-charts/admin";
+import { careHref } from "../../modules/care-labels/admin";
 import { AxesEditor, ChipsInput, ChipsScript, axesErrorCode, axesText } from "./option-axes";
 import { optionLabel, optionNamesOf, type OptionNames } from "../../products/option-names";
 import { moduleEnabled } from "../../modules/registry";
@@ -493,6 +494,11 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         {sizeChartHref(shop, { product: product.id }) ? (
           <a class="btn secondary" href={sizeChartHref(shop, { product: product.id })!}>
             {t("sizechart.link")}
+          </a>
+        ) : null}
+        {careHref(shop, { product: product.id }) ? (
+          <a class="btn secondary" href={careHref(shop, { product: product.id })!}>
+            {t("care.link")}
           </a>
         ) : null}
       </PageHead>

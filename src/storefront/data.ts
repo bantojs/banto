@@ -2,6 +2,7 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
+import type { CareView } from "../care-labels/care";
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../db/types";
@@ -52,6 +53,8 @@ export interface PublicShop {
   option_names?: Record<string, string>;
   /** 選択肢の値ごとの見本（0115、src/products/option-swatches.ts）。0115 の前の DB では無い */
   option_swatches?: unknown;
+  /** 洗濯表示の記号の絵（0127、同梱モジュール care_labels が ON のときだけ。src/care-labels/care.ts）。当たる前は無い */
+  care_symbols?: unknown;
   /** ゲストの行動を渡す連携があるか（0108、同梱モジュール event_relay。src/modules/event-relay/relay.ts）。当たる前は無い */
   relay_guests?: boolean;
   /** お店の画面のダイアログ（0110、同梱モジュール dialogs が ON のときだけ。有効で期間内のもの）。当たる前は無い */
@@ -145,6 +148,8 @@ export interface ProductDetail {
   skus: SkuWithStock[];
   /** 見る人が買えるか（会員限定の商品、0098。会員は DB が判定、ゲストは会員の条件の付いた商品は買えない）。省略は買える */
   purchasable?: boolean;
+  /** 洗濯表示（同梱モジュール care_labels、0127）。商品ページのルートがカテゴリーまでたどって決めたもの。無ければ出さない */
+  care?: CareView | null;
 }
 
 /** 会員の読み取りの経路（service_role の product_member_* / page_member_get など。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の行を足す） */

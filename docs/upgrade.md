@@ -150,6 +150,7 @@ npm run deploy
 - **0124_article_field_dates（記事の日付の項目）**: 記事の項目に `date` / `datetime` を足し、`::: articles` と `::: stores articles=` の `sort=field:<キー>`・`from=today` で開催日の順・今日以降だけにできます（docs/blog.md）。当てるまでは定義に日付の種類を書けません（ほかは今までどおり）。
 - **0125_blog_date_order（ブログの並び順を開催日の順に）**: ブログの設定の並び順に日付の項目の順・「今日以降だけ」・いつまで出すかの項目（終了日）を足し、ブロックの `until=field:<キー>` を使えるようにします。当てるまで、ブログの設定にこれらの欄は出ません。
 - **0126_store_fields（実店舗の独自項目と外部コード）**: 組織ごとに実店舗の独自項目を定義し、店舗ごとに値と外部コード（社内のシステムの店舗コード）を持てるようにします（docs/store-tryon.md「店舗の独自項目と外部コード」）。`::: stores show=field:<キー>`・ヘッドレスの `fields`・AI 用 API の `stores:write`（`PATCH /api/v1/stores/{ref}`）。当てるまで、実店舗の画面に欄を出しません。
+- **0127_mod_care_labels（洗濯表示）**: 同梱モジュール「洗濯表示」の列と関数（docs/care-labels.md）。当てるまでモジュールの一覧に出ず、ON にできません。AI 用 API の `PUT /api/v1/products/{ref}/care`・`/categories/{ref}/care` は 409 `migration_required` です。
 - **お店の画面の URL を変えました（2026-11-05、マイグレーションなし）**: すべての商品は `/products`、商品は `/products/<商品>`、カテゴリーの一覧は `/categories/<カテゴリー>`、検索は `/products?q=` です（docs/storefront.md「URL」）。前の `/p/<商品>`・`/search`・`/?category=`・`/?all=1` は転送しません。テーマ・本文のリンクで前の URL を書いている所は直してください（Liquid のテーマは `product.url`・`collection.url`・`routes.*` を使っていればそのままで動きます）。
 - **0114_page_layouts_blogs（ブログの一覧のひな形）**: ブログごとに一覧（`/blogs/<ブログ>`）のひな形を割り当てられるようになります（docs/pages.md「ひな形の割り当て」）。当てるまでは割り当ての欄が出ません。
 - **0113_category_media（カテゴリーの画像と説明）**: カテゴリーに説明と画像を付けられるようになります（docs/storefront.md「カテゴリーの画像と説明」）。当てるまでは管理画面に欄が出ません。

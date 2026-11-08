@@ -350,3 +350,10 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - MCP は `store_update`（書き込み、`destructiveHint`）。
 - 発行できるのは、そのショップの「実店舗・お店で試着」（`stores`）の項目を持つ人だけです。
 - データベースの更新 `0126_store_fields` が要ります。当たるまでは 409（`migration_required`）で、トークンの発行の画面にもスコープを出しません。
+
+## 17. 洗濯表示（0127、メンテナの決定 2026-11-08）
+
+- スコープ `products:write`（項目 `catalog`）。新しいスコープは作っていません。
+- `PUT /api/v1/products/{ref}/care`・`PUT /api/v1/categories/{ref}/care`: `ref` は ID か URL の名前。本文は `{ "symbols": [JIS L 0001:2024 の記号番号], "notes": [付記] }`、`{}` で外す。区分（番号の 1 桁目）ごとに 1 つ・7 つまで、付記は 8 つまで・40 文字まで（違えば 400 `invalid_care`）。
+- MCP は `care_set`。記号の絵は管理画面だけで変えます（docs/care-labels.md）。
+- データベースの更新 `0127_mod_care_labels` が要ります。当たるまでは 409（`migration_required`）です。

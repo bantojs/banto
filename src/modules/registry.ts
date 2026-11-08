@@ -54,6 +54,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "dialogs", name: "mod.dialogs.name", description: "mod.dialogs.description", adminPath: "dialogs" },
   // 会員のお気に入り（本人・運営者・AI 用 API と連携。ゲストはブラウザに覚えてログインで移す。0123_mod_favorites、docs/favorites.md）
   { id: "favorites", name: "mod.favorites.name", description: "mod.favorites.description", migration: "0123_mod_favorites" },
+  // 洗濯表示（JIS L 0001 の記号番号。カテゴリーで決めて商品で上書き。記号の絵は運営者が持ち込む。0127_mod_care_labels、docs/care-labels.md）
+  { id: "care_labels", name: "mod.care_labels.name", description: "mod.care_labels.description", adminPath: "care-labels", migration: "0127_mod_care_labels" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

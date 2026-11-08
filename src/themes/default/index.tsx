@@ -39,6 +39,7 @@ import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
 import { ConfirmationBlock } from "./confirmation";
 import { REVIEWS_CSS, ReviewsList, ReviewsSummary } from "./reviews";
 import { SIZE_CHART_SCRIPT, selectedRowValue, sizeChartOf } from "../../size-charts/chart";
+import { CareLabelsView } from "../../care-labels/html";
 import { SIZE_CHART_CSS, SizeChartView } from "../../size-charts/html";
 import { productReviews } from "../../apps/app-data";
 import { absoluteMedia, pagePath, pagesNav } from "../../pages";
@@ -625,6 +626,7 @@ export const defaultTheme: Theme = {
           </div>
         </div>
         {p["size-chart"]}
+        {p.care}
         {p.reviews}
       </Layout>
     );
@@ -1975,6 +1977,8 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
       </>
     ) : null,
     reviews: reviews ? <ReviewsList reviews={reviews} id="reviews" /> : null,
+    // 洗濯表示（同梱モジュール care_labels、0127）。どの段のものかはルートが決めて detail.care に入れる（モジュールが OFF なら無い）
+    care: detail.care ? <CareLabelsView care={detail.care} /> : null,
   };
   return { product, seo, parts };
 }

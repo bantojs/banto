@@ -113,6 +113,9 @@ function mapRpcError(e: unknown): never {
       if (/article_fields_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `article_fields_invalid${key ? `:${key}` : ""}: up to 20 { key, label, type: text | number | select | store | product | article | image | date | datetime, options (select), blog (article: a blog of this shop), multiple (product / article) } (see docs/blog.md)`, 400);
       throw new ApiError("invalid", `article_field_invalid${key ? `:${key}` : ""}: the value does not fit the blog's field (a select option, a number, a store this shop uses, or URL names of products / articles that exist)`, 400);
     }
+    // 洗濯表示（0127）
+    if (e.is("invalid_care")) throw new ApiError("invalid", "invalid_care: send { symbols: [JIS L 0001:2024 symbol numbers, one per group (first digit), up to 7], notes: [up to 8 strings of 1-40 characters] } or null (see docs/care-labels.md)", 400);
+    if (e.is("invalid_care_target")) throw new ApiError("invalid", "invalid_care_target: product or category", 400);
     // 実店舗（0126）
     if (e.is("invalid_store_values")) throw new ApiError("invalid", "invalid_store_values: a store takes only fields and external_ref (name, address, hours… are changed in the admin screen)", 400);
     if (/store_field_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `${e.dbMessage.replace(/^.*?(store_field_invalid(:[a-z0-9_]+)?).*$/s, "$1")}: the key must be one of the organization's store fields and the value must fit its type`, 400);
@@ -591,6 +594,17 @@ export class ApiService {
     this.call<Record<string, unknown>>("api_tryon_request_update", { p_number: number, p_status: status, p_hold_until: holdUntil ?? null });
   /** 終わった申し込み（購入なし・期限切れ・取り消し）の在庫を EC に戻す。2 回目は何もしない */
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
+  /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
+  careSet = async (target: "product" | "category", ref: string, care: unknown) => {
+    await this.requireMigration("0127_mod_care_labels");
+    if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
+    if (care !== null && (typeof care !== "object" || Array.isArray(care))) throw new ApiError("invalid", "invalid_care: send an object { symbols, notes } or null", 400);
+    // 記号も付記も無いもの（{} や空の配列）は外すのと同じ（null = 上の段を使う）。「何も無い」を段に残さない
+    const o = (care ?? {}) as Record<string, unknown>;
+    const empty = (k: string) => o[k] === undefined || o[k] === null || (Array.isArray(o[k]) && (o[k] as unknown[]).length === 0);
+    const value = care === null || (empty("symbols") && empty("notes") && Object.keys(o).every((k) => k === "symbols" || k === "notes")) ? null : care;
+    return this.call<Record<string, unknown>>("api_care_set", { p_target: target, p_ref: ref, p_care: value });
+  };
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
   /** 実店舗の独自項目の値と外部コード（0126、stores:write）。店舗は id か ext:<外部コード> */
   storeUpdate = async (ref: string, values: Record<string, unknown>) => {
