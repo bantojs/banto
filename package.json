@@ -9,7 +9,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --minify=false",
     "deploy": "node scripts/deploy.mjs",
     "build:workers": "wrangler deploy --dry-run --outdir dist/workers",
     "build:node": "tsc -p tsconfig.node.json && esbuild src/entry/node.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/node/server.js && esbuild src/entry/migrate.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/node/migrate.js",

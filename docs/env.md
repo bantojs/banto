@@ -14,6 +14,7 @@
 | `BANTO_ADMIN_ICON_URL` | 変数 | 任意 | 管理画面の左上のアイコンの画像（28px の正方形に収める）。`https://` の URL か、このサイトのパス（例: 管理画面で上げた画像の `/media/…`）。それ以外の形は使わず、文字のアイコンのまま |
 | `BANTO_PLACEMENT` | **ビルドの変数**（Settings → Builds） | 任意 | Worker を動かす場所（Cloudflare の Placement）。`aws:<Supabase のリージョン>`（例 `aws:ap-northeast-1`）か `smart`。Deploy command を `npm run deploy` にしたときだけ効く（docs/setup.md §8）。実行中の Worker からは読まない |
 | `BANTO_OBSERVABILITY` | **ビルドの変数**（Settings → Builds） | 任意 | `off` で Worker のログ（Workers Logs）を切る。既定は ON（`wrangler.jsonc`）。Deploy command を `npm run deploy` にしたときだけ効く（docs/setup.md §9）。実行中の Worker からは読まない |
+| `BANTO_MINIFY` | **ビルドの変数**（Settings → Builds） | 任意 | `off` で Worker を縮めずに送る（デバッグを優先するとき）。既定は縮める（`wrangler.jsonc`）。縮めないと大きさが 1.2 倍ほどになり、Cloudflare の上限を超えるとデプロイが落ちる。Deploy command を `npm run deploy` にしたときだけ効く（docs/setup.md §11）。実行中の Worker からは読まない |
 | `MASK_ORDERS_AFTER_DAYS` | 変数 | 任意 | 発送から何日で個人情報をマスクするか。既定 180 |
 | `AUDIT_LOG_KEEP_DAYS` | 変数 | 任意 | 監査ログ（0051、管理画面「組織とメンバー」→「監査ログ」）を何日残すか。既定 365、30 より短くはならない |
 | `STRIPE_SECRET_KEY` | Secret | Stripe を使うなら | Stripe → 開発者 → API キー → シークレットキー |
