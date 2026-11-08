@@ -3,7 +3,7 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
-import { consentCollected, returnOrigins, safeReturnUrl } from "../../commerce/checkout";
+import { consentCollected, returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/checkout";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
@@ -163,7 +163,7 @@ membersApi.post("/shops/:shop/members/login", async (c: Ctx) => {
   const banto = `${shopHome(publicBaseUrl(c), shop)}/account/verify`;
   // 許可リストに無い戻り先は使わない（Banto の確認画面にする。オープンリダイレクトにしない）
   const returnTo = safeReturnUrl(b["return_to"], returnOrigins(shop.settings), "");
-  const link = (id: string, token: string) => (returnTo ? `${returnTo}${returnTo.includes("?") ? "&" : "?"}banto_challenge=${id}&banto_token=${token}` : `${banto}?c=${id}&t=${token}`);
+  const link = (id: string, token: string) => (returnTo ? withQueryParam(withQueryParam(returnTo, "banto_challenge", id), "banto_token", token) : `${banto}?c=${id}&t=${token}`);
   const r = await startLogin(deps, shop, str(b["email"]), { ip: await clientIpFor(c, shop), returnTo: returnTo || null, link });
   if (!r.ok) {
     if (r.error === "invalid_email") return c.json({ error: "invalid_email" }, 400);

@@ -889,7 +889,7 @@ members.post("/:shop/account/passkey/login", async (c: Ctx) => {
   if (returnTo) {
     const token = randomToken(32);
     const id = await deps.db.memberHandoffCreate(s.shop.id, r.customer_id, r.session_epoch, await linkHash(deps.secret, token));
-    return c.json({ redirect: `${returnTo}${returnTo.includes("?") ? "&" : "?"}banto_handoff=${id}.${token}` });
+    return c.json({ redirect: withQueryParam(returnTo, "banto_handoff", `${id}.${token}`) });
   }
   if (!(await signIn(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return c.json({ error: "failed" }, 401);
   return c.json({ redirect: `${s.shopPath}/account` });
@@ -1159,7 +1159,7 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   const shopPath = st.path;
   const fail = (reason: string) =>
     st.mode === "api" && st.return_to
-      ? c.redirect(`${st.return_to}${st.return_to.includes("?") ? "&" : "?"}banto_error=${reason}`)
+      ? c.redirect(withQueryParam(st.return_to, "banto_error", reason))
       : c.redirect(st.mode === "link" ? `${shopPath}/account?error=${reason}` : `${shopPath}/account/login?error=oauth`);
   const code = c.req.query("code");
   if (!code) return fail("oauth");
@@ -1188,7 +1188,7 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
     // ヘッドレス: 1 回限り・2 分の引き換え券を渡す（会員のトークンを URL に載せない）
     const token = randomToken(32);
     const id = await db.memberHandoffCreate(st.shop, r.customer_id, r.session_epoch, await linkHash(secret, token));
-    return c.redirect(`${st.return_to}${st.return_to.includes("?") ? "&" : "?"}banto_handoff=${id}.${token}`);
+    return c.redirect(withQueryParam(st.return_to, "banto_handoff", `${id}.${token}`));
   }
   const target = { shop: { id: st.shop }, shopPath };
   if (!(await startWebSession(c, target, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return fail("oauth");

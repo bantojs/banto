@@ -139,6 +139,28 @@ describe("ヘッドレスの会員 API（店ごと・パスワードなし）", 
     expect(mail.link("jiro@example.com").startsWith(`${BASE}/my-shop/account/verify?c=`)).toBe(true);
   });
 
+  it("return_to に banto_ の鍵やフラグメントを先に埋め込んだもの（ログイン CSRF）は受けず、Banto の確認画面にする", async () => {
+    const { mail, call } = setup();
+    // 攻撃者が自分の組（ATT）を仕込み、被害者のアドレスで本物のメールを送らせる。連携サイトは最初の値を読むので、被害者が攻撃者としてログインしてしまう
+    for (const bad of [
+      "https://wp.example.com/cb?banto_challenge=ATT&banto_token=ATTTOK#",
+      "https://wp.example.com/cb?BANTO_handoff=x",
+      "https://wp.example.com/cb#/login",
+      "https://wp.example.com/cb?lang=ja#",
+    ]) {
+      await call("/api/shops/my-shop/members/login", { email: "taro@example.com", return_to: bad });
+      const link = mail.link("taro@example.com");
+      expect(link.startsWith(`${BASE}/my-shop/account/verify?c=`), bad).toBe(true);
+      expect(link.includes("ATT")).toBe(false);
+    }
+    // 連携サイト自身のクエリはそのまま残り、組はその後ろに 1 つだけ付く
+    await call("/api/shops/my-shop/members/login", { email: "taro@example.com", return_to: "https://wp.example.com/cb?lang=ja&x=1" });
+    const link = new URL(mail.link("taro@example.com"));
+    expect(link.searchParams.getAll("banto_challenge")).toHaveLength(1);
+    expect(link.searchParams.get("x")).toBe("1");
+    expect(link.hash).toBe("");
+  });
+
   it("不正なアドレス。他店のチャレンジは通らない", async () => {
     const { call } = setup();
     expect((await call("/api/shops/my-shop/members/login", { email: "bad" })).json).toEqual({ error: "invalid_email" });

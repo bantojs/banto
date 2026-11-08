@@ -842,7 +842,13 @@ function originOf(s: string): string | null {
 export function safeReturnUrl(url: unknown, allowed: string[], fallback: string): string {
   if (typeof url !== "string" || url.length > 2000) return fallback;
   const origin = originOf(url);
-  return origin && allowed.includes(origin) ? url : fallback;
+  if (!origin || !allowed.includes(origin)) return fallback;
+  // Banto が後ろに付け足す鍵（banto_challenge / banto_token / banto_handoff …）を先に埋め込ませない: 連携サイトは最初の値を読むので、
+  // 攻撃者の組を仕込んだ return_to でショップの本物のメールを被害者に送らせ、攻撃者のアカウントでログインさせられる。
+  // フラグメント（#）があると付け足した鍵がその中に入るので、これも受けない
+  const u = new URL(url);
+  if (u.hash || url.endsWith("#") || [...u.searchParams.keys()].some((k) => k.toLowerCase().startsWith("banto_"))) return fallback;
+  return url;
 }
 
 /** 送料の案内（カート・確認画面・API で共通） */

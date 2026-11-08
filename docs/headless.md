@@ -345,7 +345,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 
 1. `POST /api/shops/<shop>/members/login` `{ "email": "...", "return_to": "https://wp.example.com/my-account/" }` → `{ "challenge_id": "..." }`
    - 登録の有無・送信回数の上限にかかわらず、同じ形で返します（どのアドレスが会員か外から分からないように）。初めてのアドレスは、verify の時点で会員になります。
-   - `return_to` はメールのリンクの行き先です。**ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンだけ** 使えます。リンクは `<return_to>?banto_challenge=<id>&banto_token=<token>` になります。省くか許可されていなければ、Banto の確認画面へのリンクになります。
+   - `return_to` はメールのリンクの行き先です。**ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンだけ** 使えます。リンクは `<return_to>?banto_challenge=<id>&banto_token=<token>` になります。省くか許可されていなければ、Banto の確認画面へのリンクになります。`return_to` に `banto_` で始まるクエリやフラグメント（`#`）があるものも受け付けません（Banto が付け足す鍵を先に埋め込ませないため。LINE・Google・パスキーの `return_to` も同じ）。
 2. 会員がコードを入れたら、またはリンクで連携側のページが開いたら:
    `POST /api/shops/<shop>/members/verify` `{ "challenge_id": "...", "code": "123456" }` か `{ "challenge_id": "...", "token": "<banto_token>" }`
    → `{ "access_token": "bm1....", "refresh_token": "bm1....", "expires_in": 900, "member": { "id", "email", "created" } }`
