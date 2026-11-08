@@ -5,7 +5,7 @@ CLAUDE.md に書いてある規約の「なぜ」と、規約には書ききれ�
 ## 2026-11-08
 
 - **Worker を既定で縮める（minify）。縮めないのはデプロイごとの選択（メンテナの決定 2026-11-08）**: 圧縮後の大きさが 1 MiB の予算の 94% まで来た。縮めると約 2 割減る（967 → 797 KiB）。読みにくさはソースマップ（`upload_source_maps`）で補える。デバッグを優先したい運営者・開発者のために、ビルドの変数 `BANTO_MINIFY=off` で縮めずに送れる（`scripts/deploy.mjs` が `wrangler.jsonc` の写しで切り替える。Placement と同じ作り）。予算（`check:size`）は既定のビルドだけを測り、縮めないデプロイは Cloudflare の上限だけを守る（超えたらデプロイが落ちるので気づける）。`npm run dev` はいつも縮めない。
-  落とし穴: wrangler は既定で `keep_names` を付け、関数ごとに名前を残す補助（`__name`）を差し込む。縮めるとこの補助の名前も短く変わるので、管理画面に `toString()` で埋め込むブラウザのコード（woo-import・送り状・ページの編集）がブラウザで `l is not defined` になって壊れる。縮めるときは `keep_names: false`（エラーの名前は各クラスが `this.name` で持つので困らない）。`check:size` は埋め込むコードをビルドから取り出して単独で動かし、壊れていれば落ちる。
+  落とし穴: wrangler は既定で `keep_names` を付け、関数ごとに名前を残す補助（`__name`）を差し込む。縮めるとこの補助の名前も短く変わるので、管理画面に `toString()` で埋め込むブラウザのコード（woo-import・送り状・ページの編集）がブラウザで `l is not defined` になって壊れる。縮めるときは `keep_names: false`（エラーの名前は各クラスが `this.name` で持つので困らない）。`check:client`（`scripts/check-client-scripts.mjs`）は埋め込むコードをビルドから取り出して動かす。縮めると関数の名前も変わるので、埋め込む所（`(${…toString()})()` の前後）から今の名前を引く。
 
 ## 2026-11-07
 

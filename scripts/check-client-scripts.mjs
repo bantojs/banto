@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 管理画面がブラウザへ渡すスクリプト（関数の toString()）が、本番の Workers バンドルのままで動くか確かめる。
-// wrangler のビルドは関数の中にヘルパー（__name など）を差し込むことがあり、テスト環境（vitest）では再現しないため、
+// wrangler のビルドは関数の中にヘルパー（__name など）を差し込むことがあり（縮めたビルドではその名前も変わる、docs/knowledge/02-decisions.md 2026-11-08）、テスト環境（vitest）では再現しないため、
 // dist/workers/index.js から関数を取り出し、ページと同じ前置きを付けて、DOM の無い VM で解析を 1 回走らせる。
 // 先に npm run build:workers を実行しておくこと。
 import { readFileSync, existsSync } from "node:fs";
@@ -16,7 +16,24 @@ if (!existsSync(bundlePath)) {
 }
 const bundle = readFileSync(bundlePath, "utf8");
 
-function extractFunction(src, name) {
+/**
+ * 縮めたビルド（既定、wrangler.jsonc の minify）では関数の名前が短く変わるので、埋め込む所（`(${name.toString()})()` の前後の決まった文字）から今の名前を引く。
+ * 縮めないビルド（BANTO_MINIFY=off）では元の名前のまま見つかる
+ */
+const USES = {
+  wooImporter: /\(\$\{([\w$]+)\.toString\(\)\}\)\(\)\.mount\(document\.getElementById\("woo-import"\)/,
+  shippingLabelsClient: /var __labels = \(\$\{([\w$]+)\.toString\(\)\}\)\(\)/,
+  pageEditorClient: /\(\$\{([\w$]+)\.toString\(\)\}\)\(\)\.mount\(\$\{JSON\.stringify\(/,
+};
+function bundleName(src, name) {
+  if (src.includes(`function ${name}(`)) return name;
+  const m = USES[name]?.exec(src);
+  if (!m) throw new Error(`function ${name} not found in the bundle (埋め込む所も見つからない)`);
+  return m[1];
+}
+
+function extractFunction(src, original) {
+  const name = bundleName(src, original);
   const start = src.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`function ${name} not found in the bundle`);
   let depth = 0;
