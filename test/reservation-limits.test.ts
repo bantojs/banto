@@ -81,7 +81,8 @@ describe("Webhook の照合（0029）", () => {
     expect(await wh.json()).toMatchObject({ refunded: true, ignored: "amount_mismatch" });
     expect(stripe.refunds).toEqual([{ account: "acct_connected", payment_intent: "pi_1", idempotencyKey: expect.stringMatching(/^refund-evt_/) }]);
     expect(sb.tables.orders).toHaveLength(0);
-    expect(sb.tables.reservations[0]!["status"]).toBe("released");
+    // 0128: 返金すると決めた予約は refunded（在庫は戻る。二度と確定しない）
+    expect(sb.tables.reservations[0]!["status"]).toBe("refunded");
     expect(stock(sb, sku.id)).toBe(50);
     // 通貨
     await b.post("/my-shop/cart/add", { sku_id: sku.id, qty: "1" });
@@ -107,7 +108,9 @@ describe("Webhook の照合（0029）", () => {
     const wh = await stripe.deliver(app, BASE, stripe.event(sessionId!, "checkout.session.completed", { amount_total: 50, payment_intent: null }), WEBHOOK_SECRET);
     expect(wh.status).toBe(500);
     expect(sb.tables.orders).toHaveLength(0);
-    expect(sb.tables.reservations[0]!["status"]).toBe("pending");
+    // 0128: 返金すると決めたことは返金の前に DB に残る（在庫は戻る）。再送のときは同じイベントなので返金をやり直す
+    expect(sb.tables.reservations[0]!["status"]).toBe("refunded");
+    expect(stock(sb, sku.id)).toBe(50);
     expect(sb.calls.some((x) => x.includes("record_webhook_event"))).toBe(false);
   });
 

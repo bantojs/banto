@@ -423,6 +423,13 @@ export interface PrivilegedDb {
   releaseExpiredReservations(): Promise<number>;
   /** Webhook の冪等化。初見なら true */
   recordWebhookEvent(provider: string, eventId: string): Promise<boolean>;
+  /** 記録済み（処理が済んだ）イベントか（0128。再配信なら何もしない） */
+  webhookEventSeen(provider: string, eventId: string): Promise<boolean>;
+  /**
+   * 「返金すると決めた」ことを返金の前に DB に残す（0128。pending なら在庫とクーポンの枠も戻す）。
+   * marked = 今決めた（返金する）、same_event = 同じイベントで決めてある（返金をやり直してよい）、other_event = 別のイベントで決めてある（返金しない）
+   */
+  reservationMarkRefunded(reservationId: string, shopId: string, provider: string, eventId: string): Promise<"marked" | "same_event" | "other_event">;
   /** 発送から p_days 日経過した注文の個人情報をマスク（Cron） */
   maskShippedOrders(days?: number): Promise<number>;
   /** 監査ログの保持（0051）。既定 365 日より古い行を消す（30 日より短くはならない）。戻り値: 消した行数 */
@@ -703,6 +710,11 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     releaseReservationAbandoned: (reservationId, shopId) => rpc<boolean>("release_reservation_abandoned", { p_reservation_id: reservationId, p_shop_id: shopId }),
     releaseExpiredReservations: () => rpc<number>("release_expired_reservations", {}),
     recordWebhookEvent: (provider, eventId) => rpc<boolean>("record_webhook_event", { p_provider: provider, p_event_id: eventId }),
+    webhookEventSeen: (provider, eventId) => rpc<boolean>("webhook_event_seen", { p_provider: provider, p_event_id: eventId }),
+    reservationMarkRefunded: async (reservationId, shopId, provider, eventId) => {
+      const r = await rpc<string>("reservation_mark_refunded", { p_reservation_id: reservationId, p_shop_id: shopId, p_provider: provider, p_event_id: eventId });
+      return r === "same_event" || r === "other_event" ? r : "marked";
+    },
     maskShippedOrders: (days = 180) => rpc<number>("mask_shipped_orders", { p_days: days }),
     pruneAuditLog: (days = 365) => rpc<number>("prune_audit_log", { p_days: days }),
     purgePagesTrash: (days = 30) => rpc<number>("pages_purge_trash", { p_days: days }),

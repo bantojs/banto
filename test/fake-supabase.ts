@@ -4148,6 +4148,8 @@ export class FakeSupabase {
       if (!res) return fail("reservation_not_found");
       const existing = this.tables.orders.find((o) => o["reservation_id"] === res["id"]);
       if (existing) return json(existing["id"]);
+      // 0128: 返金すると決めた予約は二度と確定しない（detail にどのイベントで決めたか）
+      if (res["status"] === "refunded") return json({ code: "P0001", message: "reservation_refunded", details: String(res["refund_event"] ?? "") }, 400);
       const items = res["items"] as { sku_id: string; qty: number; unit_price_jpy: number }[];
       const order = (args["p_order"] ?? {}) as Record<string, unknown>;
       const cust = (res["customer"] ?? {}) as Record<string, unknown>;
@@ -4374,6 +4376,22 @@ export class FakeSupabase {
       const fresh = !this.webhookEvents.has(key);
       this.webhookEvents.add(key);
       return json(fresh);
+    }
+    // 0128: 記録済みのイベントか
+    if (fn === "webhook_event_seen") return json(this.webhookEvents.has(`${args["p_provider"]}:${args["p_event_id"]}`));
+    // 0128: 返金すると決めたことを DB に残す（pending なら在庫とクーポンの枠を戻す）
+    if (fn === "reservation_mark_refunded") {
+      const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"]);
+      if (!res) return fail("reservation_not_found");
+      const ev = `${args["p_provider"]}:${args["p_event_id"]}`;
+      if (res["status"] === "refunded") return json(res["refund_event"] === ev ? "same_event" : "other_event");
+      if (res["status"] === "confirmed") return fail("reservation_confirmed");
+      if (res["status"] === "pending") {
+        for (const it of res["items"] as { sku_id: string; qty: number }[]) inv(it.sku_id)!["available"] = (inv(it.sku_id)!["available"] as number) + it.qty;
+        this.releaseCoupons(res["id"]);
+      }
+      Object.assign(res, { status: "refunded", refund_event: ev, customer: null });
+      return json("marked");
     }
     // 監査ログの保持（0051。Cron の mask_shipped_orders と同じ回）。監査ログの行はここでは持たない
     if (fn === "prune_audit_log") return json(0);

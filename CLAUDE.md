@@ -88,7 +88,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 ## 5. 外部連携
 
 - **Stripe**: 既定は **API キー方式**（同梱プラグイン「Stripe 決済」。`STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` を Workers Secret に置き、運営者自身のアカウントで Checkout）。Connect Standard（OAuth、`STRIPE_CLIENT_ID` + `stripe_account_id`）は複数ショップで入金先を分けるための上級設定で、接続済みなら優先。どちらも決済は Checkout Session、注文確定は **Webhook のみ**（リダイレクト完了で確定しない）。Webhook 署名検証 + イベント ID で冪等化。唯一の例外は 0 円の注文（支払いが無いので、確定の直前に引き直した金額が 0 ならその場で確定。`payment_provider = 'free'`）。
-  SDK は使わず `src/payments/stripe.ts` の fetch 実装を使う。Webhook は「処理に成功したイベントだけ記録」し、失敗は 500 で Stripe に再送させる。返金は Stripe の Idempotency-Key（イベント ID）で二重防止。
+  SDK は使わず `src/payments/stripe.ts` の fetch 実装を使う。Webhook は「処理に成功したイベントだけ記録」し、失敗は 500 で Stripe に再送させる。記録済みのイベントの再配信は何もしない（0128）。返金は Stripe の Idempotency-Key（イベント ID）で二重防止。
 - **KOMOJU**: API キー方式（Workers Secret）。将来 OAuth 相当があれば移行。
 - **CRM / MA / メール**: コアの hooks から署名付き Webhook を送る。コアは送信先の仕様を知らない。
 - **hooks 一覧**: `order.created` `order.paid` `order.shipped` `order.cancelled` `checkout.abandoned`（会員の予約の期限切れ、0105。ゲスト・支払いの失敗は送らない）`customer.created` `customer.updated` `customer.deleted`（会員。0047 のトリガー、ペイロードは会員 ID と `external_ref` だけ）`product.updated` `inventory.low`、同梱モジュール「お店で試着」の `tryon.requested` `tryon.updated`（メンテナの決定 2026-10-17、0025）、同梱モジュール「お問い合わせ」の `inquiry.created` `inquiry.updated`（メンテナの決定 2026-10-27、0061）、同梱モジュール「お気に入り」の `favorite.added` `favorite.removed`（メンテナの決定 2026-11-06、0123。ペイロードは会員 ID と商品 ID だけ）。失敗時は指数バックオフで最大5回再送。
@@ -113,7 +113,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 - `reserve_stock` は SKU が shop に属し、商品と shop が公開中であることも検証し、予約 `items` に単価スナップショットを残す。
 - `confirm_reservation(p_reservation_id, p_shop_id, p_order)` は注文行と明細まで作って order id を返す。同じ予約には同じ id を返す（`orders.reservation_id` の一意制約で DB 側でも保証）。
   TTL 切れで解放済みの予約が決済完了した場合は同じ品目を再度引き、足りなければ `insufficient_stock_after_release` を投げる（呼び出し側で返金）。
-- `record_webhook_event(provider, event_id)` で Webhook を冪等化する（初見なら true）。
+- `record_webhook_event(provider, event_id)` で Webhook を冪等化する（初見なら true）。処理の前に `webhook_event_seen` で記録済みなら何もしない（0128）。確定できずに返金するときは、返金の前に `reservation_mark_refunded` で予約を `refunded` にし（pending なら在庫とクーポンの枠も戻す）、`confirm_reservation` は `refunded` を `reservation_refunded` で拒む。流れは `src/payments/webhook-confirm.ts` だけ（Stripe と KOMOJU で共通）。
 - owner が在庫数を触る経路は `set_stock(sku_id, available)` と、一括取り込みの `import_catalog(shop_id, batch)`（`0009_catalog_import.sql`、同梱モジュールのインポーターが使う）だけ。どちらも authenticated で、関数内で所有を検証する。`inventory` への直接 UPDATE は誰にも許さない。
 - `skus` への insert で `inventory` 行がトリガーで自動生成される。
 - 顧客削除依頼は `mask_customer(shop_id, email)`（owner）、定期マスキングは `mask_shipped_orders(days)`（service_role, Cron）。

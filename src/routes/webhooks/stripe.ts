@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createPrivilegedDb, PrivilegedRpcError, type OrderInput } from "../../db/privileged";
+import { createPrivilegedDb, type OrderInput } from "../../db/privileged";
+import { confirmFromWebhook } from "../../payments/webhook-confirm";
+import { migrated } from "../../db/migration-state";
 import { createStripeClient, verifyStripeSignature, type CheckoutSession, type StripeEvent } from "../../payments/stripe";
-import { type Ctx } from "../common";
+import { migrationStateFor, type Ctx } from "../common";
 import { PLATFORM_PAYMENT_ACCOUNT } from "../../orders/cancel";
 
 /**
@@ -10,11 +12,14 @@ import { PLATFORM_PAYMENT_ACCOUNT } from "../../orders/cancel";
  *   checkout.session.completed / async_payment_succeeded → confirm_reservation（注文確定）
  *   checkout.session.expired  / async_payment_failed     → release_reservation（在庫を戻す）
  * 処理に成功したイベントだけ record_webhook_event に記録する（失敗時は 500 を返して Stripe に再送させる）。
+ * 記録済みのイベントの再配信は何もしない（0128。src/payments/webhook-confirm.ts）。
  */
 export const stripeWebhook = new Hono<AppEnv>();
 
 const CONFIRM_EVENTS = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded"]);
 const RELEASE_EVENTS = new Set(["checkout.session.expired", "checkout.session.async_payment_failed"]);
+/** 記録済みのイベントを処理の前に見る・返金すると決めた予約を確定しない（0128） */
+export const REPLAY_GUARD_MIGRATION = "0128_webhook_replay";
 
 /**
  * paymentAccount: 決済した口座（0090 の orders.payment_account）。Connect のイベントなら event.account、API キー方式（自分のアカウント）なら
@@ -72,6 +77,10 @@ stripeWebhook.post("/", async (c: Ctx) => {
   if (!CONFIRM_EVENTS.has(event.type) && !RELEASE_EVENTS.has(event.type)) {
     return c.json({ received: true, ignored: event.type });
   }
+  // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。返金して済みにした決済が、在庫が戻った後に注文にならないように）
+  const ms = migrationStateFor(c, url);
+  const guard = ms ? await migrated(ms, REPLAY_GUARD_MIGRATION) : false;
+  if (guard && (await db.webhookEventSeen("stripe", event.id))) return c.json({ received: true, duplicate: true });
 
   const session = event.data.object as unknown as CheckoutSession;
   const reservationId = session.metadata?.["reservation_id"] ?? session.client_reference_id ?? null;
@@ -111,30 +120,6 @@ stripeWebhook.post("/", async (c: Ctx) => {
     return true;
   };
 
-  try {
-    const orderId = await db.confirmReservation(reservationId, shopId, orderInputFromSession(session, typeof event.account === "string" ? event.account : PLATFORM_PAYMENT_ACCOUNT));
-    await db.recordWebhookEvent("stripe", event.id);
-    return c.json({ received: true, order_id: orderId });
-  } catch (e) {
-    if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock_after_release") || e.is("quote_superseded") || e.is("coupon_exhausted_after_release"))) {
-      // TTL 切れで在庫が他の人に渡ってしまった / 解放の後に同じ quote で出し直した予約が生きている / クーポンの先着枠が埋まった（0090）。
-      // どれも確定できないので返金して、イベントは済みにする
-      const refunded = await refund();
-      await db.recordWebhookEvent("stripe", event.id);
-      return c.json({ received: true, refunded });
-    }
-    if (e instanceof PrivilegedRpcError && e.is("amount_mismatch")) {
-      // 支払額・通貨が Banto の計算と違う（0029）。確定せず返金し、在庫を戻す
-      console.error(`[banto] stripe webhook ${event.id}: amount mismatch for reservation ${reservationId} (${e.details ?? ""})`);
-      const refunded = await refund();
-      await db.releaseReservation(reservationId, shopId).catch(() => false);
-      await db.recordWebhookEvent("stripe", event.id);
-      return c.json({ received: true, refunded, ignored: "amount_mismatch" });
-    }
-    if (e instanceof PrivilegedRpcError && e.is("reservation_not_found")) {
-      await db.recordWebhookEvent("stripe", event.id);
-      return c.json({ received: true, ignored: "reservation_not_found" });
-    }
-    throw e; // 500 → Stripe が再送する
-  }
+  const order = orderInputFromSession(session, typeof event.account === "string" ? event.account : PLATFORM_PAYMENT_ACCOUNT);
+  return c.json(await confirmFromWebhook({ db, provider: "stripe", eventId: event.id, reservationId, shopId, order, refund, guard }));
 });

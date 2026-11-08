@@ -1,14 +1,17 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createPrivilegedDb, PrivilegedRpcError } from "../../db/privileged";
+import { createPrivilegedDb } from "../../db/privileged";
+import { confirmFromWebhook } from "../../payments/webhook-confirm";
+import { migrated } from "../../db/migration-state";
+import { REPLAY_GUARD_MIGRATION } from "./stripe";
 import { createKomojuClient, verifyKomojuSignature, type KomojuEvent } from "../../plugins/komoju";
-import { type Ctx } from "../common";
+import { migrationStateFor, type Ctx } from "../common";
 
 /**
  * KOMOJU Webhook。X-Komoju-Signature（HMAC-SHA256 hex）を検証し、
  *   payment.captured → confirm_reservation（購入者情報は予約に一時保持したものを使う）
  *   payment.expired / payment.cancelled → release_reservation
- * 処理に成功したイベントだけ記録し、失敗は 500 で再送させる。
+ * 処理に成功したイベントだけ記録し、失敗は 500 で再送させる。記録済みのイベントの再配信は何もしない（0128。src/payments/webhook-confirm.ts）。
  */
 export const komojuWebhook = new Hono<AppEnv>();
 
@@ -41,6 +44,10 @@ komojuWebhook.post("/", async (c: Ctx) => {
   if (!reservationId || !shopId) return c.json({ received: true, ignored: "no_reservation" });
 
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
+  // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。KOMOJU の署名には時刻が無いので、捕まえた本文はいつでも再送できる）
+  const ms = migrationStateFor(c, url);
+  const guard = ms ? await migrated(ms, REPLAY_GUARD_MIGRATION) : false;
+  if (guard && (await db.webhookEventSeen("komoju", event.id))) return c.json({ received: true, duplicate: true });
 
   if (RELEASE.has(event.type)) {
     // 決済ページの期限切れだけがカゴ落ち（会員の予約なら checkout.abandoned を積む、0105）。支払いの失敗・取り消しは数えない
@@ -49,44 +56,21 @@ komojuWebhook.post("/", async (c: Ctx) => {
     return c.json({ received: true, released });
   }
 
-  try {
-    const orderId = await db.confirmReservation(reservationId, shopId, {
-      customer_email: payment.customer_email ?? null,
-      payment_provider: "komoju",
-      payment_ref: payment.id,
-      amount_paid_jpy: typeof payment.amount === "number" ? payment.amount : null,
-      currency: typeof payment.currency === "string" ? payment.currency : null,
-      // 決済した口座（0090）。KOMOJU は API キー方式だけ
-      payment_account: "komoju",
-    });
-    await db.recordWebhookEvent("komoju", event.id);
-    return c.json({ received: true, order_id: orderId });
-  } catch (e) {
-    const refund = async (): Promise<boolean> => {
-      const secretKey = cfg.get("KOMOJU_SECRET_KEY");
-      // 返金できなければ例外 → 500 で KOMOJU に再送させる（決済済み・注文なし・返金なしで静かに終わらせない）
-      if (!secretKey) throw new Error(`komoju webhook ${event.id}: cannot refund ${payment.id} (secret key missing); not recording so KOMOJU retries`);
-      await createKomojuClient({ secretKey, fetch: c.get("deps").fetch }).refundPayment(payment.id, `refund-${event.id}`);
-      return true;
-    };
-    if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock_after_release") || e.is("quote_superseded") || e.is("coupon_exhausted_after_release"))) {
-      // 解放後の在庫切れ / 同じ quote で出し直した予約が生きている / クーポンの先着枠が埋まった（0090）: 確定できないので返金して済みにする
-      const refunded = await refund();
-      await db.recordWebhookEvent("komoju", event.id);
-      return c.json({ received: true, refunded });
-    }
-    if (e instanceof PrivilegedRpcError && e.is("amount_mismatch")) {
-      // 支払額・通貨が Banto の計算と違う（0029）。確定せず返金し、在庫を戻す
-      console.error(`[banto] komoju webhook ${event.id}: amount mismatch for reservation ${reservationId} (${e.details ?? ""})`);
-      const refunded = await refund();
-      await db.releaseReservation(reservationId, shopId).catch(() => false);
-      await db.recordWebhookEvent("komoju", event.id);
-      return c.json({ received: true, refunded, ignored: "amount_mismatch" });
-    }
-    if (e instanceof PrivilegedRpcError && e.is("reservation_not_found")) {
-      await db.recordWebhookEvent("komoju", event.id);
-      return c.json({ received: true, ignored: "reservation_not_found" });
-    }
-    throw e;
-  }
+  const refund = async (): Promise<boolean> => {
+    const secretKey = cfg.get("KOMOJU_SECRET_KEY");
+    // 返金できなければ例外 → 500 で KOMOJU に再送させる（決済済み・注文なし・返金なしで静かに終わらせない）
+    if (!secretKey) throw new Error(`komoju webhook ${event.id}: cannot refund ${payment.id} (secret key missing); not recording so KOMOJU retries`);
+    await createKomojuClient({ secretKey, fetch: c.get("deps").fetch }).refundPayment(payment.id, `refund-${event.id}`);
+    return true;
+  };
+  const order = {
+    customer_email: payment.customer_email ?? null,
+    payment_provider: "komoju",
+    payment_ref: payment.id,
+    amount_paid_jpy: typeof payment.amount === "number" ? payment.amount : null,
+    currency: typeof payment.currency === "string" ? payment.currency : null,
+    // 決済した口座（0090）。KOMOJU は API キー方式だけ
+    payment_account: "komoju",
+  };
+  return c.json(await confirmFromWebhook({ db, provider: "komoju", eventId: event.id, reservationId, shopId, order, refund, guard }));
 });
