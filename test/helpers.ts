@@ -131,8 +131,8 @@ export class Browser {
     }
   }
 
-  async get(path: string): Promise<Response> {
-    const res = await this.app.request(`${this.base}${path}`, { headers: { cookie: this.cookieHeader() } });
+  async get(path: string, headers: Record<string, string> = {}): Promise<Response> {
+    const res = await this.app.request(`${this.base}${path}`, { headers: { ...headers, cookie: this.cookieHeader() } });
     this.storeCookies(res);
     if ((res.headers.get("content-type") ?? "").includes("text/html")) this.referrerPolicy = res.headers.get("referrer-policy");
     return res;

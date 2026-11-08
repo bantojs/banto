@@ -135,6 +135,29 @@ export interface RejectedCoupon {
   shortfall?: number;
 }
 
+/**
+ * 購入者に返す理由。コードの存在・開始前・配布数・会員限定・配られた相手のような「キャンペーンの中身」が分かる理由は
+ * not_found に畳む（短い手入力のコードを探られても、期間前のキャンペーンの存在が漏れない）。管理画面・AI 用 API・ログは元の理由のまま
+ */
+export function buyerRejectReason(reason: RejectReason): RejectReason {
+  switch (reason) {
+    case "inactive":
+    case "not_started":
+    case "exhausted":
+    case "members_only":
+    case "grant_used":
+    case "grant_other":
+      return "not_found";
+    default:
+      return reason;
+  }
+}
+
+export function buyerRejected(r: RejectedCoupon): RejectedCoupon {
+  const reason = buyerRejectReason(r.reason);
+  return reason === r.reason ? r : { code: r.code, reason };
+}
+
 export interface DiscountResult {
   applied: AppliedDiscount[];
   rejected: RejectedCoupon[];

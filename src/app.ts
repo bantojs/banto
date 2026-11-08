@@ -1,4 +1,5 @@
 import { isSecureRequest } from "./routes/common";
+import { HTTPException } from "hono/http-exception";
 import { Hono } from "hono";
 import type { ShopEvent } from "./storefront/events";
 import type { ShopAccess } from "./routes/admin/access";
@@ -99,6 +100,8 @@ export function createApp(
 
   // 予期しない例外: スタックや接続先の情報を外に出さない。ログには残す。
   app.onError((err, c) => {
+    // 入口で決めた応答（公開 API の本文の上限 413 など）はそのまま返す
+    if (err instanceof HTTPException) return err.getResponse();
     console.error(`[banto] ${c.req.method} ${c.req.path}:`, err);
     const path = c.req.path;
     // 公開側の欄に秘密のキー（src/db/client.ts が止める）: 管理画面はセットアップの画面へ（直し方を出す）

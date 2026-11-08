@@ -8,7 +8,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx } from "../common";
 import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
@@ -133,14 +133,8 @@ async function shopFor(c: Ctx, slug: string = param(c, "shop")): Promise<PublicS
   return sf.shopBySlug(slug);
 }
 
-async function body(c: Ctx): Promise<Record<string, unknown>> {
-  try {
-    const b: unknown = await c.req.json();
-    return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
+/** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば空 */
+const body = async (c: Ctx): Promise<Record<string, unknown>> => (await publicJsonBody(c)) ?? {};
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const NO_STORE = { "cache-control": "no-store" };

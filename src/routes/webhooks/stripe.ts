@@ -91,6 +91,8 @@ stripeWebhook.post("/", async (c: Ctx) => {
   if (typeof event.account === "string") {
     const expected = await db.shopStripeAccount(shopId);
     if (expected !== event.account) {
+      // 運営者が決済の途中で接続先を変えた・外したときに起きる。支払いは済んでいて注文も返金も無いので、ログに残して運営者が気づけるように
+      console.error(`[banto] stripe webhook ${event.id}: event from account ${event.account} but shop ${shopId} is connected to ${expected ?? "none"}; ignored (payment is neither confirmed nor refunded)`);
       await db.recordWebhookEvent("stripe", event.id);
       return c.json({ received: true, ignored: "wrong_account" });
     }

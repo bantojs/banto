@@ -4,7 +4,8 @@ import { t } from "../i18n";
 import { createDbClient } from "../db/client";
 import type { MigrationStateDeps } from "../db/migration-state";
 import { canonicalIp, relayIps } from "../commerce/checkout";
-import { STOREFRONT_CACHE_TTL } from "../storefront/data";
+import { HTTPException } from "hono/http-exception";
+import { STOREFRONT_CACHE_TTL, StorefrontData, type PublicShop } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
@@ -44,21 +45,58 @@ export async function readBodyLimited(req: Request, max: number): Promise<Uint8A
   return out;
 }
 
+/** 公開 API（/api/shops/...）の JSON の本文の上限。カート・注文照会・お問い合わせの本文には十分で、Node 実行でメモリを食わせられない */
+export const PUBLIC_JSON_BODY_BYTES = 64 * 1024;
+
+/**
+ * 公開 API の JSON の本文を上限まで読む。超えたら 413（HTTPException。app.onError がそのまま返す）。
+ * JSON でない・オブジェクトでなければ null（呼ぶ側が 400 か空として扱う）
+ */
+export async function publicJsonBody(c: Ctx, max = PUBLIC_JSON_BODY_BYTES): Promise<Record<string, unknown> | null> {
+  const raw = await readBodyLimited(c.req.raw, max);
+  if (!raw) throw new HTTPException(413, { res: Response.json({ error: "too_large" }, { status: 413 }) });
+  try {
+    const b: unknown = JSON.parse(new TextDecoder().decode(raw));
+    return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 公開 API の入口: anon の StorefrontData と、URL のショップ（キャッシュ済みの公開のショップ行）。
+ * Supabase の設定が無ければ 503、ショップが無ければ 404 の Response を返す
+ */
+export async function publicShop(c: Ctx): Promise<{ sf: StorefrontData; shop: PublicShop } | Response> {
+  const cfg = c.get("adapters").config;
+  const url = cfg.get("SUPABASE_URL");
+  const anonKey = cfg.get("SUPABASE_ANON_KEY");
+  if (!url || !anonKey) return c.json({ error: "not_configured" }, 503);
+  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
+  const shop = await sf.shopBySlug(param(c, "shop"));
+  if (!shop) return c.json({ error: "not_found" }, 404);
+  return { sf, shop };
+}
+
+/**
+ * ほかのサイトからの遷移・fetch か（Origin が付いていて自分と違う、または Sec-Fetch-Site が cross-site / same-site）。
+ * csrfGuard の判定の本体。GET でも、Worker に外へ取りに行かせる口など、ほかのサイトから呼ばせたくない入口が使う
+ */
+export function crossSiteRequest(c: Ctx): boolean {
+  const origin = c.req.header("origin");
+  if (origin !== undefined && !originIsSelf(c, origin)) return true;
+  const site = c.req.header("sec-fetch-site");
+  return Boolean(site && site !== "same-origin" && site !== "none");
+}
+
 /**
  * フォーム POST の CSRF 対策。Cookie は SameSite=Lax だが、念のため Origin / Sec-Fetch-Site も見る。
  * Origin が付いていて自分と違えば 403（`null`（sandbox の iframe・data: 由来）も違うとみなす。ホスティングで他人のサイトと兄弟サブドメインに並ぶと
  * Lax の Cookie が same-site の POST に付くため）。Sec-Fetch-Site は Origin の有無にかかわらず、cross-site / same-site なら 403。
  */
 export const csrfGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE" || c.req.method === "PATCH") {
-    const origin = c.req.header("origin");
-    if (origin !== undefined && !originIsSelf(c, origin)) {
-      return c.text(t("error.csrf"), 403);
-    }
-    const site = c.req.header("sec-fetch-site");
-    if (site && site !== "same-origin" && site !== "none") {
-      return c.text(t("error.csrf"), 403);
-    }
+  if ((c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE" || c.req.method === "PATCH") && crossSiteRequest(c)) {
+    return c.text(t("error.csrf"), 403);
   }
   await next();
 };
@@ -125,7 +163,9 @@ export function clientIp(c: Ctx): string | null {
   // （TRUSTED_PROXY_HOPS、既定 1 = 直前のプロキシが足した値）。Cloudflare の CF-Connecting-IP は常に 1 つ
   const hopsRaw = cfg.get("TRUSTED_PROXY_HOPS");
   const hops = hopsRaw && /^[1-9][0-9]?$/.test(hopsRaw) ? Number(hopsRaw) : 1;
-  const pick = parts[Math.max(0, parts.length - hops)]!;
+  // 段数が要素の数より多い（設定した段数のプロキシを通っていない）なら、先頭は依頼側が書けた値なので使わない（IP ごとの上限は掛けない側に倒す）
+  if (hops > parts.length) return null;
+  const pick = parts[parts.length - hops]!;
   return pick.length <= 64 ? pick : null;
 }
 

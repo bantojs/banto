@@ -1,12 +1,10 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
-import { StorefrontData } from "../../storefront/data";
 import { moduleEnabled } from "../../modules/registry";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
 import { receiptAvailable, receiptData } from "../../modules/receipt/data";
 import { openOrderToken, sealOrderToken } from "../../orders/lookup";
-import { param, type Ctx } from "../common";
+import { publicJsonBody, publicShop, type Ctx } from "../common";
 import { guestOrderLookup } from "../order-lookup";
 
 /**
@@ -26,25 +24,15 @@ export const ordersApi = new Hono<AppEnv>();
 const NO_STORE = { "cache-control": "no-store" };
 
 async function scope(c: Ctx) {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
   const secret = c.get("sessionSecret");
-  if (!url || !anonKey || !secret) return c.json({ error: "not_configured" }, 503);
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
-  const shop = await sf.shopBySlug(param(c, "shop"));
-  if (!shop) return c.json({ error: "not_found" }, 404);
-  return { sf, shop, secret };
+  if (!secret) return c.json({ error: "not_configured" }, 503);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  return { ...p, secret };
 }
 
-async function body(c: Ctx): Promise<Record<string, unknown>> {
-  try {
-    const b: unknown = await c.req.json();
-    return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
+/** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば空 */
+const body = async (c: Ctx): Promise<Record<string, unknown>> => (await publicJsonBody(c)) ?? {};
 
 ordersApi.post("/shops/:shop/orders/lookup", async (c: Ctx) => {
   const s = await scope(c);

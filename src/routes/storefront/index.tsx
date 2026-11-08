@@ -35,6 +35,7 @@ import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewe
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
@@ -961,7 +962,7 @@ async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: nu
   const d = await discountCart({ sf: s.sf, shop: s.shop, coupons: source, member: member ? { id: member.cid } : null }, { lines, subtotal, dropped: [], cart: s.cart }, s.cart.coupons, 0, null);
   return {
     applied: d.applied.map((a) => ({ code: a.code, name: a.name, amount_jpy: a.amount_jpy, free_shipping: a.kind === "free_shipping" })),
-    rejected: d.rejected.map(couponNotice),
+    rejected: d.rejected.map((r) => couponNotice(buyerRejected(r))),
     discount: d.itemDiscount,
   };
 }

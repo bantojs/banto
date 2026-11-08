@@ -651,6 +651,8 @@ export class ApiService {
     let stored: string[] = [];
     if (files.length > 0) {
       const storage = this.attachmentStorage();
+      // 置き場に書く前に、返事の書き込みのスコープを確かめる（スコープの無いトークンに置かせない）
+      if (!(await this.call<boolean>("api_has_scope", { p_scope: "inquiries:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
       const shopId = (await this.call<{ shop_id: string }>("api_token_shop", {})).shop_id;
       const r = await storeAttachments(storage, shopId, files);
       if (!r.ok) {

@@ -63,6 +63,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     storefront_invalid: "sfmode.invalid",
     domain_saved: "domain.saved",
     domain_invalid: "domain.invalid",
+    domain_needs_base_url: "domain.needs_base_url",
     domain_taken: "domain.taken",
     domain_unverified: "domain.unverified",
     domain_unavailable: "domain.unavailable",
@@ -803,6 +804,9 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
   const domain = normalizeDomain(f.domain ?? "");
   const own = [new URL(c.req.url).hostname, new URL(publicBaseUrl(c)).hostname];
   if (domain === "invalid" || (domain && (own.includes(domain) || domain.endsWith(".workers.dev")))) return c.redirect(`/admin/shops/${shopId}?flash=domain_invalid#domain`);
+  // 独自ドメインを使うなら Banto 自身の URL（PUBLIC_BASE_URL）が要る。無いと、ショップのドメインで開いたときに Banto の URL が決まらず、
+  // 管理画面への転送・サイトマップ・会員ページの戻り先が開いた Host で揺れる（docs/custom-domain.md §1）
+  if (domain && !c.get("adapters").config.get("PUBLIC_BASE_URL")) return c.redirect(`/admin/shops/${shopId}?flash=domain_needs_base_url#domain`);
   // 独自ドメインの提供元（DomainAdapter）。付ける前に所有の確認と登録を頼み、断られたら保存しない。
   // 無ければ今までどおり（運営者が Cloudflare で Worker に付けてから保存する。docs/custom-domain.md §6）
   const provider = c.get("adapters").domain;

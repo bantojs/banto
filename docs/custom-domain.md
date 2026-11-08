@@ -21,7 +21,7 @@ Cloudflare の画面で **ドメインを追加**（ネームサーバーを Clo
 
 ## 3. Banto 側の設定
 
-1. **変数とシークレット** で `PUBLIC_BASE_URL` を `https://shop.example.com` にします（未設定ならアクセスされた URL から自動で決まるので、workers.dev と独自ドメインの両方でアクセスされると Stripe のコールバック先が揺れます。独自ドメインにしたら明示してください）。
+1. **変数とシークレット** で `PUBLIC_BASE_URL` を `https://shop.example.com` にします（未設定ならアクセスされた URL から自動で決まるので、workers.dev と独自ドメインの両方でアクセスされると Stripe のコールバック先が揺れます。独自ドメインにしたら明示してください）。**未設定のあいだは、ショップに独自ドメインを保存できません**（管理画面が設定を促します）。
 2. Stripe / KOMOJU の Webhook URL と、Stripe Connect を使う場合のリダイレクト URI を新しいドメインに変えます。
 3. ショップの URL は `https://shop.example.com/<ショップのスラッグ>` です。トップ（`/`）は公開ショップが 1 つなら自動でそのショップに転送されます。
 

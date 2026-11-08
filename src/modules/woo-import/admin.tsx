@@ -10,6 +10,7 @@ import { couponCsv } from "../coupons/csv";
 import { isoToZonedInput } from "../../i18n/time";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
 import { owner, param, publicBaseUrl, type AdminContext } from "../../routes/admin/context";
+import { crossSiteRequest } from "../../routes/common";
 import { shopHome } from "../../storefront/urls";
 import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
@@ -403,6 +404,8 @@ const MAX_QUEUE_PRODUCTS = 100;
  * 応答はページとして開かれても何もできないように、種類を中身で決め、CSP で何も読み込ませない。
  */
 wooImport.get("/images/original", requireOwner, async (c: AdminContext) => {
+  // GET だが Worker に外へ取りに行かせる口なので、ほかのサイトからの遷移（Lax の Cookie が付く）では動かさない
+  if (crossSiteRequest(c)) return c.json({ error: "forbidden" }, 403);
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const url = c.req.query("url") ?? "";

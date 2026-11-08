@@ -1008,6 +1008,7 @@ export const en: Record<MessageKey, string> = {
   "domain.save": "Save domain",
   "domain.saved": "Custom domain saved (takes about 30 seconds to apply).",
   "domain.invalid": "The domain is not valid (e.g. shop.example.com; Banto's own host name cannot be used).",
+  "domain.needs_base_url": "Set the PUBLIC_BASE_URL variable to Banto's own URL (https://…) before using a custom domain (docs/custom-domain.md).",
   "domain.taken": "Another shop already uses that domain.",
   "domain.provider_intro": "This service registers the domain and its certificate for you. Saving registers it with the provider and shows the DNS records (such as a CNAME) you need to add here. It can take minutes to hours after the DNS change until it becomes active.",
   "domain.state_active": "Active at the provider.",

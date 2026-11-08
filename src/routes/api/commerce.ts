@@ -2,15 +2,15 @@ import { deliveryOptions } from "../../modules/delivery-time";
 import { withApiMember } from "../audience-render";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
 import { STATUS_QUERY_PARAM, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
-import { clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { clientIpFor, publicBaseUrl, publicJsonBody, publicShop, type Ctx } from "../common";
 import { shopHome } from "../../storefront/urls";
 
 /**
@@ -41,14 +41,11 @@ interface Scope {
 }
 
 async function scope(c: Ctx): Promise<Scope | Response> {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
   const secret = c.get("sessionSecret");
-  if (!url || !anonKey || !secret) return c.json({ error: "not_configured" }, 503);
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
-  const shop = await sf.shopBySlug(param(c, "shop"));
-  if (!shop) return c.json({ error: "not_found" }, 404);
+  if (!secret) return c.json({ error: "not_configured" }, 503);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { sf, shop } = p;
   const m = await memberFromRequest(c, shop);
   // トークンが付いているのに確かめられない: 連携側はトークンを更新して呼び直す（黙ってゲスト扱いにすると、会員の値引きが消えて見える）
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
@@ -56,14 +53,8 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop) };
 }
 
-async function jsonBody(c: Ctx): Promise<Record<string, unknown> | null> {
-  try {
-    const body: unknown = await c.req.json();
-    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
+/** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば null */
+const jsonBody = (c: Ctx): Promise<Record<string, unknown> | null> => publicJsonBody(c);
 
 /** トークン → カート。省略なら空、署名が合わなければ null（連携側は保持しているトークンを捨てて作り直す） */
 async function openCartToken(secret: string, token: unknown): Promise<Cart | null> {
@@ -104,7 +95,7 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
     coupons: discount
       ? {
           applied: discount.applied.map((a) => ({ code: a.code, name: a.name, kind: a.kind, amount_jpy: a.amount_jpy })),
-          rejected: discount.rejected.map(couponNotice),
+          rejected: discount.rejected.map((r) => couponNotice(buyerRejected(r))),
           discount_jpy: discount.itemDiscount,
           subtotal_after_discount_jpy: priced.subtotal - discount.itemDiscount,
         }

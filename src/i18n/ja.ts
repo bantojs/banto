@@ -1015,6 +1015,7 @@ export const ja = {
   "domain.save": "ドメインを保存",
   "domain.saved": "独自ドメインを保存しました（反映まで 30 秒ほど）。",
   "domain.invalid": "ドメインの形が正しくありません（例 shop.example.jp。Banto 自身のホスト名は使えません）。",
+  "domain.needs_base_url": "独自ドメインを使うには、先に変数 PUBLIC_BASE_URL に Banto 自身の URL（https://…）を設定してください（docs/custom-domain.md）。",
   "domain.taken": "そのドメインは、ほかのショップで使っています。",
   "domain.provider_intro": "このサービスがドメインの登録と証明書を扱います。保存すると提供元に登録し、必要な DNS の設定（CNAME など）をここに出します。設定が届いて有効になるまで数分から数時間かかることがあります。",
   "domain.state_active": "提供元で有効です。",

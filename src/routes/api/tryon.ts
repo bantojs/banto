@@ -1,9 +1,8 @@
 import { Hono } from "hono";
 import { ipHash } from "../../members/auth";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
 import { PrivilegedRpcError } from "../../db/privileged";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { normalizeCart, sealCart, type Cart } from "../../cart/cart";
 import { priceCart } from "../../commerce/checkout";
 import { openJson } from "../../util/signed";
@@ -11,7 +10,7 @@ import { moduleEnabled } from "../../modules/registry";
 import { TRYON_MODULE, checkTryon, hoursOn, storeView, todayHere, tryonSettings, visitDates, type StoreRow } from "../../modules/store-tryon";
 import { privilegedFor } from "../payment-deps";
 import { memberFromRequest, type ApiMember } from "./members";
-import { clientIpFor, param, type Ctx } from "../common";
+import { clientIpFor, publicJsonBody, publicShop, type Ctx } from "../common";
 
 /**
  * ヘッドレスのお店で試着（同梱モジュール store_tryon、決済なし。docs/headless.md「お店で試着」、docs/store-tryon.md）。認証なし、CORS 許可。
@@ -34,14 +33,11 @@ interface Scope {
 }
 
 async function scope(c: Ctx): Promise<Scope | Response> {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
   const secret = c.get("sessionSecret");
-  if (!url || !anonKey || !secret) return c.json({ error: "not_configured" }, 503);
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
-  const shop = await sf.shopBySlug(param(c, "shop"));
-  if (!shop) return c.json({ error: "not_found" }, 404);
+  if (!secret) return c.json({ error: "not_configured" }, 503);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { sf, shop } = p;
   if (!moduleEnabled(shop.settings, TRYON_MODULE)) return c.json({ error: "tryon_disabled" }, 404);
   const m = await memberFromRequest(c, shop);
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
@@ -96,14 +92,8 @@ const RPC_ERRORS: Record<string, string> = {
 tryonApi.post("/shops/:shop/tryon", async (c: Ctx) => {
   const s = await scope(c);
   if (s instanceof Response) return s;
-  let body: Record<string, unknown>;
-  try {
-    const b: unknown = await c.req.json();
-    if (!b || typeof b !== "object" || Array.isArray(b)) return c.json({ error: "invalid_request" }, 400);
-    body = b as Record<string, unknown>;
-  } catch {
-    return c.json({ error: "invalid_request" }, 400);
-  }
+  const body = await publicJsonBody(c);
+  if (!body) return c.json({ error: "invalid_request" }, 400);
   const raw = typeof body.cart === "string" ? await openJson(s.secret, body.cart) : null;
   if (raw === null) return c.json({ error: "invalid_cart" }, 400);
   const cart: Cart = normalizeCart(raw);

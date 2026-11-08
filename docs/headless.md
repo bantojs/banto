@@ -168,7 +168,7 @@ GET /api/shops/<shop>/cart?cart=<トークン>
 - `checkout_url` を開くと、そのブラウザのカートになり、Banto のカート画面から配送先 → 最終確認 → 決済へ進みます（B の終点）。クーポンのコードも引き継ぎます。
 - `delivery` は配送日時の選択肢（同梱モジュール「配送日時の指定」が ON のときだけ。OFF なら `null`）。`dates[].value`（`YYYY-MM-DD`）と `slots[].value` を、チェックアウト API の配送先の `delivery_date` / `delivery_slot` にそのまま渡します。`label` は表示用（デプロイのロケール）。日付は応答した時点の「今日」から数えるので、カートの応答を使い回さないでください（日付をまたいで古い日を送ると quote が `invalid_address` の `delivery_date` を返すので、カートを取り直して選び直してもらいます）。
 - `coupons.discount_jpy` は商品の値引きです。送料無料のクーポンは、送料が決まる quote（最終確認の内容）で反映されます。
-- `coupons.rejected` は入力されたが使えないクーポンと理由です（`reason`: `not_found` / `inactive` / `not_started` / `ended` / `members_only` / `limit_reached` / `exhausted` / `not_combinable` / `too_many` / `no_eligible_items` / `min_subtotal` / `max_subtotal` / `min_qty`）。`message` をそのまま表示できます。条件を満たせば使えるようになるもの（`min_subtotal` など）はトークンに残しています。
+- `coupons.rejected` は入力されたが使えないクーポンと理由です（`reason`: `not_found` / `ended` / `limit_reached` / `grant_expired` / `not_combinable` / `too_many` / `no_eligible_items` / `min_subtotal` / `max_subtotal` / `min_qty` / `attributes` / `payment_method`）。`message` をそのまま表示できます。無効・開始前・配布数の上限・会員限定・ほかの会員に配られたクーポンは、購入者には `not_found`（コードが見つからない）として返します（キャンペーンの存在や期間をコードの探索で知られないため。管理画面と AI 用 API では元の理由が見えます）。条件を満たせば使えるようになるもの（`min_subtotal` など）はトークンに残しています。
 - 1 人あたりの回数は、ゲストではカートの時点で分からない（購入者のメールアドレスが未定）ので、quote で判定します。会員のトークン（下の「会員」）を付けると、カートの時点から会員 ID で判定し、会員限定のクーポンも使えます。
 
 ### エラー
