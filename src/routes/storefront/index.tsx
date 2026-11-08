@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { CARE_MODULE, productCareView } from "../../care-labels/care";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
 import { blockedTarget, storefrontSettings } from "../../storefront/mode";
@@ -615,7 +616,9 @@ storefront.get("/:shop/products/:product", async (c: Ctx) => {
  * 商品ページを描く（お店の画面とひな形のプレビューで同じ）。o.layout はひな形の上書き（プレビュー: 保存していないひな形の下書き）。
  * null なら割り当てがあってもひな形を使わない
  */
-async function productPageResponse(c: Ctx, s: ShopScope, detail: ProductDetail, categories: CategoryRow[], o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
+async function productPageResponse(c: Ctx, s: ShopScope, detail0: ProductDetail, categories: CategoryRow[], o: RenderOpts & { layout?: PageRow | null } = {}): Promise<Response> {
+  // 洗濯表示（同梱モジュール care_labels、0127）: 商品に無ければ主カテゴリーから親へたどって決める（材料はキャッシュ済みのカテゴリーとショップ行）
+  const detail: ProductDetail = { ...detail0, care: productCareView(moduleEnabled(s.shop.settings, CARE_MODULE), detail0.product, categories, s.shop, s.ctx.mediaBaseUrl) };
   const props = {
     ctx: s.ctx,
     detail,

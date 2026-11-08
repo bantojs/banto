@@ -228,6 +228,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       const chart = sizeChartOf(p.size_chart);
       return sizeChartLiquid(chart, (k) => mediaUrl(u, k), chart ? selectedRowValue(chart, selected?.options) : null);
     })(),
+    // 洗濯表示（同梱モジュール care_labels、0127。{ symbols: [{ code, group, label, image: { url, width, height } | null }], notes }。無ければ null）。docs/care-labels.md
+    care: d.care ?? null,
   };
 }
 

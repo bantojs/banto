@@ -1,4 +1,6 @@
 import { eventsApi } from "../../modules/event-relay/routes";
+import { CARE_MODULE, productCareView } from "../../care-labels/care";
+import { moduleEnabled } from "../../modules/registry";
 import { dialogsApi } from "../../modules/dialogs/api";
 import { Hono } from "hono";
 import { apiViewerData } from "../audience-render";
@@ -231,6 +233,11 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       reviews: productReviews(p),
       /** 採寸表（同梱モジュール size_charts、0095。どの段の表かは Banto が決めたもの。モジュールが OFF・表が無ければ null） */
       size_chart: sizeChartJson(sizeChartOf(p.size_chart), (k) => imageUrl(d.mediaBaseUrl, k)),
+      /**
+       * 洗濯表示（同梱モジュール care_labels、0127。商品に無ければ主カテゴリーから親へたどったもの。モジュールが OFF・無ければ null）。
+       * symbols は JIS L 0001:2024 の記号番号・区分・意味の文・運営者が上げた絵（無ければ null）
+       */
+      care: productCareView(moduleEnabled(shop.settings, CARE_MODULE), p, categories, shop, d.mediaBaseUrl),
     },
   });
 });

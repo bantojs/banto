@@ -1847,6 +1847,17 @@ export class FakeSupabase {
       shop["settings"] = settings;
       return json(out);
     }
+    // 0127: 洗濯表示の記号の絵の表（本物の形・権限は test/db/care-labels.test.ts）
+    if (fn === "care_symbols_set") {
+      const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      if (!shop) return json({ code: "42501", message: "forbidden" }, 403);
+      const next = (args["p_symbols"] ?? {}) as Record<string, Row>;
+      const old = (shop["care_symbols"] ?? {}) as Record<string, Row>;
+      if (Object.entries(next).some(([code, v]) => !/^\d{3}$/.test(code) || !String(v["key"] ?? "").startsWith(`care/${String(shop["id"])}/`))) return json({ code: "P0001", message: "invalid_care_symbols" }, 400);
+      shop["care_symbols"] = next;
+      const keep = new Set(Object.values(next).map((v) => v["key"]));
+      return json({ symbols: next, removed_image_keys: [...new Set(Object.values(old).map((v) => v["key"]).filter((k) => !keep.has(k)))] });
+    }
     if (fn === "option_swatches_set") {
       // 0115: 本物の SQL（形・上限・鍵の場所・権限）は test/db/option-swatches.test.ts
       const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
@@ -2323,6 +2334,8 @@ export class FakeSupabase {
       option_names: (s["option_names"] ?? {}) as Row,
       // 0115: 選択肢の値ごとの見本
       option_swatches: (s["option_swatches"] ?? {}) as Row,
+      // 0127: 洗濯表示の記号の絵（モジュール care_labels が ON のときだけ）
+      care_symbols: moduleOn(s, "care_labels") ? ((s["care_symbols"] ?? {}) as Row) : {},
       legal_links: this.legalLinksLive(s),
       // 0071: 公開中のテーマの版（独自ドメインのあるショップだけ）。テストは shops の行に theme_public を置く
       theme: s["domain"] && s["theme_public"] ? s["theme_public"] : null,
@@ -3092,6 +3105,16 @@ export class FakeSupabase {
         if (!i) return notFound();
         i["options"] = o;
         return json(product(this.tables.products.find((x) => x["id"] === i["product_id"])!));
+      }
+      // 0127: 洗濯表示（形の検査は本物の DB。test/db/care-labels.test.ts）
+      case "api_care_set": {
+        if (!need("products:write")) return unauthorized();
+        const table = args["p_target"] === "category" ? this.tables.categories : args["p_target"] === "product" ? this.tables.products : null;
+        if (!table) return json({ code: "P0001", message: "invalid_care_target" }, 400);
+        const row = table.find((x) => x["shop_id"] === shopId && (x["id"] === args["p_ref"] || x["slug"] === args["p_ref"]));
+        if (!row) return notFound();
+        row["care"] = args["p_care"] ?? null;
+        return json({ target: args["p_target"], id: row["id"], care: row["care"] });
       }
       case "api_size_chart_get":
       case "api_size_chart_set": {

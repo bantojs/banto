@@ -185,6 +185,21 @@ export const MCP_TOOLS: McpTool[] = [
     run: (api, a) => api.sizeChartGet({ product_id: str(a, "product_id") ?? null, category_id: str(a, "category_id") ?? null }),
   },
   {
+    name: "care_set",
+    description:
+      "【書き込み】商品かカテゴリーの洗濯表示を置き換える（同梱モジュール care_labels）。symbols は JIS L 0001:2024 の記号番号（例: 141 = 液温 40℃まで洗濯機で弱い洗濯、区分 = 番号の 1 桁目ごとに 1 つ、7 つまで）、notes は付記（8 つまで・40 文字まで）。care を null にすると外す（商品ならカテゴリーのものを使う）。スコープ products:write。",
+    inputSchema: obj(
+      {
+        target: s("string", "product か category", { enum: ["product", "category"] }),
+        ref: s("string", "商品・カテゴリーの ID か URL の名前"),
+        care: s("object", "{ symbols: string[], notes: string[] }。null で外す"),
+      },
+      ["target", "ref"],
+    ),
+    readOnly: false,
+    run: (api, a) => api.careSet(str(a, "target") === "category" ? "category" : "product", str(a, "ref") ?? "", a["care"] ?? null),
+  },
+  {
     name: "size_chart_set",
     description:
       "【書き込み】採寸表の 1 つの段を置き換える。列（columns: [{ key?, label, unit? }]、12 まで。key は英小文字で、省略すると c1・c2…）を決めた近い段の列・測り方の図・軸を使い、行（rows: [{ value: \"M\", cells: { <列の key>: \"70\" } }]、60 まで）と注記はそこから商品までの近い段のもの。null の項目はその段では決めない。axis は SKU の軸の key か表示名。商品の段だけ hidden: true で出さない。図は管理画面で置く。スコープ products:write。",

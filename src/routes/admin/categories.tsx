@@ -11,6 +11,7 @@ import { categoryTree, type CategoryNode } from "../../products/categories";
 import { optionAxesFromForm } from "../../products/option-axes";
 import { optionNamesOf } from "../../products/option-names";
 import { sizeChartHref } from "../../modules/size-charts/admin";
+import { careHref } from "../../modules/care-labels/admin";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
 import { OPTION_SWATCHES_MIGRATION, optionSwatchesOf } from "../../products/option-swatches";
@@ -171,6 +172,11 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
             {sizeChartHref(shop, { category: n.id }) ? (
               <p>
                 <a href={sizeChartHref(shop, { category: n.id })!}>{t("sizechart.link")}</a>
+              </p>
+            ) : null}
+            {careHref(shop, { category: n.id }) ? (
+              <p>
+                <a href={careHref(shop, { category: n.id })!}>{t("care.link")}</a>
               </p>
             ) : null}
             <form method="post" action={`${base}/${n.id}/delete`}>

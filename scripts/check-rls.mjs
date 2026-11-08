@@ -78,6 +78,10 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
   "banto_option_names_ok", // 0094: shops.option_names の CHECK（値の形を見るだけ）
   "option_names_set", // 0094: SKU の選択肢の表示名を変える（中で catalog の項目を確かめる）
+  "banto_care_codes", // 0127: 洗濯表示の記号番号の表（定数を返すだけ）
+  "banto_care_ok", // 0127: products.care / categories.care の CHECK（値の形を見るだけ）
+  "banto_care_symbols_ok", // 0127: shops.care_symbols の CHECK（値の形を見るだけ）
+  "care_symbols_set", // 0127: 洗濯表示の記号の絵の表を変える（中で catalog の項目を確かめる）
   "banto_option_swatches_ok", // 0115: shops.option_swatches の CHECK（値の形を見るだけ）
   "option_swatches_set", // 0115: 選択肢の値ごとの見本を変える（中で catalog の項目を確かめる）
   "article_positions_set", // 0116: ブログの記事を手で並べる順（中で content の項目を確かめる）

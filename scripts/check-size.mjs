@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Worker 本体の圧縮後サイズが予算内か検査する（docs/ARCHITECTURE.md「速度の予算」、CLAUDE.md §7）。
 // 測るのは既定のビルド（wrangler.jsonc の minify: true。BANTO_MINIFY=off で縮めずに送るデプロイは Cloudflare の上限だけを守る、docs/setup.md §11）。
-// あわせて、管理画面に toString() で埋め込むブラウザのコード（woo-import など）がビルドの後もそれだけで動くかを確かめる。
+// 管理画面に toString() で埋め込むブラウザのコードがビルドの後も動くかは npm run check:client（scripts/check-client-scripts.mjs）。
 // 先に npm run build:workers を実行しておくこと。上限を上げるときは理由を docs/knowledge/02-decisions.md に書く。
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
@@ -32,35 +32,3 @@ if (gz > BUDGET_BYTES) {
 }
 console.log(line);
 
-// 埋め込むブラウザのコード: `(${fn.toString()})()` の fn を取り出し、外の名前を使っていないか（縮めたときの補助 __name の改名など）を動かして確かめる
-const text = raw.toString("utf8");
-const names = [...new Set([...text.matchAll(/\$\{([A-Za-z_$][\w$]*)\.toString\(\)\}\)\(\)/g)].map((m) => m[1]))];
-let broken = 0;
-for (const name of names) {
-  const start = text.search(new RegExp(`function ${name.replace(/\$/g, "\\$")}\\(`));
-  let src = null;
-  for (let i = text.indexOf("}", start); start >= 0 && i > 0; i = text.indexOf("}", i + 1)) {
-    try {
-      new Script(`(${text.slice(start, i + 1)})`);
-      src = text.slice(start, i + 1);
-      break;
-    } catch {
-      // まだ閉じていない
-    }
-  }
-  // 管理画面の CLIENT_PRELUDE と同じく __name だけは用意する（縮めないビルドの補助）
-  const ctx = { document: {}, console, TextDecoder, TextEncoder, setTimeout, fetch: () => Promise.reject(new Error("offline")) };
-  ctx.window = ctx;
-  try {
-    if (!src) throw new Error("関数が見つかりません");
-    runInNewContext(`var __name = function (t) { return t; }; (${src})()`, ctx, { timeout: 2000 });
-  } catch (e) {
-    broken++;
-    console.error(`check-size: 埋め込むブラウザのコード ${name} がビルドの後に動きません: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-if (names.length === 0 || broken > 0) {
-  if (names.length === 0) console.error("check-size: 埋め込むブラウザのコードが見つかりません（`(${fn.toString()})()` の形）");
-  process.exit(1);
-}
-console.log(`check-size: 埋め込むブラウザのコード ${names.length} 個はビルドの後もそれだけで動く`);
