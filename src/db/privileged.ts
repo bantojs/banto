@@ -251,7 +251,8 @@ export interface PrivilegedDb {
   /** プレビューの版に保存した設定の値（0074）。券を確かめてから呼ぶ。版が無ければ null */
   themePreviewSettings(shopId: string, versionId: string): Promise<Record<string, unknown> | null>;
   /** 在庫を原子的に減算して予約を作る。在庫不足なら insufficient_stock */
-  reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null): Promise<string>;
+  /** customerId: ログイン中の会員（会員限定の商品を DB でも確かめる、0129） */
+  reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null, customerId?: string | null): Promise<string>;
   /** 予約を注文に変換（冪等）。戻り値は order id */
   confirmReservation(reservationId: string, shopId: string, order: OrderInput): Promise<string>;
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
@@ -540,11 +541,13 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
 
   return {
     themePreviewSettings: (shopId, versionId) => rpc<Record<string, unknown> | null>("theme_preview_settings", { p_shop_id: shopId, p_version_id: versionId }),
-    reserveStock: (shopId, items, ttlSeconds, limits) =>
+    reserveStock: (shopId, items, ttlSeconds, limits, customerId) =>
       rpc<string>("reserve_stock", {
         p_shop_id: shopId, p_items: items, p_ttl_seconds: ttlSeconds,
         // 予約の上限の材料（0029、reserveLimits() で作る）
         ...(limits ? { p_quote_id: limits.quoteId, p_subject_hash: limits.subjectHash, p_ip_hash: limits.ipHash } : {}),
+        // 会員限定の商品の判定（0129）
+        ...(customerId ? { p_customer_id: customerId } : {}),
       }),
     confirmReservation: (reservationId, shopId, order) =>
       rpc<string>("confirm_reservation", { p_reservation_id: reservationId, p_shop_id: shopId, p_order: order }),

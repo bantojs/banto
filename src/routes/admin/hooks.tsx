@@ -55,6 +55,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     saved: "shop.saved",
     deleted: "hooks.deleted",
     invalid_url: "hooks.invalid_url",
+    app_connected_url_locked: "hooks.url_locked",
     invalid_app_handle: "hooks.app_handle_invalid",
     app_handle_taken: "hooks.app_handle_taken",
     connect_scope: "connect.scope_error",
@@ -83,7 +84,7 @@ function receivesEvents(url: string | undefined): boolean {
   return Boolean(findBundledPlugin(id)?.handle);
 }
 
-function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest: PluginManifest | null; apps?: boolean }) {
+function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest: PluginManifest | null; apps?: boolean; connected?: boolean }) {
   const e = props.endpoint;
   const events = new Set(e?.events ?? props.manifest?.events ?? []);
   const showEvents = receivesEvents(e?.url);
@@ -96,6 +97,11 @@ function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest:
         <div>
           <input type="hidden" name="url" value={e.url} />
           <span class="badge">{t("plugins.bundled")}</span>
+        </div>
+      ) : props.connected ? (
+        <div>
+          <input type="hidden" name="url" value={e?.url ?? ""} />
+          <code>{e?.url}</code> <span class="muted">{t("hooks.url_locked")}</span>
         </div>
       ) : (
         <input id="url" type="text" name="url" value={e?.url ?? ""} required pattern="https?://.*" />
@@ -401,7 +407,7 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
       {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
       {/* 登録・保存のときにマニフェストを読めなかった外部の送信先。プラグインの欄（設定・お店の行動を渡す等）が出ない理由を見せる */}
       {!endpoint.manifest && bundledPluginIdFromUrl(endpoint.url) === null ? <p class="muted">{t("hooks.manifest_absent")}</p> : null}
-      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps />
+      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps connected={Boolean(conn)} />
       {relayOn && endpoint.manifest?.storefront_events ? <StorefrontEventsForm action={`${base}/storefront-events`} requested={endpoint.manifest.storefront_events} granted={endpoint.storefront_events ?? null} /> : null}
 
       {bundledPluginIdFromUrl(endpoint.url) === null ? (
@@ -447,6 +453,8 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled, bundled);
   if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
   if (bundled) values.url = endpoint.url;
+  // つないだ連携（0088）の送信先は変えない（前の相手に渡したトークンとシークレットが残るため。DB も止める）
+  if (await connectionOf(c, endpoint.id)) values.url = endpoint.url;
   if (fresh) values.manifest = fresh;
   try {
     await db.from<EndpointRow>("hook_endpoints").update(values, { id: endpoint.id, shop_id: shop.id });

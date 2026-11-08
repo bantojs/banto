@@ -135,15 +135,17 @@ describe.skipIf(!dbAvailable)("パスキー（0046_mod_passkey）", () => {
     const k1 = await addKey(alice, cred(1));
     await addKey(alice, cred(2));
     const k3 = await addKey(bob, cred(3));
-    expect(await q<boolean>("select member_passkey_delete($1, $2, 0, $3) as r", [a.shopId, alice, k3])).toBe(false);
-    expect(await q<boolean>("select member_passkey_delete($1, $2, 0, $3) as r", [a.shopId, alice, k1])).toBe(true);
-    await q("select member_logout_all($1, $2, 0) as r", [a.shopId, alice]);
+    const sa = await session(alice);
+    expect(await q<boolean>("select member_passkey_delete($1, $2, 0, $3, $4) as r", [a.shopId, alice, k3, sa])).toBe(false);
+    expect(await q<boolean>("select member_passkey_delete($1, $2, 0, $3, $4) as r", [a.shopId, alice, k1, sa])).toBe(true);
+    await q("select member_logout_all($1, $2, 0, $3) as r", [a.shopId, alice, sa]);
     expect(await lookup(cred(2))).not.toBeNull();
     // ほかのショップの運営者は消せない
     expect(await expectDbError(() => asUser(b.ownerId, (c) => c.query("select member_passkeys_reset($1, $2)", [a.shopId, alice])))).toMatch(/forbidden/);
     expect((await asUser(a.ownerId, (c) => c.query("select member_passkeys_reset($1, $2) as n", [a.shopId, alice]))).rows[0].n).toBe(1);
     expect(await lookup(cred(2))).toBeNull();
-    await asService((c) => c.query("select member_withdraw($1, $2, 0)", [a.shopId, bob]));
+    const sb = await session(bob);
+    await asService((c) => c.query("select member_withdraw($1, $2, 0, $3)", [a.shopId, bob, sb]));
     expect(await lookup(cred(3))).toBeNull();
     bob = (await getPool().query("insert into customers (shop_id, email) values ($1, 'bob@example.com') returning id", [a.shopId])).rows[0].id;
   });

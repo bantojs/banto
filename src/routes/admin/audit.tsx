@@ -33,6 +33,16 @@ const ACTION_LABEL: Record<string, MessageKey> = {
   "shop.published_changed": "audit.action.shop.published_changed",
   "shop.theme_published": "audit.action.shop.theme_published",
   "shop.theme_previewed": "audit.action.shop.theme_previewed",
+  "org_member.mfa_reset": "audit.action.org_member.mfa_reset",
+  "app.connected": "audit.action.app.connected",
+  "app.storefront_events": "audit.action.app.storefront_events",
+  "app.disconnected": "audit.action.app.disconnected",
+  "hook_endpoint.changed": "audit.action.hook_endpoint.changed",
+  "hook_endpoint.deleted": "audit.action.hook_endpoint.deleted",
+  "blog.deleted": "audit.action.blog.deleted",
+  "shop.page_layouts_changed": "audit.action.shop.page_layouts_changed",
+  "org.store_fields_changed": "audit.action.org.store_fields_changed",
+  "shop.legal_links_checked": "audit.action.shop.legal_links_checked",
 };
 
 const STATUS_LABEL: Record<string, MessageKey> = {
@@ -80,6 +90,12 @@ function describe(r: AuditRow): string {
       return `${label}: ${short(String(d["version"] ?? ""))}`;
     case "shop.published_changed":
       return `${label}: ${d["published"] === true ? t("audit.published.on") : t("audit.published.off")}`;
+    case "hook_endpoint.changed":
+      return `${label}: ${str(d["name"])}${d["host_to"] ? `（${str(d["host_from"])} → ${str(d["host_to"])}）` : ""}${d["enabled"] === true ? `（${t("audit.enabled.on")}）` : d["enabled"] === false ? `（${t("audit.enabled.off")}）` : ""}`;
+    case "hook_endpoint.deleted":
+      return `${label}: ${str(d["name"])}（${str(d["host"])}）`;
+    case "blog.deleted":
+      return `${label}: ${str(d["handle"])}`;
     case "customer.deleted":
       return label;
     default:

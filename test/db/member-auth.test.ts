@@ -156,12 +156,15 @@ describe.skipIf(!dbAvailable)("会員のログイン（0012_member_auth）", () 
     const stored = (await getPool().query("select customer, customer_id from reservations where id = $1", [res])).rows[0];
     expect(stored).toEqual({ customer: { customer_email: "epoch@example.com" }, customer_id: v.customer_id });
 
-    expect(await asService(async (c) => (await c.query("select member_logout_all($1, $2, 0) as ok", [a.shopId, v.customer_id])).rows[0].ok)).toBe(true);
+    const sid0 = await asService(async (c) => (await c.query<{ r: string }>("select member_session_start($1, $2, 0, 'web', null, 3600) as r", [a.shopId, v.customer_id])).rows[0]!.r);
+    expect(await asService(async (c) => (await c.query("select member_logout_all($1, $2, 0, $3) as ok", [a.shopId, v.customer_id, sid0])).rows[0].ok)).toBe(true);
     expect(await get(0)).toBeNull();
     expect(await get(1)).toMatchObject({ customer: { name: "会員 花子", default_address: { state: "東京都" } } });
     expect(await expectDbError(() => attach(0))).toMatch(/member_session_invalid/);
-    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 0) as r", [a.shopId, v.customer_id])).rows[0].r)).toEqual({ ok: false });
-    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 1) as r", [a.shopId, v.customer_id])).rows[0].r)).toEqual({ ok: true, email: "epoch@example.com", mail_from: expect.any(String) });
+    // 古い世代のセッションでは退会できない（reauth_required）。今の世代のセッションなら消える
+    expect(await expectDbError(() => asService((c) => c.query("select member_withdraw($1, $2, 0, $3) as r", [a.shopId, v.customer_id, sid0])))).toMatch(/reauth_required/);
+    const sid1 = await asService(async (c) => (await c.query<{ r: string }>("select member_session_start($1, $2, 1, 'web', null, 3600) as r", [a.shopId, v.customer_id])).rows[0]!.r);
+    expect(await asService(async (c) => (await c.query("select member_withdraw($1, $2, 1, $3) as r", [a.shopId, v.customer_id, sid1])).rows[0].r)).toEqual({ ok: true, email: "epoch@example.com", mail_from: expect.any(String) });
   });
 
   it("運営者によるメールアドレスの変更: 自分の店だけ。重複は不可。世代が上がり、未使用のコードは無効", async () => {

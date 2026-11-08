@@ -83,7 +83,7 @@ describe.skipIf(!dbAvailable)("セキュリティの締め直し 4（0090_securi
   });
 
   // ---------- 2. 再認証 ----------
-  it("全端末ログアウト・連携の解除・パスキーの削除: 15 分を過ぎたセッションでは reauth_required。15 分以内ならできる。p_session_id 無しは従来どおり", async () => {
+  it("全端末ログアウト・連携の解除・パスキーの削除: 15 分を過ぎたセッションでは reauth_required。15 分以内ならできる。セッションの id が無くても reauth_required（0129）", async () => {
     let epoch = await epochOf();
     await getPool().query("insert into member_identities (shop_id, provider, subject, customer_id) values ($1, 'google', 'sub-1', $2)", [f.shopId, cid]);
     const key = (await getPool().query<{ id: string }>(
@@ -109,15 +109,16 @@ describe.skipIf(!dbAvailable)("セキュリティの締め直し 4（0090_securi
     expect(await rpc<boolean>("member_passkey_delete", [f.shopId, cid, epoch, key, fresh])).toBe(true);
     expect(await rpc<boolean>("member_logout_all", [f.shopId, cid, epoch, fresh])).toBe(true);
     epoch = await epochOf();
-    // 古い Worker（p_session_id 無し）は世代だけで確かめる
-    expect(await rpc<boolean>("member_logout_all", [f.shopId, cid, epoch])).toBe(true);
-    expect(await rpc<boolean>("member_logout_all", [f.shopId, cid, epoch])).toBe(false);
+    // セッションの id が無い呼び出しは通らない（0129。Worker は必ず渡す）
+    expect(await expectDbError(() => rpc("member_logout_all", [f.shopId, cid, epoch]))).toMatch(/reauth_required/);
+    expect(await epochOf()).toBe(epoch);
   });
 
-  it("退会: 15 分以内のセッションで消え、本人に知らせるための email と送信元が返る。世代が合わなければ { ok: false }", async () => {
+  it("退会: 15 分以内のセッションで消え、本人に知らせるための email と送信元が返る。世代が合わなければ reauth_required", async () => {
     const epoch = await epochOf();
-    expect(await rpc<J>("member_withdraw", [f.shopId, cid, epoch - 1])).toEqual({ ok: false });
+    expect(await expectDbError(() => rpc("member_withdraw", [f.shopId, cid, epoch - 1]))).toMatch(/reauth_required/);
     const fresh = await sessionStart(epoch);
+    expect(await expectDbError(() => rpc("member_withdraw", [f.shopId, cid, epoch - 1, fresh]))).toMatch(/reauth_required/);
     expect(await rpc<J>("member_withdraw", [f.shopId, cid, epoch, fresh])).toEqual({ ok: true, email: "member@example.com", mail_from: "Shop <shop@example.com>" });
     expect((await getPool().query("select 1 from customers where id = $1", [cid])).rowCount).toBe(0);
     // 行ごと消えたのでセッションも無い

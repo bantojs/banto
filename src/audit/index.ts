@@ -24,6 +24,16 @@ export const AUDIT_ACTIONS = [
   "shop.published_changed",
   "shop.theme_published",
   "shop.theme_previewed",
+  "org_member.mfa_reset",
+  "app.connected",
+  "app.storefront_events",
+  "app.disconnected",
+  "hook_endpoint.changed",
+  "hook_endpoint.deleted",
+  "blog.deleted",
+  "shop.page_layouts_changed",
+  "org.store_fields_changed",
+  "shop.legal_links_checked",
 ] as const;
 
 export interface AuditRow {

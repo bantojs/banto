@@ -93,6 +93,8 @@ function mapRpcError(e: unknown): never {
   if (e instanceof PrivilegedRpcError) {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
+    // 公開の切り替えと回数の上限は、発行者が owner / admin のときだけ（0129）
+    if (e.is("admin_required")) throw new ApiError("forbidden", "admin_required: only an organization owner or admin can change this", 403);
     // クーポンと会員（0036）
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
     // お店の画面のダイアログ（0111）

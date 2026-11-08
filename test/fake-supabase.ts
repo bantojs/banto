@@ -2274,9 +2274,14 @@ export class FakeSupabase {
     const items = args["p_items"] as { sku_id: string; qty: number }[];
     const customer = args["p_customer"] as Row;
     if (!String(customer["customer_email"] ?? "").includes("@")) return fail("invalid_customer");
+    const cid = customer["customer_id"] ? String(customer["customer_id"]) : null;
+    const aud = cid ? this.memberAudienceIdsFor(shopId, cid) : [];
     for (const it of items) {
       const sku = this.tables.skus.find((k) => k["id"] === it.sku_id && k["shop_id"] === shopId);
       if (!sku || !this.productPublished(sku["product_id"])) return fail("sku_not_available");
+      // 0129: 会員限定の商品は条件に合う会員だけ
+      const prod = this.tables.products.find((p) => p["id"] === sku["product_id"]);
+      if (prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
       const inv = this.tables.inventory.find((i) => i["sku_id"] === it.sku_id)!;
       if (Number(inv["available"]) < it.qty) return fail("insufficient_stock");
     }
@@ -4087,9 +4092,14 @@ export class FakeSupabase {
       if (!Array.isArray(items) || items.length === 0) return fail("empty_items");
       const shopId = args["p_shop_id"];
       // 全件検証してから減算（失敗時は何も変えない = ロールバック相当）
+      const customerId = (args["p_customer_id"] as string | null | undefined) ?? null;
+      const aud = customerId ? this.memberAudienceIdsFor(String(shopId), customerId) : [];
       for (const it of items) {
         const sku = this.tables.skus.find((k) => k["id"] === it.sku_id && k["shop_id"] === shopId);
         if (!sku || !this.productPublished(sku["product_id"])) return fail("sku_not_available");
+        // 0129: 会員限定の商品は条件に合う会員だけ
+        const prod = this.tables.products.find((p) => p["id"] === sku["product_id"]);
+        if (prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
         if (!Number.isInteger(it.qty) || it.qty <= 0) return fail("invalid_item");
         if ((inv(it.sku_id)!["available"] as number) < it.qty) return fail("insufficient_stock");
       }

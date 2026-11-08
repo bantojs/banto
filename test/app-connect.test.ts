@@ -162,4 +162,20 @@ describe("つなぐ", () => {
     expect(s.sb.tables.app_connections).toHaveLength(0);
     expect(s.sb.tables.api_tokens.filter((x) => x["endpoint_id"] === epId)).toHaveLength(0);
   });
+
+  it("つないだ連携の送信先の URL は画面から変えられない（欄は読み取り専用、送っても今の URL のまま）", async () => {
+    const s = setup();
+    const { b, res } = await connect(s, ["products:read"]);
+    const first = new URL(res.headers.get("location")!);
+    const epId = first.searchParams.get("endpoint_id")!;
+    await exchange(s.app, first.searchParams.get("ticket"));
+    const page = await (await b.get(`/admin/shops/${s.shop.id}/hooks/${epId}`)).text();
+    expect(page).toContain('type="hidden" name="url"');
+    expect(page).not.toContain('id="url" type="text"');
+    const ep = s.sb.tables.hook_endpoints.find((x) => x["id"] === epId)!;
+    const before = String(ep["url"]);
+    await b.post(`/admin/shops/${s.shop.id}/hooks/${epId}`, { name: "renamed", url: "https://other-vendor.example/hooks" });
+    expect(ep["url"]).toBe(before);
+    expect(ep["name"]).toBe("renamed");
+  });
 });

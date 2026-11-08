@@ -599,6 +599,7 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })),
       quote.provider === "komoju" ? reservationSeconds(deps.setup.komoju?.settings ?? {}) : CHECKOUT_TTL_SECONDS,
       input.limits ?? null,
+      input.customerId ?? null,
     );
     await deps.privileged.attachReservationCustomer(reservationId, shop.id, {
       customer_email: a.customer_email,
