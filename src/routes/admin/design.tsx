@@ -4,7 +4,6 @@ import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { migrated } from "../../db/migration-state";
 import { THEME_BUNDLE_LIMITS } from "../../themes/liquid/bundle";
 import { themePreviewUrl } from "../../themes/liquid/preview";
 import { deleteThemeFiles, missingThemeAsset, prepareThemeVersion, putThemeAsset, readThemeBundle, removeThemeBundle, storeThemeBundle, themeStorage, THEME_UPLOAD_MAX_BYTES, THEME_VERSION_ID as UUID } from "../../themes/liquid/versions";

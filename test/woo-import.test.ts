@@ -533,7 +533,7 @@ describe("WooCommerce インポーター: 管理画面とサーバー側", () =>
   });
 
   it("大きすぎる・壊れた本文は受け付けない", async () => {
-    const { sb, shop, app } = setup();
+    const { shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     await admin.post(`/admin/shops/${shop.id}/modules/woo_import/enabled`, { enabled: "on" });
     const base = `/admin/shops/${shop.id}/modules/woo-import`;

@@ -8,7 +8,6 @@ import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone, zonedInputToIso } from "../i18n/time";
 import type { Filter } from "../db/client";
 
-export const ARTICLE_FIELDS_MIGRATION = "0117_article_fields";
 /** 画像の種類（0120、メンテナの決定 2026-11-05）。当てるまで定義に書かせない */
 export const ARTICLE_FIELD_IMAGE_MIGRATION = "0120_article_field_image";
 export const ARTICLE_FIELDS_MAX = 20;

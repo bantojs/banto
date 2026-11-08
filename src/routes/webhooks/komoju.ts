@@ -64,7 +64,7 @@ komojuWebhook.post("/", async (c: Ctx) => {
   } catch (e) {
     const refund = async (): Promise<boolean> => {
       const secretKey = cfg.get("KOMOJU_SECRET_KEY");
-      // 返金できなければ例外 → 500 で KOMOJU に再送させる（決済済み・注文なし・返金なしで静かに終わらせない。監査 L-4）
+      // 返金できなければ例外 → 500 で KOMOJU に再送させる（決済済み・注文なし・返金なしで静かに終わらせない）
       if (!secretKey) throw new Error(`komoju webhook ${event.id}: cannot refund ${payment.id} (secret key missing); not recording so KOMOJU retries`);
       await createKomojuClient({ secretKey, fetch: c.get("deps").fetch }).refundPayment(payment.id, `refund-${event.id}`);
       return true;

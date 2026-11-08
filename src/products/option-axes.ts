@@ -36,14 +36,6 @@ export function optionAxesOf(v: unknown): OptionAxes | null {
 
 const valueText = (v: unknown) => (v === null || v === undefined ? "" : String(v).trim());
 
-/** SKU の options が軸に合うか（DB の banto_sku_fits_axes と同じ） */
-export function skuFitsAxes(options: Options, axes: OptionAxes): boolean {
-  const o = options ?? {};
-  const keys = Object.keys(o).sort();
-  const want = axes.map((a) => a.key).sort();
-  return keys.length === want.length && keys.every((k, i) => k === want[i]) && Object.values(o).every((v) => valueText(v) !== "");
-}
-
 /** 今の SKU から軸を推す（どの SKU も同じ鍵を持つときだけ。鍵の順は最初の SKU、値は出てくる順）。推せなければ null */
 export function inferOptionAxes(skus: readonly { options?: Options }[]): OptionAxes | null {
   if (skus.length === 0) return null;

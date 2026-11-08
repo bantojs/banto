@@ -20,7 +20,6 @@ export interface LegalLinksSetting {
 }
 
 export type LegalLinkResults = Partial<Record<LegalKind, { url: string; ok: boolean }>>;
-export type LegalLinkState = Partial<Record<LegalKind, { url: string; ok: boolean; checked_at: string }>>;
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 

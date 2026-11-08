@@ -51,7 +51,7 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
 import { memberReader } from "../audience-render";
 import { AUDIENCES_MODULE } from "../../members/audience";
 import type { ProductSummary } from "../../storefront/data";
-import { GUEST, audienceAttrsOf, type AudienceContext } from "../../members/audience";
+import { audienceAttrsOf } from "../../members/audience";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
@@ -129,12 +129,6 @@ export function customerSession(c: Ctx, s: { shop: { id: string; slug: string; d
   return p;
 }
 
-/** 会員の条件（0097）の判定の材料。ゲストは GUEST。値は Cookie に入れたもの（最大数分遅れる。画面の出し分けだけに使う） */
-export async function memberAudience(c: Ctx, s: { shop: { id: string; slug: string; domain?: string | null; settings?: Record<string, unknown> } }): Promise<AudienceContext> {
-  const session = await customerSession(c, s);
-  return session ? { member: true, attrs: session.at ?? {} } : GUEST;
-}
-
 /** `add` のセッションで通してよい場所: パスキーの登録（options・register）とログアウトだけ */
 function passkeyAddPath(c: Ctx): boolean {
   return /\/account\/(?:passkey\/register(?:\/options)?|logout)$/.test(new URL(c.req.url).pathname);
@@ -197,15 +191,6 @@ export function loginDeps(c: Ctx): LoginDeps | null {
   if (!secret || !db) return null;
   const doFetch = c.get("deps").fetch;
   return { db, secret, fetch: doFetch, mailer: createMailer(c.get("adapters"), doFetch) };
-}
-
-/**
- * 0090 が当たっているか（会員の再認証: 退会・連携の解除・パスキーの削除・全端末ログアウトはログインしてから 15 分以内のセッションだけ）。
- * 当たっていれば今のセッションの行の id を渡し、DB が確かめる。古い DB には渡さない（引数の無い関数しか無い）
- */
-async function reauthSessionId(c: Ctx, session: MemberSession): Promise<string | undefined> {
-  const sf = storefrontData(c);
-  return session.sid || undefined;
 }
 
 /** 15 分を過ぎたセッションからの操作（reauth_required）: この端末のセッションを終えて、ログイン画面に理由を出す */
@@ -597,7 +582,7 @@ members.post("/:shop/account/logout-all", async (c: Ctx) => {
   if (s.session && db) {
     try {
       // 0090: ログインしてから 15 分以内のセッションだけ（盗まれた Cookie から本人を締め出さない）
-      await db.memberLogoutAll(s.shop.id, s.session.cid, s.session.ep, await reauthSessionId(c, s.session));
+      await db.memberLogoutAll(s.shop.id, s.session.cid, s.session.ep, s.session.sid || undefined);
     } catch (e) {
       if (isReauthRequired(e)) return reauthRedirect(c, s);
       throw e;
@@ -728,7 +713,7 @@ members.post("/:shop/account/delete", navigateOnly, async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
   try {
-    r = await db.memberWithdraw(s.shop.id, s.session.cid, s.session.ep, await reauthSessionId(c, s.session));
+    r = await db.memberWithdraw(s.shop.id, s.session.cid, s.session.ep, s.session.sid || undefined);
   } catch (e) {
     if (isReauthRequired(e)) return reauthRedirect(c, s);
     throw e;
@@ -1014,7 +999,7 @@ members.post("/:shop/account/passkeys/:id{[0-9a-f-]{36}}/delete", async (c: Ctx)
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   // false は「無い・他人のもの」か「古いセッション」。古いセッションなら一覧の画面がログインへ送る。0090: 15 分を過ぎていれば入り直す
   try {
-    const ok = await db.memberPasskeyDelete(s.shop.id, s.session.cid, s.session.ep, c.req.param("id") ?? "", await reauthSessionId(c, s.session));
+    const ok = await db.memberPasskeyDelete(s.shop.id, s.session.cid, s.session.ep, c.req.param("id") ?? "", s.session.sid || undefined);
     return c.redirect(ok ? `${s.shopPath}/account/passkeys?flash=deleted` : `${s.shopPath}/account/passkeys`);
   } catch (e) {
     if (isReauthRequired(e)) return reauthRedirect(c, s);
@@ -1060,14 +1045,8 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
     await writeSession(c, s, null);
     return c.redirect(`${s.shopPath}/account/login${r.reason === "reauth" ? "?error=reauth" : ""}`);
   }
-  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代で続ける（0057）。0045 より前の Cookie（sid 無し）は行を作り直す
-  if (s.session.sid) {
-    const now = Math.floor(Date.now() / 1000);
-    await writeSession(c, s, { ...s.session, ep: r.epoch, chk: now });
-  } else if (!(await startWebSession(c, s, { customer_id: s.session.cid, session_epoch: r.epoch, email: s.session.email }))) {
-    await writeSession(c, s, null);
-    return c.redirect(`${s.shopPath}/account/login`);
-  }
+  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代で続ける（0057。sid の無い Cookie は verifySession が通さない）
+  await writeSession(c, s, { ...s.session, ep: r.epoch, chk: Math.floor(Date.now() / 1000) });
   // 本人に知らせる（盗まれたセッションから足されても気づけるように。送信元が無ければ送らない）
   const ld = loginDeps(c);
   if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
@@ -1159,7 +1138,7 @@ members.post("/:shop/account/oauth/:provider/unlink", async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ
-    const ok = await db.memberUnlinkIdentity(s.shop.id, s.session.cid, s.session.ep, p, await reauthSessionId(c, s.session));
+    const ok = await db.memberUnlinkIdentity(s.shop.id, s.session.cid, s.session.ep, p, s.session.sid || undefined);
     return c.redirect(ok ? `${s.shopPath}/account?flash=oauth_unlinked` : `${s.shopPath}/account`);
   } catch (e) {
     if (isReauthRequired(e)) return reauthRedirect(c, s);

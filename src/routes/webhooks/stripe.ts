@@ -98,7 +98,7 @@ stripeWebhook.post("/", async (c: Ctx) => {
   if (session.payment_status !== "paid") return c.json({ received: true, ignored: "unpaid" });
 
   // 決済済みなのに確定できないとき（解放後の在庫切れ・支払額の不一致）は返金する（冪等キー = イベント ID）。
-  // 返金できなければ例外 → 500 で Stripe に再送させる（決済済み・注文なし・返金なしで静かに終わらせない。監査 L-4）
+  // 返金できなければ例外 → 500 で Stripe に再送させる（決済済み・注文なし・返金なしで静かに終わらせない）
   const refund = async (): Promise<boolean> => {
     const secretKey = cfg.get("STRIPE_SECRET_KEY");
     const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : null;

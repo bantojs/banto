@@ -6,6 +6,7 @@
  */
 import { AuthError } from "../auth/supabase";
 import { supabaseHeaders } from "./api-keys";
+import { ACTOR_HEADER } from "../audit";
 
 export interface PrivilegedDbOptions {
   url: string;
@@ -509,7 +510,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     ...supabaseHeaders(opts.serviceRoleKey),
     "Content-Type": "application/json",
   };
-  if (opts.actor) headers["X-Banto-Actor"] = opts.actor;
+  if (opts.actor) headers[ACTOR_HEADER] = opts.actor;
 
   async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
     const res = await doFetch(`${base}/rest/v1/rpc/${fn}`, { method: "POST", headers, body: JSON.stringify(args) });
@@ -589,11 +590,9 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberSaveAddress: (shopId, customerId, epoch, name, address) =>
       rpc("member_save_address", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_name: name, p_address: address }),
     memberWithdraw: async (shopId, customerId, epoch, sessionId) => {
-      const r = await rpc<boolean | { ok?: boolean; email?: string | null; mail_from?: string | null } | null>("member_withdraw", {
+      const r = await rpc<{ ok?: boolean; email?: string | null; mail_from?: string | null } | null>("member_withdraw", {
         p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}),
       });
-      // 0090 より前の DB は boolean を返す（知らせの材料は無い）
-      if (r === true) return { ok: true, email: null, mail_from: null };
       if (!r || typeof r !== "object" || r.ok !== true) return { ok: false };
       return { ok: true, email: r.email ?? null, mail_from: r.mail_from ?? null };
     },
@@ -627,8 +626,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberSessionStart: (shopId, customerId, epoch, kind, label, ttlSeconds, authenticatedAt) =>
       rpc("member_session_start", {
         p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_kind: kind, p_label: label, p_ttl_seconds: ttlSeconds,
-        // 0090 より前の DB は 6 引数の関数しか無いので、渡されたときだけ付ける
-        ...(authenticatedAt !== undefined ? { p_authenticated_at: authenticatedAt } : {}),
+        // ログインを確かめた時刻を引き継ぐとき（0090）。null なら今
+        p_authenticated_at: authenticatedAt ?? null,
       }),
     memberSessionCheck: (shopId, customerId, epoch, sessionId) => rpc("member_session_check", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
     memberSessionCheckAttrs: async (shopId, customerId, epoch, sessionId) => {

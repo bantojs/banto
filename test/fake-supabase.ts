@@ -89,11 +89,6 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
 const moduleOn = (shop: Row, id: string) => ((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.[id] === true;
 
 /** POST の本文は 1 行のオブジェクトか行の配列。列の有無を見るために先頭の行を返す */
-function firstRow(body: unknown): Record<string, unknown> {
-  const row = Array.isArray(body) ? body[0] : body;
-  return row && typeof row === "object" ? (row as Record<string, unknown>) : {};
-}
-
 /** jsonb の @> の小さな写し（オブジェクトは鍵ごと、配列は要素を含むか、ほかは等しいか） */
 function jsonContainsFake(a: unknown, b: unknown): boolean {
   if (Array.isArray(b)) return Array.isArray(a) && b.every((x) => a.some((y) => jsonContainsFake(y, x)));

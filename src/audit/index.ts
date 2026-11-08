@@ -25,7 +25,6 @@ export const AUDIT_ACTIONS = [
   "shop.theme_published",
   "shop.theme_previewed",
 ] as const;
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 export interface AuditRow {
   id: number;

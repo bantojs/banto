@@ -174,14 +174,6 @@ export function dialogScript(base: string, dialogs: readonly PublicDialog[], car
   return `(${DIALOG_RUNTIME})(${scriptJson(dialogs.map(forBrowser))},${scriptJson(base)},${scriptJson(dialogWords())},${cartTotal === null ? "null" : String(cartTotal)});`;
 }
 
-export interface DialogHeadExtra {
-  member: boolean;
-  base: string;
-  path?: string;
-  search?: string;
-  audienceOk?: (id: string) => boolean;
-}
-
 /** カートの画面で積んだ cart_view の金額（カートの合計）。ほかのページでは null（ブラウザが覚えた値を使う） */
 const cartTotalOf = (events: readonly ShopEvent[]): number | null => {
   const e = events.find((x) => x.type === "cart_view");

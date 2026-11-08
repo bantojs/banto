@@ -2,7 +2,7 @@
  * SKU の選択肢の key と表示名（0094_option_keys、メンテナの決定 2026-11-02。docs/knowledge/02-decisions.md）。
  *   - SKU の options・画像の options・SKU を分ける軸の鍵は英字の key（size・color・opt1…）。表示名はショップの名前の表 shops.option_names
  *   - 書き込みは名前でも key でもよい（DB のトリガーが key に直す）。ここは表示のための読み替えだけ
- *   - 名前の表が無い（0094 の前の DB）・表に無い key は、key をそのまま名前として出す（今までの名前の鍵はそれ自体が名前）
+ *   - 表に無い key は、key をそのまま名前として出す（今までの名前の鍵はそれ自体が名前）
  */
 export type OptionNames = Readonly<Record<string, string>>;
 

@@ -34,11 +34,6 @@ export function productCategoryIds(p: { category_id?: string | null; extra_categ
   return out;
 }
 
-/** 商品がカテゴリーの集合（descendantIds の結果）のどれかに入っているか */
-export function inCategories(p: { category_id?: string | null; extra_category_ids?: string[] | null }, ids: Set<string>): boolean {
-  return productCategoryIds(p).some((id) => ids.has(id));
-}
-
 /** 自分と子孫の id（絞り込み用） */
 export function descendantIds(rows: CategoryRow[], id: string): Set<string> {
   const out = new Set<string>([id]);

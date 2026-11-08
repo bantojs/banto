@@ -374,7 +374,7 @@ membersApi.post("/shops/:shop/members/withdraw", async (c: Ctx) => {
   let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth_required。連携側はログインし直させる）
-    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid ?? undefined);
+    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid);
   } catch (e) {
     if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
     throw e;
@@ -440,7 +440,7 @@ membersApi.post("/shops/:shop/members/logout-all", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ
-    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid ?? undefined);
+    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid);
     return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
   } catch (e) {
     if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
@@ -478,7 +478,7 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   if (!r.ok) return r.reason === "reauth" ? c.json({ error: "reauth" }, 403) : c.json({ error: "invalid_member_token" }, 401);
   // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
   if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
-  // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）。古い DB には渡さない
+  // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）
   const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });

@@ -28,11 +28,6 @@ export function encodeKey(key: string): string {
     .join("/");
 }
 
-export interface SignedRequest {
-  url: string;
-  headers: Record<string, string>;
-}
-
 /** SigV4（単一チャンク、ペイロードハッシュ付き）で署名したヘッダを返す。実体は src/util/sigv4.ts（SES と共用） */
 export async function signS3Request(opts: {
   method: string;

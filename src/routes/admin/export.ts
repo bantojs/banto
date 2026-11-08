@@ -160,7 +160,7 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
         counts,
         await privileged.restoreOptionAxes(shopId, {
           shop: shopAxes ?? null,
-          // SKU の選択肢の表示名（0094。0094 の前の DB は読まない）
+          // SKU の選択肢の表示名（0094。古いバックアップの JSON には無い）
           ...(backupShop && backupShop.option_names && typeof backupShop.option_names === "object" ? { option_names: backupShop.option_names } : {}),
           categories: rows("categories").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"] })),
           products: rows("products").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"], option_axes_custom: r["option_axes_custom"] === true })),

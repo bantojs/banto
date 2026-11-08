@@ -18,7 +18,6 @@ import { openSecret } from "../../members/secret-box";
 import { randomToken } from "../../util/signed";
 import { t } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";

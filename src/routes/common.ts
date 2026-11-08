@@ -8,7 +8,6 @@ import { STOREFRONT_CACHE_TTL } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
-import { migrated } from "../db/migration-state";
 
 export type Ctx = Context<AppEnv>;
 
@@ -48,7 +47,7 @@ export async function readBodyLimited(req: Request, max: number): Promise<Uint8A
 /**
  * フォーム POST の CSRF 対策。Cookie は SameSite=Lax だが、念のため Origin / Sec-Fetch-Site も見る。
  * Origin が付いていて自分と違えば 403（`null`（sandbox の iframe・data: 由来）も違うとみなす。ホスティングで他人のサイトと兄弟サブドメインに並ぶと
- * Lax の Cookie が same-site の POST に付くため。監査 L-1）。Sec-Fetch-Site は Origin の有無にかかわらず、cross-site / same-site なら 403。
+ * Lax の Cookie が same-site の POST に付くため）。Sec-Fetch-Site は Origin の有無にかかわらず、cross-site / same-site なら 403。
  */
 export const csrfGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE" || c.req.method === "PATCH") {

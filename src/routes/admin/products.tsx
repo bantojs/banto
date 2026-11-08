@@ -362,7 +362,6 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
 }
 
 products.get("/:shopId/products/new", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shop = await loadShop(c, param(c, "shopId"), "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
   return c.html(
@@ -392,7 +391,7 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     brand: brand || null,
     attributes: cleanAttributes(fields, attrInput, mediaBase),
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
-    // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面・当たる前の DB では列に触れない）。
+    // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。
     // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
     ...(f.audience_present === "1"
       ? {

@@ -38,9 +38,6 @@ interface EndpointRow {
   storefront_events?: { types: string[]; custom?: string[]; visitors: "members" | "all" } | null;
 }
 
-/** 拡張データ（0084）が DB に入ったか。入る前は app_handle の列が無い */
-
-
 interface DeliveryRow {
   id: string;
   endpoint_id: string;
@@ -279,7 +276,6 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
 
 /** URL を受け取り、マニフェストを取得して登録フォームを出す */
 hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop) return c.text(t("shop.not_found"), 404);

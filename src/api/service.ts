@@ -27,6 +27,14 @@ import { getLocale } from "../i18n";
 import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
+import { FAVORITES_MIGRATION } from "../modules/registry";
+import { CARE_MIGRATION } from "../care-labels/care";
+import { STORE_FIELDS_MIGRATION } from "../stores/fields";
+
+/** ひな形の割り当てとメディアの取り込みの API（0119） */
+const LAYOUTS_MEDIA_MIGRATION = "0119_api_layouts_media";
+/** ブログの設定の API（0118） */
+const BLOG_UPDATE_MIGRATION = "0118_api_blog_update";
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
 import { lineTokenFor } from "../plugins/line_token";
@@ -50,11 +58,6 @@ export interface InquiryMailDeps {
 export const INQUIRY_API_STATUSES = ["closed", "waiting_shop", "waiting_customer"] as const;
 export type InquiryApiStatus = (typeof INQUIRY_API_STATUSES)[number];
 export const isInquiryApiStatus = (v: unknown): v is InquiryApiStatus => typeof v === "string" && (INQUIRY_API_STATUSES as readonly string[]).includes(v);
-
-/** 商品画像のファイルを送る（api_image_add_file）版 */
-/** クーポンの条件のブランドと支払い方法（banto_api_coupon_apply が受け付ける版） */
-
-/** 購入前の確認画面の文言（checkout_terms）を api_shop_get / api_shop_update が扱う版 */
 
 export type ApiErrorCode = "unauthorized" | "forbidden" | "not_found" | "invalid" | "conflict" | "migration_required" | "upstream";
 
@@ -92,8 +95,6 @@ function mapRpcError(e: unknown): never {
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
     // クーポンと会員（0036）
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
-    // ページ・記事（0083）
-    // 拡張データ（0084）
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -465,7 +466,6 @@ export class ApiService {
     return this.call<Record<string, unknown>>("api_product_set_option_axes", { p_product_id: productId, p_axes: axes });
   }
 
-  /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */
   /** 商品の画像の並び順を決める（0078）。その商品の画像の id をすべて、並べたい順に。1 枚目がメインの画像 */
   async imagesReorder(productId: string, imageIds: unknown): Promise<Record<string, unknown>> {
     uuidOr404(productId);
@@ -596,7 +596,7 @@ export class ApiService {
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
   /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
   careSet = async (target: "product" | "category", ref: string, care: unknown) => {
-    await this.requireMigration("0127_mod_care_labels");
+    await this.requireMigration(CARE_MIGRATION);
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
     if (care !== null && (typeof care !== "object" || Array.isArray(care))) throw new ApiError("invalid", "invalid_care: send an object { symbols, notes } or null", 400);
     // 記号も付記も無いもの（{} や空の配列）は外すのと同じ（null = 上の段を使う）。「何も無い」を段に残さない
@@ -608,7 +608,7 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
   /** 実店舗の独自項目の値と外部コード（0126、stores:write）。店舗は id か ext:<外部コード> */
   storeUpdate = async (ref: string, values: Record<string, unknown>) => {
-    await this.requireMigration("0126_store_fields");
+    await this.requireMigration(STORE_FIELDS_MIGRATION);
     // id（uuid）か ext:<外部コード>。外部コードは大文字・小文字を区別する
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
     if (!uuid && !/^ext:[A-Za-z0-9._:-]{1,64}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
@@ -740,12 +740,12 @@ export class ApiService {
   customerGet = async (id: string) => this.call<Record<string, unknown>>("api_customer_get", { p_customer_id: uuidOr404(id) });
   /** 会員のお気に入り（0123、新しい順）。customers:read */
   customerFavorites = async (id: string) => {
-    await this.requireMigration("0123_mod_favorites");
+    await this.requireMigration(FAVORITES_MIGRATION);
     return this.call<{ items: Record<string, unknown>[] }>("api_customer_favorites", { p_customer_id: uuidOr404(id) });
   };
   /** お気に入りを足した順にたどる（0123）。商品で絞れる。続きは前の応答の cursor（since と after） */
   async favoritesList(q: { product?: string | undefined; since?: string | undefined; after?: string | undefined; limit?: number | undefined } = {}) {
-    await this.requireMigration("0123_mod_favorites");
+    await this.requireMigration(FAVORITES_MIGRATION);
     const [afterCustomer, afterProduct] = q.after ? q.after.split(":") : [undefined, undefined];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (q.after !== undefined && (!q.since || !afterCustomer || !afterProduct || !uuid.test(afterCustomer) || !uuid.test(afterProduct))) {
@@ -798,12 +798,12 @@ export class ApiService {
   }
   /** ひな形の割り当て（0119）。ページは URL の名前、ブログは URL の名前、カテゴリーはスラッグの形 */
   async pageLayoutsGet() {
-    await this.requireMigration("0119_api_layouts_media");
+    await this.requireMigration(LAYOUTS_MEDIA_MIGRATION);
     return this.call<Record<string, unknown>>("api_page_layouts_get", {});
   }
   /** ひな形を割り当てる（0119）。送った鍵だけ変える。null か "" で外す。表（articles・blogs・…）は鍵ごとに混ぜる */
   async pageLayoutsSet(changes: Record<string, unknown>) {
-    await this.requireMigration("0119_api_layouts_media");
+    await this.requireMigration(LAYOUTS_MEDIA_MIGRATION);
     return this.call<Record<string, unknown>>("api_page_layouts_set", { p_changes: changes });
   }
   /**
@@ -817,7 +817,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "url must be an absolute http(s) URL", 400);
     }
-    await this.requireMigration("0119_api_layouts_media");
+    await this.requireMigration(LAYOUTS_MEDIA_MIGRATION);
     // 外に取りに行く前・置き場に書く前に、書き込みのスコープを確かめる
     if (!(await this.call<boolean>("api_has_scope", { p_scope: "content:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     let image: Awaited<ReturnType<typeof fetchImage>>;
@@ -840,7 +840,7 @@ export class ApiService {
   }
   /** ブログの設定を変える（0118。題・説明・メニュー・並び順・フィード・記事の項目の定義。送らなかった鍵は今のまま） */
   async blogUpdate(blog: string, values: Record<string, unknown>) {
-    await this.requireMigration("0118_api_blog_update");
+    await this.requireMigration(BLOG_UPDATE_MIGRATION);
     return this.call<Record<string, unknown>>("api_blog_update", { p_blog: blog, p_values: values });
   }
   async articlesList(blog: string, q: { status?: string | undefined; query?: string | undefined; tag?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
@@ -891,8 +891,8 @@ export class ApiService {
   async appDataSet(productId: string, kind: string, data: unknown, isPublic = true, key?: string) {
     await this.appDataReady(kind, key);
     if (kind === "custom.v1" && key === undefined) throw new ApiError("invalid", "invalid_app_data_key: custom.v1 needs a key (PUT /products/{id}/app-data/custom.v1/{key})", 400);
-    // p_key は custom.v1 のときだけ送る（0085 の前の DB の関数は p_key を知らない）
-    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic, ...(key !== undefined ? { p_key: key } : {}) });
+    // p_key は custom.v1 の名前（ほかの種類は '' = 名前なし、0085）
+    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic, p_key: key ?? "" });
   }
   /** 消す。custom.v1 で名前を省くと、その種類の自分の行をすべて */
   async appDataDelete(productId: string, kind: string, key?: string) {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, appWith, memberLogin, memberMail } from "./helpers";
+import { BASE, Browser, appWith, memberMail } from "./helpers";
 import { buildOrderEmail } from "../src/plugins/email_resend";
 import { openOrderToken } from "../src/orders/lookup";
 

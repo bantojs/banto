@@ -40,7 +40,7 @@ function callbackUrl(c: AdminContext): string {
 }
 
 stripe.get("/shops/:shopId/stripe/connect", requireOwner, async (c: AdminContext) => {
-  const { db, session } = owner(c);
+  const { session } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop) return c.text("not found", 404);

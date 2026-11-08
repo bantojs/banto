@@ -3,8 +3,6 @@
  * 決まり（20 個まで・1 つ 40 字まで・カンマと制御文字は不可・重なりを消す、メモは 2,000 字まで）の正は DB の banto_order_tags_norm と列の CHECK。
  * ここは画面の入力（カンマか改行で区切った文字）を並びに直すだけ。
  */
-export const ORDER_TAGS_MAX = 20;
-export const ORDER_TAG_MAX_CHARS = 40;
 export const ORDER_NOTE_MAX_CHARS = 2000;
 
 /** 「要確認, ギフト」や改行で区切った入力を並びにする（空を捨て、重なりを消す。形の検査は DB） */

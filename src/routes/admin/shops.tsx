@@ -11,7 +11,6 @@ import type { DomainAttachResult, DomainState } from "../../adapters/types";
 import type { ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
-import { createPrivilegedDb } from "../../db/privileged";
 import { orderPageUrl } from "../../orders/lookup";
 import { memberAccountPage } from "../../storefront/urls";
 import { LEGAL_CHECK_HOURS, LEGAL_KINDS, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
@@ -903,7 +902,6 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
 /** 外の URL を確かめて結果を書く（保存と「今すぐ確かめる」。管理画面の操作なので、その場で取りに行く） */
 async function recordLegalLinks(c: AdminContext, shop: ShopRow, urls: Partial<Record<LegalKind, string>>): Promise<void> {
   const shopId = shop.id;
-  const cfg = c.get("adapters").config;
   const outbound = c.get("adapters").publicFetch ?? c.get("deps").fetch;
   const results: LegalLinkResults = Object.keys(urls).length > 0 ? await checkLegalLinks(urls, outbound) : {};
   // 結果は運営者の JWT で書く（DB が integrations の項目を確かめる）

@@ -9,7 +9,7 @@ import { createNodeAdapters } from "../adapters/node";
 import { registerJobs } from "../jobs";
 
 // 外から見た URL は必須（docs/run-on-node.md）。無いと Host ヘッダーがメールのリンクや OAuth の戻り先の起点になり、
-// リバースプロキシの後ろで Host を偽装されると会員のログインのリンクを攻撃者のサイトに届けられる（監査 M-4）
+// リバースプロキシの後ろで Host を偽装されると会員のログインのリンクを攻撃者のサイトに届けられる（Host を信じない）
 if (!/^https?:\/\/[^/\s]+/.test(process.env["PUBLIC_BASE_URL"] ?? "")) {
   console.error("[banto] PUBLIC_BASE_URL is required (e.g. https://shop.example). See docs/run-on-node.md");
   process.exit(1);

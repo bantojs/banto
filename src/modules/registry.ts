@@ -4,6 +4,10 @@
  * ON/OFF はキャッシュ済み / 読み込み済みのショップ行で判定し、そのために DB に問い合わせない。OFF のモジュールはルートもメニューも出さない。
  */
 import type { MessageKey } from "../i18n";
+import { CARE_MIGRATION } from "../care-labels/care";
+
+/** お気に入り（0123_mod_favorites）のマイグレーション。モジュールの一覧と API が「当たるまで出さない」判定に使う */
+export const FAVORITES_MIGRATION = "0123_mod_favorites";
 
 export interface ModuleDef {
   id: string;
@@ -53,9 +57,9 @@ export const MODULES: readonly ModuleDef[] = [
   // お店の画面のダイアログ（今の訪問・今のページで分かることだけで出す。0110_mod_dialogs、docs/dialogs.md）
   { id: "dialogs", name: "mod.dialogs.name", description: "mod.dialogs.description", adminPath: "dialogs" },
   // 会員のお気に入り（本人・運営者・AI 用 API と連携。ゲストはブラウザに覚えてログインで移す。0123_mod_favorites、docs/favorites.md）
-  { id: "favorites", name: "mod.favorites.name", description: "mod.favorites.description", migration: "0123_mod_favorites" },
+  { id: "favorites", name: "mod.favorites.name", description: "mod.favorites.description", migration: FAVORITES_MIGRATION },
   // 洗濯表示（JIS L 0001 の記号番号。カテゴリーで決めて商品で上書き。記号の絵は運営者が持ち込む。0127_mod_care_labels、docs/care-labels.md）
-  { id: "care_labels", name: "mod.care_labels.name", description: "mod.care_labels.description", adminPath: "care-labels", migration: "0127_mod_care_labels" },
+  { id: "care_labels", name: "mod.care_labels.name", description: "mod.care_labels.description", adminPath: "care-labels", migration: CARE_MIGRATION },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

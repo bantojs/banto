@@ -83,10 +83,9 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
   const scopeList = await scopesFor(c);
-  const withApps = scopeList.includes("app_data:write");
   const [rows, apps] = await Promise.all([
-    db.from<TokenRow>("api_tokens").select(`id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at${withApps ? ",endpoint_id" : ""}`, { eq: { shop_id: shopId }, order: "created_at.desc" }),
-    withApps ? appEndpoints(c, shopId) : Promise.resolve([]),
+    db.from<TokenRow>("api_tokens").select("id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at,endpoint_id", { eq: { shop_id: shopId }, order: "created_at.desc" }),
+    appEndpoints(c, shopId),
   ]);
   const appName = new Map(apps.map((a) => [a.id, a.app_handle]));
   const base = publicBaseUrl(c);
@@ -166,7 +165,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
             </div>
           ))}
         </fieldset>
-        {withApps && grantable("app_data:write") ? (
+        {grantable("app_data:write") ? (
           <div>
             <label for="endpoint_id">{t("tokens.app_endpoint")}</label>
             {apps.length > 0 ? (

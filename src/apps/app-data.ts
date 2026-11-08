@@ -36,7 +36,7 @@ export interface ReviewsV1 {
 export interface PublicAppData {
   app: string;
   kind: string;
-  /** custom.v1 の名前（ほかの種類と 0085 の前は空か無い） */
+  /** custom.v1 の名前（ほかの種類は空か無い） */
   key?: string;
   data: unknown;
   updated_at?: string;
