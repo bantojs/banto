@@ -1,0 +1,32 @@
+# 依存の更新の知らせ（週 1 回、まとめて PR にする）。実行時の依存は hono・liquidjs・pg・@hono/node-server の 4 つ。
+# 更新を取り込むときは CI（build / db）が通ることを確かめる（CONTRIBUTING.md）。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    groups:
+      runtime:
+        dependency-type: production
+      development:
+        dependency-type: development
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+  # 自前で立てる PostgreSQL + GoTrue + PostgREST + Caddy の固定した版（docs/self-hosted-db.md）
+  - package-ecosystem: docker-compose
+    directory: /selfhost
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
