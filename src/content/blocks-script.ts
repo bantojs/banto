@@ -423,9 +423,27 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var insQ=document.createElement("input"); insQ.type="search"; insQ.placeholder=T("search"); insQ.setAttribute("aria-label",T("search")); ins.appendChild(insQ);
   var insBody=el("div",""); ins.appendChild(insBody);
   var insFor=null, insMode="after", insSel=0, insList=[];
-  function match(b,f){ return !f||b.k.indexOf(f)===0||b.label.toLowerCase().indexOf(f)>=0||b.desc.toLowerCase().indexOf(f)>=0; }
+  // 中の名前（本文の書き方の名前。shop:current なら current）
+  function keyOf(b){ return b.k.slice(b.k.lastIndexOf(":")+1); }
+  function match(b,f){ return !f||b.k.indexOf(f)===0||keyOf(b).indexOf(f)===0||b.label.toLowerCase().indexOf(f)>=0||b.desc.toLowerCase().indexOf(f)>=0; }
   // 名前に合うものを説明だけに合うものより先に（「動画」で動画のブロックが先頭に来るように）
-  function rank(list,f){ if(!f) return list; var hit=function(b){ return b.label.toLowerCase().indexOf(f)>=0||b.k.indexOf(f)===0?0:1; }; return list.map(function(b,i){ return [hit(b),i,b]; }).sort(function(x,y){ return x[0]-y[0]||x[1]-y[1]; }).map(function(x){ return x[2]; }); }
+  function rank(list,f){ if(!f) return list; var hit=function(b){ return b.label.toLowerCase().indexOf(f)>=0||b.k.indexOf(f)===0||keyOf(b).indexOf(f)===0?0:1; }; return list.map(function(b,i){ return [hit(b),i,b]; }).sort(function(x,y){ return x[0]-y[0]||x[1]-y[1]; }).map(function(x){ return x[2]; }); }
+  // 探す: 上のブロックに加えて、お店のブロックの選択欄の選択肢（「今の記事・商品の部品」の「洗濯表示」など）に合えば、
+  // その選択肢を選んだ形でも出す（選ぶと設定の画面がその選択肢で開く）。選択肢の値は 2 文字から頭で合わせる。12 まで
+  var PRESET=null;
+  function found(f){
+    var list=BLOCKS.filter(function(b){ return match(b,f); });
+    if(f){ var extra=[];
+      Object.keys(SHOPDEF).forEach(function(k){ var d=SHOPDEF[k]; (d.fields||[]).forEach(function(x){ if(x.type!=="select") return; (x.options||[]).forEach(function(o){
+        var lab=String(o.label||""), val=String(o.value||""); if(!val||extra.length>=12) return;
+        if(lab.toLowerCase().indexOf(f)>=0||(f.length>=2&&val.toLowerCase().indexOf(f)===0)){ var pre={}; pre[x.key]=val; extra.push({k:"shop:"+k,g:d.group||"shop",label:d.label+": "+lab,desc:d.desc||"",preset:pre}); }
+      }); }); });
+      list=list.concat(extra);
+    }
+    return rank(list,f);
+  }
+  // 選んだ候補で入れる（選択肢を選んだ形なら、その値を設定の画面に渡す）
+  function put(b,fn){ PRESET=b.preset||null; try{ fn(); } finally { PRESET=null; } }
   // 図の並び（＋の一覧と左のブロックの一覧で共通）。list は絞り込んだもの、cur は選んでいる位置（-1 なら無し）
   function tiles(box,list,cur,onPick,onDrag){
     box.innerHTML="";
@@ -444,7 +462,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     });
   }
   function drawIns(){
-    var f=insQ.value.trim().toLowerCase(); insList=rank(BLOCKS.filter(function(b){ return match(b,f); }),f);
+    var f=insQ.value.trim().toLowerCase(); insList=found(f);
     insSel=Math.max(0,Math.min(insSel,insList.length-1)); tiles(insBody,insList,insSel,pickIns,null);
   }
   var insAnchor=null;
@@ -461,7 +479,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     at(ins,r,0,below?r.height+6:-ins.offsetHeight-6);
   }
   function closeIns(){ if(ins.hidden) return; ins.hidden=true; var b=insFor; insFor=null; if(isBlock(b)){ if(!BOXES[kindOf(b)]&&!CONT[kindOf(b)]) caretIn(b); } refresh(); }
-  function pickIns(i){ var b=insList[i]; var blk=insFor, mode=insMode; ins.hidden=true; insFor=null; if(b) insertAt(b.k,blk,mode); }
+  function pickIns(i){ var b=insList[i]; var blk=insFor, mode=insMode; ins.hidden=true; insFor=null; if(b) put(b,function(){ insertAt(b.k,blk,mode); }); }
   // ブロックを入れる: replace はその空の行に、before / after はその前後に新しい行を作って
   function insertAt(k,ref,mode){
     // 列の並びの中には列しか置けないので、カラムの前後へ
@@ -572,7 +590,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var menuFor=null, menuSel=0, menuItems=[];
   function openMenu(blk,filter){
     menuFor=blk; var f=(filter||"").toLowerCase();
-    menuItems=rank(BLOCKS.filter(function(b){ return match(b,f); }),f);
+    menuItems=found(f);
     if(!menuItems.length){ closeMenu(); return; }
     menuSel=Math.min(menuSel,menuItems.length-1); menu.innerHTML="";
     menuItems.forEach(function(b,i){
@@ -584,7 +602,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     menu.hidden=false; plus.hidden=true; at(menu,blk.getBoundingClientRect(),0,blk.offsetHeight+4);
   }
   function closeMenu(){ menu.hidden=true; menuFor=null; menuSel=0; }
-  function chooseMenu(i){ var b=menuItems[i], blk=menuFor; closeMenu(); if(!b||!blk) return; blk.innerHTML="<br>"; apply(b.k,blk); }
+  function chooseMenu(i){ var b=menuItems[i], blk=menuFor; closeMenu(); if(!b||!blk) return; blk.innerHTML="<br>"; put(b,function(){ apply(b.k,blk); }); }
   ed.addEventListener("keydown",function(e){
     if(menu.hidden) return;
     if(e.key==="ArrowDown"){ e.preventDefault(); menuSel=(menuSel+1)%menuItems.length; openMenu(menuFor,(menuFor.textContent||"").slice(1)); }
@@ -804,7 +822,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   }
   function openShop(box,blk,kind){
     var def=SHOPDEF[kind]; if(!def) return;
-    var cur=box?shopAttrs(box):{};
+    var cur=box?shopAttrs(box):(PRESET||{});
     var dlg=document.createElement("dialog"); dlg.className="blk-dlg"; var f=document.createElement("form"); f.method="dialog"; dlg.appendChild(f);
     var h=document.createElement("h2"); h.textContent=def.label; f.appendChild(h);
     if(def.desc){ var p0=el("p","muted"); p0.textContent=def.desc; f.appendChild(p0); }
@@ -1208,9 +1226,9 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
 
     // ブロックの一覧: 押すとカーソルの位置に、ドラッグすると置いた場所に入れる
     var libSel=-1, libList=BLOCKS;
-    function drawLib(){ var f=libQ.value.trim().toLowerCase(); libList=rank(BLOCKS.filter(function(b){ return match(b,f); }),f); tiles(libBody,libList,libSel,function(i){ var b=libList[i]; if(b) insertAtCursor(b.k); },dragTile); }
+    function drawLib(){ var f=libQ.value.trim().toLowerCase(); libList=found(f); tiles(libBody,libList,libSel,function(i){ var b=libList[i]; if(b) put(b,function(){ insertAtCursor(b.k); }); },dragTile); }
     libQ.addEventListener("input",function(){ libSel=libQ.value.trim()?0:-1; drawLib(); });
-    libQ.addEventListener("keydown",function(e){ if(e.key==="Enter"&&libList.length){ e.preventDefault(); insertAtCursor(libList[Math.max(0,libSel)].k); } else if(e.key==="Escape"){ libQ.value=""; libSel=-1; drawLib(); } });
+    libQ.addEventListener("keydown",function(e){ if(e.key==="Enter"&&libList.length){ e.preventDefault(); var lb=libList[Math.max(0,libSel)]; put(lb,function(){ insertAtCursor(lb.k); }); } else if(e.key==="Escape"){ libQ.value=""; libSel=-1; drawLib(); } });
     var newDrag=null;
     function dragTile(e,b,o){
       var x0=e.clientX, y0=e.clientY, moved=false;
