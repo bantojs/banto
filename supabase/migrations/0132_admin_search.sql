@@ -3,7 +3,7 @@
 -- 0059 の admin_search_ids を定義し直す。引数・返り値・権限の確かめ（項目を 1 回だけ）は同じ。
 --   キーワード 1 つで、入れたものを読み取る:
 --     注文: #番号・番号（完全一致）、メール・氏名（部分一致）、決済の参照・送り状番号（完全一致、送り状番号はハイフンを無視）、
---           電話番号（数字だけにして完全一致。10〜13 桁）
+--           電話番号（数字だけにして完全一致。10〜13 桁。日本の国番号 +81 は 0 に読み替える）
 --     商品: 名前・スラッグ（部分一致）、品番・JAN（SKU の完全一致）
 --   条件（p_filters）:
 --     共通: sort = new（既定、新しい順）| old（古い順）
@@ -14,7 +14,8 @@
 --   会員（customers）は 0059 のまま。
 
 -- 電話番号（数字だけ）と送り状番号を探すためのインデックス。電話番号は注文の配送先にある（個人情報のマスクで消える）
-create index if not exists orders_phone_digits on orders (shop_id, (regexp_replace(coalesce(shipping_address->>'phone', ''), '[^0-9]', '', 'g')));
+-- 「+81 80 …」と「080-…」が同じになるよう、数字だけにしてから先頭の 81 を 0 に読み替える（日本の国内の番号は 0 で始まるので、81 で始まるのは国番号付き）
+create index if not exists orders_phone_digits on orders (shop_id, (regexp_replace(regexp_replace(coalesce(shipping_address->>'phone', ''), '[^0-9]', '', 'g'), '^81', '0')));
 create index if not exists orders_tracking_number on orders (shop_id, tracking_number) where tracking_number is not null;
 create index if not exists skus_shop_gtin on skus (shop_id, gtin) where gtin is not null;
 
@@ -65,12 +66,12 @@ begin
     if v_like is not null then
       if v_q ~ '^#?\d{1,9}$' then v_num := ltrim(v_q, '#')::integer; end if;
       if v_q ~ '^[0-9+() -]{10,20}$' and length(regexp_replace(v_q, '[^0-9]', '', 'g')) between 10 and 13 then
-        v_phone := regexp_replace(v_q, '[^0-9]', '', 'g');
+        v_phone := regexp_replace(regexp_replace(v_q, '[^0-9]', '', 'g'), '^81', '0');
       end if;
       if v_q ~ '^[0-9A-Za-z-]{4,60}$' and length(replace(v_q, '-', '')) between 4 and 40 then v_track := replace(v_q, '-', ''); end if;
       v_where := v_where || ' and (customer_email ilike $2 or customer_name ilike $2 or payment_ref = $3'
         || case when v_num is not null then ' or number = $8' else '' end
-        || case when v_phone is not null then ' or regexp_replace(coalesce(shipping_address->>''phone'', ''''), ''[^0-9]'', '''', ''g'') = $9' else '' end
+        || case when v_phone is not null then ' or regexp_replace(regexp_replace(coalesce(shipping_address->>''phone'', ''''), ''[^0-9]'', '''', ''g''), ''^81'', ''0'') = $9' else '' end
         || case when v_track is not null then ' or tracking_number = $10' else '' end
         || ')';
     end if;

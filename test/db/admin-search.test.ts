@@ -52,6 +52,10 @@ describe.skipIf(!dbAvailable)("管理画面の検索を広げる（0132）", () 
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "09012345678"))).toEqual([1001]);
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "090-1234-5678"))).toEqual([1001]);
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "+81 80 9999 0000"))).toEqual([1003]);
+    // 日本の国番号の書き方が違っても当たる（+81 ↔ 0）
+    expect(await numbers(await search(a.ownerId, a.shopId, "orders", "080-9999-0000"))).toEqual([1003]);
+    expect(await numbers(await search(a.ownerId, a.shopId, "orders", "+81 90-1234-5678"))).toEqual([1001]);
+    expect(await numbers(await search(a.ownerId, a.shopId, "orders", "819012345678"))).toEqual([1001]);
     // 電話番号は完全一致（一部では探さない）
     expect(await search(a.ownerId, a.shopId, "orders", "1234-5678")).toEqual([]);
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "1234-5678-9012"))).toEqual([1002]);

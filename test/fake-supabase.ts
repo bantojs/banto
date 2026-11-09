@@ -2149,8 +2149,9 @@ export class FakeSupabase {
       const ext = this.appliedMigrations.includes("0132_admin_search");
       const desc = !ext || f["sort"] !== "old";
       const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
+      const jpPhone = (v: string) => v.replace(/[^0-9]/g, "").replace(/^81/, "0");
       const digits = raw.replace(/[^0-9]/g, "");
-      const phone = ext && /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? digits : null;
+      const phone = ext && /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? jpPhone(raw) : null;
       const track = ext && /^[0-9A-Za-z-]{4,60}$/.test(raw) && raw.replace(/-/g, "").length <= 40 ? raw.replace(/-/g, "") : null;
       const num = (ext ? /^#?\d{1,9}$/ : /^\d{1,9}$/).test(raw) ? Number(raw.replace(/^#/, "")) : null;
       const jst = (d: string, plus = 0) => new Date(Date.parse(`${d}T00:00:00+09:00`) + plus * 86400000).toISOString();
@@ -2178,7 +2179,7 @@ export class FakeSupabase {
             const created = String(r["created_at"]);
             const tags = (r["tags"] as string[] | undefined) ?? [];
             return (
-              (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === raw || (num !== null && Number(r["number"]) === num) || (phone !== null && String(addr["phone"] ?? "").replace(/[^0-9]/g, "") === phone) || (track !== null && r["tracking_number"] === track)) &&
+              (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === raw || (num !== null && Number(r["number"]) === num) || (phone !== null && jpPhone(String(addr["phone"] ?? "")) === phone) || (track !== null && r["tracking_number"] === track)) &&
               (!f["status"] || r["status"] === f["status"]) &&
               (!ext || !f["payment"] || r["payment_provider"] === f["payment"]) &&
               (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["from"] ?? "") || created >= jst(f["from"]!)) &&

@@ -27,6 +27,7 @@ describe("注文の一覧の検索", () => {
     const base = `/admin/shops/${shop.id}/orders`;
     expect(numbers(await (await b.get(`${base}?q=${encodeURIComponent("#1002")}`)).text())).toEqual([1002]);
     expect(numbers(await (await b.get(`${base}?q=09012345678`)).text())).toEqual([1001]);
+    expect(numbers(await (await b.get(`${base}?q=${encodeURIComponent("+81 90 1234 5678")}`)).text())).toEqual([1001]);
     expect(numbers(await (await b.get(`${base}?q=1234-5678-9012`)).text())).toEqual([1002]);
   });
 
