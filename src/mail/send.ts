@@ -73,6 +73,15 @@ export function createMailer(adapters: Pick<Adapters, "config" | "socket">, doFe
   }
 }
 
+/**
+ * 送れなかったときにログへ出す 1 行。送り手の応答には宛先のアドレスが入ることがある（SMTP の RCPT の拒否、HTTP の送り手の 4xx の本文、形の誤り）。
+ * 会員のログインはまだ会員でない人のアドレスでも呼べるので、アドレスの @ の前を伏せてから出す（ログに個人情報を入れない）
+ */
+export function mailFailureLog(context: string, mailer: Pick<Mailer, "name"> | null, e: MailError): string {
+  const message = e.message.replace(/[^\s<>"'(),;:\[\]]+@([^\s<>"'(),;:\[\]]+)/g, "***@$1");
+  return `[banto] ${context}: mail failed (${mailer?.name ?? "none"} ${e.status}): ${message}`;
+}
+
 /** 送る。送り手が無ければ MailError(0)（会員のログインは「設定が済んでいない」と出す） */
 export async function sendMail(mailer: Mailer | null, mail: Mail): Promise<void> {
   if (!mailer) throw new MailError(0, "mail transport is not configured (MAIL_TRANSPORT, docs/email.md)");

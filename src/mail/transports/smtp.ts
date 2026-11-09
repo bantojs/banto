@@ -19,7 +19,7 @@ export function smtpMailer(sockets: SocketAdapter, o: SmtpOptions): Mailer {
         await smtpSend(sockets, o, { from: msg.envelopeFrom, recipients: msg.recipients, data: msg.data });
       } catch (e) {
         if (e instanceof SmtpError) throw new MailError(e.code, `SMTP ${e.message}`);
-        if (e instanceof MailAddressError) throw new MailError(0, `SMTP: ${e.message} (the sender must look like "Shop <order@example.com>", docs/email.md)`);
+        if (e instanceof MailAddressError) throw new MailError(0, `SMTP: ${e.message} (the sender and recipient must look like "Shop <order@example.com>" or "order@example.com"; check the sender in the mail plugin settings, docs/email.md)`);
         throw new MailError(0, `SMTP: ${(e as Error).message}`);
       }
     },

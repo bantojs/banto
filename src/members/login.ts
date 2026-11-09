@@ -3,7 +3,7 @@
  * コードとトークンを作ってメールで送り（送り手は src/mail/send.ts）、DB には HMAC の値だけを渡す。照合・回数の制限・失効は DB（0012_member_auth.sql）。
  */
 import { PrivilegedRpcError, type MemberLoginVerify, type PrivilegedDb } from "../db/privileged";
-import { MailError, type Mailer, sendMail } from "../mail/send";
+import { MailError, mailFailureLog, type Mailer, sendMail } from "../mail/send";
 import { renderMailHtml } from "../mail/html";
 import { t, tf } from "../i18n";
 import { planLimitOf } from "../plan/limits";
@@ -64,7 +64,7 @@ export async function startLogin(
     } catch (e) {
       if (e instanceof MailError) {
         // 送り手の応答（SMTP の応答コードと文・HTTP の状態）を残す。画面には「送れませんでした」だけを出すので、運営者が原因を見られるのはここだけ
-        if (deps.mailer) console.error(`[banto] member login: mail failed (${deps.mailer.name} ${e.status}): ${e.message}`);
+        if (deps.mailer) console.error(mailFailureLog("member login", deps.mailer, e));
         return { ok: false, error: e.status === 0 && !deps.mailer ? "unavailable" : "mail_failed" };
       }
       throw e;
