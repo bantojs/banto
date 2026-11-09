@@ -283,9 +283,9 @@ describe("会員機能（店ごとのアカウント・パスワードなし）"
 
     await memberLogin(new Browser(app), mail, "/my-shop", "taken@example.com");
     let res = await admin.post(`/admin/shops/${shop.id}/customers/${id}/email`, { email: "Taken@example.com" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?error=email_taken`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${id}?error=email_taken`);
     res = await admin.post(`/admin/shops/${shop.id}/customers/${id}/email`, { email: "New@Example.com" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?flash=email_changed`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${id}?flash=email_changed`);
     expect(sb.tables.customers.find((x) => x["id"] === id)).toMatchObject({ email: "new@example.com", session_epoch: 1 });
     const notices = mail.sent.filter((m) => m.subject.includes("メールアドレスを変更しました"));
     expect(notices.map((m) => m.to).sort()).toEqual(["member@example.com", "new@example.com"]);

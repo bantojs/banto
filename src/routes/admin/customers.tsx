@@ -4,7 +4,7 @@ import type { AppEnv } from "../../app";
 import { t } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, PageHead } from "./layout";
-import { owner, param, type AdminContext } from "./context";
+import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 
 /** CSV に入れる行の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
@@ -19,6 +19,11 @@ import { moduleEnabled } from "../../modules/registry";
 import { PASSKEY_MODULE } from "../../modules/passkey";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { attributeRows, attributesFromForm, customerFields, externalRef, type CustomerField } from "../../customers/fields";
+import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
+import { migrated } from "../../db/migration-state";
+import { UUID_RE } from "../../util/cursor";
+import { yen } from "../common";
+import type { MessageKey } from "../../i18n";
 
 /**
  * 会員一覧・削除（退会依頼への対応）・メールアドレスの変更（メールを失った会員の救済）。/admin/shops/:shopId/customers
@@ -42,30 +47,41 @@ interface CustomerRow {
   marketing_consent?: boolean | null;
   marketing_consent_at?: string | null;
   marketing_consent_source?: string | null;
+  /** 0133。購入の集計（支払い済み・発送済みの注文）と社内メモ */
+  orders_count?: number;
+  total_spent_jpy?: number | string;
+  last_order_at?: string | null;
+  note?: string | null;
 }
+
+/** 読む列（0133 の前の DB では集計とメモを選ばない） */
+const customerColumns = (stats: boolean) =>
+  `id,email,name,default_address,created_at,last_login_at,external_ref,attributes,marketing_consent,marketing_consent_at,marketing_consent_source${stats ? ",orders_count,total_spent_jpy,last_order_at,note" : ""}`;
 
 /**
  * 一覧と CSV で共通: メール・氏名の部分一致（q）、独自項目 1 つの値の部分一致（f / v）、案内メールの同意で DB で絞り、
- * 新しい順に limit 件（after より後ろ）を読む
+ * limit 件（after より後ろ）を読む。並びは新しい順、0132 からは古い順も
  */
-async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>, opts: { limit: number; after?: PagePosition }) {
+async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>, opts: { limit: number; after?: PagePosition; stats: boolean; sortable: boolean }) {
   const { db } = owner(c);
   const fields: CustomerField[] = customerFields(settings);
-  const columns = "id,email,name,default_address,created_at,last_login_at,external_ref,attributes,marketing_consent,marketing_consent_at,marketing_consent_source";
+  const columns = customerColumns(opts.stats);
   const q = (c.req.query("q") ?? "").trim().slice(0, 100);
-  const f = (c.req.query("f") ?? "").trim();
-  const v = (c.req.query("v") ?? "").trim().slice(0, 100);
+  const f0 = (c.req.query("f") ?? "").trim();
+  const v0 = (c.req.query("v") ?? "").trim().slice(0, 100);
   // 案内メールの同意で絞る（0050）: yes / no / none（未回答）
   const consent = ["yes", "no", "none"].includes(c.req.query("consent") ?? "") ? c.req.query("consent")! : "";
+  const attr = Boolean(f0 && v0 && fields.some((x) => x.key === f0));
+  const sort = opts.sortable && readSort(c.req.query("sort")) === "old" ? "old" : "";
+  const params: SearchParams = { q, f: attr ? f0 : "", v: attr ? v0 : "", consent, sort };
+  const filtered = Boolean(q || attr || consent || sort || opts.after);
+  // 部分一致（氏名・メール・独自項目）と古い順は RLS の外の検索の関数で（0059 / 0132。インデックスが効く）
+  if (q || attr || sort) {
+    const rows = await searchRows<CustomerRow>(c, { kind: "customers", shopId, q, filters: { ...(attr ? { field: f0, value: v0 } : {}), ...(consent ? { consent } : {}), ...(sort ? { sort } : {}) }, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns });
+    return { fields, rows, params, filtered };
+  }
   const where: Filter[] = [];
   if (consent) where.push(consent === "none" ? { col: "marketing_consent", op: "is", value: null } : { col: "marketing_consent", op: "is", value: consent === "yes" });
-  const attr = Boolean(f && v && fields.some((x) => x.key === f));
-  const filtered = Boolean(q || attr || consent || opts.after);
-  // 部分一致（氏名・メール・独自項目）は RLS の外の検索の関数で（0059。インデックスが効く）
-  if (q || attr) {
-    const rows = await searchRows<CustomerRow>(c, { kind: "customers", shopId, q, filters: { ...(attr ? { field: f, value: v } : {}), ...(consent ? { consent } : {}) }, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns });
-    return { fields, rows, q, f, v, consent, filtered };
-  }
   const rows: CustomerRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {
@@ -76,11 +92,28 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { fields, rows, q, f, v, consent, filtered };
+  return { fields, rows, params, filtered };
 }
 
+/** 会員の購入の集計の列と社内メモ（0133） */
+const STATS_MIGRATION = "0133_customer_stats_note";
+/** 一覧の並び（0132） */
+const SEARCH_MIGRATION = "0132_admin_search";
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");
+const customerPath = (shopId: string, id: string) => `/admin/shops/${shopId}/customers/${id}`;
 
+/** 会員の詳細の画面の知らせ（flash / error の値 → 文言と種類） */
+const DETAIL_FLASH: Record<string, [MessageKey, "notice" | "error"]> = {
+  email_changed: ["customers.email_changed", "notice"],
+  passkeys_reset: ["passkey.admin_reset_done", "notice"],
+  attributes_saved: ["customers.attributes_saved", "notice"],
+  consent_withdrawn: ["customers.consent_withdrawn", "notice"],
+  note_saved: ["customers.note_saved", "notice"],
+  attributes_invalid: ["customers.attributes_invalid", "error"],
+  email_taken: ["customers.email_taken", "error"],
+  email_invalid: ["customers.email_invalid", "error"],
+  note_too_long: ["customers.note_too_long", "error"],
+};
 
 customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
@@ -88,25 +121,31 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
-  const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
-  const { fields, q, f, v, consent, filtered } = list;
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const [stats, sortable] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION)]);
+  const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, stats, sortable, ...(after ? { after } : {}) });
+  const { fields, params, filtered } = list;
   const page = splitPage(list.rows, (r) => r.created_at);
   const rows = page.rows;
-  const editable = fields.length > 0;
-  const query = new URLSearchParams({ ...(q ? { q } : {}), ...(f ? { f, v } : {}), ...(consent ? { consent } : {}) }).toString();
-  const passkeys = moduleEnabled(shop.settings, PASSKEY_MODULE);
-  const favoritesOn = moduleEnabled(shop.settings, FAVORITES_MODULE);
+  const base = `/admin/shops/${shop.id}/customers`;
+  const listHref = searchHref(base, params);
+  const chips = searchChips(base, params, (name, value) => {
+    if (name === "consent") return `${t("customers.consent")}: ${consentLabel(value === "yes" ? true : value === "no" ? false : null)}`;
+    if (name === "sort") return t("search.sort_old");
+    return null;
+  });
+  // 独自項目の値は、項目と値の 2 つで 1 つの条件（外すときは両方）
+  if (params["f"] && params["v"]) chips.unshift({ label: `${fields.find((x) => x.key === params["f"])?.label ?? params["f"]}: ${params["v"]}`, href: searchHref(base, { ...params, f: "", v: "" }) });
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("customers.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "customers" }}>
-      <PageHead title={t("customers.title")} />
+      <PageHead title={t("customers.title")}>
+        {rows.length > 0 || filtered ? (
+          <a class="btn secondary" href={`/admin/shops/${shop.id}/customers.csv${listHref.slice(base.length)}`}>
+            {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("customers.csv")}
+          </a>
+        ) : null}
+      </PageHead>
       {c.req.query("flash") === "deleted" ? <p class="notice">{t("customers.deleted")}</p> : null}
-      {c.req.query("flash") === "email_changed" ? <p class="notice">{t("customers.email_changed")}</p> : null}
-      {c.req.query("flash") === "passkeys_reset" ? <p class="notice">{t("passkey.admin_reset_done")}</p> : null}
-      {c.req.query("flash") === "attributes_saved" ? <p class="notice">{t("customers.attributes_saved")}</p> : null}
-      {c.req.query("flash") === "consent_withdrawn" ? <p class="notice">{t("customers.consent_withdrawn")}</p> : null}
-      {c.req.query("error") === "attributes_invalid" ? <p class="error">{t("customers.attributes_invalid")}</p> : null}
-      {c.req.query("error") === "email_taken" ? <p class="error">{t("customers.email_taken")}</p> : null}
-      {c.req.query("error") === "email_invalid" ? <p class="error">{t("customers.email_invalid")}</p> : null}
       {!(shop.settings ?? {})["members_enabled"] ? (
         <div class="notice">
           <p>
@@ -121,149 +160,328 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </div>
       ) : (
         <>
-          <form method="get" class="toolbar">
-            <input type="search" name="q" value={q} placeholder={t("customers.search_placeholder")} aria-label={t("order.search")} />
+          <SearchBar action={base} q={params["q"] ?? ""} placeholder={t("customers.search_placeholder")} sortable={sortable} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
             {fields.length > 0 ? (
               <>
-                <select name="f" aria-label={t("customers.filter_field")}>
-                  <option value="">{t("customers.filter_any")}</option>
-                  {fields.map((fd) => (
-                    <option value={fd.key} selected={fd.key === f}>
-                      {fd.label}
-                    </option>
-                  ))}
-                </select>
-                <input type="search" name="v" value={v} placeholder={t("customers.filter_value")} aria-label={t("customers.filter_value")} />
+                <label>
+                  {t("customers.filter_field")}
+                  <select name="f">
+                    <option value="">{t("customers.filter_any")}</option>
+                    {fields.map((fd) => (
+                      <option value={fd.key} selected={fd.key === params["f"]}>
+                        {fd.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  {t("customers.filter_value")}
+                  <input type="text" name="v" value={params["v"] ?? ""} maxlength={100} />
+                </label>
               </>
             ) : null}
-            <select name="consent" aria-label={t("customers.consent_filter")}>
-              <option value="">{t("customers.consent_filter")}</option>
-              <option value="yes" selected={consent === "yes"}>
-                {t("customers.consent_yes")}
-              </option>
-              <option value="no" selected={consent === "no"}>
-                {t("customers.consent_no")}
-              </option>
-              <option value="none" selected={consent === "none"}>
-                {t("customers.consent_none")}
-              </option>
-            </select>
-            <button type="submit" class="secondary small">
-              {t("order.search")}
-            </button>
-            <a class="btn secondary small" href={`/admin/shops/${shop.id}/customers.csv${query ? `?${query}` : ""}`}>
-              {t("customers.csv")}
-            </a>
-          </form>
-          <p class="muted">{t("customers.change_email_hint")}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>{t("login.email")}</th>
-                <th>{t("store.address_name")}</th>
-                <th>{t("store.address_state")}</th>
-                <th>{t("customers.attributes")}</th>
-                <th>{t("customers.consent")}</th>
-                <th>{t("order.date")}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
+            <label>
+              {t("customers.consent")}
+              <select name="consent">
+                <option value="">{t("search.any")}</option>
+                <option value="yes" selected={params["consent"] === "yes"}>
+                  {t("customers.consent_yes")}
+                </option>
+                <option value="no" selected={params["consent"] === "no"}>
+                  {t("customers.consent_no")}
+                </option>
+                <option value="none" selected={params["consent"] === "none"}>
+                  {t("customers.consent_none")}
+                </option>
+              </select>
+            </label>
+          </SearchBar>
+          {rows.length === 0 ? (
+            <p>{t("customers.no_match")}</p>
+          ) : (
+            <table>
+              <thead>
                 <tr>
-                  <td>{r.email ?? "-"}</td>
-                  <td>{r.name ?? "-"}</td>
-                  <td>{typeof r.default_address?.["state"] === "string" ? String(r.default_address["state"]) : "-"}</td>
-                  <td>
-                    {attributeRows(fields, r.attributes).map((a) => (
-                      <span class="muted" style="display:block">
-                        {a.label}: {a.value}
-                      </span>
-                    ))}
-                    {externalRef(r.external_ref) ? (
-                      <span class="muted" style="display:block">
-                        {t("customers.external_ref")}: {externalRef(r.external_ref)!.provider} / {externalRef(r.external_ref)!.id}
-                      </span>
-                    ) : null}
-                    {attributeRows(fields, r.attributes).length === 0 && !externalRef(r.external_ref) ? "-" : null}
-                  </td>
-                  <td>{consentLabel(r.marketing_consent)}</td>
-                  <td>{formatDateTime(r.created_at, { dateOnly: true })}</td>
-                  <td>
-                    <details>
-                      <summary>{t("customers.actions")}</summary>
-                      {editable ? (
-                        <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/attributes${query ? `?${query}` : ""}`}>
-                          {fields.map((fd) => {
-                            const cur = r.attributes && typeof r.attributes === "object" ? r.attributes[fd.key] : undefined;
-                            const val = typeof cur === "string" || typeof cur === "number" ? String(cur) : "";
-                            return (
-                              <label style="display:block">
-                                {fd.label}
-                                {fd.type === "select" ? (
-                                  <select name={`attr_${fd.key}`}>
-                                    <option value="">-</option>
-                                    {(fd.options ?? []).map((o) => (
-                                      <option value={o} selected={o === val}>
-                                        {o}
-                                      </option>
-                                    ))}
-                                  </select>
-                                ) : fd.type === "textarea" ? (
-                                  <textarea name={`attr_${fd.key}`} rows={2}>{val}</textarea>
-                                ) : (
-                                  <input type={fd.type === "number" ? "number" : fd.type === "url" ? "url" : "text"} step={fd.type === "number" ? "any" : undefined} name={`attr_${fd.key}`} value={val} />
-                                )}
-                              </label>
-                            );
-                          })}
-                          <p class="muted">{t("customers.attributes_hint")}</p>
-                          <button type="submit" class="secondary small">
-                            {t("customers.edit_attributes")}
-                          </button>
-                        </form>
-                      ) : null}
-                      <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/email`} class="toolbar">
-                        <input type="email" name="email" required aria-label={t("customers.change_email")} placeholder={t("customers.change_email")} />
-                        <button type="submit" class="secondary small">
-                          {t("customers.change_email")}
-                        </button>
-                      </form>
-                      {r.marketing_consent === true ? (
-                        <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/consent/withdraw${query ? `?${query}` : ""}`}>
-                          <button type="submit" class="secondary small">
-                            {t("customers.consent_withdraw")}
-                          </button>
-                        </form>
-                      ) : null}
-                      {passkeys && can(c.get("shopAccess"), "admin") ? (
-                        <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/passkeys/reset`} onsubmit={`return confirm(${JSON.stringify(t("passkey.admin_reset_confirm"))})`}>
-                          <button type="submit" class="secondary small">
-                            {t("passkey.admin_reset")}
-                          </button>
-                        </form>
-                      ) : null}
-                      {favoritesOn ? (
-                        <p>
-                          <a href={`/admin/shops/${shop.id}/customers/${r.id}/favorites`}>{t("customers.favorites")}</a>
-                        </p>
-                      ) : null}
-                      <form method="post" action={`/admin/shops/${shop.id}/customers/${r.id}/delete`}>
-                        <button type="submit" class="small">
-                          {t("customers.delete")}
-                        </button>
-                      </form>
-                    </details>
-                  </td>
+                  <th>{t("store.address_name")}</th>
+                  <th>{t("login.email")}</th>
+                  <th>{t("store.address_state")}</th>
+                  {stats ? <th class="num">{t("customers.orders_count")}</th> : null}
+                  {stats ? <th class="num">{t("customers.total_spent")}</th> : null}
+                  {stats ? <th>{t("customers.last_order_at")}</th> : null}
+                  {fields.length > 0 ? <th>{t("customers.attributes_short")}</th> : null}
+                  <th>{t("customers.consent")}</th>
+                  <th>{t("customers.registered_at")}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr>
+                    <td>
+                      <a href={customerPath(shop.id, r.id)}>{r.name || r.email || r.id.slice(0, 8)}</a>
+                    </td>
+                    <td>{r.email ?? "-"}</td>
+                    <td>{typeof r.default_address?.["state"] === "string" ? String(r.default_address["state"]) : "-"}</td>
+                    {stats ? <td class="num">{r.orders_count ?? 0}</td> : null}
+                    {stats ? <td class="num">{yen(Number(r.total_spent_jpy ?? 0))}</td> : null}
+                    {stats ? <td>{r.last_order_at ? formatDateTime(r.last_order_at, { dateOnly: true }) : "-"}</td> : null}
+                    {fields.length > 0 ? (
+                      <td>
+                        {attributeRows(fields, r.attributes).map((a) => (
+                          <span class="muted" style="display:block">
+                            {a.label}: {a.value}
+                          </span>
+                        ))}
+                        {attributeRows(fields, r.attributes).length === 0 ? "-" : null}
+                      </td>
+                    ) : null}
+                    <td>{consentLabel(r.marketing_consent)}</td>
+                    <td>{formatDateTime(r.created_at, { dateOnly: true })}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </>
       )}
-      <Pager base={`/admin/shops/${shop.id}/customers${query ? `?${query}` : ""}`} next={page.next} paged={Boolean(after)} />
+      <Pager base={listHref} next={page.next} paged={Boolean(after)} />
     </AdminLayout>,
   );
+});
+
+interface MemberOrderRow {
+  id: string;
+  number: number;
+  status: string;
+  total_jpy: number;
+  created_at: string;
+}
+interface MemberInquiryRow {
+  id: string;
+  number: number;
+  created_at: string;
+}
+
+/**
+ * 会員の詳細（メンテナの決定 2026-11-08「会員の詳細の画面を作る」）: 購入の集計・注文・お問い合わせ・独自項目・社内メモ・
+ * 案内メールの同意・アカウントの操作を 1 画面に。注文とお問い合わせは新しいほうから 20 件（権限の項目がある人だけ）
+ */
+customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const customerId = param(c, "customerId");
+  const shop = await loadShop(c, shopId, "customers");
+  if (!shop || !UUID_RE.test(customerId)) return c.text(t("shop.not_found"), 404);
+  const access = c.get("shopAccess");
+  const stats = await migrated({ db, cache: c.get("adapters").cache }, STATS_MIGRATION);
+  const r = await db.from<CustomerRow>("customers").selectOne(customerColumns(stats), { eq: { shop_id: shopId, id: customerId } });
+  if (!r) return c.text(t("customers.not_found"), 404);
+  const inquiriesOn = moduleEnabled(shop.settings, "inquiries") && can(access, "support");
+  const [orders, inquiries] = await Promise.all([
+    can(access, "orders") ? db.from<MemberOrderRow>("orders").select("id,number,status,total_jpy,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc,id.desc", limit: 20 }) : Promise.resolve(null),
+    inquiriesOn ? db.from<MemberInquiryRow>("inquiries").select("id,number,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 20 }).catch(() => null) : Promise.resolve(null),
+  ]);
+  const fields = customerFields(shop.settings);
+  const ref = externalRef(r.external_ref);
+  const code = c.req.query("flash") ?? c.req.query("error") ?? "";
+  const msg = DETAIL_FLASH[code];
+  const self = customerPath(shopId, customerId);
+  const title = r.name || r.email || t("customers.title");
+  return c.html(
+    <AdminLayout title={`${shop.name} · ${title}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title"), href: `/admin/shops/${shop.id}/customers` }, { label: title }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access, active: "customers" }}>
+      <PageHead title={title} sub={r.email ?? undefined} />
+      {msg ? <p class={msg[1]}>{t(msg[0])}</p> : null}
+      <div class="split">
+        <div>
+          {stats ? (
+            <section class="card">
+              <dl class="sum">
+                <dt>{t("customers.orders_count")}</dt>
+                <dd>{r.orders_count ?? 0}</dd>
+                <dt>{t("customers.total_spent")}</dt>
+                <dd>{yen(Number(r.total_spent_jpy ?? 0))}</dd>
+                <dt>{t("customers.last_order_at")}</dt>
+                <dd>{r.last_order_at ? formatDateTime(r.last_order_at) : "-"}</dd>
+              </dl>
+              <p class="muted">{t("customers.stats_hint")}</p>
+            </section>
+          ) : null}
+          {orders ? (
+            <section class="card">
+              <h2>{t("order.list")}</h2>
+              {orders.length === 0 ? (
+                <p class="muted">{t("customers.no_orders")}</p>
+              ) : (
+                <table>
+                  <tbody>
+                    {orders.map((o) => (
+                      <tr>
+                        <td>
+                          <a href={`/admin/shops/${shop.id}/orders/${o.id}`}>#{o.number}</a>
+                        </td>
+                        <td>{formatDateTime(o.created_at, { dateOnly: true })}</td>
+                        <td class="num">{yen(o.total_jpy)}</td>
+                        <td>{t(`order.status.${o.status}` as MessageKey)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          ) : null}
+          {inquiries ? (
+            <section class="card">
+              <h2>{t("mod.inquiries.name")}</h2>
+              {inquiries.length === 0 ? (
+                <p class="muted">{t("customers.no_inquiries")}</p>
+              ) : (
+                <ul>
+                  {inquiries.map((q) => (
+                    <li>
+                      <a href={`/admin/shops/${shop.id}/modules/inquiries/${q.id}`}>#{q.number}</a>{" "}
+                      <span class="muted">{formatDateTime(q.created_at, { dateOnly: true })}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
+          {stats ? (
+            <form method="post" action={`${self}/note`} class="card">
+              <h2>{t("customers.note")}</h2>
+              <textarea name="note" rows={4} maxlength={2000} style="width:100%">
+                {r.note ?? ""}
+              </textarea>
+              <p class="muted">{t("customers.note_hint")}</p>
+              <p>
+                <button type="submit" class="secondary small">
+                  {t("shop.save")}
+                </button>
+              </p>
+            </form>
+          ) : null}
+          {fields.length > 0 ? (
+            <form method="post" action={`${self}/attributes`} class="card">
+              <h2>{t("customers.attributes")}</h2>
+              {fields.map((fd) => {
+                const cur = r.attributes && typeof r.attributes === "object" ? r.attributes[fd.key] : undefined;
+                const val = typeof cur === "string" || typeof cur === "number" ? String(cur) : "";
+                return (
+                  <label style="display:block">
+                    {fd.label}
+                    {fd.type === "select" ? (
+                      <select name={`attr_${fd.key}`}>
+                        <option value="">-</option>
+                        {(fd.options ?? []).map((o) => (
+                          <option value={o} selected={o === val}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    ) : fd.type === "textarea" ? (
+                      <textarea name={`attr_${fd.key}`} rows={2}>
+                        {val}
+                      </textarea>
+                    ) : (
+                      <input type={fd.type === "number" ? "number" : fd.type === "url" ? "url" : "text"} step={fd.type === "number" ? "any" : undefined} name={`attr_${fd.key}`} value={val} />
+                    )}
+                  </label>
+                );
+              })}
+              <p class="muted">{t("customers.attributes_hint")}</p>
+              <p>
+                <button type="submit" class="secondary small">
+                  {t("customers.edit_attributes")}
+                </button>
+              </p>
+            </form>
+          ) : null}
+        </div>
+        <aside>
+          <section class="card">
+            <dl class="sum">
+              <dt>{t("customers.registered_at")}</dt>
+              <dd>{formatDateTime(r.created_at, { dateOnly: true })}</dd>
+              <dt>{t("customers.last_login_at")}</dt>
+              <dd>{r.last_login_at ? formatDateTime(r.last_login_at) : "-"}</dd>
+              <dt>{t("store.address_state")}</dt>
+              <dd>{typeof r.default_address?.["state"] === "string" ? String(r.default_address["state"]) : "-"}</dd>
+              {ref ? (
+                <>
+                  <dt>{t("customers.external_ref")}</dt>
+                  <dd>
+                    {ref.provider} / {ref.id}
+                  </dd>
+                </>
+              ) : null}
+            </dl>
+          </section>
+          <section class="card">
+            <h2>{t("customers.consent")}</h2>
+            <p>{consentLabel(r.marketing_consent)}</p>
+            {r.marketing_consent === true ? (
+              <form method="post" action={`${self}/consent/withdraw`}>
+                <button type="submit" class="secondary small">
+                  {t("customers.consent_withdraw")}
+                </button>
+              </form>
+            ) : null}
+          </section>
+          <section class="card">
+            <h2>{t("customers.account")}</h2>
+            <form method="post" action={`${self}/email`}>
+              <label>
+                {t("customers.change_email")}
+                <input type="email" name="email" required />
+              </label>
+              <p class="muted">{t("customers.change_email_hint")}</p>
+              <button type="submit" class="secondary small">
+                {t("customers.change_email")}
+              </button>
+            </form>
+            {moduleEnabled(shop.settings, PASSKEY_MODULE) && can(access, "admin") ? (
+              <form method="post" action={`${self}/passkeys/reset`} onsubmit={`return confirm(${JSON.stringify(t("passkey.admin_reset_confirm"))})`}>
+                <p>
+                  <button type="submit" class="secondary small">
+                    {t("passkey.admin_reset")}
+                  </button>
+                </p>
+              </form>
+            ) : null}
+            {moduleEnabled(shop.settings, FAVORITES_MODULE) ? (
+              <p>
+                <a href={`${self}/favorites`}>{t("customers.favorites")}</a>
+              </p>
+            ) : null}
+            <form method="post" action={`${self}/delete`} onsubmit={`return confirm(${JSON.stringify(t("customers.delete_confirm"))})`}>
+              <p>
+                <button type="submit" class="danger">
+                  {t("customers.delete")}
+                </button>
+              </p>
+            </form>
+          </section>
+        </aside>
+      </div>
+    </AdminLayout>,
+  );
+});
+
+/** 社内メモ（0133 の customer_set_note。項目 customers） */
+customers.post("/:shopId/customers/:customerId/note", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const customerId = param(c, "customerId");
+  if (!(await loadShop(c, shopId, "customers")) || !UUID_RE.test(customerId)) return c.text(t("shop.not_found"), 404);
+  const note = (await formFields(c)).note ?? "";
+  const self = customerPath(shopId, customerId);
+  try {
+    await db.rpc("customer_set_note", { p_shop_id: shopId, p_customer_id: customerId, p_note: note });
+  } catch (e) {
+    if (e instanceof DbError && /note_too_long/.test(e.message)) return c.redirect(`${self}?error=note_too_long`);
+    if (e instanceof DbError && /customer_not_found/.test(e.message)) return c.redirect(`/admin/shops/${shopId}/customers?flash=deleted`);
+    throw e;
+  }
+  return c.redirect(`${self}?flash=note_saved`);
 });
 
 /** 会員のお気に入り（同梱モジュール favorites、0123）。読めるのは項目 customers（RLS）。新しい順 */
@@ -319,14 +537,17 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const { fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS });
-  const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key)];
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const [stats, sortable] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION)]);
+  const { fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS, stats, sortable });
+  const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key), ...(stats ? ["orders_count", "total_spent_jpy", "last_order_at", "note"] : [])];
   const lines = rows.map((r) => {
     const a = (r.default_address ?? {}) as Record<string, unknown>;
     const ref = externalRef(r.external_ref);
     const attrs = r.attributes && typeof r.attributes === "object" ? r.attributes : {};
     const consentCols = [r.marketing_consent === true ? "yes" : r.marketing_consent === false ? "no" : "", r.marketing_consent_at ? formatDateTime(r.marketing_consent_at) : "", r.marketing_consent_source ?? ""];
-    return [r.id, r.email, r.name, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], formatDateTime(r.created_at), r.last_login_at ? formatDateTime(r.last_login_at) : "", ...consentCols, ref?.provider ?? "", ref?.id ?? "", ...fields.map((f) => attrs[f.key] ?? "")].map(csvCell).join(",");
+    const statCols = stats ? [r.orders_count ?? 0, r.total_spent_jpy ?? 0, r.last_order_at ? formatDateTime(r.last_order_at) : "", r.note ?? ""] : [];
+    return [r.id, r.email, r.name, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], formatDateTime(r.created_at), r.last_login_at ? formatDateTime(r.last_login_at) : "", ...consentCols, ref?.provider ?? "", ref?.id ?? "", ...fields.map((f) => attrs[f.key] ?? ""), ...statCols].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n";
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="customers-${shop.slug}.csv"`, "Cache-Control": "no-store" });
@@ -338,8 +559,8 @@ customers.post("/:shopId/customers/:customerId/attributes", requireOwner, async 
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const back = `/admin/shops/${shopId}/customers${c.req.url.includes("?") ? `?${c.req.url.split("?")[1]}` : ""}`;
-  const sep = back.includes("?") ? "&" : "?";
+  const back = customerPath(shopId, param(c, "customerId"));
+  const sep = "?";
   const body = await c.req.parseBody();
   const form: Record<string, string | undefined> = {};
   for (const [k, val] of Object.entries(body)) if (typeof val === "string") form[k] = val;
@@ -348,7 +569,7 @@ customers.post("/:shopId/customers/:customerId/attributes", requireOwner, async 
     await db.rpc("customer_set_attributes", { p_shop_id: shopId, p_customer_id: param(c, "customerId"), p_values: values });
   } catch (e) {
     if (e instanceof DbError && /invalid_attribute/.test(e.message)) return c.redirect(`${back}${sep}error=attributes_invalid`);
-    if (e instanceof DbError && /customer_not_found/.test(e.message)) return c.redirect(`${back}${sep}flash=deleted`);
+    if (e instanceof DbError && /customer_not_found/.test(e.message)) return c.redirect(`/admin/shops/${shopId}/customers?flash=deleted`);
     throw e;
   }
   return c.redirect(`${back}${sep}flash=attributes_saved`);
@@ -360,8 +581,8 @@ customers.post("/:shopId/customers/:customerId/consent/withdraw", requireOwner, 
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const back = `/admin/shops/${shopId}/customers${c.req.url.includes("?") ? `?${c.req.url.split("?")[1]}` : ""}`;
-  const sep = back.includes("?") ? "&" : "?";
+  const back = customerPath(shopId, param(c, "customerId"));
+  const sep = "?";
   await db.rpc("customer_marketing_consent_withdraw", { p_shop_id: shopId, p_customer_id: param(c, "customerId") });
   return c.redirect(`${back}${sep}flash=consent_withdrawn`);
 });
@@ -385,8 +606,8 @@ customers.post("/:shopId/customers/:customerId/email", requireOwner, async (c: A
   try {
     changed = await db.rpc("member_set_email", { p_shop_id: shopId, p_customer_id: param(c, "customerId"), p_email: email });
   } catch (e) {
-    if (e instanceof DbError && /email_taken/.test(e.message)) return c.redirect(`/admin/shops/${shopId}/customers?error=email_taken`);
-    if (e instanceof DbError && /invalid_email/.test(e.message)) return c.redirect(`/admin/shops/${shopId}/customers?error=email_invalid`);
+    if (e instanceof DbError && /email_taken/.test(e.message)) return c.redirect(`${customerPath(shopId, param(c, "customerId"))}?error=email_taken`);
+    if (e instanceof DbError && /invalid_email/.test(e.message)) return c.redirect(`${customerPath(shopId, param(c, "customerId"))}?error=email_invalid`);
     throw e;
   }
   // 前後のアドレスに知らせる（送れなくても変更は済んでいる。送信元はメール通知プラグインの設定）
@@ -402,7 +623,7 @@ customers.post("/:shopId/customers/:customerId/email", requireOwner, async (c: A
       await sendMail(mailer, { ...notice, to }).catch(() => undefined);
     }
   }
-  return c.redirect(`/admin/shops/${shopId}/customers?flash=email_changed`);
+  return c.redirect(`${customerPath(shopId, param(c, "customerId"))}?flash=email_changed`);
 });
 
 /** 会員のパスキーを全部消す（0046 の member_passkeys_reset。0055 からは owner / admin だけ。メールアドレスの変更と同じ線） */
@@ -412,5 +633,5 @@ customers.post("/:shopId/customers/:customerId/passkeys/reset", requireOwner, as
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   await db.rpc("member_passkeys_reset", { p_shop_id: shopId, p_customer_id: param(c, "customerId") });
-  return c.redirect(`/admin/shops/${shopId}/customers?flash=passkeys_reset`);
+  return c.redirect(`${customerPath(shopId, param(c, "customerId"))}?flash=passkeys_reset`);
 });
