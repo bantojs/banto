@@ -45,6 +45,15 @@ describe("ショップの行の保存（settings の項目が無い member）", 
     expect(settings()["oauth"]).toBeUndefined();
   });
 
+  it("LINE ログインのチャネルを integrations だけの人が保存し直しても、友だち追加の設定は残る（0131 から DB が残す）", async () => {
+    const { sb, shop, member, settings } = setup();
+    sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] = { ...settings(), oauth: { line: { client_id: "old", bot_prompt: "aggressive" } } };
+    const b = await member("integ@example.com", ["integrations"]);
+    const res = await b.post(`/admin/shops/${shop.id}/modules/line-login`, { client_id: "1650000000", client_secret: "secret-value" });
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/modules/line-login?flash=saved`);
+    expect(settings()["oauth"]).toEqual({ line: { client_id: "1650000000", bot_prompt: "aggressive" } });
+  });
+
   it("WooCommerce の項目の取り込み（catalog だけ）: 403 で止める", async () => {
     const { shop, member, settings } = setup();
     const b = await member("catalog@example.com", ["catalog"]);

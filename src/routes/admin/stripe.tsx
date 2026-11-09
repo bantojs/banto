@@ -7,7 +7,7 @@ import { openJson, sealJson } from "../../util/signed";
 import { owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
-import { updateShop } from "./shop-save";
+import { failCode, updateShop } from "./shop-save";
 import { can } from "./access";
 
 /**
@@ -81,11 +81,18 @@ stripe.post("/shops/:shopId/stripe/disconnect", requireOwner, async (c: AdminCon
   // 接続先は shops の行の列なので settings の項目も要る（RLS、0024）。先に確かめないと、Stripe 側だけ解除して Banto に残る
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop || !can(c.get("shopAccess"), "settings")) return c.text("not found", 404);
+  const back = `/admin/shops/${shopId}/settings/payments`;
+  // Banto の接続先を先に消す。消せなければ Stripe は呼ばない（Stripe 側だけ解除されて Banto に残る形にしない）
+  try {
+    await updateShop(c, shopId, { stripe_account_id: null });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${back}?flash=${failCode(e)}`);
+    throw e;
+  }
   const client = stripeClient(c);
   if (shop.stripe_account_id && client) {
-    // Stripe 側の解除に失敗しても、こちらの接続情報は消す（再接続すれば整合する）
+    // Stripe 側の解除に失敗しても、こちらの接続情報は消したまま（再接続すれば整合する）
     await client.deauthorize(shop.stripe_account_id).catch(() => undefined);
   }
-  await updateShop(c, shopId, { stripe_account_id: null });
-  return c.redirect(`/admin/shops/${shopId}/settings/payments?flash=stripe_disconnected`);
+  return c.redirect(`${back}?flash=stripe_disconnected`);
 });

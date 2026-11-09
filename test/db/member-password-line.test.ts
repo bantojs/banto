@@ -179,6 +179,14 @@ describe.skipIf(!dbAvailable)("会員のパスワード（0013）と LINE ログ
     expect((await getPool().query("select settings->'oauth' as o from shops where id = $1", [f.shopId])).rows[0].o).toEqual({});
   });
 
+  it("提供元を保存し直しても、ほかの設定（LINE の友だち追加）は残す（0131）", async () => {
+    await getPool().query(`update shops set settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{oauth}', '{"line": {"client_id": "old", "bot_prompt": "aggressive"}}'::jsonb) where id = $1`, [f.shopId]);
+    await asUser(f.ownerId, (c) => c.query("select shop_oauth_client_save($1, 'line', ' 1650000000 ', 'v1.aaaa.bbbb')", [f.shopId]));
+    expect((await getPool().query("select settings->'oauth' as o from shops where id = $1", [f.shopId])).rows[0].o).toEqual({ line: { client_id: "1650000000", bot_prompt: "aggressive" } });
+    await asUser(f.ownerId, (c) => c.query("select shop_oauth_client_delete($1, 'line')", [f.shopId]));
+    expect((await getPool().query("select settings->'oauth' as o from shops where id = $1", [f.shopId])).rows[0].o).toEqual({});
+  });
+
   it("Google の結びつけ: line と google は別々に持てる", async () => {
     const m = (await getPool().query("select id, session_epoch from customers where email = 'plain@example.com'")).rows[0];
     const r = await asService(async (c) => (await c.query<{ r: R }>("select member_oauth_login($1, 'google', 'G-plain', 'plain@example.com', true, null, null) as r", [f.shopId])).rows[0]!.r);

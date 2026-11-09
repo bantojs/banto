@@ -2184,7 +2184,7 @@ export class FakeSupabase {
     }
     if (fn === "shop_oauth_client_save" || fn === "shop_oauth_client_delete") {
       const shopId = String(args["p_shop_id"]);
-      if (!this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      if (!this.ownedShopIds(uid).has(shopId) && !this.memberPerms(uid, shopId).includes("integrations")) return json({ code: "42501", message: "shop_not_found" }, 403);
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
       const settings = { ...((shop["settings"] ?? {}) as Row) };
       const oauth = { ...((settings["oauth"] ?? {}) as Row) };
@@ -2200,7 +2200,9 @@ export class FakeSupabase {
         const row = { shop_id: shopId, provider, client_id: clientId, secret_box: args["p_secret_box"] ?? this.oauthClients[i]!["secret_box"] };
         if (i >= 0) this.oauthClients[i] = row;
         else this.oauthClients.push(row);
-        oauth[provider] = { client_id: clientId };
+        // 0131 からはほかの鍵（友だち追加の設定）を残す
+        const keep = this.appliedMigrations.includes("0131_oauth_client_keep_settings") && oauth[provider] && typeof oauth[provider] === "object" ? (oauth[provider] as Row) : {};
+        oauth[provider] = { ...keep, client_id: clientId };
       }
       settings["oauth"] = oauth;
       shop["settings"] = settings;
