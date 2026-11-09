@@ -153,6 +153,7 @@ export const en: Record<MessageKey, string> = {
   "product.brand": "Brand",
   "product.fields": "Custom fields",
   "product.section_basic": "Basics",
+  "settings.not_saved": "Not saved. Changing shop settings requires the Shop settings permission.",
   "settings.tab_general": "Basics and legal",
   "settings.tab_shipping": "Shipping and tax",
   "settings.tab_payments": "Payments",

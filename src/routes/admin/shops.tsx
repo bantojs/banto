@@ -33,6 +33,22 @@ import { AutocheckHint, AutocheckScript, autocheckAttrs } from "./autocheck";
 export const shops = new Hono<AppEnv>();
 
 /**
+ * shops の行を更新する。member の更新は RLS（0024 の shops_member_update）が settings の項目を求め、足りないと
+ * PostgREST は 0 行・エラーなしで終える。それを「保存しました」と出さないように、0 行なら NotSaved を投げる
+ */
+class NotSaved extends DbError {
+  constructor() {
+    super("shop_not_updated", 403, "42501");
+  }
+}
+async function updateShop(c: AdminContext, shopId: string, values: Partial<ShopRow>): Promise<void> {
+  const rows = await owner(c).db.from<ShopRow>("shops").update(values, { id: shopId });
+  if (rows.length === 0) throw new NotSaved();
+}
+/** 保存の失敗の flash（権限が足りず 0 行なら not_saved） */
+const failCode = (e: DbError) => (e instanceof NotSaved ? "not_saved" : "generic");
+
+/**
  * 管理対象のショップ。自分が触れるショップで、perm の権限の項目を持つときだけ返す（無ければ null = 404）。
  * id だけで引かない（RLS の公開ポリシーにより、他人の「公開中」ショップも SELECT できてしまうため）。
  * perm: 権限の項目、"admin" = 組織の owner / admin、"any" = 何か 1 つでも持つ。自分の権限は c.get("shopAccess") に入る
@@ -50,6 +66,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     saved: "shop.saved",
     publish_blocked: "shop.publish_blocked",
     generic: "error.generic",
+    not_saved: "settings.not_saved",
     shipping_saved: "shipping.saved",
     theme_saved: "theme.saved",
     terms_saved: "terms.saved",
@@ -204,6 +221,8 @@ const SECTION_PERM: Record<SettingsSection, ShopPerm | "admin"> = {
 };
 function sectionAllowed(access: ShopAccess | undefined, section: SettingsSection): boolean {
   if (section === "members") return can(access, "admin") || can(access, "integrations");
+  // shops の行の更新は、鍵ごとの項目の前に RLS が settings を求める（0024 の shops_member_update）
+  if (section === "headless" || section === "legal-links") return can(access, "settings") && can(access, "integrations");
   return can(access, SECTION_PERM[section]);
 }
 
@@ -823,12 +842,14 @@ shops.get("/:shopId/settings/:section", requireOwner, (c: AdminContext) => {
 });
 shops.get("/:shopId/fields", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "catalog");
-  if (!shop) return c.text(t("shop.not_found"), 404);
+  // 定義は shops の行に置くので、settings の項目も要る（RLS、0024）
+  if (!shop || !can(c.get("shopAccess"), "settings")) return c.text(t("shop.not_found"), 404);
   return c.html(<FieldsPage shop={shop} access={c.get("shopAccess")} kind="product" flash={flash(c.req.query("flash"))} />);
 });
 shops.get("/:shopId/customer-fields", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "customers");
-  if (!shop) return c.text(t("shop.not_found"), 404);
+  // 定義は shops の行に置くので、settings の項目も要る（RLS、0024）
+  if (!shop || !can(c.get("shopAccess"), "settings")) return c.text(t("shop.not_found"), 404);
   return c.html(<FieldsPage shop={shop} access={c.get("shopAccess")} kind="customer" flash={flash(c.req.query("flash"))} />);
 });
 
@@ -862,7 +883,6 @@ async function imageConverterConnected(c: AdminContext, shopId: string): Promise
 }
 
 shops.post("/:shopId", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -885,12 +905,12 @@ shops.post("/:shopId", requireOwner, async (c: AdminContext) => {
     values.settings = { ...(shop.settings ?? {}), contact_email: contact && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contact) ? contact : null };
   }
   try {
-    await db.from<ShopRow>("shops").update(values, { id: shopId });
+    await updateShop(c, shopId, values);
   } catch (e) {
     if (e instanceof DbError && /shops_publish_requires_legal/.test(e.message)) {
       return c.redirect(`/admin/shops/${shopId}?flash=publish_blocked`);
     }
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shopId}?flash=saved`);
@@ -898,7 +918,6 @@ shops.post("/:shopId", requireOwner, async (c: AdminContext) => {
 
 /** 配送と税（shops.settings に保存） */
 shops.post("/:shopId/shipping", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -928,9 +947,9 @@ shops.post("/:shopId/shipping", requireOwner, async (c: AdminContext) => {
     tax_rounding: taxRoundingOf(f.tax_rounding),
   };
   try {
-    await db.from<ShopRow>("shops").update({ settings }, { id: shopId });
+    await updateShop(c, shopId, { settings });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "shipping")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "shipping")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "shipping")}?flash=shipping_saved`);
@@ -938,7 +957,6 @@ shops.post("/:shopId/shipping", requireOwner, async (c: AdminContext) => {
 
 /** 会員機能・パスワード・案内メールの同意の欄（鍵は owner / admin の項目、0129） */
 shops.post("/:shopId/members", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -950,9 +968,9 @@ shops.post("/:shopId/members", requireOwner, async (c: AdminContext) => {
     marketing_consent: f.marketing_consent === "on",
   };
   try {
-    await db.from<ShopRow>("shops").update({ settings }, { id: shopId });
+    await updateShop(c, shopId, { settings });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "members")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "members")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "members")}?flash=saved`);
@@ -960,7 +978,6 @@ shops.post("/:shopId/members", requireOwner, async (c: AdminContext) => {
 
 /** 商品画像の本画像の横幅と、変換をだれがするか（これから上げる画像から。src/media/variants.ts、0091・0092） */
 shops.post("/:shopId/images", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -973,9 +990,9 @@ shops.post("/:shopId/images", requireOwner, async (c: AdminContext) => {
     ...(f.image_processing !== undefined ? { processing: f.image_processing === "plugin" ? "plugin" : "browser" } : {}),
   };
   try {
-    await db.from<ShopRow>("shops").update({ settings: { ...current, images } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...current, images } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "images")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "images")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "images")}?flash=saved`);
@@ -983,7 +1000,6 @@ shops.post("/:shopId/images", requireOwner, async (c: AdminContext) => {
 
 /** 購入前の確認画面に出す内容（shops.settings.checkout_terms。src/commerce/checkout.ts が読む） */
 shops.post("/:shopId/terms", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -991,9 +1007,9 @@ shops.post("/:shopId/terms", requireOwner, async (c: AdminContext) => {
   const clean = (v: string | undefined) => (v ?? "").replace(/\r\n/g, "\n").trim().slice(0, 2000);
   const checkout_terms = { delivery: clean(f.delivery), cancellation: clean(f.cancellation), payment_note: clean(f.payment_note) };
   try {
-    await db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), checkout_terms } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), checkout_terms } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "terms")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "terms")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "terms")}?flash=terms_saved`);
@@ -1001,16 +1017,15 @@ shops.post("/:shopId/terms", requireOwner, async (c: AdminContext) => {
 
 /** カスタム項目の定義（shops.settings.product_fields。値は products.attributes。src/products/fields.ts） */
 shops.post("/:shopId/fields", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   const product_fields = parseFieldDefinitions(f.definitions ?? "");
   try {
-    await db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), product_fields } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), product_fields } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/fields?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/fields?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shopId}/fields?flash=fields_saved`);
@@ -1021,16 +1036,15 @@ shops.post("/:shopId/fields", requireOwner, async (c: AdminContext) => {
  * 値は外部の顧客マスタが AI 用トークンの API で写す（向きは外部 → Banto）。定義に無い鍵は SQL が受け付けない
  */
 shops.post("/:shopId/customer-fields", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   const customer_fields = parseCustomerFieldDefinitions(f.definitions ?? "");
   try {
-    await db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), customer_fields } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), customer_fields } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/customer-fields?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/customer-fields?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shopId}/customer-fields?flash=customer_fields_saved`);
@@ -1041,7 +1055,6 @@ shops.post("/:shopId/customer-fields", requireOwner, async (c: AdminContext) => 
  * Banto 自身のホスト名は付けられない（管理画面や他のショップまでそのショップになってしまうため）。
  */
 shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -1065,13 +1078,13 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
     }
   }
   try {
-    await db.from<ShopRow>("shops").update({ domain }, { id: shopId });
+    await updateShop(c, shopId, { domain });
   } catch (e) {
     // 提供元には登録したのに Banto 側で保存できなかった → 提供元の登録を戻す（失敗しても画面の結果は変えない）
     if (provider && domain && domain !== previous) await provider.detach(domain, ref).catch(() => undefined);
     if (e instanceof DbError && (e.code === "23505" || /shops_domain_key/.test(e.message))) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_taken`);
     if (e instanceof DbError && (e.code === "23514" || /shops_domain_format/.test(e.message))) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_invalid`);
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "domain")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "domain")}?flash=${failCode(e)}`);
     throw e;
   }
   // 外した・変えた: 前のドメインの登録を提供元から消す（失敗しても Banto 側の設定は戻さない）
@@ -1081,9 +1094,8 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
 
 /** お店の画面の使い方（shops.settings.storefront、0041。src/storefront/mode.ts）。分析（GA4）は同梱モジュール ga4 の画面で */
 shops.post("/:shopId/storefront", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
-  const shop = await loadShop(c, shopId, "settings");
+  const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   const mode = (STOREFRONT_MODES as readonly string[]).includes(f.mode ?? "") ? f.mode! : "full";
@@ -1096,9 +1108,9 @@ shops.post("/:shopId/storefront", requireOwner, async (c: AdminContext) => {
   const current = shop.settings ?? {};
   const settings: Record<string, unknown> = { ...current, storefront: { mode, site_url: siteUrl, product_url: productUrl } };
   try {
-    await db.from<ShopRow>("shops").update({ settings }, { id: shopId });
+    await updateShop(c, shopId, { settings });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "storefront")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "storefront")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "storefront")}?flash=storefront_saved`);
@@ -1106,7 +1118,6 @@ shops.post("/:shopId/storefront", requireOwner, async (c: AdminContext) => {
 
 /** ヘッドレス連携（shops.settings.headless）。決済後の戻り先として許可するオリジン、信頼する中継元の IP、IP ごとの上限（0033） */
 shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -1140,9 +1151,9 @@ shops.post("/:shopId/headless", requireOwner, async (c: AdminContext) => {
   if (f.login_per_ip_per_hour !== undefined) settings.members_login_limits = { ...section(current.members_login_limits), per_ip_per_hour: limit(f.login_per_ip_per_hour, 30) };
   if (f.order_lookup_per_ip_per_hour !== undefined) settings.order_lookup = { ...section(current.order_lookup), per_ip_per_hour: limit(f.order_lookup_per_ip_per_hour, 20) };
   try {
-    await db.from<ShopRow>("shops").update({ settings }, { id: shopId });
+    await updateShop(c, shopId, { settings });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "headless")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "headless")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "headless")}?flash=headless_saved`);
@@ -1162,7 +1173,6 @@ async function recordLegalLinks(c: AdminContext, shop: ShopRow, urls: Partial<Re
 
 /** 法務のページの外の URL（shops.settings.headless.legal_links、0062）。https で、決済後の戻り先として許可したサイトだけ */
 shops.post("/:shopId/legal-links", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -1178,10 +1188,10 @@ shops.post("/:shopId/legal-links", requireOwner, async (c: AdminContext) => {
   const hours = Number(f.check_hours);
   const headless = { ...((current.headless ?? {}) as Record<string, unknown>), legal_links: { ...urls, check_hours: (LEGAL_CHECK_HOURS as readonly number[]).includes(hours) ? hours : 24 } };
   try {
-    await db.from<ShopRow>("shops").update({ settings: { ...current, headless } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...current, headless } });
     await recordLegalLinks(c, shop, urls);
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "legal-links")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "legal-links")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "legal-links")}?flash=legal_links_saved`);
@@ -1194,7 +1204,7 @@ shops.post("/:shopId/legal-links/check", requireOwner, async (c: AdminContext) =
   try {
     await recordLegalLinks(c, shop, legalLinksOf(shop.settings).urls);
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "legal-links")}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "legal-links")}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${settingsPath(shopId, "legal-links")}?flash=legal_links_checked`);
@@ -1202,7 +1212,6 @@ shops.post("/:shopId/legal-links/check", requireOwner, async (c: AdminContext) =
 
 /** テーマ設定（既定テーマが解釈する。独自テーマは好きなキーを使ってよい） */
 shops.post("/:shopId/theme", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -1216,9 +1225,9 @@ shops.post("/:shopId/theme", requireOwner, async (c: AdminContext) => {
     logo_url: /^https:\/\//.test(logo) ? logo : "",
   };
   try {
-    await db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), theme_settings } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), theme_settings } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/design?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/design?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shopId}/design?flash=theme_saved`);

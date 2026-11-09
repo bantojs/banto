@@ -318,13 +318,13 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
         subs: [
           page("products", "/products", "product.list", "catalog"),
           page("categories", "/categories", "category.title", "catalog"),
-          page("product-fields", "/fields", "fields.title", "catalog"),
+          page("product-fields", "/fields", "fields.title", "catalog+settings"),
           mod("size-charts", "size_charts", "sizechart.title"),
           mod("care-labels", "care_labels", "mod.care_labels.name"),
           mod("woo-import", "woo_import", "mod.woo_import.name"),
         ],
       },
-      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), page("customer-fields", "/customer-fields", "customer_fields.title", "customers"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices")] },
+      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), page("customer-fields", "/customer-fields", "customer_fields.title", "customers+settings"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices")] },
       { label: "mod.inquiries.name", subs: [mod("inquiries", "inquiries", "mod.inquiries.name")] },
       { label: "mod.store_tryon.name", subs: [mod("store-tryon", "store_tryon", "mod.store_tryon.name")] },
     ],
@@ -420,11 +420,11 @@ function SubTabs(props: { tabs: ShopTabs; here: ShopHere | undefined }) {
   );
 }
 
-/** perm: 権限の項目（"a|b" はどれか 1 つ）、"admin" = 組織の owner / admin、"any" = だれでも */
+/** perm: 権限の項目（"a|b" はどれか 1 つ、"a+b" は両方）、"admin" = 組織の owner / admin、"any" = だれでも */
 function tabAllowed(access: ShopTabs["access"], perm: string): boolean {
   if (!access) return true;
   if (perm === "any") return true;
-  return access.role === "owner" || access.role === "admin" || perm.split("|").some((p) => access.perms.includes(p));
+  return access.role === "owner" || access.role === "admin" || perm.split("|").some((alt) => alt.split("+").every((p) => access.perms.includes(p)));
 }
 
 /**

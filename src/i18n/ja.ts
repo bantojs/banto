@@ -152,6 +152,7 @@ export const ja = {
   "product.brand": "ブランド",
   "product.fields": "カスタム項目",
   "product.section_basic": "基本情報",
+  "settings.not_saved": "保存できませんでした。ショップの設定を変えるには「ショップ設定」の項目が要ります。",
   "settings.tab_general": "基本と法定表記",
   "settings.tab_shipping": "配送と税",
   "settings.tab_payments": "決済",

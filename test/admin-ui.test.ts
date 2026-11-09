@@ -139,6 +139,21 @@ describe("管理画面の共通の見た目", () => {
     expect(m).toContain("ログインの方法");
     expect(m).not.toContain('name="members_enabled"');
     expect((await integ.post(`${base}/members`, { members_enabled: "on" })).status).toBe(404);
+    // ヘッドレス・法務のページは shops の行の更新なので settings も要る（RLS の shops_member_update、0024）。開けない
+    expect((await integ.get(`${base}/settings/headless`)).status).toBe(404);
+    expect((await integ.get(`${base}/settings/legal-links`)).status).toBe(404);
+    // 直接送っても、RLS で 0 行になったら「保存しました」と言わない
+    const res = await integ.post(`${base}/headless`, { return_origins: "https://wp.example.com" });
+    expect(res.headers.get("location")).toBe(`${base}/settings/headless?flash=not_saved`);
+    expect((sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] as Record<string, unknown>)["headless"]).toBeUndefined();
+    expect(await (await settings.get(`${base}?flash=not_saved`)).text()).toContain("保存できませんでした");
+    // 独自項目の定義も同じ: catalog だけの人には画面とタブを出さず、送っても保存しない
+    const catalog = await member("catalog@example.com", ["catalog"]);
+    expect((await catalog.get(`${base}/fields`)).status).toBe(404);
+    expect(await (await catalog.get(`${base}/products`)).text()).not.toContain(`href="${base}/fields"`);
+    expect((await catalog.post(`${base}/fields`, { definitions: "material | 素材 | text" })).headers.get("location")).toBe(`${base}/fields?flash=not_saved`);
+    const both = await member("both@example.com", ["catalog", "settings"]);
+    expect(await (await both.get(`${base}/products`)).text()).toContain(`href="${base}/fields"`);
   });
 
   it("商品の一覧: 名前・スラッグの部分一致と公開の状態で DB で絞る", async () => {
