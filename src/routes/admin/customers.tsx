@@ -24,6 +24,7 @@ import { migrated } from "../../db/migration-state";
 import { UUID_RE } from "../../util/cursor";
 import { yen } from "../common";
 import type { MessageKey } from "../../i18n";
+import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 
 /**
  * 会員一覧・削除（退会依頼への対応）・メールアドレスの変更（メールを失った会員の救済）。/admin/shops/:shopId/customers
@@ -122,7 +123,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [stats, sortable] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION)]);
+  const [stats, sortable, viewsOn] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION), migrated(deps, VIEWS_MIGRATION)]);
   const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, stats, sortable, ...(after ? { after } : {}) });
   const { fields, params, filtered } = list;
   const page = splitPage(list.rows, (r) => r.created_at);
@@ -160,6 +161,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </div>
       ) : (
         <>
+          <ViewTabs shopId={shop.id} screen="customers" views={viewsOf(shop.settings, "customers")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
           <SearchBar action={base} q={params["q"] ?? ""} placeholder={t("customers.search_placeholder")} sortable={sortable} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
             {fields.length > 0 ? (
               <>

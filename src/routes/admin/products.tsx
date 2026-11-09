@@ -30,6 +30,7 @@ import { optionLabel, optionNamesOf, type OptionNames } from "../../products/opt
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
+import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 
 export const products = new Hono<AppEnv>();
 
@@ -152,6 +153,9 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
     return null;
   });
   const filtered = Boolean(q || chips.length > 0 || after);
+  // 保存したビュー（0135）
+  const viewsOn = await migrated({ db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
+  const savedViews = viewsOf(shop.settings, "products");
   const listBase = searchHref(base, params);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("product.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
@@ -164,6 +168,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         </a>
       </PageHead>
       <Flash flash={flash(c.req.query("flash"))} />
+      {rows.length > 0 || filtered || savedViews.length > 0 ? <ViewTabs shopId={shop.id} screen="products" views={savedViews} current={params} enabled={viewsOn} error={c.req.query("view_error")} /> : null}
       {rows.length > 0 || filtered ? (
         <SearchBar action={base} q={q} placeholder={t(extended ? "search.products_placeholder" : "product.search")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
           <label>

@@ -24,6 +24,7 @@ import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier, normalizeTracking, 
 import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/tags";
 import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
 import { migrated } from "../../db/migration-state";
+import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 
 export const orders = new Hono<AppEnv>();
 
@@ -165,6 +166,8 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const query = listHref.slice(base.length);
   const tagHref = (v: string) => searchHref(base, { ...params, q: "", tag: v });
   const chips = searchChips(base, params, orderChipLabel);
+  // 保存したビュー（0135）
+  const viewsOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead title={t("order.list")}>
@@ -172,6 +175,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("order.csv")}
         </a>
       </PageHead>
+      <ViewTabs shopId={shop.id} screen="orders" views={viewsOf(shop.settings, "orders")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
       <SearchBar action={base} q={params["q"] ?? ""} placeholder={t(extended ? "search.orders_placeholder" : "order.search_placeholder")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
         <label>
           {t("order.status")}

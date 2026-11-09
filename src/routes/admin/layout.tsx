@@ -177,6 +177,19 @@ td:first-child>a:hover{text-decoration:underline}
 .toolbar input[type=search],.toolbar input[type=text],.toolbar select{width:auto;min-width:14rem;max-width:100%;min-height:36px;padding:.35rem .7rem}
 .toolbar select{min-width:9rem}
 .toolbar .count{margin-left:auto;color:var(--fg-muted);font-size:.85rem}
+/* 一覧のビュー（src/routes/admin/views.tsx）: 保存した条件のタブ */
+.views{margin:0 0 .6rem}
+.viewtabs{display:flex;gap:.2rem;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:.6rem}
+.viewtabs a{padding:.45rem .8rem;font-size:.875rem;color:var(--fg-muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.viewtabs a[aria-current=page]{color:var(--fg);border-bottom-color:var(--fg);font-weight:600}
+.views .view-save,.views .view-save summary{display:inline-block;margin:0;padding:0;border:0;background:none;box-shadow:none;font-size:.85rem;color:var(--accent,#0a66c2);cursor:pointer}
+.views .view-save[open]{display:block}
+.views .view-save form{display:flex;gap:.5rem;align-items:end;flex-wrap:wrap;margin-top:.4rem}
+.views .view-save input{width:auto;min-width:14rem;margin:0}
+.views .view-save label{display:flex;flex-direction:column;gap:.2rem;margin:0;font-size:.8rem;color:var(--fg-muted)}
+.views .view-save p{margin:0;flex-basis:100%}
+.views .view-delete{display:inline-block;margin:0 0 0 .5rem}
+.views .view-delete button{background:none;border:0;box-shadow:none;color:var(--fg-muted);padding:0;height:auto;min-height:0;font-size:.85rem;text-decoration:underline;cursor:pointer}
 /* 一覧の検索（src/routes/admin/search.tsx）: キーワード・並び・＋ 条件・チップ */
 .search{margin:0 0 1rem}
 .search-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}

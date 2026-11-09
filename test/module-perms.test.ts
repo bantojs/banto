@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith, externalHosts } from "./helpers";
@@ -36,8 +36,11 @@ async function staff(sb: FakeSupabase, app: ReturnType<typeof appWith>, shopId: 
 describe("同梱モジュールの管理画面の権限（近道と画面の入口）", () => {
   const withPage = MODULES.filter((m) => m.adminPath);
 
-  it("モジュールの権限の項目は、DB の対応表（0129 の banto_shop_settings_perm、ON / OFF を書ける人）と同じ", () => {
-    const sql = readFileSync(new URL("../supabase/migrations/0129_security_hardening_5.sql", import.meta.url), "utf8");
+  it("モジュールの権限の項目は、DB の対応表（banto_shop_settings_perm の最新の定義、ON / OFF を書ける人）と同じ", () => {
+    // 最後に定義し直したマイグレーション（0129 → 0135）を読む
+    const dir = new URL("../supabase/migrations/", import.meta.url);
+    const latest = readdirSync(dir).filter((f) => f.endsWith(".sql") && readFileSync(new URL(f, dir), "utf8").includes("create or replace function banto_shop_settings_perm")).sort().at(-1)!;
+    const sql = readFileSync(new URL(latest, dir), "utf8");
     const body = sql.slice(sql.indexOf("when p_key = 'modules' then case p_module"), sql.indexOf("else null end"));
     const db = new Map([...body.matchAll(/when '([a-z_]+)' then '([a-z_]+)'/g)].map((m) => [m[1]!, m[2]!]));
     // 表に無いモジュールは settings の項目だけでよい（null）

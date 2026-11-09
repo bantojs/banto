@@ -19,6 +19,10 @@ import { yen } from "../../routes/common";
 import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } from "./attachments";
 import { BODY_MAX, INQUIRIES_MODULE, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
 import { failCode, updateShop } from "../../routes/admin/shop-save";
+import type { Filter } from "../../db/client";
+import { migrated } from "../../db/migration-state";
+import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "../../routes/admin/views";
+import { SearchBar, searchChips, type SearchParams } from "../../routes/admin/search";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -103,9 +107,16 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const filter = (FILTERS as readonly string[]).includes(c.req.query("status") ?? "") ? c.req.query("status")! : "open";
   const assignees = await assigneesFor(c, shop);
   const who = assignees && (ASSIGNEE_FILTERS as readonly string[]).includes(c.req.query("assignee") ?? "") ? c.req.query("assignee")! : "all";
+  // キーワード（検索の形は注文・商品・会員と同じ、src/routes/admin/search.tsx）: #番号・番号はお問い合わせの番号か名乗った注文番号、ほかは連絡先のメール・名前の部分一致
+  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
+  const num = /^#?\d{1,9}$/.test(q) ? Number(q.replace(/^#/, "")) : null;
+  const where: Filter[] = q
+    ? [num !== null ? { or: [{ col: "number", op: "eq", value: num }, { col: "claimed_order_number", op: "eq", value: num }] } : { or: [{ col: "contact_email", op: "contains", value: q }, { col: "contact_name", op: "contains", value: q }] }]
+    : [];
   const eq: Record<string, string | null> = { shop_id: shop.id, ...((INQUIRY_STATUSES as readonly string[]).includes(filter) ? { status: filter } : {}), ...(who === "mine" ? { assignee_id: owner(c).session.user_id } : who === "none" ? { assignee_id: null } : {}) };
   const rows = await owner(c).db.from<Row>("inquiries").select(`id,number,status,category,contact_email,contact_name,email_verified_at,order_id,claimed_order_number,last_message_at,created_at${assignees ? ",assignee_id" : ""}`, {
     eq,
+    where,
     ...(filter === "open" ? { in: { status: ["waiting_shop", "waiting_customer"] } } : {}),
     order: "last_message_at.desc",
     limit: 200,
@@ -113,33 +124,43 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const list = filter === "unverified" ? rows.filter((r) => !r.email_verified_at) : rows;
   const labelOf = new Map((assignees ?? []).map((a) => [a.user_id, a.label]));
   const s = inquirySettings(shop.settings);
+  // 条件（既定の「対応中」と「全員」は条件にしない）・チップ・保存したビュー（0135）
+  const params: SearchParams = { q, status: filter === "open" ? "" : filter, assignee: who === "all" ? "" : who };
+  const chips = searchChips(base(shop), params, (name, value) => {
+    if (name === "status") return `${t("inq.status")}: ${t(`inq.filter_${value}` as MessageKey)}`;
+    if (name === "assignee") return `${t("inq.assignee")}: ${t(`inq.assignee_filter_${value}` as MessageKey)}`;
+    return null;
+  });
+  const viewsOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("mod.inquiries.name")}`} nav crumbs={crumbs(shop)} shopTabs={tabs(c, shop)}>
       <PageHead title={t("mod.inquiries.name")} sub={t("inq.admin_intro")} />
       <Flash code={c.req.query("flash")} />
-      <form method="get" action={base(shop)}>
-        <select name="status">
-          {FILTERS.map((f) => (
-            <option value={f} selected={f === filter}>
-              {t(`inq.filter_${f}` as MessageKey)}
-            </option>
-          ))}
-        </select>{" "}
+      <ViewTabs shopId={shop.id} screen="inquiries" views={viewsOf(shop.settings, "inquiries")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
+      <SearchBar action={base(shop)} q={q} placeholder={t("inq.search_placeholder")} chips={chips} clearHref={base(shop)}>
+        <label>
+          {t("inq.status")}
+          <select name="status">
+            {FILTERS.map((f) => (
+              <option value={f} selected={f === filter}>
+                {t(`inq.filter_${f}` as MessageKey)}
+              </option>
+            ))}
+          </select>
+        </label>
         {assignees ? (
-          <>
-            <select name="assignee" aria-label={t("inq.assignee")}>
+          <label>
+            {t("inq.assignee")}
+            <select name="assignee">
               {ASSIGNEE_FILTERS.map((f) => (
                 <option value={f} selected={f === who}>
                   {t(`inq.assignee_filter_${f}` as MessageKey)}
                 </option>
               ))}
-            </select>{" "}
-          </>
+            </select>
+          </label>
         ) : null}
-        <button type="submit" class="secondary small">
-          {t("inq.filter")}
-        </button>
-      </form>
+      </SearchBar>
       {list.length === 0 ? (
         <p class="muted">{t("inq.admin_empty")}</p>
       ) : (
