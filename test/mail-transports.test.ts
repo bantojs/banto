@@ -281,6 +281,23 @@ describe("SMTP の送り手", () => {
     expect((r as MailError).message).toMatch(/MAIL: 550 5\.1\.0 sender rejected/);
   });
 
+  it("送信元の形が誤っていれば接続せずに MailError（例外のまま 500 にしない）", async () => {
+    let connected = false;
+    const sockets: SocketAdapter = {
+      async connect() {
+        connected = true;
+        throw new Error("unexpected");
+      },
+    };
+    const mailer = createMailer({ ...memoryAdapters({ MAIL_TRANSPORT: "smtp", SMTP_HOST: "h" }), socket: sockets }, fetch)!;
+    for (const from of ["マイショップ order@example.com", "マイショップ ＜order@example.com＞", "order@example"]) {
+      const r = await sendMail(mailer, { ...MAIL, from }).catch((x: unknown) => x);
+      expect(r).toBeInstanceOf(MailError);
+      expect((r as MailError).message).toMatch(/invalid mail address/);
+    }
+    expect(connected).toBe(false);
+  });
+
   it("Node の生の TCP（node:net）で本物のソケットを通して送れる（平文、同じホスト）", async () => {
     const lines: string[] = [];
     let dataMode = false;
