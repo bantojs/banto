@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
-import { t } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { can } from "./access";
 import { MODULES, moduleEnabled, type ModuleDef } from "../../modules/registry";
 import { migrated } from "../../db/migration-state";
 import { wooImport } from "../../modules/woo-import/admin";
@@ -32,6 +33,8 @@ import { priceRulesAdmin } from "../../modules/audiences/prices";
 /**
  * 同梱モジュールの ON/OFF（shops.settings.modules）。/admin/shops/:shopId/modules
  * モジュールの画面は ON のときだけ開ける（各モジュールの側でも確かめる）。
+ * 切り替えは settings の項目に加えて、そのモジュールの項目（registry の perm）も要る。DB の banto_shops_guard（0129）と同じ判定で、
+ * 項目の無い人には切り替えのボタンを出さず、何が要るかを出す（押してから DB に断られて「エラー」とだけ出るのを防ぐ）
  */
 export const modules = new Hono<AppEnv>();
 
@@ -46,14 +49,20 @@ modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const saved = c.req.query("flash") === "saved";
+  const failed = c.req.query("flash") === "generic";
+  const forbidden = c.req.query("flash") === "forbidden";
+  const access = c.get("shopAccess");
   const available = await availableModules(c);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("modules.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
       <PageHead title={t("modules.title")} sub={t("modules.intro")} />
       {saved ? <p class="notice">{t("modules.saved")}</p> : null}
+      {failed ? <p class="error">{t("modules.save_failed")}</p> : null}
+      {forbidden ? <p class="error">{t("access.forbidden")}</p> : null}
       <div class="grid">
         {available.map((m) => {
           const on = moduleEnabled(shop.settings, m.id);
+          const allowed = can(access, m.perm);
           return (
             <section class="card" data-module={m.id}>
               <div class="card-head">
@@ -62,12 +71,16 @@ modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
               </div>
               <p class="muted">{t(m.description)}</p>
               <div class="card-foot">
-                <form method="post" action={`/admin/shops/${shop.id}/modules/${m.id}/enabled`}>
-                  <input type="hidden" name="enabled" value={on ? "off" : "on"} />
-                  <button type="submit" class={on ? "secondary small" : "small"}>
-                    {on ? t("modules.disable") : t("modules.enable")}
-                  </button>
-                </form>
+                {allowed ? (
+                  <form method="post" action={`/admin/shops/${shop.id}/modules/${m.id}/enabled`}>
+                    <input type="hidden" name="enabled" value={on ? "off" : "on"} />
+                    <button type="submit" class={on ? "secondary small" : "small"}>
+                      {on ? t("modules.disable") : t("modules.enable")}
+                    </button>
+                  </form>
+                ) : (
+                  <span class="muted">{tf("modules.perm_required", { perm: t(`perm.${m.perm}` as MessageKey) })}</span>
+                )}
                 {on && m.adminPath ? (
                   <a class="btn secondary small" href={`/admin/shops/${shop.id}/modules/${m.adminPath}`}>
                     {t("modules.open")}
@@ -92,6 +105,8 @@ modules.post("/:shopId/modules/:moduleId/enabled", requireOwner, async (c: Admin
   const shop = await loadShop(c, shopId, "settings");
   const mod = (await availableModules(c)).find((m) => m.id === param(c, "moduleId"));
   if (!shop || !mod) return c.text(t("shop.not_found"), 404);
+  // DB（banto_shops_guard）も断るが、ここで先に止める（画面にボタンを出さないのと同じ判定）
+  if (!can(c.get("shopAccess"), mod.perm)) return c.redirect(`/admin/shops/${shopId}/modules?flash=forbidden`);
   const f = await formFields(c);
   const current = (shop.settings ?? {})["modules"];
   const mods = { ...(current && typeof current === "object" ? (current as Record<string, unknown>) : {}), [mod.id]: f.enabled === "on" };

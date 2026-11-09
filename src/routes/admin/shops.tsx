@@ -85,7 +85,6 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
   return { kind: ok ? "ok" : "error", text: detail ? `${t(key)} ${detail.slice(0, 500)}` : t(key) };
 }
 
-/** モジュールの画面に要る権限の項目（loadShop と同じ。メニューの出し分け用） */
 /**
  * ショップの設定の画面の上の近道。商品・注文・会員・モジュール・連携・AI 連携は上のタブ（AdminLayout の shopTabs）にあるので、
  * ここにはタブに無いもの（カテゴリー・ON のモジュールの画面・お店の画面）だけを出す。持っていない権限の項目のものは出さない

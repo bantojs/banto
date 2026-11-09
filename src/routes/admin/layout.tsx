@@ -3,7 +3,7 @@ import type { Child } from "hono/jsx";
 import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
 import { adminBrand } from "./brand";
-import { moduleEnabled } from "../../modules/registry";
+import { MODULES, moduleEnabled } from "../../modules/registry";
 
 /**
  * 管理画面の見た目（全画面で共通）。白と黒を基調に、細い線・余白・角丸のカードで組む。
@@ -253,16 +253,19 @@ export interface ShopTabs {
 }
 export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages" | "blog" | "design" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
 
+/** 同梱モジュールのタブに要る項目はモジュールの一覧（registry の perm）から引く（権限を書く場所を 1 か所に） */
+const modulePerm = (id: string): string => MODULES.find((m) => m.id === id)?.perm ?? "settings";
+
 const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module?: string }[] = [
   { id: "products", path: "/products", label: "product.list", perm: "catalog" },
   { id: "orders", path: "/orders", label: "order.list", perm: "orders" },
   { id: "customers", path: "/customers", label: "customers.title", perm: "customers" },
   // お問い合わせ（同梱モジュール inquiries。support の項目だけの人が入れるように、モジュールの一覧とは別にタブを出す）
-  { id: "inquiries", path: "/modules/inquiries", label: "mod.inquiries.name", perm: "support", module: "inquiries" },
+  { id: "inquiries", path: "/modules/inquiries", label: "mod.inquiries.name", perm: modulePerm("inquiries"), module: "inquiries" },
   // ショップのページ（同梱モジュール pages、0079。content の項目だけの人も入れるように）
-  { id: "pages", path: "/modules/pages", label: "mod.pages.name", perm: "content", module: "pages" },
+  { id: "pages", path: "/modules/pages", label: "mod.pages.name", perm: modulePerm("pages"), module: "pages" },
   // ブログ（同梱モジュール blog、0081。ページと同じ content の項目）
-  { id: "blog", path: "/modules/blog", label: "mod.blog.name", perm: "content", module: "blog" },
+  { id: "blog", path: "/modules/blog", label: "mod.blog.name", perm: modulePerm("blog"), module: "blog" },
   // デザイン（Liquid のテーマ、0071）
   { id: "design", path: "/design", label: "design.title", perm: "design" },
   { id: "modules", path: "/modules", label: "modules.title", perm: "settings" },

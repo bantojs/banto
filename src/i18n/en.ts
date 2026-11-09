@@ -189,6 +189,8 @@ export const en: Record<MessageKey, string> = {
   "modules.disable": "Turn off",
   "modules.open": "Open",
   "modules.saved": "Module settings saved.",
+  "modules.save_failed": "Could not switch the module. Please try again.",
+  "modules.perm_required": "Switching this needs the \"{perm}\" permission (ask an owner or admin of the organization)",
   "mod.woo_import.name": "Import from WooCommerce",
   "mod.woo_import.description": "Import products, variations (SKUs), categories, tags, brands, prices, stock, JAN/GTIN, images and custom fields from the WooCommerce REST API (recommended) or a product export CSV. You can turn it off after migrating.",
   "woo.intro": "Choose the CSV exported from WooCommerce (Products → Export). The CSV must have English column names (set your WordPress profile language to English before exporting) and must not be filtered by category. Export with custom meta to import custom fields too. The file is analyzed in this browser and you review the result before importing.",

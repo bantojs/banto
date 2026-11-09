@@ -17,8 +17,9 @@ export interface ModuleDef {
   /** ON のとき管理画面のショップ設定に出すリンク（/admin/shops/:id/modules/<adminPath>） */
   adminPath?: string;
   /**
-   * このモジュールを扱う権限の項目。画面の入口（loadShop）・ショップ設定の近道・ON / OFF を書ける人（DB の banto_shop_settings_perm、0129）が同じものを使う。
-   * 全モジュールで決める（test/module-perms.test.ts が DB の対応表と画面の入口に縛る）
+   * このモジュールを扱う権限の項目。画面の入口（loadShop）・上のタブ・ショップ設定の近道が使う。
+   * ON / OFF の切り替えは settings に加えてこの項目も要る（DB の banto_shops_guard が banto_shop_settings_perm（0129）で確かめるのと同じ。機能の画面はこの項目の無い人に切り替えのボタンを出さない）。
+   * 全モジュールで決める（test/module-perms.test.ts が DB の対応表と画面に縛る）
    */
   perm: ShopPerm;
   /** 要るマイグレーション（土台より新しいもの）。当たるまでは一覧に出さず、ON にできない（CLAUDE.md §11「コードと DB の版のずれ」） */

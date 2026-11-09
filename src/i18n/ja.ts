@@ -188,6 +188,8 @@ export const ja = {
   "modules.disable": "OFF にする",
   "modules.open": "開く",
   "modules.saved": "モジュールの設定を保存しました。",
+  "modules.save_failed": "切り替えられませんでした。もう一度お試しください。",
+  "modules.perm_required": "切り替えるには「{perm}」の項目が要ります（組織の owner / admin に頼んでください）",
   "mod.woo_import.name": "WooCommerce から取り込み",
   "mod.woo_import.description": "WooCommerce の REST API（おすすめ）か、「商品のエクスポート」で書き出した CSV から、商品・バリエーション（SKU）・カテゴリー・タグ・ブランド・価格・在庫・JAN・画像・カスタム項目を取り込みます。移行が済んだら OFF にしてかまいません。",
   "woo.intro": "WooCommerce の管理画面 → 商品 → エクスポート で書き出した CSV を選んでください。列名が英語の CSV が必要です（WordPress のプロフィールの言語を English にして書き出します）。カテゴリーで絞らずに書き出してください。カスタムメタを含めて書き出すと、カスタム項目も取り込めます。解析はこのブラウザの中で行い、内容を確認してから取り込みます。",

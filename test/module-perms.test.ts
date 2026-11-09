@@ -61,4 +61,37 @@ describe("同梱モジュールの管理画面の権限（近道と画面の入�
     expect(html).not.toContain(`/admin/shops/${shop.id}/modules/pages"`);
     expect(html).toContain(`/admin/shops/${shop.id}/modules/embed"`);
   });
+
+  it("上のタブ（お問い合わせ・ページ・ブログ）も同じ項目で出し分ける", async () => {
+    const { sb, shop, app } = setup();
+    const b = await staff(sb, app, shop.id, "support@example.com", ["support"]);
+    const html = await (await b.get(`/admin/shops/${shop.id}/modules/inquiries`)).text();
+    expect(html).toContain(`<a href="/admin/shops/${shop.id}/modules/inquiries" aria-current="page">`);
+    expect(html).not.toContain(`href="/admin/shops/${shop.id}/modules/pages"`);
+  });
+});
+
+describe("機能の ON / OFF の画面（settings に加えてモジュールの項目も要る。DB の banto_shops_guard と同じ）", () => {
+  it("settings の項目だけの人: settings で切り替えられるモジュールのボタンは出し、ページには何が要るかを出す。押しても変えない", async () => {
+    const { sb, shop, app } = setup();
+    const before = JSON.stringify(sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"]);
+    const b = await staff(sb, app, shop.id, "settings@example.com", ["settings"]);
+    const html = await (await b.get(`/admin/shops/${shop.id}/modules`)).text();
+    expect(html).toContain(`action="/admin/shops/${shop.id}/modules/receipt/enabled"`);
+    expect(html).not.toContain(`action="/admin/shops/${shop.id}/modules/pages/enabled"`);
+    expect(html).toContain("切り替えるには「ページ」の項目が要ります");
+    const res = await b.post(`/admin/shops/${shop.id}/modules/pages/enabled`, { enabled: "off" });
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/modules?flash=forbidden`);
+    expect(JSON.stringify(sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"])).toBe(before);
+  });
+
+  it("settings と content の項目を持つ人はページを切り替えられる", async () => {
+    const { sb, shop, app } = setup();
+    const b = await staff(sb, app, shop.id, "content@example.com", ["settings", "content"]);
+    expect(await (await b.get(`/admin/shops/${shop.id}/modules`)).text()).toContain(`action="/admin/shops/${shop.id}/modules/pages/enabled"`);
+    const res = await b.post(`/admin/shops/${shop.id}/modules/pages/enabled`, { enabled: "off" });
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/modules?flash=saved`);
+    const mods = (sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] as Record<string, Record<string, boolean>>)["modules"]!;
+    expect(mods["pages"]).toBe(false);
+  });
 });
