@@ -3,6 +3,9 @@ import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage } from "./paging";
+import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
+import { migrated } from "../../db/migration-state";
+import { UUID_RE } from "../../util/cursor";
 import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
@@ -106,27 +109,50 @@ const IMAGE_RESIZE_SCRIPT = `
   });
 })();`;
 
+/** 一覧の検索を広げる版（品番・JAN・カテゴリー・在庫・並び。0132） */
+const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
+
 products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  // 名前・スラッグの部分一致と公開の状態で、DB で絞って新しい順に 1 ページ分だけ読む（何十万件でも同じ速さ）
-  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
-  const state = c.req.query("state") === "published" || c.req.query("state") === "draft" ? c.req.query("state")! : "";
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
+  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
+  // 条件（URL の値）。形の違う値は捨てる。0132 の前は名前・スラッグと公開の状態だけ
+  const v = (name: string) => (c.req.query(name) ?? "").trim();
+  const params: SearchParams = {
+    q: v("q").slice(0, 100),
+    state: v("state") === "published" || v("state") === "draft" ? v("state") : "",
+    ...(extended ? { category: UUID_RE.test(v("category")) ? v("category") : "", stock: v("stock") === "in" || v("stock") === "out" ? v("stock") : "", sort: readSort(v("sort")) === "old" ? "old" : "" } : {}),
+  };
+  const { q, state } = params as { q: string; state: string };
+  const filters = Object.fromEntries(Object.entries(params).filter(([k, x]) => k !== "q" && x !== ""));
+  const columns = "id,slug,name,published,created_at";
+  const categories = extended ? await loadCategories(db, shopId) : [];
+  // 条件があれば、RLS の外の検索の関数で（0059 / 0132。インデックスが効く）。無ければ新しい順に 1 ページ分だけ読む（何十万件でも同じ速さ）
   const where: Filter[] = [];
   if (state) where.push({ col: "published", op: "eq", value: state === "published" });
   if (after) where.push(olderThan(after));
-  const columns = "id,slug,name,published,created_at";
-  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
-  const page = splitPage(q ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters: state ? { state } : {}, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : (await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 })), (p) => p.created_at);
+  const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
+  const page = splitPage(
+    useSearch ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
+    (p) => p.created_at,
+  );
   const rows = page.rows;
   // お気に入りの人数（同梱モジュール favorites、0123）。だれかは出さない。表示している行の分だけ 1 回で
   const favorites = moduleEnabled(shop.settings, FAVORITES_MODULE) && rows.length > 0 ? await db.rpc<Record<string, number>>("product_favorite_counts", { p_shop_id: shopId, p_product_ids: rows.map((p) => p.id) }).catch(() => null) : null;
-  const filtered = Boolean(q || state || after);
-  const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;
+  const base = `/admin/shops/${shopId}/products`;
+  const chips = searchChips(base, params, (name, value) => {
+    if (name === "state") return `${t("product.state")}: ${value === "published" ? t("dashboard.published") : t("dashboard.unpublished")}`;
+    if (name === "category") return `${t("search.category")}: ${categories.find((x) => x.id === value)?.name ?? "?"}`;
+    if (name === "stock") return value === "out" ? t("search.stock_out") : t("search.stock_in");
+    if (name === "sort") return t("search.sort_old");
+    return null;
+  });
+  const filtered = Boolean(q || chips.length > 0 || after);
+  const listBase = searchHref(base, params);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("product.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
       <PageHead title={t("product.list")}>
@@ -139,21 +165,47 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
       </PageHead>
       <Flash flash={flash(c.req.query("flash"))} />
       {rows.length > 0 || filtered ? (
-        <form method="get" class="toolbar">
-          <input type="search" name="q" value={c.req.query("q") ?? ""} placeholder={t("product.search")} aria-label={t("product.search")} />
-          <select name="state" aria-label={t("product.state")}>
-            <option value="">{t("product.state_all")}</option>
-            <option value="published" selected={state === "published"}>
-              {t("dashboard.published")}
-            </option>
-            <option value="draft" selected={state === "draft"}>
-              {t("dashboard.unpublished")}
-            </option>
-          </select>
-          <button type="submit" class="secondary small">
-            {t("order.search")}
-          </button>
-        </form>
+        <SearchBar action={base} q={q} placeholder={t(extended ? "search.products_placeholder" : "product.search")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+          <label>
+            {t("product.state")}
+            <select name="state">
+              <option value="">{t("product.state_all")}</option>
+              <option value="published" selected={state === "published"}>
+                {t("dashboard.published")}
+              </option>
+              <option value="draft" selected={state === "draft"}>
+                {t("dashboard.unpublished")}
+              </option>
+            </select>
+          </label>
+          {extended && categories.length > 0 ? (
+            <label>
+              {t("search.category")}
+              <select name="category">
+                <option value="">{t("search.any")}</option>
+                {categoryOptions(categories).map((o) => (
+                  <option value={o.id} selected={params["category"] === o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {extended ? (
+            <label>
+              {t("search.stock")}
+              <select name="stock">
+                <option value="">{t("search.any")}</option>
+                <option value="in" selected={params["stock"] === "in"}>
+                  {t("search.stock_in")}
+                </option>
+                <option value="out" selected={params["stock"] === "out"}>
+                  {t("search.stock_out")}
+                </option>
+              </select>
+            </label>
+          ) : null}
+        </SearchBar>
       ) : null}
       {rows.length === 0 && !filtered ? (
         <div class="empty">

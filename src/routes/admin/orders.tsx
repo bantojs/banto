@@ -22,6 +22,8 @@ import { RECEIPT_STATUSES } from "../../modules/receipt/render";
 import { deliveryText } from "../../modules/delivery-time";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier, normalizeTracking, trackingUrl } from "../../orders/tracking";
 import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/tags";
+import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
+import { migrated } from "../../db/migration-state";
 
 export const orders = new Hono<AppEnv>();
 
@@ -67,23 +69,58 @@ interface OrderListRow extends OrderRow {
 /** CSV に入れる注文の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
 const CSV_MAX_ORDERS = 2000;
 
+/** 一覧の検索を広げる版（電話・送り状番号・支払い方法・日付・金額・並び。0132） */
+const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
+const ORDER_STATUSES = ["paid", "shipped", "cancelled", "refunded"] as const;
+const ORDER_PAYMENTS = ["stripe", "komoju", "amazon_pay", "free"] as const;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const YEN_RE = /^\d{1,9}$/;
+
 /**
- * 一覧と CSV で共通: 注文番号・決済の参照（完全一致）、メール・氏名（部分一致）と状態で DB で絞り、
- * 新しい順に limit 件（after より後ろ）を読む
+ * 一覧と CSV で共通の条件（URL の値）。形の違う値は捨てる（DB も無視する）。
+ * 0132 の前の DB では、今までどおりキーワード・状態・印だけ
  */
-async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; q: string; status: string; tag: string }> {
+function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
+  const v = (name: string) => (c.req.query(name) ?? "").trim();
+  const status = v("status");
+  const out: SearchParams = {
+    q: v("q").slice(0, 100),
+    status: (ORDER_STATUSES as readonly string[]).includes(status) ? status : "",
+    tag: v("tag").slice(0, 40),
+  };
+  if (!extended) return out;
+  const payment = v("payment");
+  out["payment"] = (ORDER_PAYMENTS as readonly string[]).includes(payment) ? payment : "";
+  out["from"] = DATE_RE.test(v("from")) ? v("from") : "";
+  out["to"] = DATE_RE.test(v("to")) ? v("to") : "";
+  out["min"] = YEN_RE.test(v("min")) ? v("min") : "";
+  out["max"] = YEN_RE.test(v("max")) ? v("max") : "";
+  out["sort"] = readSort(v("sort")) === "old" ? "old" : "";
+  return out;
+}
+
+/**
+ * 一覧と CSV で共通: 条件で DB で絞り、limit 件（after より後ろ）を読む。
+ * 0132 からは、キーワードか条件があれば検索の関数（admin_search_ids）がすべて絞る（キーワードは番号・メール・氏名・電話・送り状番号・決済の参照）。
+ * 条件が無ければ、新しい順に RLS 越しに読む
+ */
+async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; params: SearchParams; extended: boolean }> {
   const { db } = owner(c);
-  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
-  const status = c.req.query("status") ?? "";
-  // 印で絞る（0106）。検索と一緒のときは、検索の結果をここで絞る
-  const tag = (c.req.query("tag") ?? "").trim().slice(0, 40);
+  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
+  const params = orderSearchParams(c, extended);
+  const { q, status, tag } = params as { q: string; status: string; tag: string };
+  const filters = Object.fromEntries(Object.entries(params).filter(([k, v]) => k !== "q" && v !== ""));
+  if (extended && (q || Object.keys(filters).length > 0)) {
+    const rows = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
+    return { rows, params, extended };
+  }
+  // 0132 の前: 印で絞る（0106）のは、検索と一緒のときは検索の結果をここで絞る
   const contains = tag ? { arrayContains: { tags: [tag] } } : {};
   const eq: Record<string, string> = { shop_id: shopId };
-  if (["paid", "shipped", "cancelled", "refunded"].includes(status)) eq["status"] = status;
-  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
+  if (status) eq["status"] = status;
   if (q) {
-    const found = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: eq["status"] ? { status: eq["status"] } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
-    return { rows: tag ? found.filter((o) => orderTagsOf(o).includes(tag)) : found, q, status: eq["status"] ?? "", tag };
+    const found = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: status ? { status } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
+    return { rows: tag ? found.filter((o) => orderTagsOf(o).includes(tag)) : found, params, extended };
   }
   const rows: OrderListRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
@@ -95,45 +132,94 @@ async function listOrders(c: AdminContext, shopId: string, opts: { limit: number
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { rows, q, status: eq["status"] ?? "", tag };
+  return { rows, params, extended };
+}
+
+const PAYMENT_LABEL: Record<(typeof ORDER_PAYMENTS)[number], MessageKey> = { stripe: "search.payment_stripe", komoju: "search.payment_komoju", amazon_pay: "search.payment_amazon_pay", free: "search.payment_free" };
+
+/** 条件のチップの文字（キーワードと既定の並びはチップにしない） */
+function orderChipLabel(name: string, value: string): string | null {
+  if (name === "status") return `${t("order.status")}: ${statusLabel(value as OrderRow["status"])}`;
+  if (name === "payment") return `${t("order.payment")}: ${t(PAYMENT_LABEL[value as (typeof ORDER_PAYMENTS)[number]] ?? "search.payment_stripe")}`;
+  if (name === "from") return tf("search.chip_from", { date: value });
+  if (name === "to") return tf("search.chip_to", { date: value });
+  if (name === "min") return tf("search.chip_min", { yen: yen(Number(value)) });
+  if (name === "max") return tf("search.chip_max", { yen: yen(Number(value)) });
+  if (name === "tag") return `${t("order.tags")}: ${value}`;
+  if (name === "sort") return t("search.sort_old");
+  return null;
 }
 
 orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  void db;
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
-  const { q, status, tag } = list;
+  const { params, extended } = list;
   const page = splitPage(list.rows, (o) => o.created_at);
   const rows = page.rows;
-  const query = new URLSearchParams({ ...(q ? { q } : {}), ...(status ? { status } : {}), ...(tag ? { tag } : {}) }).toString();
-  const tagHref = (v: string) => `/admin/shops/${shop.id}/orders?${new URLSearchParams({ ...(status ? { status } : {}), tag: v }).toString()}`;
+  const base = `/admin/shops/${shop.id}/orders`;
+  const listHref = searchHref(base, params);
+  const query = listHref.slice(base.length);
+  const tagHref = (v: string) => searchHref(base, { ...params, q: "", tag: v });
+  const chips = searchChips(base, params, orderChipLabel);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead title={t("order.list")}>
-        <a class="btn secondary" href={`/admin/shops/${shop.id}/orders.csv${query ? `?${query}` : ""}`}>
-          {t("order.csv")}
+        <a class="btn secondary" href={`/admin/shops/${shop.id}/orders.csv${query}`}>
+          {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("order.csv")}
         </a>
       </PageHead>
-      <form method="get" action={`/admin/shops/${shop.id}/orders`} class="toolbar">
-        <input id="q" type="search" name="q" value={q} placeholder={t("order.search_placeholder")} aria-label={t("order.search")} />
-        <select id="status" name="status" aria-label={t("order.status")}>
+      <SearchBar action={base} q={params["q"] ?? ""} placeholder={t(extended ? "search.orders_placeholder" : "order.search_placeholder")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+        <label>
+          {t("order.status")}
+          <select name="status">
             <option value="">{t("product.state_all")}</option>
-            {(["paid", "shipped", "cancelled", "refunded"] as const).map((st) => (
-              <option value={st} selected={status === st}>
+            {ORDER_STATUSES.map((st) => (
+              <option value={st} selected={params["status"] === st}>
                 {statusLabel(st)}
               </option>
             ))}
-        </select>
-        <input id="tag" type="search" name="tag" value={tag} placeholder={t("order.tag_filter")} aria-label={t("order.tag_filter")} maxlength={40} style="width:10rem" />
-        <button type="submit" class="secondary small">
-          {t("order.search")}
-        </button>
-      </form>
+          </select>
+        </label>
+        {extended ? (
+          <>
+            <label>
+              {t("order.payment")}
+              <select name="payment">
+                <option value="">{t("search.any")}</option>
+                {ORDER_PAYMENTS.map((pm) => (
+                  <option value={pm} selected={params["payment"] === pm}>
+                    {t(PAYMENT_LABEL[pm])}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t("search.from")}
+              <input type="date" name="from" value={params["from"] ?? ""} />
+            </label>
+            <label>
+              {t("search.to")}
+              <input type="date" name="to" value={params["to"] ?? ""} />
+            </label>
+            <label>
+              {t("search.min")}
+              <input type="number" name="min" min={0} step={1} value={params["min"] ?? ""} inputmode="numeric" />
+            </label>
+            <label>
+              {t("search.max")}
+              <input type="number" name="max" min={0} step={1} value={params["max"] ?? ""} inputmode="numeric" />
+            </label>
+          </>
+        ) : null}
+        <label>
+          {t("order.tag_filter")}
+          <input type="text" name="tag" value={params["tag"] ?? ""} maxlength={40} />
+        </label>
+      </SearchBar>
       {rows.length === 0 ? (
         <p>{t("order.none")}</p>
       ) : (
@@ -176,7 +262,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           </tbody>
         </table>
       )}
-      <Pager base={`/admin/shops/${shop.id}/orders${query ? `?${query}` : ""}`} next={page.next} paged={Boolean(after)} />
+      <Pager base={listHref} next={page.next} paged={Boolean(after)} />
     </AdminLayout>,
   );
 });

@@ -2142,16 +2142,52 @@ export class FakeSupabase {
       const shopId = String(args["p_shop_id"]);
       if (!uid || !this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "forbidden" }, 403);
       const kind = String(args["p_kind"]) as "products" | "orders" | "customers";
-      const q = String(args["p_q"] ?? "").trim().toLowerCase();
+      const raw = String(args["p_q"] ?? "").trim();
+      const q = raw.toLowerCase();
       const f = (args["p_filters"] ?? {}) as Record<string, string>;
+      // 0132: 並び・キーワードの読み取り・条件（本物は supabase/migrations/0132_admin_search.sql、test/db/admin-search.test.ts）
+      const ext = this.appliedMigrations.includes("0132_admin_search");
+      const desc = !ext || f["sort"] !== "old";
       const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
+      const digits = raw.replace(/[^0-9]/g, "");
+      const phone = ext && /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? digits : null;
+      const track = ext && /^[0-9A-Za-z-]{4,60}$/.test(raw) && raw.replace(/-/g, "").length <= 40 ? raw.replace(/-/g, "") : null;
+      const num = (ext ? /^#?\d{1,9}$/ : /^\d{1,9}$/).test(raw) ? Number(raw.replace(/^#/, "")) : null;
+      const jst = (d: string, plus = 0) => new Date(Date.parse(`${d}T00:00:00+09:00`) + plus * 86400000).toISOString();
+      const inStock = (productId: unknown) => this.tables.skus.some((k) => k["product_id"] === productId && this.tables.inventory.some((i) => i["sku_id"] === k["id"] && Number(i["available"]) > 0));
       const afterK = args["p_after_k"] as string | null;
       const afterId = args["p_after_id"] as string | null;
       const rows = this.tables[kind]
         .filter((r) => r["shop_id"] === shopId)
         .filter((r) => {
-          if (kind === "products") return (!q || has(r["name"]) || has(r["slug"])) && (f["state"] !== "published" || r["published"] === true) && (f["state"] !== "draft" || r["published"] !== true);
-          if (kind === "orders") return (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === q || (/^\d{1,9}$/.test(q) && Number(r["number"]) === Number(q))) && (!f["status"] || r["status"] === f["status"]);
+          if (kind === "products") {
+            const bySku = ext && q !== "" && this.tables.skus.some((k) => k["shop_id"] === shopId && k["product_id"] === r["id"] && (k["code"] === raw || k["gtin"] === raw));
+            const cats = [r["category_id"], ...((r["extra_category_ids"] as unknown[] | undefined) ?? [])];
+            return (
+              (!q || has(r["name"]) || has(r["slug"]) || bySku) &&
+              (f["state"] !== "published" || r["published"] === true) &&
+              (f["state"] !== "draft" || r["published"] !== true) &&
+              (!ext || !f["category"] || !/^[0-9a-f-]{36}$/.test(f["category"]) || cats.includes(f["category"])) &&
+              (!ext || f["stock"] !== "out" || !inStock(r["id"])) &&
+              (!ext || f["stock"] !== "in" || inStock(r["id"]))
+            );
+          }
+          if (kind === "orders") {
+            const addr = (r["shipping_address"] ?? {}) as Record<string, unknown>;
+            const total = Number(r["total_jpy"]);
+            const created = String(r["created_at"]);
+            const tags = (r["tags"] as string[] | undefined) ?? [];
+            return (
+              (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === raw || (num !== null && Number(r["number"]) === num) || (phone !== null && String(addr["phone"] ?? "").replace(/[^0-9]/g, "") === phone) || (track !== null && r["tracking_number"] === track)) &&
+              (!f["status"] || r["status"] === f["status"]) &&
+              (!ext || !f["payment"] || r["payment_provider"] === f["payment"]) &&
+              (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["from"] ?? "") || created >= jst(f["from"]!)) &&
+              (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["to"] ?? "") || created < jst(f["to"]!, 1)) &&
+              (!ext || !/^\d{1,9}$/.test(f["min"] ?? "") || total >= Number(f["min"])) &&
+              (!ext || !/^\d{1,9}$/.test(f["max"] ?? "") || total <= Number(f["max"])) &&
+              (!ext || !f["tag"] || tags.includes(f["tag"].trim()))
+            );
+          }
           const attrs = (r["attributes"] ?? {}) as Record<string, unknown>;
           const consent = r["marketing_consent"];
           return (
@@ -2160,8 +2196,16 @@ export class FakeSupabase {
             (f["consent"] !== "yes" || consent === true) && (f["consent"] !== "no" || consent === false) && (f["consent"] !== "none" || consent === null || consent === undefined)
           );
         })
-        .filter((r) => !afterK || !afterId || String(r["created_at"]) < afterK || (String(r["created_at"]) === afterK && String(r["id"]) < afterId))
-        .sort((a, b) => (String(a["created_at"]) === String(b["created_at"]) ? (String(a["id"]) < String(b["id"]) ? 1 : -1) : String(a["created_at"]) < String(b["created_at"]) ? 1 : -1));
+        .filter((r) => {
+          if (!afterK || !afterId) return true;
+          const k = String(r["created_at"]);
+          const id = String(r["id"]);
+          return desc ? k < afterK || (k === afterK && id < afterId) : k > afterK || (k === afterK && id > afterId);
+        })
+        .sort((a, b) => {
+          const cmp = String(a["created_at"]) === String(b["created_at"]) ? (String(a["id"]) < String(b["id"]) ? -1 : 1) : String(a["created_at"]) < String(b["created_at"]) ? -1 : 1;
+          return desc ? -cmp : cmp;
+        });
       return json(rows.slice(0, Math.min(Number(args["p_limit"] ?? 50), 1000)).map((r) => r["id"]));
     }
     if (fn === "coupon_grant_counts") {

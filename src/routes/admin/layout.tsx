@@ -177,6 +177,20 @@ td:first-child>a:hover{text-decoration:underline}
 .toolbar input[type=search],.toolbar input[type=text],.toolbar select{width:auto;min-width:14rem;max-width:100%;min-height:36px;padding:.35rem .7rem}
 .toolbar select{min-width:9rem}
 .toolbar .count{margin-left:auto;color:var(--fg-muted);font-size:.85rem}
+/* 一覧の検索（src/routes/admin/search.tsx）: キーワード・並び・＋ 条件・チップ */
+.search{margin:0 0 1rem}
+.search-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.search-row input[type=search]{flex:1 1 16rem;width:auto;min-height:36px;padding:.35rem .7rem;margin:0}
+.search-row select{width:auto;min-width:8rem;min-height:36px;margin:0}
+.search .search-more{margin:.5rem 0 0;padding:0;border:0;background:none;box-shadow:none}
+.search-row button{min-height:36px}
+.search-more summary{display:inline-block;cursor:pointer;font-size:.85rem;color:var(--fg-muted);padding:.2rem .6rem;border:1px solid var(--border-strong);border-radius:999px}
+.search-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(12rem,1fr));gap:.5rem 1rem;margin-top:.6rem;padding:.8rem;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+.search-fields label{margin:0;font-size:.8rem;color:var(--fg-muted)}
+.search-fields input,.search-fields select{margin:.2rem 0 0;width:100%}
+.chips{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.6rem 0 0;font-size:.85rem}
+.chip{display:inline-flex;gap:.3rem;align-items:center;padding:.15rem .6rem;border-radius:999px;border:1px solid var(--border-strong);background:var(--bg-subtle);color:var(--fg);text-decoration:none}
+.chip:hover{border-color:var(--fg-muted)}
 .btn.small,button.small{height:32px;padding:0 .75rem;font-size:.85rem}
 /* 詳細の画面: 本体と右の列、カードの中の見出し・表・合計・項目と値 */
 .split{display:grid;grid-template-columns:minmax(0,1fr) 20rem;gap:1.25rem;align-items:start}
