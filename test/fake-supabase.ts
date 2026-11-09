@@ -2287,6 +2287,43 @@ export class FakeSupabase {
       shop["settings"] = { ...settings, [`views_${screen}`]: out };
       return json(out);
     }
+    if (fn === "stock_adjust" || fn === "stock_count" || fn === "inventory_list") {
+      // 0136: 項目 catalog の人だけ（形の決まり・全部か無しか・同時の更新の本物は test/db/inventory-ops.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const inv = (skuId: unknown) => this.tables.inventory.find((i) => i["sku_id"] === skuId && i["shop_id"] === shopId);
+      const sku = (skuId: unknown) => this.tables.skus.find((k) => k["id"] === skuId && k["shop_id"] === shopId);
+      const items = (Array.isArray(args["p_items"]) ? args["p_items"] : []) as Row[];
+      if (fn === "stock_adjust") {
+        if (items.some((x) => !Number.isInteger(x["delta"]) || !inv(x["sku_id"]))) return json({ code: "22023", message: "invalid_items" }, 400);
+        const after = new Map<unknown, number>();
+        for (const x of items) after.set(x["sku_id"], (after.get(x["sku_id"]) ?? Number(inv(x["sku_id"])!["available"])) + Number(x["delta"]));
+        for (const [id, n] of after) if (n < 0) return json({ code: "P0001", message: `insufficient_stock:${String(sku(id)!["code"])}` }, 400);
+        for (const [id, n] of after) inv(id)!["available"] = n;
+        return json([...after].map(([sku_id, available]) => ({ sku_id, available })));
+      }
+      if (fn === "stock_count") {
+        if (items.some((x) => !Number.isInteger(x["expected"]) || !Number.isInteger(x["available"]) || Number(x["available"]) < 0 || !inv(x["sku_id"]))) return json({ code: "22023", message: "invalid_items" }, 400);
+        const conflicts = items
+          .filter((x) => Number(inv(x["sku_id"])!["available"]) !== x["expected"])
+          .map((x) => ({ sku_id: x["sku_id"], code: sku(x["sku_id"])!["code"], expected: x["expected"], current: inv(x["sku_id"])!["available"], available: x["available"] }));
+        if (conflicts.length > 0) return json({ ok: false, conflicts });
+        let updated = 0;
+        for (const x of items) if (inv(x["sku_id"])!["available"] !== x["available"]) { inv(x["sku_id"])!["available"] = x["available"]; updated++; }
+        return json({ ok: true, updated });
+      }
+      const q = String(args["p_q"] ?? "").trim();
+      const after = args["p_after_code"] == null ? null : String(args["p_after_code"]);
+      const rows = this.tables.skus
+        .filter((k) => k["shop_id"] === shopId)
+        .map((k) => ({ k, p: this.tables.products.find((p) => p["id"] === k["product_id"])!, i: inv(k["id"])! }))
+        .filter(({ k, p }) => !q || k["code"] === q || k["gtin"] === q || String(p["name"]).toLowerCase().includes(q.toLowerCase()) || String(k["code"]).toLowerCase().includes(q.toLowerCase()))
+        .filter(({ i }) => args["p_stock"] !== "out" || Number(i["available"]) === 0)
+        .filter(({ k }) => after === null || String(k["code"]) > after)
+        .sort((x, y) => (String(x.k["code"]) < String(y.k["code"]) ? -1 : 1))
+        .slice(0, Math.min(Math.max(Number(args["p_limit"] ?? 100), 1), 500));
+      return json(rows.map(({ k, p, i }) => ({ sku_id: k["id"], code: k["code"], gtin: k["gtin"] ?? null, name: k["name"] ?? null, options: k["options"] ?? {}, product_id: p["id"], product_name: p["name"], available: i["available"] })));
+    }
     if (fn === "customer_set_note") {
       // 0133: 項目 customers の人だけ。2,000 字まで、空は消す（本物は test/db/customer-stats-note.test.ts）
       const shopId = String(args["p_shop_id"]);

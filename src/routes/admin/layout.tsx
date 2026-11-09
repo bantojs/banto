@@ -298,6 +298,7 @@ export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages
 export type ShopHere =
   | ShopTab
   | "shipping-labels"
+  | "inventory"
   | "categories"
   | "size-charts"
   | "care-labels"
@@ -349,6 +350,7 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
         label: "product.list",
         subs: [
           page("products", "/products", "product.list", "catalog"),
+          page("inventory", "/inventory", "inventory.title", "catalog"),
           page("categories", "/categories", "category.title", "catalog"),
           page("product-fields", "/fields", "fields.title", "catalog+settings"),
           mod("size-charts", "size_charts", "sizechart.title"),

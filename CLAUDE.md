@@ -115,7 +115,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 - `confirm_reservation(p_reservation_id, p_shop_id, p_order)` は注文行と明細まで作って order id を返す。同じ予約には同じ id を返す（`orders.reservation_id` の一意制約で DB 側でも保証）。
   TTL 切れで解放済みの予約が決済完了した場合は同じ品目を再度引き、足りなければ `insufficient_stock_after_release` を投げる（呼び出し側で返金）。
 - `record_webhook_event(provider, event_id)` で Webhook を冪等化する（初見なら true）。処理の前に `webhook_event_seen` で記録済みなら何もしない（0128）。確定できずに返金するときは、返金の前に `reservation_mark_refunded` で予約を `refunded` にし（pending なら在庫とクーポンの枠も戻す）、`confirm_reservation` は `refunded` を `reservation_refunded` で拒む。流れは `src/payments/webhook-confirm.ts` だけ（Stripe・KOMOJU・Amazon Pay で共通）。
-- owner が在庫数を触る経路は `set_stock(sku_id, available)` と、一括取り込みの `import_catalog(shop_id, batch)`（`0009_catalog_import.sql`、同梱モジュールのインポーターが使う）だけ。どちらも authenticated で、関数内で所有を検証する。`inventory` への直接 UPDATE は誰にも許さない。
+- owner が在庫数を触る経路は `set_stock(sku_id, available)`、在庫の画面の `stock_adjust`（差で足す・引く）と `stock_count`（棚卸し、開いたときの数と違えば変えない）（`0136_inventory_ops`、項目 catalog）、一括取り込みの `import_catalog(shop_id, batch)`（`0009_catalog_import.sql`、同梱モジュールのインポーターが使う）だけ。どちらも authenticated で、関数内で所有を検証する。`inventory` への直接 UPDATE は誰にも許さない。
 - `skus` への insert で `inventory` 行がトリガーで自動生成される。
 - 顧客削除依頼は `mask_customer(shop_id, email)`（owner）、定期マスキングは `mask_shipped_orders(days)`（service_role, Cron）。
 - クーポンの回数（全体の上限・1 人あたり）も同じ一本道で予約する: `apply_reservation_discounts`（`0010_coupons.sql`、service_role）が `reserve_stock` の直後に枠と回数を取り、確定で使用済み、解放・キャンセルで戻す。全体の上限は枠の行（`coupon_slots`）を `FOR UPDATE SKIP LOCKED` で取り合う。値引きの計算は `src/commerce/discounts.ts` だけ（docs/knowledge/09-coupons.md）。
