@@ -52,6 +52,16 @@ describe("管理画面の共通の見た目", () => {
     expect(hooks).toContain(`<a href="/admin/shops/${shop.id}/plugins">プラグイン</a>`);
   });
 
+  it("ページのひな形の画面では、タブの「ひな形」に印を付ける（ページの一覧ではない）", async () => {
+    const { sb, shop, app } = setup();
+    sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] = { modules: { pages: true } };
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await admin.get(`/admin/shops/${shop.id}/modules/pages/layouts`)).text();
+    const tabs = html.slice(html.indexOf('<nav class="subtabs"'), html.indexOf("</nav>", html.indexOf('<nav class="subtabs"')));
+    expect(tabs).toMatch(/<a href="[^"]+\/modules\/pages\/layouts" aria-current="page">/);
+    expect(tabs).not.toMatch(/<a href="[^"]+\/modules\/pages" aria-current="page">/);
+  });
+
   it("目次は権限の項目と同梱モジュールの ON / OFF で出し分ける", async () => {
     const { sb, shop, app } = setup();
     // OFF のモジュール（クーポン）は出さない。ON にすると「集客」に出る（集客には LINE 公式アカウントもある）
