@@ -266,9 +266,9 @@ describe("パスキー（同梱モジュール passkey、0046）", () => {
     await addPasskey(b, sb);
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const cid = String(sb.tables.customers[0]!["id"]);
-    expect(await (await admin.get(`/admin/shops/${shop.id}/customers`)).text()).toContain(`/customers/${cid}/passkeys/reset`);
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text()).toContain(`/customers/${cid}/passkeys/reset`);
     const res = await admin.post(`/admin/shops/${shop.id}/customers/${cid}/passkeys/reset`, {});
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?flash=passkeys_reset`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${cid}?flash=passkeys_reset`);
     expect(sb.memberPasskeys).toHaveLength(0);
   });
 });

@@ -2268,6 +2268,17 @@ export class FakeSupabase {
       return json(before - this.memberPasskeys.length);
     }
     // 0048: 運営者が会員の独自項目を直す（定義に無い鍵は断る。渡した鍵だけ重ね、null で消す）
+    if (fn === "customer_set_note") {
+      // 0133: 項目 customers の人だけ。2,000 字まで、空は消す（本物は test/db/customer-stats-note.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("customers"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const note = String(args["p_note"] ?? "").replace(/\r\n/g, "\n").trim();
+      if (note.length > 2000) return json({ code: "22023", message: "note_too_long" }, 400);
+      const row = this.tables.customers.find((x) => x["shop_id"] === shopId && x["id"] === args["p_customer_id"]);
+      if (!row) return json({ code: "P0002", message: "customer_not_found" }, 404);
+      row["note"] = note || null;
+      return json(null);
+    }
     if (fn === "customer_set_attributes") {
       if (!this.ownedShopIds(uid).has(String(args["p_shop_id"]))) return json({ code: "42501", message: "shop_not_found" }, 403);
       const cur = this.tables.customers.find((c) => c["shop_id"] === args["p_shop_id"] && c["id"] === args["p_customer_id"]);
