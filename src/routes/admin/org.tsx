@@ -430,6 +430,7 @@ org.post("/org/invite", requireOwner, requireOrgAdmin, async (c: AdminContext) =
       return c.redirect(`${back}&flash=invited`);
     } catch (e) {
       if (!(e instanceof MailError)) throw e;
+      console.error(`[banto] invite: mail failed (${e.status}): ${e.message}`);
     }
   }
   // 送れないとき: 招待した人にリンクを一度だけ見せる（本人に別の手段で渡す。URL や履歴に残さない）

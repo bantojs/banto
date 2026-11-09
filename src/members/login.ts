@@ -62,7 +62,11 @@ export async function startLogin(
         }),
       });
     } catch (e) {
-      if (e instanceof MailError) return { ok: false, error: e.status === 0 && !deps.mailer ? "unavailable" : "mail_failed" };
+      if (e instanceof MailError) {
+        // 送り手の応答（SMTP の応答コードと文・HTTP の状態）を残す。画面には「送れませんでした」だけを出すので、運営者が原因を見られるのはここだけ
+        if (deps.mailer) console.error(`[banto] member login: mail failed (${deps.mailer.name} ${e.status}): ${e.message}`);
+        return { ok: false, error: e.status === 0 && !deps.mailer ? "unavailable" : "mail_failed" };
+      }
       throw e;
     }
   }
