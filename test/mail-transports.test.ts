@@ -298,6 +298,39 @@ describe("SMTP の送り手", () => {
     expect(connected).toBe(false);
   });
 
+  it("応答コードの無い失敗（切られた・つながらない）には、どの段階かを文に足す", async () => {
+    const closing = (afterGreeting: boolean): SocketAdapter => ({
+      async connect() {
+        let greeted = false;
+        return {
+          async read() {
+            if (afterGreeting && !greeted) {
+              greeted = true;
+              return new TextEncoder().encode("220 hello\r\n");
+            }
+            return null; // サーバーが黙って切る
+          },
+          async write() {},
+          async startTls() {
+            throw new Error("unexpected");
+          },
+          async close() {},
+        };
+      },
+    });
+    const send = (socket: SocketAdapter) => sendMail(createMailer({ ...memoryAdapters({ MAIL_TRANSPORT: "smtp", SMTP_HOST: "mail.example.jp" }), socket }, fetch)!, MAIL).then(() => { throw new Error("sent"); }, (x: unknown) => x as MailError);
+    expect((await send(closing(false))).message).toBe("SMTP greeting: connection closed by server");
+    expect((await send(closing(true))).message).toBe("SMTP EHLO: connection closed by server");
+    const refused: SocketAdapter = {
+      async connect() {
+        throw new Error("Network connection lost.");
+      },
+    };
+    const r = await send(refused);
+    expect(r).toBeInstanceOf(MailError);
+    expect(r.message).toBe("SMTP connect mail.example.jp:587 (tls=starttls): Network connection lost.");
+  });
+
   it("送れなかったときのログはアドレスの @ の前を伏せる（会員でない人のアドレスを残さない）", () => {
     const line = mailFailureLog("member login", { name: "smtp" }, new MailError(550, "SMTP RCPT: 550 5.1.1 <taro.yamada@example.com>: Recipient address rejected"));
     expect(line).toBe("[banto] member login: mail failed (smtp 550): SMTP RCPT: 550 5.1.1 <***@example.com>: Recipient address rejected");
