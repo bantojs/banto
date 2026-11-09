@@ -20,19 +20,55 @@ describe("管理画面の共通の見た目", () => {
     expect(await (await new Browser(app).get("/my-shop")).text()).toMatch(/^<!doctype html><html lang="ja">/);
   });
 
-  it("パンくずは上の帯に出し、ショップの中の画面には今いるタブに印を付ける", async () => {
+  it("パンくずは上の帯に出し、ショップの中の画面には左の目次を出して今いる項目に印を付ける", async () => {
     const { shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const html = await (await admin.get(`/admin/shops/${shop.id}/products`)).text();
     expect(html).toContain(`<nav class="crumbs" aria-label="breadcrumb">`);
     expect(html).toContain(`<a href="/admin/shops/${shop.id}">マイショップ</a>`);
     expect(html).toContain(`<span class="here">商品</span>`);
+    expect(html).toContain(`<nav class="sidenav" aria-label="マイショップ">`);
     expect(html).toMatch(new RegExp(`<a href="/admin/shops/${shop.id}/products" aria-current="page">商品</a>`));
-    expect(html).toContain(`<a href="/admin/shops/${shop.id}/tokens">AI 連携</a>`);
+    // 目次は仕事ごとのまとまり。連携の 3 つ（Webhook・プラグイン・AI 連携）は 1 つの項目
+    for (const g of ["毎日の運営", "集客", "お店づくり", "広げる", "ショップ"]) expect(html).toContain(`<div class="navlabel">${g}</div>`);
+    expect(html).toContain(`<a href="/admin/shops/${shop.id}/hooks">外部サービスと連携</a>`);
     // 本文の上の「ダッシュボード › …」の行はもう無い
     expect(html).not.toContain("›");
-    // ダッシュボードにはタブを出さない
-    expect(await (await admin.get("/admin")).text()).not.toContain('class="tabs"');
+    // ダッシュボードには目次を出さない
+    expect(await (await admin.get("/admin")).text()).not.toContain('class="sidenav"');
+  });
+
+  it("目次の 1 項目に画面が 2 つ以上あれば、画面の中のタブでつなぐ（カテゴリーは商品の中）", async () => {
+    const { shop, app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await admin.get(`/admin/shops/${shop.id}/categories`)).text();
+    expect(html).toContain(`<nav class="subtabs" aria-label="商品">`);
+    expect(html).toContain(`<a href="/admin/shops/${shop.id}/categories" aria-current="page">カテゴリー</a>`);
+    // 左の目次では「商品」に印
+    expect(html).toMatch(new RegExp(`<a href="/admin/shops/${shop.id}/products" aria-current="page">商品</a>`));
+    // 連携の画面: Webhook・プラグイン・AI 連携をタブで行き来する
+    const hooks = await (await admin.get(`/admin/shops/${shop.id}/tokens`)).text();
+    expect(hooks).toContain(`<a href="/admin/shops/${shop.id}/tokens" aria-current="page">AI 連携</a>`);
+    expect(hooks).toContain(`<a href="/admin/shops/${shop.id}/plugins">プラグイン</a>`);
+  });
+
+  it("目次は権限の項目と同梱モジュールの ON / OFF で出し分ける", async () => {
+    const { sb, shop, app } = setup();
+    // OFF のモジュール（クーポン）は出さない。ON にすると「集客」に出る（集客には LINE 公式アカウントもある）
+    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    expect(await (await owner.get(`/admin/shops/${shop.id}/products`)).text()).not.toContain(`/modules/coupons"`);
+    sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] = { modules: { coupons: true } };
+    const on = await (await owner.get(`/admin/shops/${shop.id}/products`)).text();
+    expect(on).toContain(`<a href="/admin/shops/${shop.id}/modules/coupons">クーポン</a>`);
+    // 注文の項目だけの人: 注文とショップ設定だけ
+    const u = sb.addUser("ship@example.com", "password-123");
+    const org = String(sb.tables.shops.find((s) => s["id"] === shop.id)!["org_id"]);
+    sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+    sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms: ["orders"] });
+    const ship = await Browser.loggedIn(app, "ship@example.com", "password-123");
+    const html = await (await ship.get(`/admin/shops/${shop.id}/orders`)).text();
+    const nav = html.slice(html.indexOf('<nav class="sidenav"'), html.indexOf("</nav>", html.indexOf('<nav class="sidenav"')));
+    expect([...nav.matchAll(/<a href="[^"]+"[^>]*>([^<]+)<\/a>/g)].map((m) => m[1])).toEqual(["注文", "ショップ設定"]);
   });
 
   it("商品の一覧: 名前・スラッグの部分一致と公開の状態で DB で絞る", async () => {

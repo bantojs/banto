@@ -190,7 +190,7 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
       ];
     });
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("category.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("category.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
+    <AdminLayout title={`${shop.name} · ${t("category.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("category.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products", here: "categories" }}>
       <PageHead title={t("category.title")} sub={t("category.intro")}>
         <a class="btn" href="#add">
           {t("category.add")}

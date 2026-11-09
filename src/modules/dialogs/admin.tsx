@@ -168,7 +168,7 @@ dialogsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const plugins = await endpointNames(c, shop, rows);
   const fl = FLASH[c.req.query("flash") ?? ""];
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("dlg.title")}`} nav crumbs={crumbs(shop)} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("dlg.title")}`} nav crumbs={crumbs(shop)} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "dialogs" }}>
       <PageHead title={t("dlg.title")} sub={t("dlg.intro")}>
         <a class="btn" href={`${base(shop)}/new`}>
           {t("dlg.add")}
@@ -231,7 +231,7 @@ function EditPage(props: { shop: ShopRow; id: string | null; draft: Draft; plugi
     </>
   );
   return (
-    <AdminLayout title={`${shop.name} · ${t("dlg.title")}`} nav crumbs={crumbs(shop, d.name || t("dlg.add"))} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("dlg.title")}`} nav crumbs={crumbs(shop, d.name || t("dlg.add"))} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules", here: "dialogs" }}>
       <PageHead title={d.name || t("dlg.add")} />
       {props.plugin ? (
         <p class="notice">

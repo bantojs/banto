@@ -132,7 +132,7 @@ async function page(c: AdminContext) {
   ];
   const rowValue = (r: SizeChartRow | undefined) => r?.value ?? "";
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("sizechart.title")}`} nav crumbs={crumbs} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: level.kind === "shop" ? "modules" : "products" }}>
+    <AdminLayout title={`${shop.name} · ${t("sizechart.title")}`} nav crumbs={crumbs} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), here: "size-charts" }}>
       <style dangerouslySetInnerHTML={{ __html: `${SIZE_CHART_CSS}.size-chart-grid input{width:6rem}.size-chart-grid input.value{width:7rem}` }} />
       <PageHead title={`${t("sizechart.title")} · ${title}`} sub={t("sizechart.intro")} />
       {fl ? <p class={fl.kind === "ok" ? "notice" : "error"}>{t(fl.key)}</p> : null}

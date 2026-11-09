@@ -131,7 +131,7 @@ priceRulesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const names = new Map(audiences.map((a) => [a.id, a.name]));
   const fl = FLASH[c.req.query("flash") ?? ""];
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("mprice.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("aud.title"), href: `/admin/shops/${shop.id}/modules/audiences` }, { label: t("mprice.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mprice.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("aud.title"), href: `/admin/shops/${shop.id}/modules/audiences` }, { label: t("mprice.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "member-prices" }}>
       <PageHead title={t("mprice.title")} sub={t("mprice.intro")}>
         <a class="btn" href={`${base(shop)}/new`}>
           {t("mprice.add")}
@@ -177,7 +177,7 @@ function EditPage(props: { shop: ShopRow; id: string | null; draft: Draft; audie
   const { shop, draft: d } = props;
   const action = props.id ? `${base(shop)}/${props.id}` : base(shop);
   return (
-    <AdminLayout title={`${shop.name} · ${t("mprice.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mprice.title"), href: base(shop) }, { label: d.name || t("mprice.add") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mprice.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mprice.title"), href: base(shop) }, { label: d.name || t("mprice.add") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules", here: "member-prices" }}>
       <PageHead title={d.name || t("mprice.add")} />
       {props.error ? (
         <p class="error" role="alert">

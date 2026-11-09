@@ -37,7 +37,7 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
   // 宣伝の月の上限と今月の数（0105）
   const usage = can(c.get("shopAccess"), "marketing") ? await owner(c).db.rpc<{ count: number; limit: number }>("line_marketing_usage", { p_shop_id: shop.id }) : null;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
+    <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins", here: "line-messaging" }}>
       <PageHead title={t("linemsg.title")} />
       {flash === "saved" ? <p class="notice">{t("linemsg.saved")}</p> : null}
       {flash === "deleted" ? <p class="notice">{t("linemsg.deleted")}</p> : null}
