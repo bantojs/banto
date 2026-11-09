@@ -47,6 +47,19 @@ describe.skipIf(!dbAvailable)("会員の購入の集計と社内メモ（0133）
     expect(await stats(other)).toMatchObject({ orders_count: 0 });
   });
 
+  it("集計に関係しない注文の更新（印・メモ・送り状番号）では数え直さない（会員の行を書かない）", async () => {
+    const o = await order(a.shopId, member, 1234, "paid");
+    // 集計の列を手で狂わせておき、関係の無い更新では直らない（= 数え直していない）ことで確かめる
+    await getPool().query("alter table customers disable trigger customers_updated_at");
+    await getPool().query("update customers set orders_count = 999 where id = $1", [member]);
+    await getPool().query("alter table customers enable trigger customers_updated_at");
+    await getPool().query("update orders set tags = '{ギフト}', note = 'メモ', tracking_number = '123456789012' where id = $1", [o]);
+    expect((await stats(member)).orders_count).toBe(999);
+    // 状態が変われば数え直す
+    await getPool().query("update orders set status = 'shipped' where id = $1", [o]);
+    expect((await stats(member)).orders_count).not.toBe(999);
+  });
+
   it("会員の行を後から作っても（復元・取り込み）、結び付いた注文から数える", async () => {
     const id = "00000000-0000-4000-a000-00000000c0de";
     // 注文が先に会員の id を持つ（orders.customer_id に外部キーは無い。復元は注文を先に入れる）

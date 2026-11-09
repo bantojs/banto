@@ -49,7 +49,15 @@ begin
   elsif tg_op = 'DELETE' then
     select array_agg(distinct customer_id) into v_ids from old_rows where customer_id is not null;
   else
-    select array_agg(distinct x) into v_ids from (select customer_id as x from new_rows union select customer_id from old_rows) u where x is not null;
+    -- 集計に関係する列（会員・状態・金額・日時）が変わった行だけ。印・メモ・送り状番号・個人情報のマスクでは数え直さない
+    -- （列のリスト付きのトリガーは遷移表と一緒に使えないので、ここで絞る）
+    select array_agg(distinct x) into v_ids from (
+      select n.customer_id as x from new_rows n join old_rows o using (id)
+       where (n.customer_id, n.status, n.total_jpy, n.created_at) is distinct from (o.customer_id, o.status, o.total_jpy, o.created_at)
+      union
+      select o.customer_id from new_rows n join old_rows o using (id)
+       where (n.customer_id, n.status, n.total_jpy, n.created_at) is distinct from (o.customer_id, o.status, o.total_jpy, o.created_at)
+    ) u where x is not null;
   end if;
   if v_ids is not null then perform banto_customer_stats_refresh(v_ids); end if;
   return null;

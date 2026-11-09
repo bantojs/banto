@@ -278,7 +278,7 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
   const inquiriesOn = moduleEnabled(shop.settings, "inquiries") && can(access, "support");
   const [orders, inquiries] = await Promise.all([
     can(access, "orders") ? db.from<MemberOrderRow>("orders").select("id,number,status,total_jpy,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc,id.desc", limit: 20 }) : Promise.resolve(null),
-    inquiriesOn ? db.from<MemberInquiryRow>("inquiries").select("id,number,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 20 }).catch(() => null) : Promise.resolve(null),
+    inquiriesOn ? db.from<MemberInquiryRow>("inquiries").select("id,number,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 20 }) : Promise.resolve(null),
   ]);
   const fields = customerFields(shop.settings);
   const ref = externalRef(r.external_ref);
