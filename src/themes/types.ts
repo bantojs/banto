@@ -316,7 +316,7 @@ export interface Theme {
    * released なら「成立しなかった」。free: 0 円の注文で、この時点で確定している
    */
   /** inquiryUrl: 同梱モジュール inquiries が ON で注文が確定していれば、この注文について問い合わせる GET の URL */
-  CheckoutDone(props: { ctx: ThemeContext; free?: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; inquiryUrl?: string | null }): Rendered;
+  CheckoutDone(props: { ctx: ThemeContext; free?: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; /** 読み込み直す先（# の無い URL） */ refreshUrl?: string; inquiryUrl?: string | null }): Rendered;
   NotFound(props: { ctx?: ThemeContext }): Rendered;
 }
 

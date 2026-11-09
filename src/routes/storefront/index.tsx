@@ -1660,7 +1660,10 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     // この注文について問い合わせる（同梱モジュール inquiries）: 同じ状態トークンをフォームに渡す（返事は注文時のアドレスへ）
     const inquiryUrl = r.status === "confirmed" && s.ctx.inquiries && inquiriesReady(s.shop, s.theme) ? `${s.ctx.shopPath}/inquiries/new?s=${encodeURIComponent(c.req.query("s") ?? "")}` : null;
     c.header("cache-control", "no-store");
-    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, inquiryUrl });
+    // 読み込み直す先は # の無い URL で明示する。決済事業者が戻り先に # を付けると（KOMOJU の #credit_card など）、
+    // URL を書かない refresh は「同じ文書の中の移動」になり、ブラウザが読み込み直さない
+    const refreshUrl = refresh ? withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? "") : null;
+    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, refreshUrl, inquiryUrl });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);
     return doneView(c, s, { free });
@@ -1668,13 +1671,13 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
 });
 
 /** 完了画面（Liquid のテーマの templates/checkout_done、無ければ既定のテーマ）。文言は既定のテーマと同じ */
-async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; inquiryUrl?: string | null }): Promise<Response> {
+async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; refreshUrl?: string | null; inquiryUrl?: string | null }): Promise<Response> {
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const message =
       p.status === "confirmed" && p.orderNumber != null ? tf("store.thanks_confirmed", { n: p.orderNumber }) : p.status === "released" ? t("store.thanks_released") : p.status === "pending" && p.refresh ? t("store.thanks_pending") : p.free ? t("store.thanks_free") : t("store.thanks_body");
-    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), free: p.free, inquiryUrl: p.inquiryUrl ?? null, categories: await s.sf.listCategories(s.shop) });
+    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), refreshUrl: p.refreshUrl ?? null, free: p.free, inquiryUrl: p.inquiryUrl ?? null, categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
-  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}) }));
+  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.refreshUrl ? { refreshUrl: p.refreshUrl } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}) }));
 }

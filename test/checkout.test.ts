@@ -74,7 +74,10 @@ describe("チェックアウト（Step 6）", () => {
     const doneHtml = await done.text();
     expect(doneHtml).toContain("ご注文ありがとうございます");
     expect(doneHtml).toContain("お支払いの確認中です");
-    expect(doneHtml).toContain('<meta http-equiv="refresh" content="4"');
+    // 読み込み直す先は # の無い URL を明示する（決済事業者が戻り先に #credit_card のような # を付けても読み込み直す）
+    expect(doneHtml).toContain(`<meta http-equiv="refresh" content="4;url=${donePath.replace(/&/g, "&amp;")}"`);
+    const withHash = await (await b.get(`${donePath}&session_id=abc`)).text();
+    expect(withHash).toContain(`content="4;url=${donePath.replace(/&/g, "&amp;")}"`);
     // トークンなしで開いた（古いブックマーク等）なら今までどおりの表示
     const plain = await (await b.get("/my-shop/checkout/done")).text();
     expect(plain).toContain("決済が完了すると、ショップから注文確認のご連絡をお送りします。");

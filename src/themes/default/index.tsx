@@ -119,7 +119,7 @@ function themeSetting(ctx: ThemeContext | undefined, key: string): string | unde
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
-function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSeconds?: number; children?: Child }) {
+function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSeconds?: number; refreshUrl?: string; children?: Child }) {
   const { ctx, seo } = props;
   const fullTitle = ctx ? `${props.title} · ${ctx.shop.name}` : props.title;
   const description = seo?.description ?? themeSetting(ctx, "description") ?? (ctx ? ctx.shop.name : t("app.name"));
@@ -137,7 +137,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{fullTitle}</title>
         <meta name="description" content={description.slice(0, 200)} />
-        {props.refreshSeconds ? <meta http-equiv="refresh" content={String(props.refreshSeconds)} /> : null}
+        {props.refreshSeconds ? <meta http-equiv="refresh" content={props.refreshUrl ? `${props.refreshSeconds};url=${props.refreshUrl}` : String(props.refreshSeconds)} /> : null}
         {seo?.noindex ? <meta name="robots" content="noindex" /> : null}
         {canonical ? <link rel="canonical" href={canonical} /> : null}
         <meta property="og:title" content={fullTitle} />
@@ -1775,7 +1775,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  CheckoutDone({ ctx, free, status, orderNumber, refresh, inquiryUrl }) {
+  CheckoutDone({ ctx, free, status, orderNumber, refresh, refreshUrl, inquiryUrl }) {
     const body =
       status === "confirmed" && orderNumber != null
         ? tf("store.thanks_confirmed", { n: orderNumber })
@@ -1787,7 +1787,7 @@ export const defaultTheme: Theme = {
               ? t("store.thanks_free")
               : t("store.thanks_body");
     return (
-      <Layout title={t("store.thanks_title")} ctx={ctx} seo={{ noindex: true }} refreshSeconds={status === "pending" && refresh ? 4 : undefined}>
+      <Layout title={t("store.thanks_title")} ctx={ctx} seo={{ noindex: true }} refreshSeconds={status === "pending" && refresh ? 4 : undefined} {...(refreshUrl ? { refreshUrl } : {})}>
         <h1>{t("store.thanks_title")}</h1>
         <p>{body}</p>
         {inquiryUrl ? (

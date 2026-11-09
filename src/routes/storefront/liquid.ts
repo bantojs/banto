@@ -550,10 +550,15 @@ export function renderLegalPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p:
   return render(c, s, choice, { template: "page", values: { page }, title: p.title, path: `/${p.handle}`, categories: p.categories });
 }
 
+/** 読み込み直しの meta。URL があれば # の無い URL を明示する（戻り先に # が付いていても読み込み直すように） */
+export function refreshMeta(seconds: number, url: string | null): string {
+  return url ? `<meta http-equiv="refresh" content="${seconds};url=${escapeHtml(url)}">` : `<meta http-equiv="refresh" content="${seconds}">`;
+}
+
 /** 購入の完了画面（templates/checkout_done）。checkout.status は confirmed / pending / released / not_found / unknown（照会できないとき）、確定していれば order_number */
-export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; free: boolean; inquiryUrl: string | null; categories: CategoryRow[] }): Response | null {
+export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; refreshUrl?: string | null; free: boolean; inquiryUrl: string | null; categories: CategoryRow[] }): Response | null {
   const checkout = { status: p.status, order_number: p.orderNumber, message: p.message, free: p.free, inquiry_url: p.inquiryUrl, continue_url: s.ctx.shopPath || "/" };
-  return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: '<meta http-equiv="refresh" content="4">' } : {}) });
+  return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: refreshMeta(4, p.refreshUrl ?? null) } : {}) });
 }
 
 /**
