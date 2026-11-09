@@ -2149,7 +2149,8 @@ export class FakeSupabase {
       const ext = this.appliedMigrations.includes("0132_admin_search");
       const desc = !ext || f["sort"] !== "old";
       const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
-      const jpPhone = (v: string) => v.replace(/[^0-9]/g, "").replace(/^81/, "0");
+      // 0132 は先頭の 81 だけ、0134 からは「+81 (0)90-…」の括弧の 0 も吸収する
+      const jpPhone = (v: string) => v.replace(/[^0-9]/g, "").replace(this.appliedMigrations.includes("0134_admin_search_phone") ? /^810?/ : /^81/, "0");
       const digits = raw.replace(/[^0-9]/g, "");
       const phone = ext && /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? jpPhone(raw) : null;
       const track = ext && /^[0-9A-Za-z-]{4,60}$/.test(raw) && raw.replace(/-/g, "").length <= 40 ? raw.replace(/-/g, "") : null;

@@ -56,6 +56,13 @@ describe.skipIf(!dbAvailable)("管理画面の検索を広げる（0132）", () 
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "080-9999-0000"))).toEqual([1003]);
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "+81 90-1234-5678"))).toEqual([1001]);
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "819012345678"))).toEqual([1001]);
+    // 0134: 国際表記で国内の 0 を括弧で残す書き方（名刺・署名など）も同じ番号
+    expect(await numbers(await search(a.ownerId, a.shopId, "orders", "+81 (0)90-1234-5678"))).toEqual([1001]);
+    expect(await numbers(await search(a.ownerId, a.shopId, "orders", "+81 (0)80 9999 0000"))).toEqual([1003]);
+    // 注文の側が括弧付きの書き方でも、国内の書き方で当たる（このテストの中だけの注文）
+    const extra = (await getPool().query<{ id: string }>("insert into orders (shop_id, number, status, total_jpy, shipping_jpy, customer_email, customer_name, shipping_address) values ($1, 1004, 'paid', 1, 0, 'ito@example.com', '伊藤', '{\"phone\": \"+81 (0)3-5555-6666\"}') returning id", [a.shopId])).rows[0]!.id;
+    expect(await numbers(await search(a.ownerId, a.shopId, "orders", "03-5555-6666"))).toEqual([1004]);
+    await getPool().query("delete from orders where id = $1", [extra]);
     // 電話番号は完全一致（一部では探さない）
     expect(await search(a.ownerId, a.shopId, "orders", "1234-5678")).toEqual([]);
     expect(await numbers(await search(a.ownerId, a.shopId, "orders", "1234-5678-9012"))).toEqual([1002]);
