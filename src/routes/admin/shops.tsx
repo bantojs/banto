@@ -29,24 +29,9 @@ import { enabledModules, moduleEnabled } from "../../modules/registry";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
 import { TAX_ROUNDINGS, shopTaxRates, taxRoundingOf } from "../../commerce/tax";
 import { AutocheckHint, AutocheckScript, autocheckAttrs } from "./autocheck";
+import { failCode, updateShop } from "./shop-save";
 
 export const shops = new Hono<AppEnv>();
-
-/**
- * shops の行を更新する。member の更新は RLS（0024 の shops_member_update）が settings の項目を求め、足りないと
- * PostgREST は 0 行・エラーなしで終える。それを「保存しました」と出さないように、0 行なら NotSaved を投げる
- */
-class NotSaved extends DbError {
-  constructor() {
-    super("shop_not_updated", 403, "42501");
-  }
-}
-async function updateShop(c: AdminContext, shopId: string, values: Partial<ShopRow>): Promise<void> {
-  const rows = await owner(c).db.from<ShopRow>("shops").update(values, { id: shopId });
-  if (rows.length === 0) throw new NotSaved();
-}
-/** 保存の失敗の flash（権限が足りず 0 行なら not_saved） */
-const failCode = (e: DbError) => (e instanceof NotSaved ? "not_saved" : "generic");
 
 /**
  * 管理対象のショップ。自分が触れるショップで、perm の権限の項目を持つときだけ返す（無ければ null = 404）。

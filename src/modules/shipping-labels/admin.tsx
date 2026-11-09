@@ -16,6 +16,7 @@ import { CARRIERS, buildLabelsCsv, labelSettings, type Carrier, type LabelOrder 
 import { shippingLabelsClient } from "./client";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier } from "../../orders/tracking";
 import { selectIn } from "../../db/select-in";
+import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
 export const LABELS_MODULE = "shipping_labels";
 
@@ -60,6 +61,7 @@ labelsAdmin.get("/", requireOwner, async (c: AdminContext) => {
     <AdminLayout title={`${shop.name} · ${t("labels.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("labels.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "shipping-labels" }}>
       <PageHead title={t("labels.title")} />
       {c.req.query("flash") === "saved" ? <p class="notice">{t("labels.saved")}</p> : null}
+      <NotSavedNotice flash={c.req.query("flash")} />
       <p>{t("labels.intro")}</p>
       <div id="shipping-labels"></div>
       <h2>{t("labels.import_title")}</h2>
@@ -98,9 +100,9 @@ labelsAdmin.post("/", requireOwner, async (c: AdminContext) => {
   const keys = ["shipper_name", "shipper_phone", "shipper_postal", "shipper_address", "shipper_address2", "item_name", "yamato_type", "yamato_billing_code", "yamato_freight_no"] as const;
   const shipping_labels = Object.fromEntries(keys.map((k) => [k, (f[k] ?? "").trim().slice(0, 100)]));
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), shipping_labels } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), shipping_labels } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shop.id}/modules/shipping-labels?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shop.id}/modules/shipping-labels?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shop.id}/modules/shipping-labels?flash=saved`);

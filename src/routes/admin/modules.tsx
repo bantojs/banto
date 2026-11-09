@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import type { ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
@@ -29,6 +28,7 @@ import { careLabelsAdmin } from "../../modules/care-labels/admin";
 import { audiencesAdmin } from "../../modules/audiences/admin";
 import { dialogsAdmin } from "../../modules/dialogs/admin";
 import { priceRulesAdmin } from "../../modules/audiences/prices";
+import { NotSavedNotice, failCode, updateShop } from "./shop-save";
 
 /**
  * 同梱モジュールの ON/OFF（shops.settings.modules）。/admin/shops/:shopId/modules
@@ -59,6 +59,7 @@ modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
       {saved ? <p class="notice">{t("modules.saved")}</p> : null}
       {failed ? <p class="error">{t("modules.save_failed")}</p> : null}
       {forbidden ? <p class="error">{t("access.forbidden")}</p> : null}
+      <NotSavedNotice flash={c.req.query("flash")} />
       <div class="grid">
         {available.map((m) => {
           const on = moduleEnabled(shop.settings, m.id);
@@ -111,9 +112,9 @@ modules.post("/:shopId/modules/:moduleId/enabled", requireOwner, async (c: Admin
   const current = (shop.settings ?? {})["modules"];
   const mods = { ...(current && typeof current === "object" ? (current as Record<string, unknown>) : {}), [mod.id]: f.enabled === "on" };
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), modules: mods } }, { id: shopId });
+    await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), modules: mods } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/modules?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/modules?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shopId}/modules?flash=saved`);

@@ -4,10 +4,11 @@ import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
 import { t } from "../../i18n";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
-import { formFields, owner, param, type AdminContext } from "../../routes/admin/context";
+import { formFields, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
 import { DELIVERY_SLOTS, deliverySettings, slotLabel } from "./index";
+import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
 /**
  * 同梱モジュール「配送日時の指定」の設定（shops.settings.delivery_time）。
@@ -28,6 +29,7 @@ deliveryAdmin.get("/", requireOwner, async (c: AdminContext) => {
     <AdminLayout title={`${shop.name} · ${t("delivery.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("settings.tab_shipping"), href: `/admin/shops/${shop.id}/settings/shipping` }, { label: t("delivery.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "settings", here: "settings-shipping" }}>
       <PageHead title={t("delivery.title")} />
       {c.req.query("flash") === "saved" ? <p class="notice">{t("delivery.saved")}</p> : null}
+      <NotSavedNotice flash={c.req.query("flash")} />
       <p>{t("delivery.intro")}</p>
       <form method="post" action={`/admin/shops/${shop.id}/modules/delivery-time`}>
         <label for="min_days">{t("delivery.min_days")}</label>
@@ -61,9 +63,9 @@ deliveryAdmin.post("/", requireOwner, async (c: AdminContext) => {
   const min = int(f.min_days, 0, 60, 3);
   const delivery_time = { min_days: min, max_days: Math.max(min, int(f.max_days, 0, 90, 14)), slots: DELIVERY_SLOTS.filter((sl) => f[`slot_${sl}`] === "on") };
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), delivery_time } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), delivery_time } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`/admin/shops/${shop.id}/modules/delivery-time?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`/admin/shops/${shop.id}/modules/delivery-time?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`/admin/shops/${shop.id}/modules/delivery-time?flash=saved`);

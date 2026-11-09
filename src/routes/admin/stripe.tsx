@@ -7,6 +7,8 @@ import { openJson, sealJson } from "../../util/signed";
 import { owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { updateShop } from "./shop-save";
+import { can } from "./access";
 
 /**
  * Stripe Connect（Standard、OAuth）。保持するのは stripe_account_id だけ（CLAUDE.md §1-5）。
@@ -43,7 +45,7 @@ stripe.get("/shops/:shopId/stripe/connect", requireOwner, async (c: AdminContext
   const { session } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "integrations");
-  if (!shop) return c.text("not found", 404);
+  if (!shop || !can(c.get("shopAccess"), "settings")) return c.text("not found", 404);
   const client = stripeClient(c);
   const secret = sessionSecret(c);
   if (!client || !secret) return c.redirect(`/admin/shops/${shopId}/settings/payments?flash=stripe_not_configured`);
@@ -75,15 +77,15 @@ stripe.get("/stripe/callback", requireOwner, async (c: AdminContext) => {
 });
 
 stripe.post("/shops/:shopId/stripe/disconnect", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
+  // 接続先は shops の行の列なので settings の項目も要る（RLS、0024）。先に確かめないと、Stripe 側だけ解除して Banto に残る
   const shop = await loadShop(c, shopId, "integrations");
-  if (!shop) return c.text("not found", 404);
+  if (!shop || !can(c.get("shopAccess"), "settings")) return c.text("not found", 404);
   const client = stripeClient(c);
   if (shop.stripe_account_id && client) {
     // Stripe 側の解除に失敗しても、こちらの接続情報は消す（再接続すれば整合する）
     await client.deauthorize(shop.stripe_account_id).catch(() => undefined);
   }
-  await db.from<ShopRow>("shops").update({ stripe_account_id: null }, { id: shopId });
+  await updateShop(c, shopId, { stripe_account_id: null });
   return c.redirect(`/admin/shops/${shopId}/settings/payments?flash=stripe_disconnected`);
 });

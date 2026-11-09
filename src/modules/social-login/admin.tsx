@@ -11,6 +11,8 @@ import { loadShop } from "../../routes/admin/shops";
 import { sealSecret } from "../../members/secret-box";
 import { moduleEnabled } from "../registry";
 import { PROVIDER_NAMES, callbackPath, providerClientId, providerModule, secretPurpose, type Provider } from "./providers";
+import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
+import { can } from "../../routes/admin/access";
 
 /**
  * 同梱モジュール「LINE でログイン」「Google でログイン」の設定画面（ショップごと）。
@@ -46,6 +48,7 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
         <PageHead title={tf("social.title", { name })} />
         {flash === "saved" ? <p class="notice">{t("social.saved")}</p> : null}
         {flash === "deleted" ? <p class="notice">{t("social.deleted")}</p> : null}
+        <NotSavedNotice flash={flash} />
         {c.req.query("error") === "invalid" ? <p class="error">{t("social.invalid")}</p> : null}
         {(shop.settings ?? {})["members_enabled"] !== true ? (
           <p class="error">
@@ -70,7 +73,7 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
             <button type="submit">{t("social.save")}</button>
           </p>
         </form>
-        {p === "line" && clientId ? (
+        {p === "line" && clientId && can(c.get("shopAccess"), "settings") ? (
           <form method="post" action={`${base}/bot-prompt`}>
             <label for="bot_prompt">{t("social.bot_prompt")}</label>
             <select id="bot_prompt" name="bot_prompt">
@@ -110,12 +113,13 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     try {
       await owner(c).db.rpc("shop_oauth_client_save", { p_shop_id: shop.id, p_provider: p, p_client_id: clientId, p_secret_box: box });
       // shop_oauth_client_save は settings.oauth.<provider> を { client_id } で置き換えるので、友だち追加の設定を戻す
-      const bot = p === "line" ? botPrompt(shop) : "";
+      // 戻すのは shops の行の更新なので settings の項目も要る（RLS、0024）。無い人には友だち追加の欄を出していない
+      const bot = p === "line" && can(c.get("shopAccess"), "settings") ? botPrompt(shop) : "";
       if (bot) {
         const fresh = await loadShop(c, shop.id, "integrations");
         const settings = fresh?.settings ?? {};
         const oauth = (settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>;
-        await owner(c).db.from<ShopRow>("shops").update({ settings: { ...settings, oauth: { ...oauth, line: { ...(oauth["line"] ?? {}), bot_prompt: bot } } } }, { id: shop.id });
+        await updateShop(c, shop.id, { settings: { ...settings, oauth: { ...oauth, line: { ...(oauth["line"] ?? {}), bot_prompt: bot } } } });
       }
     } catch (e) {
       if (e instanceof DbError) return c.redirect(`${base}?error=invalid`);
@@ -134,7 +138,12 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     const line = { ...(oauth["line"] ?? {}) };
     if (v === "normal" || v === "aggressive") line["bot_prompt"] = v;
     else delete line["bot_prompt"];
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...settings, oauth: { ...oauth, line } } }, { id: shop.id });
+    try {
+      await updateShop(c, shop.id, { settings: { ...settings, oauth: { ...oauth, line } } });
+    } catch (e) {
+      if (e instanceof DbError) return c.redirect(`/admin/shops/${shop.id}/modules/line-login?flash=${failCode(e, "generic")}`);
+      throw e;
+    }
     return c.redirect(`/admin/shops/${shop.id}/modules/line-login?flash=saved`);
   });
 

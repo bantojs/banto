@@ -4,11 +4,12 @@ import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
 import { t } from "../../i18n";
 import { AdminLayout, PageHead } from "../../routes/admin/layout";
-import { formFields, owner, param, type AdminContext } from "../../routes/admin/context";
+import { formFields, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
 import { GA4_ID_RE, GA4_MODULE, ga4Id } from "./ga4";
+import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
 /**
  * 同梱モジュール「Google アナリティクス（GA4）」の設定（測定 ID。shops.settings.analytics.ga4_id）。docs/ga4.md
@@ -32,6 +33,7 @@ ga4Admin.get("/", requireOwner, async (c: AdminContext) => {
       <PageHead title={t("mod.ga4.name")} />
       {flash === "saved" ? <p class="notice">{t("ga4.saved")}</p> : null}
       {flash === "invalid" ? <p class="error">{t("ga4.invalid")}</p> : null}
+      <NotSavedNotice flash={flash} />
       <p>{t("ga4.intro")}</p>
       <form method="post" action={`/admin/shops/${shop.id}/modules/ga4`}>
         <label for="ga4_id">{t("ga4.id")}</label>
@@ -56,9 +58,9 @@ ga4Admin.post("/", requireOwner, async (c: AdminContext) => {
   const current = shop.settings ?? {};
   const analytics = { ...(current["analytics"] && typeof current["analytics"] === "object" && !Array.isArray(current["analytics"]) ? (current["analytics"] as Record<string, unknown>) : {}), ga4_id: raw || null };
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...current, analytics } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...current, analytics } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${base}?flash=invalid`);
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${failCode(e, "invalid")}`);
     throw e;
   }
   return c.redirect(`${base}?flash=saved`);

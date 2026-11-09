@@ -25,6 +25,7 @@ import { moduleEnabled } from "../registry";
 import { wcImageKey, wcImageTag } from "./keys";
 import { wooImporter } from "./client";
 import { imageOptionsOf } from "../../products/images";
+import { NotSaved, updateShop } from "../../routes/admin/shop-save";
 
 /**
  * 同梱モジュール「WooCommerce から取り込み」（woo_import、既定 OFF）。docs/knowledge/08-woo-migration.md
@@ -217,8 +218,10 @@ wooImport.post("/fields", requireOwner, async (c: AdminContext) => {
   const merged: ProductField[] = [...existing];
   for (const f of incoming) if (!merged.some((x) => x.key === f.key) && merged.length < MAX_FIELDS) merged.push(f);
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), product_fields: merged } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), product_fields: merged } });
   } catch (e) {
+    // 定義は shops の行に置くので settings の項目も要る（RLS、0024）。足りなければ取り込みを止めて知らせる
+    if (e instanceof NotSaved) return c.json({ error: "not_saved" }, 403);
     if (e instanceof DbError) return c.json({ error: "db_error" }, 502);
     throw e;
   }

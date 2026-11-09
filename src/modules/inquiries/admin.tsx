@@ -18,6 +18,7 @@ import { moduleEnabled } from "../registry";
 import { yen } from "../../routes/common";
 import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } from "./attachments";
 import { BODY_MAX, INQUIRIES_MODULE, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
+import { failCode, updateShop } from "../../routes/admin/shop-save";
 
 /**
  * 同梱モジュール「お問い合わせ」の運営側の画面（docs/inquiries.md）。ショップの support の項目を持つ人（組織の owner / admin を含む）。
@@ -44,6 +45,7 @@ function crumbs(shop: ShopRow, here?: string): Crumb[] {
 
 const FLASH: Record<string, MessageKey> = {
   saved: "inq.admin_saved",
+  not_saved: "settings.not_saved",
   sent: "inq.admin_reply_sent",
   sent_no_mail: "inq.admin_reply_no_mail",
   status: "inq.admin_status_saved",
@@ -61,7 +63,7 @@ const FLASH: Record<string, MessageKey> = {
 function Flash({ code }: { code?: string | undefined }) {
   const key = code ? FLASH[code] : undefined;
   if (!key) return null;
-  return <p class={code === "empty" || code === "generic" || code === "sent_no_mail" || code === "assigned_no_mail" || !!code?.startsWith("attachment") ? "error" : "notice"}>{t(key)}</p>;
+  return <p class={code === "empty" || code === "generic" || code === "not_saved" || code === "sent_no_mail" || code === "assigned_no_mail" || !!code?.startsWith("attachment") ? "error" : "notice"}>{t(key)}</p>;
 }
 
 interface Row {
@@ -210,9 +212,9 @@ inquiriesAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
   const templates = inquiryTemplates(Array.from({ length: MAX_TEMPLATES }, (_, i) => ({ title: f[`tpl_title_${i}`] ?? "", body: f[`tpl_body_${i}`] ?? "" })));
   const inquiries = { ...((shop.settings ?? {})["inquiries"] as Record<string, unknown> | undefined), notify_email: (f.notify_email ?? "").trim() || null };
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), inquiries: { ...inquiries, notify_email: inquirySettings({ inquiries }).notify_email, templates } } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), inquiries: { ...inquiries, notify_email: inquirySettings({ inquiries }).notify_email, templates } } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${base(shop)}?flash=generic`);
+    if (e instanceof DbError) return c.redirect(`${base(shop)}?flash=${failCode(e)}`);
     throw e;
   }
   return c.redirect(`${base(shop)}?flash=saved`);
