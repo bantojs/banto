@@ -10,7 +10,8 @@ import type { ShopPerm } from "./access";
 
 /**
  * 一覧のビュー（よく使う条件に名前を付けて保存。メンテナの決定 2026-11-08、0135）。
- * ショップのメンバーで共有し、その画面の項目を持つ人が保存・削除する。書くのは DB の views_set だけ（settings の項目が無い人でも書けるように）。
+ * ショップのメンバーで共有し、その画面の項目を持つ人が保存・削除する。書くのは DB の views_add / views_remove だけ（settings の項目が無い人でも
+ * 書けるように。並びは DB の中で今の値を読み直して直すので、同時に保存しても片方が消えない）。
  * ビューは条件の URL の値をそのまま持つ。開くと、その条件の一覧の URL になる（スクリプト無しで動く）
  */
 export type ViewScreen = "orders" | "customers" | "products" | "inquiries";
@@ -67,7 +68,7 @@ export function ViewTabs(props: { shopId: string; screen: ViewScreen; views: Sav
           </a>
         ))}
       </nav>
-      {props.error ? <p class="error">{t(props.error === "full" ? "views.full" : "views.invalid")}</p> : null}
+      {props.error ? <p class="error">{t(props.error === "full" ? "views.full" : props.error === "too_large" ? "views.too_large" : "views.invalid")}</p> : null}
       {hasConditions && active < 0 && props.views.length < MAX_VIEWS ? (
         <details class="view-save">
           <summary>{t("views.save")}</summary>
@@ -86,7 +87,7 @@ export function ViewTabs(props: { shopId: string; screen: ViewScreen; views: Sav
       ) : null}
       {active >= 0 ? (
         <form method="post" action={`${action}/delete`} class="view-delete" onsubmit={`return confirm(${JSON.stringify(t("views.delete_confirm"))})`}>
-          <input type="hidden" name="index" value={String(active)} />
+          <input type="hidden" name="name" value={props.views[active]!.name} />
           <button type="submit" class="secondary small">
             {t("views.delete")}
           </button>
@@ -100,7 +101,11 @@ export const views = new Hono<AppEnv>();
 
 const readScreen = (v: string): ViewScreen | null => (v === "orders" || v === "customers" || v === "products" || v === "inquiries" ? v : null);
 
-/** 今の条件をビューとして足す（同じ名前があれば置き換える） */
+/** DB の断りの理由 → 画面の知らせ */
+const viewError = (e: DbError): string => (/views_full/.test(e.message) ? "full" : /views_too_large/.test(e.message) ? "too_large" : "invalid");
+const withError = (href: string, code: string): string => `${href}${href.includes("?") ? "&" : "?"}view_error=${code}`;
+
+/** 今の条件をビューとして足す（同じ名前があれば置き換える。DB の views_add） */
 views.post("/:shopId/views/:screen", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const screen = readScreen(param(c, "screen"));
@@ -114,29 +119,30 @@ views.post("/:shopId/views/:screen", requireOwner, async (c: AdminContext) => {
     const parsed: unknown = JSON.parse(f.query ?? "{}");
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) query = Object.fromEntries(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""));
   } catch {
-    return c.redirect(`${base}?view_error=invalid`);
+    return c.redirect(withError(base, "invalid"));
   }
-  const name = (f.name ?? "").trim();
-  const current = viewsOf(shop.settings, screen).filter((v) => v.name !== name);
-  if (current.length >= MAX_VIEWS) return c.redirect(`${searchHref(base, query)}${Object.keys(query).length ? "&" : "?"}view_error=full`);
   try {
-    await owner(c).db.rpc("views_set", { p_shop_id: shopId, p_screen: screen, p_views: [...current, { name, query }] });
+    await owner(c).db.rpc("views_add", { p_shop_id: shopId, p_screen: screen, p_name: f.name ?? "", p_query: query });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${searchHref(base, query)}${Object.keys(query).length ? "&" : "?"}view_error=invalid`);
+    if (e instanceof DbError) return c.redirect(withError(searchHref(base, query), viewError(e)));
     throw e;
   }
   return c.redirect(searchHref(base, query));
 });
 
+/** ビューを名前で消す（DB の views_remove） */
 views.post("/:shopId/views/:screen/delete", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const screen = readScreen(param(c, "screen"));
   if (!screen) return c.text(t("shop.not_found"), 404);
   const shop = await loadShop(c, shopId, SCREEN_PERM[screen]);
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const index = Number((await formFields(c)).index);
-  const current = viewsOf(shop.settings, screen);
-  if (!Number.isInteger(index) || index < 0 || index >= current.length) return c.redirect(listPath(shopId, screen));
-  await owner(c).db.rpc("views_set", { p_shop_id: shopId, p_screen: screen, p_views: current.filter((_, i) => i !== index) });
-  return c.redirect(listPath(shopId, screen));
+  const base = listPath(shopId, screen);
+  try {
+    await owner(c).db.rpc("views_remove", { p_shop_id: shopId, p_screen: screen, p_name: (await formFields(c)).name ?? "" });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(withError(base, viewError(e)));
+    throw e;
+  }
+  return c.redirect(base);
 });

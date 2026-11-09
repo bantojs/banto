@@ -807,6 +807,7 @@ export const en: Record<MessageKey, string> = {
   "views.delete": "Delete this view",
   "views.delete_confirm": "Delete this view? (The filtered results do not change.)",
   "views.invalid": "Could not save the view (names can be up to 40 characters).",
+  "views.too_large": "The views are too large to save. Use shorter conditions or delete views you no longer use.",
   "views.full": "Up to 20 views per screen. Delete views you no longer use.",
   "inq.search_placeholder": "Number, order number, name, email",
   "search.submit": "Filter",

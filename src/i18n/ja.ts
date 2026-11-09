@@ -808,6 +808,7 @@ export const ja = {
   "views.delete": "このビューを消す",
   "views.delete_confirm": "このビューを消しますか？（条件で絞った結果は変わりません）",
   "views.invalid": "ビューを保存できませんでした（名前は 40 字まで）。",
+  "views.too_large": "ビューが大きすぎて保存できませんでした。条件の短いビューにするか、使わないビューを消してください。",
   "views.full": "ビューは 1 つの画面に 20 個までです。使わないビューを消してください。",
   "inq.search_placeholder": "番号・注文番号・お名前・メール",
   "search.submit": "絞り込む",

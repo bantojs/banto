@@ -2270,17 +2270,21 @@ export class FakeSupabase {
       return json(before - this.memberPasskeys.length);
     }
     // 0048: 運営者が会員の独自項目を直す（定義に無い鍵は断る。渡した鍵だけ重ね、null で消す）
-    if (fn === "views_set") {
-      // 0135: その画面の項目の人だけ。形の検査は本物（test/db/admin-views.test.ts）に任せ、ここでは件数と名前だけ
+    if (fn === "views_add" || fn === "views_remove") {
+      // 0135: その画面の項目の人だけ。並びは今の値から 1 つ足す / 名前で消す（形と大きさの検査の本物は test/db/admin-views.test.ts）
       const shopId = String(args["p_shop_id"]);
-      const perm = ({ orders: "orders", customers: "customers", products: "catalog", inquiries: "support" } as Record<string, string>)[String(args["p_screen"])];
+      const screen = String(args["p_screen"]);
+      const perm = ({ orders: "orders", customers: "customers", products: "catalog", inquiries: "support" } as Record<string, string>)[screen];
       if (!perm) return json({ code: "22023", message: "invalid_screen" }, 400);
       if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes(perm))) return json({ code: "42501", message: "shop_not_found" }, 403);
-      const views = args["p_views"] as { name: string; query: Row }[];
-      if (!Array.isArray(views) || views.length > 20 || views.some((v) => !v.name?.trim() || v.name.trim().length > 40)) return json({ code: "22023", message: "invalid_view_name" }, 400);
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
-      const out = views.map((v) => ({ name: v.name.trim(), query: v.query }));
-      shop["settings"] = { ...((shop["settings"] ?? {}) as Row), [`views_${String(args["p_screen"])}`]: out };
+      const settings = (shop["settings"] ?? {}) as Row;
+      const name = String(args["p_name"] ?? "").trim();
+      const cur = ((Array.isArray(settings[`views_${screen}`]) ? settings[`views_${screen}`] : []) as { name: string }[]).filter((v) => v.name !== name);
+      if (fn === "views_add" && (!name || name.length > 40)) return json({ code: "22023", message: "invalid_view_name" }, 400);
+      const out = fn === "views_add" ? [...cur, { name, query: args["p_query"] }] : cur;
+      if (out.length > 20) return json({ code: "22023", message: "views_full" }, 400);
+      shop["settings"] = { ...settings, [`views_${screen}`]: out };
       return json(out);
     }
     if (fn === "customer_set_note") {

@@ -3,12 +3,12 @@
 -- ビューはショップのメンバーで共有する（人ごとにしない）。置き場は shops.settings のいちばん上の、画面ごとの鍵:
 --   views_orders（項目 orders）・views_customers（customers）・views_products（catalog）・views_inquiries（support）
 -- 保存できるのはその画面の項目を持つ人。member が shops の行を直接更新するには RLS（0024 の shops_member_update）が settings の
--- 項目を求めるので、書くのは専用の関数 views_set だけにする（security definer。その画面の項目を確かめ、その鍵だけを書き換える）。
+-- 項目を求めるので、書くのは専用の関数 views_add / views_remove だけにする（security definer。その画面の項目を確かめ、その鍵だけを書き換える）。
 -- 鍵は banto_shop_settings_perm（0129）にも画面の項目で登録し、直接の更新に対する守り（banto_shops_guard）にも効かせる。
 -- お客様の画面に渡す設定の許可リスト（banto_shop_public_settings）には入れない。
 --
--- 1 つのビュー: { "name": 1〜40 字, "query": { 条件の名前: 文字 } }。1 画面 20 まで。条件の名前は英小文字・_（20 字まで）、値は 200 字まで、
--- 12 個まで。条件の意味（どの名前が使えるか）は画面が決める（形の違う条件は画面と admin_search_ids が捨てる）。
+-- 1 つのビュー: { "name": 1〜40 字, "query": { 条件の名前: 文字 } }。1 画面 20 まで・全体で 8 KiB まで。条件の名前は英小文字・_（20 字まで）、
+-- 値は 100 字まで、12 個まで。条件の意味（どの名前が使えるか）は画面が決める（形の違う条件は画面と admin_search_ids が捨てる）。
 
 create or replace function banto_shop_settings_perm(p_key text, p_module text)
 returns text
@@ -50,8 +50,43 @@ as $$
 $$;
 revoke execute on function banto_view_screen_perm(text) from public, anon, authenticated;
 
--- ビューの並びを置き換える（空の配列で全部消す）。返り値は保存した並び
-create or replace function views_set(p_shop_id uuid, p_screen text, p_views jsonb)
+-- ビューを 1 つ足す（同じ名前があれば置き換える）・名前で 1 つ消す。返り値は保存した並び。
+-- 並びは DB の中で、ショップの行を押さえてから今の値を読み直して作る（2 人が同時に保存しても、片方のビューが消えない）。
+-- 1 画面のビュー全体は 8 KiB まで（4 画面で 32 KiB。設定全体の上限 64 KiB（0129 の shops_settings_size）を、権限の低いメンバーが
+-- ビューだけで使い切って、ほかの人の設定の保存を止められないように）。条件の値は検索の欄（admin_search_ids の 100 字）に合わせて 100 字まで
+
+-- 今の並び（ショップの行を押さえて読む。形の違う値は空として扱う）
+create or replace function banto_views_current(p_shop_id uuid, p_screen text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v jsonb;
+begin
+  select settings->('views_' || p_screen) into v from shops where id = p_shop_id for update;
+  return case when jsonb_typeof(v) = 'array' then v else '[]'::jsonb end;
+end;
+$$;
+revoke execute on function banto_views_current(uuid, text) from public, anon, authenticated;
+
+-- 並びを書く（件数と大きさの上限を確かめる）
+create or replace function banto_views_write(p_shop_id uuid, p_screen text, p_views jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if jsonb_array_length(p_views) > 20 then raise exception 'views_full' using errcode = '22023'; end if;
+  if octet_length(p_views::text) > 8192 then raise exception 'views_too_large' using errcode = '22023'; end if;
+  update shops set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('views_' || p_screen, p_views) where id = p_shop_id;
+  return p_views;
+end;
+$$;
+revoke execute on function banto_views_write(uuid, text, jsonb) from public, anon, authenticated;
+
+create or replace function views_add(p_shop_id uuid, p_screen text, p_name text, p_query jsonb)
 returns jsonb
 language plpgsql
 security definer
@@ -59,37 +94,48 @@ set search_path = public
 as $$
 declare
   v_perm text := banto_view_screen_perm(p_screen);
-  v_out jsonb := '[]'::jsonb;
-  v_view jsonb;
-  v_name text;
-  v_query jsonb;
+  v_name text := btrim(coalesce(p_name, ''));
+  v_query jsonb := '{}'::jsonb;
   v_k text;
   v_v jsonb;
 begin
   if v_perm is null then raise exception 'invalid_screen' using errcode = '22023'; end if;
   if not banto_shop_perm(p_shop_id, v_perm) then raise exception 'shop_not_found' using errcode = '42501'; end if;
-  if jsonb_typeof(p_views) is distinct from 'array' or jsonb_array_length(p_views) > 20 then raise exception 'invalid_views' using errcode = '22023'; end if;
-  for v_view in select * from jsonb_array_elements(p_views) loop
-    if jsonb_typeof(v_view) <> 'object' or jsonb_typeof(v_view->'name') <> 'string' or jsonb_typeof(v_view->'query') <> 'object' then
+  if char_length(v_name) not between 1 and 40 then raise exception 'invalid_view_name' using errcode = '22023'; end if;
+  if jsonb_typeof(p_query) is distinct from 'object' or (select count(*) from jsonb_object_keys(p_query)) > 12 then
+    raise exception 'invalid_views' using errcode = '22023';
+  end if;
+  for v_k, v_v in select * from jsonb_each(p_query) loop
+    if v_k !~ '^[a-z_]{1,20}$' or jsonb_typeof(v_v) <> 'string' or char_length(v_v #>> '{}') > 100 then
       raise exception 'invalid_views' using errcode = '22023';
     end if;
-    v_name := btrim(v_view->>'name');
-    if char_length(v_name) not between 1 and 40 then raise exception 'invalid_view_name' using errcode = '22023'; end if;
-    if (select count(*) from jsonb_object_keys(v_view->'query')) > 12 then raise exception 'invalid_views' using errcode = '22023'; end if;
-    v_query := '{}'::jsonb;
-    for v_k, v_v in select * from jsonb_each(v_view->'query') loop
-      if v_k !~ '^[a-z_]{1,20}$' or jsonb_typeof(v_v) <> 'string' or char_length(v_v #>> '{}') > 200 then
-        raise exception 'invalid_views' using errcode = '22023';
-      end if;
-      if (v_v #>> '{}') <> '' then v_query := v_query || jsonb_build_object(v_k, v_v); end if;
-    end loop;
-    v_out := v_out || jsonb_build_array(jsonb_build_object('name', v_name, 'query', v_query));
+    if (v_v #>> '{}') <> '' then v_query := v_query || jsonb_build_object(v_k, v_v); end if;
   end loop;
-  update shops set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('views_' || p_screen, v_out) where id = p_shop_id;
-  return v_out;
+  return banto_views_write(p_shop_id, p_screen,
+    coalesce((select jsonb_agg(e order by o) from jsonb_array_elements(banto_views_current(p_shop_id, p_screen)) with ordinality x(e, o)
+               where e->>'name' is distinct from v_name), '[]'::jsonb)
+    || jsonb_build_array(jsonb_build_object('name', v_name, 'query', v_query)));
 end;
 $$;
-revoke execute on function views_set(uuid, text, jsonb) from public, anon;
-grant execute on function views_set(uuid, text, jsonb) to authenticated;
+revoke execute on function views_add(uuid, text, text, jsonb) from public, anon;
+grant execute on function views_add(uuid, text, text, jsonb) to authenticated;
+
+create or replace function views_remove(p_shop_id uuid, p_screen text, p_name text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_perm text := banto_view_screen_perm(p_screen);
+begin
+  if v_perm is null then raise exception 'invalid_screen' using errcode = '22023'; end if;
+  if not banto_shop_perm(p_shop_id, v_perm) then raise exception 'shop_not_found' using errcode = '42501'; end if;
+  return banto_views_write(p_shop_id, p_screen,
+    coalesce((select jsonb_agg(e order by o) from jsonb_array_elements(banto_views_current(p_shop_id, p_screen)) with ordinality x(e, o)
+               where e->>'name' is distinct from btrim(coalesce(p_name, ''))), '[]'::jsonb));
+end;
+$$;
+revoke execute on function views_remove(uuid, text, text) from public, anon;
+grant execute on function views_remove(uuid, text, text) to authenticated;
 
 insert into banto_migrations (version) values ('0135_admin_views');

@@ -53,7 +53,8 @@ describe("一覧のビュー", () => {
     expect(opened).toContain("このビューを消す");
     // 条件なしは「すべて」に印
     expect(await (await b.get(base)).text()).toContain(`<a href="${base}" aria-current="page">すべて</a>`);
-    expect((await b.post(`/admin/shops/${shop.id}/views/orders/delete`, { index: "0" })).headers.get("location")).toBe(base);
+    expect(opened).toContain('<input type="hidden" name="name" value="ギフトの発送待ち"/>');
+    expect((await b.post(`/admin/shops/${shop.id}/views/orders/delete`, { name: "ギフトの発送待ち" })).headers.get("location")).toBe(base);
     expect((sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] as Record<string, unknown>)["views_orders"]).toEqual([]);
   });
 
