@@ -199,6 +199,7 @@ export const ja = {
   "fields.vis_card": "出す（一覧のカードにも）",
   "fields.vis_private": "出さない（管理画面と API だけ）",
   "fields.options_placeholder": "例: 日本, 中国",
+  "fields.options_has_separator": "選択肢に「,」か「、」を含むものがあります。この欄を編集すると、そこで分かれます（触らなければそのまま残ります）。",
   "fields.delete_label": "「{label}」を消す",
   "fields.add_row": "＋ 項目を足す",
   "fields.title": "カスタム項目（商品）",

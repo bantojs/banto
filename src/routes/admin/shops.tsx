@@ -23,7 +23,7 @@ import { bundledPluginIdFromUrl } from "../../plugins/types";
 import { fetchManifest } from "../../hooks/manifest";
 import { PREFECTURES, parseShippingSettings, taxRate } from "../../commerce/shipping";
 import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, returnOrigins, shopLimit } from "../../commerce/checkout";
-import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
+import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, optionsHaveSeparator, optionsText, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
 import { customerFields } from "../../customers/fields";
 import { enabledModules, moduleEnabled } from "../../modules/registry";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
@@ -786,7 +786,9 @@ function FieldsPage(props: { shop: ShopRow; access: ShopAccess | undefined; kind
                     </select>
                   </td>
                   <td>
-                    <input type="text" name={`f_options_${i}`} value={(f?.options ?? []).join(", ")} placeholder={t("fields.options_placeholder")} aria-label={t("fields.col_options")} />
+                    <input type="text" name={`f_options_${i}`} value={optionsText(f?.options)} placeholder={t("fields.options_placeholder")} aria-label={t("fields.col_options")} />
+                    {f?.options?.length ? <input type="hidden" name={`f_options_orig_${i}`} value={JSON.stringify(f.options)} /> : null}
+                    {optionsHaveSeparator(f?.options) ? <p class="muted">{t("fields.options_has_separator")}</p> : null}
                   </td>
                   {product ? (
                     <td>

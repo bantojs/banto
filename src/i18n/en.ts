@@ -200,6 +200,7 @@ export const en: Record<MessageKey, string> = {
   "fields.vis_card": "Show (also on list cards)",
   "fields.vis_private": "Hide (admin and API only)",
   "fields.options_placeholder": "e.g. Japan, China",
+  "fields.options_has_separator": "Some choices contain a comma. Editing this box splits them there (they stay as they are if you leave it unchanged).",
   "fields.delete_label": "Delete \"{label}\"",
   "fields.add_row": "+ Add a field",
   "fields.title": "Custom product fields",
