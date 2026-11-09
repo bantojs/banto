@@ -172,23 +172,23 @@ describe("管理画面: 独自ドメインの設定", () => {
   it("保存・形のチェック・重複・Banto 自身のホスト名", async () => {
     const { app, shop, other, sb } = setup({ domain: null });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    const page = await (await admin.get(`/admin/shops/${shop.id}/settings/domain`)).text();
     expect(page).toContain(`action="/admin/shops/${shop.id}/domain"`);
 
     let res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "https://Shop.Example.JP/" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(sb.tables.shops.find((s) => s["id"] === shop.id)!["domain"]).toBe(DOMAIN);
 
     res = await admin.post(`/admin/shops/${other.id}/domain`, { domain: DOMAIN });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${other.id}?flash=domain_taken#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${other.id}/settings/domain?flash=domain_taken`);
 
     for (const bad of ["not a domain", "localhost", "banto.workers.dev"]) {
       res = await admin.post(`/admin/shops/${other.id}/domain`, { domain: bad });
-      expect(res.headers.get("location"), bad).toBe(`/admin/shops/${other.id}?flash=domain_invalid#domain`);
+      expect(res.headers.get("location"), bad).toBe(`/admin/shops/${other.id}/settings/domain?flash=domain_invalid`);
     }
 
     res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(sb.tables.shops.find((s) => s["id"] === shop.id)!["domain"]).toBeNull();
   });
 });

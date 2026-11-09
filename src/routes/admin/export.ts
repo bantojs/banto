@@ -95,7 +95,7 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
  */
 exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
-  const base = `/admin/shops/${shopId}`;
+  const base = `/admin/shops/${shopId}/settings/backup`;
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const body = await c.req.parseBody();

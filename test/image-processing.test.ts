@@ -98,16 +98,16 @@ describe("管理画面", () => {
   it("ショップの設定で任せるを選ぶ。画像を変換できるプラグインがつながっていなければ知らせる", async () => {
     const { app, sb, shop } = await setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    let html = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    let html = await (await b.get(`/admin/shops/${shop.id}/settings/images`)).text();
     expect(html).toContain('name="image_processing"');
     const action = /<form method="post" action="([^"]+)"[^>]*>(?:(?!<\/form>)[\s\S])*name="image_processing"/.exec(html)![1]!;
     const form = { mode: "flat", flat_fee_jpy: "0", free_over_jpy: "", tax_rate: "10", tax_rate_reduced: "8", tax_rounding: "floor", contact_email: "", image_max: "2048", image_processing: "plugin" };
     await b.post(action, form);
     expect((sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] as Record<string, unknown>)["images"]).toEqual({ max_width: 2048, processing: "plugin" });
-    html = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    html = await (await b.get(`/admin/shops/${shop.id}/settings/images`)).text();
     expect(html).toContain("画像を変換できるプラグインがつながっていません");
     sb.tables.hook_endpoints.push({ id: "ep-webp", shop_id: shop.id, name: "WebP", url: "https://webp.example/hook", events: ["product.updated"], enabled: true, settings: {}, manifest: { name: "webp", events: ["product.updated"], settings: [], capabilities: ["images"] }, created_at: "" });
-    html = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    html = await (await b.get(`/admin/shops/${shop.id}/settings/images`)).text();
     expect(html).not.toContain("画像を変換できるプラグインがつながっていません");
   });
 

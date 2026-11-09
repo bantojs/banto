@@ -6,7 +6,7 @@
 | Workers 入口 / Node 入口 | `src/index.ts` / `src/entry/node.ts` | Cloudflare 型はここと `src/adapters/workers/` だけ |
 | アダプタ | `src/adapters/` | `types.ts` に `CONFIG_PLACEHOLDER` と `normalizeConfigValue`（REPLACE_ME を未設定扱い） |
 | 設定値の一覧 | `docs/env.md`、`.dev.vars.example`、`wrangler.jsonc` | `vars` は書かない。`keep_vars: true` |
-| 管理画面 | `src/routes/admin/` | `setup.tsx`（ウィザード）、`migrate.tsx`（トークン / 接続文字列）、`shops.tsx`（設定・バックアップ・復元）、`products.tsx`（画像のブラウザ側縮小スクリプト）、`orders.tsx`（検索・CSV・キャンセル）、`plugins.tsx`（有効化・Secret 形式・Webhook URL）、`hooks.tsx`（送信先・配信履歴）、`tokens.tsx`、`customers.tsx`、`export.ts`（JSON 書き出し・復元）、`update.tsx` |
+| 管理画面 | `src/routes/admin/` | `setup.tsx`（ウィザード）、`migrate.tsx`（トークン / 接続文字列）、`shops.tsx`（ショップの設定: 基本と法定表記は `/admin/shops/:id`、ほかは `/settings/<画面>`（`settingsPath`、画面ごとの権限は `SECTION_PERM`）。商品・会員の独自項目の画面 `/fields`・`/customer-fields`）、`layout.tsx`（左の目次と画面の中のタブ `NAV`）、`products.tsx`（画像のブラウザ側縮小スクリプト）、`orders.tsx`（検索・CSV・キャンセル）、`plugins.tsx`（有効化・Secret 形式・Webhook URL）、`hooks.tsx`（送信先・配信履歴）、`tokens.tsx`、`customers.tsx`、`export.ts`（JSON 書き出し・復元）、`update.tsx` |
 | ストアフロント | `src/routes/storefront/index.tsx`、`members.ts` | カート → 住所 → 最終確認（`ConfirmPage`、quote を hidden で持つ）→ `/checkout/:provider`。テーマは `src/themes/default/` |
 | チェックアウトの中核 | `src/commerce/checkout.ts` | カートの値付け・配送先の検証・最終確認の内容（`Confirmation`）・quote の署名と引き直し・`placeOrder`（在庫予約 → 決済ページ）。同梱テーマも API もここを通る。決済クライアントは `src/routes/payment-deps.ts` |
 | 同梱モジュール | `src/modules/registry.ts`（一覧・ON/OFF）、`src/routes/admin/modules.tsx`（/admin/shops/:id/modules） | ON/OFF は `shops.settings.modules.<id>` |

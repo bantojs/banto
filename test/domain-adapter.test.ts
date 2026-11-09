@@ -40,7 +40,7 @@ describe("独自ドメインの提供元（DomainAdapter）", () => {
     const { sb, shop, domains, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     let res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "shop.example.jp" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(sb.tables.shops[0]!["domain"]).toBe("shop.example.jp");
     expect(domains.calls).toEqual(["attach:shop.example.jp:main"]);
 
@@ -51,13 +51,13 @@ describe("独自ドメインの提供元（DomainAdapter）", () => {
 
     // 変える: 新しい方を attach、前の方を detach
     res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "store.example.jp" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(domains.calls).toEqual(["attach:store.example.jp:main", "detach:shop.example.jp:main"]);
 
     // 外す: attach は無し、detach だけ
     domains.calls = [];
     res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(sb.tables.shops[0]!["domain"]).toBeNull();
     expect(domains.calls).toEqual(["detach:store.example.jp:main"]);
   });
@@ -67,7 +67,7 @@ describe("独自ドメインの提供元（DomainAdapter）", () => {
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     domains.attachResult = { ok: false, reason: "unverified", message: "TXT record not found" };
     let res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "shop.example.jp" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_unverified&detail=TXT%20record%20not%20found#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_unverified&detail=TXT%20record%20not%20found`);
     expect(sb.tables.shops[0]!["domain"] ?? null).toBeNull();
     const page = await (await admin.get(`/admin/shops/${shop.id}?flash=domain_unverified&detail=TXT%20record%20not%20found`)).text();
     expect(page).toContain("所有を確かめられませんでした");
@@ -75,33 +75,33 @@ describe("独自ドメインの提供元（DomainAdapter）", () => {
 
     domains.attachResult = { ok: false, reason: "taken" };
     res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "shop.example.jp" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_taken#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_taken`);
 
     domains.attach = async () => {
       throw new Error("boom");
     };
     res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "shop.example.jp" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_unavailable#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_unavailable`);
     expect(sb.tables.shops[0]!["domain"] ?? null).toBeNull();
   });
 
   it("設定画面: 提供元があれば手順の代わりに提供元の説明を出し、ドメインがあれば状態と DNS の指示を出す", async () => {
     const { sb, shop, domains, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    let page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    let page = await (await admin.get(`/admin/shops/${shop.id}/settings/domain`)).text();
     expect(page).toContain("このサービスがドメインの登録と証明書を扱います");
     expect(page).not.toContain("「カスタムドメイン」として追加します");
     expect(domains.calls).toEqual([]); // ドメインが無ければ聞かない
 
     sb.tables.shops[0]!["domain"] = "shop.example.jp";
-    page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    page = await (await admin.get(`/admin/shops/${shop.id}/settings/domain`)).text();
     expect(domains.calls).toEqual(["status:shop.example.jp"]);
     expect(page).toContain("DNS の設定か確認の待ちです。 DNS を待っています");
     expect(page).toContain("<td>CNAME</td>");
     expect(page).toContain("customers.hosting.example");
 
     domains.state = { status: "active" };
-    page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    page = await (await admin.get(`/admin/shops/${shop.id}/settings/domain`)).text();
     expect(page).toContain("提供元で有効です。");
     expect(page).not.toContain("<td>CNAME</td>");
 
@@ -109,7 +109,7 @@ describe("独自ドメインの提供元（DomainAdapter）", () => {
     domains.status = async () => {
       throw new Error("down");
     };
-    page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    page = await (await admin.get(`/admin/shops/${shop.id}/settings/domain`)).text();
     expect(page).toContain("独自ドメイン");
     expect(page).not.toContain("提供元で有効です。");
   });

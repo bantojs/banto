@@ -44,12 +44,14 @@ describe("同梱モジュールの管理画面の権限（近道と画面の入�
     expect(Object.fromEntries(MODULES.map((m) => [m.id, m.perm]))).toEqual(Object.fromEntries(MODULES.map((m) => [m.id, db.get(m.id) ?? "settings"])));
   });
 
+  // 用途の近い設定の画面から入るモジュール（メンテナの決定 2026-11-08）。ほかはショップの画面（左の目次か近道）から
+  const entry: Record<string, string> = { delivery_time: "/settings/shipping", line_login: "/settings/members", google_login: "/settings/members" };
   for (const m of withPage) {
-    it(`${m.id}: 「${m.perm}」の項目だけの人に近道が出て、画面も開ける`, async () => {
+    it(`${m.id}: 「${m.perm}」の項目だけの人に入口が出て、画面も開ける`, async () => {
       const { sb, shop, app } = setup();
       const b = await staff(sb, app, shop.id, `${m.id}@example.com`, [m.perm]);
       const href = `/admin/shops/${shop.id}/modules/${m.adminPath}`;
-      expect(await (await b.get(`/admin/shops/${shop.id}`)).text()).toContain(`href="${href}"`);
+      expect(await (await b.get(`/admin/shops/${shop.id}${entry[m.id] ?? ""}`)).text()).toContain(`href="${href}"`);
       expect((await b.get(href)).status).toBe(200);
     });
   }

@@ -42,14 +42,14 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     const flash = c.req.query("flash");
     const base = `/admin/shops/${shop.id}/modules/${p}-login`;
     return c.html(
-      <AdminLayout title={`${shop.name} · ${tf("social.title", { name })}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: p === "line" ? "line-login" : "google-login" }}>
+      <AdminLayout title={`${shop.name} · ${tf("social.title", { name })}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("settings.tab_members"), href: `/admin/shops/${shop.id}/settings/members` }, { label: name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "settings", here: "settings-members" }}>
         <PageHead title={tf("social.title", { name })} />
         {flash === "saved" ? <p class="notice">{t("social.saved")}</p> : null}
         {flash === "deleted" ? <p class="notice">{t("social.deleted")}</p> : null}
         {c.req.query("error") === "invalid" ? <p class="error">{t("social.invalid")}</p> : null}
         {(shop.settings ?? {})["members_enabled"] !== true ? (
           <p class="error">
-            {t("social.members_off")} <a href={`/admin/shops/${shop.id}#members`}>{t("shop.members_open_settings")}</a>
+            {t("social.members_off")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("shop.members_open_settings")}</a>
           </p>
         ) : null}
         <p>{tf("social.intro", { name })}</p>

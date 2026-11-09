@@ -110,7 +110,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
       {!(shop.settings ?? {})["members_enabled"] ? (
         <div class="notice">
           <p>
-            {t("shop.members_where")} <a href={`/admin/shops/${shop.id}#members`}>{t("shop.members_open_settings")}</a>
+            {t("shop.members_where")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("shop.members_open_settings")}</a>
           </p>
           <p class="muted">{t("shop.members_hint")}</p>
         </div>

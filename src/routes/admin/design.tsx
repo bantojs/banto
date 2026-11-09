@@ -13,6 +13,7 @@ import { getLocale } from "../../i18n";
 import { requireOwner } from "./auth";
 import { planLimitOf } from "../../plan/limits";
 import { loadShop } from "./shops";
+import { can } from "./access";
 import { readBodyLimited } from "../common";
 
 /**
@@ -42,6 +43,7 @@ const FLASH: Record<string, { kind: "ok" | "error"; key: MessageKey }> = {
   published: { kind: "ok", key: "design.published" },
   unpublished: { kind: "ok", key: "design.unpublished" },
   deleted: { kind: "ok", key: "design.deleted" },
+  theme_saved: { kind: "ok", key: "theme.saved" },
   requires_domain: { kind: "error", key: "design.requires_domain" },
   incomplete: { kind: "error", key: "design.incomplete" },
   full: { kind: "error", key: "design.full" },
@@ -129,6 +131,38 @@ const UPLOAD_SCRIPT = `(function(){
   });
 })();`;
 
+/**
+ * 既定のテーマの見た目（紹介文・お知らせ・アクセントカラー・ロゴ。shops.settings.theme_settings）。
+ * ショップの設定から移した（メンテナの決定 2026-11-08「見た目はデザインへ」）。鍵は settings の項目なので、その項目のある人だけに出す
+ */
+function LookSection(props: { shop: ShopRow }) {
+  const { shop } = props;
+  const theme = ((shop.settings ?? {})["theme_settings"] ?? {}) as Record<string, unknown>;
+  const str = (k: string) => (typeof theme[k] === "string" ? String(theme[k]) : "");
+  return (
+    <section>
+      <h2>{t("theme.title")}</h2>
+      <form method="post" action={`/admin/shops/${shop.id}/theme`} class="card" id="theme">
+        <p class="muted">{t("theme.intro")}</p>
+        <label for="description">{t("theme.description")}</label>
+        <textarea id="description" name="description" rows={3} maxlength={300} style="width:100%;max-width:40rem">
+          {str("description")}
+        </textarea>
+        <label for="announcement">{t("theme.announcement")}</label>
+        <input id="announcement" type="text" name="announcement" value={str("announcement")} maxlength={120} />
+        <label for="accent_color">{t("theme.accent")}</label>
+        <input id="accent_color" type="color" name="accent_color" value={str("accent_color") || "#1f6feb"} />
+        <label for="logo_url">{t("theme.logo")}</label>
+        <input id="logo_url" type="url" name="logo_url" value={str("logo_url")} placeholder="https://" />
+        <p class="muted">{t("theme.logo_hint")}</p>
+        <p>
+          <button type="submit">{t("shop.save")}</button>
+        </p>
+      </form>
+    </section>
+  );
+}
+
 design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.text(t("shop.not_found"), 404);
@@ -157,6 +191,7 @@ design.get("/:shopId/design", requireOwner, async (c: AdminContext) => {
     <AdminLayout title={`${shop.name} · ${t("design.title")}`} nav crumbs={crumbs} shopTabs={tabs}>
       <PageHead title={t("design.title")} sub={t("design.intro")} />
       {flash ? <p class={flash.kind === "ok" ? "notice" : "error"}>{t(flash.key)}</p> : null}
+      {can(c.get("shopAccess"), "settings") ? <LookSection shop={shop} /> : null}
       <section>
         <h2>{t("design.conditions")}</h2>
         <ul>

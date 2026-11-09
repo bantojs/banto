@@ -161,12 +161,12 @@ describe("独自ドメインの保存", () => {
     const app = appWith(sb, { PUBLIC_BASE_URL: undefined });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "shop.example.jp" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_needs_base_url#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_needs_base_url`);
     expect(sb.tables.shops[0]!["domain"] ?? null).toBeNull();
-    expect(await (await admin.get(`/admin/shops/${shop.id}?flash=domain_needs_base_url`)).text()).toContain("PUBLIC_BASE_URL");
+    expect(await (await admin.get(`/admin/shops/${shop.id}/settings/domain?flash=domain_needs_base_url`)).text()).toContain("PUBLIC_BASE_URL");
     // 外すのは PUBLIC_BASE_URL が無くてもできる
     const clear = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "" });
-    expect(clear.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(clear.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
   });
 });
 

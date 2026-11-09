@@ -303,7 +303,7 @@ function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormCont
       </select>
       {!members ? (
         <p class="muted">
-          {t("coupons.members_disabled")} <a href={`/admin/shops/${fc.shop.id}#members`}>{t("shop.members_open_settings")}</a>
+          {t("coupons.members_disabled")} <a href={`/admin/shops/${fc.shop.id}/settings/members`}>{t("shop.members_open_settings")}</a>
         </p>
       ) : null}
 

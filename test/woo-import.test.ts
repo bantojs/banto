@@ -459,12 +459,13 @@ describe("WooCommerce インポーター: 管理画面とサーバー側", () =>
     expect((await json(admin, `${base}/batch`, { products: [] })).status).toBe(404);
     let html = await (await admin.get(`/admin/shops/${shop.id}/modules`)).text();
     expect(html).toContain("WooCommerce から取り込み");
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).not.toContain(base);
+    expect(await (await admin.get(`/admin/shops/${shop.id}/products`)).text()).not.toContain(base);
 
     const res = await admin.post(`/admin/shops/${shop.id}/modules/woo_import/enabled`, { enabled: "on" });
     expect(res.headers.get("location")).toContain("flash=saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({ modules: { woo_import: true } });
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain(base);
+    // 商品の中のタブに出る
+    expect(await (await admin.get(`/admin/shops/${shop.id}/products`)).text()).toContain(base);
     html = await (await admin.get(base)).text();
     const script = /<script>([\s\S]*?)<\/script>/.exec(html.slice(html.indexOf('id="woo-import"')))![1]!;
     expect(script).toContain(".mount(document.getElementById");
@@ -590,7 +591,7 @@ describe("WooCommerce インポーター: 会員の取り込み", () => {
     const html = await (await admin.get(base)).text();
     const markup = html.slice(0, html.indexOf("<script>"));
     expect(markup).not.toContain('data-wc-customers=""');
-    expect(markup).toContain(`href="/admin/shops/${shop.id}#members"`);
+    expect(markup).toContain(`href="/admin/shops/${shop.id}/settings/members"`);
     const res = await admin.postJson(`${base}/customers`, { customers: [{ email: "a@example.com" }] });
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "members_disabled" });

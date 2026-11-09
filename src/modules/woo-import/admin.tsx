@@ -142,7 +142,7 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
           </>
         ) : (
           <p class="notice">
-            {t("woo.customers_disabled")} <a href={`/admin/shops/${shop.id}#members`}>{t("woo.customers_open_settings")}</a>
+            {t("woo.customers_disabled")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("woo.customers_open_settings")}</a>
           </p>
         )}
         <h3>{t("woo.coupons_title")}</h3>
@@ -178,7 +178,7 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
           </>
         ) : (
           <p class="notice">
-            {t("woo.passwords_disabled")} <a href={`/admin/shops/${shop.id}#members`}>{t("woo.customers_open_settings")}</a>
+            {t("woo.passwords_disabled")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("woo.customers_open_settings")}</a>
           </p>
         )}
         <h2>{t("woo.csv_title")}</h2>

@@ -197,14 +197,11 @@ td:first-child>.status>a:hover{text-decoration:underline}
   background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 -4px 16px rgba(0,0,0,.04)}
 .savebar label{margin:0}
 .danger-zone:not(aside .danger-zone) button{width:auto}
-/* 設定の画面: 左の目次と、項目ごとのカード */
-.settings{display:grid;grid-template-columns:12rem minmax(0,1fr);gap:2rem;align-items:start}
-.settings>div>.card:first-child{margin-top:0}
-.side-nav{position:sticky;top:72px;display:flex;flex-direction:column;gap:.1rem}
-.side-nav a{padding:.4rem .65rem;border-radius:6px;font-size:.875rem;color:var(--fg-muted);text-decoration:none}
-.side-nav a:hover{color:var(--fg);background:var(--bg-subtle)}
+/* 設定の画面: 上級者向けの一覧 */
+.setting-list{list-style:none}
+.setting-list li{display:flex;flex-direction:column;gap:.15rem;padding:.7rem 0;border-bottom:1px solid var(--border)}
+.setting-list li:last-child{border-bottom:0}
 .card{scroll-margin-top:72px}
-@media (max-width:900px){.settings{grid-template-columns:minmax(0,1fr)}.side-nav{position:static;flex-direction:row;flex-wrap:wrap}}
 th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 dl.sum{display:grid;grid-template-columns:1fr auto;gap:.4rem 0;margin:1rem 0 0;font-size:.9rem}
 dl.sum dt{color:var(--fg-muted)}
@@ -284,9 +281,12 @@ export type ShopHere =
   | "layouts"
   | "embed"
   | "receipt"
-  | "delivery-time"
-  | "line-login"
-  | "google-login";
+  | "product-fields"
+  | "customer-fields"
+  | "settings-shipping"
+  | "settings-payments"
+  | "settings-members"
+  | "settings-advanced";
 
 /** 目次の 1 項目の中の画面（画面の中のタブ）。同梱モジュールの項目に要る権限はモジュールの一覧（registry の perm）から引く */
 interface NavSub {
@@ -318,12 +318,13 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
         subs: [
           page("products", "/products", "product.list", "catalog"),
           page("categories", "/categories", "category.title", "catalog"),
+          page("product-fields", "/fields", "fields.title", "catalog"),
           mod("size-charts", "size_charts", "sizechart.title"),
           mod("care-labels", "care_labels", "mod.care_labels.name"),
           mod("woo-import", "woo_import", "mod.woo_import.name"),
         ],
       },
-      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices")] },
+      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), page("customer-fields", "/customer-fields", "customer_fields.title", "customers"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices")] },
       { label: "mod.inquiries.name", subs: [mod("inquiries", "inquiries", "mod.inquiries.name")] },
       { label: "mod.store_tryon.name", subs: [mod("store-tryon", "store_tryon", "mod.store_tryon.name")] },
     ],
@@ -359,11 +360,12 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
       {
         label: "shop.settings",
         subs: [
-          page("settings", "", "shop.settings", "any"),
+          page("settings", "", "settings.tab_general", "any"),
+          page("settings-shipping", "/settings/shipping", "settings.tab_shipping", "settings"),
+          page("settings-payments", "/settings/payments", "settings.tab_payments", "settings"),
+          page("settings-members", "/settings/members", "settings.tab_members", "admin|integrations"),
           mod("receipt", "receipt", "mod.receipt.name"),
-          mod("delivery-time", "delivery_time", "mod.delivery_time.name"),
-          mod("line-login", "line_login", "mod.line_login.name"),
-          mod("google-login", "google_login", "mod.google_login.name"),
+          page("settings-advanced", "/settings/advanced", "settings.tab_advanced", "settings"),
         ],
       },
     ],
@@ -418,10 +420,11 @@ function SubTabs(props: { tabs: ShopTabs; here: ShopHere | undefined }) {
   );
 }
 
+/** perm: 権限の項目（"a|b" はどれか 1 つ）、"admin" = 組織の owner / admin、"any" = だれでも */
 function tabAllowed(access: ShopTabs["access"], perm: string): boolean {
   if (!access) return true;
   if (perm === "any") return true;
-  return access.role === "owner" || access.role === "admin" || access.perms.includes(perm);
+  return access.role === "owner" || access.role === "admin" || perm.split("|").some((p) => access.perms.includes(p));
 }
 
 /**

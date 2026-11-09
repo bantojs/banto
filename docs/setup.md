@@ -130,7 +130,7 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 ### 複数のショップで入金先を分けたい場合（上級者向け）
 
 Stripe Connect を使うと、ショップごとに別の Stripe アカウントへ入金できます。Stripe 側で Connect（プラットフォーム）の設定と
-`STRIPE_CLIENT_ID` の登録が必要です。ショップ設定の「上級者向け: Stripe Connect」から接続します。
+`STRIPE_CLIENT_ID` の登録が必要です。ショップ設定の「決済」にある「上級者向け: Stripe Connect」から接続します。
 Webhook は「接続済みアカウントのイベントをリッスン」で登録してください。1 ショップだけなら不要です。
 
 ## 6. 公開前にやること

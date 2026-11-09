@@ -25,7 +25,7 @@ describe("商品マスタの拡張: 管理画面", () => {
     let res = await admin.post(`/admin/shops/${shop.id}/fields`, { definitions: "material | 素材 | text\norigin | 原産国 | select | 日本/中国\ncost | 原価 | number | | private\nBad Key | x | text" });
     expect(res.headers.get("location")).toContain("flash=fields_saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({ product_fields: FIELDS });
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain("origin | 原産国 | select | 日本/中国");
+    expect(await (await admin.get(`/admin/shops/${shop.id}/fields`)).text()).toContain("origin | 原産国 | select | 日本/中国");
 
     // カテゴリー
     res = await admin.post(`/admin/shops/${shop.id}/categories`, { name: "ウェア", slug: "wear", parent_id: "", sort_order: "0" });
@@ -193,7 +193,7 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
         { key: "newsletter", label: "メルマガ", type: "select", options: ["yes", "no"], public: false },
       ],
     });
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain("rank | 会員ランク | select | regular/gold");
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customer-fields`)).text()).toContain("rank | 会員ランク | select | regular/gold");
 
     sb.tables.customers.push({ id: crypto.randomUUID(), shop_id: shop.id, email: "m@example.com", name: "会員", attributes: { rank: "gold", stale: "x" }, external_ref: { provider: "hubspot", id: "101" }, created_at: "2026-10-23T00:00:00Z" });
     const html = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();

@@ -46,7 +46,7 @@ stripe.get("/shops/:shopId/stripe/connect", requireOwner, async (c: AdminContext
   if (!shop) return c.text("not found", 404);
   const client = stripeClient(c);
   const secret = sessionSecret(c);
-  if (!client || !secret) return c.redirect(`/admin/shops/${shopId}?flash=stripe_not_configured`);
+  if (!client || !secret) return c.redirect(`/admin/shops/${shopId}/settings/payments?flash=stripe_not_configured`);
   const state: ConnectState = { shop_id: shopId, user_id: session.user_id, exp: Math.floor(Date.now() / 1000) + 10 * 60 };
   return c.redirect(client.oauthAuthorizeUrl({ redirectUri: callbackUrl(c), state: await sealJson(secret, state) }));
 });
@@ -59,7 +59,7 @@ stripe.get("/stripe/callback", requireOwner, async (c: AdminContext) => {
   if (!state || typeof state.shop_id !== "string" || state.user_id !== session.user_id || typeof state.exp !== "number" || state.exp < Date.now() / 1000) {
     return c.redirect("/admin?flash=stripe_state_invalid");
   }
-  const back = `/admin/shops/${state.shop_id}`;
+  const back = `/admin/shops/${state.shop_id}/settings/payments`;
   if (c.req.query("error")) return c.redirect(`${back}?flash=stripe_failed`);
   const code = c.req.query("code");
   if (!code || !client) return c.redirect(`${back}?flash=stripe_failed`);
@@ -85,5 +85,5 @@ stripe.post("/shops/:shopId/stripe/disconnect", requireOwner, async (c: AdminCon
     await client.deauthorize(shop.stripe_account_id).catch(() => undefined);
   }
   await db.from<ShopRow>("shops").update({ stripe_account_id: null }, { id: shopId });
-  return c.redirect(`/admin/shops/${shopId}?flash=stripe_disconnected`);
+  return c.redirect(`/admin/shops/${shopId}/settings/payments?flash=stripe_disconnected`);
 });

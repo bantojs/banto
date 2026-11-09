@@ -81,6 +81,66 @@ describe("管理画面の共通の見た目", () => {
     expect([...nav.matchAll(/<a href="[^"]+"[^>]*>([^<]+)<\/a>/g)].map((m) => m[1])).toEqual(["注文", "ショップ設定"]);
   });
 
+  it("ショップ設定は画面ごとに分け、1 画面に保存は 1 つ（基本と法定表記 / 配送と税 / 決済 / 会員とログイン / 上級者向け）", async () => {
+    const { shop, app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}`;
+    const main = (html: string) => html.slice(html.indexOf("<main>"), html.indexOf("</main>"));
+    const general = await (await admin.get(base)).text();
+    expect(general).toContain(`<nav class="subtabs" aria-label="ショップ設定">`);
+    for (const [path, label] of [["", "基本と法定表記"], ["/settings/shipping", "配送と税"], ["/settings/payments", "決済"], ["/settings/members", "会員とログイン"], ["/settings/advanced", "上級者向け"]]) {
+      expect(general).toContain(`<a href="${base}${path}"`);
+      const html = await (await admin.get(`${base}${path}`)).text();
+      expect(html).toContain(`<h1>${label}</h1>`);
+      expect(main(html).match(/<button type="submit"/g)?.length ?? 0, label).toBeLessThanOrEqual(1);
+    }
+    // 上級者向けは一覧から 1 つずつの画面へ
+    const adv = await (await admin.get(`${base}/settings/advanced`)).text();
+    for (const s of ["domain", "storefront", "headless", "legal-links", "terms", "images", "backup"]) {
+      expect(adv).toContain(`href="${base}/settings/${s}"`);
+      const html = await (await admin.get(`${base}/settings/${s}`)).text();
+      // 目次とタブは「上級者向け」に印
+      expect(html, s).toContain(`<a href="${base}/settings/advanced" aria-current="page">上級者向け</a>`);
+    }
+    expect((await admin.get(`${base}/settings/nothing`)).status).toBe(404);
+    // 見た目はデザイン、独自項目は商品・会員の中
+    expect(general).not.toContain('name="accent_color"');
+    expect(await (await admin.get(`${base}/design`)).text()).toContain('name="accent_color"');
+    const fields = await (await admin.get(`${base}/fields`)).text();
+    expect(fields).toContain(`<a href="${base}/fields" aria-current="page">カスタム項目（商品）</a>`);
+    expect(fields).toMatch(new RegExp(`<a href="${base}/products" aria-current="page">商品</a>`));
+  });
+
+  it("設定の画面は保存する鍵の項目で出し分ける（会員とログインは owner / admin、ログインの方法だけなら integrations）", async () => {
+    const { sb, shop, app } = setup();
+    const org = String(sb.tables.shops.find((s) => s["id"] === shop.id)!["org_id"]);
+    const member = async (email: string, perms: string[]) => {
+      const u = sb.addUser(email, "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms });
+      return Browser.loggedIn(app, email, "password-123");
+    };
+    const base = `/admin/shops/${shop.id}`;
+    const settings = await member("settings@example.com", ["settings"]);
+    expect((await settings.get(`${base}/settings/shipping`)).status).toBe(200);
+    expect((await settings.get(`${base}/settings/members`)).status).toBe(404);
+    expect((await settings.get(`${base}/settings/images`)).status).toBe(404);
+    const adv = await (await settings.get(`${base}/settings/advanced`)).text();
+    expect(adv).toContain(`href="${base}/settings/domain"`);
+    expect(adv).not.toContain(`href="${base}/settings/backup"`);
+    expect(adv).not.toContain(`href="${base}/settings/headless"`);
+    // 配送と税の保存は会員機能の鍵に触らない（owner / admin の鍵、0129）
+    sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"] = { members_enabled: true };
+    await settings.post(`${base}/shipping`, { mode: "flat", flat_fee_jpy: "500", tax_rate: "10" });
+    expect(sb.tables.shops.find((s) => s["id"] === shop.id)!["settings"]).toMatchObject({ members_enabled: true, shipping: { flat_fee_jpy: 500 } });
+    // integrations だけの人: ログインの方法は見えるが、会員機能の欄は出さない
+    const integ = await member("integ@example.com", ["integrations"]);
+    const m = await (await integ.get(`${base}/settings/members`)).text();
+    expect(m).toContain("ログインの方法");
+    expect(m).not.toContain('name="members_enabled"');
+    expect((await integ.post(`${base}/members`, { members_enabled: "on" })).status).toBe(404);
+  });
+
   it("商品の一覧: 名前・スラッグの部分一致と公開の状態で DB で絞る", async () => {
     const { shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
