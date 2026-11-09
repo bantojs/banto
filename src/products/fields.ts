@@ -80,6 +80,45 @@ export function parseFieldRows(input: string): Record<string, unknown>[] {
     });
 }
 
+/** 表の「公開」の欄の値（商品だけ。会員の項目はお客様の画面に出さない） */
+export type FieldVisibility = "public" | "card" | "private";
+export const fieldVisibility = (f: ProductField): FieldVisibility => (!f.public ? "private" : f.card ? "card" : "public");
+
+/**
+ * 管理画面の項目の表（メンテナの決定 2026-11-08「独自項目は表で決める」）→ 生の行（検査は fieldDefinitions）と、受け付けない行。
+ * 行ごとの欄は f_key_<n>（新しい行だけ。今ある行の鍵は f_orig_<n> で固定。鍵を変えると入力済みの値と切れるため）・f_label_<n>・f_type_<n>・
+ * f_options_<n>（「,」「、」か改行で区切る）・f_vis_<n>・f_del_<n>。鍵も表示名も空の行は飛ばす。形の違う鍵・重なる鍵は invalid に入れ、呼び手は保存しない
+ */
+export function fieldRowsFromForm(form: Record<string, string | undefined>): { rows: Record<string, unknown>[]; invalid: string[] } {
+  const n = Math.min(Number.parseInt(form["f_n"] ?? "0", 10) || 0, MAX_FIELDS + 20);
+  const rows: Record<string, unknown>[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < n; i++) {
+    if (form[`f_del_${i}`] === "on") continue;
+    const key = (form[`f_orig_${i}`] ?? form[`f_key_${i}`] ?? "").trim();
+    const label = (form[`f_label_${i}`] ?? "").trim();
+    if (!key && !label) continue;
+    if (!KEY_RE.test(key) || seen.has(key)) {
+      invalid.push(key || label);
+      continue;
+    }
+    seen.add(key);
+    const type = form[`f_type_${i}`] ?? "text";
+    const vis = form[`f_vis_${i}`];
+    const options = (form[`f_options_${i}`] ?? "").split(/[,、\n]/).map((x) => x.trim()).filter(Boolean);
+    rows.push({
+      key,
+      label: label || key,
+      type: (FIELD_TYPES as readonly string[]).includes(type) ? type : "text",
+      ...(options.length ? { options } : {}),
+      public: vis !== "private",
+      ...(vis === "card" ? { card: true } : {}),
+    });
+  }
+  return { rows, invalid };
+}
+
 export function formatFieldDefinitions(fields: ProductField[]): string {
   return fields.map((f) => [f.key, f.label, f.type, (f.options ?? []).join("/"), f.public ? (f.card ? "card" : "") : "private"].join(" | ").replace(/( \| )+$/, "")).join("\n");
 }

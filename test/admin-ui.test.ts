@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { Browser, appWith } from "./helpers";
+import { Browser, appWith, fieldForm } from "./helpers";
 
 /** 管理画面の共通の見た目（パンくず・ショップのタブ・一覧の絞り込み）。docs は src/routes/admin/layout.tsx */
 function setup() {
@@ -151,7 +151,7 @@ describe("管理画面の共通の見た目", () => {
     const catalog = await member("catalog@example.com", ["catalog"]);
     expect((await catalog.get(`${base}/fields`)).status).toBe(404);
     expect(await (await catalog.get(`${base}/products`)).text()).not.toContain(`href="${base}/fields"`);
-    expect((await catalog.post(`${base}/fields`, { definitions: "material | 素材 | text" })).headers.get("location")).toBe(`${base}/fields?flash=not_saved`);
+    expect((await catalog.post(`${base}/fields`, fieldForm([{ key: "material", label: "素材" }]))).headers.get("location")).toBe(`${base}/fields?flash=not_saved`);
     const both = await member("both@example.com", ["catalog", "settings"]);
     expect(await (await both.get(`${base}/products`)).text()).toContain(`href="${base}/fields"`);
   });

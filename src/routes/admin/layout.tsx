@@ -197,6 +197,11 @@ td:first-child>.status>a:hover{text-decoration:underline}
   background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 -4px 16px rgba(0,0,0,.04)}
 .savebar label{margin:0}
 .danger-zone:not(aside .danger-zone) button{width:auto}
+/* 独自項目の表: 狭い画面では横に送る */
+.table-scroll{overflow-x:auto}
+.fields-table td{vertical-align:middle}
+.fields-table th{white-space:nowrap}
+.fields-table input[type=text],.fields-table select{width:100%;min-width:8rem;margin:0}
 /* 設定の画面: 上級者向けの一覧 */
 .setting-list{list-style:none}
 .setting-list li{display:flex;flex-direction:column;gap:.15rem;padding:.7rem 0;border-bottom:1px solid var(--border)}

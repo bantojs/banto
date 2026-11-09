@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, appWith } from "./helpers";
+import { BASE, Browser, appWith, fieldForm } from "./helpers";
 
 function setup(settings: Record<string, unknown> = {}) {
   const sb = new FakeSupabase();
@@ -21,11 +21,21 @@ describe("商品マスタの拡張: 管理画面", () => {
     const { sb, shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
 
-    // カスタム項目の定義（1 行 1 項目）
-    let res = await admin.post(`/admin/shops/${shop.id}/fields`, { definitions: "material | 素材 | text\norigin | 原産国 | select | 日本/中国\ncost | 原価 | number | | private\nBad Key | x | text" });
+    // カスタム項目の定義（表の 1 行 1 項目）。形の違う鍵があれば、何も保存せずに知らせる
+    const rows = [
+      { key: "material", label: "素材" },
+      { key: "origin", label: "原産国", type: "select", options: "日本, 中国" },
+      { key: "cost", label: "原価", type: "number", vis: "private" as const },
+    ];
+    let res = await admin.post(`/admin/shops/${shop.id}/fields`, fieldForm([...rows, { key: "Bad Key", label: "x" }]));
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/fields?flash=fields_invalid&detail=${encodeURIComponent("Bad Key")}`);
+    expect((sb.tables.shops[0]!["settings"] as Record<string, unknown>)["product_fields"]).toBeUndefined();
+    res = await admin.post(`/admin/shops/${shop.id}/fields`, fieldForm([...rows, { key: "", label: "" }]));
     expect(res.headers.get("location")).toContain("flash=fields_saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({ product_fields: FIELDS });
-    expect(await (await admin.get(`/admin/shops/${shop.id}/fields`)).text()).toContain("origin | 原産国 | select | 日本/中国");
+    const page = await (await admin.get(`/admin/shops/${shop.id}/fields`)).text();
+    expect(page).toContain('<code>origin</code><input type="hidden" name="f_orig_1" value="origin"/>');
+    expect(page).toContain('name="f_options_1" value="日本, 中国"');
 
     // カテゴリー
     res = await admin.post(`/admin/shops/${shop.id}/categories`, { name: "ウェア", slug: "wear", parent_id: "", sort_order: "0" });
@@ -185,7 +195,7 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
   it("定義を保存し、会員の一覧に独自項目と外部の ID が出る", async () => {
     const { sb, shop, app } = setup({ members_enabled: true });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const res = await admin.post(`/admin/shops/${shop.id}/customer-fields`, { definitions: "rank | 会員ランク | select | regular/gold\nnewsletter | メルマガ | select | yes/no\nBad Key | x | text" });
+    const res = await admin.post(`/admin/shops/${shop.id}/customer-fields`, fieldForm([{ key: "rank", label: "会員ランク", type: "select", options: "regular, gold" }, { key: "newsletter", label: "メルマガ", type: "select", options: "yes、no" }]));
     expect(res.headers.get("location")).toContain("flash=customer_fields_saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({
       customer_fields: [
@@ -193,7 +203,7 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
         { key: "newsletter", label: "メルマガ", type: "select", options: ["yes", "no"], public: false },
       ],
     });
-    expect(await (await admin.get(`/admin/shops/${shop.id}/customer-fields`)).text()).toContain("rank | 会員ランク | select | regular/gold");
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customer-fields`)).text()).toContain('name="f_options_0" value="regular, gold"');
 
     sb.tables.customers.push({ id: crypto.randomUUID(), shop_id: shop.id, email: "m@example.com", name: "会員", attributes: { rank: "gold", stale: "x" }, external_ref: { provider: "hubspot", id: "101" }, created_at: "2026-10-23T00:00:00Z" });
     const html = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();

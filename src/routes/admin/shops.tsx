@@ -23,8 +23,8 @@ import { bundledPluginIdFromUrl } from "../../plugins/types";
 import { fetchManifest } from "../../hooks/manifest";
 import { PREFECTURES, parseShippingSettings, taxRate } from "../../commerce/shipping";
 import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, returnOrigins, shopLimit } from "../../commerce/checkout";
-import { formatFieldDefinitions, parseFieldDefinitions, productFields } from "../../products/fields";
-import { customerFields, parseCustomerFieldDefinitions } from "../../customers/fields";
+import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
+import { customerFields } from "../../customers/fields";
 import { enabledModules, moduleEnabled } from "../../modules/registry";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
 import { TAX_ROUNDINGS, shopTaxRates, taxRoundingOf } from "../../commerce/tax";
@@ -70,6 +70,7 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     domain_unverified: "domain.unverified",
     domain_unavailable: "domain.unavailable",
     fields_saved: "fields.saved",
+    fields_invalid: "fields.invalid",
     customer_fields_saved: "customer_fields.saved",
     stripe_connected: "stripe.connected_ok",
     stripe_disconnected: "stripe.disconnected_ok",
@@ -718,28 +719,107 @@ function BackupSection(props: { shop: ShopRow }) {
   );
 }
 
-/** 商品・会員の独自項目の定義の画面（商品・会員の中。メンテナの決定 2026-11-08） */
+/** 商品・会員の独自項目の定義の画面（商品・会員の中。メンテナの決定 2026-11-08「独自項目は書式の文字の欄ではなく表で決める」） */
+const BLANK_FIELD_ROWS = 3;
+/** スクリプトがあれば「項目を足す」で空の行を足す（無くても空の行 3 つで足せる）。行の番号は f_n で数える */
+const FIELDS_ADD_SCRIPT = `(function(){
+  var f=document.getElementById("fields-form");if(!f)return;
+  var b=f.querySelector("[data-add-row]"),tb=f.querySelector("tbody"),n=f.querySelector("input[name=f_n]");if(!b||!tb||!n)return;
+  b.hidden=false;
+  b.addEventListener("click",function(){var last=tb.querySelector("tr[data-blank]:last-of-type");if(!last)return;var i=Number(n.value);var r=last.cloneNode(true);
+    r.querySelectorAll("[name]").forEach(function(el){el.name=el.name.replace(/_\\d+$/,"_"+i);if(el.id)el.id=el.id.replace(/_\\d+$/,"_"+i);if(el.type==="checkbox")el.checked=false;else if(el.tagName!=="SELECT")el.value="";else el.selectedIndex=0;});
+    r.querySelectorAll("label[for]").forEach(function(l){l.htmlFor=l.htmlFor.replace(/_\\d+$/,"_"+i);});
+    tb.appendChild(r);n.value=String(i+1);var k=r.querySelector("input[type=text]");if(k)k.focus();});
+})();`;
+const FIELD_TYPE_LABEL: Record<FieldType, MessageKey> = { text: "fields.type_text", textarea: "fields.type_textarea", number: "fields.type_number", url: "fields.type_url", select: "fields.type_select", image: "fields.type_image" };
+const FIELD_VIS_LABEL: Record<FieldVisibility, MessageKey> = { public: "fields.vis_public", card: "fields.vis_card", private: "fields.vis_private" };
+
 function FieldsPage(props: { shop: ShopRow; access: ShopAccess | undefined; kind: "product" | "customer"; flash: ReturnType<typeof flash> }) {
   const { shop } = props;
   const product = props.kind === "product";
   const title = t(product ? "fields.title" : "customer_fields.title");
+  const fields = product ? productFields(shop.settings) : customerFields(shop.settings);
+  // 会員の項目に画像は使わない（src/customers/fields.ts）
+  const types = FIELD_TYPES.filter((ty) => product || ty !== "image");
+  const rows: (ProductField | null)[] = [...fields, ...Array.from({ length: BLANK_FIELD_ROWS }, () => null)];
   return (
     <AdminLayout title={`${shop.name} · ${title}`} nav crumbs={[{ label: shop.name, href: settingsPath(shop.id) }, { label: title }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: product ? "products" : "customers", here: product ? "product-fields" : "customer-fields" }}>
-      <PageHead title={title} />
+      <PageHead title={title} sub={t(product ? "fields.intro" : "customer_fields.intro")} />
       {props.flash ? <p class={props.flash.kind === "ok" ? "notice" : "error"}>{props.flash.text}</p> : null}
-      <form method="post" action={`/admin/shops/${shop.id}/${product ? "fields" : "customer-fields"}`} class="card" id={product ? "fields" : "customer-fields"}>
-        <p class="muted">{t(product ? "fields.intro" : "customer_fields.intro")}</p>
-        <textarea
-          name="definitions"
-          rows={product ? 6 : 4}
-          style="width:100%;max-width:40rem;font-family:monospace"
-          placeholder={product ? "material | 素材 | text\norigin | 原産国 | select | 日本/中国\ncost | 原価 | number | | private" : "rank | 会員ランク | select | regular/silver/gold\nnewsletter | メルマガ | select | yes/no\nowner | 担当者 | text"}
-        >
-          {formatFieldDefinitions(product ? productFields(shop.settings) : customerFields(shop.settings))}
-        </textarea>
+      <form method="post" action={`/admin/shops/${shop.id}/${product ? "fields" : "customer-fields"}`} class="card" id="fields-form">
+        <input type="hidden" name="f_n" value={String(rows.length)} />
+        <div class="table-scroll">
+          <table class="fields-table">
+            <thead>
+              <tr>
+                <th>{t("fields.col_label")}</th>
+                <th>{t("fields.col_key")}</th>
+                <th>{t("fields.col_type")}</th>
+                <th>{t("fields.col_options")}</th>
+                {product ? <th>{t("fields.col_visibility")}</th> : null}
+                <th>{t("fields.col_delete")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((f, i) => (
+                <tr data-blank={f ? undefined : ""}>
+                  <td>
+                    <input type="text" name={`f_label_${i}`} value={f?.label ?? ""} maxlength={60} aria-label={t("fields.col_label")} />
+                  </td>
+                  <td>
+                    {f ? (
+                      <>
+                        <code>{f.key}</code>
+                        <input type="hidden" name={`f_orig_${i}`} value={f.key} />
+                      </>
+                    ) : (
+                      <input type="text" name={`f_key_${i}`} maxlength={40} pattern="[a-z][a-z0-9_]{0,39}" placeholder="material" aria-label={t("fields.col_key")} />
+                    )}
+                  </td>
+                  <td>
+                    <select name={`f_type_${i}`} aria-label={t("fields.col_type")}>
+                      {types.map((ty) => (
+                        <option value={ty} selected={(f?.type ?? "text") === ty}>
+                          {t(FIELD_TYPE_LABEL[ty])}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <input type="text" name={`f_options_${i}`} value={(f?.options ?? []).join(", ")} placeholder={t("fields.options_placeholder")} aria-label={t("fields.col_options")} />
+                  </td>
+                  {product ? (
+                    <td>
+                      <select name={`f_vis_${i}`} aria-label={t("fields.col_visibility")}>
+                        {(["public", "card", "private"] as const).map((v) => (
+                          <option value={v} selected={(f ? fieldVisibility(f) : "public") === v}>
+                            {t(FIELD_VIS_LABEL[v])}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  ) : null}
+                  <td>
+                    {f ? (
+                      <label>
+                        <input type="checkbox" name={`f_del_${i}`} value="on" aria-label={tf("fields.delete_label", { label: f.label })} />
+                      </label>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <button type="button" class="secondary" data-add-row hidden>
+            {t("fields.add_row")}
+          </button>
+        </p>
         <p class="muted">{t(product ? "fields.hint" : "customer_fields.hint")}</p>
         <SaveButton />
       </form>
+      <script dangerouslySetInnerHTML={{ __html: FIELDS_ADD_SCRIPT }} />
     </AdminLayout>
   );
 }
@@ -1005,8 +1085,9 @@ shops.post("/:shopId/fields", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const f = await formFields(c);
-  const product_fields = parseFieldDefinitions(f.definitions ?? "");
+  const { rows, invalid } = fieldRowsFromForm(await formFields(c));
+  if (invalid.length) return c.redirect(`/admin/shops/${shopId}/fields?flash=fields_invalid&detail=${encodeURIComponent(invalid.join(", "))}`);
+  const product_fields = productFields({ product_fields: rows });
   try {
     await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), product_fields } });
   } catch (e) {
@@ -1024,8 +1105,9 @@ shops.post("/:shopId/customer-fields", requireOwner, async (c: AdminContext) => 
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const f = await formFields(c);
-  const customer_fields = parseCustomerFieldDefinitions(f.definitions ?? "");
+  const { rows, invalid } = fieldRowsFromForm(await formFields(c));
+  if (invalid.length) return c.redirect(`/admin/shops/${shopId}/customer-fields?flash=fields_invalid&detail=${encodeURIComponent(invalid.join(", "))}`);
+  const customer_fields = customerFields({ customer_fields: rows });
   try {
     await updateShop(c, shopId, { settings: { ...(shop.settings ?? {}), customer_fields } });
   } catch (e) {
