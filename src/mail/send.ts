@@ -44,7 +44,8 @@ export function smtpHostIsIpWithTls(config: ConfigAdapter): boolean {
   if (mailTransportName(config) !== "smtp") return false;
   const host = (config.get("SMTP_HOST") ?? "").trim().replace(/^\[|\]$/g, "");
   if (!host) return false;
-  return smtpOptions(config).tls !== "off" && (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || (host.includes(":") && /^[0-9a-f:.]+$/i.test(host)));
+  // IPv6 は "::" を含むか ":" が 2 つ以上（"cafe:587" のようにポートを付けたホスト名を IP とみなさない）
+  return smtpOptions(config).tls !== "off" && (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || (/^[0-9a-f:.]+$/i.test(host) && (host.includes("::") || host.split(":").length > 2)));
 }
 
 function smtpOptions(config: ConfigAdapter) {

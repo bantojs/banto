@@ -338,6 +338,8 @@ describe("SMTP の送り手", () => {
     expect(warn({ SMTP_HOST: "[2001:db8::1]" })).toBe(true);
     expect(warn({ SMTP_HOST: "192.0.2.10", SMTP_TLS: "off" })).toBe(false);
     expect(warn({ SMTP_HOST: "example.sakura.ne.jp" })).toBe(false);
+    expect(warn({ SMTP_HOST: "cafe:587" })).toBe(false); // ポートを付けたホスト名は IPv6 ではない
+    expect(warn({ SMTP_HOST: "2001:db8:0:0:0:0:0:1" })).toBe(true);
     expect(smtpHostIsIpWithTls(memoryAdapters({ SMTP_HOST: "192.0.2.10" }).config)).toBe(false); // 送り手が smtp でない
   });
 
