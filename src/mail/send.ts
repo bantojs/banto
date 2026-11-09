@@ -36,6 +36,17 @@ export function mailTransportMissing(config: ConfigAdapter): string[] {
   return REQUIRED[name].filter((n) => !config.get(n));
 }
 
+/**
+ * SMTP_HOST が IP アドレスで、TLS（starttls / on）を使う設定か。証明書はホスト名に対して出ているので、IP では TLS の確認が通らずに切られる。
+ * 管理画面のメール通知のカードが警告する（docs/email.md「届かないとき」）
+ */
+export function smtpHostIsIpWithTls(config: ConfigAdapter): boolean {
+  if (mailTransportName(config) !== "smtp") return false;
+  const host = (config.get("SMTP_HOST") ?? "").trim().replace(/^\[|\]$/g, "");
+  if (!host) return false;
+  return smtpOptions(config).tls !== "off" && (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || (host.includes(":") && /^[0-9a-f:.]+$/i.test(host)));
+}
+
 function smtpOptions(config: ConfigAdapter) {
   const tlsRaw = (config.get("SMTP_TLS") ?? "starttls").toLowerCase();
   const tls: "on" | "starttls" | "off" = tlsRaw === "on" || tlsRaw === "tls" ? "on" : tlsRaw === "off" || tlsRaw === "none" ? "off" : "starttls";

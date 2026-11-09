@@ -823,6 +823,7 @@ export const en: Record<MessageKey, string> = {
   "plugins.off": "Off",
   "plugins.enable": "Enable",
   "plugins.configure": "Open settings",
+  "plugins.smtp_host_ip": "SMTP_HOST is an IP address. With TLS (SMTP_TLS is starttls or on) the server certificate is checked against the host name, so an IP address fails the check and the connection is closed. Enter the mail server's host name (for example, the host name your hosting company gives for SMTP).",
   "plugins.mail_transport": "Mail transport: {name} (choose resend / smtp / sendgrid / ses with the MAIL_TRANSPORT variable; see docs/email.md)",
   "plugins.missing_secrets": "This plugin needs the following secrets:",
   "plugins.webhook_url": "Webhook URL to register with the payment provider:",

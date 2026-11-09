@@ -826,6 +826,7 @@ export const ja = {
   "plugins.off": "無効",
   "plugins.enable": "有効にする",
   "plugins.configure": "設定を開く",
+  "plugins.smtp_host_ip": "SMTP_HOST が IP アドレスです。TLS（SMTP_TLS が starttls か on）ではサーバーの証明書をホスト名で確かめるので、IP では確認が通らずに接続が切られます。レンタルサーバーのホスト名（例: アカウント名.sakura.ne.jp）を入れてください。",
   "plugins.mail_transport": "メールの送り手: {name}（環境変数 MAIL_TRANSPORT で resend / smtp / sendgrid / ses から選びます。docs/email.md）",
   "plugins.missing_secrets": "このプラグインには Secret の設定が必要です:",
   "plugins.webhook_url": "決済事業者側に登録する Webhook の URL:",

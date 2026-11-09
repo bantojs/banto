@@ -2,7 +2,7 @@ import { createServer, type Socket } from "node:net";
 import { describe, expect, it } from "vitest";
 import type { RawConnection, SocketAdapter } from "../src/adapters/types";
 import { nodeSockets } from "../src/adapters/node/socket";
-import { createMailer, MailError, mailFailureLog, mailTransportMissing, mailTransportName, sendMail } from "../src/mail/send";
+import { createMailer, MailError, mailFailureLog, mailTransportMissing, smtpHostIsIpWithTls, mailTransportName, sendMail } from "../src/mail/send";
 import { buildMimeMessage, encodeHeaderText, parseAddress } from "../src/mail/message";
 import { dotStuff } from "../src/mail/smtp-client";
 import { SENDGRID_API_URL } from "../src/mail/transports/sendgrid";
@@ -329,6 +329,16 @@ describe("SMTP の送り手", () => {
     const r = await send(refused);
     expect(r).toBeInstanceOf(MailError);
     expect(r.message).toBe("SMTP connect mail.example.jp:587 (tls=starttls): Network connection lost.");
+  });
+
+  it("SMTP_HOST が IP アドレスで TLS を使う設定なら警告する（証明書の確認が通らない）", () => {
+    const warn = (env: Record<string, string>) => smtpHostIsIpWithTls(memoryAdapters({ MAIL_TRANSPORT: "smtp", ...env }).config);
+    expect(warn({ SMTP_HOST: "192.0.2.10" })).toBe(true);
+    expect(warn({ SMTP_HOST: "192.0.2.10", SMTP_TLS: "on" })).toBe(true);
+    expect(warn({ SMTP_HOST: "[2001:db8::1]" })).toBe(true);
+    expect(warn({ SMTP_HOST: "192.0.2.10", SMTP_TLS: "off" })).toBe(false);
+    expect(warn({ SMTP_HOST: "example.sakura.ne.jp" })).toBe(false);
+    expect(smtpHostIsIpWithTls(memoryAdapters({ SMTP_HOST: "192.0.2.10" }).config)).toBe(false); // 送り手が smtp でない
   });
 
   it("送れなかったときのログはアドレスの @ の前を伏せる（会員でない人のアドレスを残さない）", () => {
