@@ -32,6 +32,11 @@ describe("独自項目の表の欄 → 定義（fieldRowsFromForm）", () => {
     expect(fieldRowsFromForm(form).rows[0]).toMatchObject({ label: "種類（直した）", options });
     form["f_options_0"] = `${optionsText(options)}, D`;
     expect(fieldRowsFromForm(form).rows[0]).toMatchObject({ options: ["A", "B", "赤", "白", "C", "D"] });
+    // 改行を含む選択肢: ブラウザは入力欄の値から改行を落とすが、触っていなければ元のまま
+    const multi = ["一行目\n二行目", "C"];
+    const sent = fieldForm([{ key: "kind", label: "種類", type: "select", options: optionsText(multi).replace(/\n/g, ""), orig: true }]);
+    sent["f_options_orig_0"] = JSON.stringify(multi);
+    expect(fieldRowsFromForm(sent).rows[0]).toMatchObject({ options: multi });
     // 形の違う隠しの値は使わない
     form["f_options_0"] = "X";
     form["f_options_orig_0"] = "{broken";

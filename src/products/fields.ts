@@ -85,6 +85,12 @@ export const optionsText = (options: readonly string[] | undefined): string => (
 /** 選択肢に区切りの文字を含むか（含めば、欄を編集すると分かれる） */
 export const optionsHaveSeparator = (options: readonly string[] | undefined): boolean => (options ?? []).some((o) => /[,、\n]/.test(o));
 
+/**
+ * 欄の文字が表示したときのままか。<input type="text"> はブラウザが値から改行を落とすので、両方から改行を除いて比べる
+ * （改行を含む選択肢も、触っていなければ元の配列のまま）
+ */
+const sameOptionsText = (sent: string, shown: string): boolean => sent.replace(/[\r\n]/g, "") === shown.replace(/[\r\n]/g, "");
+
 function originalOptions(raw: string | undefined): string[] | null {
   if (!raw) return null;
   try {
@@ -125,7 +131,7 @@ export function fieldRowsFromForm(form: Record<string, string | undefined>): { r
     const vis = form[`f_vis_${i}`];
     const text = form[`f_options_${i}`] ?? "";
     const before = originalOptions(form[`f_options_orig_${i}`]);
-    const options = before && text === before.join(", ") ? before : text.split(/[,、\n]/).map((x) => x.trim()).filter(Boolean);
+    const options = before && sameOptionsText(text, optionsText(before)) ? before : text.split(/[,、\n]/).map((x) => x.trim()).filter(Boolean);
     rows.push({
       key,
       label: label || key,
