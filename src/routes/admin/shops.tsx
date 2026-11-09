@@ -86,19 +86,6 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
 }
 
 /** モジュールの画面に要る権限の項目（loadShop と同じ。メニューの出し分け用） */
-const MODULE_PERMS: Record<string, ShopPerm> = {
-  coupons: "marketing",
-  dialogs: "marketing",
-  woo_import: "catalog",
-  line_login: "integrations",
-  google_login: "integrations",
-  product_feed: "marketing",
-  receipt: "settings",
-  delivery_time: "settings",
-  shipping_labels: "orders",
-  store_tryon: "stores",
-};
-
 /**
  * ショップの設定の画面の上の近道。商品・注文・会員・モジュール・連携・AI 連携は上のタブ（AdminLayout の shopTabs）にあるので、
  * ここにはタブに無いもの（カテゴリー・ON のモジュールの画面・お店の画面）だけを出す。持っていない権限の項目のものは出さない
@@ -107,8 +94,8 @@ export function ShopNav({ shop, access, publicBaseUrl }: { shop: ShopRow; access
   const links: [ShopPerm, string, string][] = [
     ["catalog", `/admin/shops/${shop.id}/categories`, t("category.title")],
     ...enabledModules(shop.settings)
-      .filter((m) => m.adminPath && can(access, MODULE_PERMS[m.id] ?? "settings"))
-      .map((m): [ShopPerm, string, string] => [MODULE_PERMS[m.id] ?? "settings", `/admin/shops/${shop.id}/modules/${m.adminPath}`, t(m.name)]),
+      .filter((m) => m.adminPath && can(access, m.perm))
+      .map((m): [ShopPerm, string, string] => [m.perm, `/admin/shops/${shop.id}/modules/${m.adminPath}`, t(m.name)]),
   ];
   return (
     <div class="quick">

@@ -2048,7 +2048,8 @@ export class FakeSupabase {
     }
     if (fn.startsWith("image_import_")) {
       const shopId = args["p_shop_id"] as string;
-      if (!uid || !this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      // 本物（0039）は banto_shop_perm(p_shop_id, 'catalog')。owner / admin のほか catalog の項目の member も通す
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
       const mine = this.imageJobs.filter((j) => j.shop_id === shopId);
       if (fn === "image_import_enqueue") {
         const r = { queued: 0, skipped: 0, missing: 0 };

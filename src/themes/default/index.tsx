@@ -127,8 +127,11 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
   const accent = themeSetting(ctx, "accent_color") ?? "#1f6feb";
   const announcement = themeSetting(ctx, "announcement");
   const logo = themeSetting(ctx, "logo_url");
+  // doctype が無いとブラウザは互換モード（quirks mode）で描く。JSX では書けないので raw で先頭に置く
   return (
-    <html lang={getLocale()}>
+    <>
+      {raw("<!doctype html>")}
+      <html lang={getLocale()}>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -200,7 +203,8 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
           <p class="muted">{t("store.powered_by")}</p>
         </footer>
       </body>
-    </html>
+      </html>
+    </>
   );
 }
 

@@ -363,8 +363,11 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
   if (crumbs.length === 0 || crumbs[crumbs.length - 1]!.href) crumbs.push({ label: props.title });
   const tabs = props.shopTabs;
   const brand = adminBrand();
+  // doctype が無いとブラウザは互換モード（quirks mode）で描く。JSX では書けないので raw で先頭に置く
   return (
-    <html lang={getLocale()}>
+    <>
+      {raw("<!doctype html>")}
+      <html lang={getLocale()}>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -424,6 +427,7 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
         </footer>
         <script>{raw(COPY_SCRIPT)}</script>
       </body>
-    </html>
+      </html>
+    </>
   );
 }

@@ -13,6 +13,13 @@ function setup() {
 }
 
 describe("管理画面の共通の見た目", () => {
+  it("管理画面と既定のテーマのお店の画面は <!doctype html> で始まる（無いとブラウザが互換モードで描く）", async () => {
+    const { app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    expect(await (await admin.get("/admin")).text()).toMatch(/^<!doctype html><html lang="ja">/);
+    expect(await (await new Browser(app).get("/my-shop")).text()).toMatch(/^<!doctype html><html lang="ja">/);
+  });
+
   it("パンくずは上の帯に出し、ショップの中の画面には今いるタブに印を付ける", async () => {
     const { shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
