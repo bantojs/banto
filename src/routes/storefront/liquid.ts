@@ -16,6 +16,8 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
+import { isoToZonedDate } from "../../i18n/time";
+import { promoteLeadImage } from "../../pages/lead-image";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { productReviews } from "../../apps/app-data";
@@ -572,6 +574,7 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
     name: `#${String(o["number"])}`,
     order_number: o["number"],
     created_at: o["created_at"],
+    created_on: isoToZonedDate(String(o["created_at"])),
     financial_status: o["status"],
     status: o["status"],
     status_label: t(`order.status.${String(o["status"])}` as MessageKey),
@@ -581,8 +584,25 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
   // お気に入り（0123）: 一覧と同じ product の形。外すのは POST <shopPath>/account/favorites/remove（product_id）
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const favorites = props.favorites ? props.favorites.map((x) => productFromSummary(u, x)) : null;
+  // お店で試着の申し込み（同梱モジュール store_tryon）: 表は {% banto_account %} にもあるが、テーマが自分で並べられるように同じ値を渡す。
+  // created_at は ISO、created_on は運営者の時間帯の日付（"2026-11-06"）。取り消すのは POST cancel_url
+  const tryonRequests = props.tryon
+    ? props.tryon.map((r) => ({
+        number: r.number,
+        status: r.status,
+        status_label: t(`tryon.status_${r.status}` as MessageKey),
+        store_name: r.store_name,
+        created_at: r.created_at,
+        created_on: isoToZonedDate(r.created_at),
+        visit_label: r.visit_label,
+        hold_label: r.hold_label,
+        items: r.items,
+        cancellable: r.cancellable,
+        cancel_url: r.cancellable ? `${s.ctx.shopPath}/account/tryon/${r.number}/cancel` : null,
+      }))
+    : null;
   const customer = props.customer
-    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove` }
+    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`, tryon_requests: tryonRequests }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
 }
@@ -691,7 +711,8 @@ export async function renderTryon(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
 
 /** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
 /** path: canonical のパス（ひな形、0101。お店のトップは ""・記事は /blogs/…。無ければ /pages/<handle>） */
-export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string; jsonLd?: unknown; noindex?: boolean } & ArticleBlocks): Response | null {
+/** lead: 本文の最初の画像をすぐ読む（src/pages/lead-image.ts。ブロックの中身を入れた後に当てる） */
+export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string; jsonLd?: unknown; noindex?: boolean; lead?: boolean } & ArticleBlocks): Response | null {
   const pg = p.page;
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
@@ -709,7 +730,8 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     ...(p.jsonLd ? { jsonLd: p.jsonLd } : {}),
     ...(p.noindex ? { noindex: true } : {}),
   });
-  return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
+  const html = withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p);
+  return render(c, s, choice, parts(p.lead ? promoteLeadImage(html) : html));
 }
 
 type ArticleBlocks = { ablocks?: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards?: string[]; apps?: (AppBlockData | null)[]; appCards?: string[] };
@@ -867,7 +889,7 @@ export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: 
 }
 
 /** ブログの記事（/blogs/<ブログ>/<handle>）。templates/article.<suffix> か templates/article */
-export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[] } & ArticleBlocks): Response | null {
+export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[]; lead?: boolean } & ArticleBlocks): Response | null {
   const a = p.article;
   const sp = s.ctx.shopPath;
   const parts = (html: string): PageParts => {
@@ -881,7 +903,8 @@ export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
       categories: p.categories,
     };
   };
-  return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
+  const html = withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p);
+  return render(c, s, choice, parts(p.lead ? promoteLeadImage(html) : html));
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

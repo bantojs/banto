@@ -10,7 +10,7 @@ import { cardAttributes, productFields } from "../../products/fields";
 import { favoritesEnabled } from "../../modules/favorites";
 import { shopImageUrl } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
-import { formatDateTime } from "../../i18n/time";
+import { formatDateTime, isoToZonedDate } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
 import { OPTION_AXES_SCRIPT, displayOptionAxes } from "../../products/option-axes";
 
@@ -334,6 +334,7 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
             <thead>
               <tr>
                 <th>{t("tryon.number")}</th>
+                <th>{t("tryon.requested_on")}</th>
                 <th>{t("tryon.store")}</th>
                 <th>{t("tryon.items")}</th>
                 <th>{t("tryon.status")}</th>
@@ -342,8 +343,11 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
             </thead>
             <tbody>
               {tryon.map((r) => (
-                <tr>
+                <tr data-number={String(r.number)} data-date={isoToZonedDate(r.created_at)} data-status={r.status}>
                   <td>{r.number}</td>
+                  <td>
+                    <time datetime={isoToZonedDate(r.created_at)}>{formatDateTime(r.created_at, { dateOnly: true })}</time>
+                  </td>
                   <td>{r.store_name}</td>
                   <td>{r.items.map((i) => `${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}`).join("、")}</td>
                   <td>
@@ -394,9 +398,11 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
           </thead>
           <tbody>
             {orders.map((o) => (
-              <tr>
+              <tr data-number={String(o["number"])} data-date={isoToZonedDate(String(o["created_at"]))} data-status={String(o["status"])}>
                 <td>{String(o["number"])}</td>
-                <td>{formatDateTime(String(o["created_at"]), { dateOnly: true })}</td>
+                <td>
+                  <time datetime={isoToZonedDate(String(o["created_at"]))}>{formatDateTime(String(o["created_at"]), { dateOnly: true })}</time>
+                </td>
                 <td>{yen(Number(o["total_jpy"]))}</td>
                 <td>{t(`order.status.${String(o["status"])}` as MessageKey)}</td>
                 {receipt ? (

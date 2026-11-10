@@ -47,6 +47,7 @@ import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
+import { promoteLeadImage } from "../../pages/lead-image";
 import { audienceShow } from "../../content/audience-blocks";
 import { contentPreviewFrameOrigin, openContentPreview } from "../../content/preview-ticket";
 import { BLOG_PARTS_CSS, CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, blogLayoutId, collectionLayoutId, composeLayout, fillCurrent, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
@@ -578,11 +579,11 @@ async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: Rende
     // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
     const values = collectionPartValues(c, s, { page: d.page, ...(d.category ? { category: d.category } : {}), ...(d.tag ? { tag: d.tag } : {}), tags: d.facets.tags, link: d.link, ...(d.after ? { after: d.after } : {}) });
     const themed = themeLayoutParts(c, s, lt, { body: view.body, names: COLLECTION_PARTS, defaults: only(parts), values, title: page.title, path: d.path, categories: d.categories });
-    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: d.path, ...(d.after || d.q ? { noindex: true } : {}) });
+    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: d.path, lead: true, ...(d.after || d.q ? { noindex: true } : {}) });
     if (res) return res;
   }
   const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
-  return c.html(s.theme.ShopHome({ ...props, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+  return c.html(s.theme.ShopHome({ ...props, layout: (parts) => promoteLeadImage(`<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts))) }));
 }
 
 storefront.get("/:shop/products/:product", async (c: Ctx) => {
@@ -649,11 +650,11 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail0: ProductDetail,
       // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
       const themed = themeLayoutParts(c, s, lt, { body: view.body, names: PRODUCT_LAYOUT_PARTS, defaults: only(parts), values: productPartValues(c, s, detail, props.selectedSku), title: detail.product.name, path, categories });
       const page: PageRow = { ...layout, title: detail.product.name, seo_title: null, seo_description: detail.product.description ? detail.product.description.slice(0, 200) : null, image_url: null };
-      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd });
+      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd, lead: true });
       if (res) return res;
     }
     const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
-    return c.html(s.theme.ProductPage({ ...props, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+    return c.html(s.theme.ProductPage({ ...props, layout: (parts) => promoteLeadImage(`<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts))) }));
   }
   if (lt) {
     const res = renderProduct(c, s, lt, { detail, categories, categoryNames: props.categoryPath.map((x) => x.name), selectedSku: props.selectedSku });
@@ -739,13 +740,16 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
   // 「今の記事・商品の部品」はふつうのページ（お店のトップのひな形を含む）ではそのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）
   const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at }), pageParts({ mediaBase: s.ctx.mediaBaseUrl, page }));
   const layout = o.layoutPath !== undefined;
+  // 本文の最初の画像をすぐ読む（ひな形は本文がページ全体。ふつうのページはアイキャッチが上に出るときは上げない）
+  const lead = layout || !page.image_url;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, ...(layout ? { path: o.layoutPath } : {}) });
+    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, lead, ...(layout ? { path: o.layoutPath } : {}) });
     if (res) return res;
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
-  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), ...(layout ? { bare: true, path: `${s.ctx.shopPath}${o.layoutPath}` || "/" } : {}) }));
+  const filled = fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards);
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: lead ? promoteLeadImage(filled) : filled, ...(layout ? { bare: true, path: `${s.ctx.shopPath}${o.layoutPath}` || "/" } : {}) }));
 }
 
 /** 記事の本文・ひな形の中のブロックに渡す「今の記事」（0117: field:<key>=@article と from=@field:<key>） */
@@ -781,20 +785,23 @@ async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article:
     if (lt) {
       // Liquid: ひな形のページとして templates/page（ひな形の template_suffix があればそれ）で描く。見出しなどは記事のもの
       const page: PageRow = { ...layout, title: article.title, seo_title: article.seo_title, seo_description: article.seo_description || article.excerpt, image_url: article.image_url };
-      const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, path });
+      const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, path, lead: true });
       if (res) return res;
     }
-    if (s.theme.ArticlePage) return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl, bare: true }));
+    if (s.theme.ArticlePage) return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: promoteLeadImage(fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards)), feedUrl, bare: true }));
   }
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories, articleCurrent(article));
   const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), dates));
+  // アイキャッチが本文の上に出る記事は、本文の画像を上げない
+  const lead = !article.image_url;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards });
+    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards, lead });
     if (res) return res;
   }
   if (!s.theme.ArticlePage) return notFoundPage(c, s);
-  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl }));
+  const filled = fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards);
+  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: lead ? promoteLeadImage(filled) : filled, feedUrl }));
 }
 
 
@@ -847,11 +854,11 @@ async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: s
         // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
         const themed = themeLayoutParts(c, s, lt, { body: view.body, names: BLOG_LIST_PARTS, defaults: only(parts), values: blogPartValues(s, { blog, articles, tag, tags, pageNo, newer, older }), title, path: lpath, categories });
         const page: PageRow = { ...layout, title: tag ? tf("blog.tagged", { tag }) : blog.title, seo_title: title, seo_description: blog.seo_description || blog.description, image_url: null };
-        const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${BLOG_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path: lpath, ...(tag ? { noindex: true } : {}) });
+        const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${BLOG_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path: lpath, lead: true, ...(tag ? { noindex: true } : {}) });
         if (res) return res;
       }
       const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
-      return c.html(s.theme.BlogPage({ ...props, feedUrl, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+      return c.html(s.theme.BlogPage({ ...props, feedUrl, layout: (parts) => promoteLeadImage(`<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts))) }));
     }
   }
   if (lt) {
@@ -933,11 +940,11 @@ async function legalResponse(c: Ctx, s: ShopScope, kind: LegalKind, o: RenderOpt
       const only = Object.fromEntries(LEGAL_PARTS.map((k) => [k, parts[k] ?? ""]));
       if (lt) {
         const pg: PageRow = { ...layout, title, seo_title: null, seo_description: null, image_url: null };
-        const res = renderContentPage(c, s, lt, { page: pg, html: fillCurrent(doc, only), categories, blocks, cards, ablocks, acards, apps, appCards, path: `/${kind}` });
+        const res = renderContentPage(c, s, lt, { page: pg, html: fillCurrent(doc, only), categories, blocks, cards, ablocks, acards, apps, appCards, path: `/${kind}`, lead: true });
         if (res) return res;
       }
       const html = fillCurrent(fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards), only);
-      return c.html(s.theme.LegalPage({ ctx: s.ctx, title, body, layout: () => html }));
+      return c.html(s.theme.LegalPage({ ctx: s.ctx, title, body, layout: () => promoteLeadImage(html) }));
     }
   }
   // Liquid のテーマの templates/page（文面は Banto が作る）。無ければ既定のテーマ

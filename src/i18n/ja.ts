@@ -1620,6 +1620,7 @@ export const ja = {
   "tryon.filter": "絞り込む",
   "tryon.no_requests": "申し込みはありません。",
   "tryon.number": "受付番号",
+  "tryon.requested_on": "申込日",
   "tryon.created_at": "申し込み日時",
   "tryon.customer": "お客様",
   "tryon.member": "会員",

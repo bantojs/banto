@@ -1613,6 +1613,7 @@ export const en: Record<MessageKey, string> = {
   "tryon.filter": "Filter",
   "tryon.no_requests": "No requests.",
   "tryon.number": "Number",
+  "tryon.requested_on": "Requested",
   "tryon.created_at": "Requested at",
   "tryon.customer": "Customer",
   "tryon.member": "Member",

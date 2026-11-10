@@ -1,6 +1,8 @@
+import { formatDateTime, isoToZonedDate } from "../src/i18n/time";
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, appWith, memberLogin, memberMail } from "./helpers";
+import { BASE, Browser, MemoryStorage, appWith, memberLogin, memberMail } from "./helpers";
+import { forgetThemes } from "../src/themes/liquid/cache";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 
 let dispose: (() => void) | null = null;
@@ -125,6 +127,13 @@ describe("会員ページのお店で試着", () => {
     expect(html).toContain("お店で試着のお申し込み");
     expect(html).toContain("渋谷店");
     expect(html).toContain("/my-shop/account/tryon/1/cancel");
+    // 申込日（運営者の時間帯の日付）: 列と、テーマが読む tr の data-date
+    const created = String(sb.tables.tryon_requests[0]!["created_at"]);
+    const day = isoToZonedDate(created);
+    expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(html).toContain(`<tr data-number="1" data-date="${day}" data-status="requested">`);
+    expect(html).toContain(`<time datetime="${day}">${formatDateTime(created, { dateOnly: true })}</time>`);
+    expect(html).toContain("<th>申込日</th>");
     const res = await b.post("/my-shop/account/tryon/1/cancel", {});
     expect(res.headers.get("location")).toBe("/my-shop/account?flash=tryon_cancelled");
     expect(sb.tables.tryon_requests[0]!["status"]).toBe("cancelled");
@@ -212,3 +221,33 @@ describe("AI 用トークンのお店で試着（REST / MCP）", () => {
     expect((await rest(read, "POST", "/tryon-requests/1/restock")).status).toBe(401);
   });
 });
+
+describe("会員ページのお店で試着（Liquid のテーマ）", () => {
+  afterEach(forgetThemes);
+
+  it("customer.tryon_requests に申込日（created_on）・状態・取り消しの URL を渡す", async () => {
+    forgetThemes();
+    const { sb, shop, sku, mail } = setup();
+    sb.sitePlan = "paid";
+    const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    row["domain"] = "shop.example.jp";
+    const version = "11111111-2222-4333-8444-555555555555";
+    row["theme_public"] = { id: version, storage_key: `themes/${shop.id}/${version}/bundle.json`, settings: {} };
+    const files = {
+      "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+      "templates/index.liquid": "<h1>top</h1>",
+      "templates/customers/account.liquid": `{% for r in customer.tryon_requests %}<p class="t" data-date="{{ r.created_on }}">{{ r.number }}:{{ r.status_label }}:{{ r.store_name }}:{{ r.cancel_url }}</p>{% endfor %}`,
+    };
+    const storage = new MemoryStorage(`${BASE}/media`);
+    await storage.put(`themes/${shop.id}/${version}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
+    const b = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }, storage), "https://shop.example.jp");
+    await memberLogin(b, mail, "", "hanako@example.com");
+    await b.post("/cart/add", { sku_id: sku.id, qty: "1" });
+    expect((await b.post("/tryon/submit", CUSTOMER)).status).toBe(302);
+    const html = await (await b.get("/account")).text();
+    const day = isoToZonedDate(String(sb.tables.tryon_requests[0]!["created_at"]));
+    expect(html).toContain(`<p class="t" data-date="${day}">1:`);
+    expect(html).toContain(":渋谷店:/account/tryon/1/cancel</p>");
+  });
+});
+

@@ -79,7 +79,7 @@ describe("商品のカスタム項目の画像", () => {
     sb.addPage(shop.id, { id: crypto.randomUUID(), handle: "pick", title: "P", body: "::: product slug=coat show=name,field:photo", published: true });
     const b = new Browser(app, BASE);
     expect(await (await b.get("/my-shop/products/coat")).text()).toContain(`<td><img src="${url}" alt="素材の写真" loading="lazy"`);
-    expect(await (await b.get("/my-shop/pages/pick")).text()).toContain(`<span class="banto-product__field-value"><img src="${url}" alt="素材の写真" loading="lazy"></span>`);
+    expect(await (await b.get("/my-shop/pages/pick")).text()).toContain(`<span class="banto-product__field-value"><img src="${url}" alt="素材の写真" loading="eager" fetchpriority="high"></span>`); // ページの最初の画像はすぐ読む（src/pages/lead-image.ts）
   });
 });
 
@@ -99,7 +99,7 @@ describe("記事の項目の画像（0120）", () => {
 
     const tpl = sb.addPage(shop.id, { id: crypto.randomUUID(), handle: "tpl-staff", title: "t", body: "::: current part=title\n\n::: current part=field:photo" });
     (sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, unknown>)["page_layouts"] = { articles: { [staff.id]: tpl.id } };
-    expect(await (await new Browser(app, BASE).get("/my-shop/blogs/staff/amada")).text()).toContain(`<img class="banto-field banto-field--photo banto-field--image" src="${url}" alt="写真" loading="lazy">`);
+    expect(await (await new Browser(app, BASE).get("/my-shop/blogs/staff/amada")).text()).toContain(`<img class="banto-field banto-field--photo banto-field--image" src="${url}" alt="写真" loading="eager" fetchpriority="high">`); // ひな形の最初の画像はすぐ読む
   });
 
   it("0120 の前は image の定義を保存しない", async () => {

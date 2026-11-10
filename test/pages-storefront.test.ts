@@ -106,3 +106,41 @@ describe("ショップのページ（Liquid のテーマ）", () => {
     expect(await (await b.get("/pages/faq")).text()).toContain('<article class="pg" data-t="page" data-n="page"><h1>よくある質問</h1>');
   });
 });
+
+describe("本文の最初の画像をすぐ読む（LCP）", () => {
+  const body = "::: cover image=/media/hero.webp\n# ようこそ\n:::\n\n![2 枚目](/media/two.webp)";
+  const eager = 'src="/media/hero.webp" alt="" loading="eager" fetchpriority="high"';
+
+  it("既定のテーマ: ページの本文の最初の画像だけ eager・fetchpriority=high、ほかは lazy のまま", async () => {
+    const { sb, shop, b } = setup();
+    sb.addPage(shop.id, { handle: "hero", title: "トップ", body });
+    const html = await (await b.get("/my-shop/pages/hero")).text();
+    expect(html).toContain(eager);
+    expect(html).toContain('src="/media/two.webp" alt="2 枚目" loading="lazy"');
+    expect(html.match(/fetchpriority="high"/g)).toHaveLength(1);
+  });
+
+  it("アイキャッチが本文の上に出るページは、本文の画像を上げない", async () => {
+    const { sb, shop, b } = setup();
+    sb.addPage(shop.id, { handle: "hero", title: "トップ", body, image_url: "/media/eye.webp" });
+    const html = await (await b.get("/my-shop/pages/hero")).text();
+    expect(html).not.toContain('fetchpriority="high"');
+  });
+
+  it("お店のトップのひな形（Liquid のテーマ）でも同じ（テーマは page.content を置くだけ）", async () => {
+    const { sb, shop, b } = setup({
+      liquid: {
+        "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        "templates/index.liquid": "<h1>top</h1>",
+        "templates/page.liquid": "<article>{{ page.content }}</article>",
+      },
+    });
+    const home = sb.addPage(shop.id, { handle: "home", title: "トップ", body });
+    const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    row["settings"] = { ...(row["settings"] as Record<string, unknown>), page_layouts: { home: home.id } };
+    const html = await (await b.get("/")).text();
+    expect(html).toContain(eager);
+    expect(html).toContain('src="/media/two.webp" alt="2 枚目" loading="lazy"');
+  });
+});
+
