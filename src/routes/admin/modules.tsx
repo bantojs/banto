@@ -7,7 +7,7 @@ import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { can } from "./access";
-import { MODULES, moduleEnabled, type ModuleDef } from "../../modules/registry";
+import { MODULES, MODULE_CATEGORIES, moduleEnabled, type ModuleDef } from "../../modules/registry";
 import { migrated } from "../../db/migration-state";
 import { wooImport } from "../../modules/woo-import/admin";
 import { couponsAdmin } from "../../modules/coupons/admin";
@@ -54,44 +54,59 @@ modules.get("/:shopId/modules", requireOwner, async (c: AdminContext) => {
   const access = c.get("shopAccess");
   const available = await availableModules(c);
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("modules.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout
+      title={`${shop.name} · ${t("modules.title")}`}
+      nav
+      crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title") }]}
+      shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}
+    >
       <PageHead title={t("modules.title")} sub={t("modules.intro")} />
       {saved ? <p class="notice">{t("modules.saved")}</p> : null}
       {failed ? <p class="error">{t("modules.save_failed")}</p> : null}
       {forbidden ? <p class="error">{t("access.forbidden")}</p> : null}
       <NotSavedNotice flash={c.req.query("flash")} />
-      <div class="grid">
-        {available.map((m) => {
-          const on = moduleEnabled(shop.settings, m.id);
-          const allowed = can(access, m.perm);
-          return (
-            <section class="card" data-module={m.id}>
-              <div class="card-head">
-                <strong>{t(m.name)}</strong>
-                <span class={`status ${on ? "on" : "off"}`}>{on ? t("modules.on") : t("modules.off")}</span>
-              </div>
-              <p class="muted">{t(m.description)}</p>
-              <div class="card-foot">
-                {allowed ? (
-                  <form method="post" action={`/admin/shops/${shop.id}/modules/${m.id}/enabled`}>
-                    <input type="hidden" name="enabled" value={on ? "off" : "on"} />
-                    <button type="submit" class={on ? "secondary small" : "small"}>
-                      {on ? t("modules.disable") : t("modules.enable")}
-                    </button>
-                  </form>
-                ) : (
-                  <span class="muted">{tf("modules.perm_required", { perm: t(`perm.${m.perm}` as MessageKey) })}</span>
-                )}
-                {on && m.adminPath ? (
-                  <a class="btn secondary small" href={`/admin/shops/${shop.id}/modules/${m.adminPath}`}>
-                    {t("modules.open")}
-                  </a>
-                ) : null}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+      {/* 使う仕事ごとのまとまり（メンテナの決定 2026-11-08「機能を追加は ON / OFF だけ」。設定は ON にした機能の画面で） */}
+      {MODULE_CATEGORIES.map((cat) => {
+        const list = available.filter((m) => m.category === cat);
+        if (list.length === 0) return null;
+        return (
+          <section class="module-group" aria-labelledby={`modcat-${cat}`}>
+            <h2 id={`modcat-${cat}`}>{t(`modcat.${cat}`)}</h2>
+            <div class="grid">
+              {list.map((m) => {
+                const on = moduleEnabled(shop.settings, m.id);
+                const allowed = can(access, m.perm);
+                return (
+                  <section class="card" data-module={m.id}>
+                    <div class="card-head">
+                      <strong>{t(m.name)}</strong>
+                      <span class={`status ${on ? "on" : "off"}`}>{on ? t("modules.on") : t("modules.off")}</span>
+                    </div>
+                    <p class="muted">{t(m.description)}</p>
+                    <div class="card-foot">
+                      {allowed ? (
+                        <form method="post" action={`/admin/shops/${shop.id}/modules/${m.id}/enabled`}>
+                          <input type="hidden" name="enabled" value={on ? "off" : "on"} />
+                          <button type="submit" class={on ? "secondary small" : "small"}>
+                            {on ? t("modules.disable") : t("modules.enable")}
+                          </button>
+                        </form>
+                      ) : (
+                        <span class="muted">{tf("modules.perm_required", { perm: t(`perm.${m.perm}` as MessageKey) })}</span>
+                      )}
+                      {on && m.adminPath ? (
+                        <a class="btn secondary small" href={`/admin/shops/${shop.id}/modules/${m.adminPath}`}>
+                          {t("modules.open")}
+                        </a>
+                      ) : null}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
     </AdminLayout>,
   );
 });
