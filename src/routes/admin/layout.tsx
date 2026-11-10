@@ -226,6 +226,14 @@ td:first-child>.status>a:hover{text-decoration:underline}
 .danger-zone:not(aside .danger-zone) button{width:auto}
 /* 独自項目の表: 狭い画面では横に送る */
 .table-scroll{overflow-x:auto}
+.chip[aria-pressed=false]{background:transparent;color:var(--fg-muted);border-style:dashed}
+.bulk-table th[scope=row]{font-weight:500;white-space:nowrap}
+.bulk-table .bulk-sku th[scope=row]{padding-left:1.5rem;font-weight:400}
+.bulk-table td{padding:.25rem .35rem;vertical-align:top}
+.bulk-table .cell{width:100%;min-width:6rem;margin:0}
+.bulk-table .cell.chg{background:var(--warn-bg)}
+.bulk-table .cell.err{border-color:var(--err);background:var(--err-bg)}
+.cell-error{display:block;font-size:.75rem;margin-top:.15rem}
 .fields-table td{vertical-align:middle}
 .fields-table th{white-space:nowrap}
 .fields-table input[type=text],.fields-table select{width:100%;min-width:8rem;margin:0}

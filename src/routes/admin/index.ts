@@ -26,6 +26,7 @@ import { audit } from "./audit";
 import { storesAdmin } from "../../modules/store-tryon/stores-admin";
 import { views } from "./views";
 import { inventory } from "./inventory";
+import { bulk } from "./bulk";
 
 /**
  * 管理画面（Hono SSR）。
@@ -49,6 +50,7 @@ admin.route("/", org);
 admin.route("/", audit);
 admin.route("/stores", storesAdmin);
 admin.route("/shops", shops);
+admin.route("/shops", bulk);
 admin.route("/shops", products);
 admin.route("/shops", categories);
 admin.route("/shops", modules);

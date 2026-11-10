@@ -2287,6 +2287,49 @@ export class FakeSupabase {
       shop["settings"] = { ...settings, [`views_${screen}`]: out };
       return json(out);
     }
+    if (fn === "catalog_bulk_update") {
+      // 0137: 項目 catalog の人だけ。開いたときの値と比べ、誤りが 1 つでもあれば何も変えない（形の決まりの本物は test/db/catalog-bulk.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const changes = (Array.isArray(args["p_changes"]) ? args["p_changes"] : []) as Row[];
+      const text = (row: Row, col: string): string | null => {
+        const v = row[col];
+        if (col === "tags") return ((v as string[] | undefined) ?? []).join(", ") || null;
+        if (col === "tax_class") return String(v ?? "standard");
+        return v === null || v === undefined ? null : String(v);
+      };
+      const errors: Row[] = [];
+      const rows = new Map<Row, Row>();
+      for (const x of changes) {
+        const table = x["kind"] === "product" ? this.tables.products : this.tables.skus;
+        const row = table.find((r) => r["id"] === x["id"] && r["shop_id"] === shopId);
+        const base = { kind: x["kind"], id: x["id"], col: x["col"] };
+        if (!row) { errors.push({ ...base, error: "not_found" }); continue; }
+        const col = String(x["col"]);
+        const to = x["to"] == null ? null : String(x["to"]).trim() || null;
+        if (text(row, col) !== (x["from"] ?? null)) { errors.push({ ...base, error: "changed", current: text(row, col) }); continue; }
+        const ok = col === "name" ? to !== null && to.length <= 200 : col === "published" ? to === "true" || to === "false" : col === "price_jpy" ? to !== null && /^\d{1,9}$/.test(to) : col === "compare_at_price_jpy" ? to === null || /^\d{1,9}$/.test(to) : col === "gtin" ? to === null || /^(\d{8}|\d{12,14})$/.test(to) : col === "category_id" ? to === null || this.tables.categories.some((k) => k["id"] === to && k["shop_id"] === shopId) : true;
+        if (!ok) { errors.push({ ...base, error: "invalid" }); continue; }
+        rows.set(row, { ...(rows.get(row) ?? {}), [col]: to });
+      }
+      for (const [row, vals] of rows) {
+        if (!("price_jpy" in vals) && !("compare_at_price_jpy" in vals)) continue;
+        const price = Number(vals["price_jpy"] ?? row["price_jpy"]);
+        const cmp = "compare_at_price_jpy" in vals ? vals["compare_at_price_jpy"] : row["compare_at_price_jpy"];
+        if (cmp != null && Number(cmp) <= price) errors.push({ kind: "sku", id: row["id"], col: "compare_at_price_jpy" in vals ? "compare_at_price_jpy" : "price_jpy", error: "compare_at_low" });
+      }
+      if (errors.length > 0) return json({ ok: false, errors });
+      let products = 0;
+      let skus = 0;
+      for (const [row, vals] of rows) {
+        for (const [col, v] of Object.entries(vals)) {
+          row[col] = col === "published" ? v === "true" : col === "price_jpy" || col === "compare_at_price_jpy" ? (v == null ? null : Number(v)) : col === "tags" ? normalizeTags(String(v ?? "").split(",")) : v;
+        }
+        if (this.tables.products.includes(row)) products++;
+        else skus++;
+      }
+      return json({ ok: true, products, skus });
+    }
     if (fn === "stock_adjust" || fn === "stock_count" || fn === "inventory_list") {
       // 0136: 項目 catalog の人だけ（形の決まり・全部か無しか・同時の更新の本物は test/db/inventory-ops.test.ts）
       const shopId = String(args["p_shop_id"]);

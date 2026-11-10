@@ -31,6 +31,7 @@ import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { BULK_MIGRATION } from "./bulk";
 
 export const products = new Hono<AppEnv>();
 
@@ -154,7 +155,8 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   });
   const filtered = Boolean(q || chips.length > 0 || after);
   // 保存したビュー（0135）
-  const viewsOn = await migrated({ db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
+  const [viewsOn, bulkOn] = await Promise.all([migrated({ db, cache: c.get("adapters").cache }, VIEWS_MIGRATION), migrated({ db, cache: c.get("adapters").cache }, BULK_MIGRATION)]);
+  const bulkForm = `bulk-${shop.id}`;
   const savedViews = viewsOf(shop.settings, "products");
   const listBase = searchHref(base, params);
   return c.html(
@@ -220,9 +222,19 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
       ) : rows.length === 0 ? (
         <div class="empty">{t("product.no_match")}</div>
       ) : (
-        <table>
+        <>
+          {bulkOn ? (
+            <form id={bulkForm} method="get" action={`${base}/bulk`} class="actions bulk-select">
+              <button type="submit" class="secondary small">
+                {t("bulk.edit_selected")}
+              </button>
+              <a href={`${base}/bulk?ids=${rows.map((p) => p.id).join(",")}`}>{t("bulk.edit_page")}</a>
+            </form>
+          ) : null}
+          <table>
           <thead>
             <tr>
+              {bulkOn ? <th class="select">{t("bulk.select")}</th> : null}
               <th>{t("product.name")}</th>
               <th>slug</th>
               {favorites ? <th>{t("products.favorites")}</th> : null}
@@ -232,6 +244,11 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
           <tbody>
             {rows.map((p) => (
               <tr>
+                {bulkOn ? (
+                  <td class="select">
+                    <input type="checkbox" name="id" value={p.id} form={bulkForm} aria-label={tf("bulk.select_product", { name: p.name })} />
+                  </td>
+                ) : null}
                 <td>
                   <a href={`/admin/shops/${shop.id}/products/${p.id}`}>{p.name}</a>
                 </td>
@@ -245,7 +262,8 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </>
       )}
       <Pager base={listBase} next={page.next} paged={Boolean(after)} />
     </AdminLayout>,
