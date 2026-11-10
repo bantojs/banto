@@ -67,6 +67,9 @@ export function articleOrderParam(sort: ArticleOrder | undefined): string {
   return "published_at.desc,id.desc";
 }
 
+/** ブログをまたぐ「記事を並べる」（::: articles blog=a,b / blog=*）。当てるまで出さない */
+export const ARTICLES_MULTI_MIGRATION = "0140_articles_multi_blog";
+
 /** フィードを出すブログか（0116 の前は出す） */
 export const blogHasFeed = (blog: Pick<BlogRow, "feed">) => blog.feed !== false;
 

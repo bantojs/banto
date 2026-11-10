@@ -376,8 +376,8 @@ export interface PrivilegedDb {
   /** 0112: 選んだ slug の商品（product_member_pick） */
   productMemberPick(args: Record<string, unknown>): Promise<unknown>;
   productMemberSkus(args: Record<string, unknown>): Promise<unknown>;
-  /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page） */
-  contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page", args: Record<string, unknown>): Promise<unknown>;
+  /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page。ブログをまたぐ articles_member_multi は 0140） */
+  contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page" | "articles_member_multi", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
   shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */

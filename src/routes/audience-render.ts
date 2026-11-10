@@ -11,6 +11,8 @@ import { moduleEnabled } from "../modules/registry";
 import { AUDIENCES_MODULE, queryParamsOf, rememberedParams, type AudienceContext } from "../members/audience";
 import { audienceShow, filterAudienceBlocks, hasAudienceBlocks, type RenderAudience } from "../content/audience-blocks";
 import type { MemberReader, PublicShop, StorefrontData } from "../storefront/data";
+import type { ArticleOrder } from "../blog";
+import type { FieldSort } from "../blog/fields";
 import { memberFromRequest } from "./api/members";
 import { withIncludes } from "../content/include";
 
@@ -96,6 +98,12 @@ export async function storefrontQueryContext(c: Ctx, shop: { id: string; setting
   return { params, remembered: keep };
 }
 
+/** 会員の一覧の関数の並びの引数（articles_member_page / articles_member_multi で同じ） */
+function sortArgs(sort: ArticleOrder | undefined, fieldSort: FieldSort | null | undefined): Record<string, string> {
+  if (fieldSort) return { p_sort: `field:${fieldSort.key}`, ...(fieldSort.from ? { p_field_from: fieldSort.from } : {}), ...(fieldSort.until ? { p_until_key: fieldSort.until.key, p_until_from: fieldSort.until.from } : {}) };
+  return sort ? { p_sort: sort } : {};
+}
+
 /** 会員の読み取りの経路（0098 の product_member_*。service_role の鍵が無ければ null = ゲストと同じ） */
 export function memberReader(c: Ctx, shopId: string, member: { cid: string; ep: number; sid: string }): MemberReader | null {
   const db = privilegedFor(c);
@@ -113,7 +121,10 @@ export function memberReader(c: Ctx, shopId: string, member: { cid: string; ep: 
     // p_fields は 0117 から（fields があるのは 0117 の DB だけ。src/blog/fields.ts）
     // 日付の項目の順（0124）は p_sort = field:<key>・p_field_from、いつまで出すか（0125）は p_until_key・p_until_from（どれも当たっている DB でしか作られない）
     articles: (blogId, offset, limit, tag, sort, fields, fieldSort) =>
-      db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...(fieldSort ? { p_sort: `field:${fieldSort.key}`, ...(fieldSort.from ? { p_field_from: fieldSort.from } : {}), ...(fieldSort.until ? { p_until_key: fieldSort.until.key, p_until_from: fieldSort.until.from } : {}) } : sort ? { p_sort: sort } : {}), ...(fields ? { p_fields: fields } : {}) }),
+      db.contentMemberRpc("articles_member_page", { ...who, p_blog_id: blogId, p_offset: offset, p_limit: limit, p_tag: tag, ...sortArgs(sort, fieldSort), ...(fields ? { p_fields: fields } : {}) }),
+    // ブログをまたぐ「記事を並べる」（0140）。並びは new / title / field:<key> だけ（呼ぶ側が manual を渡さない）
+    articlesMulti: (blogIds, limit, tag, sort, fields, fieldSort) =>
+      db.contentMemberRpc("articles_member_multi", { ...who, p_blog_ids: blogIds, p_offset: 0, p_limit: limit, p_tag: tag, ...sortArgs(sort, fieldSort), ...(fields ? { p_fields: fields } : {}) }),
   };
 }
 

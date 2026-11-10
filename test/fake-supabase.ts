@@ -1583,16 +1583,24 @@ export class FakeSupabase {
       }
       return json(n);
     }
-    if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") {
+    if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page" || fn === "articles_member_multi") {
+      // 0140: ブログをまたぐ一覧（ブログの配列。並びは new / title / field:<key> だけ）
+      if (fn === "articles_member_multi") {
+        if (!this.appliedMigrations.includes("0140_articles_multi_blog")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_multi" }, 404);
+        const ids = args["p_blog_ids"];
+        if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20) return json({ code: "22023", message: "invalid_blogs" }, 400);
+        if (args["p_sort"] === "manual") return json({ code: "22023", message: "invalid_sort" }, 400);
+      }
       const aud = this.memberAudienceIds(args);
       const open = (x: Row) => this.pageLive(x) && (!x["audience_id"] || aud.includes(String(x["audience_id"])));
       if (fn === "page_member_get") return json(this.tables.pages.find((p) => p["shop_id"] === args["p_shop_id"] && p["handle"] === args["p_handle"] && open(p)) ?? null);
-      const arts = this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && a["blog_id"] === args["p_blog_id"] && Boolean(a["published_at"]) && open(a));
+      const inBlog = (a: Row) => (fn === "articles_member_multi" ? (args["p_blog_ids"] as unknown[]).includes(a["blog_id"]) : a["blog_id"] === args["p_blog_id"]);
+      const arts = this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && inBlog(a) && Boolean(a["published_at"]) && open(a));
       if (fn === "article_member_get") return json(arts.find((a) => a["handle"] === args["p_handle"]) ?? null);
       const tag = args["p_tag"] as string | null;
       // 0116: p_sort が無ければブログの並び順（同じなら新しい順）
       if ("p_sort" in args && !this.appliedMigrations.includes("0116_blog_order")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
-      const sort = (args["p_sort"] as string | undefined) ?? String(this.tables.blogs.find((b) => b["id"] === args["p_blog_id"])?.["article_order"] ?? "new");
+      const sort = (args["p_sort"] as string | undefined) ?? (fn === "articles_member_multi" ? "new" : String(this.tables.blogs.find((b) => b["id"] === args["p_blog_id"])?.["article_order"] ?? "new"));
       const newer = (x: Row, y: Row) => String(y["published_at"]).localeCompare(String(x["published_at"])) || String(y["id"]).localeCompare(String(x["id"]));
       const cmp = (x: Row, y: Row) =>
         (sort === "manual" ? Number(x["position"] ?? 0) - Number(y["position"] ?? 0) : 0) || (sort === "title" ? (String(x["title"]) < String(y["title"]) ? -1 : String(x["title"]) > String(y["title"]) ? 1 : 0) : 0) || newer(x, y);
@@ -4073,7 +4081,7 @@ export class FakeSupabase {
 
   private serviceRpc(fn: string, args: Record<string, unknown>): Response {
     // 0098: 会員の読み取りの経路（中身は rpc() の product_member_*）
-    if (fn.startsWith("product_member_") || fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") return this.rpc(fn, args, null);
+    if (fn.startsWith("product_member_") || fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page" || fn === "articles_member_multi") return this.rpc(fn, args, null);
     if (fn === "theme_preview_settings") {
       const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"] && x["shop_id"] === args["p_shop_id"]);
       return json(v ? (v["settings"] ?? {}) : null);

@@ -37,8 +37,8 @@ import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnipp
 import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
 import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
 import { usesPart } from "../../content/layouts";
-import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
-import type { AppBlockData } from "../../content/body-blocks";
+import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ProductBlock } from "../../pages/blocks";
+import { articleBlogOf, type AppBlockData, type ArticleBlockData } from "../../content/body-blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
@@ -734,7 +734,7 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
   return render(c, s, choice, parts(p.lead ? promoteLeadImage(html) : html));
 }
 
-type ArticleBlocks = { ablocks?: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards?: string[]; apps?: (AppBlockData | null)[]; appCards?: string[] };
+type ArticleBlocks = { ablocks?: ArticleBlockData[]; acards?: string[]; apps?: (AppBlockData | null)[]; appCards?: string[] };
 
 /**
  * 本文の外部プラグインのブロック（0086）の場所に中身を入れる: snippets/app-<プラグイン>-<ブロック> → app-<ブロック> の順に探して描き
@@ -763,8 +763,8 @@ function withAppBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (htm
 }
 
 /**
- * 本文の「記事を並べる」の場所に中身を入れる: テーマに snippets/page-articles があればそれで描き（articles・block・blog を渡す）、
- * 無ければ既定のカード（acards）
+ * 本文の「記事を並べる」の場所に中身を入れる: テーマに snippets/page-articles があればそれで描き（articles・block・blog・blogs を渡す）、
+ * 無ければ既定のカード（acards）。ブログをまたぐブロック（0140）は blog が空で、blogs にまたいだブログ（記事の url はそれぞれのブログのもの）
  */
 function withArticleBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, p: ArticleBlocks): string {
   if (!p.ablocks?.length || !themeHasSnippet(choice.lt, "page-articles")) return fillArticleBlocks(html, p.acards ?? []);
@@ -775,7 +775,13 @@ function withArticleBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: 
     rendered = (p.acards ?? []).map((card, i) => {
       const b = p.ablocks?.[i];
       if (!b) return card;
-      const out = renderThemeSnippet(choice.lt, input, "page-articles", { articles: b.items.map((a) => articleObject(sp, b.blog, a, "", s.ctx.publicBaseUrl)), blog: blogObject(sp, b.blog), block: { ...b.block, index: i } });
+      const blogs = b.blogs ?? [b.blog];
+      const out = renderThemeSnippet(choice.lt, input, "page-articles", {
+        articles: b.items.map((a) => articleObject(sp, articleBlogOf(b, a), a, "", s.ctx.publicBaseUrl)),
+        blog: b.blogs ? null : blogObject(sp, b.blog),
+        blogs: blogs.map((x) => blogObject(sp, x)),
+        block: { ...b.block, index: i },
+      });
       return out ?? card;
     });
   } catch (e) {

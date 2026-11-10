@@ -101,7 +101,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | `snippets/page-products.liquid`（任意） | ショップのページの「商品を並べる」ブロックの見た目（下の「使える名前」のショップのページ） |
 | `snippets/app-<連携>-<ブロック>.liquid`・`snippets/app-<ブロック>.liquid`（任意） | 外部プラグインのブロック（`::: app`、0086）の見た目。`block`・`product`・`reviews`・`data` を渡す。無ければ Banto の既定の見た目（レビューだけ）。docs/app-data.md §6 |
 | `snippets/part-<部品>.liquid`（任意） | ショップのページを商品詳細・商品一覧の**ひな形**にしたとき（docs/pages.md「ひな形の割り当て」）の部品（`::: current part=<部品>`）の見た目。下の「ひな形の部品」 |
-| `snippets/page-articles.liquid`（任意） | ショップのページ・記事の「記事を並べる」ブロックの見た目。`articles`（記事の一覧の形）・`blog`・`block`（`layout`（`grid` / `list`）・`limit`・`tag`・`style`・`index`）を渡す。無ければ Banto の既定のカード（`ul.banto-articles__list`） |
+| `snippets/page-articles.liquid`（任意） | ショップのページ・記事の「記事を並べる」ブロックの見た目。`articles`（記事の一覧の形。`url` は記事ごとのブログのもの）・`blog`（ブログをまたぐブロック（0140）では空）・`blogs`（ブロックのブログ。1 つなら `blog` と同じ 1 件）・`block`（`layout`（`grid` / `list`）・`limit`・`tag`・`style`・`index`）を渡す。無ければ Banto の既定のカード（`ul.banto-articles__list`） |
 | `config/banto_patterns.json`（任意） | 編集の画面のブロックの一覧に出す「パターン」（下の「パターンとブロックのスタイル」） |
 | `config/banto_block_styles.json`（任意） | ブロックごとの見た目の選択肢（下の「パターンとブロックのスタイル」） |
 | `blocks/*.liquid` | テーマのブロック（`{% content_for 'blocks' %}`・`{% content_for 'block', type: 'x', id: 'y' %}`）。`{% schema %}` に設定の宣言 |

@@ -27,12 +27,12 @@ export function defaultAppHtml(b: AppBlockData | null, productUrl: string): stri
 }
 import type { CategoryRow } from "../db/types";
 import type { PublicShop, StorefrontData } from "../storefront/data";
-import { PRODUCT_BLOCK_SLUGS_MAX, PRODUCT_TAG, appBlocksOf, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, productBlocksOf, type AppBlock, type ArticlesBlock, type ProductBlock } from "../pages/blocks";
+import { ALL_BLOGS, PRODUCT_BLOCK_SLUGS_MAX, PRODUCT_TAG, appBlocksOf, articleBlockBlogs, articleBlocksOf, defaultArticlesHtml, defaultProductsHtml, productBlocksOf, type AppBlock, type ArticlesBlock, type ProductBlock } from "../pages/blocks";
 import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
-import { BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
-import { BLOG_DATE_ORDER_MIGRATION, articleFieldDefs, articleFieldsReady, blogFieldSort, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
+import { ARTICLES_MULTI_MIGRATION, BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
+import { BLOG_DATE_ORDER_MIGRATION, type ArticleFieldDef, type FieldSort, articleFieldDefs, articleFieldsReady, blogFieldSort, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
 import { moduleEnabled } from "../modules/registry";
 import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
@@ -74,12 +74,23 @@ export interface BodyBlocksDeps {
 
 type ProductItems = NonNullable<Awaited<ReturnType<StorefrontData["productPage"]>>>["items"];
 
+/**
+ * 記事のブロックの中身。blog は 1 つのブログのブロックならそのブログ、ブログをまたぐブロック（0140）なら最初のブログで、
+ * blogs にまたいだブログすべて（記事の blog_id でどのブログかを引く）
+ */
+export type ArticleBlockData = { block: ArticlesBlock; blog: BlogRow; blogs?: BlogRow[]; items: ArticleRow[] } | null;
+
+/** 記事が載っているブログ（またいだブロックは blog_id で引く） */
+export function articleBlogOf(b: NonNullable<ArticleBlockData>, a: Pick<ArticleRow, "blog_id">): BlogRow {
+  return b.blogs?.find((x) => x.id === a.blog_id) ?? b.blog;
+}
+
 export interface BodyBlocks {
   blocks: { block: ProductBlock; items: ProductItems }[];
   /** 商品のブロックの既定のカード（印の番号と同じ並び） */
   cards: string[];
   /** 記事のブロック（印の番号と同じ並び。ブログが無い・取れなかったブロックは null） */
-  ablocks: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[];
+  ablocks: ArticleBlockData[];
   acards: string[];
   apps: (AppBlockData | null)[];
   appCards: string[];
@@ -144,7 +155,12 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
           // tag=@product: 描いている商品の URL の名前のタグ（商品の画面の外では何も並べない）
           const tag = block.tag === PRODUCT_TAG ? (d.current?.product ?? null) : block.tag;
           if (block.tag === PRODUCT_TAG && !tag) return null;
-          const blog = await d.sf.blogByHandle(d.shop, block.blog);
+          // ブログをまたぐブロック（0140）。名前が 1 つのブログにしか当たらなければ、そのブログのブロックと同じに描く
+          const spec = articleBlockBlogs(block);
+          const many = spec === ALL_BLOGS || spec.length > 1 ? await resolveBlogs(d, spec) : null;
+          if (many && many.length === 0) return null;
+          if (many && many.length > 1) return { block: { ...block, tag }, blog: many[0]!, blogs: many, items: await multiBlogArticles(d, many, block, tag) };
+          const blog = many ? many[0]! : await d.sf.blogByHandle(d.shop, block.blog);
           if (!blog) return null;
           // 項目で絞る（0117）: @product は描いている商品、@article は描いている記事の URL の名前。定義に無い項目・値の無いときは何も並べない
           let fields: Record<string, unknown> | null = null;
@@ -186,10 +202,59 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
   ]);
   const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: d.shopPath, mediaBaseUrl: d.mediaBaseUrl, taxNote: t("store.tax_included"), yen, cardFields: productFields(d.shop.settings) }));
   const acards = ablocks.map((b) =>
-    b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(d.shopPath, b.blog.handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
+    b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(d.shopPath, articleBlogOf(b, a).handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
   );
   const appCards = apps.map((b) => defaultAppHtml(b, b ? `${productUrl(d.shopPath, b.product.slug)}#reviews` : ""));
   return { blocks, cards, ablocks, acards, apps, appCards, shopCards };
+}
+
+/**
+ * またぐブログ（0140）: すべて（"*"）ならショップのブログの一覧（キャッシュ済み、並びはブログの並び順）、名前ならその順に引く（無い名前は飛ばす）。
+ * 0140 が当たるまでは何も並べない（会員の経路の関数が無いため。ゲストと会員で並ぶものを変えない）
+ */
+async function resolveBlogs(d: BodyBlocksDeps, spec: string[] | typeof ALL_BLOGS): Promise<BlogRow[]> {
+  if (!(await d.sf.migratedTo(ARTICLES_MULTI_MIGRATION))) return [];
+  if (spec === ALL_BLOGS) return await d.sf.blogsList(d.shop);
+  const found = await Promise.all(spec.map((h) => d.sf.blogByHandle(d.shop, h)));
+  return found.filter((b): b is BlogRow => b !== null);
+}
+
+/**
+ * ブログをまたいで並べる記事（0140、メンテナの決定 2026-11-10）。並びは新しい順（既定）・題の順・日付の項目の順だけ
+ * （手で並べた順はブログごとの順なので新しい順にする。ブログごとの並び順の設定も使わない）。
+ * 記事の項目（field:）は、またいだブログのすべてに同じキー・同じ種類（と「いくつも持てる」）の項目があるときだけ効く。無ければ何も並べない
+ */
+async function multiBlogArticles(d: BodyBlocksDeps, blogs: BlogRow[], block: ArticlesBlock, tag: string | null): Promise<ArticleRow[]> {
+  const ready = blogs.every((b) => articleFieldsReady(b));
+  let fields: Record<string, unknown> | null = null;
+  if (block.field) {
+    const def = commonFieldDef(blogs, block.field.key);
+    const v = block.field.value === PRODUCT_TAG ? (d.current?.product ?? "") : block.field.value === "@article" ? (d.current?.article ?? "") : block.field.value;
+    fields = def && ready ? fieldContains(def, v) : null;
+    if (!fields) return [];
+  }
+  let fieldSort: FieldSort | null = null;
+  if (block.fieldSort) {
+    // 日付の項目の順・今日以降だけは、どのブログでも同じ答えになるときだけ（同じキーが同じ種類の日付・日時の項目）
+    const until = block.until && (await d.sf.migratedTo(BLOG_DATE_ORDER_MIGRATION)) ? block.until : null;
+    const now = Date.now();
+    const each = blogs.map((b) => fieldSortOf(b, block.fieldSort!, block.from === "today", now, until));
+    if (!ready || each.some((x) => !x) || each.some((x) => JSON.stringify(x) !== JSON.stringify(each[0]))) return [];
+    fieldSort = each[0]!;
+  }
+  return d.sf.articlesMulti(
+    d.shop,
+    blogs.map((b) => b.id),
+    { limit: block.limit, tag, sort: block.sort === "title" ? "title" : "new", withFields: ready, ...(fields ? { fields } : {}), ...(fieldSort ? { fieldSort } : {}) },
+  );
+}
+
+/** どのブログにも同じキー・同じ種類・同じ「いくつも持てる」の項目があれば、その定義（無ければ null） */
+function commonFieldDef(blogs: BlogRow[], key: string): ArticleFieldDef | null {
+  const defs = blogs.map((b) => articleFieldDefs(b).find((f) => f.key === key) ?? null);
+  const first = defs[0];
+  if (!first) return null;
+  return defs.every((f) => f !== null && f.type === first.type && Boolean(f.multiple) === Boolean(first.multiple)) ? first : null;
 }
 
 /** 実店舗の独自項目の行（dl。画像は <img>） */
