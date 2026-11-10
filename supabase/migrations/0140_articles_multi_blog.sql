@@ -43,3 +43,5 @@ end;
 $$;
 revoke execute on function articles_member_multi(uuid, uuid[], integer, integer, text, uuid, integer, uuid, text, jsonb, text, text, text) from public, anon, authenticated;
 grant execute on function articles_member_multi(uuid, uuid[], integer, integer, text, uuid, integer, uuid, text, jsonb, text, text, text) to service_role;
+
+insert into banto_migrations (version) values ('0140_articles_multi_blog');
