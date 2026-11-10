@@ -2287,6 +2287,17 @@ export class FakeSupabase {
       shop["settings"] = { ...settings, [`views_${screen}`]: out };
       return json(out);
     }
+    if (fn === "product_images_order") {
+      // 0138: 項目 catalog の人だけ。その商品の画像ちょうど全部を受け取り、0 から振り直す（本物は test/db/product-images-order.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const mine = this.tables.product_images.filter((i) => i["shop_id"] === shopId && i["product_id"] === args["p_product_id"]);
+      const ids = (Array.isArray(args["p_ids"]) ? args["p_ids"] : []) as string[];
+      if (new Set(ids).size !== ids.length || ids.length !== mine.length || ids.some((id) => !mine.some((i) => i["id"] === id))) return json({ code: "22023", message: "invalid_images" }, 400);
+      let n = 0;
+      ids.forEach((id, i) => { const row = mine.find((x) => x["id"] === id)!; if (row["sort_order"] !== i) { row["sort_order"] = i; n++; } });
+      return json(n);
+    }
     if (fn === "catalog_bulk_update") {
       // 0137: 項目 catalog の人だけ。開いたときの値と比べ、誤りが 1 つでもあれば何も変えない（形の決まりの本物は test/db/catalog-bulk.test.ts）
       const shopId = String(args["p_shop_id"]);

@@ -526,6 +526,7 @@ export const en: Record<MessageKey, string> = {
   "image.group_empty": "No images yet.",
   "image.no_axes": "To give each SKU its own images, first set the options that split SKUs (color, size, etc.).",
   "image.no_axes_link": "Set options",
+  "image.order_needs_update": "Images with the same display order can be reordered after you apply the database update.",
   "image.list": "Images",
   "image.upload": "Upload image",
   "image.file": "File (JPEG / PNG / WebP / GIF / AVIF, up to 5 MB)",

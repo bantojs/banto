@@ -3,6 +3,7 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { imageOptionsFromForm, orderImagesForSku, skuOptionChoices } from "../src/products/images";
+import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * SKU ごとの画像（0063）の Worker 側。列の形・対応表のトリガー・権限は test/db/sku-images.test.ts（実 PostgreSQL）。
@@ -175,6 +176,15 @@ describe("SKU ごとの画像: 管理画面・AI 用 API・復元", () => {
     expect(sorted).toEqual([IMG.all, IMG.red, IMG.blue, IMG.red_l]);
     // ほかの商品の画像とは入れ替えない
     expect((await admin.post(`${base}/images/${IMG.red}/move`, { with: "00000000-0000-4000-8000-00000000ffff" })).headers.get("location")).toBe(`${base}?flash=saved#images`);
+    // 0138 の前: 番号の違う 2 つは入れ替えるだけ、同じ番号どうしはアップデートを案内する
+    const old = setup({ appliedMigrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0138_product_images_order") });
+    const oldAdmin = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
+    const oldBase = `/admin/shops/${old.shop.id}/products/${old.tee.id}`;
+    await oldAdmin.post(`${oldBase}/images/${IMG.red_l}/move`, { with: IMG.all });
+    expect(old.sb.tables.product_images.find((i) => i["id"] === IMG.red_l)!["sort_order"]).toBe(0);
+    expect(old.sb.tables.product_images.find((i) => i["id"] === IMG.all)!["sort_order"]).toBe(3);
+    old.sb.tables.product_images.find((i) => i["id"] === IMG.blue)!["sort_order"] = 2;
+    expect((await oldAdmin.post(`${oldBase}/images/${IMG.blue}/move`, { with: IMG.red })).headers.get("location")).toBe(`${oldBase}?flash=image_order_update#images`);
     // 付け先を選んでアップロード（スクリプト無し）
     const up = await admin.postMultipart(`${base}/images`, { file: new File([tinyPng()], "a.png", { type: "image/png" }), target: JSON.stringify({ color: "ブルー", size: "M" }) });
     expect(up.headers.get("location")).toBe(`${base}?img=sku&axis=color&axis=size&flash=saved#images`);

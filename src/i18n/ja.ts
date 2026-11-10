@@ -525,6 +525,7 @@ export const ja = {
   "image.group_empty": "まだ画像がありません。",
   "image.no_axes": "SKU ごとに画像を分けるには、先に「SKU を分ける軸」（カラー・サイズなど）を決めてください。",
   "image.no_axes_link": "軸を決める",
+  "image.order_needs_update": "同じ表示順の画像どうしは、データベースのアップデートを適用すると並べ替えられます。",
   "image.list": "画像",
   "image.upload": "画像をアップロード",
   "image.file": "ファイル（JPEG / PNG / WebP / GIF / AVIF、5MB まで）",

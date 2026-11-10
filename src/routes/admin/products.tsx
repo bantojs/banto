@@ -55,6 +55,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     infer_failed: "axes.infer_failed",
     matrix_empty: "axes.matrix_empty",
     audience_display_only: "product.audience_display_only",
+    image_order_update: "image.order_needs_update",
   };
   if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
   const key = map[code];
@@ -114,6 +115,8 @@ const IMAGE_RESIZE_SCRIPT = `
 
 /** 一覧の検索を広げる版（品番・JAN・カテゴリー・在庫・並び。0132） */
 const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
+/** 画像の並びを 1 回で書く（0138） */
+const IMAGE_ORDER_MIGRATION = "0138_product_images_order";
 
 products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -1170,8 +1173,22 @@ products.post("/:shopId/products/:productId/images/:imageId/move", requireOwner,
   if (a < 0 || b < 0 || a === b) return c.redirect(imageBackHref(base, f.back));
   const order = images.map((x) => x.id);
   [order[a], order[b]] = [order[b]!, order[a]!];
-  const changed = order.map((id, i) => ({ id, i })).filter(({ id, i }) => images.find((x) => x.id === id)!.sort_order !== i);
-  for (const { id, i } of changed) await db.from<ProductImageRow>("product_images").update({ sort_order: i }, { id, product_id: productId, shop_id: shopId });
+  if (await migrated({ db, cache: c.get("adapters").cache }, IMAGE_ORDER_MIGRATION)) {
+    // 並び全体を 1 回で書く（画像の数だけ送らない。途中で止まっても半分だけ振り直されない）
+    try {
+      await db.rpc("product_images_order", { p_shop_id: shopId, p_product_id: productId, p_ids: order });
+    } catch (e) {
+      if (e instanceof DbError) return c.redirect(`${base}?flash=generic#images`);
+      throw e;
+    }
+  } else {
+    // 0138 の前: 2 つの番号が違えば入れ替えるだけ（更新 2 回）。同じ番号どうしは、アップデートを当ててから
+    const x = images[a]!;
+    const y = images[b]!;
+    if (x.sort_order === y.sort_order) return c.redirect(`${base}?flash=image_order_update#images`);
+    await db.from<ProductImageRow>("product_images").update({ sort_order: y.sort_order }, { id: x.id, product_id: productId, shop_id: shopId });
+    await db.from<ProductImageRow>("product_images").update({ sort_order: x.sort_order }, { id: y.id, product_id: productId, shop_id: shopId });
+  }
   return c.redirect(imageBackHref(base, f.back));
 });
 
