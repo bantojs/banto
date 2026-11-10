@@ -935,6 +935,13 @@ export class FakeSupabase {
       const limit = u.searchParams.get("limit");
       const total = out.length;
       out = out.slice(offset, limit ? offset + Number(limit) : undefined);
+      // PostgREST の埋め込み: skus の inventory(available)（一対一。src/routes/admin/products.tsx の商品の CSV）
+      if (table === "skus" && (u.searchParams.get("select") ?? "").includes("inventory(")) {
+        out = out.map((k) => {
+          const inv = this.tables.inventory.find((i) => i["sku_id"] === k["id"]);
+          return { ...k, inventory: inv ? { available: inv["available"] } : null };
+        });
+      }
       // Prefer: count=exact（DbClient の count）
       if ((req.headers.get("prefer") ?? "").includes("count=exact")) {
         const res = json(out);

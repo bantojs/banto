@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { DbError } from "../../db/client";
+import { DbError, type DbClient } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage } from "./paging";
 import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
@@ -309,7 +309,27 @@ const PRODUCT_CSV_PRESETS: Record<string, CsvPreset> = {
   stock: { label: "csvx.p_stock", cols: ["name", "code", "options", "gtin", "stock"], unit: "sku" },
 };
 const PRODUCT_CONDITIONS = ["q", "state", "category", "stock", "sort"] as const;
-const CSV_MAX_PRODUCTS = 2000;
+const CSV_MAX_PRODUCTS = 1000;
+/** SKU の上限（在庫は SKU と一緒に 1 回で読む。1 リクエストの外部呼び出しを SKU の数に比例させないため） */
+const CSV_MAX_SKUS = 10000;
+
+/**
+ * 商品の SKU を在庫ごと読む（PostgREST の埋め込み inventory(available)、一対一）。商品 100 件ずつ、1 回 1,000 行まで（越えたら続きを読む）。
+ * 呼び出しの回数は「商品 ÷ 100 + SKU ÷ 1,000」ほどで、CSV_MAX_SKUS で止める
+ */
+async function skusWithStock(db: DbClient, shopId: string, productIds: string[], withStock: boolean): Promise<(SkuRow & { inventory?: { available: number } | null })[]> {
+  const cols = `id,product_id,code,name,options,price_jpy,compare_at_price_jpy,gtin,created_at${withStock ? ",inventory(available)" : ""}`;
+  const out: (SkuRow & { inventory?: { available: number } | null })[] = [];
+  for (let i = 0; i < productIds.length && out.length < CSV_MAX_SKUS; i += 100) {
+    const part = productIds.slice(i, i + 100);
+    for (let offset = 0; out.length < CSV_MAX_SKUS; offset += 1000) {
+      const page = await db.from<SkuRow & { inventory?: { available: number } | null }>("skus").select(cols, { eq: { shop_id: shopId }, in: { product_id: part }, order: "id.asc", limit: 1000, offset });
+      out.push(...page);
+      if (page.length < 1000) break;
+    }
+  }
+  return out.slice(0, CSV_MAX_SKUS);
+}
 
 products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -336,12 +356,11 @@ products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
   const rows = useSearch
     ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, limit: CSV_MAX_PRODUCTS, columns })
     : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: CSV_MAX_PRODUCTS });
-  const skus = await selectIn<SkuRow>(db, "skus", "id,product_id,code,name,options,price_jpy,compare_at_price_jpy,gtin,created_at", shopId, "product_id", rows.map((p) => p.id));
-  const [inventory, categories] = await Promise.all([
-    choice.cols.some((col) => col.key === "stock") ? selectIn<InventoryRow>(db, "inventory", "sku_id,available", shopId, "sku_id", skus.map((k) => k.id)) : Promise.resolve([] as InventoryRow[]),
+  const [skus, categories] = await Promise.all([
+    skusWithStock(db, shopId, rows.map((p) => p.id), choice.cols.some((col) => col.key === "stock")),
     choice.cols.some((col) => col.key === "category") ? loadCategories(db, shopId) : Promise.resolve([] as CategoryRow[]),
   ]);
-  const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
+  const stock = new Map(skus.map((k) => [k.id, k.inventory?.available ?? 0]));
   const categoryName = new Map(categories.map((k) => [k.id, k.name]));
   const names = optionNamesOf(shop.option_names);
   const byProduct = new Map<string, SkuRow[]>();

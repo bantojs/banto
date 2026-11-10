@@ -81,6 +81,22 @@ describe("CSV の書き出しの列と範囲", () => {
     expect(stockOnly.slice(1).every((l) => l.startsWith("Tシャツ"))).toBe(true);
   });
 
+  it("商品: 在庫は SKU と一緒に読み、DB への問い合わせは SKU の数に比例しない", async () => {
+    const { sb, shop, app, base } = setup();
+    for (let i = 0; i < 300; i++) {
+      const p = sb.addProduct(shop.id, { slug: `p${i}`, name: `商品${i}`, published: true });
+      for (let j = 0; j < 5; j++) sb.addSku(shop.id, p.id, { code: `P${i}-${j}`, price_jpy: 1000, available: j });
+    }
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const before = sb.calls.length;
+    const csv = lines(await (await b.get(`${base}/products.csv`)).text());
+    expect(csv).toHaveLength(1 + 3 + 1500);
+    expect(csv.find((l) => l.startsWith("p7,"))?.endsWith(",0")).toBe(true);
+    const calls = sb.calls.slice(before);
+    expect(calls.filter((x) => x.includes("/inventory")).length).toBe(0);
+    expect(calls.length).toBeLessThan(15);
+  });
+
   it("一覧の下に書き出しの欄: 個人情報のまとまりに印、Shift_JIS はスクリプトがあるときだけ選べる", async () => {
     const { app, base } = setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
