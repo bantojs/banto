@@ -148,7 +148,7 @@ export type ArticlesSort = "new" | "title" | "manual";
 export const PRODUCT_TAG = "@product";
 export interface ArticlesBlock {
   /**
-   * ブログの URL の名前。ブログをまたぐとき（0140）はカンマでつないだ名前（"news,staff"、重なりを除いて書いた順、10 個まで）か、
+   * ブログの URL の名前。ブログをまたぐとき（0140）はカンマでつないだ名前（"news,staff"、重なりを除いて書いた順、20 個まで）か、
    * "*"（ショップのすべてのブログ）。分けるのは articleBlockBlogs
    */
   blog: string;
@@ -173,8 +173,8 @@ export const ARTICLE_BLOCKS_MAX = 2;
 export const ARTICLE_BLOCK_LIMIT_MAX = 12;
 export const ARTICLE_BLOCK_LIMIT_DEFAULT = 3;
 const ARTICLES_LINE = /^\s{0,3}:::\s*articles(?:\s+(.*))?$/;
-/** ブログをまたぐときに書けるブログの数（0140） */
-export const ARTICLE_BLOCK_BLOGS_MAX = 10;
+/** ブログをまたぐときに書けるブログの数（0140）。ショップのブログの上限（20）と同じ */
+export const ARTICLE_BLOCK_BLOGS_MAX = 20;
 /** すべてのブログ（0140） */
 export const ALL_BLOGS = "*";
 const BLOG_HANDLE = /^[a-z0-9][a-z0-9-]{0,63}$/;

@@ -173,6 +173,8 @@ describe("新しいブロック（グリッド・タブ・お店のブロック�
       expect(back(markdownToHtml(body, { articlesLabel: () => "記事" }))).toBe(body);
     }
     expect(back('<div data-banto-block="articles" data-blog="news,Bad" data-limit="3">x</div>')).toBe("");
+    const twenty = Array.from({ length: 20 }, (_, i) => `b${i}`).join(",");
+    expect(back(markdownToHtml(`::: articles blog=${twenty} limit=3 layout=grid`, { articlesLabel: () => "記事" }))).toBe(`::: articles blog=${twenty} limit=3 layout=grid`);
   });
 
   it("書式 → 編集の画面の HTML → 書式 で同じ形に戻る", () => {

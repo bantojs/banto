@@ -52,11 +52,14 @@ const cards = (html: string) => [...html.matchAll(/<li class="card banto-article
 const titles = (html: string) => cards(html).map((x) => x.split("@")[0]);
 
 describe("書き方", () => {
-  it("blog= はカンマでつないだ名前（重なりを除く、10 個まで）か *。今までの 1 つの書き方はそのまま", () => {
+  it("blog= はカンマでつないだ名前（重なりを除く、20 個まで）か *。今までの 1 つの書き方はそのまま", () => {
     expect(parseArticlesLine("::: articles blog=news")?.blog).toBe("news");
     expect(parseArticlesLine("::: articles blog=news,staff,news")?.blog).toBe("news,staff");
     expect(parseArticlesLine("::: articles blog=*")?.blog).toBe("*");
-    expect(parseArticlesLine(`::: articles blog=${Array.from({ length: 11 }, (_, i) => `b${i}`).join(",")}`)).toBeNull();
+    // ショップのブログの上限（20）と同じだけ書ける
+    const twenty = Array.from({ length: 20 }, (_, i) => `blog-with-a-long-handle-${i}`).join(",");
+    expect(parseArticlesLine(`::: articles blog=${twenty}`)?.blog).toBe(twenty);
+    expect(parseArticlesLine(`::: articles blog=${Array.from({ length: 21 }, (_, i) => `b${i}`).join(",")}`)).toBeNull();
     expect(parseArticlesLine("::: articles blog=news,")).toBeNull();
     expect(parseArticlesLine("::: articles blog=News")).toBeNull();
     expect(articleBlockBlogs({ blog: "news,staff" })).toEqual(["news", "staff"]);

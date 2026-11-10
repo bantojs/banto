@@ -965,7 +965,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   var FSORT=/^field:[a-z][a-z0-9_]{0,39}$/;
   function okSort(v){ return ASORT[v]||FSORT.test(v||""); }
   // ブログ: 1 つの名前・カンマでつないだ名前・"*"（すべて。0140）
-  var ABLOG=/^(\*|[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63}){0,9})$/;
+  var ABLOG=/^(\*|[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63}){0,19})$/;
   function blogName(f,h){ var o=f&&(f.querySelector("[name=blog] option[value='"+h.replace(/['\\]/g,"")+"']")||f.querySelector("[name=blogs][value='"+h.replace(/['\\]/g,"")+"']")); return o?(o.getAttribute("data-title")||o.textContent):h; }
   function articlesText(d){ var f=adlg?adlg.querySelector("form"):null; var name=d.blog==="*"?T("articles-all"):String(d.blog).split(",").map(function(h){ return blogName(f,h); }).join("\u30fb"); return T("articles-label").replace("{blog}",name).replace("{n}",String(d.limit)); }
   // 選んだブログ（チェックボックスの欄があればそこから。無ければ 1 つを選ぶ欄）
@@ -973,7 +973,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     var bx=f.querySelectorAll("[name=blogs]");
     if(!bx.length) return f.elements.blog?String(f.elements.blog.value||""):"";
     if(f.elements.allblogs&&f.elements.allblogs.checked) return "*";
-    var out=[]; Array.prototype.forEach.call(bx,function(x){ if(x.checked&&out.length<10) out.push(x.value); }); return out.join(",");
+    var out=[]; Array.prototype.forEach.call(bx,function(x){ if(x.checked&&out.length<20) out.push(x.value); }); return out.join(",");
   }
   function setPickedBlogs(f,v){
     var bx=f.querySelectorAll("[name=blogs]");

@@ -168,9 +168,9 @@ export function pageEditorClient() {
 
   /** 記事を並べるブロックの箱 → 「::: articles …」の 1 行（blocks.ts の parseArticlesLine が受ける形だけ） */
   function articlesLine(n: MdNode): string {
-    // 1 つの名前・カンマでつないだ名前（10 個まで）・"*"（すべてのブログ、0140）
+    // 1 つの名前・カンマでつないだ名前（20 個まで。ショップのブログの上限と同じ）・"*"（すべてのブログ、0140）
     const blog = attr(n, "data-blog");
-    if (!/^(\*|[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63}){0,9})$/.test(blog)) return "";
+    if (!/^(\*|[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63}){0,19})$/.test(blog)) return "";
     const parts = ["::: articles", `blog=${blog}`];
     const tag = attr(n, "data-tag").replace(/["\n\r]/g, "").trim().slice(0, 50);
     if (tag) parts.push(/\s/.test(tag) ? `tag="${tag}"` : `tag=${tag}`);
