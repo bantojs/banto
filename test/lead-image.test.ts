@@ -38,6 +38,17 @@ describe("promoteLeadImage（本文の最初の画像をすぐ読む）", () => 
     expect(promoteLeadImage(open)).toContain('src="/media/d.webp" alt="" loading="eager" fetchpriority="high"');
   });
 
+  it("閉じたアコーディオンの入れ子: 内側の閉じで外側も閉じたと読み違えず、外の画像を上げる", () => {
+    const html = `<details><summary>a</summary><details><summary>b</summary>x</details>${lazy("/media/hidden.webp")}</details>${lazy("/media/main.webp")}`;
+    const out = promoteLeadImage(html);
+    expect(out).toContain(lazy("/media/hidden.webp"));
+    expect(out).toContain('src="/media/main.webp" alt="" loading="eager" fetchpriority="high"');
+    // 閉じたものの中の開いたアコーディオンも見えない
+    const nested = `<details><summary>a</summary><details open><summary>b</summary>${lazy("/media/in.webp")}</details></details>${lazy("/media/main.webp")}`;
+    expect(promoteLeadImage(nested)).toContain(lazy("/media/in.webp"));
+    expect(promoteLeadImage(nested)).toContain('src="/media/main.webp" alt="" loading="eager" fetchpriority="high"');
+  });
+
   it("画像が無ければそのまま", () => {
     expect(promoteLeadImage("<p>text</p>")).toBe("<p>text</p>");
   });
