@@ -9,7 +9,7 @@ import { UUID_RE } from "../../util/cursor";
 import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
-import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, imageUrl, productImageKey, thumbKey } from "../../media/images";
+import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, productImageKey, thumbKey } from "../../media/images";
 import { ORIGINAL_MAX_BYTES, imageKeys, imageMaxWidth, imageProcessing, readVariantFiles, resizeScript, thumbScript, thumbWidthOf, variantKey } from "../../media/variants";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
@@ -21,7 +21,8 @@ import { cleanAttributes, productFields, type ProductField } from "../../product
 import { FIELD_IMAGE_SCRIPT, FieldImageInput, fieldImageUpload } from "./field-image";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
-import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices } from "../../products/images";
+import { imageOptionsFromForm, skuOptionChoices } from "../../products/images";
+import { ImagesSection, imageBackHref, parseTarget, readImageView } from "./product-images";
 import { MAX_COMBINATIONS, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
 import { sizeChartHref } from "../../modules/size-charts/admin";
 import { careHref } from "../../modules/care-labels/admin";
@@ -79,7 +80,7 @@ const Flash = (props: { flash: ReturnType<typeof flash> }) =>
 const IMAGE_RESIZE_SCRIPT = `
 (function(){
   var form=document.getElementById("image-form"); if(!form) return;
-  var input=document.getElementById("file"), status=document.getElementById("image-status");
+  var input=document.getElementById("file"), status=document.getElementById("image-status"), TARGET=document.getElementById("image-target");
   var MAX=Number(form.getAttribute("data-max"))||1600, VARIANTS=form.getAttribute("data-variants")==="1", PLUGIN=form.getAttribute("data-processing")==="plugin";
   ${resizeScript()}
   ${thumbScript()}
@@ -91,7 +92,7 @@ const IMAGE_RESIZE_SCRIPT = `
     load(file).then(function(im){
       // 外部の変換プラグインに任せるショップ（0092）: 元の写真はそのまま、サムネイルだけ作る（本画像と中間の段はプラグインが作って差し替える）
       if(PLUGIN) return bantoThumb(im).then(function(t){
-        var fd=new FormData(); fd.append("file",file); fd.append("thumb",new File([t.blob],"thumb.webp",{type:"image/webp"}));
+        var fd=new FormData(); fd.append("file",file); fd.append("thumb",new File([t.blob],"thumb.webp",{type:"image/webp"})); if(TARGET) fd.append("target",TARGET.value);
         fd.append("width",String(im.naturalWidth)); fd.append("height",String(im.naturalHeight));
         status.textContent=form.getAttribute("data-uploading")||"";
         return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",redirect:"follow"}).then(function(res){ location.href=res.url||location.href; });
@@ -101,7 +102,7 @@ const IMAGE_RESIZE_SCRIPT = `
         // 元が小さく、縮小しても軽くならないなら元ファイルのまま
         var keepOrig=Math.max(im.naturalWidth,im.naturalHeight)<=MAX&&r.main.size>=file.size;
         var mainFile=keepOrig?file:new File([r.main],file.name.replace(/\\.[^.]+$/,"")+".webp",{type:"image/webp"});
-        fd.append("file",mainFile); fd.append("thumb",new File([r.thumb],"thumb.webp",{type:"image/webp"}));
+        fd.append("file",mainFile); fd.append("thumb",new File([r.thumb],"thumb.webp",{type:"image/webp"})); if(TARGET) fd.append("target",TARGET.value);
         if(VARIANTS) r.variants.forEach(function(v){ fd.append("variant_"+v.size,new File([v.blob],"v"+v.size+".webp",{type:"image/webp"})); });
         fd.append("width",String(keepOrig?im.naturalWidth:r.w)); fd.append("height",String(keepOrig?im.naturalHeight:r.h));
         status.textContent=form.getAttribute("data-uploading")||"";
@@ -542,8 +543,6 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const catalog = await catalogContext(c, shop);
   const variantsReady = true;
   const pluginMode = imagePluginMode(shop);
-  // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
-  const optionChoices = skuOptionChoices(skus);
   // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
   const axes = optionAxesOf(product.option_axes);
   const upper = resolveOptionAxes(catalog.categories, product.category_id, shop.option_axes);
@@ -696,79 +695,36 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
       {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} names={names} /> : null}
       <ChipsScript />
 
-      <h2 id="images">{t("image.list")}</h2>
-      {images.length === 0 ? (
-        <div class="empty">
-          <p>{t("image.none")}</p>
-        </div>
-      ) : null}
-      {optionChoices.length > 0 ? <p class="muted">{t("image.options_hint")}</p> : null}
-      {images.length > 0 ? (
-        <table>
-          <tbody>
-            {images.map((img) => (
-              <tr>
-                <td>
-                  <img src={imageUrl(mediaBase, img.thumb_key ?? img.storage_key)} alt="" style="max-width:8rem;max-height:8rem" loading="lazy" />
-                  {img.width && img.height ? (
-                    <div class="muted">
-                      {img.width}×{img.height}
-                      {img.thumb_key ? "" : ` ${t("image.no_thumb")}`}
-                    </div>
-                  ) : img.thumb_key ? null : (
-                    <div class="muted">{t("image.no_thumb")}</div>
-                  )}
-                </td>
-                <td>
-                  <form method="post" action={`${base}/images/${img.id}/sort`} style="display:inline">
-                    {t("image.sort")} <input type="number" name="sort_order" value={String(img.sort_order)} style="width:4rem" />{" "}
-                    <button type="submit" class="secondary small">
-                      {t("product.save")}
-                    </button>
-                  </form>
-                </td>
-                {optionChoices.length > 0 ? (
-                  <td>
-                    <form method="post" action={`${base}/images/${img.id}/options`} style="display:inline">
-                      {optionChoices.map((ch) => (
-                        <label style="display:inline-block;margin-right:.5rem">
-                          {optionLabel(names, ch.key)}{" "}
-                          <select name={`options.${ch.key}`}>
-                            <option value="">{t("image.options_any")}</option>
-                            {ch.values.map((v) => (
-                              <option value={v} selected={imageOptionsOf(img.options)[ch.key] === v}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      ))}
-                      <button type="submit" class="secondary small">
-                        {t("product.save")}
-                      </button>
-                    </form>
-                  </td>
-                ) : null}
-                <td>
-                  <form method="post" action={`${base}/images/${img.id}/delete`} style="display:inline">
-                    <button type="submit" class="small">
-                      {t("image.delete")}
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-      <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-processing={pluginMode ? "plugin" : "browser"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
-        <label for="file">{t("image.file")}</label>
-        <input id="file" type="file" name="file" accept="image/*" required />
-        <p class="muted">{pluginMode ? t("image.plugin_note") : tf("image.resize_note", { max: imageMaxWidth(shop.settings) })}</p>
-        <p>
-          <button type="submit">{t("image.upload")}</button> <span id="image-status" aria-live="polite"></span>
-        </p>
-      </form>
+      <ImagesSection
+        base={base}
+        images={images}
+        skus={skus}
+        names={names}
+        mediaBase={mediaBase}
+        state={readImageView({ view: c.req.query("img"), axes: c.req.queries("axis") ?? [], to: c.req.query("to") }, skus)}
+        uploadForm={(target, targets) => (
+          <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-processing={pluginMode ? "plugin" : "browser"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
+            <label for="file">{t("image.file")}</label>
+            <input id="file" type="file" name="file" accept="image/*" required />
+            {targets.length > 0 ? (
+              <>
+                <label for="image-target">{t("image.attach_to")}</label>
+                <select id="image-target" name="target">
+                  {targets.map((x) => (
+                    <option value={JSON.stringify(x.options)} selected={JSON.stringify(x.options) === JSON.stringify(target)}>
+                      {x.label}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
+            <p class="muted">{pluginMode ? t("image.plugin_note") : tf("image.resize_note", { max: imageMaxWidth(shop.settings) })}</p>
+            <p>
+              <button type="submit">{t("image.upload")}</button> <span id="image-status" aria-live="polite"></span>
+            </p>
+          </form>
+        )}
+      />
       <script dangerouslySetInnerHTML={{ __html: IMAGE_RESIZE_SCRIPT }} />
 
       <section class="card danger-zone">
@@ -1179,6 +1135,8 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   if (thumbBytes && thumb && tKey) await storage.put(tKey, thumbBytes.slice().buffer, thumb.type);
   await Promise.all(variants.map((v, i) => storage.put(vKeys[i]!, v.bytes.slice().buffer, "image/webp")));
   const sortOrder = data.images.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
+  // 付け先（品番 / オプション / SKU、0063 の options）。SKU にある鍵だけ。無い・形が違えば品番
+  const target = typeof body.target === "string" ? parseTarget(body.target, skuOptionChoices(data.skus).map((ch) => ch.key)) : null;
   try {
     await db.from<ProductImageRow>("product_images").insert({
       shop_id: shopId,
@@ -1188,6 +1146,7 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
       width: width && height ? width : null,
       height: width && height ? height : null,
       sort_order: sortOrder,
+      ...(target && Object.keys(target).length > 0 ? { options: target } : {}),
       ...(variantsOn ? { variants: variants.map((v) => v.size), thumb_width: thumbWidth } : {}),
     });
   } catch (e) {
@@ -1195,7 +1154,25 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
   }
-  return c.redirect(`${base}?flash=saved`);
+  return c.redirect(typeof body.target === "string" ? imageBackHref(base, `img=${target && Object.keys(target).length > 0 ? (Object.keys(target).length === skuOptionChoices(data.skus).length ? "sku" : "option") : "product"}${target ? Object.keys(target).map((k) => `&axis=${encodeURIComponent(k)}`).join("") : ""}`) : `${base}?flash=saved`);
+});
+
+/** 並べ替え: 同じ組の隣の画像と入れ替える（全部の画像を今の順で 0.. に振り直してから、2 つを入れ替える） */
+products.post("/:shopId/products/:productId/images/:imageId/move", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const { shopId, productId, imageId } = params(c);
+  const base = `/admin/shops/${shopId}/products/${productId}`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const f = await formFields(c);
+  const images = await db.from<ProductImageRow>("product_images").select("id,sort_order,created_at", { eq: { product_id: productId, shop_id: shopId }, order: "sort_order.asc,created_at.asc" });
+  const a = images.findIndex((x) => x.id === imageId);
+  const b = images.findIndex((x) => x.id === f.with);
+  if (a < 0 || b < 0 || a === b) return c.redirect(imageBackHref(base, f.back));
+  const order = images.map((x) => x.id);
+  [order[a], order[b]] = [order[b]!, order[a]!];
+  const changed = order.map((id, i) => ({ id, i })).filter(({ id, i }) => images.find((x) => x.id === id)!.sort_order !== i);
+  for (const { id, i } of changed) await db.from<ProductImageRow>("product_images").update({ sort_order: i }, { id, product_id: productId, shop_id: shopId });
+  return c.redirect(imageBackHref(base, f.back));
 });
 
 products.post("/:shopId/products/:productId/images/:imageId/sort", requireOwner, async (c: AdminContext) => {
@@ -1215,14 +1192,17 @@ products.post("/:shopId/products/:productId/images/:imageId/options", requireOwn
   const { shopId, productId, imageId } = params(c);
   const f = await formFields(c);
   const skus = await db.from<SkuRow>("skus").select("options", { eq: { product_id: productId, shop_id: shopId } });
-  const options = imageOptionsFromForm(f, skuOptionChoices(skus).map((ch) => ch.key));
+  const keys = skuOptionChoices(skus).map((ch) => ch.key);
+  // 付け先の選択（JSON の options）か、鍵ごとの欄（options.<鍵>）
+  const options = f.target !== undefined ? parseTarget(f.target, keys) ?? (f.target === "{}" ? {} : null) : imageOptionsFromForm(f, keys);
+  if (options === null) return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=generic#images`);
   try {
     await db.from<ProductImageRow>("product_images").update({ options }, { id: imageId, product_id: productId, shop_id: shopId });
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=generic#images`);
     throw e;
   }
-  return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved#images`);
+  return c.redirect(f.back !== undefined ? imageBackHref(`/admin/shops/${shopId}/products/${productId}`, f.back) : `/admin/shops/${shopId}/products/${productId}?flash=saved#images`);
 });
 
 products.post("/:shopId/products/:productId/images/:imageId/delete", requireOwner, async (c: AdminContext) => {

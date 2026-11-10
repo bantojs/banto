@@ -120,15 +120,68 @@ describe("SKU ごとの画像: 管理画面・AI 用 API・復元", () => {
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const html = await (await admin.get(`/admin/shops/${shop.id}/products/${tee.id}`)).text();
     expect(html).toContain(`action="/admin/shops/${shop.id}/products/${tee.id}/images/${IMG.all}/options"`);
-    expect(html).toContain('name="options.color"');
-    expect(html).toContain('name="options.size"');
-    expect(html).toMatch(/<option value="レッド" selected="">レッド<\/option>/);
+    // 付け先は 1 つの選択（品番 / オプションの値 / SKU）。今の付け先に印
+    expect(html).toContain('<select name="target">');
+    expect(html).toContain('<option value="{&quot;color&quot;:&quot;レッド&quot;}" selected="">color: レッド</option>');
+    let moved = await admin.post(`/admin/shops/${shop.id}/products/${tee.id}/images/${IMG.all}/options`, { target: JSON.stringify({ color: "ブルー" }), back: "?img=option&axis=color" });
+    expect(moved.headers.get("location")).toBe(`/admin/shops/${shop.id}/products/${tee.id}?img=option&axis=color&flash=saved#images`);
+    expect(sb.tables.product_images.find((i) => i["id"] === IMG.all)!["options"]).toEqual({ color: "ブルー" });
+    moved = await admin.post(`/admin/shops/${shop.id}/products/${tee.id}/images/${IMG.all}/options`, { target: JSON.stringify({ evil: "x" }) });
+    expect(moved.headers.get("location")).toContain("flash=generic");
+    expect(sb.tables.product_images.find((i) => i["id"] === IMG.all)!["options"]).toEqual({ color: "ブルー" });
+    // 鍵ごとの欄（options.<鍵>）でも今までどおり
 
     const res = await admin.post(`/admin/shops/${shop.id}/products/${tee.id}/images/${IMG.all}/options`, { "options.color": "ブルー", "options.size": "M", "options.evil": "x" });
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/products/${tee.id}?flash=saved#images`);
     expect(sb.tables.product_images.find((i) => i["id"] === IMG.all)!["options"]).toEqual({ color: "ブルー", size: "M" });
     await admin.post(`/admin/shops/${shop.id}/products/${tee.id}/images/${IMG.all}/options`, { "options.color": "", "options.size": "" });
     expect(sb.tables.product_images.find((i) => i["id"] === IMG.all)!["options"]).toEqual({});
+  });
+
+  it("画像のまとめ方: 品番は全部を 1 つの並び、オプションは選んだ軸の値ごと、SKU はお店で選んだときと同じ順（メンテナの決定 2026-11-08）", async () => {
+    const { shop, tee, app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/products/${tee.id}`;
+    const order = (html: string) => [...html.matchAll(/shops\/s\/([a-z-]+)\.webp/g)].map((m) => m[1]);
+    const section = (html: string, title: string) => html.slice(html.indexOf(`aria-label="${title}"`)).split("</section>")[0]!;
+    // 品番: 全部を並びの順に、付け先の印つき
+    const all = await (await admin.get(base)).text();
+    expect(order(all)).toEqual(["all", "blue", "red", "red-l"]);
+    expect(all).toContain('<a href="' + base + '?img=product#images" aria-current="page">品番</a>');
+    expect(all).toContain('<span class="badge">品番（すべての SKU）</span>');
+    expect(all).toContain('<span class="badge">color: レッド / size: L</span>');
+    // オプション（color）: 値ごと。SKU 1 つの画像は「ほかの付け先」へ
+    const byColor = await (await admin.get(`${base}?img=option&axis=color`)).text();
+    expect(order(section(byColor, "color: レッド"))).toEqual(["red"]);
+    expect(order(section(byColor, "color: ブルー"))).toEqual(["blue"]);
+    expect(order(section(byColor, "ほかの付け先の画像"))).toEqual(["red-l"]);
+    expect(byColor).toContain(`href="${base}?img=option&amp;axis=color&amp;to=%7B%22color%22%3A%22%E3%83%AC%E3%83%83%E3%83%89%22%7D#image-form"`);
+    // ここに追加: アップロードの付け先がその組になる
+    const addRed = await (await admin.get(`${base}?img=option&axis=color&to=${encodeURIComponent(JSON.stringify({ color: "レッド" }))}`)).text();
+    expect(addRed).toMatch(/<select id="image-target" name="target">[\s\S]*?<option value="\{&quot;color&quot;:&quot;レッド&quot;\}" selected="">/);
+    // SKU: お店でその SKU を選んだときと同じ順（当てはまる画像だけ）
+    const bySku = await (await admin.get(`${base}?img=sku`)).text();
+    expect(order(section(bySku, "TEE-RED-L（color: レッド / size: L）"))).toEqual(["red-l", "red", "all"]);
+    expect(order(section(bySku, "TEE-BLUE-M（color: ブルー / size: M）"))).toEqual(["blue", "all"]);
+  });
+
+  it("並べ替えは隣と入れ替え、付け先を選んでアップロードできる。戻り先はまとめ方を残す", async () => {
+    const { sb, shop, tee, app } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/products/${tee.id}`;
+    const res = await admin.post(`${base}/images/${IMG.red}/move`, { with: IMG.blue, back: "?img=product&evil=1" });
+    expect(res.headers.get("location")).toBe(`${base}?img=product&flash=saved#images`);
+    const sorted = [...sb.tables.product_images].sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])).map((i) => i["id"]);
+    expect(sorted).toEqual([IMG.all, IMG.red, IMG.blue, IMG.red_l]);
+    // ほかの商品の画像とは入れ替えない
+    expect((await admin.post(`${base}/images/${IMG.red}/move`, { with: "00000000-0000-4000-8000-00000000ffff" })).headers.get("location")).toBe(`${base}?flash=saved#images`);
+    // 付け先を選んでアップロード（スクリプト無し）
+    const up = await admin.postMultipart(`${base}/images`, { file: new File([tinyPng()], "a.png", { type: "image/png" }), target: JSON.stringify({ color: "ブルー", size: "M" }) });
+    expect(up.headers.get("location")).toBe(`${base}?img=sku&axis=color&axis=size&flash=saved#images`);
+    expect(sb.tables.product_images.at(-1)!["options"]).toEqual({ color: "ブルー", size: "M" });
+    // SKU に無い鍵は品番の画像に
+    await admin.postMultipart(`${base}/images`, { file: new File([tinyPng()], "b.png", { type: "image/png" }), target: JSON.stringify({ evil: "x" }) });
+    expect(sb.tables.product_images.at(-1)!["options"] ?? {}).toEqual({});
   });
 
   it("REST の PATCH /images/:id と MCP の product_image_set_options", async () => {
