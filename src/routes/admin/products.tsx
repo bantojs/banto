@@ -33,6 +33,7 @@ import { FAVORITES_MODULE } from "../../modules/favorites";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 import { BULK_MIGRATION } from "./bulk";
+import { CsvExportPanel, csvBody, csvHeaders, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 
 export const products = new Hono<AppEnv>();
 
@@ -270,8 +271,87 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         </>
       )}
       <Pager base={listBase} next={page.next} paged={Boolean(after)} />
+      {rows.length > 0 || filtered ? <CsvExportPanel kind="products" action={`/admin/shops/${shop.id}/products.csv`} params={params} columns={PRODUCT_CSV_COLUMNS} units={[{ key: "sku", label: "csvx.u_sku" }, { key: "product", label: "csvx.u_product" }]} presets={PRODUCT_CSV_PRESETS} defaults={PRODUCT_CSV_PRESETS["catalog"]!.cols} /> : null}
     </AdminLayout>,
   );
+});
+
+// ---------- CSV（列と範囲を選ぶ。メンテナの決定 2026-11-09） ----------
+/** 書き出しの 1 行（SKU ごと: sku あり、商品ごと: sku は null で skus を数える） */
+interface ProductCsvRow {
+  p: ProductRow;
+  sku: SkuRow | null;
+  skus: SkuRow[];
+  stock: Map<string, number>;
+  categoryName: Map<string, string>;
+  names: OptionNames;
+}
+const PRODUCT_CSV_COLUMNS: CsvColumn<ProductCsvRow>[] = [
+  { key: "slug", label: "slug", group: "csvx.g_product", value: (r) => r.p.slug },
+  { key: "name", label: "商品名", group: "csvx.g_product", value: (r) => r.p.name },
+  { key: "published", label: "公開", group: "csvx.g_product", value: (r) => (r.p.published ? "公開" : "非公開") },
+  { key: "category", label: "カテゴリー", group: "csvx.g_product", value: (r) => (r.p.category_id ? (r.categoryName.get(r.p.category_id) ?? "") : "") },
+  { key: "tags", label: "タグ", group: "csvx.g_product", value: (r) => (r.p.tags ?? []).join(", ") },
+  { key: "brand", label: "ブランド", group: "csvx.g_product", value: (r) => r.p.brand ?? "" },
+  { key: "tax_class", label: "税の区分", group: "csvx.g_product", value: (r) => taxClassOf(r.p) },
+  { key: "sku_count", label: "SKU の数", group: "csvx.g_sku", units: ["product"], value: (r) => r.skus.length },
+  { key: "code", label: "品番", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.code ?? "" },
+  { key: "sku_name", label: "SKU 名", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.name ?? "" },
+  { key: "options", label: "選択肢", group: "csvx.g_sku", units: ["sku"], value: (r) => Object.entries(r.sku?.options ?? {}).map(([k, v]) => `${optionLabel(r.names, k)}=${String(v)}`).join(" / ") },
+  { key: "price", label: "価格（税込）", group: "csvx.g_sku", value: (r) => (r.sku ? r.sku.price_jpy : r.skus.length ? Math.min(...r.skus.map((k) => k.price_jpy)) : "") },
+  { key: "compare_at", label: "通常価格", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.compare_at_price_jpy ?? "" },
+  { key: "gtin", label: "JAN", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.gtin ?? "" },
+  { key: "stock", label: "在庫", group: "csvx.g_sku", value: (r) => (r.sku ? (r.stock.get(r.sku.id) ?? 0) : r.skus.reduce((n, k) => n + (r.stock.get(k.id) ?? 0), 0)) },
+];
+const PRODUCT_CSV_PRESETS: Record<string, CsvPreset> = {
+  catalog: { label: "csvx.p_catalog", cols: ["slug", "name", "published", "category", "tags", "code", "sku_name", "options", "price", "compare_at", "gtin", "stock"], unit: "sku" },
+  prices: { label: "csvx.p_prices", cols: ["name", "code", "options", "price", "compare_at"], unit: "sku" },
+  stock: { label: "csvx.p_stock", cols: ["name", "code", "options", "gtin", "stock"], unit: "sku" },
+};
+const PRODUCT_CONDITIONS = ["q", "state", "category", "stock", "sort"] as const;
+const CSV_MAX_PRODUCTS = 2000;
+
+products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const shop = await loadShop(c, shopId, "catalog");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const all = stripConditions(c, `/admin/shops/${shopId}/products.csv`, PRODUCT_CONDITIONS);
+  if (all) return c.redirect(all);
+  // 列を選ばずに開いたら、商品の一覧（SKU ごと）の組み合わせ
+  const choice = readCsvChoice(c, PRODUCT_CSV_COLUMNS, ["sku", "product"], PRODUCT_CSV_PRESETS) ?? { cols: PRODUCT_CSV_COLUMNS.filter((col) => PRODUCT_CSV_PRESETS["catalog"]!.cols.includes(col.key)), unit: "sku", format: "bom" as const, preset: null };
+  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
+  const v = (name: string) => (c.req.query(name) ?? "").trim();
+  const q = v("q").slice(0, 100);
+  const state = v("state") === "published" || v("state") === "draft" ? v("state") : "";
+  const filters: Record<string, string> = {
+    ...(state ? { state } : {}),
+    ...(extended && UUID_RE.test(v("category")) ? { category: v("category") } : {}),
+    ...(extended && (v("stock") === "in" || v("stock") === "out") ? { stock: v("stock") } : {}),
+    ...(extended && readSort(v("sort")) === "old" ? { sort: "old" } : {}),
+  };
+  const columns = "id,slug,name,published,created_at,category_id,tags,brand,tax_class";
+  const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
+  const where: Filter[] = state ? [{ col: "published", op: "eq", value: state === "published" }] : [];
+  const rows = useSearch
+    ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, limit: CSV_MAX_PRODUCTS, columns })
+    : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: CSV_MAX_PRODUCTS });
+  const skus = await selectIn<SkuRow>(db, "skus", "id,product_id,code,name,options,price_jpy,compare_at_price_jpy,gtin,created_at", shopId, "product_id", rows.map((p) => p.id));
+  const [inventory, categories] = await Promise.all([
+    choice.cols.some((col) => col.key === "stock") ? selectIn<InventoryRow>(db, "inventory", "sku_id,available", shopId, "sku_id", skus.map((k) => k.id)) : Promise.resolve([] as InventoryRow[]),
+    choice.cols.some((col) => col.key === "category") ? loadCategories(db, shopId) : Promise.resolve([] as CategoryRow[]),
+  ]);
+  const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
+  const categoryName = new Map(categories.map((k) => [k.id, k.name]));
+  const names = optionNamesOf(shop.option_names);
+  const byProduct = new Map<string, SkuRow[]>();
+  for (const k of skus.sort((a, b) => (a.code < b.code ? -1 : 1))) byProduct.set(k.product_id, [...(byProduct.get(k.product_id) ?? []), k]);
+  const csvRows: ProductCsvRow[] = rows.flatMap((p): ProductCsvRow[] => {
+    const ks = byProduct.get(p.id) ?? [];
+    const base = { p, skus: ks, stock, categoryName, names };
+    return choice.unit === "sku" && ks.length > 0 ? ks.map((sku) => ({ ...base, sku })) : [{ ...base, sku: null }];
+  });
+  return c.body(csvBody(choice.cols, csvRows, choice.format), 200, csvHeaders(`products-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
 });
 
 // ---------- 作成 ----------

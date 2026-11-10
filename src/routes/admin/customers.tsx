@@ -25,6 +25,7 @@ import { UUID_RE } from "../../util/cursor";
 import { yen } from "../common";
 import type { MessageKey } from "../../i18n";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { CsvExportPanel, csvBody, csvHeaders, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 
 /**
  * 会員一覧・削除（退会依頼への対応）・メールアドレスの変更（メールを失った会員の救済）。/admin/shops/:shopId/customers
@@ -54,6 +55,44 @@ interface CustomerRow {
   last_order_at?: string | null;
   note?: string | null;
 }
+
+/** 書き出しの列（メンテナの決定 2026-11-09）。独自項目はショップの定義から、集計とメモは 0133 が当たっていれば */
+function customerCsvColumns(fields: CustomerField[], stats: boolean): CsvColumn<CustomerRow>[] {
+  const addr = (r: CustomerRow, k: string) => (r.default_address ?? {})[k];
+  const cols: CsvColumn<CustomerRow>[] = [
+    { key: "id", label: "id", group: "csvx.g_member", value: (r) => r.id },
+    { key: "created_at", label: "登録日時", group: "csvx.g_member", value: (r) => formatDateTime(r.created_at) },
+    { key: "last_login_at", label: "最後のログイン", group: "csvx.g_member", value: (r) => (r.last_login_at ? formatDateTime(r.last_login_at) : "") },
+    { key: "email", label: "メール", group: "csvx.g_contact", pii: true, value: (r) => r.email },
+    { key: "name", label: "氏名", group: "csvx.g_contact", pii: true, value: (r) => r.name },
+    { key: "phone", label: "電話", group: "csvx.g_contact", pii: true, value: (r) => addr(r, "phone") },
+    { key: "postal_code", label: "郵便番号", group: "csvx.g_address", pii: true, value: (r) => addr(r, "postal_code") },
+    { key: "state", label: "都道府県", group: "csvx.g_address", pii: true, value: (r) => addr(r, "state") },
+    { key: "city", label: "市区町村", group: "csvx.g_address", pii: true, value: (r) => addr(r, "city") },
+    { key: "line1", label: "番地", group: "csvx.g_address", pii: true, value: (r) => addr(r, "line1") },
+    { key: "line2", label: "建物", group: "csvx.g_address", pii: true, value: (r) => addr(r, "line2") },
+    { key: "marketing_consent", label: "案内メールの同意", group: "csvx.g_consent", value: (r) => (r.marketing_consent === true ? "yes" : r.marketing_consent === false ? "no" : "") },
+    { key: "marketing_consent_at", label: "同意の日時", group: "csvx.g_consent", value: (r) => (r.marketing_consent_at ? formatDateTime(r.marketing_consent_at) : "") },
+    ...fields.map((f): CsvColumn<CustomerRow> => ({ key: `attr_${f.key}`, label: f.label, group: "csvx.g_attributes", value: (r) => (r.attributes && typeof r.attributes === "object" ? (r.attributes[f.key] ?? "") : "") })),
+    { key: "external_provider", label: "外部の連携先", group: "csvx.g_external", value: (r) => externalRef(r.external_ref)?.provider ?? "" },
+    { key: "external_id", label: "外部の ID", group: "csvx.g_external", value: (r) => externalRef(r.external_ref)?.id ?? "" },
+  ];
+  if (stats) {
+    cols.push(
+      { key: "orders_count", label: "購入回数", group: "csvx.g_stats", value: (r) => r.orders_count ?? 0 },
+      { key: "total_spent_jpy", label: "累計の購入額", group: "csvx.g_stats", value: (r) => r.total_spent_jpy ?? 0 },
+      { key: "last_order_at", label: "最後に買った日", group: "csvx.g_stats", value: (r) => (r.last_order_at ? formatDateTime(r.last_order_at) : "") },
+      { key: "note", label: "社内メモ", group: "csvx.g_notes", pii: true, value: (r) => r.note ?? "" },
+    );
+  }
+  return cols;
+}
+const customerCsvPresets = (fields: CustomerField[]): Record<string, CsvPreset> => ({
+  // 案内メールの宛先は、同意した会員だけに必ず絞る（特定電子メール法のオプトイン。書き出しの側で consent=yes を外せない）
+  mail: { label: "csvx.p_mail", cols: ["email", "name", "marketing_consent", "marketing_consent_at"] },
+  crm: { label: "csvx.p_crm", cols: ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", ...fields.map((f) => `attr_${f.key}`), "external_provider", "external_id"] },
+});
+const CUSTOMER_CONDITIONS = ["q", "f", "v", "consent", "sort"] as const;
 
 /** 読む列（0133 の前の DB では集計とメモを選ばない） */
 const customerColumns = (stats: boolean) =>
@@ -246,6 +285,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </>
       )}
       <Pager base={listHref} next={page.next} paged={Boolean(after)} />
+      {rows.length > 0 || filtered ? <CsvExportPanel kind="customers" action={`/admin/shops/${shop.id}/customers.csv`} params={params} columns={customerCsvColumns(fields, stats)} presets={customerCsvPresets(fields)} note={t("csvx.mail_note")} /> : null}
     </AdminLayout>,
   );
 });
@@ -541,7 +581,21 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   if (!shop) return c.text(t("shop.not_found"), 404);
   const deps = { db: owner(c).db, cache: c.get("adapters").cache };
   const [stats, sortable] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION)]);
+  const base = `/admin/shops/${shopId}/customers.csv`;
+  const allFields = customerFields(shop.settings ?? {});
+  const choice = readCsvChoice(c, customerCsvColumns(allFields, stats), ["member"], customerCsvPresets(allFields));
+  // 案内メールの宛先は、同意した会員だけ（範囲「すべて」でもこの条件は外さない）
+  if (choice?.preset === "mail" && c.req.query("consent") !== "yes") {
+    const url = new URL(c.req.url);
+    for (const k of CUSTOMER_CONDITIONS) if (c.req.query("range") === "all") url.searchParams.delete(k);
+    url.searchParams.delete("range");
+    url.searchParams.set("consent", "yes");
+    return c.redirect(`${base}${url.search}`);
+  }
+  const all = stripConditions(c, base, CUSTOMER_CONDITIONS);
+  if (all) return c.redirect(all);
   const { fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS, stats, sortable });
+  if (choice) return c.body(csvBody(choice.cols, rows, choice.format), 200, csvHeaders(`customers-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
   const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key), ...(stats ? ["orders_count", "total_spent_jpy", "last_order_at", "note"] : [])];
   const lines = rows.map((r) => {
     const a = (r.default_address ?? {}) as Record<string, unknown>;

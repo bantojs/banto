@@ -26,6 +26,7 @@ import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from 
 import { migrated } from "../../db/migration-state";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 import { can } from "./access";
+import { CsvExportPanel, csvBody, csvHeaders, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 import { permLabel } from "./denied";
 
 export const orders = new Hono<AppEnv>();
@@ -71,6 +72,57 @@ interface OrderListRow extends OrderRow {
 
 /** CSV に入れる注文の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
 const CSV_MAX_ORDERS = 2000;
+
+/** 書き出しの 1 行（注文ごと: item は null、明細ごと: その明細） */
+interface OrderCsvRow {
+  o: OrderListRow;
+  items: OrderItemRow[];
+  item: OrderItemRow | null;
+  ctx: { skuById: Map<string, SkuRow>; productName: Map<string, string> };
+}
+const addr = (r: OrderCsvRow, k: string) => ((r.o.shipping_address ?? {}) as Record<string, unknown>)[k];
+const itemCode = (r: OrderCsvRow, i: OrderItemRow) => (i.sku_id ? r.ctx.skuById.get(i.sku_id)?.code : undefined) ?? i.item_name ?? i.sku_id ?? "";
+const itemProduct = (r: OrderCsvRow, i: OrderItemRow) => {
+  const sku = i.sku_id ? r.ctx.skuById.get(i.sku_id) : undefined;
+  return [i.item_name ?? (sku ? r.ctx.productName.get(sku.product_id) : undefined), i.item_variant ?? sku?.name].filter(Boolean).join(" / ");
+};
+/** 注文の書き出しの列（まとまりごと。明細の列は、注文ごとなら 1 つのセルにまとめる） */
+const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
+  { key: "number", label: "注文番号", group: "csvx.g_order", value: (r) => r.o.number },
+  { key: "date", label: "日時", group: "csvx.g_order", value: (r) => formatDateTime(r.o.created_at) },
+  { key: "status", label: "状態", group: "csvx.g_order", value: (r) => r.o.status },
+  { key: "payment", label: "決済", group: "csvx.g_order", value: (r) => r.o.payment_provider },
+  { key: "payment_ref", label: "決済参照", group: "csvx.g_order", value: (r) => r.o.payment_ref },
+  { key: "total", label: "合計", group: "csvx.g_amounts", value: (r) => r.o.total_jpy },
+  { key: "shipping", label: "送料", group: "csvx.g_amounts", value: (r) => r.o.shipping_jpy },
+  { key: "discount", label: "値引き", group: "csvx.g_amounts", value: (r) => r.o.discount_jpy ?? 0 },
+  { key: "coupon", label: "クーポン", group: "csvx.g_amounts", value: (r) => (r.o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" ") },
+  { key: "name", label: "氏名", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_name },
+  { key: "email", label: "メール", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_email },
+  { key: "phone", label: "電話", group: "csvx.g_customer", pii: true, value: (r) => addr(r, "phone") },
+  { key: "postal_code", label: "郵便番号", group: "csvx.g_address", pii: true, value: (r) => addr(r, "postal_code") },
+  { key: "state", label: "都道府県", group: "csvx.g_address", pii: true, value: (r) => addr(r, "state") },
+  { key: "city", label: "市区町村", group: "csvx.g_address", pii: true, value: (r) => addr(r, "city") },
+  { key: "line1", label: "番地", group: "csvx.g_address", pii: true, value: (r) => addr(r, "line1") },
+  { key: "line2", label: "建物", group: "csvx.g_address", pii: true, value: (r) => addr(r, "line2") },
+  { key: "sku", label: "品番", group: "csvx.g_items", value: (r) => (r.item ? itemCode(r, r.item) : r.items.map((i) => `${itemCode(r, i)} x${i.qty}`).join(" / ")) },
+  { key: "product", label: "商品", group: "csvx.g_items", value: (r) => (r.item ? itemProduct(r, r.item) : r.items.map((i) => itemProduct(r, i)).join(" / ")) },
+  { key: "qty", label: "数量", group: "csvx.g_items", value: (r) => (r.item ? r.item.qty : r.items.reduce((n, i) => n + i.qty, 0)) },
+  { key: "unit_price", label: "単価", group: "csvx.g_items", units: ["item"], value: (r) => r.item?.unit_price_jpy ?? "" },
+  { key: "subtotal", label: "小計", group: "csvx.g_items", value: (r) => (r.item ? r.item.unit_price_jpy * r.item.qty : r.items.reduce((n, i) => n + i.unit_price_jpy * i.qty, 0)) },
+  { key: "shipped_at", label: "発送日時", group: "csvx.g_shipping", value: (r) => (r.o.shipped_at ? formatDateTime(r.o.shipped_at) : "") },
+  { key: "carrier", label: "配送業者", group: "csvx.g_shipping", value: (r) => (r.o.tracking_carrier ? carrierLabel(r.o.tracking_carrier) : "") },
+  { key: "tracking_number", label: "送り状番号", group: "csvx.g_shipping", value: (r) => r.o.tracking_number ?? "" },
+  { key: "tags", label: "印", group: "csvx.g_notes", value: (r) => orderTagsOf(r.o).join(", ") },
+  { key: "note", label: "メモ", group: "csvx.g_notes", pii: true, value: (r) => r.o.note ?? "" },
+];
+const ORDER_CSV_PRESETS: Record<string, CsvPreset> = {
+  accounting: { label: "csvx.p_accounting", cols: ["number", "date", "status", "payment", "payment_ref", "total", "shipping", "discount", "coupon"], unit: "order" },
+  shipping: { label: "csvx.p_shipping", cols: ["number", "name", "phone", "postal_code", "state", "city", "line1", "line2", "sku", "qty", "tracking_number"], unit: "order" },
+  sold: { label: "csvx.p_sold", cols: ["number", "date", "sku", "product", "qty", "unit_price", "subtotal"], unit: "item" },
+};
+/** 一覧の条件の名前（「すべて」で外すもの） */
+const ORDER_CONDITIONS = ["q", "status", "tag", "payment", "from", "to", "min", "max", "sort"] as const;
 
 /** 一覧の検索を広げる版（電話・送り状番号・支払い方法・日付・金額・並び。0132） */
 const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
@@ -269,6 +321,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
         </table>
       )}
       <Pager base={listHref} next={page.next} paged={Boolean(after)} />
+      <CsvExportPanel kind="orders" action={`/admin/shops/${shop.id}/orders.csv`} params={params} columns={ORDER_CSV_COLUMNS} units={[{ key: "order", label: "csvx.u_order" }, { key: "item", label: "csvx.u_item" }]} presets={ORDER_CSV_PRESETS} />
     </AdminLayout>,
   );
 });
@@ -278,14 +331,33 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
+  const choice = readCsvChoice(c, ORDER_CSV_COLUMNS, ["order", "item"], ORDER_CSV_PRESETS);
+  // 範囲「すべて」: 条件を外した URL へ
+  const all = stripConditions(c, `/admin/shops/${shopId}/orders.csv`, ORDER_CONDITIONS);
+  if (all) return c.redirect(all);
   const { rows } = await listOrders(c, shopId, { limit: CSV_MAX_ORDERS });
   const { db } = owner(c);
   // 明細と SKU は CSV に入る注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
   const items = await selectIn<OrderItemRow>(db, "order_items", "*", shopId, "order_id", rows.map((o) => o.id));
-  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
+  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name,product_id", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const itemsByOrder = new Map<string, OrderItemRow[]>();
   for (const i of items) itemsByOrder.set(i.order_id, [...(itemsByOrder.get(i.order_id) ?? []), i]);
+  if (choice) {
+    // 列と範囲を選んだ書き出し（メンテナの決定 2026-11-09）。商品名は明細の列を選んだときだけ読む
+    const wantsProduct = choice.cols.some((col) => col.key === "product");
+    const products = wantsProduct ? await selectIn<{ id: string; name: string } & Record<string, unknown>>(db, "products", "id,name", shopId, "id", skus.map((k) => k.product_id)) : [];
+    const productName = new Map(products.map((p) => [p.id, p.name]));
+    const ctx = { skuById, productName };
+    const csvRows: OrderCsvRow[] =
+      choice.unit === "item"
+        ? rows.flatMap((o): OrderCsvRow[] => {
+            const its = itemsByOrder.get(o.id) ?? [];
+            return its.length > 0 ? its.map((item) => ({ o, items: its, item, ctx })) : [{ o, items: its, item: null, ctx }];
+          })
+        : rows.map((o) => ({ o, items: itemsByOrder.get(o.id) ?? [], item: null, ctx }));
+    return c.body(csvBody(choice.cols, csvRows, choice.format), 200, csvHeaders(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
+  }
   const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
   const lines = rows.map((o) => {
     const a = (o.shipping_address ?? {}) as Record<string, unknown>;

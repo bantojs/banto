@@ -239,6 +239,7 @@ td:first-child>.status>a:hover{text-decoration:underline}
 .kpis{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));margin:.6rem 0}.kpi{border:1px solid var(--border);border-radius:var(--radius);padding:.6rem .8rem}.kpi strong{display:block;font-size:1.6rem;font-variant-numeric:tabular-nums}
 .req-cards{display:grid;gap:.6rem}.req-card{border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem}.req-card .actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
 .big-btn{min-height:44px;padding:.6rem 1rem;font-size:1rem}
+.csv-export{margin:1rem 0;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .8rem}.csv-export>summary{cursor:pointer;font-weight:600}.csv-export form{margin-top:.6rem}
 .checklist{margin:.4rem 0 0;padding-left:1.4rem}.checklist li{margin:.25rem 0}.checklist li.done{color:var(--fg-muted)}
 .todo-list{list-style:none;margin:.4rem 0 0;padding:0}.todo-list li{border-top:1px solid var(--border)}.todo-list li:first-child{border-top:0}
 .todo-list a{display:block;padding:.6rem .2rem;text-decoration:none;color:var(--fg)}.todo-list a:hover{background:var(--bg-subtle)}.todo-list strong{display:inline-block;min-width:2.5rem;font-variant-numeric:tabular-nums}
