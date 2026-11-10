@@ -99,6 +99,13 @@ describe.skipIf(!dbAvailable)("商品のまとめて編集（0137）", () => {
     expect(await sku(a.skuId)).toMatchObject({ price_jpy: 5000, compare_at_price_jpy: 6000 });
   });
 
+  it("前後に空白のある今の値（API で作った商品など）も、開いたときの値として受け付ける", async () => {
+    await getPool().query("update products set name = '商品A ', brand = ' B ' where id = $1", [a.productId]);
+    expect(await save(a.ownerId, a.shopId, [{ kind: "product", id: a.productId, col: "name", from: "商品A", to: "商品B" }, { kind: "product", id: a.productId, col: "brand", from: "B", to: "C" }])).toEqual({ ok: true, products: 1, skus: 0 });
+    expect(await product(a.productId)).toMatchObject({ name: "商品B", brand: "C" });
+    await getPool().query("update products set name = '白T', brand = null where id = $1", [a.productId]);
+  });
+
   it("形の違う変更の並び・項目の無い人・他人のショップ・anon は断る", async () => {
     for (const bad of [{}, [{ kind: "order", id: a.productId, col: "name", from: null, to: "x" }], [{ kind: "product", id: a.productId, col: "slug", from: "tee", to: "x" }], [{ kind: "product", id: a.productId, col: "name", to: "x" }], [{ kind: "product", id: a.productId, col: "name", from: "白T", to: 1 }]]) {
       expect(await expectDbError(() => save(a.ownerId, a.shopId, bad))).toMatch(/invalid_changes/);

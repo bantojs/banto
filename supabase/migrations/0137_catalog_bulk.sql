@@ -94,7 +94,8 @@ begin
       select * into v_s from skus where id = v_id and shop_id = p_shop_id;
       if v_s.id is null then v_errors := v_errors || jsonb_build_array(jsonb_build_object('kind', v_kind, 'id', v_id, 'col', v_col, 'error', 'not_found')); continue; end if;
     end if;
-    if banto_bulk_text(v_kind, v_col, v_p, v_s) is distinct from v_from then
+    -- 今の値も同じ形（前後の空白を落とし、空は null）にそろえて比べる（API で前後に空白のある名前で作った商品も、いつまでも changed にしない）
+    if nullif(btrim(banto_bulk_text(v_kind, v_col, v_p, v_s)), '') is distinct from v_from then
       v_errors := v_errors || jsonb_build_array(jsonb_build_object('kind', v_kind, 'id', v_id, 'col', v_col, 'error', 'changed', 'current', banto_bulk_text(v_kind, v_col, v_p, v_s)));
       continue;
     end if;

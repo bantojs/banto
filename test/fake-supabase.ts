@@ -2307,7 +2307,7 @@ export class FakeSupabase {
         if (!row) { errors.push({ ...base, error: "not_found" }); continue; }
         const col = String(x["col"]);
         const to = x["to"] == null ? null : String(x["to"]).trim() || null;
-        if (text(row, col) !== (x["from"] ?? null)) { errors.push({ ...base, error: "changed", current: text(row, col) }); continue; }
+        if ((text(row, col)?.trim() || null) !== (x["from"] ?? null)) { errors.push({ ...base, error: "changed", current: text(row, col) }); continue; }
         const ok = col === "name" ? to !== null && to.length <= 200 : col === "published" ? to === "true" || to === "false" : col === "price_jpy" ? to !== null && /^\d{1,9}$/.test(to) : col === "compare_at_price_jpy" ? to === null || /^\d{1,9}$/.test(to) : col === "gtin" ? to === null || /^(\d{8}|\d{12,14})$/.test(to) : col === "category_id" ? to === null || this.tables.categories.some((k) => k["id"] === to && k["shop_id"] === shopId) : true;
         if (!ok) { errors.push({ ...base, error: "invalid" }); continue; }
         rows.set(row, { ...(rows.get(row) ?? {}), [col]: to });
