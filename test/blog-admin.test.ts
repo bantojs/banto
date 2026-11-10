@@ -31,7 +31,7 @@ describe("ブログの管理画面", () => {
     const writer = await staff(sb, app, shop, "w@example.com", ["content"]);
     expect(await (await writer.get(`/admin/shops/${shop.id}/modules/blog`)).text()).toContain(`href="/admin/shops/${shop.id}/modules/blog"`);
     const catalog = await staff(sb, app, shop, "c@example.com", ["catalog"]);
-    expect((await catalog.get(`/admin/shops/${shop.id}/modules/blog`)).status).toBe(404);
+    expect((await catalog.get(`/admin/shops/${shop.id}/modules/blog`)).status).toBe(403);
   });
 
   it("ブログを作り、記事を書いて公開・予約・タグ・抜粋。編集の画面はページと同じ（ブロック・メディア・リビジョン）", async () => {

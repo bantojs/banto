@@ -2287,6 +2287,32 @@ export class FakeSupabase {
       shop["settings"] = { ...settings, [`views_${screen}`]: out };
       return json(out);
     }
+    if (fn === "shop_home") {
+      // 0139: 見る人の項目にある分だけ数える（本物は test/db/shop-home.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      const owns = !!uid && this.ownedShopIds(uid).has(shopId);
+      const perms = owns ? null : uid ? this.memberPerms(uid, shopId) : [];
+      if (!owns && !this.orgMemberShops.some((m) => m.user_id === uid && m.shop_id === shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const has = (p: string) => owns || perms!.includes(p);
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const orders = this.tables.orders.filter((o) => o["shop_id"] === shopId);
+      const products = this.tables.products.filter((p) => p["shop_id"] === shopId);
+      const out: Row = {};
+      if (has("orders")) out["orders"] = { to_ship: orders.filter((o) => o["status"] === "paid").length };
+      if (has("reports")) {
+        const recent = orders.filter((o) => (o["status"] === "paid" || o["status"] === "shipped") && Date.parse(String(o["created_at"])) >= Date.now() - 30 * 86400_000);
+        out["sales"] = { orders: recent.length, revenue_jpy: recent.reduce((n, o) => n + Number(o["total_jpy"]), 0) };
+      }
+      if (has("catalog")) {
+        const published = new Set(products.filter((p) => p["published"]).map((p) => p["id"]));
+        const out0 = this.tables.skus.filter((k) => k["shop_id"] === shopId && published.has(k["product_id"]) && Number(this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0) === 0).length;
+        out["catalog"] = { out_of_stock: out0, drafts: products.filter((p) => !p["published"]).length, products: products.length };
+      }
+      if (has("support")) out["support"] = { waiting: this.tables.inquiries.filter((q) => q["shop_id"] === shopId && q["status"] === "waiting_shop" && !(q["origin"] === "form" && !q["email_verified_at"])).length };
+      if (has("content")) out["content"] = { scheduled: 0, drafts: 0 };
+      if (owns) out["setup"] = { legal: Boolean(shop["legal_notice"] && shop["privacy_policy"] && shop["return_policy"]), product: products.some((p) => p["published"]), published: Boolean(shop["published"]) };
+      return json(out);
+    }
     if (fn === "product_images_order") {
       // 0138: 項目 catalog の人だけ。その商品の画像ちょうど全部を受け取り、0 から振り直す（本物は test/db/product-images-order.test.ts）
       const shopId = String(args["p_shop_id"]);

@@ -109,7 +109,7 @@ dashboard.get("/", requireOwner, async (c) => {
                       {[...s.name][0] ?? "?"}
                     </span>
                     <div style="min-width:0">
-                      <a href={`/admin/shops/${s.id}`}>{s.name}</a>
+                      <a href={`/admin/shops/${s.id}/home`}>{s.name}</a>
                       <div class="muted">
                         <code>{s.slug}</code>
                       </div>

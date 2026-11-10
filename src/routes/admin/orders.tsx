@@ -25,6 +25,8 @@ import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/
 import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
 import { migrated } from "../../db/migration-state";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { can } from "./access";
+import { permLabel } from "./denied";
 
 export const orders = new Hono<AppEnv>();
 
@@ -310,6 +312,9 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
   const base = `/admin/shops/${shopId}/orders/${orderId}`;
   const addr = order.shipping_address ?? null;
   const msg = flash(c.req.query("flash"));
+  // 押せないものは理由を出す（メンテナの決定 2026-11-08）。判定の正は DB（cancel_order・mask_customer）
+  const access = c.get("shopAccess");
+  const Locked = (props: { perm: string }) => <p class="lockline">{tf("access.needs_perm", { perm: permLabel(props.perm) })}</p>;
 
   return c.html(
     <AdminLayout title={t("order.detail")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list"), href: `/admin/shops/${shop.id}/orders` }, { label: fmtDate(order.created_at) }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
@@ -317,6 +322,8 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
         title={
           <>
             #{order.number} <span class={`status ${statusDot(order.status)}`}>{statusLabel(order.status)}</span>
+            {/* 支払いと発送を分けて見せる（状態は 1 つのまま、見せ方だけ） */}
+            {order.status === "paid" ? <span class="status off">{t("order.unshipped")}</span> : null}
           </>
         }
         sub={`${t("order.detail")} · ${fmtDate(order.created_at)}`}
@@ -433,6 +440,23 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
                 </>
               ) : null}
             </p>
+            {order.customer_id ? can(access, "customers") ? <a href={`/admin/shops/${shop.id}/customers/${order.customer_id}`}>{t("order.open_member")}</a> : <Locked perm="customers" /> : <p class="muted">{t("order.guest")}</p>}
+          </section>
+          <section class="card">
+            <h2>{t("order.history")}</h2>
+            <ol class="timeline">
+              <li>
+                <span class="muted">{fmtDate(order.created_at)}</span> {t("order.history_placed")}
+              </li>
+              {order.shipped_at ? (
+                <li>
+                  <span class="muted">{fmtDate(order.shipped_at)}</span> {t("order.history_shipped")}
+                </li>
+              ) : null}
+              {order.status === "cancelled" || order.status === "refunded" ? (
+                <li>{statusLabel(order.status)}</li>
+              ) : null}
+            </ol>
           </section>
           <section class="card">
             <h2>{t("order.shipping")}</h2>
@@ -486,20 +510,28 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
             <section class="card danger-zone">
               <h2>{t("order.danger")}</h2>
               {order.status === "paid" ? (
-                <>
-                  <form method="post" action={`${base}/status`}>
-                    <input type="hidden" name="status" value="cancelled" />
-                    <button type="submit" class="danger">
-                      {t("order.mark_cancelled")}
-                    </button>
-                  </form>
-                  <p class="muted">{t("order.cancel_note")}</p>
-                </>
+                can(access, "orders_cancel") ? (
+                  <>
+                    <form method="post" action={`${base}/status`}>
+                      <input type="hidden" name="status" value="cancelled" />
+                      <button type="submit" class="danger">
+                        {t("order.mark_cancelled")}
+                      </button>
+                    </form>
+                    <p class="muted">{t("order.cancel_note")}</p>
+                  </>
+                ) : (
+                  <Locked perm="orders_cancel" />
+                )
               ) : null}
               {order.customer_email ? (
-                <form method="post" action={`${base}/mask`}>
-                  <button type="submit">{t("order.mask")}</button>
-                </form>
+                can(access, "customers") ? (
+                  <form method="post" action={`${base}/mask`}>
+                    <button type="submit">{t("order.mask")}</button>
+                  </form>
+                ) : (
+                  <Locked perm="customers" />
+                )
               ) : null}
             </section>
           ) : null}

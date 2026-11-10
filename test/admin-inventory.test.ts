@@ -86,7 +86,9 @@ describe("在庫の画面", () => {
   it("項目 catalog の無い人は開けない。戻り先は条件の名前だけを残す", async () => {
     const { member, base, teeM } = setup();
     const ship = await member("ship@example.com", ["orders"]);
-    expect((await ship.get(base)).status).toBe(404);
+    const denied = await ship.get(base);
+    expect(denied.status).toBe(403);
+    expect(await denied.text()).toContain("このページには「商品・在庫」の項目が要ります");
     expect((await ship.post(`${base}/adjust`, { [`d_${teeM.id}`]: "1" })).status).toBe(404);
     const b = await member("stock@example.com", ["catalog"]);
     expect((await b.post(`${base}/adjust`, { back: "?q=x&next=https://evil.example/", [`d_${teeM.id}`]: "1" })).headers.get("location")).toBe(`${base}?q=x&flash=adjusted&n=1`);

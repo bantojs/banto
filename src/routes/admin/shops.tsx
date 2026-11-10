@@ -40,8 +40,13 @@ export const shops = new Hono<AppEnv>();
  */
 export async function loadShop(c: AdminContext, shopId: string, perm: ShopPerm | "admin" | "any"): Promise<ShopRow | null> {
   const r = await shopAccess(c, shopId);
-  if (!r || !can(r.access, perm)) return null;
+  if (!r) return null;
   c.set("shopAccess", r.access);
+  if (!can(r.access, perm)) {
+    // ショップには入れるが、この画面の項目が無い（GET なら「どの項目が要るか」を案内する。src/routes/admin/denied.tsx）
+    c.set("deniedShop", { shop: { id: r.shop.id, name: r.shop.name, settings: r.shop.settings }, perm });
+    return null;
+  }
   return r.shop;
 }
 

@@ -97,7 +97,7 @@ describe("商品のまとめて編集", () => {
     const form = await formOf(await (await b.get(`${base}/bulk?id=${tee.id}`)).text());
     expect((await b.post(`${base}/bulk`, form)).headers.get("location")).toContain("&flash=nothing");
     const ship = await member("ship@example.com", ["orders"]);
-    expect((await ship.get(`${base}/bulk?id=${tee.id}`)).status).toBe(404);
+    expect((await ship.get(`${base}/bulk?id=${tee.id}`)).status).toBe(403);
     expect((await ship.post(`${base}/bulk`, form)).status).toBe(404);
     const other = sb.addShop(sb.addUser("o@example.com", "password-123", { owner: true }).id, { slug: "other", name: "ほか" });
     const foreign = sb.addProduct(other.id, { slug: "x", name: "よその商品" });

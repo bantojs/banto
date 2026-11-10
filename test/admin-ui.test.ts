@@ -78,7 +78,7 @@ describe("管理画面の共通の見た目", () => {
     const ship = await Browser.loggedIn(app, "ship@example.com", "password-123");
     const html = await (await ship.get(`/admin/shops/${shop.id}/orders`)).text();
     const nav = html.slice(html.indexOf('<nav class="sidenav"'), html.indexOf("</nav>", html.indexOf('<nav class="sidenav"')));
-    expect([...nav.matchAll(/<a href="[^"]+"[^>]*>([^<]+)<\/a>/g)].map((m) => m[1])).toEqual(["注文", "ショップ設定"]);
+    expect([...nav.matchAll(/<a href="[^"]+"[^>]*>([^<]+)<\/a>/g)].map((m) => m[1])).toEqual(["ホーム", "注文", "ショップ設定"]);
   });
 
   it("ショップ設定は画面ごとに分け、1 画面に保存は 1 つ（基本と法定表記 / 配送と税 / 決済 / 会員とログイン / 上級者向け）", async () => {

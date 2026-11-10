@@ -27,6 +27,8 @@ import { storesAdmin } from "../../modules/store-tryon/stores-admin";
 import { views } from "./views";
 import { inventory } from "./inventory";
 import { bulk } from "./bulk";
+import { deniedPage } from "./denied";
+import { home } from "./home";
 
 /**
  * 管理画面（Hono SSR）。
@@ -40,6 +42,7 @@ import { bulk } from "./bulk";
 export const admin = new Hono<AppEnv>();
 
 admin.use("*", csrfGuard);
+admin.use("/shops/*", deniedPage);
 admin.route("/setup", setup);
 admin.route("/", login);
 admin.route("/", mfa);
@@ -50,6 +53,7 @@ admin.route("/", org);
 admin.route("/", audit);
 admin.route("/stores", storesAdmin);
 admin.route("/shops", shops);
+admin.route("/shops", home);
 admin.route("/shops", bulk);
 admin.route("/shops", products);
 admin.route("/shops", categories);

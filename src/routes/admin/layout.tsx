@@ -226,6 +226,11 @@ td:first-child>.status>a:hover{text-decoration:underline}
 .danger-zone:not(aside .danger-zone) button{width:auto}
 /* 独自項目の表: 狭い画面では横に送る */
 .table-scroll{overflow-x:auto}
+.lockline{font-size:.85rem;color:var(--fg-muted);border-left:3px solid var(--border-strong);padding:.2rem .6rem;margin:.4rem 0}
+.timeline{list-style:none;margin:0;padding:0}.timeline li{padding:.2rem 0}
+.checklist{margin:.4rem 0 0;padding-left:1.4rem}.checklist li{margin:.25rem 0}.checklist li.done{color:var(--fg-muted)}
+.todo-list{list-style:none;margin:.4rem 0 0;padding:0}.todo-list li{border-top:1px solid var(--border)}.todo-list li:first-child{border-top:0}
+.todo-list a{display:block;padding:.6rem .2rem;text-decoration:none;color:var(--fg)}.todo-list a:hover{background:var(--bg-subtle)}.todo-list strong{display:inline-block;min-width:2.5rem;font-variant-numeric:tabular-nums}
 .chip[aria-pressed=false]{background:transparent;color:var(--fg-muted);border-style:dashed}
 .bulk-table th[scope=row]{font-weight:500;white-space:nowrap}
 .bulk-table .bulk-sku th[scope=row]{padding-left:1.5rem;font-weight:400}
@@ -306,6 +311,7 @@ export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages
 export type ShopHere =
   | ShopTab
   | "shipping-labels"
+  | "home"
   | "inventory"
   | "categories"
   | "size-charts"
@@ -353,6 +359,7 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
   {
     label: "nav.group.daily",
     items: [
+      { label: "nav.home", subs: [page("home", "/home", "nav.home", "any")] },
       { label: "order.list", subs: [page("orders", "/orders", "order.list", "orders"), mod("shipping-labels", "shipping_labels", "mod.shipping_labels.name")] },
       {
         label: "product.list",

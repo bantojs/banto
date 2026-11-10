@@ -9,7 +9,7 @@ import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
-import { can, shopAccess } from "./access";
+import { can } from "./access";
 
 /**
  * AI 連携（トークン）: /admin/shops/:shopId/tokens（docs/ai-access.md）
@@ -77,8 +77,10 @@ async function appEndpoints(c: AdminContext, shopId: string): Promise<AppEndpoin
 tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
-  const sa = await shopAccess(c, shopId);
-  if (!sa || !can(sa.access, "integrations")) return c.text(t("shop.not_found"), 404);
+  // loadShop を通す（項目の無い人には、どの項目が要るかを出す。src/routes/admin/denied.tsx）
+  const loaded = await loadShop(c, shopId, "integrations");
+  if (!loaded) return c.text(t("shop.not_found"), 404);
+  const sa = { shop: loaded, access: c.get("shopAccess")! };
   const shop = sa.shop;
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
