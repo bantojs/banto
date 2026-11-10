@@ -228,6 +228,11 @@ td:first-child>.status>a:hover{text-decoration:underline}
 .table-scroll{overflow-x:auto}
 .lockline{font-size:.85rem;color:var(--fg-muted);border-left:3px solid var(--border-strong);padding:.2rem .6rem;margin:.4rem 0}
 .timeline{list-style:none;margin:0;padding:0}.timeline li{padding:.2rem 0}
+.badge.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent);background:var(--warn-bg);margin-left:.35rem}
+.purpose-groups{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));margin:.4rem 0}
+.purpose-group{border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem;margin:0}.purpose-group legend{font-weight:600;padding:0 .3rem}
+.purpose-line{display:flex;gap:.4rem;align-items:flex-start;margin:.3rem 0;font-weight:400}.purpose-line code{font-size:.75rem;color:var(--fg-muted)}
+.plainlist{list-style:none;padding:0;margin:.3rem 0}.plainlist li{margin:.25rem 0}.plainlist code{font-size:.75rem;color:var(--fg-muted)}
 .checklist{margin:.4rem 0 0;padding-left:1.4rem}.checklist li{margin:.25rem 0}.checklist li.done{color:var(--fg-muted)}
 .todo-list{list-style:none;margin:.4rem 0 0;padding:0}.todo-list li{border-top:1px solid var(--border)}.todo-list li:first-child{border-top:0}
 .todo-list a{display:block;padding:.6rem .2rem;text-decoration:none;color:var(--fg)}.todo-list a:hover{background:var(--bg-subtle)}.todo-list strong{display:inline-block;min-width:2.5rem;font-variant-numeric:tabular-nums}

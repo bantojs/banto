@@ -47,6 +47,8 @@ export async function loadShop(c: AdminContext, shopId: string, perm: ShopPerm |
     c.set("deniedShop", { shop: { id: r.shop.id, name: r.shop.name, settings: r.shop.settings }, perm });
     return null;
   }
+  // 前に断った印が残っていると、この後の本当の 404 が「項目が要ります」に置き換わるので外す
+  c.set("deniedShop", undefined);
   return r.shop;
 }
 
