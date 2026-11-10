@@ -404,6 +404,9 @@ function hoursFromForm(f: Record<string, string | undefined>): { hours: Record<s
   const hours: Record<string, TimeRange[]> = {};
   for (let d = 0; d < 7; d++) {
     const r = parseRanges(weekdayText(f, d));
+    // 「営業」を選んだのに時刻が 1 つも無いのは入れ忘れ（黙って定休日にしない）。今までの文字の欄は空 = 定休日のまま
+    const forgot = f[`h${d}`] === undefined && f[`h${d}_mode`] === "open" && r !== null && r.length === 0;
+    if (forgot) return { hours, special_days: [], error: tf("hours.forgot_times", { day: weekdayLabel(d) }) };
     if (r === null) return { hours, special_days: [], error: tf("tryon.invalid_hours", { detail: weekdayLabel(d) }) };
     hours[String(d)] = r;
   }
