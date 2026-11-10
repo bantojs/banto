@@ -6,8 +6,8 @@ import { AdminLayout, type Crumb, PageHead } from "../../routes/admin/layout";
 import { formFields, owner, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
 import { myOrgs, type MyOrg } from "../../routes/admin/access";
-import { formatRanges, formatSpecialDays, parseRanges, parseSpecialDays, specialDays, todayHere, weekdayLabel, weeklyHours, type OrgStore, type StorePerm, type TimeRange } from "./index";
-import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, type RequestRow } from "./requests";
+import { formatRanges, parseRanges, parseSpecialDays, specialDays, todayHere, weekdayLabel, weeklyHours, type OrgStore, type SpecialDay, type StorePerm, type TimeRange } from "./index";
+import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, statusLabel, type RequestRow } from "./requests";
 import { migrated } from "../../db/migration-state";
 import { mediaBaseUrl } from "../../routes/common";
 import type { ProductField } from "../../products/fields";
@@ -199,6 +199,122 @@ storesAdmin.post("/special-days", requireOwner, async (c: AdminContext) => {
 });
 
 // ---------- 実店舗 ----------
+/**
+ * 営業時間の入れ方（メンテナの決定 2026-11-08、保存の形は今のまま）: 曜日ごとに「営業 / 定休日」と時刻を選ぶ欄（休憩をはさむときの 2 つ目も）。
+ * 臨時休業・臨時営業は、今ある日を 1 行ずつ（消す印つき）と、日付を選んで「休み / 時間を変える」を足す行。まとめて貼るのは開いて使う欄。
+ * スクリプト無しで動く。送られた欄は hoursFromForm が今までの書式（10:00-20:00・2026-12-31 休業）に直して同じ読み方で確かめる
+ */
+function HoursFields(props: { hours: Record<string, TimeRange[]>; days: SpecialDay[]; values?: Record<string, string | undefined> | undefined }) {
+  const v = (k: string, fallback: string) => props.values?.[k] ?? fallback;
+  return (
+    <>
+      <fieldset class="hours-week">
+        <legend>{t("tryon.store_hours")}</legend>
+        {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+          const r = props.hours[String(d)] ?? [];
+          const closed = v(`h${d}_mode`, r.length === 0 ? "closed" : "open") === "closed";
+          return (
+            <div class="hours-row">
+              <strong class="hours-day">{weekdayLabel(d)}</strong>
+              <select name={`h${d}_mode`} aria-label={tf("hours.mode_for", { day: weekdayLabel(d) })}>
+                <option value="open" selected={!closed}>
+                  {t("hours.open")}
+                </option>
+                <option value="closed" selected={closed}>
+                  {t("hours.closed")}
+                </option>
+              </select>
+              {[0, 1].map((i) => (
+                <span class="hours-range">
+                  <input type="time" name={`h${d}_s${i}`} value={v(`h${d}_s${i}`, r[i]?.[0] ?? "")} aria-label={tf(i === 0 ? "hours.open_at" : "hours.open_at2", { day: weekdayLabel(d) })} />
+                  〜
+                  <input type="time" name={`h${d}_e${i}`} value={v(`h${d}_e${i}`, r[i]?.[1] ?? "")} aria-label={tf(i === 0 ? "hours.close_at" : "hours.close_at2", { day: weekdayLabel(d) })} />
+                </span>
+              ))}
+            </div>
+          );
+        })}
+        <p class="muted">{t("hours.week_hint")}</p>
+      </fieldset>
+      <fieldset class="hours-special">
+        <legend>{t("tryon.store_special_days")}</legend>
+        {props.days.length > 0 ? (
+          <ul class="plainlist">
+            {props.days.map((d, i) => (
+              <li>
+                <input type="hidden" name={`sd_${i}`} value={specialDayLine(d)} />
+                <label>
+                  <input type="checkbox" name={`sd_${i}_remove`} value="on" /> {t("hours.remove")}
+                </label>{" "}
+                <strong>{d.date}</strong> {d.closed ? t("hours.closed") : formatRanges(d.hours)} <span class="muted">{d.note ?? ""}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p class="muted">{t("hours.no_special")}</p>
+        )}
+        <div class="hours-add">
+          <strong>{t("hours.add_day")}</strong>
+          <label>
+            {t("hours.from")} <input type="date" name="add_from" value={v("add_from", "")} />
+          </label>
+          <label>
+            {t("hours.to")} <input type="date" name="add_to" value={v("add_to", "")} />
+          </label>
+          <select name="add_kind" aria-label={t("hours.add_kind")}>
+            <option value="closed" selected={v("add_kind", "closed") === "closed"}>
+              {t("hours.add_closed")}
+            </option>
+            <option value="hours" selected={v("add_kind", "closed") === "hours"}>
+              {t("hours.add_hours")}
+            </option>
+          </select>
+          <span class="hours-range">
+            <input type="time" name="add_s" value={v("add_s", "")} aria-label={t("hours.add_open_at")} />〜<input type="time" name="add_e" value={v("add_e", "")} aria-label={t("hours.add_close_at")} />
+          </span>
+          <input type="text" name="add_note" value={v("add_note", "")} maxlength={50} placeholder={t("hours.add_note")} aria-label={t("hours.add_note")} />
+        </div>
+        <details>
+          <summary>{t("hours.bulk")}</summary>
+          <textarea name="special_days_bulk" rows={4} placeholder={"2026-12-31〜2027-01-03 休業 年末年始\n2027-01-04 11:00-17:00 初売り"}>
+            {v("special_days_bulk", "")}
+          </textarea>
+          <p class="muted">{t("tryon.store_special_days_hint")}</p>
+        </details>
+      </fieldset>
+    </>
+  );
+}
+
+/** 臨時の日 → 今までの書式の 1 行（範囲はカンマで続ける。空白で区切ると備考と取り違えるため） */
+const specialDayLine = (d: SpecialDay): string => [d.date, d.closed ? "休業" : d.hours.map(([a, b]) => `${a}-${b}`).join(","), d.note ?? ""].join(" ").trim();
+
+/** 曜日の欄 → 今までの書式（10:00-14:00,15:00-20:00 / 空 = 定休日）。今までの文字の欄（h<曜日>）が送られたらそれを使う */
+function weekdayText(f: Record<string, string | undefined>, d: number): string {
+  if (f[`h${d}`] !== undefined) return f[`h${d}`] ?? "";
+  if (f[`h${d}_mode`] === "closed") return "";
+  return [0, 1]
+    .map((i) => [f[`h${d}_s${i}`] ?? "", f[`h${d}_e${i}`] ?? ""] as const)
+    .filter(([a, b]) => a || b)
+    .map(([a, b]) => `${a}-${b}`)
+    .join(",");
+}
+
+/** 臨時の日の欄 → 今までの書式の行（残す行・足す行・まとめて貼った行）。今までの textarea（special_days）が送られたらそれを使う */
+function specialDaysText(f: Record<string, string | undefined>): string {
+  if (f.special_days !== undefined) return f.special_days ?? "";
+  const lines: string[] = [];
+  for (let i = 0; f[`sd_${i}`] !== undefined; i++) if (f[`sd_${i}_remove`] !== "on") lines.push(f[`sd_${i}`] ?? "");
+  const from = (f.add_from ?? "").trim();
+  if (from) {
+    const to = (f.add_to ?? "").trim();
+    const word = f.add_kind === "hours" ? `${f.add_s ?? ""}-${f.add_e ?? ""}` : "休業";
+    lines.push([to && to !== from ? `${from}〜${to}` : from, word, (f.add_note ?? "").trim().replace(/\s+/g, " ")].join(" ").trim());
+  }
+  if (f.special_days_bulk) lines.push(f.special_days_bulk);
+  return lines.join("\n");
+}
+
 function StoreForm({ store, orgId, values, error, hoursOnly, defs }: { store: OrgStore | null; orgId?: string; values?: Record<string, string | undefined>; error?: string; hoursOnly?: boolean; defs?: ProductField[] | null }) {
   const hours = weeklyHours(store?.hours);
   const v = (k: string, fallback: string) => values?.[k] ?? fallback;
@@ -227,23 +343,7 @@ function StoreForm({ store, orgId, values, error, hoursOnly, defs }: { store: Or
           {check("active", "tryon.store_active", values ? values["active"] === "on" : (store?.active ?? true))}
         </>
       )}
-      <fieldset>
-        <legend>{t("tryon.store_hours")}</legend>
-        <p class="muted">{t("tryon.store_hours_hint")}</p>
-        {[1, 2, 3, 4, 5, 6, 0].map((d) => (
-          <p>
-            <label for={`h${d}`} style="display:inline-block;width:3rem">
-              {weekdayLabel(d)}
-            </label>
-            <input id={`h${d}`} name={`h${d}`} value={v(`h${d}`, formatRanges(hours[String(d)] ?? []))} placeholder="10:00-20:00" style="width:16rem" />
-          </p>
-        ))}
-      </fieldset>
-      <label for="special_days">{t("tryon.store_special_days")}</label>
-      <textarea id="special_days" name="special_days" rows={6} placeholder={"2026-12-31〜2027-01-03 休業 年末年始\n2027-01-04 11:00-17:00 初売り"}>
-        {v("special_days", formatSpecialDays(specialDays(store?.special_days)))}
-      </textarea>
-      <p class="muted">{t("tryon.store_special_days_hint")}</p>
+      <HoursFields hours={hours} days={specialDays(store?.special_days)} values={values} />
       {hoursOnly ? null : (
         <>
           <label for="note">{t("tryon.store_note")}</label>
@@ -303,11 +403,11 @@ function StoreForm({ store, orgId, values, error, hoursOnly, defs }: { store: Or
 function hoursFromForm(f: Record<string, string | undefined>): { hours: Record<string, TimeRange[]>; special_days: ReturnType<typeof parseSpecialDays>["days"]; error: string | null } {
   const hours: Record<string, TimeRange[]> = {};
   for (let d = 0; d < 7; d++) {
-    const r = parseRanges(f[`h${d}`] ?? "");
+    const r = parseRanges(weekdayText(f, d));
     if (r === null) return { hours, special_days: [], error: tf("tryon.invalid_hours", { detail: weekdayLabel(d) }) };
     hours[String(d)] = r;
   }
-  const sp = parseSpecialDays(f.special_days ?? "", todayHere());
+  const sp = parseSpecialDays(specialDaysText(f), todayHere());
   if (sp.errors.length > 0) return { hours, special_days: [], error: tf("tryon.invalid_special_days", { lines: sp.errors.join(", ") }) };
   return { hours, special_days: sp.days, error: null };
 }
@@ -488,5 +588,93 @@ storesAdmin.get("/:storeId/requests/:rid", requireOwner, async (c: AdminContext)
 storesAdmin.post("/:storeId/requests/:rid/status", requireOwner, async (c: AdminContext) => {
   const x = await staffRequest(c);
   if (!x) return c.notFound();
-  return c.redirect(await postStatus(c, x.d, `/admin/stores/${x.a.store.id}`));
+  const to = await postStatus(c, x.d, `/admin/stores/${x.a.store.id}`);
+  // 店舗のホームのボタンから押したら、ホームへ戻る（結果の知らせはそのまま）
+  if ((await formFields(c)).back === "home") return c.redirect(`/admin/stores/${x.a.store.id}/home${to.slice(to.indexOf("?"))}`);
+  return c.redirect(to);
+});
+
+// ---------- 店舗のホーム（スタッフ、スマホ向け。メンテナの決定 2026-11-08） ----------
+// 今日の来店予定・取り置き中・届くのを待っている数と、対応中の申し込みのカード。片手で押せる大きなボタン（購入された / されなかった）。
+// 店舗に届いた（取り置き）は取り置きの期限を選ぶので、申し込みの画面へ。EC の在庫に戻すボタンは出さない（実店舗のスタッフには戻させない）
+storesAdmin.get("/:storeId/home", requireOwner, async (c: AdminContext) => {
+  const a = await storeAccess(c, param(c, "storeId"));
+  if (!a) return c.notFound();
+  const base = `/admin/stores/${a.store.id}`;
+  const today = todayHere();
+  const tryon = a.perms.includes("tryon");
+  const active = tryon ? await owner(c).db.from<RequestRow>("tryon_requests").select("*", { eq: { store_id: a.store.id }, in: { status: ["requested", "sent", "ready"] }, order: "visit_date.asc.nullslast,created_at.asc", limit: 100 }) : [];
+  const count = (f: (r: RequestRow) => boolean) => active.filter(f).length;
+  return c.html(
+    <AdminLayout title={`${a.store.name} · ${t("storehome.title")}`} nav crumbs={crumbs(a.store.name)}>
+      <PageHead title={a.store.name} sub={t("storehome.title")} />
+      <Flash code={c.req.query("flash")} />
+      {tryon ? (
+        <>
+          <div class="kpis">
+            <div class="kpi">
+              {t("storehome.today")}
+              <strong>{count((r) => r.visit_date === today)}</strong>
+            </div>
+            <div class="kpi">
+              {t("storehome.ready")}
+              <strong>{count((r) => r.status === "ready")}</strong>
+            </div>
+            <div class="kpi">
+              {t("storehome.sent")}
+              <strong>{count((r) => r.status === "sent")}</strong>
+            </div>
+          </div>
+          <h2>{t("storehome.active")}</h2>
+          {active.length === 0 ? (
+            <p class="muted">{t("storehome.none")}</p>
+          ) : (
+            <div class="req-cards">
+              {active.map((r) => (
+                <section class="req-card">
+                  <div>
+                    <a href={`${base}/requests/${r.id}`}>
+                      <strong>#{r.number}</strong> {r.customer_name ?? ""}
+                    </a>{" "}
+                    <span class={`status ${r.status === "ready" ? "on" : "info"}`}>{statusLabel(r.status)}</span>
+                  </div>
+                  <div class="muted">
+                    {r.visit_date ? tf("tryon.visit_short", { date: r.visit_date }) : null}
+                    {r.status === "ready" && r.hold_until ? ` · ${tf("tryon.hold_short", { date: r.hold_until })}` : null}
+                  </div>
+                  <div class="actions">
+                    {r.status === "ready" ? (
+                      <>
+                        {(["purchased", "not_purchased"] as const).map((st) => (
+                          <form method="post" action={`${base}/requests/${r.id}/status`}>
+                            <input type="hidden" name="status" value={st} />
+                            <input type="hidden" name="back" value="home" />
+                            <button type="submit" class={st === "purchased" ? "big-btn" : "big-btn secondary"}>
+                              {t(st === "purchased" ? "storehome.purchased" : "storehome.not_purchased")}
+                            </button>
+                          </form>
+                        ))}
+                      </>
+                    ) : (
+                      <a class="btn big-btn secondary" href={`${base}/requests/${r.id}`}>
+                        {r.status === "sent" ? t("storehome.arrived") : t("storehome.open")}
+                      </a>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+          <p>
+            <a href={`${base}/requests`}>{t("storehome.all_requests")}</a>
+          </p>
+        </>
+      ) : null}
+      {a.admin || a.perms.includes("hours") ? (
+        <p>
+          <a href={base}>{t("storehome.hours")}</a>
+        </p>
+      ) : null}
+    </AdminLayout>,
+  );
 });
