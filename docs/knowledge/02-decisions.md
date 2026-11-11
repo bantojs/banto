@@ -343,7 +343,7 @@ CLAUDE.md に書いてある規約の「なぜ」と、規約には書ききれ�
 ## 2026-10-24
 
 - **運営者の二段階認証を入れる（メンテナの決定 2026-10-24、0054_operator_mfa）**: 管理画面の前に Cloudflare Access のような認証の門を置くのは、利用者ごとの課金・ログインが 2 回・組織と名簿が二重になり、多くの運営者を預かる形では向かない。代わりに Banto 側で運営者の守りを強くする。判定基準 (1)（権限の判定はコア）。
-  - 方式は **Supabase Auth（GoTrue）の TOTP**（認証アプリの 6 桁）。二段階目を済ませた JWT は `aal = aal2`。Supabase と selfhost/ の GoTrue（v2.164）の両方にある。パスキーは会員向けの仕組み（0046）が Banto 独自で、運営者の JWT に「済み」の印を付けられず DB で強制できないので見送り。
+  - 方式は **Supabase Auth（GoTrue）の TOTP**（認証アプリの 6 桁）。二段階目を済ませた JWT は `aal = aal2`。Supabase と selfhost/ の GoTrue の両方にある。パスキーは会員向けの仕組み（0046）が Banto 独自で、運営者の JWT に「済み」の印を付けられず DB で強制できないので見送り。
   - **強制は DB**: 画面で求めるだけでは、パスワードを知る人が GoTrue に直接ログインして aal1 の JWT で PostgREST を叩ける（SUPABASE_URL と anon キーは公開）。PostgREST の `db_pre_request`（`banto_pre_request`）で、登録済みの人の aal1 と、必須の組織にいる未登録の人を止める。テーブルにも RPC にも 1 か所で効き、anon と service_role は対象外。テーブルごとの制限的なポリシーや、権限の関数を全部書き換える案は、抜けが出やすく 1 か所で止まる方を選んだ。
   - **任意で始め、組織の owner が「全員必須」にできる**（`organizations.require_mfa`）。必須にするのは aal2 の owner だけ（自分が締め出されないため）。必須でも登録の画面は GoTrue だけで済むので詰まない。
   - **なくしたとき**: 同じ組織の owner / admin が外す（`org_member_mfa_reset_authorize` が許可と監査ログ、Worker が GoTrue の Admin API で消す。owner の登録は owner だけ）。owner が 1 人なら SQL（docs/hardening.md §3）。6 桁の試行は管理者ログインの回数の制限（0030）で数える。
