@@ -98,7 +98,8 @@ describe("LINE 通知", () => {
     expect(texts[1]).toContain("新しい注文");
     expect(texts[1]).toContain("¥9,000（3 点）");
     expect(texts.join()).not.toContain("buyer@example.com");
-    expect(pushes.map((p) => p.retryKey)).toEqual(sb.tables.hook_deliveries.map((d) => d["id"]));
+    // 送る順は問わない（在庫僅少はまとめて先に送る、0141）
+    expect(pushes.map((p) => p.retryKey).sort()).toEqual(sb.tables.hook_deliveries.map((d) => String(d["id"])).sort());
 
     // トークン無し → 失敗（再送対象）
     sb.enqueue(shop.id, "order.paid", { order_id: "o", total_jpy: 1, items: [] });

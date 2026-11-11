@@ -21,6 +21,32 @@ export function lineMessageFor(ctx: PluginContext): string | null {
   return null;
 }
 
+/** まとめて知らせるときに並べる SKU の数（LINE の 1 通は 5,000 字まで） */
+export const LINE_LOW_STOCK_LIST_MAX = 20;
+
+/** 在庫僅少をまとめた 1 通（棚卸し・取り込みで一度に何百もの SKU が少なくなっても、LINE は 1 回の配信で 1 通） */
+export function lineLowStockSummary(ctxs: readonly PluginContext[]): string | null {
+  if (ctxs.length === 0) return null;
+  if (ctxs.length === 1) return lineMessageFor(ctxs[0]!);
+  const lines = ctxs.slice(0, LINE_LOW_STOCK_LIST_MAX).map(({ envelope: { data } }) => `・SKU: ${String(data["sku_id"] ?? "").slice(0, 8)}… 残り ${String(data["available"])} 点`);
+  const rest = ctxs.length - lines.length;
+  const threshold = String(ctxs[0]!.envelope.data["threshold"]);
+  return [`【Banto】在庫が残りわずかな SKU が ${ctxs.length} 件あります（閾値 ${threshold}）`, ...lines, ...(rest > 0 ? [`ほか ${rest} 件`] : [])].join("\n");
+}
+
+async function pushText(ctx: PluginContext, text: string, retryKey: string): Promise<void> {
+  const to = typeof ctx.settings["to"] === "string" ? ctx.settings["to"].trim() : "";
+  if (!to) throw new Error("line_notify: 送信先ユーザー ID が未設定");
+  const token = await lineToken(ctx);
+  if (!token) throw new Error("line_notify: チャネルアクセストークンが未設定");
+  const res = await ctx.fetch(LINE_PUSH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": retryKey },
+    body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
+  });
+  if (!res.ok) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
+
 export const lineNotify: BundledPlugin = {
   id: "line_notify",
   manifest: {
@@ -35,15 +61,14 @@ export const lineNotify: BundledPlugin = {
   async handle(ctx) {
     const text = lineMessageFor(ctx);
     if (!text) return;
-    const to = typeof ctx.settings["to"] === "string" ? ctx.settings["to"].trim() : "";
-    if (!to) throw new Error("line_notify: 送信先ユーザー ID が未設定");
-    const token = await lineToken(ctx);
-    if (!token) throw new Error("line_notify: チャネルアクセストークンが未設定");
-    const res = await ctx.fetch(LINE_PUSH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": ctx.envelope.id },
-      body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
-    });
-    if (!res.ok) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    await pushText(ctx, text, ctx.envelope.id);
+  },
+  // 在庫僅少は、同じ回に取り出した分を 1 通にまとめる（人が在庫を減らしたときも届くようになったため、0141）。
+  // 再送の鍵はまとめた配信の id のうち小さいもの（同じ組で再送したときに LINE が重ねて送らない）
+  batchEvents: ["inventory.low"],
+  async handleBatch(ctxs) {
+    const text = lineLowStockSummary(ctxs);
+    if (!text) return;
+    await pushText(ctxs[0]!, text, ctxs.map((c) => c.envelope.id).sort()[0]!);
   },
 };
