@@ -257,10 +257,36 @@ export function publicBaseUrl(c: Ctx): string {
   return (configured || new URL(c.req.url).origin).replace(/\/+$/, "");
 }
 
-/** 画像 URL の起点。MEDIA_BASE_URL が未設定なら <publicBaseUrl>/media（Worker 自身が配信） */
+/**
+ * 画像 URL の起点。MEDIA_BASE_URL が未設定なら Worker 自身が配信する <入口>/media。
+ * 入口は Banto の URL（PUBLIC_BASE_URL）だが、ショップの独自ドメインで開いたページでは、そのドメインの /media にする
+ * （お店の画面の画像を Banto の URL（workers.dev など）へ取りに行かせない。接続が 1 本増え、別のドメインになるため）。
+ * ショップのドメインは https だけなので https で組む（TLS を手前で終える構成でも http にしない）
+ */
 export function mediaBaseUrl(c: Ctx): string {
-  const configured = c.get("adapters").config.get("MEDIA_BASE_URL");
-  return (configured || `${publicBaseUrl(c)}/media`).replace(/\/+$/, "");
+  const configured = c.get("adapters").config.get("MEDIA_BASE_URL")?.replace(/\/+$/, "");
+  // MEDIA_BASE_URL に Worker 自身の <Banto の URL>/media を書いた構成も、置き場は Worker なので未設定と同じに扱う
+  if (configured && configured !== `${publicBaseUrl(c)}/media`) return configured;
+  const shopHost = shopDomainHost(c);
+  return shopHost ? `https://${shopHost}/media` : configured || `${publicBaseUrl(c)}/media`;
+}
+
+/**
+ * 今のリクエストが Banto 自身の URL 以外（ショップの独自ドメイン）のホストなら、そのホスト。Banto の URL・workers.dev・ローカル・
+ * PUBLIC_BASE_URL が無いときは null（src/routes/storefront/domain.ts の isPlatformHost と同じ線引き）
+ */
+function shopDomainHost(c: Ctx): string | null {
+  const configured = c.get("adapters").config.get("PUBLIC_BASE_URL");
+  if (!configured) return null;
+  let own: string;
+  try {
+    own = new URL(configured).hostname.toLowerCase().replace(/\.+$/, "");
+  } catch {
+    return null;
+  }
+  const host = new URL(c.req.url).hostname.toLowerCase().replace(/\.+$/, "");
+  if (host === own || host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host.endsWith(".workers.dev")) return null;
+  return host;
 }
 
 /** migrated() に渡す anon の DbClient とキャッシュ（anon キーが無ければ null = 新しいマイグレーションの機能は出さない） */

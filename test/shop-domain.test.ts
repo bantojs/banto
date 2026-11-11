@@ -215,3 +215,35 @@ describe("取引メールのリンク", () => {
   });
 });
 
+describe("画像の起点（MEDIA_BASE_URL が無いとき）", () => {
+  const withImage = (o: { media?: string } = {}) => {
+    const { sb, shop } = setup();
+    const p = sb.tables.products.find((x) => x["slug"] === "tee")!;
+    sb.tables.product_images.push({ id: crypto.randomUUID(), shop_id: shop.id, product_id: p["id"], storage_key: `shops/${shop.id}/products/${String(p["id"])}/a.webp`, thumb_key: null, width: 800, height: 800, sort_order: 0, options: {}, variants: [], thumb_width: null });
+    // テストの既定の MEDIA_BASE_URL（<Banto の URL>/media）は外す
+    const app = appWith(sb, { RESEND_API_KEY: "re_test", MEDIA_BASE_URL: o.media }, undefined, new FakeStripe());
+    return { shop, app };
+  };
+
+  it("ショップの独自ドメインで開いたページの商品画像は、そのドメインの /media から（Banto の URL へ取りに行かない）", async () => {
+    const { shop, app } = withImage();
+    const html = await (await new Browser(app, SHOP_URL).get("/products/tee")).text();
+    expect(html).toContain(`${SHOP_URL}/media/shops/${shop.id}/products/`);
+    expect(html).not.toContain(`${BASE}/media/`);
+    // MEDIA_BASE_URL に Worker 自身の <Banto の URL>/media を書いた構成も同じ
+    const w = withImage({ media: `${BASE}/media` });
+    expect(await (await new Browser(w.app, SHOP_URL).get("/products/tee")).text()).toContain(`${SHOP_URL}/media/shops/${w.shop.id}/products/`);
+  });
+
+  it("Banto の URL で開いたページは今までどおり PUBLIC_BASE_URL の /media、MEDIA_BASE_URL があればどこでもそこから", async () => {
+    const { shop, app } = withImage();
+    // 独自ドメインのショップは Banto の URL では転送されるので、Banto の URL のままの公開 API で確かめる
+    const api = await (await new Browser(app).get("/api/shops/my-shop/products/tee")).text();
+    expect(api).toContain(`${BASE}/media/shops/${shop.id}/products/`);
+    const r = withImage({ media: "https://media.example.jp" });
+    const html = await (await new Browser(r.app, SHOP_URL).get("/products/tee")).text();
+    expect(html).toContain(`https://media.example.jp/shops/${r.shop.id}/products/`);
+    expect(html).not.toContain("/media/shops/");
+  });
+});
+
