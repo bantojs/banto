@@ -11,7 +11,7 @@
 import type { ArticleRow, BlogRow } from "../blog";
 import { blogPath, articlePath } from "../blog";
 import { CURRENT_PARTS, currentMarker } from "../pages/shop-blocks";
-import { shopImageUrl } from "../pages/markdown";
+import { shopImageSrc } from "../pages/markdown";
 import { t } from "../i18n";
 
 export interface PageLayouts {
@@ -139,7 +139,7 @@ export function articleParts(o: {
   content?: string;
 }): Record<string, string> {
   const a = o.article;
-  const img = a.image_url ? shopImageUrl(a.image_url, o.mediaBase) : null;
+  const img = a.image_url ? shopImageSrc(a.image_url, o.mediaBase) : null;
   const n = o.neighbors;
   const link = (x: Pick<ArticleRow, "handle" | "title">, rel: "prev" | "next") =>
     `<a class="banto-current-nav__${rel}" rel="${rel}" href="${esc(articlePath(o.shopPath, o.blog.handle, x.handle))}"><span>${esc(t(rel === "prev" ? "layout.prev" : "layout.next"))}</span>${esc(x.title)}</a>`;
@@ -156,7 +156,7 @@ export function articleParts(o: {
 
 /** ふつうのページ（お店のトップのひな形を含む）の部品: そのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）。ほかは空 */
 export function pageParts(o: { mediaBase: string; page: { title: string; image_url?: string | null; seo_description?: string | null } }): Record<string, string> {
-  const img = o.page.image_url ? shopImageUrl(o.page.image_url, o.mediaBase) : null;
+  const img = o.page.image_url ? shopImageSrc(o.page.image_url, o.mediaBase) : null;
   return {
     title: `<h1 class="banto-current-title">${esc(o.page.title)}</h1>`,
     image: img ? `<img class="banto-current-image" src="${esc(img)}" alt="" decoding="async">` : "",

@@ -8,7 +8,7 @@ import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { cardAttributes, productFields } from "../../products/fields";
 import { favoritesEnabled } from "../../modules/favorites";
-import { shopImageUrl } from "../../pages/markdown";
+import { shopImageSrc } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime, isoToZonedDate } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
@@ -145,7 +145,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
         <meta property="og:type" content={seo?.type === "product" ? "product" : "website"} />
         {ctx ? <meta property="og:site_name" content={ctx.shop.name} /> : null}
         {canonical ? <meta property="og:url" content={canonical} /> : null}
-        {seo?.image ? <meta property="og:image" content={absoluteMedia(seo.image, ctx?.publicBaseUrl)} /> : null}
+        {seo?.image ? <meta property="og:image" content={absoluteMedia(seo.image, ctx?.publicBaseUrl, ctx?.mediaBaseUrl)} /> : null}
         <meta name="twitter:card" content={seo?.image ? "summary_large_image" : "summary"} />
         {seo?.jsonLd ? <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(seo.jsonLd) }} /> : null}
         <style>{raw(css)}</style>
@@ -268,6 +268,9 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
   const list = mine.length > 0 ? mine : guest;
   return list.length > 0 ? `${t("store.member_price")} ${yen(Math.min(...list))}` : null;
 }
+
+/** ページ・記事のアイキャッチの URL（置き場の画像だけ。/media/… は置き場の起点 MEDIA_BASE_URL から。src/pages/markdown.ts の shopImageUrl） */
+const eyecatch = (url: string, ctx: ThemeContext): string => shopImageSrc(url, ctx.mediaBaseUrl) ?? "";
 
 export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
@@ -828,7 +831,7 @@ export const defaultTheme: Theme = {
       <Layout title={page.seo_title || page.title} ctx={ctx} seo={{ path: path ?? pagePath(ctx.shopPath, page.handle), ...(page.seo_description ? { description: page.seo_description } : {}), ...(page.image_url ? { image: page.image_url } : {}) }}>
         <article class="page">
           {bare ? null : <h1>{page.title}</h1>}
-          {!bare && page.image_url ? <img class="page-image" src={page.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          {!bare && page.image_url ? <img class="page-image" src={eyecatch(page.image_url, ctx)} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
         </article>
       </Layout>
@@ -887,7 +890,7 @@ export const defaultTheme: Theme = {
             {article.author ? <> · {article.author}</> : null}
           </p>
           <h1>{article.title}</h1>
-          {article.image_url ? <img class="page-image" src={article.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          {article.image_url ? <img class="page-image" src={eyecatch(article.image_url, ctx)} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
           {article.tags.length > 0 ? (
             <p class="blog-tags">
@@ -2064,7 +2067,7 @@ function CardFields({ ctx, items }: { ctx: ThemeContext; items: { key: string; l
       {items.map((a) => (
         <li class={`card-field card-field--${a.key}`}>
           {a.type === "image" ? (
-            <img src={shopImageUrl(String(a.value), ctx.mediaBaseUrl) ?? ""} alt={a.label} loading="lazy" />
+            <img src={shopImageSrc(String(a.value), ctx.mediaBaseUrl) ?? ""} alt={a.label} loading="lazy" />
           ) : (
             <>
               <span class="muted">{a.label}</span> {String(a.value)}
@@ -2107,7 +2110,7 @@ export function blogListParts({ ctx, blog, articles, tag, tags, newer, older }: 
           {articles.map(({ article, summary }) => (
             <li>
               <a href={articlePath(ctx.shopPath, blog.handle, article.handle)}>
-                {article.image_url ? <img src={article.image_url} alt="" loading="lazy" decoding="async" /> : null}
+                {article.image_url ? <img src={eyecatch(article.image_url, ctx)} alt="" loading="lazy" decoding="async" /> : null}
                 <div class="blog-meta">{article.published_at ? formatDateTime(article.published_at, { dateOnly: true }) : null}</div>
                 <h2>{article.title}</h2>
                 {summary ? <p>{summary}</p> : null}

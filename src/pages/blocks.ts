@@ -14,7 +14,7 @@
  */
 import { responsiveImage } from "../media/images";
 import { cardAttributes, type ProductField } from "../products/fields";
-import { shopImageUrl } from "./markdown";
+import { shopImageSrc } from "./markdown";
 import { productUrl } from "../storefront/urls";
 import { PRODUCT_SORTS, type ProductSort, type ProductSummary } from "../storefront/data";
 
@@ -273,7 +273,7 @@ export function cardFieldsHtml(fields: readonly ProductField[], values: Record<s
   const items = cardAttributes(fields.filter((f) => f.card), values);
   if (items.length === 0) return "";
   const li = items.map((a) => {
-    const body = a.type === "image" ? `<img src="${escapeHtml(shopImageUrl(String(a.value), mediaBase) ?? "")}" alt="${escapeHtml(a.label)}" loading="lazy">` : `<span class="muted">${escapeHtml(a.label)}</span> ${escapeHtml(String(a.value))}`;
+    const body = a.type === "image" ? `<img src="${escapeHtml(shopImageSrc(String(a.value), mediaBase) ?? "")}" alt="${escapeHtml(a.label)}" loading="lazy">` : `<span class="muted">${escapeHtml(a.label)}</span> ${escapeHtml(String(a.value))}`;
     return `<li class="card-field card-field--${escapeHtml(a.key)}">${body}</li>`;
   });
   return `<ul class="card-fields" style="list-style:none;margin:.25rem 0;padding:0;font-size:.85em">${li.join("")}</ul>`;

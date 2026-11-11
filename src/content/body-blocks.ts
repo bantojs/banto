@@ -42,7 +42,7 @@ import { storeView, todayHere } from "../modules/store-tryon";
 import { storeFieldView } from "../stores/fields";
 import type { StoreView } from "../themes/types";
 import { productFields } from "../products/fields";
-import { shopImageUrl } from "../pages/markdown";
+import { shopImageSrc } from "../pages/markdown";
 import { PAGES_MODULE, pagePath } from "../pages";
 import { imageUrl } from "../media/images";
 import { categoryImageOf } from "../products/category-media";
@@ -202,7 +202,7 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
   ]);
   const cards = blocks.map((b) => defaultProductsHtml(b.items, b.block, { shopPath: d.shopPath, mediaBaseUrl: d.mediaBaseUrl, taxNote: t("store.tax_included"), yen, cardFields: productFields(d.shop.settings) }));
   const acards = ablocks.map((b) =>
-    b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(d.shopPath, articleBlogOf(b, a).handle, a.handle), image: a.image_url, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
+    b ? defaultArticlesHtml(b.items.map((a) => ({ title: a.title, url: articlePath(d.shopPath, articleBlogOf(b, a).handle, a.handle), image: a.image_url ? shopImageSrc(a.image_url, d.mediaBaseUrl) : null, date: formatDateTime(a.published_at ?? a.updated_at, { dateOnly: true }), summary: articleSummary(a, 80) })), b.block) : "",
   );
   const appCards = apps.map((b) => defaultAppHtml(b, b ? `${productUrl(d.shopPath, b.product.slug)}#reviews` : ""));
   return { blocks, cards, ablocks, acards, apps, appCards, shopCards };
@@ -261,7 +261,7 @@ function commonFieldDef(blogs: BlogRow[], key: string): ArticleFieldDef | null {
 function storeFieldsHtml(items: { key: string; label: string; type: string; value: string | number }[], mediaBase: string): string {
   if (items.length === 0) return "";
   const dd = (x: (typeof items)[number]) =>
-    x.type === "image" ? `<img src="${esc(shopImageUrl(String(x.value), mediaBase) ?? "")}" alt="${esc(x.label)}" loading="lazy">` : x.type === "url" ? `<a href="${esc(String(x.value))}" rel="noopener">${esc(String(x.value))}</a>` : esc(String(x.value));
+    x.type === "image" ? `<img src="${esc(shopImageSrc(String(x.value), mediaBase) ?? "")}" alt="${esc(x.label)}" loading="lazy">` : x.type === "url" ? `<a href="${esc(String(x.value))}" rel="noopener">${esc(String(x.value))}</a>` : esc(String(x.value));
   return `<dl class="banto-store__fields">${items.map((x) => `<div class="banto-store__field banto-store__field--${esc(x.key)}"><dt>${esc(x.label)}</dt><dd>${dd(x)}</dd></div>`).join("")}</dl>`;
 }
 
@@ -292,7 +292,7 @@ async function storeArticles(d: BodyBlocksDeps, spec: string, storeIds: readonly
   const block: ArticlesBlock = { blog: blog.handle, tag: null, sort: null, limit, layout: "list", style: null };
   const out = new Map<string, string>();
   for (const [id, list] of byStore) {
-    out.set(id, defaultArticlesHtml(list.map((x) => ({ title: x.title, url: articlePath(d.shopPath, blog.handle, x.handle), image: x.image_url, date: formatDateTime(x.published_at ?? x.updated_at, { dateOnly: true }), summary: articleSummary(x, 80) })), block));
+    out.set(id, defaultArticlesHtml(list.map((x) => ({ title: x.title, url: articlePath(d.shopPath, blog.handle, x.handle), image: x.image_url ? shopImageSrc(x.image_url, d.mediaBaseUrl) : null, date: formatDateTime(x.published_at ?? x.updated_at, { dateOnly: true }), summary: articleSummary(x, 80) })), block));
   }
   return out;
 }
@@ -410,7 +410,7 @@ function productFieldHtml(d: BodyBlocksDeps, p: ProductRow, key: string): string
   if (!f || raw === undefined || raw === null || String(raw).trim() === "") return "";
   const v = String(raw);
   if (f.type === "image") {
-    const src = shopImageUrl(v, d.mediaBaseUrl);
+    const src = shopImageSrc(v, d.mediaBaseUrl);
     if (!src) return "";
     return `<div class="banto-product__field banto-product__field--${esc(key)} banto-product__field--image"><span class="banto-product__field-label">${esc(f.label)}</span><span class="banto-product__field-value"><img src="${esc(src)}" alt="${esc(f.label)}" loading="lazy"></span></div>`;
   }
@@ -443,6 +443,7 @@ function optionsHtml(d: BodyBlocksDeps, detail: NonNullable<Awaited<ReturnType<S
 }
 
 function cardHtml(url: string, title: string, image: string | null, summary: string, mediaBase: string, date?: string): string {
-  const src = image ? (image.startsWith("/") || /^https?:\/\//.test(image) ? image : imageUrl(mediaBase, image)) : null;
+  // アイキャッチ（置き場の URL）は本文の画像と同じ規則で起点から。キーだけのもの（カテゴリーの画像など）は置き場の起点に付ける
+  const src = image ? (image.startsWith("/") || /^https?:\/\//.test(image) ? shopImageSrc(image, mediaBase) : imageUrl(mediaBase, image)) : null;
   return `<a class="banto-card" href="${esc(url)}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async">` : ""}<span><span class="banto-card__title">${esc(title)}</span>${date ? `<br><small>${esc(date)}</small>` : ""}${summary ? `<br><small>${esc(summary)}</small>` : ""}</span></a>`;
 }
