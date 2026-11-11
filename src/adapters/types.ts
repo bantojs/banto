@@ -26,7 +26,6 @@ export interface StorageRange {
   end: number;
 }
 
-/** 範囲を大きさに合わせる（end を丸める・始まりが外なら null） */
 /**
  * 公開の置き場（画像）に置くオブジェクトの Cache-Control。Worker の `/media/` と、R2 のカスタムドメイン・S3 の公開ドメインから直接配るときで同じ値にする
  * （直接配る置き場は Worker を通らないので、置くときにオブジェクトに付けておかないとブラウザが毎回取り直す）。
@@ -38,6 +37,7 @@ export function mediaCacheControl(key: string): string | null {
   return /^(feeds|themes)\//.test(key) ? null : MEDIA_CACHE_CONTROL;
 }
 
+/** 範囲を大きさに合わせる（end を丸める・始まりが外なら null） */
 export function clampRange(size: number, start: number, end: number | null): { start: number; end: number } | null {
   if (start >= size) return null;
   return { start, end: Math.min(end ?? size - 1, size - 1) };
