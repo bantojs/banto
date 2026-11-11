@@ -138,7 +138,7 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     if (!shop || p !== "line") return c.notFound();
     const v = (await formFields(c)).bot_prompt;
     const settings = shop.settings ?? {};
-    const oauth = ((settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>) ?? {};
+    const oauth = (settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>;
     const line = { ...(oauth["line"] ?? {}) };
     if (v === "normal" || v === "aggressive") line["bot_prompt"] = v;
     else delete line["bot_prompt"];

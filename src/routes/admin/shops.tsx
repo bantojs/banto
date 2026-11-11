@@ -909,7 +909,7 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
 }
 
 shops.get("/:shopId", requireOwner, (c: AdminContext) => settingsPage(c, "general"));
-shops.get("/:shopId/settings/:section", requireOwner, (c: AdminContext) => {
+shops.get("/:shopId/settings/:section", requireOwner, async (c: AdminContext) => {
   const section = c.req.param("section") ?? "";
   if (!SECTIONS.includes(section)) return c.text(t("shop.not_found"), 404);
   return settingsPage(c, section as SettingsSection);
