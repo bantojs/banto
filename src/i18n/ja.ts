@@ -982,6 +982,8 @@ export const ja = {
   "csvx.g_external": "外部の ID",
   "csvx.p_mail": "案内メールの宛先",
   "csvx.p_crm": "CRM に写す",
+  "csvx.truncated": "書き出せる上限に届いたので、ここまでの {n} 件で切りました。条件で絞って、分けて書き出してください。",
+  "csvx.limit_note": "一度に書き出せるのは {n} 件までです。越えたときは書き出した分の最後の行で知らせます。",
   "csvx.mail_note": "「案内メールの宛先」は、案内メールに同意した会員だけを書き出します（この条件は外せません）。",
   "csvx.g_product": "商品",
   "csvx.g_sku": "SKU",

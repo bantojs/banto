@@ -97,6 +97,49 @@ describe("CSV の書き出しの列と範囲", () => {
     expect(calls.length).toBeLessThan(15);
   });
 
+  it("上限に届いたら黙って切らない: 最後の行で知らせ、商品は SKU を全部読めた商品の区切りで止める", async () => {
+    const { sb, shop, app, base } = setup();
+    // SKU の上限（10,000）を越える: 101 商品 × 100 SKU
+    for (let i = 0; i < 101; i++) {
+      const p = sb.addProduct(shop.id, { slug: `big${i}`, name: `大${i}`, published: true });
+      for (let j = 0; j < 100; j++) sb.addSku(shop.id, p.id, { code: `B${i}-${String(j).padStart(3, "0")}`, price_jpy: 1000, available: 1 });
+    }
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const csv = lines(await (await b.get(`${base}/products.csv?preset=stock`)).text());
+    const note = csv[csv.length - 1]!;
+    expect(note).toMatch(/^書き出せる上限に届いたので、ここまでの \d+ 件で切りました/);
+    const body = csv.slice(1, -1);
+    const perProduct = new Map<string, number>();
+    for (const l of body) perProduct.set(l.split(",")[0]!, (perProduct.get(l.split(",")[0]!) ?? 0) + 1);
+    // 出した商品は SKU を全部出す（途中で切れた商品・「SKU 無し」の行は無い）
+    for (const [name, n] of perProduct) expect(n, name).toBe(name === "Tシャツ" ? 2 : name === "キャップ" ? 1 : 100);
+    expect(body.every((l) => l.split(",")[1] !== "")).toBe(true);
+    expect(body.length).toBeLessThanOrEqual(10000);
+    expect(note).toContain(`ここまでの ${perProduct.size} 件`);
+    // 書き出しの欄に上限を出す
+    expect(await (await b.get(`${base}/products`)).text()).toContain("一度に書き出せるのは 1,000 件までです。");
+  });
+
+  it("上限に届いたら黙って切らない: 注文 2,000 件・会員 5,000 件（案内メールの宛先も）", async () => {
+    const { sb, shop, app, base } = setup();
+    const now = new Date().toISOString();
+    for (let n = 2001; n <= 4000; n++) sb.tables.orders.push({ id: `00000000-0000-4000-b000-${String(n).padStart(12, "0")}`, shop_id: shop.id, number: n, status: "paid", total_jpy: 1000, shipping_jpy: 0, customer_email: `c${n}@example.com`, customer_name: `客${n}`, shipping_address: {}, tags: [], created_at: now });
+    for (let n = 3; n <= 5002; n++) sb.tables.customers.push({ id: `00000000-0000-4000-c000-${String(n).padStart(12, "0")}`, shop_id: shop.id, email: `m${n}@example.com`, name: `会員${n}`, default_address: {}, attributes: {}, marketing_consent: true, created_at: now });
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const truncatedNote = (n: number) => `書き出せる上限に届いたので、ここまでの ${n} 件で切りました。条件で絞って、分けて書き出してください。`;
+    for (const url of [`${base}/orders.csv`, `${base}/orders.csv?preset=accounting`]) {
+      const csv = lines(await (await b.get(url)).text());
+      expect(csv, url).toHaveLength(1 + 2000 + 1);
+      expect(csv[csv.length - 1], url).toBe(truncatedNote(2000));
+    }
+    // 案内メールの宛先: 同意した会員は 5,001 人。切れたことが分かる
+    const mail = lines(await (await b.get(`${base}/customers.csv?preset=mail&consent=yes`)).text());
+    expect(mail).toHaveLength(1 + 5000 + 1);
+    expect(mail[mail.length - 1]).toBe(truncatedNote(5000));
+    const legacy = lines(await (await b.get(`${base}/customers.csv`)).text());
+    expect(legacy[legacy.length - 1]).toBe(truncatedNote(5000));
+  });
+
   it("一覧の下に書き出しの欄: 個人情報のまとまりに印、Shift_JIS はスクリプトがあるときだけ選べる", async () => {
     const { app, base } = setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");

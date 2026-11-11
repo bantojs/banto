@@ -26,7 +26,7 @@ import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from 
 import { migrated } from "../../db/migration-state";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 import { can } from "./access";
-import { CsvExportPanel, csvBody, csvHeaders, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
+import { CsvExportPanel, csvBody, csvHeaders, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 import { permLabel } from "./denied";
 
 export const orders = new Hono<AppEnv>();
@@ -321,12 +321,12 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
         </table>
       )}
       <Pager base={listHref} next={page.next} paged={Boolean(after)} />
-      <CsvExportPanel kind="orders" action={`/admin/shops/${shop.id}/orders.csv`} params={params} columns={ORDER_CSV_COLUMNS} units={[{ key: "order", label: "csvx.u_order" }, { key: "item", label: "csvx.u_item" }]} presets={ORDER_CSV_PRESETS} />
+      <CsvExportPanel kind="orders" action={`/admin/shops/${shop.id}/orders.csv`} params={params} columns={ORDER_CSV_COLUMNS} units={[{ key: "order", label: "csvx.u_order" }, { key: "item", label: "csvx.u_item" }]} presets={ORDER_CSV_PRESETS} limit={CSV_MAX_ORDERS} />
     </AdminLayout>,
   );
 });
 
-/** CSV（Excel 向けに BOM 付き UTF-8）。検索条件は一覧と同じで、新しい順に CSV_MAX_ORDERS 件まで */
+/** CSV（Excel 向けに BOM 付き UTF-8）。検索条件は一覧と同じで、新しい順に CSV_MAX_ORDERS 件まで（越えたら最後の行で知らせる） */
 orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
@@ -335,7 +335,10 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   // 範囲「すべて」: 条件を外した URL へ
   const all = stripConditions(c, `/admin/shops/${shopId}/orders.csv`, ORDER_CONDITIONS);
   if (all) return c.redirect(all);
-  const { rows } = await listOrders(c, shopId, { limit: CSV_MAX_ORDERS });
+  // 1 件多く読んで、上限で切ったかを知る（黙って切らない）
+  const listed = (await listOrders(c, shopId, { limit: CSV_MAX_ORDERS + 1 })).rows;
+  const truncated = listed.length > CSV_MAX_ORDERS ? CSV_MAX_ORDERS : null;
+  const rows = listed.slice(0, CSV_MAX_ORDERS);
   const { db } = owner(c);
   // 明細と SKU は CSV に入る注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
   const items = await selectIn<OrderItemRow>(db, "order_items", "*", shopId, "order_id", rows.map((o) => o.id));
@@ -356,7 +359,7 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
             return its.length > 0 ? its.map((item) => ({ o, items: its, item, ctx })) : [{ o, items: its, item: null, ctx }];
           })
         : rows.map((o) => ({ o, items: itemsByOrder.get(o.id) ?? [], item: null, ctx }));
-    return c.body(csvBody(choice.cols, csvRows, choice.format), 200, csvHeaders(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
+    return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
   }
   const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
   const lines = rows.map((o) => {
@@ -366,7 +369,7 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
       .join(" / ");
     return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? ""].map(csvCell).join(",");
   });
-  const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n";
+  const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="orders-${shop.slug}.csv"`, "Cache-Control": "no-store" });
 });
 

@@ -1,4 +1,4 @@
-import { t, type MessageKey } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
 import { shippingLabelsClient } from "../../modules/shipping-labels/client";
 import { CLIENT_PRELUDE } from "../../modules/woo-import/admin";
 import { csvCell } from "../../util/csv";
@@ -66,9 +66,16 @@ export function stripConditions(c: AdminContext, base: string, conditionKeys: re
   return `${base}${url.search}`;
 }
 
-export function csvBody<R>(cols: readonly CsvColumn<R>[], rows: readonly R[], format: CsvFormat): string {
+/**
+ * 上限に届いて切ったときの最後の行（黙って切らない）。n は書き出した件数（注文・会員・商品の数）。
+ * 読む側が見落とさないよう、1 列目に文で入れる
+ */
+export const csvTruncatedLine = (n: number): string => csvCell(tf("csvx.truncated", { n })) + "\r\n";
+
+/** truncated に件数を渡すと、上限で切ったことを最後の行で知らせる */
+export function csvBody<R>(cols: readonly CsvColumn<R>[], rows: readonly R[], format: CsvFormat, truncated: number | null = null): string {
   const lines = [cols.map((c) => csvCell(c.label)).join(","), ...rows.map((r) => cols.map((c) => csvCell(c.value(r))).join(","))];
-  return (format === "bom" ? "﻿" : "") + lines.join("\r\n") + "\r\n";
+  return (format === "bom" ? "﻿" : "") + lines.join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
 }
 
 export const csvHeaders = (name: string) => ({ "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${name}.csv"`, "Cache-Control": "no-store" });
@@ -84,6 +91,8 @@ export function CsvExportPanel<R>(props: {
   /** 既定で印を付ける列（無ければ全部） */
   defaults?: readonly string[];
   note?: string;
+  /** 一度に書き出せる件数（上限で切ったら CSV の最後の行で知らせる） */
+  limit?: number;
 }) {
   const groups: MessageKey[] = [];
   for (const col of props.columns) if (!groups.includes(col.group)) groups.push(col.group);
@@ -117,6 +126,7 @@ export function CsvExportPanel<R>(props: {
             ))}
           </div>
           {props.note ? <p class="muted">{props.note}</p> : null}
+          {props.limit ? <p class="muted">{tf("csvx.limit_note", { n: props.limit.toLocaleString("ja-JP") })}</p> : null}
         </fieldset>
         <div class="purpose-groups">
           {groups.map((g) => (

@@ -25,7 +25,7 @@ import { UUID_RE } from "../../util/cursor";
 import { yen } from "../common";
 import type { MessageKey } from "../../i18n";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
-import { CsvExportPanel, csvBody, csvHeaders, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
+import { CsvExportPanel, csvBody, csvHeaders, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 
 /**
  * 会員一覧・削除（退会依頼への対応）・メールアドレスの変更（メールを失った会員の救済）。/admin/shops/:shopId/customers
@@ -285,7 +285,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </>
       )}
       <Pager base={listHref} next={page.next} paged={Boolean(after)} />
-      {rows.length > 0 || filtered ? <CsvExportPanel kind="customers" action={`/admin/shops/${shop.id}/customers.csv`} params={params} columns={customerCsvColumns(fields, stats)} presets={customerCsvPresets(fields)} note={t("csvx.mail_note")} /> : null}
+      {rows.length > 0 || filtered ? <CsvExportPanel kind="customers" action={`/admin/shops/${shop.id}/customers.csv`} params={params} columns={customerCsvColumns(fields, stats)} presets={customerCsvPresets(fields)} note={t("csvx.mail_note")} limit={CSV_MAX_ROWS} /> : null}
     </AdminLayout>,
   );
 });
@@ -594,8 +594,12 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   }
   const all = stripConditions(c, base, CUSTOMER_CONDITIONS);
   if (all) return c.redirect(all);
-  const { fields, rows } = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS, stats, sortable });
-  if (choice) return c.body(csvBody(choice.cols, rows, choice.format), 200, csvHeaders(`customers-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
+  // 1 件多く読んで、上限で切ったかを知る（案内メールの宛先が足りないことに気づけるよう、黙って切らない）
+  const listed = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS + 1, stats, sortable });
+  const fields = listed.fields;
+  const truncated = listed.rows.length > CSV_MAX_ROWS ? CSV_MAX_ROWS : null;
+  const rows = listed.rows.slice(0, CSV_MAX_ROWS);
+  if (choice) return c.body(csvBody(choice.cols, rows, choice.format, truncated), 200, csvHeaders(`customers-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
   const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key), ...(stats ? ["orders_count", "total_spent_jpy", "last_order_at", "note"] : [])];
   const lines = rows.map((r) => {
     const a = (r.default_address ?? {}) as Record<string, unknown>;
@@ -605,7 +609,7 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
     const statCols = stats ? [r.orders_count ?? 0, r.total_spent_jpy ?? 0, r.last_order_at ? formatDateTime(r.last_order_at) : "", r.note ?? ""] : [];
     return [r.id, r.email, r.name, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], formatDateTime(r.created_at), r.last_login_at ? formatDateTime(r.last_login_at) : "", ...consentCols, ref?.provider ?? "", ref?.id ?? "", ...fields.map((f) => attrs[f.key] ?? ""), ...statCols].map(csvCell).join(",");
   });
-  const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n";
+  const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="customers-${shop.slug}.csv"`, "Cache-Control": "no-store" });
 });
 

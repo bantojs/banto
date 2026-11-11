@@ -271,7 +271,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         </>
       )}
       <Pager base={listBase} next={page.next} paged={Boolean(after)} />
-      {rows.length > 0 || filtered ? <CsvExportPanel kind="products" action={`/admin/shops/${shop.id}/products.csv`} params={params} columns={PRODUCT_CSV_COLUMNS} units={[{ key: "sku", label: "csvx.u_sku" }, { key: "product", label: "csvx.u_product" }]} presets={PRODUCT_CSV_PRESETS} defaults={PRODUCT_CSV_PRESETS["catalog"]!.cols} /> : null}
+      {rows.length > 0 || filtered ? <CsvExportPanel kind="products" action={`/admin/shops/${shop.id}/products.csv`} params={params} columns={PRODUCT_CSV_COLUMNS} units={[{ key: "sku", label: "csvx.u_sku" }, { key: "product", label: "csvx.u_product" }]} presets={PRODUCT_CSV_PRESETS} limit={CSV_MAX_PRODUCTS} defaults={PRODUCT_CSV_PRESETS["catalog"]!.cols} /> : null}
     </AdminLayout>,
   );
 });
@@ -313,22 +313,38 @@ const CSV_MAX_PRODUCTS = 1000;
 /** SKU の上限（在庫は SKU と一緒に 1 回で読む。1 リクエストの外部呼び出しを SKU の数に比例させないため） */
 const CSV_MAX_SKUS = 10000;
 
+type CsvSku = SkuRow & { inventory?: { available: number } | null };
+
 /**
  * 商品の SKU を在庫ごと読む（PostgREST の埋め込み inventory(available)、一対一）。商品 100 件ずつ、1 回 1,000 行まで（越えたら続きを読む）。
- * 呼び出しの回数は「商品 ÷ 100 + SKU ÷ 1,000」ほどで、CSV_MAX_SKUS で止める
+ * 呼び出しの回数は「商品 ÷ 100 + SKU ÷ 1,000」ほど。CSV_MAX_SKUS を越えたら **商品の区切りで** 止める:
+ * 商品の id の順に読むので、越えた SKU の商品より前の商品は SKU を全部読めている。complete はその商品の id（ここに無い商品は出さない。
+ * SKU を途中までしか読めなかった商品を「SKU 無し・在庫 0」の行にしないため）
  */
-async function skusWithStock(db: DbClient, shopId: string, productIds: string[], withStock: boolean): Promise<(SkuRow & { inventory?: { available: number } | null })[]> {
+async function skusWithStock(db: DbClient, shopId: string, productIds: string[], withStock: boolean): Promise<{ skus: CsvSku[]; complete: Set<string> }> {
   const cols = `id,product_id,code,name,options,price_jpy,compare_at_price_jpy,gtin,created_at${withStock ? ",inventory(available)" : ""}`;
-  const out: (SkuRow & { inventory?: { available: number } | null })[] = [];
-  for (let i = 0; i < productIds.length && out.length < CSV_MAX_SKUS; i += 100) {
+  const out: CsvSku[] = [];
+  const complete = new Set<string>();
+  for (let i = 0; i < productIds.length; i += 100) {
     const part = productIds.slice(i, i + 100);
-    for (let offset = 0; out.length < CSV_MAX_SKUS; offset += 1000) {
-      const page = await db.from<SkuRow & { inventory?: { available: number } | null }>("skus").select(cols, { eq: { shop_id: shopId }, in: { product_id: part }, order: "id.asc", limit: 1000, offset });
-      out.push(...page);
+    const got: CsvSku[] = [];
+    let cut: string | null = null;
+    for (let offset = 0; ; offset += 1000) {
+      const page = await db.from<CsvSku>("skus").select(cols, { eq: { shop_id: shopId }, in: { product_id: part }, order: "product_id.asc,id.asc", limit: 1000, offset });
+      got.push(...page);
+      if (out.length + got.length > CSV_MAX_SKUS) {
+        // 上限を越えた最初の SKU の商品から後ろは出さない（uuid の順は小文字の 16 進の文字の順と同じ）
+        cut = got[CSV_MAX_SKUS - out.length]!.product_id;
+        break;
+      }
       if (page.length < 1000) break;
     }
+    const before = (id: string) => cut === null || id < cut;
+    out.push(...got.filter((k) => before(k.product_id)));
+    for (const id of part) if (before(id)) complete.add(id);
+    if (cut !== null) break;
   }
-  return out.slice(0, CSV_MAX_SKUS);
+  return { skus: out, complete };
 }
 
 products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
@@ -353,11 +369,13 @@ products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
   const columns = "id,slug,name,published,created_at,category_id,tags,brand,tax_class";
   const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
   const where: Filter[] = state ? [{ col: "published", op: "eq", value: state === "published" }] : [];
-  const rows = useSearch
-    ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, limit: CSV_MAX_PRODUCTS, columns })
-    : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: CSV_MAX_PRODUCTS });
-  const [skus, categories] = await Promise.all([
-    skusWithStock(db, shopId, rows.map((p) => p.id), choice.cols.some((col) => col.key === "stock")),
+  // 1 件多く読んで、上限で切ったかを知る（黙って切らない）
+  const listed = useSearch
+    ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, limit: CSV_MAX_PRODUCTS + 1, columns })
+    : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: CSV_MAX_PRODUCTS + 1 });
+  const read = listed.slice(0, CSV_MAX_PRODUCTS);
+  const [{ skus, complete }, categories] = await Promise.all([
+    skusWithStock(db, shopId, read.map((p) => p.id), choice.cols.some((col) => col.key === "stock")),
     choice.cols.some((col) => col.key === "category") ? loadCategories(db, shopId) : Promise.resolve([] as CategoryRow[]),
   ]);
   const stock = new Map(skus.map((k) => [k.id, k.inventory?.available ?? 0]));
@@ -365,12 +383,16 @@ products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
   const names = optionNamesOf(shop.option_names);
   const byProduct = new Map<string, SkuRow[]>();
   for (const k of skus.sort((a, b) => (a.code < b.code ? -1 : 1))) byProduct.set(k.product_id, [...(byProduct.get(k.product_id) ?? []), k]);
+  // SKU の上限に届いたら、SKU を全部読めた商品までで止める（一覧の順の先頭から）
+  const stop = read.findIndex((p) => !complete.has(p.id));
+  const rows = stop < 0 ? read : read.slice(0, stop);
+  const truncated = listed.length > CSV_MAX_PRODUCTS || rows.length < read.length ? rows.length : null;
   const csvRows: ProductCsvRow[] = rows.flatMap((p): ProductCsvRow[] => {
     const ks = byProduct.get(p.id) ?? [];
     const base = { p, skus: ks, stock, categoryName, names };
     return choice.unit === "sku" && ks.length > 0 ? ks.map((sku) => ({ ...base, sku })) : [{ ...base, sku: null }];
   });
-  return c.body(csvBody(choice.cols, csvRows, choice.format), 200, csvHeaders(`products-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
+  return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(`products-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
 });
 
 // ---------- 作成 ----------

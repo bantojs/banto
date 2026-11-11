@@ -981,6 +981,8 @@ export const en: Record<MessageKey, string> = {
   "csvx.g_external": "External ID",
   "csvx.p_mail": "Marketing email list",
   "csvx.p_crm": "Copy to a CRM",
+  "csvx.truncated": "The export limit was reached, so this file stops after {n} rows. Narrow the conditions and export in parts.",
+  "csvx.limit_note": "Up to {n} can be exported at once. If there are more, the last line of the file says so.",
   "csvx.mail_note": "\"Marketing email list\" only exports members who agreed to marketing emails (this cannot be turned off).",
   "csvx.g_product": "Product",
   "csvx.g_sku": "SKU",
