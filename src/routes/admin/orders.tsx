@@ -26,7 +26,7 @@ import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from 
 import { migrated } from "../../db/migration-state";
 import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
 import { can } from "./access";
-import { CsvExportPanel, csvBody, csvHeaders, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
+import { CsvExportPanel, csvBody, csvHeaders, csvName, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 import { permLabel } from "./denied";
 
 export const orders = new Hono<AppEnv>();
@@ -337,7 +337,7 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   if (all) return c.redirect(all);
   // 1 件多く読んで、上限で切ったかを知る（黙って切らない）
   const listed = (await listOrders(c, shopId, { limit: CSV_MAX_ORDERS + 1 })).rows;
-  const truncated = listed.length > CSV_MAX_ORDERS ? CSV_MAX_ORDERS : null;
+  const truncated = listed.length > CSV_MAX_ORDERS ? { n: CSV_MAX_ORDERS, what: "csvx.what_orders" as const } : null;
   const rows = listed.slice(0, CSV_MAX_ORDERS);
   const { db } = owner(c);
   // 明細と SKU は CSV に入る注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
@@ -359,7 +359,7 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
             return its.length > 0 ? its.map((item) => ({ o, items: its, item, ctx })) : [{ o, items: its, item: null, ctx }];
           })
         : rows.map((o) => ({ o, items: itemsByOrder.get(o.id) ?? [], item: null, ctx }));
-    return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`));
+    return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(csvName(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`, truncated)));
   }
   const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
   const lines = rows.map((o) => {
@@ -370,7 +370,7 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
     return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? ""].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
-  return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="orders-${shop.slug}.csv"`, "Cache-Control": "no-store" });
+  return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${csvName(`orders-${shop.slug}`, truncated)}.csv"`, "Cache-Control": "no-store" });
 });
 
 orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => {

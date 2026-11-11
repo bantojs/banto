@@ -66,14 +66,23 @@ export function stripConditions(c: AdminContext, base: string, conditionKeys: re
   return `${base}${url.search}`;
 }
 
-/**
- * 上限に届いて切ったときの最後の行（黙って切らない）。n は書き出した件数（注文・会員・商品の数）。
- * 読む側が見落とさないよう、1 列目に文で入れる
- */
-export const csvTruncatedLine = (n: number): string => csvCell(tf("csvx.truncated", { n })) + "\r\n";
+/** 上限で切ったとき: 書き出した件数（行の数ではなく、注文・会員・商品の数）と、その数え方 */
+export interface CsvCut {
+  n: number;
+  what: "csvx.what_orders" | "csvx.what_members" | "csvx.what_products";
+}
 
-/** truncated に件数を渡すと、上限で切ったことを最後の行で知らせる */
-export function csvBody<R>(cols: readonly CsvColumn<R>[], rows: readonly R[], format: CsvFormat, truncated: number | null = null): string {
+/**
+ * 上限に届いて切ったときの最後の行（黙って切らない）。読む側が見落とさないよう、1 列目に文で入れる。
+ * ファイル名にも -partial を付ける（csvName）ので、開く前にも分かる
+ */
+export const csvTruncatedLine = (cut: CsvCut): string => csvCell(tf("csvx.truncated", { n: cut.n.toLocaleString("ja-JP"), what: t(cut.what) })) + "\r\n";
+
+/** ファイル名（拡張子なし）。上限で切ったら -partial を付ける */
+export const csvName = (name: string, cut: CsvCut | null): string => (cut ? `${name}-partial` : name);
+
+/** truncated を渡すと、上限で切ったことを最後の行で知らせる */
+export function csvBody<R>(cols: readonly CsvColumn<R>[], rows: readonly R[], format: CsvFormat, truncated: CsvCut | null = null): string {
   const lines = [cols.map((c) => csvCell(c.label)).join(","), ...rows.map((r) => cols.map((c) => csvCell(c.value(r))).join(","))];
   return (format === "bom" ? "﻿" : "") + lines.join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
 }

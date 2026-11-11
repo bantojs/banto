@@ -12,6 +12,9 @@ import { publicShopSettings } from "../src/storefront/data";
 import { audienceDisplayOnly, audienceOk } from "../src/members/audience";
 import { legalLinksOf } from "../src/storefront/legal-links";
 
+/** PostgREST の db-max-rows（Supabase の既定）。本物と同じく 1 回の応答をここまでで切る */
+const FAKE_MAX_ROWS = 1000;
+
 export interface FakeSupabaseOptions {
   url?: string;
   anonKey?: string;
@@ -934,7 +937,8 @@ export class FakeSupabase {
       const offset = Number(u.searchParams.get("offset") ?? 0);
       const limit = u.searchParams.get("limit");
       const total = out.length;
-      out = out.slice(offset, limit ? offset + Number(limit) : undefined);
+      // PostgREST の max_rows（Supabase の既定 1,000）: limit を大きくしても 1 回に返すのはそこまで
+      out = out.slice(offset, offset + Math.min(limit ? Number(limit) : FAKE_MAX_ROWS, FAKE_MAX_ROWS));
       // PostgREST の埋め込み: skus の inventory(available)（一対一。src/routes/admin/products.tsx の商品の CSV）
       if (table === "skus" && (u.searchParams.get("select") ?? "").includes("inventory(")) {
         out = out.map((k) => {
