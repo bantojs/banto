@@ -205,13 +205,13 @@ describe("管理画面の注文照会のページ", () => {
   it("許可リストのサイトの https だけ保存できる。空なら外す", async () => {
     const { app, shop, sb } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    const page = await (await admin.get(`/admin/shops/${shop.id}/settings/headless`)).text();
     expect(page).toContain('name="order_page_url"');
     expect(page).toContain('name="order_lookup_per_ip_per_hour" min="1" max="9999" value="20"');
     let res = await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://wp.example.com", order_page_url: "https://evil.example.com/x" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=order_page_invalid#headless`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/headless?flash=order_page_invalid`);
     res = await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://wp.example.com", order_page_url: "https://wp.example.com/order-status/" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=headless_saved`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/headless?flash=headless_saved`);
     const headless = () => (sb.shops[0]!["settings"] as Record<string, Record<string, unknown>>)["headless"]!;
     expect(headless()["order_page_url"]).toBe("https://wp.example.com/order-status/");
     await admin.post(`/admin/shops/${shop.id}/headless`, { return_origins: "https://wp.example.com", order_page_url: "https://wp.example.com/order-status/", order_lookup_per_ip_per_hour: "40" });

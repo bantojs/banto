@@ -16,6 +16,8 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
+import { isoToZonedDate } from "../../i18n/time";
+import { promoteLeadImage } from "../../pages/lead-image";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { productReviews } from "../../apps/app-data";
@@ -35,8 +37,8 @@ import { renderThemePage, renderThemeSections, renderThemeSnippet, themeHasSnipp
 import { absoluteMedia, pagePath, pagePublishedAt, pagesNav, type PageRow } from "../../pages";
 import { categoryImageOf, categoryMetaDescription } from "../../products/category-media";
 import { usesPart } from "../../content/layouts";
-import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ArticlesBlock, type ProductBlock } from "../../pages/blocks";
-import type { AppBlockData } from "../../content/body-blocks";
+import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ProductBlock } from "../../pages/blocks";
+import { articleBlogOf, type AppBlockData, type ArticleBlockData } from "../../content/body-blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
@@ -550,10 +552,15 @@ export function renderLegalPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p:
   return render(c, s, choice, { template: "page", values: { page }, title: p.title, path: `/${p.handle}`, categories: p.categories });
 }
 
+/** 読み込み直しの meta。URL があれば # の無い URL を明示する（戻り先に # が付いていても読み込み直すように） */
+export function refreshMeta(seconds: number, url: string | null): string {
+  return url ? `<meta http-equiv="refresh" content="${seconds};url=${escapeHtml(url)}">` : `<meta http-equiv="refresh" content="${seconds}">`;
+}
+
 /** 購入の完了画面（templates/checkout_done）。checkout.status は confirmed / pending / released / not_found / unknown（照会できないとき）、確定していれば order_number */
-export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; free: boolean; inquiryUrl: string | null; categories: CategoryRow[] }): Response | null {
+export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; refreshUrl?: string | null; free: boolean; inquiryUrl: string | null; categories: CategoryRow[] }): Response | null {
   const checkout = { status: p.status, order_number: p.orderNumber, message: p.message, free: p.free, inquiry_url: p.inquiryUrl, continue_url: s.ctx.shopPath || "/" };
-  return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: '<meta http-equiv="refresh" content="4">' } : {}) });
+  return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: refreshMeta(4, p.refreshUrl ?? null) } : {}) });
 }
 
 /**
@@ -567,6 +574,7 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
     name: `#${String(o["number"])}`,
     order_number: o["number"],
     created_at: o["created_at"],
+    created_on: isoToZonedDate(String(o["created_at"])),
     financial_status: o["status"],
     status: o["status"],
     status_label: t(`order.status.${String(o["status"])}` as MessageKey),
@@ -576,8 +584,25 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
   // お気に入り（0123）: 一覧と同じ product の形。外すのは POST <shopPath>/account/favorites/remove（product_id）
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const favorites = props.favorites ? props.favorites.map((x) => productFromSummary(u, x)) : null;
+  // お店で試着の申し込み（同梱モジュール store_tryon）: 表は {% banto_account %} にもあるが、テーマが自分で並べられるように同じ値を渡す。
+  // created_at は ISO、created_on は運営者の時間帯の日付（"2026-11-06"）。取り消すのは POST cancel_url
+  const tryonRequests = props.tryon
+    ? props.tryon.map((r) => ({
+        number: r.number,
+        status: r.status,
+        status_label: t(`tryon.status_${r.status}` as MessageKey),
+        store_name: r.store_name,
+        created_at: r.created_at,
+        created_on: isoToZonedDate(r.created_at),
+        visit_label: r.visit_label,
+        hold_label: r.hold_label,
+        items: r.items,
+        cancellable: r.cancellable,
+        cancel_url: r.cancellable ? `${s.ctx.shopPath}/account/tryon/${r.number}/cancel` : null,
+      }))
+    : null;
   const customer = props.customer
-    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove` }
+    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`, tryon_requests: tryonRequests }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
 }
@@ -686,12 +711,13 @@ export async function renderTryon(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
 
 /** ショップのページ（同梱モジュール pages、0079、/pages/<handle>）。templates/page.<suffix> があればそれ、無ければ templates/page */
 /** path: canonical のパス（ひな形、0101。お店のトップは ""・記事は /blogs/…。無ければ /pages/<handle>） */
-export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string; jsonLd?: unknown; noindex?: boolean } & ArticleBlocks): Response | null {
+/** lead: 本文の最初の画像をすぐ読む（src/pages/lead-image.ts。ブロックの中身を入れた後に当てる） */
+export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { page: PageRow; html: string; categories: CategoryRow[]; blocks?: { block: ProductBlock; items: ProductSummary[] }[]; cards?: string[]; path?: string; jsonLd?: unknown; noindex?: boolean; lead?: boolean } & ArticleBlocks): Response | null {
   const pg = p.page;
   const suffixed = pg.template_suffix ? (`page.${pg.template_suffix}` as const) : null;
   const template: ThemeTemplate = suffixed && themeHasTemplate(choice.lt, suffixed) ? suffixed : "page";
   // アイキャッチ画像（0080）: page.image と、Shopify と同じ page_image（テーマが OG の画像に使う）
-  const img = pg.image_url ? absoluteMedia(pg.image_url, s.ctx.publicBaseUrl) : null;
+  const img = pg.image_url ? absoluteMedia(pg.image_url, s.ctx.publicBaseUrl, s.ctx.mediaBaseUrl) : null;
   const image = img ? { src: img, url: img, alt: pg.title } : null;
   const parts = (html: string): PageParts => ({
     template,
@@ -704,10 +730,11 @@ export function renderContentPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     ...(p.jsonLd ? { jsonLd: p.jsonLd } : {}),
     ...(p.noindex ? { noindex: true } : {}),
   });
-  return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
+  const html = withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p);
+  return render(c, s, choice, parts(p.lead ? promoteLeadImage(html) : html));
 }
 
-type ArticleBlocks = { ablocks?: ({ block: ArticlesBlock; blog: BlogRow; items: ArticleRow[] } | null)[]; acards?: string[]; apps?: (AppBlockData | null)[]; appCards?: string[] };
+type ArticleBlocks = { ablocks?: ArticleBlockData[]; acards?: string[]; apps?: (AppBlockData | null)[]; appCards?: string[] };
 
 /**
  * 本文の外部プラグインのブロック（0086）の場所に中身を入れる: snippets/app-<プラグイン>-<ブロック> → app-<ブロック> の順に探して描き
@@ -736,8 +763,8 @@ function withAppBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (htm
 }
 
 /**
- * 本文の「記事を並べる」の場所に中身を入れる: テーマに snippets/page-articles があればそれで描き（articles・block・blog を渡す）、
- * 無ければ既定のカード（acards）
+ * 本文の「記事を並べる」の場所に中身を入れる: テーマに snippets/page-articles があればそれで描き（articles・block・blog・blogs を渡す）、
+ * 無ければ既定のカード（acards）。ブログをまたぐブロック（0140）は blog が空で、blogs にまたいだブログ（記事の url はそれぞれのブログのもの）
  */
 function withArticleBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: (html: string) => PageParts, html: string, p: ArticleBlocks): string {
   if (!p.ablocks?.length || !themeHasSnippet(choice.lt, "page-articles")) return fillArticleBlocks(html, p.acards ?? []);
@@ -748,7 +775,13 @@ function withArticleBlocks(c: Ctx, s: LiquidScope, choice: LiquidChoice, parts: 
     rendered = (p.acards ?? []).map((card, i) => {
       const b = p.ablocks?.[i];
       if (!b) return card;
-      const out = renderThemeSnippet(choice.lt, input, "page-articles", { articles: b.items.map((a) => articleObject(sp, b.blog, a, "", s.ctx.publicBaseUrl)), blog: blogObject(sp, b.blog), block: { ...b.block, index: i } });
+      const blogs = b.blogs ?? [b.blog];
+      const out = renderThemeSnippet(choice.lt, input, "page-articles", {
+        articles: b.items.map((a) => articleObject(sp, articleBlogOf(b, a), a, "", s.ctx.publicBaseUrl, s.ctx.mediaBaseUrl)),
+        blog: b.blogs ? null : blogObject(sp, b.blog),
+        blogs: blogs.map((x) => blogObject(sp, x)),
+        block: { ...b.block, index: i },
+      });
       return out ?? card;
     });
   } catch (e) {
@@ -793,8 +826,8 @@ function blogObject(shopPath: string, b: BlogRow, extra: Record<string, unknown>
 }
 
 /** 記事（Liquid の article）。content は本文の HTML（一覧では空）、excerpt は抜粋か本文の頭の文字 */
-function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: string, origin?: string) {
-  const img = a.image_url ? absoluteMedia(a.image_url, origin) : null;
+function articleObject(shopPath: string, blog: BlogRow, a: ArticleRow, content: string, origin?: string, mediaBase?: string) {
+  const img = a.image_url ? absoluteMedia(a.image_url, origin, mediaBase) : null;
   const image = img ? { src: img, url: img, alt: a.title } : null;
   const excerpt = articleSummary(a);
   return {
@@ -832,7 +865,7 @@ export function blogPartValues(s: LiquidScope, p: BlogListInput): Record<string,
 
 function blogListValues(s: LiquidScope, p: BlogListInput) {
   const sp = s.ctx.shopPath;
-  const articles = p.articles.map(({ article }) => articleObject(sp, p.blog, article, "", s.ctx.publicBaseUrl));
+  const articles = p.articles.map(({ article }) => articleObject(sp, p.blog, article, "", s.ctx.publicBaseUrl, s.ctx.mediaBaseUrl));
   const paginate: Paginate = {
     current_page: p.pageNo,
     page_size: articles.length,
@@ -862,11 +895,11 @@ export function renderBlogPage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: 
 }
 
 /** ブログの記事（/blogs/<ブログ>/<handle>）。templates/article.<suffix> か templates/article */
-export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[] } & ArticleBlocks): Response | null {
+export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { blog: BlogRow; article: ArticleRow; html: string; categories: CategoryRow[]; blocks?: BodyBlocks; cards?: string[]; lead?: boolean } & ArticleBlocks): Response | null {
   const a = p.article;
   const sp = s.ctx.shopPath;
   const parts = (html: string): PageParts => {
-    const article = articleObject(sp, p.blog, a, html, s.ctx.publicBaseUrl);
+    const article = articleObject(sp, p.blog, a, html, s.ctx.publicBaseUrl, s.ctx.mediaBaseUrl);
     return {
       template: suffixedTemplate(choice.lt, "article", a.template_suffix),
       values: { article, blog: blogObject(sp, p.blog), ...(article.image ? { page_image: article.image } : {}) },
@@ -876,7 +909,8 @@ export function renderArticlePage(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
       categories: p.categories,
     };
   };
-  return render(c, s, choice, parts(withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p)));
+  const html = withAppBlocks(c, s, choice, parts, withArticleBlocks(c, s, choice, parts, withProductBlocks(c, s, choice, parts, p.html, p.blocks, p.cards), p), p);
+  return render(c, s, choice, parts(p.lead ? promoteLeadImage(html) : html));
 }
 
 export function renderNotFound(c: Ctx, s: LiquidScope, choice: LiquidChoice, categories: CategoryRow[]): Response | null {

@@ -20,6 +20,7 @@ import { migrated } from "../../db/migration-state";
 import { mediaBaseUrl } from "../common";
 import { MAX_IMAGE_BYTES, imageSize, imageUrl, randomKey, sniffImage } from "../../media/images";
 import { CATEGORY_DESCRIPTION_MAX, CATEGORY_IMAGE_WIDTH, CATEGORY_MEDIA_MIGRATION, categoryDescriptionFromForm, categoryImageKey, categoryImageOf } from "../../products/category-media";
+import { NotSaved, updateShop } from "./shop-save";
 
 /**
  * カテゴリーの管理（0008_catalog.sql、3 段まで）。owner の JWT で RLS 経由で書く。
@@ -51,6 +52,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     slug_taken: "category.slug_taken",
     too_deep: "category.too_deep",
     generic: "error.generic",
+    not_saved: "settings.not_saved",
     axes_saved: "axes.saved",
     axes_invalid: "axes.invalid",
     axes_mismatch: "axes.mismatch",
@@ -190,7 +192,7 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
       ];
     });
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("category.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("category.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
+    <AdminLayout title={`${shop.name} · ${t("category.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("category.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products", here: "categories" }}>
       <PageHead title={t("category.title")} sub={t("category.intro")}>
         <a class="btn" href="#add">
           {t("category.add")}
@@ -422,15 +424,15 @@ categories.post("/:shopId/option-names", requireOwner, async (c: AdminContext) =
 
 /** ショップの既定（settings の項目。ショップの行を書くため） */
 categories.post("/:shopId/option-axes/shop", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const back = `/admin/shops/${shopId}/categories`;
   if (!(await loadShop(c, shopId, "settings"))) return c.text(t("shop.not_found"), 404);
   const axes = optionAxesFromForm(await formFields(c));
   if (axes === "invalid") return c.redirect(`${back}?flash=axes_invalid#option-axes`);
   try {
-    await db.from("shops").update({ option_axes: axes }, { id: shopId });
+    await updateShop(c, shopId, { option_axes: axes });
   } catch (e) {
+    if (e instanceof NotSaved) return c.redirect(`${back}?flash=not_saved`);
     if (axesErrorCode(e)) return c.redirect(`${back}?flash=axes_invalid`);
     throw e;
   }

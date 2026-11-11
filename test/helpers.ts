@@ -252,3 +252,20 @@ export async function followPreview(app: ReturnType<typeof appWith>, handoff: Re
   edit?.(fields);
   return app.request(dec(action[1]!), { method: "POST", body: new URLSearchParams(fields).toString(), headers: { "content-type": "application/x-www-form-urlencoded", origin: "null", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } });
 }
+
+/**
+ * 独自項目の表（商品・会員の項目の画面）に送る欄。行は [鍵, 表示名, 種類, 選択肢, お客様の画面]。
+ * orig: true の行は今ある項目（鍵は固定で f_orig_<n>）、del: true は消す
+ */
+export function fieldForm(rows: { key: string; label?: string; type?: string; options?: string; vis?: "public" | "card" | "private"; orig?: boolean; del?: boolean }[]): Record<string, string> {
+  const out: Record<string, string> = { f_n: String(rows.length) };
+  rows.forEach((r, i) => {
+    out[r.orig ? `f_orig_${i}` : `f_key_${i}`] = r.key;
+    out[`f_label_${i}`] = r.label ?? "";
+    out[`f_type_${i}`] = r.type ?? "text";
+    out[`f_options_${i}`] = r.options ?? "";
+    out[`f_vis_${i}`] = r.vis ?? "public";
+    if (r.del) out[`f_del_${i}`] = "on";
+  });
+  return out;
+}

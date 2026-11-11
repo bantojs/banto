@@ -150,7 +150,7 @@ audiencesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const labels = Object.fromEntries(customerFields(shop.settings).map((f) => [f.key, f.label]));
   const fl = FLASH[c.req.query("flash") ?? ""];
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("aud.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("aud.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("aud.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("aud.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "audiences" }}>
       <PageHead title={t("aud.title")} sub={t("aud.intro")}>
         <a class="btn" href={`${base(shop)}/new`}>
           {t("aud.add")}
@@ -215,7 +215,7 @@ function EditPage(props: { shop: ShopRow; row: AudienceRow | null; fields: Custo
   const action = row ? `${base(shop)}/${row.id}` : base(shop);
   const opLabel: Record<Op, MessageKey> = { in: "aud.op_in", not_in: "aud.op_not_in", gte: "aud.op_gte", lte: "aud.op_lte", set: "aud.op_set" };
   return (
-    <AdminLayout title={`${shop.name} · ${t("aud.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("aud.title"), href: base(shop) }, { label: row?.name ?? t("aud.add") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("aud.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("aud.title"), href: base(shop) }, { label: row?.name ?? t("aud.add") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: props.access, active: "modules", here: "audiences" }}>
       <PageHead title={row?.name ?? t("aud.add")} />
       {props.flash ? <p class={props.flash.kind === "ok" ? "notice" : "error"} role={props.flash.kind === "ok" ? undefined : "alert"}>{props.flash.row !== undefined ? tf(props.flash.key, { n: String(props.flash.row + 1) }) : t(props.flash.key)}</p> : null}
       <form method="post" action={action} class="card">

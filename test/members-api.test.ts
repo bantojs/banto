@@ -141,9 +141,9 @@ describe("ヘッドレスの会員 API（店ごと・パスワードなし）", 
 
   it("return_to に banto_ の鍵やフラグメントを先に埋め込んだもの（ログイン CSRF）は受けず、Banto の確認画面にする", async () => {
     const { mail, call } = setup();
-    // 攻撃者が自分の組（ATT）を仕込み、被害者のアドレスで本物のメールを送らせる。連携サイトは最初の値を読むので、被害者が攻撃者としてログインしてしまう
+    // 攻撃者が自分の組（ATTACKER-…）を仕込み、被害者のアドレスで本物のメールを送らせる。連携サイトは最初の値を読むので、被害者が攻撃者としてログインしてしまう
     for (const bad of [
-      "https://wp.example.com/cb?banto_challenge=ATT&banto_token=ATTTOK#",
+      "https://wp.example.com/cb?banto_challenge=ATTACKER-CHALLENGE&banto_token=ATTACKER-TOKEN#",
       "https://wp.example.com/cb?BANTO_handoff=x",
       "https://wp.example.com/cb#/login",
       "https://wp.example.com/cb?lang=ja#",
@@ -151,7 +151,8 @@ describe("ヘッドレスの会員 API（店ごと・パスワードなし）", 
       await call("/api/shops/my-shop/members/login", { email: "taro@example.com", return_to: bad });
       const link = mail.link("taro@example.com");
       expect(link.startsWith(`${BASE}/my-shop/account/verify?c=`), bad).toBe(true);
-      expect(link.includes("ATT")).toBe(false);
+      // 仕込んだ値は券（ランダムな base64url）にたまたま出てこない長さ・形にしてある
+      expect(link.includes("ATTACKER-")).toBe(false);
     }
     // 連携サイト自身のクエリはそのまま残り、組はその後ろに 1 つだけ付く
     await call("/api/shops/my-shop/members/login", { email: "taro@example.com", return_to: "https://wp.example.com/cb?lang=ja&x=1" });

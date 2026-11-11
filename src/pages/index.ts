@@ -82,8 +82,14 @@ export function randomPageHandle(): string {
 
 export const PAGE_LIMITS ={ title: 200, body: 50000, seoTitle: 200, seoDescription: 500 } as const;
 
-/** /media/… の画像をこのオリジンの絶対 URL にする（OG の画像・Liquid の image.src。ほかはそのまま） */
-export const absoluteMedia = (url: string, origin: string | undefined): string => (url.startsWith("/") && !url.startsWith("//") && origin ? `${origin.replace(/\/+$/, "")}${url}` : url);
+/**
+ * /media/… の画像を絶対 URL にする（OG の画像・Liquid の image.src。ほかはそのまま）。置き場の起点（mediaBase、MEDIA_BASE_URL）を
+ * 渡せば /media/<キー> はその起点から（本文の画像と同じ規則。src/pages/markdown.ts の mediaPath）、無ければこのオリジンから
+ */
+export const absoluteMedia = (url: string, origin: string | undefined, mediaBase?: string): string => {
+  if (mediaBase && url.startsWith("/media/") && !/^(?:https?:\/\/[^/?#]+)?\/media\/*$/i.test(mediaBase)) return `${mediaBase.replace(/\/+$/, "")}${url.slice("/media".length)}`;
+  return url.startsWith("/") && !url.startsWith("//") && origin ? `${origin.replace(/\/+$/, "")}${url}` : url;
+};
 
 export const pagePath = (shopPath: string, handle: string) => `${shopPath}/pages/${encodeURIComponent(handle)}`;
 

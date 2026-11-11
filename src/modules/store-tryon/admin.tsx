@@ -38,7 +38,7 @@ function crumbs(shop: ShopRow, here?: string): Crumb[] {
   ];
 }
 
-const tabs = (c: AdminContext, shop: ShopRow): ShopTabs => ({ shop, access: c.get("shopAccess"), active: "modules" });
+const tabs = (c: AdminContext, shop: ShopRow): ShopTabs => ({ shop, access: c.get("shopAccess"), active: "modules", here: "store-tryon" });
 
 tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);

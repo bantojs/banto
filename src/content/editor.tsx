@@ -19,7 +19,7 @@ import { MAX_VIDEO_BYTES, sniffMp4 } from "../media/video";
 import { PAGE_LIMITS, PAGE_NAVS, RESERVED_HANDLES, type PageNav } from "../pages";
 import { formatDateTime, isoToZonedInput } from "../i18n/time";
 import { markdownToHtml, shopImageUrl } from "../pages/markdown";
-import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, PRODUCT_BLOCK_SLUGS_MAX, type ProductBlock } from "../pages/blocks";
+import { APP_BLOCKS_MAX, ARTICLE_BLOCKS_MAX, ARTICLE_BLOCK_BLOGS_MAX, ARTICLE_BLOCK_LIMIT_DEFAULT, ARTICLE_BLOCK_LIMIT_MAX, PRODUCT_BLOCKS_MAX, PRODUCT_BLOCK_LIMIT_DEFAULT, PRODUCT_BLOCK_LIMIT_MAX, PRODUCT_BLOCK_SLUGS_MAX, type ProductBlock } from "../pages/blocks";
 import { PRODUCT_SORTS, toPublicShop, type ProductSort } from "../storefront/data";
 import { storefrontData } from "../routes/storefront/domain";
 import { tagCounts } from "../products/tags";
@@ -37,7 +37,7 @@ import { migrated } from "../db/migration-state";
 import { escapeHtml } from "../mail/html";
 import { productFields } from "../products/fields";
 import { FIELD_IMAGE_SCRIPT, FieldImageInput } from "../routes/admin/field-image";
-import { ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
+import { ARTICLES_MULTI_MIGRATION, ARTICLE_ORDERS, BLOG_ORDER_MIGRATION } from "../blog";
 import { fieldValues, type ArticleFieldDef } from "../blog/fields";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
@@ -118,6 +118,8 @@ export interface EditorExtras {
   blogs: { handle: string; title: string }[];
   /** 記事を並べるブロックで並び順を選べるか（0116 が当たっていれば） */
   blogOrder?: boolean;
+  /** 記事を並べるブロックでブログをまたげるか（0140 が当たっていれば。選ぶ欄をチェックボックスにする） */
+  blogsMulti?: boolean;
   /** ブロックの一覧の「パターン」（公開中のテーマのものと Banto の既定。本文は選んだときに …/pattern で受け取る） */
   patterns: EditorPattern[];
   /** 公開中のテーマのブロックのスタイル */
@@ -156,7 +158,7 @@ async function editorAppBlocks(c: AdminContext, shop: ShopRow): Promise<EditorAp
 export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] } & EditorExtras> {
   const db = owner(c).db;
   const deps = { db, cache: c.get("adapters").cache };
-  const [categories, rows, blogs, theme, apps, audiences, blogOrder] = await Promise.all([
+  const [categories, rows, blogs, theme, apps, audiences, blogOrder, blogsMulti] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
     db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }).catch(() => []),
@@ -164,10 +166,11 @@ export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ c
     editorAppBlocks(c, shop),
     editorAudiences(c, shop),
     migrated(deps, BLOG_ORDER_MIGRATION).catch(() => false),
+    migrated(deps, ARTICLES_MULTI_MIGRATION).catch(() => false),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
   const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, blogOrder, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, blogOrder, blogsMulti, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
 }
 
 /** 見せる相手の囲みで選べる会員の条件（モジュールが OFF なら空。読めるのは項目 content を持つ人も） */
@@ -457,6 +460,7 @@ export const EDITOR_CSS = `
 .bp-preview:empty{display:none}
 .page-preview .banto-button__link{display:inline-block;padding:.5rem 1.25rem;border-radius:6px;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:600}
 @media (max-width:600px){#body-visual{padding:.5rem .25rem 3rem 2rem}.blk-grid{grid-template-columns:repeat(3,1fr)}}
+.ba-blogs{border:0;padding:0;margin:0 0 .5rem}.ba-blogs label{display:block;margin:.15rem 0}
 #blk-products,#blk-button,#blk-articles,#blk-app{max-width:28rem;width:calc(100% - 2rem);border:1px solid var(--border-strong);border-radius:10px;padding:1.25rem 1.5rem}
 #blk-products::backdrop,#blk-button::backdrop,#blk-articles::backdrop,#blk-app::backdrop{background:rgba(0,0,0,.35)}
 @media (max-width:600px){.pe-bar button{height:32px;padding:0 .7rem;font-size:.85rem}.pe-bar .status{display:none}}
@@ -722,6 +726,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
     "data-t-shop-required": t("blocks.required"),
     "data-t-articles-none": t("pages.articles_none"),
     "data-t-articles-label": t("pages.articles_label"),
+    "data-t-articles-all": t("pages.articles_all_blogs"),
     // 外部プラグインのブロック（0086）
     "data-apps": JSON.stringify(props.extras?.apps ?? []),
     "data-t-g-apps": t("pages.block_group_apps"),
@@ -1155,14 +1160,32 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
         <dialog id="blk-articles" aria-labelledby="blk-articles-title">
           <form method="dialog">
             <h2 id="blk-articles-title">{t("pages.block_articles")}</h2>
-            <label for="ba-blog">{t("pages.articles_blog")}</label>
-            <select id="ba-blog" name="blog">
-              {props.extras.blogs.map((b) => (
-                <option value={b.handle}>
-                  {b.title}（{b.handle}）
-                </option>
-              ))}
-            </select>
+            {props.extras.blogsMulti && props.extras.blogs.length > 1 ? (
+              // ブログをまたぐ（0140）: いくつでも選べる。「すべてのブログ」はこれから作るブログも含む
+              <fieldset class="ba-blogs">
+                <legend>{t("pages.articles_blogs")}</legend>
+                <label>
+                  <input type="checkbox" name="allblogs" value="*" /> {t("pages.articles_all_blogs")}
+                </label>
+                {props.extras.blogs.map((b) => (
+                  <label>
+                    <input type="checkbox" name="blogs" value={b.handle} data-title={b.title} /> {b.title}（{b.handle}）
+                  </label>
+                ))}
+                <p class="muted">{tf("pages.articles_blogs_help", { n: ARTICLE_BLOCK_BLOGS_MAX })}</p>
+              </fieldset>
+            ) : (
+              <>
+                <label for="ba-blog">{t("pages.articles_blog")}</label>
+                <select id="ba-blog" name="blog">
+                  {props.extras.blogs.map((b) => (
+                    <option value={b.handle}>
+                      {b.title}（{b.handle}）
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
             <label for="ba-tag">{t("pages.articles_tag")}</label>
             <input id="ba-tag" name="tag" maxlength={50} />
             <p class="muted">{t("pages.articles_tag_help")}</p>

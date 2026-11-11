@@ -5,7 +5,7 @@ import { DbError } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
 import { createPrivilegedAuth, createPrivilegedDb, PrivilegedRpcError } from "../../db/privileged";
 import { hashApiToken } from "../../api/tokens";
-import { createMailer, MailError, sendMail } from "../../mail/send";
+import { createMailer, MailError, mailFailureLog, sendMail } from "../../mail/send";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { randomToken } from "../../util/signed";
@@ -430,6 +430,7 @@ org.post("/org/invite", requireOwner, requireOrgAdmin, async (c: AdminContext) =
       return c.redirect(`${back}&flash=invited`);
     } catch (e) {
       if (!(e instanceof MailError)) throw e;
+      console.error(mailFailureLog("invite", mailer, e));
     }
   }
   // 送れないとき: 招待した人にリンクを一度だけ見せる（本人に別の手段で渡す。URL や履歴に残さない）

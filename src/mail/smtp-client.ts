@@ -112,19 +112,31 @@ export function dotStuff(data: string): string {
 }
 
 export async function smtpSend(sockets: SocketAdapter, o: SmtpOptions, msg: { from: string; recipients: string[]; data: string }): Promise<void> {
-  const conn = await sockets.connect(o.host, o.port, o.tls);
+  // どの段階で失敗したかを文に残す（「切られた」「待ちきれない」だけでは、つながらないのか TLS か認証かが分からない）
+  let stage = `connect ${o.host}:${o.port} (tls=${o.tls})`;
+  let conn: RawConnection;
+  try {
+    conn = await sockets.connect(o.host, o.port, o.tls);
+  } catch (e) {
+    throw new SmtpError(0, `${stage}: ${e instanceof Error ? e.message : String(e)}`);
+  }
   const s = new Session(conn, o.timeoutMs ?? 20_000);
   try {
+    stage = "greeting";
     const greeting = await s.reply();
     if (greeting.code !== 220) throw new SmtpError(greeting.code, `greeting: ${greeting.code} ${greeting.lines.join(" ").slice(0, 200)}`);
+    stage = "EHLO";
     let ehlo = parseEhlo(await s.command(`EHLO ${o.ehloName}`, [250]));
     if (o.tls === "starttls") {
       if (!ehlo.starttls) throw new SmtpError(0, "server does not offer STARTTLS (set SMTP_TLS=on for port 465, or SMTP_TLS=off only for a server on the same host)");
+      stage = "STARTTLS";
       await s.command("STARTTLS", [220]);
       await s.startTls();
+      stage = "EHLO after STARTTLS (TLS handshake)";
       ehlo = parseEhlo(await s.command(`EHLO ${o.ehloName}`, [250]));
     }
     if (o.user) {
+      stage = "AUTH";
       const pass = o.pass ?? "";
       if (ehlo.auth.includes("LOGIN") && !ehlo.auth.includes("PLAIN")) {
         await s.command("AUTH LOGIN", [334], "AUTH");
@@ -134,14 +146,21 @@ export async function smtpSend(sockets: SocketAdapter, o: SmtpOptions, msg: { fr
         await s.command(`AUTH PLAIN ${base64Utf8(`\0${o.user}\0${pass}`)}`, [235], "AUTH");
       }
     }
+    stage = "MAIL FROM";
     await s.command(`MAIL FROM:<${msg.from}>`, [250]);
+    stage = "RCPT TO";
     for (const rcpt of msg.recipients) await s.command(`RCPT TO:<${rcpt}>`, [250, 251]);
+    stage = "DATA";
     await s.command("DATA", [354]);
     await s.writeRaw(enc.encode(dotStuff(msg.data)));
     const done = await s.reply();
     if (done.code !== 250) throw new SmtpError(done.code, `DATA: ${done.code} ${done.lines.join(" ").slice(0, 200)}`);
     // 送り終えたあとの QUIT の応答は待つが、ここでの失敗はもう送信の失敗ではない
     await s.command("QUIT", [221]).catch(() => undefined);
+  } catch (e) {
+    // 応答コードのある失敗（"AUTH: 535 …"）はもう段階が分かる。コードの無い失敗（切られた・待ちきれない・TLS）に段階を足す
+    if (e instanceof SmtpError && e.code !== 0) throw e;
+    throw new SmtpError(0, `${stage}: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     await s.close();
   }

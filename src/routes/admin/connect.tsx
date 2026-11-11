@@ -16,12 +16,14 @@ import { isHookEvent } from "../../hooks/events";
 import { connectionSecretPurpose, endpointSecret } from "../../hooks/signing";
 import { openSecret } from "../../members/secret-box";
 import { randomToken } from "../../util/signed";
-import { t } from "../../i18n";
+import { tf, t } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { formFields, owner, param, publicBaseUrl, sessionSecret, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { can, type ShopAccess } from "./access";
+import { permLabel } from "./denied";
+import { EventChips, ScopeList, ScopePicker } from "./purposes";
 import type { ShopRow } from "../../db/types";
 
 
@@ -80,23 +82,15 @@ export function ConnectConfirm(props: { shop: ShopRow; access: ShopAccess | unde
         <fieldset style="border:0;padding:0">
           <legend>{t("connect.scopes")}</legend>
           {scopes.length === 0 ? <p class="muted">{t("connect.no_scopes")}</p> : null}
-          {scopes.map((sc) => {
-            const ok = can(props.access, SCOPE_PERM[sc]);
-            return (
-              <div>
-                <label>
-                  <input type="checkbox" name="scopes" value={sc} checked={ok} disabled={!ok} /> <code>{sc}</code>
-                  {ok ? null : <span class="muted"> ({t("tokens.scope_needs_perm")})</span>}
-                </label>
-              </div>
-            );
-          })}
+          {/* 目的ごとにまとめて言葉で。自分の項目に無いものは理由つきで選べない（判定の正は app_connect_begin） */}
+          <ScopePicker available={scopes} checked={() => true} grantable={(sc) => can(props.access, SCOPE_PERM[sc])} reason={(sc) => tf("access.needs_perm", { perm: permLabel(SCOPE_PERM[sc]) })} />
         </fieldset>
         {scopes.includes("orders:pii") || scopes.includes("customers:read") || scopes.includes("customers:write") ? <p class="notice">{t("tokens.pii_warning")}</p> : null}
         {(m.events ?? []).filter(isHookEvent).length > 0 ? (
-          <p>
-            {t("connect.events")}: <code>{(m.events ?? []).filter(isHookEvent).join(", ")}</code>
-          </p>
+          <>
+            <p style="margin-bottom:0">{t("connect.events")}</p>
+            <EventChips events={(m.events ?? []).filter(isHookEvent)} />
+          </>
         ) : null}
         {m.blocks?.length ? (
           <p>
@@ -135,9 +129,9 @@ export function ConnectionCard(props: { shopId: string; endpointId: string; conn
       ) : (
         <p class="notice">{t("connect.pending")}</p>
       )}
-      <p>
-        {t("connect.scopes")}: {conn.scopes.length ? <code>{conn.scopes.join(", ")}</code> : <span class="muted">{t("connect.no_scopes")}</span>}
-      </p>
+      <h3>{t("hooks.allowed_title")}</h3>
+      <ScopeList scopes={conn.scopes} />
+      <p class="muted">{t("hooks.allowed_hint")}</p>
       <p class="muted">{t("connect.secret_note")}</p>
       {props.canReconnect ? (
         <form method="post" action={`/admin/shops/${props.shopId}/hooks/${props.endpointId}/reconnect`}>

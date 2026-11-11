@@ -43,6 +43,8 @@ export type AppEnv = {
     db?: DbClient;
     /** loadShop を通ったあとだけ入る（そのショップでの自分の役割と権限の項目、0024） */
     shopAccess?: ShopAccess;
+    /** loadShop が項目の不足で断ったとき（権限の無いページの案内に使う。src/routes/admin/denied.tsx） */
+    deniedShop?: { shop: { id: string; name: string; settings: Record<string, unknown> | null }; perm: string };
     /** /api/v1 と /mcp: Bearer トークンで認証済みの ApiService */
     api?: ApiService;
     /** お店の画面で起きた出来事（src/storefront/events.ts）。同梱モジュールが <head> の口から外の形にする */

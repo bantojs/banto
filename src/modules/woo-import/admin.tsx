@@ -25,6 +25,7 @@ import { moduleEnabled } from "../registry";
 import { wcImageKey, wcImageTag } from "./keys";
 import { wooImporter } from "./client";
 import { imageOptionsOf } from "../../products/images";
+import { NotSaved, updateShop } from "../../routes/admin/shop-save";
 
 /**
  * 同梱モジュール「WooCommerce から取り込み」（woo_import、既定 OFF）。docs/knowledge/08-woo-migration.md
@@ -97,7 +98,7 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
   const json = JSON.stringify(cfg).replace(/</g, "\\u003c");
   const script = `${CLIENT_PRELUDE}(${wooImporter.toString()})().mount(document.getElementById("woo-import"), ${json});`;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("mod.woo_import.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.woo_import.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mod.woo_import.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.woo_import.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "woo-import" }}>
       <PageHead title={t("mod.woo_import.name")} />
       <ul class="muted">
         <li>{t("woo.note_safe")}</li>
@@ -142,7 +143,7 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
           </>
         ) : (
           <p class="notice">
-            {t("woo.customers_disabled")} <a href={`/admin/shops/${shop.id}#members`}>{t("woo.customers_open_settings")}</a>
+            {t("woo.customers_disabled")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("woo.customers_open_settings")}</a>
           </p>
         )}
         <h3>{t("woo.coupons_title")}</h3>
@@ -178,7 +179,7 @@ wooImport.get("/", requireOwner, async (c: AdminContext) => {
           </>
         ) : (
           <p class="notice">
-            {t("woo.passwords_disabled")} <a href={`/admin/shops/${shop.id}#members`}>{t("woo.customers_open_settings")}</a>
+            {t("woo.passwords_disabled")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("woo.customers_open_settings")}</a>
           </p>
         )}
         <h2>{t("woo.csv_title")}</h2>
@@ -217,8 +218,10 @@ wooImport.post("/fields", requireOwner, async (c: AdminContext) => {
   const merged: ProductField[] = [...existing];
   for (const f of incoming) if (!merged.some((x) => x.key === f.key) && merged.length < MAX_FIELDS) merged.push(f);
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), product_fields: merged } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), product_fields: merged } });
   } catch (e) {
+    // 定義は shops の行に置くので settings の項目も要る（RLS、0024）。足りなければ取り込みを止めて知らせる
+    if (e instanceof NotSaved) return c.json({ error: "not_saved" }, 403);
     if (e instanceof DbError) return c.json({ error: "db_error" }, 502);
     throw e;
   }

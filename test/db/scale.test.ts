@@ -165,11 +165,17 @@ describe.skipIf(!dbAvailable)("10 万件の性能（0058〜0060）", () => {
     expect(hits.length).toBeGreaterThan(0);
     const common = await timed("admin:products_search_common", () => run("select admin_search_ids($1, 'products', 'shirt', '{}', null, null, 51) as r", [shop.shopId]));
     expect((common[0]!.r as string[]).length).toBe(51);
+    // 0132: 品番の完全一致・カテゴリー・在庫切れ（在庫は 0 のまま = 全部が在庫切れ。いちばん重い形）
+    const bySku = await timed("admin:products_sku", () => run("select admin_search_ids($1, 'products', 'S-p-4242', '{}', null, null, 51) as r", [shop.shopId]));
+    expect((bySku[0]!.r as string[]).length).toBe(1);
+    await timed("admin:products_category", () => run("select admin_search_ids($1, 'products', '', $2, null, null, 51) as r", [shop.shopId, JSON.stringify({ category: categories[7] })]));
+    await timed("admin:products_out_of_stock", () => run("select admin_search_ids($1, 'products', '', '{\"stock\": \"out\"}', null, null, 51) as r", [shop.shopId]));
+    await timed("admin:products_old_first", () => run("select admin_search_ids($1, 'products', '', '{\"sort\": \"old\"}', null, null, 51) as r", [shop.shopId]));
     const grants = await timed("admin:grant_counts", () => run("select coupon_grant_counts($1, $2) as r", [shop.shopId, campaignId]));
     expect(grants[0]!.r).toEqual({ available: 90000, held: 0, used: 10000, revoked: 0 });
     await timed("admin:grants_page", () => run("select id, code from coupon_grants where campaign_id = $1 order by created_at desc, id desc limit 51", [campaignId]));
     await timed("admin:campaigns_page", () => run("select id from coupon_campaigns where shop_id = $1 order by created_at desc, id desc limit 51", [shop.shopId]));
-    for (const k of ["admin:products", "admin:products_next", "admin:products_search", "admin:products_search_common", "admin:grants_page", "admin:campaigns_page", "admin:grant_counts"]) expect(timings[k], k).toBeLessThan(FAST_MS);
+    for (const k of ["admin:products", "admin:products_next", "admin:products_search", "admin:products_search_common", "admin:products_sku", "admin:products_category", "admin:products_out_of_stock", "admin:products_old_first", "admin:grants_page", "admin:campaigns_page", "admin:grant_counts"]) expect(timings[k], k).toBeLessThan(FAST_MS);
   });
 
   it("クーポンの判定: キャンペーン 1 万件・コード 10 万枚でも、入力したコードだけを引く", async () => {

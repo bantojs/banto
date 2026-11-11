@@ -22,6 +22,12 @@ import { RECEIPT_STATUSES } from "../../modules/receipt/render";
 import { deliveryText } from "../../modules/delivery-time";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier, normalizeTracking, trackingUrl } from "../../orders/tracking";
 import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/tags";
+import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
+import { migrated } from "../../db/migration-state";
+import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { can } from "./access";
+import { CsvExportPanel, csvBody, csvHeaders, csvName, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
+import { permLabel } from "./denied";
 
 export const orders = new Hono<AppEnv>();
 
@@ -67,23 +73,109 @@ interface OrderListRow extends OrderRow {
 /** CSV に入れる注文の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
 const CSV_MAX_ORDERS = 2000;
 
+/** 書き出しの 1 行（注文ごと: item は null、明細ごと: その明細） */
+interface OrderCsvRow {
+  o: OrderListRow;
+  items: OrderItemRow[];
+  item: OrderItemRow | null;
+  ctx: { skuById: Map<string, SkuRow>; productName: Map<string, string> };
+}
+const addr = (r: OrderCsvRow, k: string) => ((r.o.shipping_address ?? {}) as Record<string, unknown>)[k];
+const itemCode = (r: OrderCsvRow, i: OrderItemRow) => (i.sku_id ? r.ctx.skuById.get(i.sku_id)?.code : undefined) ?? i.item_name ?? i.sku_id ?? "";
+const itemProduct = (r: OrderCsvRow, i: OrderItemRow) => {
+  const sku = i.sku_id ? r.ctx.skuById.get(i.sku_id) : undefined;
+  return [i.item_name ?? (sku ? r.ctx.productName.get(sku.product_id) : undefined), i.item_variant ?? sku?.name].filter(Boolean).join(" / ");
+};
+/** 注文の書き出しの列（まとまりごと。明細の列は、注文ごとなら 1 つのセルにまとめる） */
+const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
+  { key: "number", label: "注文番号", group: "csvx.g_order", value: (r) => r.o.number },
+  { key: "date", label: "日時", group: "csvx.g_order", value: (r) => formatDateTime(r.o.created_at) },
+  { key: "status", label: "状態", group: "csvx.g_order", value: (r) => r.o.status },
+  { key: "payment", label: "決済", group: "csvx.g_order", value: (r) => r.o.payment_provider },
+  { key: "payment_ref", label: "決済参照", group: "csvx.g_order", value: (r) => r.o.payment_ref },
+  { key: "total", label: "合計", group: "csvx.g_amounts", value: (r) => r.o.total_jpy },
+  { key: "shipping", label: "送料", group: "csvx.g_amounts", value: (r) => r.o.shipping_jpy },
+  { key: "discount", label: "値引き", group: "csvx.g_amounts", value: (r) => r.o.discount_jpy ?? 0 },
+  { key: "coupon", label: "クーポン", group: "csvx.g_amounts", value: (r) => (r.o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" ") },
+  { key: "name", label: "氏名", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_name },
+  { key: "email", label: "メール", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_email },
+  { key: "phone", label: "電話", group: "csvx.g_customer", pii: true, value: (r) => addr(r, "phone") },
+  { key: "postal_code", label: "郵便番号", group: "csvx.g_address", pii: true, value: (r) => addr(r, "postal_code") },
+  { key: "state", label: "都道府県", group: "csvx.g_address", pii: true, value: (r) => addr(r, "state") },
+  { key: "city", label: "市区町村", group: "csvx.g_address", pii: true, value: (r) => addr(r, "city") },
+  { key: "line1", label: "番地", group: "csvx.g_address", pii: true, value: (r) => addr(r, "line1") },
+  { key: "line2", label: "建物", group: "csvx.g_address", pii: true, value: (r) => addr(r, "line2") },
+  { key: "sku", label: "品番", group: "csvx.g_items", value: (r) => (r.item ? itemCode(r, r.item) : r.items.map((i) => `${itemCode(r, i)} x${i.qty}`).join(" / ")) },
+  { key: "product", label: "商品", group: "csvx.g_items", value: (r) => (r.item ? itemProduct(r, r.item) : r.items.map((i) => itemProduct(r, i)).join(" / ")) },
+  { key: "qty", label: "数量", group: "csvx.g_items", value: (r) => (r.item ? r.item.qty : r.items.reduce((n, i) => n + i.qty, 0)) },
+  { key: "unit_price", label: "単価", group: "csvx.g_items", units: ["item"], value: (r) => r.item?.unit_price_jpy ?? "" },
+  { key: "subtotal", label: "小計", group: "csvx.g_items", value: (r) => (r.item ? r.item.unit_price_jpy * r.item.qty : r.items.reduce((n, i) => n + i.unit_price_jpy * i.qty, 0)) },
+  { key: "shipped_at", label: "発送日時", group: "csvx.g_shipping", value: (r) => (r.o.shipped_at ? formatDateTime(r.o.shipped_at) : "") },
+  { key: "carrier", label: "配送業者", group: "csvx.g_shipping", value: (r) => (r.o.tracking_carrier ? carrierLabel(r.o.tracking_carrier) : "") },
+  { key: "tracking_number", label: "送り状番号", group: "csvx.g_shipping", value: (r) => r.o.tracking_number ?? "" },
+  { key: "tags", label: "印", group: "csvx.g_notes", value: (r) => orderTagsOf(r.o).join(", ") },
+  { key: "note", label: "メモ", group: "csvx.g_notes", pii: true, value: (r) => r.o.note ?? "" },
+];
+const ORDER_CSV_PRESETS: Record<string, CsvPreset> = {
+  accounting: { label: "csvx.p_accounting", cols: ["number", "date", "status", "payment", "payment_ref", "total", "shipping", "discount", "coupon"], unit: "order" },
+  shipping: { label: "csvx.p_shipping", cols: ["number", "name", "phone", "postal_code", "state", "city", "line1", "line2", "sku", "qty", "tracking_number"], unit: "order" },
+  sold: { label: "csvx.p_sold", cols: ["number", "date", "sku", "product", "qty", "unit_price", "subtotal"], unit: "item" },
+};
+/** 一覧の条件の名前（「すべて」で外すもの） */
+const ORDER_CONDITIONS = ["q", "status", "tag", "payment", "from", "to", "min", "max", "sort"] as const;
+
+/** 一覧の検索を広げる版（電話・送り状番号・支払い方法・日付・金額・並び。0132） */
+const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
+const ORDER_STATUSES = ["paid", "shipped", "cancelled", "refunded"] as const;
+const ORDER_PAYMENTS = ["stripe", "komoju", "amazon_pay", "free"] as const;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const YEN_RE = /^\d{1,9}$/;
+
 /**
- * 一覧と CSV で共通: 注文番号・決済の参照（完全一致）、メール・氏名（部分一致）と状態で DB で絞り、
- * 新しい順に limit 件（after より後ろ）を読む
+ * 一覧と CSV で共通の条件（URL の値）。形の違う値は捨てる（DB も無視する）。
+ * 0132 の前の DB では、今までどおりキーワード・状態・印だけ
  */
-async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; q: string; status: string; tag: string }> {
+function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
+  const v = (name: string) => (c.req.query(name) ?? "").trim();
+  const status = v("status");
+  const out: SearchParams = {
+    q: v("q").slice(0, 100),
+    status: (ORDER_STATUSES as readonly string[]).includes(status) ? status : "",
+    tag: v("tag").slice(0, 40),
+  };
+  if (!extended) return out;
+  const payment = v("payment");
+  out["payment"] = (ORDER_PAYMENTS as readonly string[]).includes(payment) ? payment : "";
+  out["from"] = DATE_RE.test(v("from")) ? v("from") : "";
+  out["to"] = DATE_RE.test(v("to")) ? v("to") : "";
+  out["min"] = YEN_RE.test(v("min")) ? v("min") : "";
+  out["max"] = YEN_RE.test(v("max")) ? v("max") : "";
+  out["sort"] = readSort(v("sort")) === "old" ? "old" : "";
+  return out;
+}
+
+/**
+ * 一覧と CSV で共通: 条件で DB で絞り、limit 件（after より後ろ）を読む。
+ * 0132 からは、キーワードか条件があれば検索の関数（admin_search_ids）がすべて絞る（キーワードは番号・メール・氏名・電話・送り状番号・決済の参照）。
+ * 条件が無ければ、新しい順に RLS 越しに読む
+ */
+async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; params: SearchParams; extended: boolean }> {
   const { db } = owner(c);
-  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
-  const status = c.req.query("status") ?? "";
-  // 印で絞る（0106）。検索と一緒のときは、検索の結果をここで絞る
-  const tag = (c.req.query("tag") ?? "").trim().slice(0, 40);
+  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
+  const params = orderSearchParams(c, extended);
+  const { q, status, tag } = params as { q: string; status: string; tag: string };
+  const filters = Object.fromEntries(Object.entries(params).filter(([k, v]) => k !== "q" && v !== ""));
+  if (extended && (q || Object.keys(filters).length > 0)) {
+    const rows = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
+    return { rows, params, extended };
+  }
+  // 0132 の前: 印で絞る（0106）のは、検索と一緒のときは検索の結果をここで絞る
   const contains = tag ? { arrayContains: { tags: [tag] } } : {};
   const eq: Record<string, string> = { shop_id: shopId };
-  if (["paid", "shipped", "cancelled", "refunded"].includes(status)) eq["status"] = status;
-  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
+  if (status) eq["status"] = status;
   if (q) {
-    const found = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: eq["status"] ? { status: eq["status"] } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
-    return { rows: tag ? found.filter((o) => orderTagsOf(o).includes(tag)) : found, q, status: eq["status"] ?? "", tag };
+    const found = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: status ? { status } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
+    return { rows: tag ? found.filter((o) => orderTagsOf(o).includes(tag)) : found, params, extended };
   }
   const rows: OrderListRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
@@ -95,45 +187,97 @@ async function listOrders(c: AdminContext, shopId: string, opts: { limit: number
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { rows, q, status: eq["status"] ?? "", tag };
+  return { rows, params, extended };
+}
+
+const PAYMENT_LABEL: Record<(typeof ORDER_PAYMENTS)[number], MessageKey> = { stripe: "search.payment_stripe", komoju: "search.payment_komoju", amazon_pay: "search.payment_amazon_pay", free: "search.payment_free" };
+
+/** 条件のチップの文字（キーワードと既定の並びはチップにしない） */
+function orderChipLabel(name: string, value: string): string | null {
+  if (name === "status") return `${t("order.status")}: ${statusLabel(value as OrderRow["status"])}`;
+  if (name === "payment") return `${t("order.payment")}: ${t(PAYMENT_LABEL[value as (typeof ORDER_PAYMENTS)[number]] ?? "search.payment_stripe")}`;
+  if (name === "from") return tf("search.chip_from", { date: value });
+  if (name === "to") return tf("search.chip_to", { date: value });
+  if (name === "min") return tf("search.chip_min", { yen: yen(Number(value)) });
+  if (name === "max") return tf("search.chip_max", { yen: yen(Number(value)) });
+  if (name === "tag") return `${t("order.tags")}: ${value}`;
+  if (name === "sort") return t("search.sort_old");
+  return null;
 }
 
 orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  void db;
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
-  const { q, status, tag } = list;
+  const { params, extended } = list;
   const page = splitPage(list.rows, (o) => o.created_at);
   const rows = page.rows;
-  const query = new URLSearchParams({ ...(q ? { q } : {}), ...(status ? { status } : {}), ...(tag ? { tag } : {}) }).toString();
-  const tagHref = (v: string) => `/admin/shops/${shop.id}/orders?${new URLSearchParams({ ...(status ? { status } : {}), tag: v }).toString()}`;
+  const base = `/admin/shops/${shop.id}/orders`;
+  const listHref = searchHref(base, params);
+  const query = listHref.slice(base.length);
+  const tagHref = (v: string) => searchHref(base, { ...params, q: "", tag: v });
+  const chips = searchChips(base, params, orderChipLabel);
+  // 保存したビュー（0135）
+  const viewsOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead title={t("order.list")}>
-        <a class="btn secondary" href={`/admin/shops/${shop.id}/orders.csv${query ? `?${query}` : ""}`}>
-          {t("order.csv")}
+        <a class="btn secondary" href={`/admin/shops/${shop.id}/orders.csv${query}`}>
+          {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("order.csv")}
         </a>
       </PageHead>
-      <form method="get" action={`/admin/shops/${shop.id}/orders`} class="toolbar">
-        <input id="q" type="search" name="q" value={q} placeholder={t("order.search_placeholder")} aria-label={t("order.search")} />
-        <select id="status" name="status" aria-label={t("order.status")}>
+      <ViewTabs shopId={shop.id} screen="orders" views={viewsOf(shop.settings, "orders")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
+      <SearchBar action={base} q={params["q"] ?? ""} placeholder={t(extended ? "search.orders_placeholder" : "order.search_placeholder")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+        <label>
+          {t("order.status")}
+          <select name="status">
             <option value="">{t("product.state_all")}</option>
-            {(["paid", "shipped", "cancelled", "refunded"] as const).map((st) => (
-              <option value={st} selected={status === st}>
+            {ORDER_STATUSES.map((st) => (
+              <option value={st} selected={params["status"] === st}>
                 {statusLabel(st)}
               </option>
             ))}
-        </select>
-        <input id="tag" type="search" name="tag" value={tag} placeholder={t("order.tag_filter")} aria-label={t("order.tag_filter")} maxlength={40} style="width:10rem" />
-        <button type="submit" class="secondary small">
-          {t("order.search")}
-        </button>
-      </form>
+          </select>
+        </label>
+        {extended ? (
+          <>
+            <label>
+              {t("order.payment")}
+              <select name="payment">
+                <option value="">{t("search.any")}</option>
+                {ORDER_PAYMENTS.map((pm) => (
+                  <option value={pm} selected={params["payment"] === pm}>
+                    {t(PAYMENT_LABEL[pm])}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t("search.from")}
+              <input type="date" name="from" value={params["from"] ?? ""} />
+            </label>
+            <label>
+              {t("search.to")}
+              <input type="date" name="to" value={params["to"] ?? ""} />
+            </label>
+            <label>
+              {t("search.min")}
+              <input type="number" name="min" min={0} step={1} value={params["min"] ?? ""} inputmode="numeric" />
+            </label>
+            <label>
+              {t("search.max")}
+              <input type="number" name="max" min={0} step={1} value={params["max"] ?? ""} inputmode="numeric" />
+            </label>
+          </>
+        ) : null}
+        <label>
+          {t("order.tag_filter")}
+          <input type="text" name="tag" value={params["tag"] ?? ""} maxlength={40} />
+        </label>
+      </SearchBar>
       {rows.length === 0 ? (
         <p>{t("order.none")}</p>
       ) : (
@@ -176,24 +320,47 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           </tbody>
         </table>
       )}
-      <Pager base={`/admin/shops/${shop.id}/orders${query ? `?${query}` : ""}`} next={page.next} paged={Boolean(after)} />
+      <Pager base={listHref} next={page.next} paged={Boolean(after)} />
+      <CsvExportPanel kind="orders" action={`/admin/shops/${shop.id}/orders.csv`} params={params} columns={ORDER_CSV_COLUMNS} units={[{ key: "order", label: "csvx.u_order" }, { key: "item", label: "csvx.u_item" }]} presets={ORDER_CSV_PRESETS} limit={CSV_MAX_ORDERS} />
     </AdminLayout>,
   );
 });
 
-/** CSV（Excel 向けに BOM 付き UTF-8）。検索条件は一覧と同じで、新しい順に CSV_MAX_ORDERS 件まで */
+/** CSV（Excel 向けに BOM 付き UTF-8）。検索条件は一覧と同じで、新しい順に CSV_MAX_ORDERS 件まで（越えたら最後の行で知らせる） */
 orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "orders");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const { rows } = await listOrders(c, shopId, { limit: CSV_MAX_ORDERS });
+  const choice = readCsvChoice(c, ORDER_CSV_COLUMNS, ["order", "item"], ORDER_CSV_PRESETS);
+  // 範囲「すべて」: 条件を外した URL へ
+  const all = stripConditions(c, `/admin/shops/${shopId}/orders.csv`, ORDER_CONDITIONS);
+  if (all) return c.redirect(all);
+  // 1 件多く読んで、上限で切ったかを知る（黙って切らない）
+  const listed = (await listOrders(c, shopId, { limit: CSV_MAX_ORDERS + 1 })).rows;
+  const truncated = listed.length > CSV_MAX_ORDERS ? { n: CSV_MAX_ORDERS, what: "csvx.what_orders" as const } : null;
+  const rows = listed.slice(0, CSV_MAX_ORDERS);
   const { db } = owner(c);
   // 明細と SKU は CSV に入る注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
   const items = await selectIn<OrderItemRow>(db, "order_items", "*", shopId, "order_id", rows.map((o) => o.id));
-  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
+  const skus = await selectIn<SkuRow>(db, "skus", "id,code,name,product_id", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const itemsByOrder = new Map<string, OrderItemRow[]>();
   for (const i of items) itemsByOrder.set(i.order_id, [...(itemsByOrder.get(i.order_id) ?? []), i]);
+  if (choice) {
+    // 列と範囲を選んだ書き出し（メンテナの決定 2026-11-09）。商品名は明細の列を選んだときだけ読む
+    const wantsProduct = choice.cols.some((col) => col.key === "product");
+    const products = wantsProduct ? await selectIn<{ id: string; name: string } & Record<string, unknown>>(db, "products", "id,name", shopId, "id", skus.map((k) => k.product_id)) : [];
+    const productName = new Map(products.map((p) => [p.id, p.name]));
+    const ctx = { skuById, productName };
+    const csvRows: OrderCsvRow[] =
+      choice.unit === "item"
+        ? rows.flatMap((o): OrderCsvRow[] => {
+            const its = itemsByOrder.get(o.id) ?? [];
+            return its.length > 0 ? its.map((item) => ({ o, items: its, item, ctx })) : [{ o, items: its, item: null, ctx }];
+          })
+        : rows.map((o) => ({ o, items: itemsByOrder.get(o.id) ?? [], item: null, ctx }));
+    return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(csvName(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`, truncated)));
+  }
   const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
   const lines = rows.map((o) => {
     const a = (o.shipping_address ?? {}) as Record<string, unknown>;
@@ -202,8 +369,8 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
       .join(" / ");
     return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? ""].map(csvCell).join(",");
   });
-  const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n";
-  return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="orders-${shop.slug}.csv"`, "Cache-Control": "no-store" });
+  const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
+  return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${csvName(`orders-${shop.slug}`, truncated)}.csv"`, "Cache-Control": "no-store" });
 });
 
 orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => {
@@ -220,6 +387,9 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
   const base = `/admin/shops/${shopId}/orders/${orderId}`;
   const addr = order.shipping_address ?? null;
   const msg = flash(c.req.query("flash"));
+  // 押せないものは理由を出す（メンテナの決定 2026-11-08）。判定の正は DB（cancel_order・mask_customer）
+  const access = c.get("shopAccess");
+  const Locked = (props: { perm: string }) => <p class="lockline">{tf("access.needs_perm", { perm: permLabel(props.perm) })}</p>;
 
   return c.html(
     <AdminLayout title={t("order.detail")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list"), href: `/admin/shops/${shop.id}/orders` }, { label: fmtDate(order.created_at) }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
@@ -227,6 +397,8 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
         title={
           <>
             #{order.number} <span class={`status ${statusDot(order.status)}`}>{statusLabel(order.status)}</span>
+            {/* 支払いと発送を分けて見せる（状態は 1 つのまま、見せ方だけ） */}
+            {order.status === "paid" ? <span class="status off">{t("order.unshipped")}</span> : null}
           </>
         }
         sub={`${t("order.detail")} · ${fmtDate(order.created_at)}`}
@@ -343,6 +515,23 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
                 </>
               ) : null}
             </p>
+            {order.customer_id ? can(access, "customers") ? <a href={`/admin/shops/${shop.id}/customers/${order.customer_id}`}>{t("order.open_member")}</a> : <Locked perm="customers" /> : <p class="muted">{t("order.guest")}</p>}
+          </section>
+          <section class="card">
+            <h2>{t("order.history")}</h2>
+            <ol class="timeline">
+              <li>
+                <span class="muted">{fmtDate(order.created_at)}</span> {t("order.history_placed")}
+              </li>
+              {order.shipped_at ? (
+                <li>
+                  <span class="muted">{fmtDate(order.shipped_at)}</span> {t("order.history_shipped")}
+                </li>
+              ) : null}
+              {order.status === "cancelled" || order.status === "refunded" ? (
+                <li>{statusLabel(order.status)}</li>
+              ) : null}
+            </ol>
           </section>
           <section class="card">
             <h2>{t("order.shipping")}</h2>
@@ -396,20 +585,28 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
             <section class="card danger-zone">
               <h2>{t("order.danger")}</h2>
               {order.status === "paid" ? (
-                <>
-                  <form method="post" action={`${base}/status`}>
-                    <input type="hidden" name="status" value="cancelled" />
-                    <button type="submit" class="danger">
-                      {t("order.mark_cancelled")}
-                    </button>
-                  </form>
-                  <p class="muted">{t("order.cancel_note")}</p>
-                </>
+                can(access, "orders_cancel") ? (
+                  <>
+                    <form method="post" action={`${base}/status`}>
+                      <input type="hidden" name="status" value="cancelled" />
+                      <button type="submit" class="danger">
+                        {t("order.mark_cancelled")}
+                      </button>
+                    </form>
+                    <p class="muted">{t("order.cancel_note")}</p>
+                  </>
+                ) : (
+                  <Locked perm="orders_cancel" />
+                )
               ) : null}
               {order.customer_email ? (
-                <form method="post" action={`${base}/mask`}>
-                  <button type="submit">{t("order.mask")}</button>
-                </form>
+                can(access, "customers") ? (
+                  <form method="post" action={`${base}/mask`}>
+                    <button type="submit">{t("order.mask")}</button>
+                  </form>
+                ) : (
+                  <Locked perm="customers" />
+                )
               ) : null}
             </section>
           ) : null}

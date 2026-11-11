@@ -3,7 +3,7 @@ import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { BUNDLED_PLUGINS, bundledPluginUrl, findBundledPlugin } from "../../plugins";
 import { t, tf } from "../../i18n";
-import { mailTransportName } from "../../mail/send";
+import { mailTransportName, smtpHostIsIpWithTls } from "../../mail/send";
 import { AdminLayout, Copyable, PageHead } from "./layout";
 import { publicBaseUrl } from "../common";
 import { owner, param, type AdminContext } from "./context";
@@ -61,6 +61,7 @@ plugins.get("/:shopId/plugins", requireOwner, async (c: AdminContext) => {
               </p>
             ) : null}
             {p.id === "email_resend" ? <p class="muted">{tf("plugins.mail_transport", { name: mailTransportName(cfg) ?? `${cfg.get("MAIL_TRANSPORT")} (?)` })}</p> : null}
+            {p.id === "email_resend" && smtpHostIsIpWithTls(cfg) ? <p class="notice">{t("plugins.smtp_host_ip")}</p> : null}
             {missing.length > 0 ? (
               <p class="notice">
                 {t("plugins.missing_secrets")} <code>{missing.join(", ")}</code>

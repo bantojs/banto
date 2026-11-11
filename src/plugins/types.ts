@@ -44,4 +44,11 @@ export interface BundledPlugin {
   webhook?: { path: string; events: string[]; where: string };
   /** hooks を受け取る（manifest.events を購読）。失敗は throw（再送される） */
   handle?(ctx: PluginContext): Promise<void>;
+  /**
+   * 任意: この出来事は、同じ回に取り出した送信先ごとの配信をまとめて受け取る（handleBatch）。
+   * 棚卸しで何百もの SKU が一度に少なくなったとき、1 件ずつ知らせると数が多すぎるもの（LINE の通数など）に使う。
+   * 失敗は throw（まとめた配信がどれも再送される）
+   */
+  batchEvents?: readonly string[];
+  handleBatch?(ctxs: PluginContext[]): Promise<void>;
 }

@@ -14,7 +14,7 @@
  */
 import { responsiveImage } from "../media/images";
 import { cardAttributes, type ProductField } from "../products/fields";
-import { shopImageUrl } from "./markdown";
+import { shopImageSrc } from "./markdown";
 import { productUrl } from "../storefront/urls";
 import { PRODUCT_SORTS, type ProductSort, type ProductSummary } from "../storefront/data";
 
@@ -147,7 +147,10 @@ export type ArticlesSort = "new" | "title" | "manual";
 /** ::: articles tag=@product: 描いている商品の URL の名前をタグとして絞る（商品詳細のひな形で「この商品を着た着こなし」など） */
 export const PRODUCT_TAG = "@product";
 export interface ArticlesBlock {
-  /** ブログの URL の名前 */
+  /**
+   * ブログの URL の名前。ブログをまたぐとき（0140）はカンマでつないだ名前（"news,staff"、重なりを除いて書いた順、20 個まで）か、
+   * "*"（ショップのすべてのブログ）。分けるのは articleBlockBlogs
+   */
   blog: string;
   /** このタグの記事だけ（PRODUCT_TAG なら描いている商品の URL の名前） */
   tag: string | null;
@@ -170,13 +173,34 @@ export const ARTICLE_BLOCKS_MAX = 2;
 export const ARTICLE_BLOCK_LIMIT_MAX = 12;
 export const ARTICLE_BLOCK_LIMIT_DEFAULT = 3;
 const ARTICLES_LINE = /^\s{0,3}:::\s*articles(?:\s+(.*))?$/;
+/** ブログをまたぐときに書けるブログの数（0140）。ショップのブログの上限（20）と同じ */
+export const ARTICLE_BLOCK_BLOGS_MAX = 20;
+/** すべてのブログ（0140） */
+export const ALL_BLOGS = "*";
+const BLOG_HANDLE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/** blog= の値を整える（1 つ・カンマでつないだ名前・"*"）。形が違えば null */
+function blogSpec(raw: string): string | null {
+  if (raw === ALL_BLOGS) return ALL_BLOGS;
+  const list = [...new Set(raw.split(","))];
+  if (list.length === 0 || list.length > ARTICLE_BLOCK_BLOGS_MAX || !list.every((h) => BLOG_HANDLE.test(h))) return null;
+  return list.join(",");
+}
+
+/** ブロックのブログ: URL の名前の並びか、すべてのブログ（"*"） */
+export function articleBlockBlogs(b: Pick<ArticlesBlock, "blog">): string[] | typeof ALL_BLOGS {
+  return b.blog === ALL_BLOGS ? ALL_BLOGS : b.blog.split(",");
+}
+
+/** ブログをまたぐブロックか（2 つ以上の名前か、すべてのブログ） */
+export const articleBlockSpansBlogs = (b: Pick<ArticlesBlock, "blog">): boolean => b.blog === ALL_BLOGS || b.blog.includes(",");
 
 export function parseArticlesLine(line: string): ArticlesBlock | null {
   const m = ARTICLES_LINE.exec(line);
   if (!m) return null;
   const a = attrs(m[1] ?? "");
-  const blog = a.get("blog") ?? "";
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(blog)) return null;
+  const blog = blogSpec(a.get("blog") ?? "");
+  if (!blog) return null;
   const tag = a.get("tag")?.trim() || null;
   if (tag !== null && tag.length > 50) return null;
   const limitRaw = a.get("limit");
@@ -249,7 +273,7 @@ export function cardFieldsHtml(fields: readonly ProductField[], values: Record<s
   const items = cardAttributes(fields.filter((f) => f.card), values);
   if (items.length === 0) return "";
   const li = items.map((a) => {
-    const body = a.type === "image" ? `<img src="${escapeHtml(shopImageUrl(String(a.value), mediaBase) ?? "")}" alt="${escapeHtml(a.label)}" loading="lazy">` : `<span class="muted">${escapeHtml(a.label)}</span> ${escapeHtml(String(a.value))}`;
+    const body = a.type === "image" ? `<img src="${escapeHtml(shopImageSrc(String(a.value), mediaBase) ?? "")}" alt="${escapeHtml(a.label)}" loading="lazy">` : `<span class="muted">${escapeHtml(a.label)}</span> ${escapeHtml(String(a.value))}`;
     return `<li class="card-field card-field--${escapeHtml(a.key)}">${body}</li>`;
   });
   return `<ul class="card-fields" style="list-style:none;margin:.25rem 0;padding:0;font-size:.85em">${li.join("")}</ul>`;

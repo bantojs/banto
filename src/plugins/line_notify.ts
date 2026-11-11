@@ -21,6 +21,46 @@ export function lineMessageFor(ctx: PluginContext): string | null {
   return null;
 }
 
+/** まとめて知らせるときに並べる SKU の数（LINE の 1 通は 5,000 字まで） */
+export const LINE_LOW_STOCK_LIST_MAX = 20;
+
+/** 在庫僅少をまとめた 1 通（棚卸し・取り込みで一度に何百もの SKU が少なくなっても、LINE は 1 回の配信で 1 通） */
+export function lineLowStockSummary(ctxs: readonly PluginContext[]): string | null {
+  if (ctxs.length === 0) return null;
+  if (ctxs.length === 1) return lineMessageFor(ctxs[0]!);
+  const lines = ctxs.slice(0, LINE_LOW_STOCK_LIST_MAX).map(({ envelope: { data } }) => `・SKU: ${String(data["sku_id"] ?? "").slice(0, 8)}… 残り ${String(data["available"])} 点`);
+  const rest = ctxs.length - lines.length;
+  const threshold = String(ctxs[0]!.envelope.data["threshold"]);
+  return [`【Banto】在庫が残りわずかな SKU が ${ctxs.length} 件あります（閾値 ${threshold}）`, ...lines, ...(rest > 0 ? [`ほか ${rest} 件`] : [])].join("\n");
+}
+
+async function pushText(ctx: PluginContext, text: string, retryKey: string): Promise<void> {
+  const to = typeof ctx.settings["to"] === "string" ? ctx.settings["to"].trim() : "";
+  if (!to) throw new Error("line_notify: 送信先ユーザー ID が未設定");
+  const token = await lineToken(ctx);
+  if (!token) throw new Error("line_notify: チャネルアクセストークンが未設定");
+  const res = await ctx.fetch(LINE_PUSH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": retryKey },
+    body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
+  });
+  // 409 は同じ再送キーを LINE が受け付け済み（送れている。src/line/send.ts の pushLine と同じ）
+  if (!res.ok && res.status !== 409) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
+
+/**
+ * まとめた配信の再送キー: まとめた id 全部の SHA-256 を UUID の形にする（LINE は UUID の形を求める）。
+ * 同じ組の再送は同じキー（LINE が重ねて送らない）、再送のときに新しい配信が加わったら別のキー（加わった分も送る）
+ */
+export async function batchRetryKey(ids: readonly string[]): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode([...ids].sort().join(","))));
+  const b = digest.slice(0, 16);
+  b[6] = (b[6]! & 0x0f) | 0x40; // version 4 の形
+  b[8] = (b[8]! & 0x3f) | 0x80; // variant
+  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export const lineNotify: BundledPlugin = {
   id: "line_notify",
   manifest: {
@@ -35,15 +75,14 @@ export const lineNotify: BundledPlugin = {
   async handle(ctx) {
     const text = lineMessageFor(ctx);
     if (!text) return;
-    const to = typeof ctx.settings["to"] === "string" ? ctx.settings["to"].trim() : "";
-    if (!to) throw new Error("line_notify: 送信先ユーザー ID が未設定");
-    const token = await lineToken(ctx);
-    if (!token) throw new Error("line_notify: チャネルアクセストークンが未設定");
-    const res = await ctx.fetch(LINE_PUSH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": ctx.envelope.id },
-      body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
-    });
-    if (!res.ok) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    await pushText(ctx, text, ctx.envelope.id);
+  },
+  // 在庫僅少は、同じ回に取り出した分を 1 通にまとめる（人が在庫を減らしたときも届くようになったため、0141）。
+  // 再送の鍵はまとめた配信の id 全部から作る（batchRetryKey）。1 件だけなら今までどおりその id
+  batchEvents: ["inventory.low"],
+  async handleBatch(ctxs) {
+    const text = lineLowStockSummary(ctxs);
+    if (!text) return;
+    await pushText(ctxs[0]!, text, ctxs.length === 1 ? ctxs[0]!.envelope.id : await batchRetryKey(ctxs.map((c) => c.envelope.id)));
   },
 };

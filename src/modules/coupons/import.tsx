@@ -141,7 +141,7 @@ function Page(props: { base: string; csv?: string; results?: RowResult[]; done?:
 function layout(c: AdminContext, shop: { id: string; name: string }, body: Child) {
   const base = `/admin/shops/${shop.id}/modules/coupons`;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("coupons.import.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: base }, { label: t("coupons.import.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("coupons.import.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: base }, { label: t("coupons.import.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={t("coupons.import.title")} />
       {body}
     </AdminLayout>,

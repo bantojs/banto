@@ -9,6 +9,7 @@ import { STOREFRONT_CACHE_TTL, StorefrontData, type PublicShop } from "../storef
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
+import { shopDomainOfRequest } from "./shop-domain-request";
 
 export type Ctx = Context<AppEnv>;
 
@@ -257,10 +258,19 @@ export function publicBaseUrl(c: Ctx): string {
   return (configured || new URL(c.req.url).origin).replace(/\/+$/, "");
 }
 
-/** 画像 URL の起点。MEDIA_BASE_URL が未設定なら <publicBaseUrl>/media（Worker 自身が配信） */
+/**
+ * 画像 URL の起点。MEDIA_BASE_URL が未設定なら Worker 自身が配信する <入口>/media。
+ * 入口は Banto の URL（PUBLIC_BASE_URL）だが、ショップの独自ドメインとして振り分けたページ（src/routes/storefront/domain.ts）では、
+ * そのショップのドメインの /media にする（お店の画面の画像を Banto の URL（workers.dev など）へ取りに行かせない）。
+ * 決めるのは Host の形ではなく、DB に登録されたショップのドメインとして振り分けたかどうか（別名・IP・プロキシの書き換えた Host では
+ * 切り替えない）。URL は登録されたドメインから https で組む（ショップのドメインは https だけ。手前で TLS を終える構成でも http にしない）
+ */
 export function mediaBaseUrl(c: Ctx): string {
-  const configured = c.get("adapters").config.get("MEDIA_BASE_URL");
-  return (configured || `${publicBaseUrl(c)}/media`).replace(/\/+$/, "");
+  const configured = c.get("adapters").config.get("MEDIA_BASE_URL")?.replace(/\/+$/, "");
+  // MEDIA_BASE_URL に Worker 自身の <Banto の URL>/media を書いた構成も、置き場は Worker なので未設定と同じに扱う
+  if (configured && configured !== `${publicBaseUrl(c)}/media`) return configured;
+  const shopDomain = shopDomainOfRequest(c.req.raw);
+  return shopDomain ? `https://${shopDomain}/media` : configured || `${publicBaseUrl(c)}/media`;
 }
 
 /** migrated() に渡す anon の DbClient とキャッシュ（anon キーが無ければ null = 新しいマイグレーションの機能は出さない） */

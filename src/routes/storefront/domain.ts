@@ -3,6 +3,7 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { SLUG_RE, type Ctx } from "../common";
+import { markShopDomainRequest } from "../shop-domain-request";
 
 /**
  * ショップごとの独自ドメイン（0015_shop_domain、docs/custom-domain.md）。
@@ -121,6 +122,8 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
     const body = method === "GET" || method === "HEAD" ? undefined : await c.req.raw.arrayBuffer();
     const req = new Request(url.toString(), { method, headers: c.req.raw.headers, body, redirect: "manual" });
     rewritten.add(req);
+    // 画像の起点（common.ts の mediaBaseUrl）が、登録されたショップのドメインのリクエストだと分かるように
+    if (shop.domain) markShopDomainRequest(req, shop.domain);
     let ctx;
     try {
       ctx = c.executionCtx;

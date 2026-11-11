@@ -3,7 +3,7 @@ import type { AppEnv } from "../../app";
 import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
-import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
+import { PAGES_MODULE, absoluteMedia, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { articleFieldDefs, articleFieldsReady, blogFieldSort } from "../../blog/fields";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSortFor, articleSummary, blogHasFeed, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
@@ -49,7 +49,8 @@ async function scope(c: Ctx, module: string): Promise<Scope | Response> {
 }
 
 /** アイキャッチ（保存した URL。/media/ から始まるものは絶対 URL に） */
-const absImage = (s: Scope, url: string | null | undefined) => (url ? (url.startsWith("/") ? `${s.origin}${url}` : url) : null);
+/** アイキャッチの絶対 URL（/media/… は置き場の起点 MEDIA_BASE_URL から。本文の画像と同じ規則） */
+const absImage = (s: Scope, url: string | null | undefined) => (url ? absoluteMedia(url, s.origin, s.mediaBaseUrl) : null);
 
 /**
  * 見る人に合わせた本文の書式と HTML（書式 → HTML、商品・記事のブロックに既定のカード）。

@@ -10,6 +10,7 @@ import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { can } from "./access";
+import { NotSavedNotice, failCode, updateShop } from "./shop-save";
 
 /** 宣伝の月の上限の既定（0105 の banto_line_marketing_limit と同じ） */
 export const LINE_MARKETING_LIMIT_DEFAULT = 150;
@@ -37,11 +38,13 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
   // 宣伝の月の上限と今月の数（0105）
   const usage = can(c.get("shopAccess"), "marketing") ? await owner(c).db.rpc<{ count: number; limit: number }>("line_marketing_usage", { p_shop_id: shop.id }) : null;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
+    <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins", here: "line-messaging" }}>
       <PageHead title={t("linemsg.title")} />
       {flash === "saved" ? <p class="notice">{t("linemsg.saved")}</p> : null}
       {flash === "deleted" ? <p class="notice">{t("linemsg.deleted")}</p> : null}
       {flash === "invalid" ? <p class="error">{t("linemsg.invalid")}</p> : null}
+      {flash === "generic" ? <p class="error">{t("error.generic")}</p> : null}
+      <NotSavedNotice flash={flash} />
       <p>{t("linemsg.intro")}</p>
       <p class={row ? "notice" : "muted"}>{row ? `${t("linemsg.status_set")}（${formatDateTime(row.updated_at)}）` : t("linemsg.status_missing")}</p>
       <ol class="muted">
@@ -63,7 +66,7 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
         <p class="muted">{t("linemsg.marketing_intro")}</p>
         {flash === "limit_saved" ? <p class="notice">{t("linemsg.limit_saved")}</p> : null}
         {usage ? <p>{t("linemsg.marketing_count").replace("{count}", String(usage.count)).replace("{limit}", String(usage.limit))}</p> : null}
-        {can(c.get("shopAccess"), "settings") ? (
+        {can(c.get("shopAccess"), "admin") ? (
           <form method="post" action={`${base}/limit`}>
             <label for="limit">{t("linemsg.limit")}</label>
             <input id="limit" name="limit" type="number" min={0} max={9999999} step={1} value={String(lineMarketingLimit(shop.settings))} required style="width:10rem" />
@@ -110,11 +113,17 @@ lineMessaging.post("/:shopId/line-messaging/delete", requireOwner, async (c: Adm
 });
 
 lineMessaging.post("/:shopId/line-messaging/limit", requireOwner, async (c: AdminContext) => {
-  const shop = await loadShop(c, param(c, "shopId"), "settings");
+  // 鍵 line_marketing_limit は組織の owner / admin（0129）
+  const shop = await loadShop(c, param(c, "shopId"), "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const base = `/admin/shops/${shop.id}/line-messaging`;
   const n = Number((await formFields(c)).limit ?? "");
   if (!Number.isInteger(n) || n < 0 || n > 9_999_999) return c.redirect(`${base}?flash=invalid`);
-  await owner(c).db.from("shops").update({ settings: { ...(shop.settings ?? {}), line_marketing_limit: n } }, { id: shop.id });
+  try {
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), line_marketing_limit: n } });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${failCode(e)}`);
+    throw e;
+  }
   return c.redirect(`${base}?flash=limit_saved`);
 });

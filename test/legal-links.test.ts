@@ -94,7 +94,7 @@ describe("法務のページの外の URL（0062）", () => {
     let up = true;
     externalHosts.set(`${WP}/`, () => (up ? html() : html(503)));
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    let page = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    let page = await (await b.get(`/admin/shops/${shop.id}/settings/legal-links`)).text();
     expect(page).toContain('id="legal-links"');
     expect(page).toContain("1 日に 1 回（既定）");
 
@@ -107,7 +107,7 @@ describe("法務のページの外の URL（0062）", () => {
     expect(res.headers.get("location")).toContain("flash=legal_links_saved");
     expect(legalLinksOf(sb.tables.shops[0]!["settings"] as Record<string, unknown>)).toEqual({ urls: { legal: `${WP}/legal`, returns: `${WP}/returns` }, check_hours: 6 });
     expect((await app.request(`${BASE}/my-shop/legal`)).headers.get("location")).toBe(`${WP}/legal`);
-    page = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    page = await (await b.get(`/admin/shops/${shop.id}/settings/legal-links`)).text();
     expect(page).toContain("生きています");
 
     // 落ちたら、今すぐ確かめるで Banto のページに戻る
@@ -115,7 +115,7 @@ describe("法務のページの外の URL（0062）", () => {
     res = await b.post(`/admin/shops/${shop.id}/legal-links/check`, {});
     expect(res.headers.get("location")).toContain("flash=legal_links_checked");
     expect((await app.request(`${BASE}/my-shop/legal`)).status).toBe(200);
-    expect(await (await b.get(`/admin/shops/${shop.id}`)).text()).toContain("届きませんでした");
+    expect(await (await b.get(`/admin/shops/${shop.id}/settings/legal-links`)).text()).toContain("届きませんでした");
 
     // ヘッドレス連携の保存は法務の URL を残す。戻り先から外したサイトの URL だけ外れる
     await b.post(`/admin/shops/${shop.id}/headless`, { return_origins: WP, relay_ips: "" });
@@ -131,7 +131,7 @@ describe("法務のページの外の URL（0062）", () => {
     sb.orgMembers.push({ org_id: orgId, user_id: staff.id, role: "member", created_at: "2026-10-27T00:00:00Z" });
     sb.orgMemberShops.push({ org_id: orgId, user_id: staff.id, shop_id: shop.id, perms: ["settings"] });
     const b = await Browser.loggedIn(app, "staff@example.com", "password-123");
-    expect(await (await b.get(`/admin/shops/${shop.id}`)).text()).not.toContain('id="legal-links"');
+    expect(await (await b.get(`/admin/shops/${shop.id}/settings/legal-links`)).text()).not.toContain('id="legal-links"');
     expect((await b.post(`/admin/shops/${shop.id}/legal-links`, { url_legal: `${WP}/legal`, check_hours: "24" })).status).toBe(404);
   });
 

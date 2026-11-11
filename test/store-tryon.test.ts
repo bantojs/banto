@@ -266,8 +266,22 @@ describe("お店で試着（管理画面）", () => {
     const req = sb.tables.tryon_requests[0]!;
 
     const s = await Browser.loggedIn(app, "staff@example.com", "staff-pass-1");
-    const dash = await (await s.get("/admin")).text();
-    expect(dash).toContain("/admin/stores/st-1/requests");
+    // 店舗のスタッフだけの人は、店舗のホームへ（今日の来店・取り置き・届くのを待つ数と、対応中のカード）
+    expect((await s.get("/admin")).headers.get("location")).toBe("/admin/stores/st-1/home");
+    const home = await (await s.get("/admin/stores/st-1/home")).text();
+    expect(home).toContain("/admin/stores/st-1/requests");
+    expect(home).toContain("届くのを待っている");
+    expect(home).toContain("<strong>#1</strong> 山田");
+    // 取り置き中は片手で押せるボタン。押したらホームに戻る
+    req["status"] = "ready";
+    req["hold_until"] = "2099-01-01";
+    const readyHome = await (await s.get("/admin/stores/st-1/home")).text();
+    expect(readyHome).toContain('class="big-btn">購入された</button>');
+    expect(readyHome).not.toContain("/restock");
+    const bought = await s.post(`/admin/stores/st-1/requests/${req["id"]}/status`, { status: "not_purchased", back: "home" });
+    expect(bought.headers.get("location")).toBe("/admin/stores/st-1/home?flash=saved");
+    expect(req["status"]).toBe("not_purchased");
+    req["status"] = "requested";
     const list = await (await s.get("/admin/stores/st-1/requests")).text();
     expect(list).toContain("#1");
     expect(list).toContain("マイショップ"); // どのショップの申し込みか（0027）
@@ -280,10 +294,32 @@ describe("お店で試着（管理画面）", () => {
     expect(await (await s.get(`/admin/stores/st-1/requests/${req["id"]}`)).text()).not.toContain("/restock");
     // 営業時間だけのフォーム（名前・メールアドレスは無い）
     const form = await (await s.get("/admin/stores/st-1")).text();
-    expect(form).toContain('name="h1"');
+    expect(form).toContain('name="h1_mode"');
     expect(form).not.toContain('name="email"');
+    // 今までの文字の欄でも保存できる
     await s.post("/admin/stores/st-1", { h1: "11:00-19:00", special_days: "" });
     expect(sb.tables.stores[0]!["hours"]).toMatchObject({ "1": [["11:00", "19:00"]], "2": [] });
+    // 曜日ごとの営業 / 定休日と時刻、休憩をはさむ 2 つ目。臨時の日は足す行と消す印
+    const week: Record<string, string> = {};
+    for (let d = 0; d < 7; d++) week[`h${d}_mode`] = d === 1 || d === 2 ? "open" : "closed";
+    Object.assign(week, { h1_s0: "10:00", h1_e0: "14:00", h1_s1: "15:00", h1_e1: "20:00", h2_s0: "10:00", h2_e0: "20:00", h0_s0: "10:00", h0_e0: "18:00" });
+    await s.post("/admin/stores/st-1", { ...week, add_from: "2099-12-31", add_to: "2100-01-01", add_kind: "closed", add_note: "年末 年始" });
+    expect(sb.tables.stores[0]!["hours"]).toMatchObject({ "0": [], "1": [["10:00", "14:00"], ["15:00", "20:00"]], "2": [["10:00", "20:00"]], "3": [] });
+    expect(sb.tables.stores[0]!["special_days"]).toEqual([
+      { date: "2099-12-31", closed: true, hours: [], note: "年末 年始" },
+      { date: "2100-01-01", closed: true, hours: [], note: "年末 年始" },
+    ]);
+    // 「営業」を選んだのに時刻が空なら、黙って定休日にせず断る
+    const forgot = await s.post("/admin/stores/st-1", { ...week, h3_mode: "open" });
+    expect(await forgot.text()).toContain("水曜日は「営業」ですが、時刻が入っていません");
+    expect(sb.tables.stores[0]!["hours"]).toMatchObject({ "3": [] });
+    const again = await (await s.get("/admin/stores/st-1")).text();
+    expect(again).toContain('name="sd_0" value="2099-12-31 休業 年末 年始"');
+    await s.post("/admin/stores/st-1", { ...week, sd_0: "2099-12-31 休業 年末 年始", sd_0_remove: "on", sd_1: "2100-01-01 休業 年末 年始", add_from: "2099-12-30", add_kind: "hours", add_s: "11:00", add_e: "17:00" });
+    expect(sb.tables.stores[0]!["special_days"]).toEqual([
+      { date: "2099-12-30", closed: false, hours: [["11:00", "17:00"]], note: null },
+      { date: "2100-01-01", closed: true, hours: [], note: "年末 年始" },
+    ]);
     // ショップの画面・組織の画面には入れない
     expect((await s.get(`/admin/shops/${sb.tables.shops[0]!["id"]}/modules/store-tryon`)).status).toBe(404);
     expect((await s.get("/admin/org")).headers.get("location")).toBe("/admin?flash=forbidden");

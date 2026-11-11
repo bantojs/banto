@@ -64,4 +64,24 @@ describe.skipIf(!dbAvailable)("会員限定のページ・記事（0100）", () 
     expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("update audiences set condition = $2 where id = $1", [gold, JSON.stringify({ param: "ref", set: true })])))).toMatch(/audience_display_only_in_use/);
     expect(await expectDbError(() => asAnon((c) => c.query("select page_member_get($1, 'vip', $2, 0, $3)", [a.shopId, goldCid, goldSid])))).toMatch(/permission denied/);
   });
+
+  it("ブログをまたぐ一覧（articles_member_multi、0140）: 選んだブログの記事を新しい順に 1 つの並びで。会員限定は合う会員だけ・手で並べた順は受けない・service_role だけ", async () => {
+    const pool = getPool();
+    const staff = (await pool.query<{ id: string }>("insert into blogs (shop_id, handle, title) values ($1, 'staff', 'スタッフ') returning id", [a.shopId])).rows[0]!.id;
+    const other = (await pool.query<{ id: string }>("insert into blogs (shop_id, handle, title) values ($1, 'other', 'ほか') returning id", [a.shopId])).rows[0]!.id;
+    await pool.query("insert into articles (shop_id, blog_id, handle, title, body, published, published_at) values ($1, $2, 'staff-1', 'staff-1', 'b', true, now() - interval '10 minutes')", [a.shopId, staff]);
+    await pool.query("insert into articles (shop_id, blog_id, handle, title, body, published, published_at) values ($1, $2, 'other-1', 'other-1', 'b', true, now() - interval '5 minutes')", [a.shopId, other]);
+    const multi = async (cid: string, sid: string, ids: string[], sort: string | null = null) =>
+      (await svc<{ handle: string; blog_id: string }[]>("select articles_member_multi($1, $2::uuid[], 0, 12, null, $3, 0, $4, $5) as r", [a.shopId, ids, cid, sid, sort])).map((x) => x.handle);
+    // news の記事（1 時間前）より staff-1（10 分前）が新しい。other は選んでいない
+    const gold2 = await multi(goldCid, goldSid, [blog, staff]);
+    expect(gold2[0]).toBe("staff-1");
+    expect(gold2.slice(1).sort()).toEqual(["hello", "vip-news"]);
+    expect((await multi(silverCid, silverSid, [blog, staff])).sort()).toEqual(["hello", "staff-1"]);
+    expect(await multi(silverCid, silverSid, [blog, staff, other], "title")).toEqual(["hello", "other-1", "staff-1"]);
+    expect(await expectDbError(() => multi(goldCid, goldSid, [blog, staff], "manual"))).toMatch(/invalid_sort/);
+    expect(await expectDbError(() => multi(goldCid, goldSid, []))).toMatch(/invalid_blogs/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select articles_member_multi($1, $2::uuid[], 0, 12, null, $3, 0, $4)", [a.shopId, [blog], goldCid, goldSid])))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asUser(a.ownerId, (c) => c.query("select articles_member_multi($1, $2::uuid[], 0, 12, null, $3, 0, $4)", [a.shopId, [blog], goldCid, goldSid])))).toMatch(/permission denied/);
+  });
 });

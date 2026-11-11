@@ -51,10 +51,14 @@ describe("ページの本文の書式", () => {
 
   it("画像はショップの画像の置き場だけ。ほかは説明の文字になる", () => {
     expect(md("![店の外観](https://media.example.jp/pages/s/a.webp)")).toBe('<p><img src="https://media.example.jp/pages/s/a.webp" alt="店の外観" loading="lazy" decoding="async"></p>');
-    expect(md("![a](/media/pages/s/a.webp)")).toContain('<img src="/media/pages/s/a.webp"');
-    // 管理画面と別のドメインで開いたお店: 管理画面の入口の /media/ の URL は、お店の /media/ から読む
-    expect(md("![a](https://banto.example.workers.dev/media/pages/s/a.webp)")).toContain('<img src="/media/pages/s/a.webp"');
-    expect(md("::: cover image=https://banto.example.workers.dev/media/pages/s/c.webp\n# 見出し\n:::")).toContain('src="/media/pages/s/c.webp"');
+    // Worker の置き場（/media/<キー>）と、管理画面など別の入口の /media/<キー> は、置き場の起点（MEDIA_BASE_URL）から読む
+    // （後から R2 のドメインを付けても、置いた時の入口の URL のまま Worker から配らない）
+    expect(md("![a](/media/pages/s/a.webp)")).toContain('<img src="https://media.example.jp/pages/s/a.webp"');
+    expect(md("![a](https://banto.example.workers.dev/media/pages/s/a.webp)")).toContain('<img src="https://media.example.jp/pages/s/a.webp"');
+    expect(md("::: cover image=https://banto.example.workers.dev/media/pages/s/c.webp\n# 見出し\n:::")).toContain('src="https://media.example.jp/pages/s/c.webp"');
+    // 起点が Worker の置き場（MEDIA_BASE_URL が無いときの <入口>/media）なら /media/ のまま（見ている入口から読む）
+    expect(markdownToHtml("![a](https://banto.example.workers.dev/media/pages/s/a.webp)", { mediaBase: "https://shop.example.jp/media" })).toContain('<img src="/media/pages/s/a.webp"');
+    expect(markdownToHtml("![a](/media/pages/s/a.webp)")).toContain('<img src="/media/pages/s/a.webp"');
     for (const bad of ["https://evil.example/x.png", "https://media.example.jp.evil/x.png", "/media/../admin", "https://evil.example/media/../admin", "javascript:x"]) {
       expect(md(`![外](${bad})`), bad).toBe("<p>外</p>");
     }

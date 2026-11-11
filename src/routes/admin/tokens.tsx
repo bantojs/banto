@@ -3,13 +3,15 @@ import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import { DEFAULT_SCOPES, SCOPE_PERM, generateApiToken, hashApiToken, isApiScope, issuableScopes, tokenPrefix, type ApiScope } from "../../api/tokens";
 import { migrated } from "../../db/migration-state";
-import { t, type MessageKey } from "../../i18n";
+import { t, tf } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
-import { can, shopAccess } from "./access";
+import { can } from "./access";
+import { permLabel } from "./denied";
+import { SCOPE_LABEL, ScopePicker, TOKEN_PRESETS, isTokenPreset } from "./purposes";
 
 /**
  * AI 連携（トークン）: /admin/shops/:shopId/tokens（docs/ai-access.md）
@@ -36,30 +38,6 @@ interface AppEndpoint {
   app_handle: string;
 }
 
-const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
-  "products:read": "tokens.scope.products_read",
-  "products:write": "tokens.scope.products_write",
-  "orders:read": "tokens.scope.orders_read",
-  "orders:pii": "tokens.scope.orders_pii",
-  "orders:write": "tokens.scope.orders_write",
-  "shop:read": "tokens.scope.shop_read",
-  "shop:write": "tokens.scope.shop_write",
-  "stats:read": "tokens.scope.stats_read",
-  "coupons:read": "tokens.scope.coupons_read",
-  "coupons:write": "tokens.scope.coupons_write",
-  "customers:read": "tokens.scope.customers_read",
-  "customers:write": "tokens.scope.customers_write",
-  "inquiries:read": "tokens.scope.inquiries_read",
-  "inquiries:write": "tokens.scope.inquiries_write",
-  "theme:write": "tokens.scope.theme_write",
-  "theme:publish": "tokens.scope.theme_publish",
-  "content:read": "tokens.scope.content_read",
-  "content:write": "tokens.scope.content_write",
-  "app_data:write": "tokens.scope.app_data_write",
-  "line:send": "tokens.scope.line_send",
-  "dialogs:write": "tokens.scope.dialogs_write",
-  "stores:write": "tokens.scope.stores_write",
-};
 
 /** 発行できるスコープ（当てるまで出さないものを除く。0111 の dialogs:write など） */
 const scopesFor = (c: AdminContext) => issuableScopes((v) => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, v));
@@ -77,11 +55,15 @@ async function appEndpoints(c: AdminContext, shopId: string): Promise<AppEndpoin
 tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
-  const sa = await shopAccess(c, shopId);
-  if (!sa || !can(sa.access, "integrations")) return c.text(t("shop.not_found"), 404);
+  // loadShop を通す（項目の無い人には、どの項目が要るかを出す。src/routes/admin/denied.tsx）
+  const loaded = await loadShop(c, shopId, "integrations");
+  if (!loaded) return c.text(t("shop.not_found"), 404);
+  const sa = { shop: loaded, access: c.get("shopAccess")! };
   const shop = sa.shop;
   // 発行者が持つ項目のスコープだけ出す（DB のトリガーも同じ判定をする。0028）
   const grantable = (sc: ApiScope) => can(sa.access, SCOPE_PERM[sc]);
+  const presetQ = c.req.query("preset");
+  const preset = isTokenPreset(presetQ) ? presetQ : null;
   const scopeList = await scopesFor(c);
   const [rows, apps] = await Promise.all([
     db.from<TokenRow>("api_tokens").select("id,name,prefix,scopes,expires_at,revoked_at,last_used_at,created_at,endpoint_id", { eq: { shop_id: shopId }, order: "created_at.desc" }),
@@ -129,7 +111,7 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
                   <code>{r.prefix}…</code>
                 </td>
                 <td>
-                  {r.scopes.join(", ")}
+                  {r.scopes.map((sc) => (isApiScope(sc) ? t(SCOPE_LABEL[sc]) : sc)).join("・")}
                   {r.endpoint_id ? <span class="muted"> → {appName.get(r.endpoint_id) ?? "-"}</span> : null}
                 </td>
                 <td>{fmt(r.last_used_at)}</td>
@@ -156,14 +138,15 @@ tokens.get("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
         <input id="name" type="text" name="name" required maxlength={100} placeholder="Claude デスクトップ" />
         <fieldset style="border:0;padding:0">
           <legend>{t("tokens.scopes")}</legend>
-          {scopeList.map((sc) => (
-            <div>
-              <label>
-                <input type="checkbox" name="scopes" value={sc} checked={grantable(sc) && (DEFAULT_SCOPES as readonly string[]).includes(sc)} disabled={!grantable(sc)} /> <code>{sc}</code> — {t(SCOPE_LABEL[sc])}
-                {grantable(sc) ? null : <span class="muted"> ({t("tokens.scope_needs_perm")})</span>}
-              </label>
-            </div>
-          ))}
+          {/* 目的のひな形（そこから細かく直せる）。スクリプト無しで、選び直すとこの画面を開き直す */}
+          <nav class="viewtabs" aria-label={t("tokens.preset")}>
+            {(["catalog", "orders", "theme", "custom"] as const).map((p) => (
+              <a href={`/admin/shops/${shop.id}/tokens?preset=${p}#issue`} aria-current={(preset ?? "custom") === p ? "page" : undefined}>
+                {t(`tokens.preset_${p}`)}
+              </a>
+            ))}
+          </nav>
+          <ScopePicker available={scopeList} checked={(sc) => (preset ? (TOKEN_PRESETS[preset] as readonly string[]) : (DEFAULT_SCOPES as readonly string[])).includes(sc)} grantable={grantable} reason={(sc) => tf("access.needs_perm", { perm: permLabel(SCOPE_PERM[sc]) })} />
         </fieldset>
         {grantable("app_data:write") ? (
           <div>
@@ -252,7 +235,7 @@ tokens.post("/:shopId/tokens", requireOwner, async (c: AdminContext) => {
       <p class="notice">{t("tokens.issued_once")}</p>
       <Copyable value={raw} name={t("tokens.title")} />
       <p>
-        {t("tokens.scopes")}: {scopes.join(", ")}
+        {t("tokens.scopes")}: {scopes.map((sc) => t(SCOPE_LABEL[sc])).join("・")}
       </p>
       <h2>{t("tokens.howto")}</h2>
       <Copyable value={JSON.stringify({ mcpServers: { banto: { type: "http", url: `${publicBaseUrl(c)}/mcp`, headers: { Authorization: `Bearer ${raw}` } } } }, null, 2)} name={t("tokens.howto")} />

@@ -101,9 +101,9 @@ function dbError(e: DbError): MessageKey {
 
 const base = (shopId: string) => `/admin/shops/${shopId}/modules/pages`;
 
-function layout(c: AdminContext, shop: ShopRow, title: string, crumbs: { label: string; href?: string }[], body: Child, status: 200 | 400 | 409 = 200) {
+function layout(c: AdminContext, shop: ShopRow, title: string, crumbs: { label: string; href?: string }[], body: Child, status: 200 | 400 | 409 = 200, here: "pages" | "layouts" = "pages") {
   return c.html(
-    <AdminLayout title={`${shop.name} · ${title}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, ...crumbs]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "pages" }}>
+    <AdminLayout title={`${shop.name} · ${title}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, ...crumbs]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "pages", here }}>
       {body}
     </AdminLayout>,
     status,
@@ -400,6 +400,7 @@ async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "err
       </form>
     </>,
     status,
+    "layouts",
   );
 }
 

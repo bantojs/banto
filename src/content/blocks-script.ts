@@ -964,7 +964,24 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
   // 日付の項目の順（0124）: data-sort="field:<key>"、data-from="today"
   var FSORT=/^field:[a-z][a-z0-9_]{0,39}$/;
   function okSort(v){ return ASORT[v]||FSORT.test(v||""); }
-  function articlesText(d){ var f=adlg?adlg.querySelector("form"):null; var o=f&&f.querySelector("[name=blog] option[value='"+String(d.blog).replace(/['\\]/g,"")+"']"); return T("articles-label").replace("{blog}",o?o.textContent:d.blog).replace("{n}",String(d.limit)); }
+  // ブログ: 1 つの名前・カンマでつないだ名前・"*"（すべて。0140）
+  var ABLOG=/^(\*|[a-z0-9][a-z0-9-]{0,63}(,[a-z0-9][a-z0-9-]{0,63}){0,19})$/;
+  function blogName(f,h){ var o=f&&(f.querySelector("[name=blog] option[value='"+h.replace(/['\\]/g,"")+"']")||f.querySelector("[name=blogs][value='"+h.replace(/['\\]/g,"")+"']")); return o?(o.getAttribute("data-title")||o.textContent):h; }
+  function articlesText(d){ var f=adlg?adlg.querySelector("form"):null; var name=d.blog==="*"?T("articles-all"):String(d.blog).split(",").map(function(h){ return blogName(f,h); }).join("\u30fb"); return T("articles-label").replace("{blog}",name).replace("{n}",String(d.limit)); }
+  // 選んだブログ（チェックボックスの欄があればそこから。無ければ 1 つを選ぶ欄）
+  function pickedBlogs(f){
+    var bx=f.querySelectorAll("[name=blogs]");
+    if(!bx.length) return f.elements.blog?String(f.elements.blog.value||""):"";
+    if(f.elements.allblogs&&f.elements.allblogs.checked) return "*";
+    var out=[]; Array.prototype.forEach.call(bx,function(x){ if(x.checked&&out.length<20) out.push(x.value); }); return out.join(",");
+  }
+  function setPickedBlogs(f,v){
+    var bx=f.querySelectorAll("[name=blogs]");
+    if(!bx.length){ if(v&&f.elements.blog&&v.indexOf(",")<0&&v!=="*") f.elements.blog.value=v; return; }
+    var list=v==="*"?[]:String(v||"").split(",");
+    if(f.elements.allblogs) f.elements.allblogs.checked=v==="*";
+    Array.prototype.forEach.call(bx,function(x){ x.checked=list.indexOf(x.value)>=0; });
+  }
   function setArticlesBox(box,d){
     box.className="banto-articles banto-articles--"+d.layout+(d.style?" banto-style-"+d.style:"")+(sel===box?" is-sel":""); box.setAttribute("data-banto-block","articles"); box.setAttribute("contenteditable","false");
     box.setAttribute("data-blog",d.blog); box.setAttribute("data-tag",d.tag); box.setAttribute("data-limit",String(d.limit)); box.setAttribute("data-layout",d.layout);
@@ -980,7 +997,7 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
     if(!adlg||!adlg.showModal){ window.alert(T("articles-none")); return; }
     if(!box&&ed.querySelectorAll("[data-banto-block=articles]").length>=2){ window.alert(T("articles-max")); if(blk){ caretIn(blk); select(blk); } return; }
     var f=adlg.querySelector("form"); var g=function(k,dv){ return box?(box.getAttribute("data-"+k)||dv):dv; };
-    if(g("blog","")) f.elements.blog.value=g("blog",""); f.elements.tag.value=g("tag",""); f.elements.limit.value=g("limit","3"); f.elements.layout.value=g("layout","grid");
+    setPickedBlogs(f,g("blog","")); f.elements.tag.value=g("tag",""); f.elements.limit.value=g("limit","3"); f.elements.layout.value=g("layout","grid");
     if(f.elements.sort) f.elements.sort.value=ASORT[g("sort","")]?g("sort",""):"";
     if(f.elements.fsort) f.elements.fsort.value=FSORT.test(g("sort",""))?g("sort","").slice(6):"";
     if(f.elements.from) f.elements.from.checked=g("from","")==="today";
@@ -992,8 +1009,11 @@ export const PAGE_BLOCKS_SCRIPT = String.raw`
       adlg.removeEventListener("close",done);
       if(adlg.returnValue!=="ok"){ if(blk){ caretIn(blk); select(blk); } return; }
       var n=parseInt(f.elements.limit.value,10);
-      var d={blog:/^[a-z0-9][a-z0-9-]{0,63}$/.test(f.elements.blog.value)?f.elements.blog.value:"",tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=12)?n:3,layout:f.elements.layout.value==="list"?"list":"grid",sort:f.elements.fsort&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.fsort.value||"").trim())?"field:"+String(f.elements.fsort.value).trim():(f.elements.sort&&ASORT[f.elements.sort.value]?f.elements.sort.value:""),from:f.elements.from&&f.elements.from.checked?"today":"",until:f.elements.funtil&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.funtil.value||"").trim())?"field:"+String(f.elements.funtil.value).trim():"",field:f.elements.field&&/^[a-z][a-z0-9_]{0,39}=[^"\n\r]{1,100}$/.test(String(f.elements.field.value||"").trim())?String(f.elements.field.value).trim():"",style:styleVal(f.elements.style)};
+      var pb=pickedBlogs(f);
+      var d={blog:ABLOG.test(pb)?pb:"",tag:String(f.elements.tag.value||"").replace(/["\n\r]/g,"").trim().slice(0,50),limit:(n>=1&&n<=12)?n:3,layout:f.elements.layout.value==="list"?"list":"grid",sort:f.elements.fsort&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.fsort.value||"").trim())?"field:"+String(f.elements.fsort.value).trim():(f.elements.sort&&ASORT[f.elements.sort.value]?f.elements.sort.value:""),from:f.elements.from&&f.elements.from.checked?"today":"",until:f.elements.funtil&&/^[a-z][a-z0-9_]{0,39}$/.test(String(f.elements.funtil.value||"").trim())?"field:"+String(f.elements.funtil.value).trim():"",field:f.elements.field&&/^[a-z][a-z0-9_]{0,39}=[^"\n\r]{1,100}$/.test(String(f.elements.field.value||"").trim())?String(f.elements.field.value).trim():"",style:styleVal(f.elements.style)};
       if(!d.blog) return;
+      // ブログをまたぐときは手で並べた順を使えない（新しい順にする）
+      if((d.blog==="*"||d.blog.indexOf(",")>=0)&&d.sort==="manual") d.sort="";
       if(box){ setArticlesBox(box,d); mark(); select(box); }
       else { var nb=document.createElement("div"); setArticlesBox(nb,d); place2(nb,blk); }
     };

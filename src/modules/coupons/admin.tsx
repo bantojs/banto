@@ -100,7 +100,7 @@ couponsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const f = flash(c.req.query("flash"));
   const now = Date.now();
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("mod.coupons.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.coupons.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mod.coupons.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.coupons.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={t("mod.coupons.name")}>
         <a class="btn secondary" href={`${base}/import`}>
           {t("coupons.import.title")}
@@ -303,7 +303,7 @@ function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormCont
       </select>
       {!members ? (
         <p class="muted">
-          {t("coupons.members_disabled")} <a href={`/admin/shops/${fc.shop.id}#members`}>{t("shop.members_open_settings")}</a>
+          {t("coupons.members_disabled")} <a href={`/admin/shops/${fc.shop.id}/settings/members`}>{t("shop.members_open_settings")}</a>
         </p>
       ) : null}
 
@@ -513,7 +513,7 @@ couponsAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   const fc = await formContext(c, shop);
   const f = flash(c.req.query("flash"));
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("coupons.new")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: t("coupons.new") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("coupons.new")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: t("coupons.new") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={t("coupons.new")} />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       <CampaignForm fc={fc} row={null} action={fc.base} />
@@ -549,7 +549,7 @@ couponsAdmin.get("/:campaignId", requireOwner, async (c: AdminContext) => {
   const f = flash(c.req.query("flash"));
   const link = row.code ? `${shopHome(publicBaseUrl(c), shop)}/cart?coupon=${encodeURIComponent(row.code)}` : null;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${row.name}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: row.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${row.name}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: row.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={row.name} />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       <CampaignForm fc={fc} row={row} action={`${fc.base}/${row.id}`} stats={stats[row.id] ?? { used: 0, held: 0 }} link={link} claimUrl={`${shopHome(publicBaseUrl(c), shop)}/coupons`} />

@@ -283,9 +283,9 @@ describe("会員機能（店ごとのアカウント・パスワードなし）"
 
     await memberLogin(new Browser(app), mail, "/my-shop", "taken@example.com");
     let res = await admin.post(`/admin/shops/${shop.id}/customers/${id}/email`, { email: "Taken@example.com" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?error=email_taken`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${id}?error=email_taken`);
     res = await admin.post(`/admin/shops/${shop.id}/customers/${id}/email`, { email: "New@Example.com" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?flash=email_changed`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${id}?flash=email_changed`);
     expect(sb.tables.customers.find((x) => x["id"] === id)).toMatchObject({ email: "new@example.com", session_epoch: 1 });
     const notices = mail.sent.filter((m) => m.subject.includes("メールアドレスを変更しました"));
     expect(notices.map((m) => m.to).sort()).toEqual(["member@example.com", "new@example.com"]);
@@ -295,9 +295,9 @@ describe("会員機能（店ごとのアカウント・パスワードなし）"
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?flash=deleted`);
     expect(sb.tables.customers.find((x) => x["id"] === id)).toBeUndefined();
 
-    html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    html = await (await admin.get(`/admin/shops/${shop.id}/settings/members`)).text();
     expect(html).toMatch(/name="members_enabled" value="on" checked/);
-    await admin.post(`/admin/shops/${shop.id}/shipping`, { mode: "flat", flat_fee_jpy: "0", tax_rate: "10" });
+    await admin.post(`/admin/shops/${shop.id}/members`, {});
     expect((sb.shops[0]!["settings"] as Record<string, unknown>)["members_enabled"]).toBe(false);
     const fresh = new Browser(appWith(sb, {}, undefined, new FakeStripe()));
     expect((await fresh.get("/my-shop/account")).status).toBe(404);
@@ -307,7 +307,7 @@ describe("会員機能（店ごとのアカウント・パスワードなし）"
     const { shop, app } = setup({ members: false });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const html = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();
-    expect(html).toContain(`href="/admin/shops/${shop.id}#members"`);
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain('id="members"');
+    expect(html).toContain(`href="/admin/shops/${shop.id}/settings/members"`);
+    expect(await (await admin.get(`/admin/shops/${shop.id}/settings/members`)).text()).toContain('id="members"');
   });
 });

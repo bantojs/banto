@@ -172,23 +172,23 @@ describe("管理画面: 独自ドメインの設定", () => {
   it("保存・形のチェック・重複・Banto 自身のホスト名", async () => {
     const { app, shop, other, sb } = setup({ domain: null });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const page = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    const page = await (await admin.get(`/admin/shops/${shop.id}/settings/domain`)).text();
     expect(page).toContain(`action="/admin/shops/${shop.id}/domain"`);
 
     let res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "https://Shop.Example.JP/" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(sb.tables.shops.find((s) => s["id"] === shop.id)!["domain"]).toBe(DOMAIN);
 
     res = await admin.post(`/admin/shops/${other.id}/domain`, { domain: DOMAIN });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${other.id}?flash=domain_taken#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${other.id}/settings/domain?flash=domain_taken`);
 
     for (const bad of ["not a domain", "localhost", "banto.workers.dev"]) {
       res = await admin.post(`/admin/shops/${other.id}/domain`, { domain: bad });
-      expect(res.headers.get("location"), bad).toBe(`/admin/shops/${other.id}?flash=domain_invalid#domain`);
+      expect(res.headers.get("location"), bad).toBe(`/admin/shops/${other.id}/settings/domain?flash=domain_invalid`);
     }
 
     res = await admin.post(`/admin/shops/${shop.id}/domain`, { domain: "" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=domain_saved#domain`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/domain?flash=domain_saved`);
     expect(sb.tables.shops.find((s) => s["id"] === shop.id)!["domain"]).toBeNull();
   });
 });
@@ -212,6 +212,50 @@ describe("取引メールのリンク", () => {
     } as unknown as Parameters<typeof buildOrderEmail>[1];
     expect(buildOrderEmail("paid", contact, BASE).text).toContain(`${SHOP_URL}/orders/lookup`);
     expect(buildOrderEmail("paid", { ...contact, shop: { ...contact.shop, domain: null } }, BASE).text).toContain(`${BASE}/my-shop/orders/lookup`);
+  });
+});
+
+describe("画像の起点（MEDIA_BASE_URL が無いとき）", () => {
+  const withImage = (o: { media?: string } = {}) => {
+    const { sb, shop } = setup();
+    const p = sb.tables.products.find((x) => x["slug"] === "tee")!;
+    sb.tables.product_images.push({ id: crypto.randomUUID(), shop_id: shop.id, product_id: p["id"], storage_key: `shops/${shop.id}/products/${String(p["id"])}/a.webp`, thumb_key: null, width: 800, height: 800, sort_order: 0, options: {}, variants: [], thumb_width: null });
+    // テストの既定の MEDIA_BASE_URL（<Banto の URL>/media）は外す
+    const app = appWith(sb, { RESEND_API_KEY: "re_test", MEDIA_BASE_URL: o.media }, undefined, new FakeStripe());
+    return { shop, app };
+  };
+
+  it("ショップの独自ドメインで開いたページの商品画像は、そのドメインの /media から（Banto の URL へ取りに行かない）", async () => {
+    const { shop, app } = withImage();
+    const html = await (await new Browser(app, SHOP_URL).get("/products/tee")).text();
+    expect(html).toContain(`${SHOP_URL}/media/shops/${shop.id}/products/`);
+    expect(html).not.toContain(`${BASE}/media/`);
+    // MEDIA_BASE_URL に Worker 自身の <Banto の URL>/media を書いた構成も同じ
+    const w = withImage({ media: `${BASE}/media` });
+    expect(await (await new Browser(w.app, SHOP_URL).get("/products/tee")).text()).toContain(`${SHOP_URL}/media/shops/${w.shop.id}/products/`);
+  });
+
+  it("独自ドメインの無いショップを PUBLIC_BASE_URL と違うホスト（IP・別名）で開いても、画像は PUBLIC_BASE_URL の /media のまま", async () => {
+    const { sb, shop } = setup({ domain: null });
+    const p = sb.tables.products.find((x) => x["slug"] === "tee")!;
+    sb.tables.product_images.push({ id: crypto.randomUUID(), shop_id: shop.id, product_id: p["id"], storage_key: `shops/${shop.id}/products/${String(p["id"])}/a.webp`, thumb_key: null, width: 800, height: 800, sort_order: 0, options: {}, variants: [], thumb_width: null });
+    const app = appWith(sb, { RESEND_API_KEY: "re_test", MEDIA_BASE_URL: undefined }, undefined, new FakeStripe());
+    for (const origin of ["http://192.168.0.5:8787", "https://www.banto.example.jp"]) {
+      const html = await (await new Browser(app, origin).get("/my-shop/products/tee")).text();
+      expect(html).toContain(`${BASE}/media/shops/${shop.id}/products/`);
+      expect(html).not.toContain("https://192.168.0.5/");
+    }
+  });
+
+  it("Banto の URL で開いたページは今までどおり PUBLIC_BASE_URL の /media、MEDIA_BASE_URL があればどこでもそこから", async () => {
+    const { shop, app } = withImage();
+    // 独自ドメインのショップは Banto の URL では転送されるので、Banto の URL のままの公開 API で確かめる
+    const api = await (await new Browser(app).get("/api/shops/my-shop/products/tee")).text();
+    expect(api).toContain(`${BASE}/media/shops/${shop.id}/products/`);
+    const r = withImage({ media: "https://media.example.jp" });
+    const html = await (await new Browser(r.app, SHOP_URL).get("/products/tee")).text();
+    expect(html).toContain(`https://media.example.jp/shops/${r.shop.id}/products/`);
+    expect(html).not.toContain("/media/shops/");
   });
 });
 

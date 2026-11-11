@@ -8,9 +8,9 @@ import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { cardAttributes, productFields } from "../../products/fields";
 import { favoritesEnabled } from "../../modules/favorites";
-import { shopImageUrl } from "../../pages/markdown";
+import { shopImageSrc } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
-import { formatDateTime } from "../../i18n/time";
+import { formatDateTime, isoToZonedDate } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
 import { OPTION_AXES_SCRIPT, displayOptionAxes } from "../../products/option-axes";
 
@@ -119,7 +119,7 @@ function themeSetting(ctx: ThemeContext | undefined, key: string): string | unde
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
-function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSeconds?: number; children?: Child }) {
+function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSeconds?: number; refreshUrl?: string; children?: Child }) {
   const { ctx, seo } = props;
   const fullTitle = ctx ? `${props.title} · ${ctx.shop.name}` : props.title;
   const description = seo?.description ?? themeSetting(ctx, "description") ?? (ctx ? ctx.shop.name : t("app.name"));
@@ -127,14 +127,17 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
   const accent = themeSetting(ctx, "accent_color") ?? "#1f6feb";
   const announcement = themeSetting(ctx, "announcement");
   const logo = themeSetting(ctx, "logo_url");
+  // doctype が無いとブラウザは互換モード（quirks mode）で描く。JSX では書けないので raw で先頭に置く
   return (
-    <html lang={getLocale()}>
+    <>
+      {raw("<!doctype html>")}
+      <html lang={getLocale()}>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{fullTitle}</title>
         <meta name="description" content={description.slice(0, 200)} />
-        {props.refreshSeconds ? <meta http-equiv="refresh" content={String(props.refreshSeconds)} /> : null}
+        {props.refreshSeconds ? <meta http-equiv="refresh" content={props.refreshUrl ? `${props.refreshSeconds};url=${props.refreshUrl}` : String(props.refreshSeconds)} /> : null}
         {seo?.noindex ? <meta name="robots" content="noindex" /> : null}
         {canonical ? <link rel="canonical" href={canonical} /> : null}
         <meta property="og:title" content={fullTitle} />
@@ -142,7 +145,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
         <meta property="og:type" content={seo?.type === "product" ? "product" : "website"} />
         {ctx ? <meta property="og:site_name" content={ctx.shop.name} /> : null}
         {canonical ? <meta property="og:url" content={canonical} /> : null}
-        {seo?.image ? <meta property="og:image" content={absoluteMedia(seo.image, ctx?.publicBaseUrl)} /> : null}
+        {seo?.image ? <meta property="og:image" content={absoluteMedia(seo.image, ctx?.publicBaseUrl, ctx?.mediaBaseUrl)} /> : null}
         <meta name="twitter:card" content={seo?.image ? "summary_large_image" : "summary"} />
         {seo?.jsonLd ? <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdText(seo.jsonLd) }} /> : null}
         <style>{raw(css)}</style>
@@ -200,7 +203,8 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
           <p class="muted">{t("store.powered_by")}</p>
         </footer>
       </body>
-    </html>
+      </html>
+    </>
   );
 }
 
@@ -264,6 +268,12 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
   const list = mine.length > 0 ? mine : guest;
   return list.length > 0 ? `${t("store.member_price")} ${yen(Math.min(...list))}` : null;
 }
+
+/**
+ * ページ・記事のアイキャッチの URL（置き場の画像だけ。/media/… は置き場の起点 MEDIA_BASE_URL から。src/pages/markdown.ts の shopImageSrc）。
+ * 置き場の外と見なすもの（MEDIA_BASE_URL を別のドメインに付け替える前に保存した絶対 URL など）は null で、呼ぶ側は <img> を出さない
+ */
+const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
 export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
@@ -330,6 +340,7 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
             <thead>
               <tr>
                 <th>{t("tryon.number")}</th>
+                <th>{t("tryon.requested_on")}</th>
                 <th>{t("tryon.store")}</th>
                 <th>{t("tryon.items")}</th>
                 <th>{t("tryon.status")}</th>
@@ -338,8 +349,11 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
             </thead>
             <tbody>
               {tryon.map((r) => (
-                <tr>
+                <tr data-number={String(r.number)} data-date={isoToZonedDate(r.created_at)} data-status={r.status}>
                   <td>{r.number}</td>
+                  <td>
+                    <time datetime={isoToZonedDate(r.created_at)}>{formatDateTime(r.created_at, { dateOnly: true })}</time>
+                  </td>
                   <td>{r.store_name}</td>
                   <td>{r.items.map((i) => `${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}`).join("、")}</td>
                   <td>
@@ -390,9 +404,11 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
           </thead>
           <tbody>
             {orders.map((o) => (
-              <tr>
+              <tr data-number={String(o["number"])} data-date={isoToZonedDate(String(o["created_at"]))} data-status={String(o["status"])}>
                 <td>{String(o["number"])}</td>
-                <td>{formatDateTime(String(o["created_at"]), { dateOnly: true })}</td>
+                <td>
+                  <time datetime={isoToZonedDate(String(o["created_at"]))}>{formatDateTime(String(o["created_at"]), { dateOnly: true })}</time>
+                </td>
                 <td>{yen(Number(o["total_jpy"]))}</td>
                 <td>{t(`order.status.${String(o["status"])}` as MessageKey)}</td>
                 {receipt ? (
@@ -818,7 +834,7 @@ export const defaultTheme: Theme = {
       <Layout title={page.seo_title || page.title} ctx={ctx} seo={{ path: path ?? pagePath(ctx.shopPath, page.handle), ...(page.seo_description ? { description: page.seo_description } : {}), ...(page.image_url ? { image: page.image_url } : {}) }}>
         <article class="page">
           {bare ? null : <h1>{page.title}</h1>}
-          {!bare && page.image_url ? <img class="page-image" src={page.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          {!bare && eyecatch(page.image_url, ctx) ? <img class="page-image" src={eyecatch(page.image_url, ctx)!} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
         </article>
       </Layout>
@@ -877,7 +893,7 @@ export const defaultTheme: Theme = {
             {article.author ? <> · {article.author}</> : null}
           </p>
           <h1>{article.title}</h1>
-          {article.image_url ? <img class="page-image" src={article.image_url} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          {eyecatch(article.image_url, ctx) ? <img class="page-image" src={eyecatch(article.image_url, ctx)!} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
           {article.tags.length > 0 ? (
             <p class="blog-tags">
@@ -1771,7 +1787,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  CheckoutDone({ ctx, free, status, orderNumber, refresh, inquiryUrl }) {
+  CheckoutDone({ ctx, free, status, orderNumber, refresh, refreshUrl, inquiryUrl }) {
     const body =
       status === "confirmed" && orderNumber != null
         ? tf("store.thanks_confirmed", { n: orderNumber })
@@ -1783,7 +1799,7 @@ export const defaultTheme: Theme = {
               ? t("store.thanks_free")
               : t("store.thanks_body");
     return (
-      <Layout title={t("store.thanks_title")} ctx={ctx} seo={{ noindex: true }} refreshSeconds={status === "pending" && refresh ? 4 : undefined}>
+      <Layout title={t("store.thanks_title")} ctx={ctx} seo={{ noindex: true }} refreshSeconds={status === "pending" && refresh ? 4 : undefined} {...(refreshUrl ? { refreshUrl } : {})}>
         <h1>{t("store.thanks_title")}</h1>
         <p>{body}</p>
         {inquiryUrl ? (
@@ -2054,7 +2070,7 @@ function CardFields({ ctx, items }: { ctx: ThemeContext; items: { key: string; l
       {items.map((a) => (
         <li class={`card-field card-field--${a.key}`}>
           {a.type === "image" ? (
-            <img src={shopImageUrl(String(a.value), ctx.mediaBaseUrl) ?? ""} alt={a.label} loading="lazy" />
+            <img src={shopImageSrc(String(a.value), ctx.mediaBaseUrl) ?? ""} alt={a.label} loading="lazy" />
           ) : (
             <>
               <span class="muted">{a.label}</span> {String(a.value)}
@@ -2097,7 +2113,7 @@ export function blogListParts({ ctx, blog, articles, tag, tags, newer, older }: 
           {articles.map(({ article, summary }) => (
             <li>
               <a href={articlePath(ctx.shopPath, blog.handle, article.handle)}>
-                {article.image_url ? <img src={article.image_url} alt="" loading="lazy" decoding="async" /> : null}
+                {eyecatch(article.image_url, ctx) ? <img src={eyecatch(article.image_url, ctx)!} alt="" loading="lazy" decoding="async" /> : null}
                 <div class="blog-meta">{article.published_at ? formatDateTime(article.published_at, { dateOnly: true }) : null}</div>
                 <h2>{article.title}</h2>
                 {summary ? <p>{summary}</p> : null}

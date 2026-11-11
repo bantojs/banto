@@ -57,11 +57,12 @@ describe("SEO とテーマ設定", () => {
   it("管理画面でテーマ設定を保存できる（不正な色・http のロゴは捨てる）", async () => {
     const { app, shop, sb } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    // 既定のテーマの見た目はデザインの画面（メンテナの決定 2026-11-08）
+    const html = await (await admin.get(`/admin/shops/${shop.id}/design`)).text();
     expect(html).toContain("見た目（テーマ）");
     expect(html).toContain('value="#aa3366"');
     const res = await admin.post(`/admin/shops/${shop.id}/theme`, { description: "新しい紹介", announcement: "", accent_color: "red", logo_url: "http://insecure.example/logo.png" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=theme_saved`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/design?flash=theme_saved`);
     expect((sb.shops[0]!["settings"] as Record<string, unknown>)["theme_settings"]).toEqual({ description: "新しい紹介", announcement: "", accent_color: "#1f6feb", logo_url: "" });
     expect((sb.shops[0]!["settings"] as Record<string, unknown>)["shipping"]).toBeUndefined(); // 他の設定キーは触らない（元々無い）
   });

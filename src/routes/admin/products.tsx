@@ -1,12 +1,15 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { DbError } from "../../db/client";
+import { DbError, type DbClient } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage } from "./paging";
+import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
+import { migrated } from "../../db/migration-state";
+import { UUID_RE } from "../../util/cursor";
 import { selectIn } from "../../db/select-in";
 import type { Filter } from "../../db/client";
 import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, ShopRow, SkuRow } from "../../db/types";
-import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, imageUrl, productImageKey, thumbKey } from "../../media/images";
+import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageDimension, imageExtension, imageSize, productImageKey, thumbKey } from "../../media/images";
 import { ORIGINAL_MAX_BYTES, imageKeys, imageMaxWidth, imageProcessing, readVariantFiles, resizeScript, thumbScript, thumbWidthOf, variantKey } from "../../media/variants";
 import { t, tf, type MessageKey } from "../../i18n";
 import { AdminLayout, PageHead } from "./layout";
@@ -18,7 +21,8 @@ import { cleanAttributes, productFields, type ProductField } from "../../product
 import { FIELD_IMAGE_SCRIPT, FieldImageInput, fieldImageUpload } from "./field-image";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
-import { imageOptionsFromForm, imageOptionsOf, skuOptionChoices } from "../../products/images";
+import { imageOptionsFromForm, skuOptionChoices } from "../../products/images";
+import { ImagesSection, imageBackHref, parseTarget, readImageView } from "./product-images";
 import { MAX_COMBINATIONS, codeFromPattern, combinations, inferOptionAxes, optionAxesFromForm, optionAxesOf, parseAxisValues, resolveOptionAxes, type OptionAxes } from "../../products/option-axes";
 import { sizeChartHref } from "../../modules/size-charts/admin";
 import { careHref } from "../../modules/care-labels/admin";
@@ -27,6 +31,9 @@ import { optionLabel, optionNamesOf, type OptionNames } from "../../products/opt
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
+import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { BULK_MIGRATION } from "./bulk";
+import { CsvExportPanel, csvBody, csvHeaders, csvName, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 
 export const products = new Hono<AppEnv>();
 
@@ -49,6 +56,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     infer_failed: "axes.infer_failed",
     matrix_empty: "axes.matrix_empty",
     audience_display_only: "product.audience_display_only",
+    image_order_update: "image.order_needs_update",
   };
   if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
   const key = map[code];
@@ -74,7 +82,7 @@ const Flash = (props: { flash: ReturnType<typeof flash> }) =>
 const IMAGE_RESIZE_SCRIPT = `
 (function(){
   var form=document.getElementById("image-form"); if(!form) return;
-  var input=document.getElementById("file"), status=document.getElementById("image-status");
+  var input=document.getElementById("file"), status=document.getElementById("image-status"), TARGET=document.getElementById("image-target");
   var MAX=Number(form.getAttribute("data-max"))||1600, VARIANTS=form.getAttribute("data-variants")==="1", PLUGIN=form.getAttribute("data-processing")==="plugin";
   ${resizeScript()}
   ${thumbScript()}
@@ -86,7 +94,7 @@ const IMAGE_RESIZE_SCRIPT = `
     load(file).then(function(im){
       // 外部の変換プラグインに任せるショップ（0092）: 元の写真はそのまま、サムネイルだけ作る（本画像と中間の段はプラグインが作って差し替える）
       if(PLUGIN) return bantoThumb(im).then(function(t){
-        var fd=new FormData(); fd.append("file",file); fd.append("thumb",new File([t.blob],"thumb.webp",{type:"image/webp"}));
+        var fd=new FormData(); fd.append("file",file); fd.append("thumb",new File([t.blob],"thumb.webp",{type:"image/webp"})); if(TARGET) fd.append("target",TARGET.value);
         fd.append("width",String(im.naturalWidth)); fd.append("height",String(im.naturalHeight));
         status.textContent=form.getAttribute("data-uploading")||"";
         return fetch(form.action,{method:"POST",body:fd,credentials:"same-origin",redirect:"follow"}).then(function(res){ location.href=res.url||location.href; });
@@ -96,7 +104,7 @@ const IMAGE_RESIZE_SCRIPT = `
         // 元が小さく、縮小しても軽くならないなら元ファイルのまま
         var keepOrig=Math.max(im.naturalWidth,im.naturalHeight)<=MAX&&r.main.size>=file.size;
         var mainFile=keepOrig?file:new File([r.main],file.name.replace(/\\.[^.]+$/,"")+".webp",{type:"image/webp"});
-        fd.append("file",mainFile); fd.append("thumb",new File([r.thumb],"thumb.webp",{type:"image/webp"}));
+        fd.append("file",mainFile); fd.append("thumb",new File([r.thumb],"thumb.webp",{type:"image/webp"})); if(TARGET) fd.append("target",TARGET.value);
         if(VARIANTS) r.variants.forEach(function(v){ fd.append("variant_"+v.size,new File([v.blob],"v"+v.size+".webp",{type:"image/webp"})); });
         fd.append("width",String(keepOrig?im.naturalWidth:r.w)); fd.append("height",String(keepOrig?im.naturalHeight:r.h));
         status.textContent=form.getAttribute("data-uploading")||"";
@@ -106,27 +114,56 @@ const IMAGE_RESIZE_SCRIPT = `
   });
 })();`;
 
+/** 一覧の検索を広げる版（品番・JAN・カテゴリー・在庫・並び。0132） */
+const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
+/** 画像の並びを 1 回で書く（0138） */
+const IMAGE_ORDER_MIGRATION = "0138_product_images_order";
+
 products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "catalog");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  // 名前・スラッグの部分一致と公開の状態で、DB で絞って新しい順に 1 ページ分だけ読む（何十万件でも同じ速さ）
-  const q = (c.req.query("q") ?? "").trim().slice(0, 100);
-  const state = c.req.query("state") === "published" || c.req.query("state") === "draft" ? c.req.query("state")! : "";
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
+  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
+  // 条件（URL の値）。形の違う値は捨てる。0132 の前は名前・スラッグと公開の状態だけ
+  const v = (name: string) => (c.req.query(name) ?? "").trim();
+  const params: SearchParams = {
+    q: v("q").slice(0, 100),
+    state: v("state") === "published" || v("state") === "draft" ? v("state") : "",
+    ...(extended ? { category: UUID_RE.test(v("category")) ? v("category") : "", stock: v("stock") === "in" || v("stock") === "out" ? v("stock") : "", sort: readSort(v("sort")) === "old" ? "old" : "" } : {}),
+  };
+  const { q, state } = params as { q: string; state: string };
+  const filters = Object.fromEntries(Object.entries(params).filter(([k, x]) => k !== "q" && x !== ""));
+  const columns = "id,slug,name,published,created_at";
+  const categories = extended ? await loadCategories(db, shopId) : [];
+  // 条件があれば、RLS の外の検索の関数で（0059 / 0132。インデックスが効く）。無ければ新しい順に 1 ページ分だけ読む（何十万件でも同じ速さ）
   const where: Filter[] = [];
   if (state) where.push({ col: "published", op: "eq", value: state === "published" });
   if (after) where.push(olderThan(after));
-  const columns = "id,slug,name,published,created_at";
-  // 部分一致は RLS の外の検索の関数で（0059。インデックスが効く）
-  const page = splitPage(q ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters: state ? { state } : {}, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : (await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 })), (p) => p.created_at);
+  const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
+  const page = splitPage(
+    useSearch ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
+    (p) => p.created_at,
+  );
   const rows = page.rows;
   // お気に入りの人数（同梱モジュール favorites、0123）。だれかは出さない。表示している行の分だけ 1 回で
   const favorites = moduleEnabled(shop.settings, FAVORITES_MODULE) && rows.length > 0 ? await db.rpc<Record<string, number>>("product_favorite_counts", { p_shop_id: shopId, p_product_ids: rows.map((p) => p.id) }).catch(() => null) : null;
-  const filtered = Boolean(q || state || after);
-  const listBase = `/admin/shops/${shopId}/products${q || state ? `?${new URLSearchParams({ ...(q ? { q } : {}), ...(state ? { state } : {}) }).toString()}` : ""}`;
+  const base = `/admin/shops/${shopId}/products`;
+  const chips = searchChips(base, params, (name, value) => {
+    if (name === "state") return `${t("product.state")}: ${value === "published" ? t("dashboard.published") : t("dashboard.unpublished")}`;
+    if (name === "category") return `${t("search.category")}: ${categories.find((x) => x.id === value)?.name ?? "?"}`;
+    if (name === "stock") return value === "out" ? t("search.stock_out") : t("search.stock_in");
+    if (name === "sort") return t("search.sort_old");
+    return null;
+  });
+  const filtered = Boolean(q || chips.length > 0 || after);
+  // 保存したビュー（0135）
+  const [viewsOn, bulkOn] = await Promise.all([migrated({ db, cache: c.get("adapters").cache }, VIEWS_MIGRATION), migrated({ db, cache: c.get("adapters").cache }, BULK_MIGRATION)]);
+  const bulkForm = `bulk-${shop.id}`;
+  const savedViews = viewsOf(shop.settings, "products");
+  const listBase = searchHref(base, params);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("product.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("product.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products" }}>
       <PageHead title={t("product.list")}>
@@ -138,22 +175,49 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         </a>
       </PageHead>
       <Flash flash={flash(c.req.query("flash"))} />
+      {rows.length > 0 || filtered || savedViews.length > 0 ? <ViewTabs shopId={shop.id} screen="products" views={savedViews} current={params} enabled={viewsOn} error={c.req.query("view_error")} /> : null}
       {rows.length > 0 || filtered ? (
-        <form method="get" class="toolbar">
-          <input type="search" name="q" value={c.req.query("q") ?? ""} placeholder={t("product.search")} aria-label={t("product.search")} />
-          <select name="state" aria-label={t("product.state")}>
-            <option value="">{t("product.state_all")}</option>
-            <option value="published" selected={state === "published"}>
-              {t("dashboard.published")}
-            </option>
-            <option value="draft" selected={state === "draft"}>
-              {t("dashboard.unpublished")}
-            </option>
-          </select>
-          <button type="submit" class="secondary small">
-            {t("order.search")}
-          </button>
-        </form>
+        <SearchBar action={base} q={q} placeholder={t(extended ? "search.products_placeholder" : "product.search")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+          <label>
+            {t("product.state")}
+            <select name="state">
+              <option value="">{t("product.state_all")}</option>
+              <option value="published" selected={state === "published"}>
+                {t("dashboard.published")}
+              </option>
+              <option value="draft" selected={state === "draft"}>
+                {t("dashboard.unpublished")}
+              </option>
+            </select>
+          </label>
+          {extended && categories.length > 0 ? (
+            <label>
+              {t("search.category")}
+              <select name="category">
+                <option value="">{t("search.any")}</option>
+                {categoryOptions(categories).map((o) => (
+                  <option value={o.id} selected={params["category"] === o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {extended ? (
+            <label>
+              {t("search.stock")}
+              <select name="stock">
+                <option value="">{t("search.any")}</option>
+                <option value="in" selected={params["stock"] === "in"}>
+                  {t("search.stock_in")}
+                </option>
+                <option value="out" selected={params["stock"] === "out"}>
+                  {t("search.stock_out")}
+                </option>
+              </select>
+            </label>
+          ) : null}
+        </SearchBar>
       ) : null}
       {rows.length === 0 && !filtered ? (
         <div class="empty">
@@ -163,9 +227,19 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
       ) : rows.length === 0 ? (
         <div class="empty">{t("product.no_match")}</div>
       ) : (
-        <table>
+        <>
+          {bulkOn ? (
+            <form id={bulkForm} method="get" action={`${base}/bulk`} class="actions bulk-select">
+              <button type="submit" class="secondary small">
+                {t("bulk.edit_selected")}
+              </button>
+              <a href={`${base}/bulk?ids=${rows.map((p) => p.id).join(",")}`}>{t("bulk.edit_page")}</a>
+            </form>
+          ) : null}
+          <table>
           <thead>
             <tr>
+              {bulkOn ? <th class="select">{t("bulk.select")}</th> : null}
               <th>{t("product.name")}</th>
               <th>slug</th>
               {favorites ? <th>{t("products.favorites")}</th> : null}
@@ -175,6 +249,11 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
           <tbody>
             {rows.map((p) => (
               <tr>
+                {bulkOn ? (
+                  <td class="select">
+                    <input type="checkbox" name="id" value={p.id} form={bulkForm} aria-label={tf("bulk.select_product", { name: p.name })} />
+                  </td>
+                ) : null}
                 <td>
                   <a href={`/admin/shops/${shop.id}/products/${p.id}`}>{p.name}</a>
                 </td>
@@ -188,11 +267,136 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </>
       )}
       <Pager base={listBase} next={page.next} paged={Boolean(after)} />
+      {rows.length > 0 || filtered ? <CsvExportPanel kind="products" action={`/admin/shops/${shop.id}/products.csv`} params={params} columns={PRODUCT_CSV_COLUMNS} units={[{ key: "sku", label: "csvx.u_sku" }, { key: "product", label: "csvx.u_product" }]} presets={PRODUCT_CSV_PRESETS} limit={CSV_MAX_PRODUCTS} defaults={PRODUCT_CSV_PRESETS["catalog"]!.cols} /> : null}
     </AdminLayout>,
   );
+});
+
+// ---------- CSV（列と範囲を選ぶ。メンテナの決定 2026-11-09） ----------
+/** 書き出しの 1 行（SKU ごと: sku あり、商品ごと: sku は null で skus を数える） */
+interface ProductCsvRow {
+  p: ProductRow;
+  sku: SkuRow | null;
+  skus: SkuRow[];
+  stock: Map<string, number>;
+  categoryName: Map<string, string>;
+  names: OptionNames;
+}
+const PRODUCT_CSV_COLUMNS: CsvColumn<ProductCsvRow>[] = [
+  { key: "slug", label: "slug", group: "csvx.g_product", value: (r) => r.p.slug },
+  { key: "name", label: "商品名", group: "csvx.g_product", value: (r) => r.p.name },
+  { key: "published", label: "公開", group: "csvx.g_product", value: (r) => (r.p.published ? "公開" : "非公開") },
+  { key: "category", label: "カテゴリー", group: "csvx.g_product", value: (r) => (r.p.category_id ? (r.categoryName.get(r.p.category_id) ?? "") : "") },
+  { key: "tags", label: "タグ", group: "csvx.g_product", value: (r) => (r.p.tags ?? []).join(", ") },
+  { key: "brand", label: "ブランド", group: "csvx.g_product", value: (r) => r.p.brand ?? "" },
+  { key: "tax_class", label: "税の区分", group: "csvx.g_product", value: (r) => taxClassOf(r.p) },
+  { key: "sku_count", label: "SKU の数", group: "csvx.g_sku", units: ["product"], value: (r) => r.skus.length },
+  { key: "code", label: "品番", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.code ?? "" },
+  { key: "sku_name", label: "SKU 名", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.name ?? "" },
+  { key: "options", label: "選択肢", group: "csvx.g_sku", units: ["sku"], value: (r) => Object.entries(r.sku?.options ?? {}).map(([k, v]) => `${optionLabel(r.names, k)}=${String(v)}`).join(" / ") },
+  { key: "price", label: "価格（税込）", group: "csvx.g_sku", value: (r) => (r.sku ? r.sku.price_jpy : r.skus.length ? Math.min(...r.skus.map((k) => k.price_jpy)) : "") },
+  { key: "compare_at", label: "通常価格", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.compare_at_price_jpy ?? "" },
+  { key: "gtin", label: "JAN", group: "csvx.g_sku", units: ["sku"], value: (r) => r.sku?.gtin ?? "" },
+  { key: "stock", label: "在庫", group: "csvx.g_sku", value: (r) => (r.sku ? (r.stock.get(r.sku.id) ?? 0) : r.skus.reduce((n, k) => n + (r.stock.get(k.id) ?? 0), 0)) },
+];
+const PRODUCT_CSV_PRESETS: Record<string, CsvPreset> = {
+  catalog: { label: "csvx.p_catalog", cols: ["slug", "name", "published", "category", "tags", "code", "sku_name", "options", "price", "compare_at", "gtin", "stock"], unit: "sku" },
+  prices: { label: "csvx.p_prices", cols: ["name", "code", "options", "price", "compare_at"], unit: "sku" },
+  stock: { label: "csvx.p_stock", cols: ["name", "code", "options", "gtin", "stock"], unit: "sku" },
+};
+const PRODUCT_CONDITIONS = ["q", "state", "category", "stock", "sort"] as const;
+const CSV_MAX_PRODUCTS = 1000;
+/** SKU の上限（在庫は SKU と一緒に 1 回で読む。1 リクエストの外部呼び出しを SKU の数に比例させないため） */
+const CSV_MAX_SKUS = 10000;
+
+type CsvSku = SkuRow & { inventory?: { available: number } | null };
+
+/**
+ * 商品の SKU を在庫ごと読む（PostgREST の埋め込み inventory(available)、一対一）。商品 100 件ずつ、1 回 1,000 行まで（越えたら続きを読む）。
+ * 呼び出しの回数は「商品 ÷ 100 + SKU ÷ 1,000」ほど。CSV_MAX_SKUS に届いたら **商品の区切りで** 止める:
+ * まとまり（100 商品）は最後まで読み（多く読むのは 1 まとまりの分だけ）、商品を一覧の順に（productIds の順に）たどって、
+ * 足しても上限を越えない商品までを出す。
+ * complete はその商品の id（ここに無い商品は出さない。SKU を途中までしか読めなかった商品を「SKU 無し・在庫 0」の行にしないため）
+ */
+async function skusWithStock(db: DbClient, shopId: string, productIds: string[], withStock: boolean): Promise<{ skus: CsvSku[]; complete: Set<string> }> {
+  const cols = `id,product_id,code,name,options,price_jpy,compare_at_price_jpy,gtin,created_at${withStock ? ",inventory(available)" : ""}`;
+  const out: CsvSku[] = [];
+  const complete = new Set<string>();
+  for (let i = 0; i < productIds.length; i += 100) {
+    const part = productIds.slice(i, i + 100);
+    const got: CsvSku[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const page = await db.from<CsvSku>("skus").select(cols, { eq: { shop_id: shopId }, in: { product_id: part }, order: "id.asc", limit: 1000, offset });
+      got.push(...page);
+      if (page.length < 1000) break;
+    }
+    const byProduct = new Map<string, CsvSku[]>();
+    for (const k of got) byProduct.set(k.product_id, [...(byProduct.get(k.product_id) ?? []), k]);
+    // 一覧の順に、枠に収まる商品を足す。足せない商品が出たらそこで終わり
+    for (const id of part) {
+      const ks = byProduct.get(id) ?? [];
+      if (out.length + ks.length > CSV_MAX_SKUS) return { skus: out, complete };
+      out.push(...ks);
+      complete.add(id);
+    }
+  }
+  return { skus: out, complete };
+}
+
+products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const shop = await loadShop(c, shopId, "catalog");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const all = stripConditions(c, `/admin/shops/${shopId}/products.csv`, PRODUCT_CONDITIONS);
+  if (all) return c.redirect(all);
+  // 列を選ばずに開いたら、商品の一覧（SKU ごと）の組み合わせ
+  const choice = readCsvChoice(c, PRODUCT_CSV_COLUMNS, ["sku", "product"], PRODUCT_CSV_PRESETS) ?? { cols: PRODUCT_CSV_COLUMNS.filter((col) => PRODUCT_CSV_PRESETS["catalog"]!.cols.includes(col.key)), unit: "sku", format: "bom" as const, preset: null };
+  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
+  const v = (name: string) => (c.req.query(name) ?? "").trim();
+  const q = v("q").slice(0, 100);
+  const state = v("state") === "published" || v("state") === "draft" ? v("state") : "";
+  const filters: Record<string, string> = {
+    ...(state ? { state } : {}),
+    ...(extended && UUID_RE.test(v("category")) ? { category: v("category") } : {}),
+    ...(extended && (v("stock") === "in" || v("stock") === "out") ? { stock: v("stock") } : {}),
+    ...(extended && readSort(v("sort")) === "old" ? { sort: "old" } : {}),
+  };
+  const columns = "id,slug,name,published,created_at,category_id,tags,brand,tax_class";
+  const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
+  const where: Filter[] = state ? [{ col: "published", op: "eq", value: state === "published" }] : [];
+  // 上限で切ったかを知る（黙って切らない）。PostgREST は 1 回に max_rows（Supabase の既定 1,000）までしか返さないので、
+  // 条件の無い読み取りは上限ちょうどまで読み、続きがあるかは 1 行だけ読んで確かめる（searchRows は 1,000 行ずつ読む）
+  const listed = useSearch
+    ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, limit: CSV_MAX_PRODUCTS + 1, columns })
+    : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: CSV_MAX_PRODUCTS });
+  const more =
+    listed.length > CSV_MAX_PRODUCTS ||
+    (!useSearch && listed.length === CSV_MAX_PRODUCTS && (await db.from<{ id: string }>("products").select("id", { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: 1, offset: CSV_MAX_PRODUCTS })).length > 0);
+  const read = listed.slice(0, CSV_MAX_PRODUCTS);
+  const [{ skus, complete }, categories] = await Promise.all([
+    skusWithStock(db, shopId, read.map((p) => p.id), choice.cols.some((col) => col.key === "stock")),
+    choice.cols.some((col) => col.key === "category") ? loadCategories(db, shopId) : Promise.resolve([] as CategoryRow[]),
+  ]);
+  const stock = new Map(skus.map((k) => [k.id, k.inventory?.available ?? 0]));
+  const categoryName = new Map(categories.map((k) => [k.id, k.name]));
+  const names = optionNamesOf(shop.option_names);
+  const byProduct = new Map<string, SkuRow[]>();
+  for (const k of skus.sort((a, b) => (a.code < b.code ? -1 : 1))) byProduct.set(k.product_id, [...(byProduct.get(k.product_id) ?? []), k]);
+  // SKU の上限に届いたら、SKU を全部読めた商品までで止める（一覧の順の先頭から）
+  const stop = read.findIndex((p) => !complete.has(p.id));
+  const rows = stop < 0 ? read : read.slice(0, stop);
+  const truncated = more || rows.length < read.length ? { n: rows.length, what: "csvx.what_products" as const } : null;
+  const csvRows: ProductCsvRow[] = rows.flatMap((p): ProductCsvRow[] => {
+    const ks = byProduct.get(p.id) ?? [];
+    const base = { p, skus: ks, stock, categoryName, names };
+    return choice.unit === "sku" && ks.length > 0 ? ks.map((sku) => ({ ...base, sku })) : [{ ...base, sku: null }];
+  });
+  return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(csvName(`products-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`, truncated)));
 });
 
 // ---------- 作成 ----------
@@ -467,8 +671,6 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const catalog = await catalogContext(c, shop);
   const variantsReady = true;
   const pluginMode = imagePluginMode(shop);
-  // SKU ごとの画像（0063）: SKU の項目（カラー・サイズなど）から、画像ごとに結ぶ先を選ぶ欄
-  const optionChoices = skuOptionChoices(skus);
   // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
   const axes = optionAxesOf(product.option_axes);
   const upper = resolveOptionAxes(catalog.categories, product.category_id, shop.option_axes);
@@ -621,79 +823,36 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
       {axes && axes.length > 0 ? <MatrixForm action={`${base}/sku-matrix`} axes={axes} slug={product.slug} names={names} /> : null}
       <ChipsScript />
 
-      <h2 id="images">{t("image.list")}</h2>
-      {images.length === 0 ? (
-        <div class="empty">
-          <p>{t("image.none")}</p>
-        </div>
-      ) : null}
-      {optionChoices.length > 0 ? <p class="muted">{t("image.options_hint")}</p> : null}
-      {images.length > 0 ? (
-        <table>
-          <tbody>
-            {images.map((img) => (
-              <tr>
-                <td>
-                  <img src={imageUrl(mediaBase, img.thumb_key ?? img.storage_key)} alt="" style="max-width:8rem;max-height:8rem" loading="lazy" />
-                  {img.width && img.height ? (
-                    <div class="muted">
-                      {img.width}×{img.height}
-                      {img.thumb_key ? "" : ` ${t("image.no_thumb")}`}
-                    </div>
-                  ) : img.thumb_key ? null : (
-                    <div class="muted">{t("image.no_thumb")}</div>
-                  )}
-                </td>
-                <td>
-                  <form method="post" action={`${base}/images/${img.id}/sort`} style="display:inline">
-                    {t("image.sort")} <input type="number" name="sort_order" value={String(img.sort_order)} style="width:4rem" />{" "}
-                    <button type="submit" class="secondary small">
-                      {t("product.save")}
-                    </button>
-                  </form>
-                </td>
-                {optionChoices.length > 0 ? (
-                  <td>
-                    <form method="post" action={`${base}/images/${img.id}/options`} style="display:inline">
-                      {optionChoices.map((ch) => (
-                        <label style="display:inline-block;margin-right:.5rem">
-                          {optionLabel(names, ch.key)}{" "}
-                          <select name={`options.${ch.key}`}>
-                            <option value="">{t("image.options_any")}</option>
-                            {ch.values.map((v) => (
-                              <option value={v} selected={imageOptionsOf(img.options)[ch.key] === v}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      ))}
-                      <button type="submit" class="secondary small">
-                        {t("product.save")}
-                      </button>
-                    </form>
-                  </td>
-                ) : null}
-                <td>
-                  <form method="post" action={`${base}/images/${img.id}/delete`} style="display:inline">
-                    <button type="submit" class="small">
-                      {t("image.delete")}
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
-      <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-processing={pluginMode ? "plugin" : "browser"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
-        <label for="file">{t("image.file")}</label>
-        <input id="file" type="file" name="file" accept="image/*" required />
-        <p class="muted">{pluginMode ? t("image.plugin_note") : tf("image.resize_note", { max: imageMaxWidth(shop.settings) })}</p>
-        <p>
-          <button type="submit">{t("image.upload")}</button> <span id="image-status" aria-live="polite"></span>
-        </p>
-      </form>
+      <ImagesSection
+        base={base}
+        images={images}
+        skus={skus}
+        names={names}
+        mediaBase={mediaBase}
+        state={readImageView({ view: c.req.query("img"), axes: c.req.queries("axis") ?? [], to: c.req.query("to") }, skus)}
+        uploadForm={(target, targets) => (
+          <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-processing={pluginMode ? "plugin" : "browser"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
+            <label for="file">{t("image.file")}</label>
+            <input id="file" type="file" name="file" accept="image/*" required />
+            {targets.length > 0 ? (
+              <>
+                <label for="image-target">{t("image.attach_to")}</label>
+                <select id="image-target" name="target">
+                  {targets.map((x) => (
+                    <option value={JSON.stringify(x.options)} selected={JSON.stringify(x.options) === JSON.stringify(target)}>
+                      {x.label}
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : null}
+            <p class="muted">{pluginMode ? t("image.plugin_note") : tf("image.resize_note", { max: imageMaxWidth(shop.settings) })}</p>
+            <p>
+              <button type="submit">{t("image.upload")}</button> <span id="image-status" aria-live="polite"></span>
+            </p>
+          </form>
+        )}
+      />
       <script dangerouslySetInnerHTML={{ __html: IMAGE_RESIZE_SCRIPT }} />
 
       <section class="card danger-zone">
@@ -1104,6 +1263,8 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   if (thumbBytes && thumb && tKey) await storage.put(tKey, thumbBytes.slice().buffer, thumb.type);
   await Promise.all(variants.map((v, i) => storage.put(vKeys[i]!, v.bytes.slice().buffer, "image/webp")));
   const sortOrder = data.images.reduce((m, i) => Math.max(m, i.sort_order), -1) + 1;
+  // 付け先（品番 / オプション / SKU、0063 の options）。SKU にある鍵だけ。無い・形が違えば品番
+  const target = typeof body.target === "string" ? parseTarget(body.target, skuOptionChoices(data.skus).map((ch) => ch.key)) : null;
   try {
     await db.from<ProductImageRow>("product_images").insert({
       shop_id: shopId,
@@ -1113,6 +1274,7 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
       width: width && height ? width : null,
       height: width && height ? height : null,
       sort_order: sortOrder,
+      ...(target && Object.keys(target).length > 0 ? { options: target } : {}),
       ...(variantsOn ? { variants: variants.map((v) => v.size), thumb_width: thumbWidth } : {}),
     });
   } catch (e) {
@@ -1120,7 +1282,39 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
   }
-  return c.redirect(`${base}?flash=saved`);
+  return c.redirect(typeof body.target === "string" ? imageBackHref(base, `img=${target && Object.keys(target).length > 0 ? (Object.keys(target).length === skuOptionChoices(data.skus).length ? "sku" : "option") : "product"}${target ? Object.keys(target).map((k) => `&axis=${encodeURIComponent(k)}`).join("") : ""}`) : `${base}?flash=saved`);
+});
+
+/** 並べ替え: 同じ組の隣の画像と入れ替える（全部の画像を今の順で 0.. に振り直してから、2 つを入れ替える） */
+products.post("/:shopId/products/:productId/images/:imageId/move", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const { shopId, productId, imageId } = params(c);
+  const base = `/admin/shops/${shopId}/products/${productId}`;
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
+  const f = await formFields(c);
+  const images = await db.from<ProductImageRow>("product_images").select("id,sort_order,created_at", { eq: { product_id: productId, shop_id: shopId }, order: "sort_order.asc,created_at.asc" });
+  const a = images.findIndex((x) => x.id === imageId);
+  const b = images.findIndex((x) => x.id === f.with);
+  if (a < 0 || b < 0 || a === b) return c.redirect(imageBackHref(base, f.back));
+  const order = images.map((x) => x.id);
+  [order[a], order[b]] = [order[b]!, order[a]!];
+  if (await migrated({ db, cache: c.get("adapters").cache }, IMAGE_ORDER_MIGRATION)) {
+    // 並び全体を 1 回で書く（画像の数だけ送らない。途中で止まっても半分だけ振り直されない）
+    try {
+      await db.rpc("product_images_order", { p_shop_id: shopId, p_product_id: productId, p_ids: order });
+    } catch (e) {
+      if (e instanceof DbError) return c.redirect(`${base}?flash=generic#images`);
+      throw e;
+    }
+  } else {
+    // 0138 の前: 2 つの番号が違えば入れ替えるだけ（更新 2 回）。同じ番号どうしは、アップデートを当ててから
+    const x = images[a]!;
+    const y = images[b]!;
+    if (x.sort_order === y.sort_order) return c.redirect(`${base}?flash=image_order_update#images`);
+    await db.from<ProductImageRow>("product_images").update({ sort_order: y.sort_order }, { id: x.id, product_id: productId, shop_id: shopId });
+    await db.from<ProductImageRow>("product_images").update({ sort_order: x.sort_order }, { id: y.id, product_id: productId, shop_id: shopId });
+  }
+  return c.redirect(imageBackHref(base, f.back));
 });
 
 products.post("/:shopId/products/:productId/images/:imageId/sort", requireOwner, async (c: AdminContext) => {
@@ -1140,14 +1334,17 @@ products.post("/:shopId/products/:productId/images/:imageId/options", requireOwn
   const { shopId, productId, imageId } = params(c);
   const f = await formFields(c);
   const skus = await db.from<SkuRow>("skus").select("options", { eq: { product_id: productId, shop_id: shopId } });
-  const options = imageOptionsFromForm(f, skuOptionChoices(skus).map((ch) => ch.key));
+  const keys = skuOptionChoices(skus).map((ch) => ch.key);
+  // 付け先の選択（JSON の options）か、鍵ごとの欄（options.<鍵>）
+  const options = f.target !== undefined ? parseTarget(f.target, keys) ?? (f.target === "{}" ? {} : null) : imageOptionsFromForm(f, keys);
+  if (options === null) return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=generic#images`);
   try {
     await db.from<ProductImageRow>("product_images").update({ options }, { id: imageId, product_id: productId, shop_id: shopId });
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=generic#images`);
     throw e;
   }
-  return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved#images`);
+  return c.redirect(f.back !== undefined ? imageBackHref(`/admin/shops/${shopId}/products/${productId}`, f.back) : `/admin/shops/${shopId}/products/${productId}?flash=saved#images`);
 });
 
 products.post("/:shopId/products/:productId/images/:imageId/delete", requireOwner, async (c: AdminContext) => {

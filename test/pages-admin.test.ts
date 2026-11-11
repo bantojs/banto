@@ -105,7 +105,7 @@ describe("ショップのページの管理画面", () => {
   it("ほかの項目の人とモジュールが OFF のショップでは開けない", async () => {
     const { sb, app, shop, base } = setup();
     const catalog = await staff(sb, app, shop, "catalog@example.com", ["catalog"]);
-    expect((await catalog.get(base)).status).toBe(404);
+    expect((await catalog.get(base)).status).toBe(403);
     expect((await catalog.post(base, form)).status).toBe(404);
     const off = setup({ enabled: false });
     const owner = await Browser.loggedIn(off.app, "owner@example.com", "password-123");

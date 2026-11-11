@@ -26,11 +26,11 @@ describe("設定画面: 知らせる前に取り直す", () => {
     externalHosts.set("https://webp.example/", () => (hits++, Response.json(NEW)));
     const app = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    const html = await (await b.get(`/admin/shops/${shop.id}/settings/images`)).text();
     expect(html).not.toContain("画像を変換できるプラグインがつながっていません");
     expect(sb.tables.hook_endpoints[0]!["manifest"]).toMatchObject({ capabilities: ["images"] });
     // 次からは保存済みのマニフェストで分かるので、取りに行かない
-    await b.get(`/admin/shops/${shop.id}`);
+    await b.get(`/admin/shops/${shop.id}/settings/images`);
     expect(hits).toBe(1);
   });
 
@@ -39,7 +39,7 @@ describe("設定画面: 知らせる前に取り直す", () => {
     externalHosts.set("https://webp.example/", () => new Response("down", { status: 502 }));
     const app = appWith(sb, {}, new MemoryStorage(`${BASE}/media`));
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await b.get(`/admin/shops/${shop.id}`)).text()).toContain("画像を変換できるプラグインがつながっていません");
+    expect(await (await b.get(`/admin/shops/${shop.id}/settings/images`)).text()).toContain("画像を変換できるプラグインがつながっていません");
     expect(sb.tables.hook_endpoints[0]!["manifest"]).toEqual(OLD);
   });
 });

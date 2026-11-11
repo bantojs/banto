@@ -163,6 +163,8 @@ export interface MemberReader {
   page(handle: string): Promise<unknown>;
   article(blogId: string, handle: string): Promise<unknown>;
   articles(blogId: string, offset: number, limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
+  /** 0140: ブログをまたぐ「記事を並べる」（articles_member_multi） */
+  articlesMulti(blogIds: string[], limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
 }
 
 /** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
@@ -533,6 +535,34 @@ export class StorefrontData {
     const out = { items: rows.slice(0, opts.limit), hasNext: rows.length > opts.limit };
     await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
+  }
+
+  /**
+   * ブログをまたぐ「記事を並べる」（0140）: 選んだブログの記事を 1 つの並びで先頭から limit 件。並びは new / title / 日付の項目の順だけ
+   * （手で並べた順はブログごとなので呼ぶ側が渡さない）。ゲストは RLS（blog_id の in）、会員は articles_member_multi。短時間キャッシュ
+   */
+  async articlesMulti(shop: PublicShop, blogIds: readonly string[], opts: { limit: number; tag?: string | null; sort?: "new" | "title"; fields?: Record<string, unknown> | null; withFields?: boolean; fieldSort?: FieldSort | null }): Promise<ArticleRow[]> {
+    const ids = [...new Set(blogIds)].slice(0, 20);
+    if (ids.length === 0) return [];
+    if (this.reader) {
+      const rows = (await this.reader.articlesMulti(ids, opts.limit, opts.tag ?? null, opts.sort, opts.fields ?? null, opts.fieldSort ?? null)) as ArticleRow[] | null;
+      return (Array.isArray(rows) ? rows : []).slice(0, opts.limit);
+    }
+    const fs = opts.fieldSort ? fieldSortQuery(opts.fieldSort) : null;
+    const key = `articles-multi:${ids.join(",")}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}:${opts.fields ? JSON.stringify(opts.fields) : ""}:${opts.withFields ? 1 : 0}:${opts.fieldSort ? `${opts.fieldSort.key}>${opts.fieldSort.from ?? ""}>${opts.fieldSort.until ? `${opts.fieldSort.until.key}>${opts.fieldSort.until.from}` : ""}` : ""}`;
+    const hit = await this.cache.get<ArticleRow[]>(key);
+    if (hit) return hit;
+    const rows = await this.db.from<ArticleRow>("articles").select(opts.withFields ? `${ARTICLE_LIST_COLUMNS},fields` : ARTICLE_LIST_COLUMNS, {
+      eq: { shop_id: shop.id, published: true },
+      in: { blog_id: ids },
+      ...(opts.tag ? { arrayContains: { tags: [opts.tag] } } : {}),
+      ...(opts.fields && opts.withFields ? { jsonContains: { fields: opts.fields } } : {}),
+      ...(fs?.where.length ? { where: fs.where } : {}),
+      order: fs ? fs.order : articleOrderParam(opts.sort),
+      limit: opts.limit,
+    });
+    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    return rows;
   }
 
   /** 記事の項目（0117）が指す記事: そのブログの公開中の記事を URL の名前でまとめて 1 回（RLS。書いた順には並べない）。短時間キャッシュ */

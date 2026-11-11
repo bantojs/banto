@@ -106,3 +106,65 @@ describe("ショップのページ（Liquid のテーマ）", () => {
     expect(await (await b.get("/pages/faq")).text()).toContain('<article class="pg" data-t="page" data-n="page"><h1>よくある質問</h1>');
   });
 });
+
+describe("本文の最初の画像をすぐ読む（LCP）", () => {
+  const body = "::: cover image=/media/hero.webp\n# ようこそ\n:::\n\n![2 枚目](/media/two.webp)";
+  const eager = 'src="/media/hero.webp" alt="" loading="eager" fetchpriority="high"';
+
+  it("既定のテーマ: ページの本文の最初の画像だけ eager・fetchpriority=high、ほかは lazy のまま", async () => {
+    const { sb, shop, b } = setup();
+    sb.addPage(shop.id, { handle: "hero", title: "トップ", body });
+    const html = await (await b.get("/my-shop/pages/hero")).text();
+    expect(html).toContain(eager);
+    expect(html).toContain('src="/media/two.webp" alt="2 枚目" loading="lazy"');
+    expect(html.match(/fetchpriority="high"/g)).toHaveLength(1);
+  });
+
+  it("アイキャッチが本文の上に出るページは、本文の画像を上げない", async () => {
+    const { sb, shop, b } = setup();
+    sb.addPage(shop.id, { handle: "hero", title: "トップ", body, image_url: "/media/eye.webp" });
+    const html = await (await b.get("/my-shop/pages/hero")).text();
+    expect(html).not.toContain('fetchpriority="high"');
+  });
+
+  it("お店のトップのひな形（Liquid のテーマ）でも同じ（テーマは page.content を置くだけ）", async () => {
+    const { sb, shop, b } = setup({
+      liquid: {
+        "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+        "templates/index.liquid": "<h1>top</h1>",
+        "templates/page.liquid": "<article>{{ page.content }}</article>",
+      },
+    });
+    const home = sb.addPage(shop.id, { handle: "home", title: "トップ", body });
+    const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    row["settings"] = { ...(row["settings"] as Record<string, unknown>), page_layouts: { home: home.id } };
+    const html = await (await b.get("/")).text();
+    expect(html).toContain(eager);
+    expect(html).toContain('src="/media/two.webp" alt="2 枚目" loading="lazy"');
+  });
+});
+
+describe("後から MEDIA_BASE_URL（R2 のドメイン）を付けたとき", () => {
+  it("前の入口の URL で書いた本文の画像・アイキャッチ・OG の画像も、置き場のドメインから配る（Worker を通さない）", async () => {
+    const { sb, shop } = setup();
+    // 置いた時の入口（workers.dev）の絶対 URL の本文と、ホストを外して保存したアイキャッチ
+    sb.addPage(shop.id, { id: crypto.randomUUID(), handle: "old", title: "前に作ったページ", body: "![店](https://banto.example.workers.dev/media/pages/s/hero.webp)\n\n![2](/media/pages/s/two.webp)", image_url: "/media/pages/s/eye.webp" });
+    const app = appWith(sb, { MEDIA_BASE_URL: "https://media.example.jp" }, new MemoryStorage("https://media.example.jp"), new FakeStripe());
+    const html = await (await new Browser(app, BASE).get("/my-shop/pages/old")).text();
+    expect(html).toContain('src="https://media.example.jp/pages/s/hero.webp"');
+    expect(html).toContain('src="https://media.example.jp/pages/s/two.webp"');
+    expect(html).toContain('<img class="page-image" src="https://media.example.jp/pages/s/eye.webp"');
+    expect(html).toContain('<meta property="og:image" content="https://media.example.jp/pages/s/eye.webp"');
+    expect(html).not.toContain("/media/pages/s/");
+  });
+
+  it("置き場のドメインを別のドメインに付け替える前に保存したアイキャッチは、置き場の外として出さない（空の src の <img> を出さない）", async () => {
+    const { sb, shop } = setup();
+    sb.addPage(shop.id, { id: crypto.randomUUID(), handle: "moved", title: "付け替え前のページ", body: "本文", image_url: "https://old-media.example.jp/pages/s/eye.webp" });
+    const app = appWith(sb, { MEDIA_BASE_URL: "https://media.example.jp" }, new MemoryStorage("https://media.example.jp"), new FakeStripe());
+    const html = await (await new Browser(app, BASE).get("/my-shop/pages/moved")).text();
+    expect(html).not.toContain('class="page-image"');
+    expect(html).not.toContain('src=""');
+  });
+});
+

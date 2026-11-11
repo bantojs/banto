@@ -24,6 +24,8 @@ dashboard.get("/", requireOwner, async (c) => {
     db.from<{ version: string }>("banto_migrations").select("version"),
     fetchLatestRelease({ fetch: c.get("deps").fetch, cache: c.get("adapters").cache }),
   ]);
+  // 店舗のスタッフだけの人（ショップが無く、実店舗が 1 つ）は、店舗のホームを開く（メンテナの決定 2026-11-08）
+  if (!admin && shops.length === 0 && stores.length === 1) return c.redirect(`/admin/stores/${stores[0]!.id}/home`);
   const pending = pendingMigrations(migrations.map((m) => m.version));
   const updateAvailable = latest && isNewer(BANTO_VERSION, latest.version) ? latest : null;
   // 直近 30 日の売上（ショップごと、reports の項目を持つショップだけ）
@@ -109,7 +111,7 @@ dashboard.get("/", requireOwner, async (c) => {
                       {[...s.name][0] ?? "?"}
                     </span>
                     <div style="min-width:0">
-                      <a href={`/admin/shops/${s.id}`}>{s.name}</a>
+                      <a href={`/admin/shops/${s.id}/home`}>{s.name}</a>
                       <div class="muted">
                         <code>{s.slug}</code>
                       </div>
@@ -158,7 +160,9 @@ dashboard.get("/", requireOwner, async (c) => {
                   <span class="avatar" aria-hidden="true">
                     {[...st.name][0] ?? "?"}
                   </span>
-                  <strong>{st.name}</strong>
+                  <a href={`/admin/stores/${st.id}/home`}>
+                    <strong>{st.name}</strong>
+                  </a>
                 </div>
                 <div class="card-links">
                   {st.perms.includes("tryon") ? <a href={`/admin/stores/${st.id}/requests`}>{t("tryon.requests")}</a> : null}

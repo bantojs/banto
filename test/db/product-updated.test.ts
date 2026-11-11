@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createHash, randomBytes } from "node:crypto";
 import { asService, asUser, closePool, createShopFixture, dbAvailable, getPool, resetDatabase, type Fixture } from "./harness";
 
 /**
  * 0075_product_updated_skus: SKU・商品の画像・在庫（人が変えたとき）を変えても product.updated を積む。
- * まだ送っていない同じ商品の知らせがあれば積まない（まとめて変えても 1 商品 1 通）
+ * まだ送っていない同じ商品の知らせがあれば積まない（まとめて変えても 1 商品 1 通）。
+ * 0141_inventory_low_manual: 人が在庫を減らして閾値以下に入ったときは inventory.low も積む
  */
 describe.skipIf(!dbAvailable)("SKU・画像・在庫の product.updated（0075）", () => {
   let f: Fixture;
@@ -53,6 +55,64 @@ describe.skipIf(!dbAvailable)("SKU・画像・在庫の product.updated（0075�
     await getPool().query("delete from hook_deliveries");
     await asService((c) => c.query("select release_reservation($1, $2)", [last, f.shopId])); // 0 → 1: 再入荷
     expect(await pending()).toHaveLength(1);
+  });
+
+  it("inventory.low: 人が在庫を減らして閾値以下に入ったときも積む（0141）。閾値以下のまま直しただけ・購入の予約では積まない", async () => {
+    const low = async () =>
+      (await getPool().query<{ sku_id: string; product_id: string; available: number; threshold: number }>(
+        "select payload->>'sku_id' as sku_id, payload->>'product_id' as product_id, (payload->>'available')::int as available, (payload->>'threshold')::int as threshold from hook_deliveries where event = 'inventory.low'",
+      )).rows;
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 10)", [f.skuId]));
+    await getPool().query("delete from hook_deliveries");
+    // 商品の画面（set_stock）: 10 → 2 は閾値（既定 3）をまたぐ
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 2)", [f.skuId]));
+    expect(await low()).toEqual([{ sku_id: f.skuId, product_id: f.productId, available: 2, threshold: 3 }]);
+    await getPool().query("delete from hook_deliveries");
+    // 閾値以下のまま（2 → 1、棚卸しの合わせ直しなど）は積まない。product.updated は今までどおり
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 1)", [f.skuId]));
+    expect(await low()).toHaveLength(0);
+    expect(await pending()).toHaveLength(1);
+    // 在庫の画面の出荷（stock_adjust）: 10 → 3 は閾値ちょうど
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 10)", [f.skuId]));
+    await getPool().query("delete from hook_deliveries");
+    await asUser(f.ownerId, (c) => c.query("select stock_adjust($1, $2::jsonb)", [f.shopId, JSON.stringify([{ sku_id: f.skuId, delta: -7 }])]));
+    expect((await low()).map((r) => r.available)).toEqual([3]);
+    // 購入の予約（service_role）で減っても積まない（注文の確定が積む）
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 10)", [f.skuId]));
+    await getPool().query("delete from hook_deliveries");
+    await asService((c) => c.query("select reserve_stock($1, $2::jsonb, 900)", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty: 8 }])]));
+    expect(await low()).toHaveLength(0);
+    // ショップの閾値に従う
+    await getPool().query("update shops set settings = settings || '{\"low_stock_threshold\": 10}'::jsonb where id = $1", [f.shopId]);
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 20)", [f.skuId]));
+    await getPool().query("delete from hook_deliveries");
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 9)", [f.skuId]));
+    expect((await low()).map((r) => [r.available, r.threshold])).toEqual([[9, 10]]);
+    await getPool().query("update shops set settings = settings - 'low_stock_threshold' where id = $1", [f.shopId]);
+  });
+
+  it("inventory.low（0141）: AI 用トークン（api_sku_update）と取り込み（import_catalog）で減らしても積む", async () => {
+    const low = async () => (await getPool().query<{ sku_id: string; available: number }>("select payload->>'sku_id' as sku_id, (payload->>'available')::int as available from hook_deliveries where event = 'inventory.low'")).rows;
+    // AI 用トークン: api_require が banto.actor = api_token:… を立てて service_role で動く
+    const raw = `banto_${randomBytes(32).toString("base64url")}`;
+    const hash = createHash("sha256").update(raw).digest("hex");
+    await asUser(f.ownerId, (c) =>
+      c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 'ai', $3, $4, '{products:read,products:write}')", [f.shopId, f.ownerId, hash, raw.slice(0, 12)]),
+    );
+    await asUser(f.ownerId, (c) => c.query("select set_stock($1, 10)", [f.skuId]));
+    await getPool().query("delete from hook_deliveries");
+    await asService((c) => c.query("select api_sku_update($1, $2, $3::jsonb)", [hash, f.skuId, JSON.stringify({ available: 1 })]));
+    expect(await low()).toEqual([{ sku_id: f.skuId, available: 1 }]);
+    // 取り込み: 作ったとき（insert）は積まず、在庫を上書きして閾値をまたいだら積む
+    const run = (available: number) =>
+      asUser(f.ownerId, (c) =>
+        c.query("select import_catalog($1, $2::jsonb)", [f.shopId, JSON.stringify({ products: [{ slug: "imp", name: "取り込み", skus: [{ code: "IMP-1", price_jpy: 1000, available }] }], overwrite_stock: true })]),
+      );
+    await run(10);
+    await getPool().query("delete from hook_deliveries");
+    await run(2);
+    const imp = (await getPool().query<{ id: string }>("select id from skus where code = 'IMP-1'")).rows[0]!.id;
+    expect(await low()).toEqual([{ sku_id: imp, available: 2 }]);
   });
 
   it("inventory.low のペイロードに product_id を足す（今までの項目はそのまま）", async () => {

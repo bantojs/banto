@@ -2,7 +2,7 @@ import { createServer, type Socket } from "node:net";
 import { describe, expect, it } from "vitest";
 import type { RawConnection, SocketAdapter } from "../src/adapters/types";
 import { nodeSockets } from "../src/adapters/node/socket";
-import { createMailer, MailError, mailTransportMissing, mailTransportName, sendMail } from "../src/mail/send";
+import { createMailer, MailError, mailFailureLog, mailTransportMissing, smtpHostIsIpWithTls, mailTransportName, sendMail } from "../src/mail/send";
 import { buildMimeMessage, encodeHeaderText, parseAddress } from "../src/mail/message";
 import { dotStuff } from "../src/mail/smtp-client";
 import { SENDGRID_API_URL } from "../src/mail/transports/sendgrid";
@@ -279,6 +279,74 @@ describe("SMTP の送り手", () => {
     expect(r).toBeInstanceOf(MailError);
     expect((r as MailError).status).toBe(550);
     expect((r as MailError).message).toMatch(/MAIL: 550 5\.1\.0 sender rejected/);
+  });
+
+  it("送信元の形が誤っていれば接続せずに MailError（例外のまま 500 にしない）", async () => {
+    let connected = false;
+    const sockets: SocketAdapter = {
+      async connect() {
+        connected = true;
+        throw new Error("unexpected");
+      },
+    };
+    const mailer = createMailer({ ...memoryAdapters({ MAIL_TRANSPORT: "smtp", SMTP_HOST: "h" }), socket: sockets }, fetch)!;
+    for (const from of ["マイショップ order@example.com", "マイショップ ＜order@example.com＞", "order@example"]) {
+      const r = await sendMail(mailer, { ...MAIL, from }).catch((x: unknown) => x);
+      expect(r).toBeInstanceOf(MailError);
+      expect((r as MailError).message).toMatch(/invalid mail address/);
+    }
+    expect(connected).toBe(false);
+  });
+
+  it("応答コードの無い失敗（切られた・つながらない）には、どの段階かを文に足す", async () => {
+    const closing = (afterGreeting: boolean): SocketAdapter => ({
+      async connect() {
+        let greeted = false;
+        return {
+          async read() {
+            if (afterGreeting && !greeted) {
+              greeted = true;
+              return new TextEncoder().encode("220 hello\r\n");
+            }
+            return null; // サーバーが黙って切る
+          },
+          async write() {},
+          async startTls() {
+            throw new Error("unexpected");
+          },
+          async close() {},
+        };
+      },
+    });
+    const send = (socket: SocketAdapter) => sendMail(createMailer({ ...memoryAdapters({ MAIL_TRANSPORT: "smtp", SMTP_HOST: "mail.example.jp" }), socket }, fetch)!, MAIL).then(() => { throw new Error("sent"); }, (x: unknown) => x as MailError);
+    expect((await send(closing(false))).message).toBe("SMTP greeting: connection closed by server");
+    expect((await send(closing(true))).message).toBe("SMTP EHLO: connection closed by server");
+    const refused: SocketAdapter = {
+      async connect() {
+        throw new Error("Network connection lost.");
+      },
+    };
+    const r = await send(refused);
+    expect(r).toBeInstanceOf(MailError);
+    expect(r.message).toBe("SMTP connect mail.example.jp:587 (tls=starttls): Network connection lost.");
+  });
+
+  it("SMTP_HOST が IP アドレスで TLS を使う設定なら警告する（証明書の確認が通らない）", () => {
+    const warn = (env: Record<string, string>) => smtpHostIsIpWithTls(memoryAdapters({ MAIL_TRANSPORT: "smtp", ...env }).config);
+    expect(warn({ SMTP_HOST: "192.0.2.10" })).toBe(true);
+    expect(warn({ SMTP_HOST: "192.0.2.10", SMTP_TLS: "on" })).toBe(true);
+    expect(warn({ SMTP_HOST: "[2001:db8::1]" })).toBe(true);
+    expect(warn({ SMTP_HOST: "192.0.2.10", SMTP_TLS: "off" })).toBe(false);
+    expect(warn({ SMTP_HOST: "example.sakura.ne.jp" })).toBe(false);
+    expect(warn({ SMTP_HOST: "cafe:587" })).toBe(false); // ポートを付けたホスト名は IPv6 ではない
+    expect(warn({ SMTP_HOST: "2001:db8:0:0:0:0:0:1" })).toBe(true);
+    expect(smtpHostIsIpWithTls(memoryAdapters({ SMTP_HOST: "192.0.2.10" }).config)).toBe(false); // 送り手が smtp でない
+  });
+
+  it("送れなかったときのログはアドレスの @ の前を伏せる（会員でない人のアドレスを残さない）", () => {
+    const line = mailFailureLog("member login", { name: "smtp" }, new MailError(550, "SMTP RCPT: 550 5.1.1 <taro.yamada@example.com>: Recipient address rejected"));
+    expect(line).toBe("[banto] member login: mail failed (smtp 550): SMTP RCPT: 550 5.1.1 <***@example.com>: Recipient address rejected");
+    expect(mailFailureLog("invite", null, new MailError(422, '{"message":"Invalid `to` field: a+b@x.jp, c@y.jp"}'))).not.toMatch(/a\+b@|c@y/);
   });
 
   it("Node の生の TCP（node:net）で本物のソケットを通して送れる（平文、同じホスト）", async () => {

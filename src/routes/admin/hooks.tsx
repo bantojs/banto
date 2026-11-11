@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
+import { isHookEvent } from "../../hooks/events";
 import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
 import { endpointSecret, signHookPayload, signPluginTicket } from "../../hooks/signing";
 import { blockedHookTarget, externalHookUrl } from "../../hooks/target";
 import { ConnectConfirm, ConnectionCard, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
-import { t, type MessageKey } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
+import { EventChips, EventPicker, ScopeList, eventLabel } from "./purposes";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, sessionSecret, type AdminContext } from "./context";
@@ -109,11 +110,7 @@ function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest:
       {showEvents ? (
         <fieldset style="border:0;padding:0">
           <legend>{t("hooks.events")}</legend>
-          {HOOK_EVENTS.map((ev) => (
-            <label style="display:inline-block;margin-right:1rem">
-              <input type="checkbox" name="events" value={ev} checked={events.has(ev)} /> <code>{ev}</code>
-            </label>
-          ))}
+          <EventPicker checked={(ev) => events.has(ev)} />
         </fieldset>
       ) : (
         <p class="muted">{t("hooks.no_events_plugin")}</p>
@@ -218,7 +215,7 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
                 <td>
                   <code>{e.url}</code>
                 </td>
-                <td>{e.events.join(", ")}</td>
+                <td>{e.events.filter(isHookEvent).map(eventLabel).join("・")}</td>
                 <td>{e.manifest?.admin_url ? <a href={`/admin/shops/${shop.id}/hooks/${e.id}/ui`}>{t("hooks.plugin_ui")}</a> : null}</td>
               </tr>
             ))}
@@ -270,6 +267,7 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
                 <td>{d.attempts}</td>
                 <td>
                   {d.last_status ?? ""} {d.last_error ? <span class="muted">{d.last_error.slice(0, 80)}</span> : null}
+                  {d.status === "pending" && d.attempts > 0 && d.next_attempt_at ? <div class="muted">{tf("hooks.next_retry", { time: formatDateTime(d.next_attempt_at) })}</div> : null}
                 </td>
               </tr>
             ))}
@@ -386,7 +384,10 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
   const { shop, endpoint } = data;
   const secret = sessionSecret(c);
   // つないだ連携（0088）は接続ごとの署名シークレットをプラグインに渡し済み。画面には出さない
-  const conn = await connectionOf(c, endpoint.id);
+  const [conn, deliveries] = await Promise.all([
+    connectionOf(c, endpoint.id),
+    owner(c).db.from<DeliveryRow>("hook_deliveries").select("id,endpoint_id,event,status,attempts,last_status,last_error,created_at,next_attempt_at", { eq: { shop_id: shop.id, endpoint_id: endpoint.id }, order: "created_at.desc", limit: 20 }),
+  ]);
   const signing = secret && !conn ? await endpointSecret(secret, endpoint.id) : null;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const f = flash(c.req.query("flash"));
@@ -404,6 +405,21 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         sub={<code>{endpoint.url}</code>}
       />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
+      {/* このアプリは何をしているか（許したこと・受け取っている出来事）を先に言葉で */}
+      <div class="split">
+        {conn ? (
+          <section class="card">
+            <h2>{t("hooks.allowed_title")}</h2>
+            <ScopeList scopes={conn.scopes} />
+          </section>
+        ) : null}
+        {receivesEvents(endpoint.url) ? (
+          <section class="card">
+            <h2>{t("hooks.receives_title")}</h2>
+            <EventChips events={endpoint.events} />
+          </section>
+        ) : null}
+      </div>
       {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
       {/* 登録・保存のときにマニフェストを読めなかった外部の送信先。プラグインの欄（設定・お店の行動を渡す等）が出ない理由を見せる */}
       {!endpoint.manifest && bundledPluginIdFromUrl(endpoint.url) === null ? <p class="muted">{t("hooks.manifest_absent")}</p> : null}
@@ -431,10 +447,38 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         </p>
       ) : null}
 
-      <h2>{t("hooks.delete")}</h2>
-      <form method="post" action={`${base}/delete`}>
-        <button type="submit">{t("hooks.delete")}</button>
-      </form>
+      <h2>{t("hooks.endpoint_deliveries")}</h2>
+      {deliveries.length === 0 ? (
+        <p class="muted">{t("hooks.no_deliveries")}</p>
+      ) : (
+        <table>
+          <tbody>
+            {deliveries.map((d) => (
+              <tr>
+                <td>{formatDateTime(d.created_at)}</td>
+                <td>{isHookEvent(d.event) ? eventLabel(d.event) : <code>{d.event}</code>}</td>
+                <td>
+                  <span class={`status ${d.status === "delivered" ? "on" : d.status === "failed" ? "warn" : "info"}`}>{t(`hooks.status.${d.status}` as MessageKey)}</span>
+                  {d.status === "pending" && d.attempts > 0 && d.next_attempt_at ? <div class="muted">{tf("hooks.next_retry", { time: formatDateTime(d.next_attempt_at) })}</div> : null}
+                </td>
+                <td>
+                  {d.last_status ?? ""} {d.last_error ? <span class="muted">{d.last_error.slice(0, 80)}</span> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <section class="card danger-zone">
+        <h2>{t("hooks.danger")}</h2>
+        <p class="muted">{t("hooks.delete_hint")}</p>
+        <form method="post" action={`${base}/delete`} onsubmit={`return confirm(${JSON.stringify(t("hooks.delete_confirm"))})`}>
+          <button type="submit" class="danger">
+            {t("hooks.delete")}
+          </button>
+        </form>
+      </section>
     </AdminLayout>,
   );
 });
