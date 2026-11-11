@@ -3,7 +3,7 @@ import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
 import { buyerMessage, lineBuyerNotify } from "../src/plugins/line_buyer";
 import { lineToken } from "../src/plugins/line_token";
-import { LINE_LOW_STOCK_LIST_MAX, LINE_PUSH_URL, lineLowStockSummary, lineNotify } from "../src/plugins/line_notify";
+import { LINE_LOW_STOCK_LIST_MAX, LINE_PUSH_URL, batchRetryKey, lineLowStockSummary, lineNotify } from "../src/plugins/line_notify";
 import { deliverPendingHooks } from "../src/hooks/deliver";
 import { createPrivilegedDb } from "../src/db/privileged";
 import { bundledPluginUrl } from "../src/plugins";
@@ -126,6 +126,28 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     expect(low.text.split("\n").filter((l) => l.startsWith("・SKU"))).toHaveLength(LINE_LOW_STOCK_LIST_MAX);
     expect(low.text.endsWith("ほか 10 件")).toBe(true);
     expect(sb.tables.hook_deliveries.every((d) => d["status"] === "delivered")).toBe(true);
+  });
+
+  it("再送キー: まとめた id 全部から UUID の形で作る（順は問わない・組が変われば別のキー）。409 は送れたとして扱う", async () => {
+    const k = await batchRetryKey(["b", "a", "c"]);
+    expect(k).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(await batchRetryKey(["c", "a", "b"])).toBe(k);
+    expect(await batchRetryKey(["a", "b", "c", "d"])).not.toBe(k);
+    // LINE には届いたが応答が落ちた → 再送で 409 → 送れたとして配信済みにする（5 回で failed にしない）
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("o@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "s", name: "S" });
+    sb.tables.hook_endpoints.push({ id: "ep-line", shop_id: shop.id, name: "LINE 通知", url: bundledPluginUrl("line_notify"), events: ["inventory.low", "order.paid"], enabled: true, manifest: null, settings: { to: "Uowner" }, created_at: "" });
+    for (let i = 0; i < 2; i++) sb.enqueue(shop.id, "inventory.low", { shop_id: shop.id, sku_id: `sku-${i}`, available: 0, threshold: 3 });
+    sb.enqueue(shop.id, "order.paid", { order_id: "o", total_jpy: 1, items: [] });
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === LINE_PUSH_URL) return new Response("{}", { status: 409 });
+      return sb.fetch(input, init);
+    }) as typeof fetch;
+    const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
+    const config = { get: () => undefined, secret: () => "env-token" } as unknown as ConfigAdapter;
+    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 3, failed: 0 });
   });
 
   it("まとめた送信に失敗したら、まとめた配信はどれも再送に回る。1 件だけなら今までの文面", async () => {

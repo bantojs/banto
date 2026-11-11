@@ -44,7 +44,21 @@ async function pushText(ctx: PluginContext, text: string, retryKey: string): Pro
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": retryKey },
     body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
   });
-  if (!res.ok) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  // 409 は同じ再送キーを LINE が受け付け済み（送れている。src/line/send.ts の pushLine と同じ）
+  if (!res.ok && res.status !== 409) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
+
+/**
+ * まとめた配信の再送キー: まとめた id 全部の SHA-256 を UUID の形にする（LINE は UUID の形を求める）。
+ * 同じ組の再送は同じキー（LINE が重ねて送らない）、再送のときに新しい配信が加わったら別のキー（加わった分も送る）
+ */
+export async function batchRetryKey(ids: readonly string[]): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode([...ids].sort().join(","))));
+  const b = digest.slice(0, 16);
+  b[6] = (b[6]! & 0x0f) | 0x40; // version 4 の形
+  b[8] = (b[8]! & 0x3f) | 0x80; // variant
+  const hex = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export const lineNotify: BundledPlugin = {
@@ -64,11 +78,11 @@ export const lineNotify: BundledPlugin = {
     await pushText(ctx, text, ctx.envelope.id);
   },
   // 在庫僅少は、同じ回に取り出した分を 1 通にまとめる（人が在庫を減らしたときも届くようになったため、0141）。
-  // 再送の鍵はまとめた配信の id のうち小さいもの（同じ組で再送したときに LINE が重ねて送らない）
+  // 再送の鍵はまとめた配信の id 全部から作る（batchRetryKey）。1 件だけなら今までどおりその id
   batchEvents: ["inventory.low"],
   async handleBatch(ctxs) {
     const text = lineLowStockSummary(ctxs);
     if (!text) return;
-    await pushText(ctxs[0]!, text, ctxs.map((c) => c.envelope.id).sort()[0]!);
+    await pushText(ctxs[0]!, text, ctxs.length === 1 ? ctxs[0]!.envelope.id : await batchRetryKey(ctxs.map((c) => c.envelope.id)));
   },
 };
