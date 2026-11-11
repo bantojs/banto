@@ -27,6 +27,17 @@ export interface StorageRange {
 }
 
 /** 範囲を大きさに合わせる（end を丸める・始まりが外なら null） */
+/**
+ * 公開の置き場（画像）に置くオブジェクトの Cache-Control。Worker の `/media/` と、R2 のカスタムドメイン・S3 の公開ドメインから直接配るときで同じ値にする
+ * （直接配る置き場は Worker を通らないので、置くときにオブジェクトに付けておかないとブラウザが毎回取り直す）。
+ * キーは置くたびに新しい（ランダムな名前か、取り込みの元の URL のハッシュ）ので、長く覚えさせてよい。
+ * 同じキーを上書きする商品フィード（`feeds/`）と、公開の置き場からは配らないテーマ（`themes/`）には付けない（null）
+ */
+export const MEDIA_CACHE_CONTROL = "public, max-age=31536000, immutable";
+export function mediaCacheControl(key: string): string | null {
+  return /^(feeds|themes)\//.test(key) ? null : MEDIA_CACHE_CONTROL;
+}
+
 export function clampRange(size: number, start: number, end: number | null): { start: number; end: number } | null {
   if (start >= size) return null;
   return { start, end: Math.min(end ?? size - 1, size - 1) };

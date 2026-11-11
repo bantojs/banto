@@ -2,7 +2,7 @@
  * S3 互換 API（AWS S3 / Cloudflare R2 の S3 API / Backblaze B2 / MinIO）向け StorageAdapter。
  * SDK を使わず、SigV4 を WebCrypto で署名する（src/util/sigv4.ts）。Node 以外のランタイムでも動く（依存は fetch と crypto.subtle のみ）。
  */
-import type { StorageAdapter, StorageRange } from "../types";
+import { mediaCacheControl, type StorageAdapter, type StorageRange } from "../types";
 import { sha256Hex, signAwsRequest } from "../../util/sigv4";
 
 export interface S3Options {
@@ -15,6 +15,8 @@ export interface S3Options {
   publicBaseUrl: string;
   /** パス形式（endpoint/bucket/key）。既定 true。仮想ホスト形式は bucket.endpoint/key */
   pathStyle?: boolean;
+  /** 公開の置き場（MEDIA_BASE_URL から直接配る）。置くときに Cache-Control を付ける（Worker の /media/ と同じ値） */
+  publicCache?: boolean;
   fetch?: typeof fetch;
   /** テスト用: 署名に使う時刻 */
   now?: () => Date;
@@ -60,13 +62,13 @@ export class S3Storage implements StorageAdapter {
     return new URL(`${base}/${this.o.bucket}/${encoded}`);
   }
 
-  private async send(method: string, key: string, body?: ArrayBuffer, contentType?: string, range?: string): Promise<Response> {
+  private async send(method: string, key: string, body?: ArrayBuffer, contentType?: string, range?: string, cacheControl?: string | null): Promise<Response> {
     const url = this.objectUrl(key);
     const payloadHash = await sha256Hex(body ?? "");
     const headers = await signS3Request({
       method,
       url,
-      headers: contentType ? { "content-type": contentType } : {},
+      headers: { ...(contentType ? { "content-type": contentType } : {}), ...(cacheControl ? { "cache-control": cacheControl } : {}) },
       payloadHash,
       region: this.o.region,
       accessKeyId: this.o.accessKeyId,
@@ -79,7 +81,8 @@ export class S3Storage implements StorageAdapter {
 
   async put(key: string, body: ReadableStream | ArrayBuffer | Blob, contentType: string) {
     const buf = body instanceof ArrayBuffer ? body : await new Response(body).arrayBuffer();
-    const res = await this.send("PUT", key, buf, contentType);
+    const cacheControl = this.o.publicCache ? mediaCacheControl(key) : null;
+    const res = await this.send("PUT", key, buf, contentType, undefined, cacheControl);
     if (!res.ok) throw new Error(`S3 PUT ${res.status}: ${(await res.text()).slice(0, 200)}`);
     return { url: `${this.o.publicBaseUrl.replace(/\/+$/, "")}/${key}` };
   }

@@ -140,6 +140,7 @@ export function createStorage(config: ConfigAdapter, fetchImpl?: typeof fetch): 
       secretAccessKey: config.secret("S3_SECRET_ACCESS_KEY"),
       publicBaseUrl,
       pathStyle: config.get("S3_PATH_STYLE") !== "false",
+      publicCache: true,
       fetch: fetchImpl,
     });
   }
