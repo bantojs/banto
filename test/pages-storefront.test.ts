@@ -157,5 +157,14 @@ describe("後から MEDIA_BASE_URL（R2 のドメイン）を付けたとき", (
     expect(html).toContain('<meta property="og:image" content="https://media.example.jp/pages/s/eye.webp"');
     expect(html).not.toContain("/media/pages/s/");
   });
+
+  it("置き場のドメインを別のドメインに付け替える前に保存したアイキャッチは、置き場の外として出さない（空の src の <img> を出さない）", async () => {
+    const { sb, shop } = setup();
+    sb.addPage(shop.id, { id: crypto.randomUUID(), handle: "moved", title: "付け替え前のページ", body: "本文", image_url: "https://old-media.example.jp/pages/s/eye.webp" });
+    const app = appWith(sb, { MEDIA_BASE_URL: "https://media.example.jp" }, new MemoryStorage("https://media.example.jp"), new FakeStripe());
+    const html = await (await new Browser(app, BASE).get("/my-shop/pages/moved")).text();
+    expect(html).not.toContain('class="page-image"');
+    expect(html).not.toContain('src=""');
+  });
 });
 

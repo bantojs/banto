@@ -269,8 +269,11 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
   return list.length > 0 ? `${t("store.member_price")} ${yen(Math.min(...list))}` : null;
 }
 
-/** ページ・記事のアイキャッチの URL（置き場の画像だけ。/media/… は置き場の起点 MEDIA_BASE_URL から。src/pages/markdown.ts の shopImageUrl） */
-const eyecatch = (url: string, ctx: ThemeContext): string => shopImageSrc(url, ctx.mediaBaseUrl) ?? "";
+/**
+ * ページ・記事のアイキャッチの URL（置き場の画像だけ。/media/… は置き場の起点 MEDIA_BASE_URL から。src/pages/markdown.ts の shopImageSrc）。
+ * 置き場の外と見なすもの（MEDIA_BASE_URL を別のドメインに付け替える前に保存した絶対 URL など）は null で、呼ぶ側は <img> を出さない
+ */
+const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
 export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
@@ -831,7 +834,7 @@ export const defaultTheme: Theme = {
       <Layout title={page.seo_title || page.title} ctx={ctx} seo={{ path: path ?? pagePath(ctx.shopPath, page.handle), ...(page.seo_description ? { description: page.seo_description } : {}), ...(page.image_url ? { image: page.image_url } : {}) }}>
         <article class="page">
           {bare ? null : <h1>{page.title}</h1>}
-          {!bare && page.image_url ? <img class="page-image" src={eyecatch(page.image_url, ctx)} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          {!bare && eyecatch(page.image_url, ctx) ? <img class="page-image" src={eyecatch(page.image_url, ctx)!} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
         </article>
       </Layout>
@@ -890,7 +893,7 @@ export const defaultTheme: Theme = {
             {article.author ? <> · {article.author}</> : null}
           </p>
           <h1>{article.title}</h1>
-          {article.image_url ? <img class="page-image" src={eyecatch(article.image_url, ctx)} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
+          {eyecatch(article.image_url, ctx) ? <img class="page-image" src={eyecatch(article.image_url, ctx)!} alt="" decoding="async" style="width:100%;height:auto;border-radius:.5rem;margin:0 0 1.5rem" /> : null}
           <div class="page-body">{raw(html)}</div>
           {article.tags.length > 0 ? (
             <p class="blog-tags">
@@ -2110,7 +2113,7 @@ export function blogListParts({ ctx, blog, articles, tag, tags, newer, older }: 
           {articles.map(({ article, summary }) => (
             <li>
               <a href={articlePath(ctx.shopPath, blog.handle, article.handle)}>
-                {article.image_url ? <img src={eyecatch(article.image_url, ctx)} alt="" loading="lazy" decoding="async" /> : null}
+                {eyecatch(article.image_url, ctx) ? <img src={eyecatch(article.image_url, ctx)!} alt="" loading="lazy" decoding="async" /> : null}
                 <div class="blog-meta">{article.published_at ? formatDateTime(article.published_at, { dateOnly: true }) : null}</div>
                 <h2>{article.title}</h2>
                 {summary ? <p>{summary}</p> : null}
