@@ -235,6 +235,18 @@ describe("画像の起点（MEDIA_BASE_URL が無いとき）", () => {
     expect(await (await new Browser(w.app, SHOP_URL).get("/products/tee")).text()).toContain(`${SHOP_URL}/media/shops/${w.shop.id}/products/`);
   });
 
+  it("独自ドメインの無いショップを PUBLIC_BASE_URL と違うホスト（IP・別名）で開いても、画像は PUBLIC_BASE_URL の /media のまま", async () => {
+    const { sb, shop } = setup({ domain: null });
+    const p = sb.tables.products.find((x) => x["slug"] === "tee")!;
+    sb.tables.product_images.push({ id: crypto.randomUUID(), shop_id: shop.id, product_id: p["id"], storage_key: `shops/${shop.id}/products/${String(p["id"])}/a.webp`, thumb_key: null, width: 800, height: 800, sort_order: 0, options: {}, variants: [], thumb_width: null });
+    const app = appWith(sb, { RESEND_API_KEY: "re_test", MEDIA_BASE_URL: undefined }, undefined, new FakeStripe());
+    for (const origin of ["http://192.168.0.5:8787", "https://www.banto.example.jp"]) {
+      const html = await (await new Browser(app, origin).get("/my-shop/products/tee")).text();
+      expect(html).toContain(`${BASE}/media/shops/${shop.id}/products/`);
+      expect(html).not.toContain("https://192.168.0.5/");
+    }
+  });
+
   it("Banto の URL で開いたページは今までどおり PUBLIC_BASE_URL の /media、MEDIA_BASE_URL があればどこでもそこから", async () => {
     const { shop, app } = withImage();
     // 独自ドメインのショップは Banto の URL では転送されるので、Banto の URL のままの公開 API で確かめる
