@@ -32,16 +32,28 @@ function bundleName(src, name) {
   return m[1];
 }
 
+/**
+ * 関数が返すもの（縮めても変わらないプロパティの名前）。縮めたビルドの短い名前（例 `sv`）は、ほかのスクリプトの
+ * 文字列の中の `function sv(` や入れ子の関数とかぶることがあるので、名前が合う所のうち、これを含むものを選ぶ
+ */
+const MARKERS = { wooImporter: "fetchStore", shippingLabelsClient: "encodeSjis", pageEditorClient: "toMarkdown" };
 function extractFunction(src, original) {
   const name = bundleName(src, original);
-  const start = src.indexOf(`function ${name}(`);
-  if (start < 0) throw new Error(`function ${name} not found in the bundle`);
-  let depth = 0;
-  for (let i = src.indexOf("{", start); i < src.length; i++) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}" && --depth === 0) return src.slice(start, i + 1);
+  const marker = MARKERS[original];
+  for (let start = src.indexOf(`function ${name}(`); start >= 0; start = src.indexOf(`function ${name}(`, start + 1)) {
+    let depth = 0;
+    let body = null;
+    for (let i = src.indexOf("{", start); i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) {
+        body = src.slice(start, i + 1);
+        break;
+      }
+    }
+    if (body === null) throw new Error(`unterminated function ${name}`);
+    if (!marker || body.includes(marker)) return body;
   }
-  throw new Error(`unterminated function ${name}`);
+  throw new Error(`function ${name} (${original}) not found in the bundle`);
 }
 
 const preludeMatch = /export const CLIENT_PRELUDE = '([^']*)';/.exec(readFileSync(join(root, "src", "modules", "woo-import", "admin.tsx"), "utf8"));
