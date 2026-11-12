@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
+import { webhookBody } from "./body";
 import { createPrivilegedDb } from "../../db/privileged";
 import { confirmFromWebhook } from "../../payments/webhook-confirm";
 import { migrated } from "../../db/migration-state";
@@ -25,7 +26,9 @@ komojuWebhook.post("/", async (c: Ctx) => {
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!webhookSecret || !url || !serviceRoleKey) return c.json({ error: "not_configured" }, 503);
 
-  const payload = await c.req.text();
+  const body = await webhookBody(c);
+  if ("res" in body) return body.res;
+  const payload = body.text;
   if (!(await verifyKomojuSignature(payload, c.req.header("x-komoju-signature"), webhookSecret))) {
     return c.json({ error: "invalid_signature" }, 400);
   }

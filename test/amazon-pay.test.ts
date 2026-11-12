@@ -322,6 +322,9 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-9-dddddddd", "OTHER") })).json()).toMatchObject({ ignored: "merchant" });
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-0-00000000") })).json()).toMatchObject({ ignored: "not_found" });
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: "not json" })).status).toBe(400);
+    // 本文の上限（256 KiB）を超える通知は、中身も Charge も見ずに 413（前は 64K 文字を読み切ってから 400）
+    const huge = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-9-dddddddd") + " ".repeat(256 * 1024) });
+    expect(huge.status).toBe(413);
     expect(sb.tables.orders).toHaveLength(0);
 
     let wh = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", headers: { "content-type": "text/plain" }, body: ipn("ch-9-dddddddd") });

@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
+import { webhookBody } from "./body";
 import { createPrivilegedDb } from "../../db/privileged";
 import { migrated } from "../../db/migration-state";
 import { REPLAY_GUARD_MIGRATION } from "./stripe";
@@ -26,8 +27,9 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
   const client = amazonPayFromConfig(cfg, c.get("deps").fetch);
   if (!client || !url || !serviceRoleKey) return c.json({ error: "not_configured" }, 503);
 
-  const text = await c.req.text();
-  if (text.length > 64 * 1024) return c.json({ error: "invalid_payload" }, 400);
+  const body = await webhookBody(c);
+  if ("res" in body) return body.res;
+  const text = body.text;
   let message: Record<string, unknown>;
   try {
     const envelope = JSON.parse(text) as Record<string, unknown>;
