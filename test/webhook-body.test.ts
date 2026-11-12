@@ -6,7 +6,7 @@ import { signStripePayload } from "../src/payments/stripe";
 import { signKomojuPayload } from "../src/plugins/komoju";
 
 /**
- * 決済の Webhook の本文の上限（本番運用のセキュリティチェック P1）: 署名を確かめる前に、実際に読んだバイト数で止める。
+ * 決済の Webhook の本文の上限: 署名を確かめる前に、実際に読んだバイト数で止める。
  * 上限を超える本文を全部メモリに読まない・申告の Content-Length を信じない・途中で切れた本文は 400
  */
 
