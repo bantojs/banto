@@ -161,7 +161,9 @@ describe("独自ドメインのストアフロント", () => {
       await memberLogin(b, mail, "", "m@example.com");
       const account = await b.get("/account");
       expect(account.status).toBe(200);
-      expect([...b.cookies.keys()].some((k) => k.startsWith("banto_member_"))).toBe(true);
+      // https のショップのドメインでは __Host- の名前（同じ登録ドメインの別のホストから差し込まれないように）
+      expect([...b.cookies.keys()].some((k) => k.startsWith("__Host-banto_member_"))).toBe(true);
+      expect([...b.cookies.keys()].some((k) => k.startsWith("banto_member_"))).toBe(false);
     } finally {
       mail.dispose();
     }

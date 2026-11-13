@@ -230,7 +230,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 
 - TypeScript strict。`any` 禁止。
 - Hono のルートは `src/routes/` に機能単位で分ける（`admin/`, `storefront/`, `api/`, `webhooks/`）。
-- 管理画面のフォーム POST は `csrfGuard`（Origin / Sec-Fetch-Site 検査）を必ず通す。Cookie は `SameSite=Lax; HttpOnly; Path=/admin`。
+- 管理画面のフォーム POST は `csrfGuard`（Origin / Sec-Fetch-Site 検査）を必ず通す。Cookie は `SameSite=Lax; HttpOnly; Path=/`（HTTPS では `__Host-banto_admin`。2026-11-13 まで `Path=/admin`）。Cookie を置く・読むのは `src/routes/common.ts` の `setScopedCookie` / `getScopedCookie` / `clearScopedCookie` だけ（HTTPS で Path=/ なら `__Host-` の名前、`src/util/cookie.ts`）。
 - 管理画面のハンドラは `requireOwner` を通し、`owner(c)` で owner の JWT 付き DbClient を受け取る。anon の DbClient を管理画面で使わない。
 - 外部 HTTP は `c.get("deps").fetch` 経由で呼ぶ（テストで `test/fake-supabase.ts` に差し替えるため）。
 - ストアフロントのテンプレートは `src/themes/<name>/` に置き、`Theme` インターフェース（`src/themes/types.ts`）を満たす。テーマはデータ取得をしない。

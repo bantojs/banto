@@ -10,6 +10,7 @@ import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
 import { shopDomainOfRequest } from "./shop-domain-request";
+import { readScopedCookie, scopedClearCookies, scopedSetCookies, type CookieScope } from "../util/cookie";
 
 export type Ctx = Context<AppEnv>;
 
@@ -283,4 +284,31 @@ export function migrationStateFor(c: Ctx, url: string): MigrationStateDeps | nul
 export function inquiryMailFor(c: Ctx): InquiryMailDeps | null {
   const secret = c.get("sessionSecret");
   return secret ? { secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), publicBase: publicBaseUrl(c) } : null;
+}
+
+/**
+ * このリクエストで Cookie を置く・読む場面（src/util/cookie.ts）。HTTPS で Path=/ なら `__Host-` の名前になる。
+ * ショップの Cookie の path は、独自ドメイン（サブドメインモードを含む）の上では "/"、Banto の URL では "/<スラッグ>"
+ */
+export function cookieScope(c: Ctx, path: string): CookieScope {
+  return { path, secure: isSecureRequest(c) };
+}
+
+/** Cookie を置く（接頭辞の付く場面で古い名前が届いていれば、それも消す） */
+export function setScopedCookie(c: Ctx, base: string, value: string, opts: { path: string; maxAge: number; legacyPath?: string }): void {
+  for (const h of scopedSetCookies(c.req.header("cookie"), base, value, { ...cookieScope(c, opts.path), maxAge: opts.maxAge, ...(opts.legacyPath ? { legacyPath: opts.legacyPath } : {}) })) {
+    c.header("Set-Cookie", h, { append: true });
+  }
+}
+
+/** Cookie を消す（今の名前と古い名前の両方） */
+export function clearScopedCookie(c: Ctx, base: string, opts: { path: string; legacyPath?: string }): void {
+  for (const h of scopedClearCookies(base, { ...cookieScope(c, opts.path), ...(opts.legacyPath ? { legacyPath: opts.legacyPath } : {}) })) {
+    c.header("Set-Cookie", h, { append: true });
+  }
+}
+
+/** この場面の Cookie の値（src/util/cookie.ts の readScopedCookie） */
+export function getScopedCookie(c: Ctx, base: string, path: string, opts: { legacy?: boolean } = {}): string | undefined {
+  return readScopedCookie(c.req.header("cookie"), base, cookieScope(c, path), opts);
 }

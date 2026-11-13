@@ -4,8 +4,7 @@
  * 引けなければ空（どの囲みも見せない）
  */
 import type { Ctx } from "./common";
-import { isSecureRequest } from "./common";
-import { readCookie } from "../util/signed";
+import { getScopedCookie, setScopedCookie } from "./common";
 import { privilegedFor } from "./payment-deps";
 import { moduleEnabled } from "../modules/registry";
 import { AUDIENCES_MODULE, queryParamsOf, rememberedParams, type AudienceContext } from "../members/audience";
@@ -82,7 +81,7 @@ export async function storefrontQueryContext(c: Ctx, shop: { id: string; setting
   if (!moduleEnabled(shop.settings ?? {}, AUDIENCES_MODULE)) return {};
   const params = queryParamsOf(new URL(c.req.url).searchParams.entries());
   const name = audienceParamCookieName(shop.id);
-  const before = rememberedOf(readCookie(c.req.header("cookie"), name));
+  const before = rememberedOf(getScopedCookie(c, name, cookiePath));
   let remembered = before;
   if (Object.keys(params).length > 0) {
     const names = rememberedParams((await shopAudiences(c, shop)).map((a) => a.condition));
@@ -93,7 +92,7 @@ export async function storefrontQueryContext(c: Ctx, shop: { id: string; setting
   }
   const keep = Object.fromEntries(Object.entries(remembered).slice(-10));
   if (Object.keys(keep).length > 0) {
-    c.header("Set-Cookie", `${name}=${encodeURIComponent(JSON.stringify(keep))}; Path=${cookiePath}; Max-Age=${AUDIENCE_PARAM_SECONDS}; SameSite=Lax; HttpOnly${isSecureRequest(c) ? "; Secure" : ""}`, { append: true });
+    setScopedCookie(c, name, encodeURIComponent(JSON.stringify(keep)), { path: cookiePath, maxAge: AUDIENCE_PARAM_SECONDS });
   }
   return { params, remembered: keep };
 }
