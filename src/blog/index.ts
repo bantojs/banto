@@ -43,7 +43,6 @@ export interface BlogRow {
 /** 記事の並び順（0116）: 公開した日時の新しい順・題の順・手で並べる（articles.position の小さい順） */
 export const ARTICLE_ORDERS = ["new", "title", "manual"] as const;
 export type ArticleOrder = (typeof ARTICLE_ORDERS)[number];
-export const BLOG_ORDER_MIGRATION = "0116_blog_order";
 export const isArticleOrder = (v: unknown): v is ArticleOrder => typeof v === "string" && (ARTICLE_ORDERS as readonly string[]).includes(v);
 
 /**

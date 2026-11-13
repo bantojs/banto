@@ -109,18 +109,6 @@ describe("お店の画面の商品のブロック", () => {
     expect(sb.pickCalls).toBe(1);
   });
 
-  it("選んだ商品は 0112 が当たるまで空（問い合わせない）", async () => {
-    const { sb, b } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0112_product_pick");
-    const page = sb.tables.pages.find((p) => p["handle"] === "winter")!;
-    page["body"] = "前\n\n::: products slugs=tee,coat";
-    page["updated_at"] = new Date(Date.UTC(2021, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString();
-    const html = await (await b.get("/my-shop/pages/winter")).text();
-    expect(html).toContain("<p>前</p>");
-    expect(html).not.toContain("T シャツ");
-    expect(sb.pickCalls).toBe(0);
-  });
-
   it("Liquid のテーマ: snippet が無ければ既定のカード", async () => {
     const { b } = setup({ liquid: theme });
     const html = await (await b.get("/pages/winter")).text();

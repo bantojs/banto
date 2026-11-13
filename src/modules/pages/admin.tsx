@@ -17,7 +17,7 @@ import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGE_PARTS_MIGRATION, PAGES_MODULE, PAGES_TRASH_DAYS, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import type { CategoryRow } from "../../db/types";
-import { BLOG_LAYOUT_MIGRATION, pageLayoutsOf } from "../../content/layouts";
+import { pageLayoutsOf } from "../../content/layouts";
 import { migrated } from "../../db/migration-state";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { BLOG_MODULE, type BlogRow } from "../../blog";
@@ -301,8 +301,8 @@ async function layoutsPage(c: AdminContext, shop: ShopRow, flash: "saved" | "err
   ]);
   const usable = pages.filter((p) => !p.deleted_at);
   const cur = pageLayoutsOf(shop.settings);
-  // ブログの一覧のひな形（0114）は当たるまで出さない
-  const blogLists = blogs.length > 0 && (await migrated({ db, cache: c.get("adapters").cache }, BLOG_LAYOUT_MIGRATION));
+  // ブログの一覧のひな形（0114）
+  const blogLists = blogs.length > 0;
   const select = (name: string, value: string | null, none: MessageKey = "pages.layouts_none") => (
     <select name={name} id={name}>
       <option value="">{t(none)}</option>
@@ -430,9 +430,8 @@ pagesAdmin.post("/layouts", requireOwner, async (c: AdminContext) => {
   const legal = { legal: f["legal"] || null, legal_pages: legalPagesSel };
   const product = { product: f["product"] || null, product_categories: cats };
   try {
-    // ブログの一覧（0114）: 当たる前の DB は blogs の鍵を断るので送らない（当たった後は、欄が無い = 外す）
-    const withBlogs = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, BLOG_LAYOUT_MIGRATION)) ? { blogs: blogLists } : {};
-    await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles, ...product, ...collection, ...legal, ...withBlogs } });
+    // ブログの一覧（0114）: 欄が無い = 外す
+    await owner(c).db.rpc("page_layouts_set", { p_shop_id: shop.id, p_layouts: { home: f["home"] || null, articles, ...product, ...collection, ...legal, blogs: blogLists } });
   } catch (e) {
     if (e instanceof DbError) return layoutsPage(c, shop, "error", 400);
     throw e;

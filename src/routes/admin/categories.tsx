@@ -14,12 +14,11 @@ import { sizeChartHref } from "../../modules/size-charts/admin";
 import { careHref } from "../../modules/care-labels/admin";
 import { AxesEditor, ChipsScript, appliedText, axesErrorCode, axesText } from "./option-axes";
 import { can } from "./access";
-import { OPTION_SWATCHES_MIGRATION, optionSwatchesOf } from "../../products/option-swatches";
+import { optionSwatchesOf } from "../../products/option-swatches";
 import { SwatchesEditor, mountOptionSwatches, skuOptionValues } from "./option-swatches";
-import { migrated } from "../../db/migration-state";
 import { mediaBaseUrl } from "../common";
 import { MAX_IMAGE_BYTES, imageSize, imageUrl, randomKey, sniffImage } from "../../media/images";
-import { CATEGORY_DESCRIPTION_MAX, CATEGORY_IMAGE_WIDTH, CATEGORY_MEDIA_MIGRATION, categoryDescriptionFromForm, categoryImageKey, categoryImageOf } from "../../products/category-media";
+import { CATEGORY_DESCRIPTION_MAX, CATEGORY_IMAGE_WIDTH, categoryDescriptionFromForm, categoryImageKey, categoryImageOf } from "../../products/category-media";
 import { NotSaved, updateShop } from "./shop-save";
 
 /**
@@ -83,10 +82,10 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const names = optionNamesOf(shop.option_names);
   const rows = await loadCategories(db, shop.id);
-  // 画像と説明（0113）。適用されるまで欄を出さない
-  const media = (await migrated({ db, cache: c.get("adapters").cache }, CATEGORY_MEDIA_MIGRATION)) ? mediaBaseUrl(c) : null;
-  // 選択肢の見本（0115）。当たるまで出さない。値は SKU に出てくるもの
-  const swatches = Object.keys(names).length > 0 && (await migrated({ db, cache: c.get("adapters").cache }, OPTION_SWATCHES_MIGRATION)) ? { values: await skuOptionValues(db, shop.id), media: mediaBaseUrl(c) } : null;
+  // 画像と説明（0113）
+  const media = mediaBaseUrl(c);
+  // 選択肢の見本（0115）。値は SKU に出てくるもの
+  const swatches = Object.keys(names).length > 0 ? { values: await skuOptionValues(db, shop.id), media: mediaBaseUrl(c) } : null;
   const f = flash(c.req.query("flash"));
   const applied = appliedText((k) => c.req.query(k));
   const base = `/admin/shops/${shop.id}/categories`;
@@ -142,35 +141,33 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
             </details>
           </td>
           <td>
-            {media !== null ? (
-              <details>
-                <summary>
-                  {t("category.media")}
-                  {categoryImageOf(row) || row.description ? ` ✓` : ""}
-                </summary>
-                <form method="post" action={`${base}/${n.id}/media`} enctype="multipart/form-data" data-category-media>
-                  <label for={`desc-${n.id}`}>{t("category.description")}</label>
-                  <textarea id={`desc-${n.id}`} name="description" rows={4} maxlength={CATEGORY_DESCRIPTION_MAX} style="width:100%">
-                    {row.description ?? ""}
-                  </textarea>
-                  <label for={`img-${n.id}`}>{t("category.image")}</label>
-                  {categoryImageOf(row) ? (
-                    <p>
-                      <img src={imageUrl(media, categoryImageOf(row)!.key)} alt="" style="max-width:12rem;height:auto" loading="lazy" />
-                      <br />
-                      <label>
-                        <input type="checkbox" name="image_remove" value="on" /> {t("category.image_remove")}
-                      </label>
-                    </p>
-                  ) : null}
-                  <input id={`img-${n.id}`} type="file" name="image" accept="image/jpeg,image/png,image/webp" />
-                  <p class="muted">{t("category.image_hint")}</p>
-                  <button type="submit" class="secondary small">
-                    {t("shop.save")}
-                  </button>
-                </form>
-              </details>
-            ) : null}
+            <details>
+              <summary>
+                {t("category.media")}
+                {categoryImageOf(row) || row.description ? ` ✓` : ""}
+              </summary>
+              <form method="post" action={`${base}/${n.id}/media`} enctype="multipart/form-data" data-category-media>
+                <label for={`desc-${n.id}`}>{t("category.description")}</label>
+                <textarea id={`desc-${n.id}`} name="description" rows={4} maxlength={CATEGORY_DESCRIPTION_MAX} style="width:100%">
+                  {row.description ?? ""}
+                </textarea>
+                <label for={`img-${n.id}`}>{t("category.image")}</label>
+                {categoryImageOf(row) ? (
+                  <p>
+                    <img src={imageUrl(media, categoryImageOf(row)!.key)} alt="" style="max-width:12rem;height:auto" loading="lazy" />
+                    <br />
+                    <label>
+                      <input type="checkbox" name="image_remove" value="on" /> {t("category.image_remove")}
+                    </label>
+                  </p>
+                ) : null}
+                <input id={`img-${n.id}`} type="file" name="image" accept="image/jpeg,image/png,image/webp" />
+                <p class="muted">{t("category.image_hint")}</p>
+                <button type="submit" class="secondary small">
+                  {t("shop.save")}
+                </button>
+              </form>
+            </details>
             {sizeChartHref(shop, { category: n.id }) ? (
               <p>
                 <a href={sizeChartHref(shop, { category: n.id })!}>{t("sizechart.link")}</a>
@@ -279,7 +276,7 @@ categories.get("/:shopId/categories", requireOwner, async (c: AdminContext) => {
         </div>
       {/* チップの入力（値の候補）。ページのすべての入力欄ができてから動かす */}
       <ChipsScript />
-      {media !== null ? <script dangerouslySetInnerHTML={{ __html: RESIZE_SCRIPT }} /> : null}
+      <script dangerouslySetInnerHTML={{ __html: RESIZE_SCRIPT }} />
     </AdminLayout>,
   );
 });

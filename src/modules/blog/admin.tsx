@@ -17,9 +17,9 @@ import { moduleEnabled } from "../registry";
 import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import { ContentForm, type EditorKind, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
-import { ARTICLE_ORDERS, BLOG_MODULE, BLOG_ORDER_MIGRATION, articleHandleOk, blogHandleOk, blogOrderReady as blogRowOrdered, isBlogOrder, parseTags, type ArticleRow, type BlogRow } from "../../blog";
+import { ARTICLE_ORDERS, BLOG_MODULE, articleHandleOk, blogHandleOk, blogOrderReady as blogRowOrdered, isBlogOrder, parseTags, type ArticleRow, type BlogRow } from "../../blog";
 import { migrated } from "../../db/migration-state";
-import { ARTICLE_FIELD_DATES_MIGRATION, ARTICLE_FIELD_IMAGE_MIGRATION, articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
+import { ARTICLE_FIELD_DATES_MIGRATION, articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
 import { fieldImageUpload } from "../../routes/admin/field-image";
 
 /**
@@ -72,13 +72,7 @@ const opt = (v: string | undefined, max: number) => {
 
 type BlogValues = Pick<BlogRow, "title" | "handle" | "description" | "seo_title" | "seo_description" | "template_suffix" | "nav" | "sort_order" | "article_order" | "feed" | "article_from_today" | "article_until">;
 
-/** 0116（並び順・フィード）が当たっているか。ブログの行があれば列があるかで分かる（問い合わせない） */
-async function blogOrderReady(c: AdminContext, blog?: BlogRow | null): Promise<boolean> {
-  if (blog) return blogRowOrdered(blog);
-  return migrated({ db: owner(c).db, cache: c.get("adapters").cache }, BLOG_ORDER_MIGRATION).catch(() => false);
-}
-
-/** ordered = 0116 が当たっている（並び順とフィードの欄を読む。当たる前は送らない） */
+/** ordered = ブログの行に並び順とフィードの列がある（0116。新しいブログでは true） */
 function blogValues(f: Record<string, string>, ordered = false): { values: BlogValues; error: MessageKey | null } {
   const title = (f.title ?? "").trim();
   const typed = (f.handle ?? "").trim().toLowerCase();
@@ -200,7 +194,6 @@ async function blogList(c: AdminContext, shop: ShopRow, opts: { values?: BlogVal
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
   const v = opts.values ?? { title: "", handle: "", description: null, seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0 };
-  const ordered = await blogOrderReady(c);
   return layout(
     c,
     shop,
@@ -257,7 +250,7 @@ async function blogList(c: AdminContext, shop: ShopRow, opts: { values?: BlogVal
         <h2>{t("blog.new_blog")}</h2>
         <p class="muted">{t("blog.new_blog_help")}</p>
         <form method="post" action={base(shop.id)}>
-          <BlogFields v={v} ordered={ordered} />
+          <BlogFields v={v} ordered />
           <p>
             <button type="submit">{t("blog.create_blog")}</button>
           </p>
@@ -277,7 +270,7 @@ blogAdmin.get("/", requireOwner, async (c: AdminContext) => {
 blogAdmin.post("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const { values, error } = blogValues(await formFields(c), await blogOrderReady(c));
+  const { values, error } = blogValues(await formFields(c), true);
   if (error) return blogList(c, shop, { values, error, status: 400 });
   try {
     const [row] = await owner(c).db.from<BlogRow>("blogs").insert({ ...values, shop_id: shop.id });
@@ -547,8 +540,8 @@ blogAdmin.post("/:blogId/fields", requireOwner, async (c: AdminContext) => {
   const text = (await formFields(c))["rows"] ?? "";
   const blogs = await owner(c).db.from<{ id: string; handle: string }>("blogs").select("id,handle", { eq: { shop_id: shop.id }, limit: 100 });
   const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [image, dates] = await Promise.all([migrated(deps, ARTICLE_FIELD_IMAGE_MIGRATION).catch(() => false), migrated(deps, ARTICLE_FIELD_DATES_MIGRATION).catch(() => false)]);
-  const { defs, error } = parseArticleFieldRows(text, blogs, { image, dates });
+  const dates = await migrated(deps, ARTICLE_FIELD_DATES_MIGRATION).catch(() => false);
+  const { defs, error } = parseArticleFieldRows(text, blogs, { dates });
   if (error !== null) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: error.slice(0, 100), status: 400 });
   try {
     await owner(c).db.from("blogs").update({ article_fields: defs }, { id: blog.id, shop_id: shop.id });

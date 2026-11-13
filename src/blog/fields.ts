@@ -8,8 +8,6 @@ import { shopImageUrl } from "../pages/markdown";
 import { getTimeZone, zonedInputToIso } from "../i18n/time";
 import type { Filter } from "../db/client";
 
-/** 画像の種類（0120、メンテナの決定 2026-11-05）。当てるまで定義に書かせない */
-export const ARTICLE_FIELD_IMAGE_MIGRATION = "0120_article_field_image";
 export const ARTICLE_FIELDS_MAX = 20;
 /** 日付・日時の種類と、その順での並べ替え・今日以降だけ（0124、メンテナの決定 2026-11-07）。当てるまで定義に書かせない */
 export const ARTICLE_FIELD_DATES_MIGRATION = "0124_article_field_dates";
@@ -64,14 +62,14 @@ export function articleFieldDefs(blog: { article_fields?: unknown }): ArticleFie
  *       author | 書いた人 | article | staff
  *       items | 着用アイテム | products
  */
-export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[], opts: { image?: boolean; dates?: boolean } = {}): { defs: ArticleFieldDef[]; error: string | null } {
+export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[], opts: { dates?: boolean } = {}): { defs: ArticleFieldDef[]; error: string | null } {
   const defs: ArticleFieldDef[] = [];
   for (const line of input.replace(/\r\n?/g, "\n").split("\n")) {
     if (!line.trim()) continue;
     const [key = "", label = "", typeRaw = "", extra = ""] = line.split("|").map((x) => x.trim());
     const plural = typeRaw === "products" || typeRaw === "articles";
     const type = (plural ? typeRaw.slice(0, -1) : typeRaw) as ArticleFieldType;
-    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key) || (type === "image" && opts.image !== true) || ((type === "date" || type === "datetime") && opts.dates !== true)) return { defs, error: line };
+    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key) || ((type === "date" || type === "datetime") && opts.dates !== true)) return { defs, error: line };
     const def: ArticleFieldDef = { key, label: (label || key).slice(0, 60), type };
     if (type === "select") {
       def.options = extra.split("/").map((x) => x.trim()).filter(Boolean).slice(0, 50);

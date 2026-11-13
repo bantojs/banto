@@ -5,7 +5,6 @@ import { BASE, MemoryStorage, appWith, externalHosts, tinyPng } from "./helpers"
 afterEach(() => externalHosts.clear());
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { MCP_TOOLS } from "../src/mcp/tools";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * /api/v1 と /mcp のページ・記事（0083、content:read / content:write）。Worker は形を整えて api_* に渡すだけなので、
@@ -105,15 +104,6 @@ describe("ページ・記事の AI 用 API（REST /api/v1・MCP）", () => {
     expect(bad.status).toBe(400);
     expect(bad.json.error?.message).toMatch(/^invalid_page_layouts/);
     expect((await rest(await issue(["content:read"]), "PATCH", "/page-layouts", { home: "x" })).status).toBe(401);
-  });
-
-  it("DB の更新を当てる前は 409 migration_required（関数の無い 502 にしない）", async () => {
-    const { rest, issue } = setup(undefined, BUNDLED_MIGRATIONS.filter((v) => v !== "0118_api_blog_update" && v !== "0119_api_layouts_media"));
-    const tok = await issue(["content:read", "content:write"]);
-    for (const [method, path, body] of [["GET", "/page-layouts"], ["PATCH", "/page-layouts", { home: null }], ["POST", "/media", { url: "https://images.example/a.png" }], ["PATCH", "/blogs/news", { title: "x" }]] as const) {
-      const r = await rest(tok, method, path, body);
-      expect(`${method} ${path} -> ${r.status} ${r.json.error?.code}`).toBe(`${method} ${path} -> 409 migration_required`);
-    }
   });
 
   it("スコープ不足は 401、モジュールが OFF は 409 module_disabled", async () => {

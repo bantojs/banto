@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, tinyPng } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { cleanAttributes, parseFieldDefinitions, publicAttributes } from "../src/products/fields";
 import { parseCustomerFieldDefinitions } from "../src/customers/fields";
 import { fieldsFromForm, parseArticleFieldRows } from "../src/blog/fields";
@@ -25,8 +24,7 @@ describe("値の形", () => {
 
   it("記事: image は 0120 が当たってから。フォームの値は置き場のものだけ", () => {
     const blogs: { id: string; handle: string }[] = [];
-    expect(parseArticleFieldRows("photo | 写真 | image", blogs).error).toBe("photo | 写真 | image");
-    const { defs, error } = parseArticleFieldRows("photo | 写真 | image", blogs, { image: true });
+    const { defs, error } = parseArticleFieldRows("photo | 写真 | image", blogs);
     expect(error).toBeNull();
     expect(defs).toEqual([{ key: "photo", label: "写真", type: "image" }]);
     expect(fieldsFromForm(defs, { field_photo: ` ${MEDIA}/fields/s/a.webp ` }, MEDIA)).toEqual({ photo: `${MEDIA}/fields/s/a.webp` });
@@ -100,12 +98,6 @@ describe("記事の項目の画像（0120）", () => {
     const tpl = sb.addPage(shop.id, { id: crypto.randomUUID(), handle: "tpl-staff", title: "t", body: "::: current part=title\n\n::: current part=field:photo" });
     (sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, unknown>)["page_layouts"] = { articles: { [staff.id]: tpl.id } };
     expect(await (await new Browser(app, BASE).get("/my-shop/blogs/staff/amada")).text()).toContain(`<img class="banto-field banto-field--photo banto-field--image" src="${url}" alt="写真" loading="eager" fetchpriority="high">`); // ひな形の最初の画像はすぐ読む
-  });
-
-  it("0120 の前は image の定義を保存しない", async () => {
-    const { staff, shop, app } = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0120_article_field_image") });
-    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect((await admin.post(`/admin/shops/${shop.id}/modules/blog/${staff.id}/fields`, { rows: "photo | 写真 | image" })).status).toBe(400);
   });
 
   it("AI 用 API: 記事の保存の画像の項目は置き場のものだけ（外の画像は 400、ほかのホストの /media/ はホストを外す）", async () => {
