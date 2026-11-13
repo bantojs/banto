@@ -55,7 +55,7 @@ import { audienceAttrsOf } from "../../members/audience";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
-import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
+import { domainUrlFor, hostShop, onShopDomain, storefrontData } from "./domain";
 import type { AccountPageProps, AddressFormValues } from "../../themes/types";
 import { liquidThemeFor, renderAccount, renderCustomerLogin, type CustomerLoginInput } from "./liquid";
 import { type PublicShop } from "../../storefront/data";
@@ -1059,7 +1059,7 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
 const OAUTH_COOKIE = "banto_oauth";
 const OAUTH_SECONDS = 10 * 60;
 /**
- * LINE の自動ログインに失敗した印（中身は "line"）。次に LINE でログインを始めるとき disable_auto_login を付ける。
+ * LINE の自動ログインに失敗した印（中身は "line:<スラッグ>"、そのショップだけに効く）。次にそのショップで LINE のログインを始めるとき disable_auto_login を付ける。
  * iOS などで LINE アプリへ移ったあと、戻りが別のブラウザ（既定のブラウザ。別のブラウザや別のアプリの中のブラウザから始めたとき）で開くと、
  * そのブラウザには state の Cookie が無い。自動ログインのまま始め直すと同じことを繰り返すので、やり直しは LINE アプリを経由させない
  */
@@ -1100,7 +1100,7 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
   if (shop.domain && !onShopDomain(c, shop)) return c.req.method === "GET" ? c.redirect(domainUrlFor(c, shop)!) : c.redirect(`https://${shop.domain}/account`, 303);
   const { verifier, challenge } = await pkce();
   const origin = shopOrigin(publicBaseUrl(c), shop);
-  const retry = p === "line" && readCookie(c.req.header("cookie"), OAUTH_RETRY_COOKIE) === "line";
+  const retry = p === "line" && readCookie(c.req.header("cookie"), OAUTH_RETRY_COOKIE) === `line:${shop.slug}`;
   if (retry) c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, "", "/", isSecureRequest(c), 0), { append: true });
   const st: OAuthState = {
     provider: p,
@@ -1167,14 +1167,17 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   const st = secret ? ((await openJson(oauthSecret(secret), raw)) as OAuthState | null) : null;
   // state が合わない = この端末で始めたログインではない（他人の戻り URL を踏まされた等）。何もしない
   if (!st || !p || st.provider !== p || !db || !secret || st.exp < Math.floor(Date.now() / 1000) || c.req.query("state") !== st.state) {
-    // 多くは「LINE アプリへ移って、戻りが別のブラウザで開いた」（このブラウザには Cookie が無い）。ログインはさせず、
-    // このブラウザでやり直せるように、state の頭のショップのログイン画面へ案内する（LINE はやり直しで自動ログインを使わない）
-    const slug = p && db && secret ? STATE_SHOP.exec(c.req.query("state") ?? "")?.[1] : undefined;
-    if (!slug) return c.text(t("member.oauth_failed"), 400);
-    if (p === "line") c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, "line", "/", isSecureRequest(c), OAUTH_SECONDS), { append: true });
-    // 独自ドメインの上の戻りなら、そのドメインのパス（スラッグを付けない）
-    const onBase = new URL(c.req.url).origin === new URL(publicBaseUrl(c)).origin;
-    return c.redirect(`${onBase ? `/${slug}` : ""}/account/login?error=oauth_retry`);
+    // Cookie が無い・合わない戻り。多くは「LINE アプリへ移って、戻りが別のブラウザで開いた」（このブラウザには Cookie が無い）。
+    // ほかに、2 つのタブで同時に始めた・古い戻りを開いた・期限切れ。どれもログインはさせず（認可コードを使わない）、
+    // このブラウザでやり直せるように、ショップのログイン画面へ案内する（LINE はやり直しで自動ログインを使わない）
+    const stateSlug = p && db && secret ? STATE_SHOP.exec(c.req.query("state") ?? "")?.[1] : undefined;
+    if (!stateSlug) return c.text(t("member.oauth_failed"), 400);
+    // 独自ドメインの上の戻りなら、Host のショップを正にして、そのドメインのパス（スラッグを付けない）。
+    // PUBLIC_BASE_URL が無い構成でも分かるように Host で引く（失敗のときだけ通るので、往復が 1 回増えても速度の予算に響かない）
+    const hs = await hostShop(c);
+    const slug = hs ? hs.slug : stateSlug;
+    if (p === "line") c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, `line:${slug}`, "/", isSecureRequest(c), OAUTH_SECONDS), { append: true });
+    return c.redirect(`${hs ? "" : `/${slug}`}/account/login?error=oauth_retry`);
   }
   const shopPath = st.path;
   const fail = (reason: string) =>

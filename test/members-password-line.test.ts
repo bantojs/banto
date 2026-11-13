@@ -388,6 +388,24 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     expect(await (await b.get("/account")).text()).toContain("d@example.com");
   });
 
+  it("独自ドメインのショップで、LINE の戻りが別のブラウザで開いた: PUBLIC_BASE_URL が無くても、そのドメインのログイン画面へ案内する", async () => {
+    const { sb, shop, app } = setup();
+    const DOMAIN = "https://shop.example.jp";
+    sb.tables.shops.find((s) => s["id"] === shop.id)!["domain"] = "shop.example.jp";
+    await configure(app, shop.id, "line", "line-channel", "line-secret");
+    const app2 = appWith(sb, { RESEND_API_KEY: "re_test", PUBLIC_BASE_URL: undefined });
+    const start = await new Browser(app2, DOMAIN).get("/account/oauth/line");
+    const auth = new URL(start.headers.get("location")!);
+    expect(auth.searchParams.get("redirect_uri")).toBe(`${DOMAIN}/_oauth/line/callback`);
+
+    const other = new Browser(app2, DOMAIN);
+    const back = await other.get(`/_oauth/line/callback?code=good&state=${auth.searchParams.get("state")}`);
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe("/account/login?error=oauth_retry");
+    expect((await other.get("/account/login?error=oauth_retry")).status).toBe(200);
+    expect(new URL((await other.get("/account/oauth/line")).headers.get("location")!).searchParams.get("disable_auto_login")).toBe("true");
+  });
+
   it("モジュールが OFF なら設定画面も入口も無い", async () => {
     const { shop, app, b } = setup({ line: false });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
