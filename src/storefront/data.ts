@@ -222,6 +222,23 @@ export class StorefrontData {
   }
 
   /**
+   * サブドメインモードのホストのスラッグ → 公開中のショップ（src/storefront/subdomain.ts）。
+   * shopBySlug と違い、無いスラッグも短時間覚える（ワイルドカードの DNS では、知らない名前のホストに毎回 DB を引かない。
+   * キャッシュは件数の上限つき）
+   */
+  async shopByHostSlug(slug: string): Promise<PublicShop | null> {
+    const hit = await this.cache.get<PublicShop>(`shop:${slug}`);
+    if (hit) return hit;
+    const key = `hostslug:${slug}`;
+    const miss = await this.cache.get<{ shop: null }>(key);
+    if (miss) return null;
+    const shop = await this.fetchShop({ slug });
+    if (shop) await this.cache.set(`shop:${slug}`, shop, STOREFRONT_CACHE_TTL);
+    else await this.cache.set(key, { shop: null }, STOREFRONT_CACHE_TTL);
+    return shop;
+  }
+
+  /**
    * 独自ドメインのホスト名 → 公開中のショップ（0015_shop_domain）。無いホストも短時間覚える（Banto 自身の URL で毎回引かないように）。
    * 見つかったショップ行は shopBySlug のキャッシュにも入れる（続く処理で引き直さない）。
    */

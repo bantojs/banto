@@ -4,7 +4,7 @@ import { pendingMigrations } from "../../db/migrations";
 import { t } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
 import { AdminLayout } from "./layout";
-import { SLUG_RE, formFields, owner } from "./context";
+import { SLUG_RE, formFields, owner, shopTemplateDomain } from "./context";
 import { DbError } from "../../db/client";
 import { planLimitOf } from "../../plan/limits";
 import type { ShopRow } from "../../db/types";
@@ -179,6 +179,8 @@ dashboard.get("/", requireOwner, async (c) => {
           <h2 id="add-shop">{t("dashboard.add_shop")}</h2>
           {flash === "invalid_slug" ? <p class="error">{t("setup.shop.invalid_slug")}</p> : null}
           {flash === "slug_taken" ? <p class="error">{t("dashboard.slug_taken")}</p> : null}
+          {flash === "slug_domain_invalid" ? <p class="error">{t("shop.slug_domain_invalid")}</p> : null}
+          {flash === "slug_domain_taken" ? <p class="error">{t("shop.slug_domain_taken")}</p> : null}
           {flash === "plan_limit" ? <p class="error">{t("plan.limit_shops")}</p> : null}
           <form method="post" action="/admin/shops" class="card" style="max-width:36rem">
             <label for="name" style="margin-top:0">
@@ -207,10 +209,15 @@ dashboard.post("/shops", requireOwner, requireOrgAdmin, async (c) => {
   const slug = (f.slug ?? "").trim();
   if (!name || name.length > 200) return c.redirect("/admin?flash=generic");
   if (!SLUG_RE.test(slug)) return c.redirect("/admin?flash=invalid_slug");
+  // サブドメインモード: ひな形からショップのドメインを決める（作れないスラッグは断る）
+  const domain = shopTemplateDomain(c, slug);
+  if (domain === "invalid") return c.redirect("/admin?flash=slug_domain_invalid");
   try {
-    const [shop] = await db.from<ShopRow>("shops").insert({ owner_id: session.user_id, slug, name });
+    const [shop] = await db.from<ShopRow>("shops").insert({ owner_id: session.user_id, slug, name, ...(domain ? { domain } : {}) });
     return c.redirect(`/admin/shops/${shop!.id}?flash=saved`);
   } catch (e) {
+    // スラッグとドメインのどちらの重なりかを分けて出す（ドメインは、ほかのショップが手で同じ名前を付けているとき）
+    if (e instanceof DbError && domain && /shops_domain_key/.test(e.message)) return c.redirect("/admin?flash=slug_domain_taken");
     if (e instanceof DbError && e.status === 409) return c.redirect("/admin?flash=slug_taken");
     if (e instanceof DbError && planLimitOf(e)) return c.redirect("/admin?flash=plan_limit");
     if (e instanceof DbError) return c.redirect("/admin?flash=generic");
