@@ -1932,6 +1932,7 @@ export const en: Record<MessageKey, string> = {
   "member.oauth_other_linked": "Another account of the same service is already linked. Unlink it first.",
   "member.oauth_already_linked": "That account is linked to another member.",
   "member.oauth_failed": "Could not log in. Please try again.",
+  "member.oauth_retry": "We couldn't finish signing you in (you may have been switched to a different browser partway through). Please try the sign-in button again in this browser.",
   "member.oauth_unlink": "Unlink",
   "member.oauth_linked": "Linked with {name}",
   "member.oauth_link": "Link {name}",

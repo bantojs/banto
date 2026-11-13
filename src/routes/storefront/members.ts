@@ -263,6 +263,7 @@ const LOGIN_ERRORS: Record<string, MessageKey> = {
   password: "member.password_invalid",
   locked: "member.password_locked",
   oauth: "member.oauth_failed",
+  oauth_retry: "member.oauth_retry",
   reauth: "member.reauth_required",
   invalid_email: "member.invalid_email",
   unavailable: "member.unavailable",
@@ -1057,6 +1058,14 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
 
 const OAUTH_COOKIE = "banto_oauth";
 const OAUTH_SECONDS = 10 * 60;
+/**
+ * LINE の自動ログインに失敗した印（中身は "line"）。次に LINE でログインを始めるとき disable_auto_login を付ける。
+ * iOS などで LINE アプリへ移ったあと、戻りが別のブラウザ（既定のブラウザ。別のブラウザや別のアプリの中のブラウザから始めたとき）で開くと、
+ * そのブラウザには state の Cookie が無い。自動ログインのまま始め直すと同じことを繰り返すので、やり直しは LINE アプリを経由させない
+ */
+const OAUTH_RETRY_COOKIE = "banto_oauth_retry";
+/** state の頭に付けるショップのスラッグ（Cookie が無い戻りで、やり直しのログイン画面へ案内するためだけに使う。信用はしない） */
+const STATE_SHOP = /^([a-z0-9][a-z0-9-]{0,62})\./;
 
 interface OAuthState {
   provider: Provider;
@@ -1091,9 +1100,11 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
   if (shop.domain && !onShopDomain(c, shop)) return c.req.method === "GET" ? c.redirect(domainUrlFor(c, shop)!) : c.redirect(`https://${shop.domain}/account`, 303);
   const { verifier, challenge } = await pkce();
   const origin = shopOrigin(publicBaseUrl(c), shop);
+  const retry = p === "line" && readCookie(c.req.header("cookie"), OAUTH_RETRY_COOKIE) === "line";
+  if (retry) c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, "", "/", isSecureRequest(c), 0), { append: true });
   const st: OAuthState = {
     provider: p,
-    state: randomToken(24),
+    state: `${shop.slug}.${randomToken(24)}`,
     nonce: randomToken(24),
     verifier,
     shop: shop.id,
@@ -1106,7 +1117,7 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
   };
   c.header("Set-Cookie", cookieHeader(OAUTH_COOKIE, await sealJson(oauthSecret(secret), st), "/_oauth", isSecureRequest(c), OAUTH_SECONDS), { append: true });
   const bot = ((shop.settings ?? {})["oauth"] as Record<string, Record<string, unknown>> | undefined)?.["line"]?.["bot_prompt"];
-  return c.redirect(authorizeUrl(p, clientId, { redirectUri: redirectUri(origin, p), state: st.state, nonce: st.nonce, challenge, botPrompt: bot === "normal" || bot === "aggressive" ? bot : null }));
+  return c.redirect(authorizeUrl(p, clientId, { redirectUri: redirectUri(origin, p), state: st.state, nonce: st.nonce, challenge, botPrompt: bot === "normal" || bot === "aggressive" ? bot : null, disableAutoLogin: retry }));
 }
 
 function providerOf(c: Ctx): Provider | null {
@@ -1155,7 +1166,16 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   c.header("Set-Cookie", cookieHeader(OAUTH_COOKIE, "", "/_oauth", isSecureRequest(c), 0), { append: true });
   const st = secret ? ((await openJson(oauthSecret(secret), raw)) as OAuthState | null) : null;
   // state が合わない = この端末で始めたログインではない（他人の戻り URL を踏まされた等）。何もしない
-  if (!st || !p || st.provider !== p || !db || !secret || st.exp < Math.floor(Date.now() / 1000) || c.req.query("state") !== st.state) return c.text(t("member.oauth_failed"), 400);
+  if (!st || !p || st.provider !== p || !db || !secret || st.exp < Math.floor(Date.now() / 1000) || c.req.query("state") !== st.state) {
+    // 多くは「LINE アプリへ移って、戻りが別のブラウザで開いた」（このブラウザには Cookie が無い）。ログインはさせず、
+    // このブラウザでやり直せるように、state の頭のショップのログイン画面へ案内する（LINE はやり直しで自動ログインを使わない）
+    const slug = p && db && secret ? STATE_SHOP.exec(c.req.query("state") ?? "")?.[1] : undefined;
+    if (!slug) return c.text(t("member.oauth_failed"), 400);
+    if (p === "line") c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, "line", "/", isSecureRequest(c), OAUTH_SECONDS), { append: true });
+    // 独自ドメインの上の戻りなら、そのドメインのパス（スラッグを付けない）
+    const onBase = new URL(c.req.url).origin === new URL(publicBaseUrl(c)).origin;
+    return c.redirect(`${onBase ? `/${slug}` : ""}/account/login?error=oauth_retry`);
+  }
   const shopPath = st.path;
   const fail = (reason: string) =>
     st.mode === "api" && st.return_to

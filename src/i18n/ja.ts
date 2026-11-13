@@ -1939,6 +1939,7 @@ export const ja = {
   "member.oauth_other_linked": "同じサービスの別のアカウントと連携しています。連携を外してからお試しください。",
   "member.oauth_already_linked": "そのアカウントは、別の会員に連携されています。",
   "member.oauth_failed": "ログインできませんでした。もう一度お試しください。",
+  "member.oauth_retry": "ログインを最後まで進められませんでした（途中で別のブラウザに切り替わった可能性があります）。このブラウザで、もう一度ログインのボタンからお試しください。",
   "member.oauth_unlink": "連携を外す",
   "member.oauth_linked": "{name} と連携しています",
   "member.oauth_link": "{name} を連携する",

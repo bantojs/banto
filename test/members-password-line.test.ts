@@ -271,7 +271,19 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     expect(start.headers.getSetCookie().find((c) => c.startsWith("banto_oauth="))).toContain("Path=/_oauth");
     const auth = new URL(start.headers.get("location")!);
     expect(auth.searchParams.get("client_id")).toBe("line-channel");
-    expect((await new Browser(app).get(`/_oauth/line/callback?code=good&state=${auth.searchParams.get("state")}`)).status).toBe(400);
+    expect(auth.searchParams.get("state")).toMatch(/^my-shop\./);
+    expect(auth.searchParams.has("disable_auto_login")).toBe(false);
+    // 戻りが別のブラウザで開いた（LINE アプリの自動ログインから既定のブラウザへ）: ログインはさせず、そのブラウザでのやり直しへ。
+    // やり直しは LINE アプリを経由しない（disable_auto_login）。印は 1 回で消える
+    const other = new Browser(app);
+    const back = await other.get(`/_oauth/line/callback?code=good&state=${auth.searchParams.get("state")}`);
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe("/my-shop/account/login?error=oauth_retry");
+    expect(await (await other.get("/my-shop/account/login?error=oauth_retry")).text()).toContain("別のブラウザに切り替わった");
+    expect(new URL((await other.get("/my-shop/account/oauth/line")).headers.get("location")!).searchParams.get("disable_auto_login")).toBe("true");
+    expect(new URL((await other.get("/my-shop/account/oauth/line")).headers.get("location")!).searchParams.has("disable_auto_login")).toBe(false);
+    expect(await (await other.get("/my-shop/account")).text()).not.toContain("LINE と連携しています");
+    // ショップの分からない state は今までどおり何もしない
     expect((await b.get(`/_oauth/line/callback?code=good&state=wrong`)).status).toBe(400);
 
     start = await b.get("/my-shop/account/oauth/line");
