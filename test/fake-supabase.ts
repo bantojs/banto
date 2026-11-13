@@ -811,15 +811,16 @@ export class FakeSupabase {
     return this.ownedShopIds(uid).has(row["shop_id"] as string);
   }
 
-  private uniqueViolation(table: TableName, row: Row, excludeId?: unknown): boolean {
+  /** 一意制約に当たれば、その制約の名前（PostgreSQL のエラーの文に入る。shops.domain は shops_domain_key）。当たらなければ null */
+  private uniqueViolation(table: TableName, row: Row, excludeId?: unknown): string | null {
     for (const cols of UNIQUE[table] ?? []) {
       // PostgreSQL と同じく null 同士は重複にしない（shops.domain 等）
       if (cols.some((c) => row[c] === null || row[c] === undefined)) continue;
       // 0080: ページの URL の名前の一意はゴミ箱の外だけ
       if ((table === "pages" || table === "articles") && row["deleted_at"]) continue;
-      if (this.tables[table].some((r) => !((table === "pages" || table === "articles") && r["deleted_at"]) && r["id"] !== excludeId && cols.every((c) => r[c] === row[c]))) return true;
+      if (this.tables[table].some((r) => !((table === "pages" || table === "articles") && r["deleted_at"]) && r["id"] !== excludeId && cols.every((c) => r[c] === row[c]))) return `${table}_${cols.join("_")}_key`;
     }
-    return false;
+    return null;
   }
 
   private isService(req: Request): boolean {
@@ -959,7 +960,8 @@ export class FakeSupabase {
       const created: Row[] = [];
       for (const r of incoming) {
         if (!this.writable(table, r, uid)) return rlsError(table);
-        if (this.uniqueViolation(table, r)) return json({ code: "23505", message: "duplicate key value violates unique constraint" }, 409);
+        const dup = this.uniqueViolation(table, r);
+        if (dup) return json({ code: "23505", message: `duplicate key value violates unique constraint "${dup}"` }, 409);
         if (table === "shops" || table === "products" || table === "customers") {
           const hit = this.planLimitHit(table);
           if (hit) return hit;
@@ -1018,7 +1020,8 @@ export class FakeSupabase {
         if (table === "shops" && next["published"] === true && !(next["legal_notice"] && next["privacy_policy"] && next["return_policy"])) {
           return json({ code: "23514", message: 'new row for relation "shops" violates check constraint "shops_publish_requires_legal"' }, 400);
         }
-        if (this.uniqueViolation(table, next, r["id"])) return json({ code: "23505", message: "duplicate key value violates unique constraint" }, 409);
+        const dup = this.uniqueViolation(table, next, r["id"]);
+        if (dup) return json({ code: "23505", message: `duplicate key value violates unique constraint "${dup}"` }, 409);
         // 0065 の守り（規則は test/db/sku-option-axes.test.ts）
         if (table === "skus" && "options" in values) {
           const bad = this.axesViolation(next);

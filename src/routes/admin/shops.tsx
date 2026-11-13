@@ -15,7 +15,8 @@ import { orderPageUrl } from "../../orders/lookup";
 import { memberAccountPage } from "../../storefront/urls";
 import { LEGAL_CHECK_HOURS, LEGAL_KINDS, checkLegalLinks, legalLinksOf, parseLegalUrl, type LegalKind, type LegalLinkResults } from "../../storefront/legal-links";
 import { AdminLayout, PageHead, type ShopHere } from "./layout";
-import { formFields, owner, param, publicBaseUrl, type AdminContext } from "./context";
+import { formFields, owner, param, publicBaseUrl, shopTemplateDomain, type AdminContext } from "./context";
+import { domainTemplateFrom, isTemplateDomain, templateSlug } from "../../storefront/subdomain";
 import { requireOwner } from "./auth";
 import { can, shopAccess, type ShopAccess, type ShopPerm } from "./access";
 import { bundledPluginUrl } from "../../plugins";
@@ -76,6 +77,8 @@ function flash(code: string | undefined, detail?: string): { kind: "ok" | "error
     domain_taken: "domain.taken",
     domain_unverified: "domain.unverified",
     domain_unavailable: "domain.unavailable",
+    slug_domain_invalid: "shop.slug_domain_invalid",
+    slug_domain_taken: "shop.slug_domain_taken",
     fields_saved: "fields.saved",
     fields_invalid: "fields.invalid",
     customer_fields_saved: "customer_fields.saved",
@@ -275,8 +278,8 @@ const SaveButton = (props: { label?: string }) => (
 );
 
 /** 基本と法定表記: 名前・URL の名前・連絡先・法務の 3 つ・公開 */
-function GeneralSection(props: { shop: ShopRow; publicBaseUrl: string }) {
-  const { shop } = props;
+function GeneralSection(props: { shop: ShopRow; publicBaseUrl: string; slugMovesDomain?: boolean }) {
+  const { shop, slugMovesDomain } = props;
   const missing = missingTerms(shop.settings);
   const termLabel = { delivery: t("terms.delivery"), cancellation: t("terms.cancellation"), payment_note: t("terms.payment_note") };
   return (
@@ -299,6 +302,7 @@ function GeneralSection(props: { shop: ShopRow; publicBaseUrl: string }) {
         <input id="name" type="text" name="name" value={shop.name} required maxlength={200} />
         <label for="slug">{t("shop.slug")}</label>
         <input id="slug" type="text" name="slug" value={shop.slug} required pattern="[a-z0-9][a-z0-9-]{0,62}" />
+        {slugMovesDomain ? <p class="muted">{t("shop.slug_moves_domain")}</p> : null}
         <label for="contact_email">{t("shipping.contact_email")}</label>
         <input id="contact_email" type="email" name="contact_email" value={typeof shop.settings?.["contact_email"] === "string" ? String(shop.settings["contact_email"]) : ""} />
         <p class="muted">{t("shipping.contact_email_hint")}</p>
@@ -527,7 +531,7 @@ function AdvancedSectionList(props: { shop: ShopRow; access: ShopAccess | undefi
   );
 }
 
-function DomainSection(props: { shop: ShopRow; publicBaseUrl: string; domain: { provider: boolean; state: DomainState | null } }) {
+function DomainSection(props: { shop: ShopRow; publicBaseUrl: string; domain: { provider: boolean; state: DomainState | null; template?: string | null } }) {
   const { shop } = props;
   return (
     <form method="post" action={`/admin/shops/${shop.id}/domain`} class="card" id="domain">
@@ -541,8 +545,9 @@ function DomainSection(props: { shop: ShopRow; publicBaseUrl: string; domain: { 
           <li>{t("domain.step_save")}</li>
         </ol>
       )}
-      <label for="domain_input">{t("domain.label")}</label>
-      <input id="domain_input" type="text" name="domain" value={shop.domain ?? ""} placeholder="shop.example.jp" maxlength={253} />
+      <label for="domain_input">{props.domain.template ? t("domain.label_template") : t("domain.label")}</label>
+      <input id="domain_input" type="text" name="domain" value={shop.domain ?? ""} placeholder={props.domain.template ?? "shop.example.jp"} maxlength={253} />
+      {props.domain.template ? <p class="muted">{tf("domain.template_hint", { domain: props.domain.template })}</p> : null}
       {shop.domain && props.domain.state ? (
         <p class={props.domain.state.status === "active" ? "notice" : "muted"}>
           {props.domain.state.status === "active" ? t("domain.state_active") : t("domain.state_pending")}
@@ -853,7 +858,7 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
   let body: unknown;
   switch (section) {
     case "general":
-      body = <GeneralSection shop={shop} publicBaseUrl={base} />;
+      body = <GeneralSection shop={shop} publicBaseUrl={base} slugMovesDomain={isTemplateDomain(domainTemplateFrom(c.get("adapters").config), shop)} />;
       break;
     case "shipping":
       body = <ShippingSection shop={shop} access={access} />;
@@ -874,8 +879,12 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
     case "domain": {
       // 独自ドメインの提供元（ホスティングの提供者）。状態は提供元に 1 回だけ聞く。失敗しても画面は出す
       const provider = c.get("adapters").domain;
-      const state = provider && shop.domain ? await provider.status(shop.domain, { id: shop.id, slug: shop.slug }).catch(() => null) : null;
-      body = <DomainSection shop={shop} publicBaseUrl={base} domain={{ provider: Boolean(provider), state }} />;
+      // サブドメインモードのひな形のドメインは提供元に登録しないので、状態も聞かない
+      const tpl = domainTemplateFrom(c.get("adapters").config);
+      const fromTemplate = isTemplateDomain(tpl, shop);
+      const state = provider && shop.domain && !fromTemplate ? await provider.status(shop.domain, { id: shop.id, slug: shop.slug }).catch(() => null) : null;
+      const templated = shopTemplateDomain(c, shop.slug);
+      body = <DomainSection shop={shop} publicBaseUrl={base} domain={{ provider: Boolean(provider), state, template: typeof templated === "string" && templated !== "invalid" ? templated : null }} />;
       break;
     }
     case "storefront":
@@ -973,6 +982,12 @@ shops.post("/:shopId", requireOwner, async (c: AdminContext) => {
     return_policy: clean(f.return_policy),
     published: f.published === "on",
   };
+  // サブドメインモード: ひな形どおりのドメインは、スラッグと一緒に付け替える（パスキーと LINE / Google の戻り先は登録し直し。画面で知らせている）
+  if (values.slug !== shop.slug && isTemplateDomain(domainTemplateFrom(c.get("adapters").config), shop)) {
+    const next = shopTemplateDomain(c, values.slug!);
+    if (next === "invalid" || next === null) return c.redirect(`/admin/shops/${shopId}?flash=slug_domain_invalid`);
+    values.domain = next;
+  }
   // お客様からの連絡先（注文メールの返信先・特商法の表記）。欄が無いフォームからは変えない
   if (f.contact_email !== undefined) {
     const contact = f.contact_email.trim();
@@ -984,6 +999,7 @@ shops.post("/:shopId", requireOwner, async (c: AdminContext) => {
     if (e instanceof DbError && /shops_publish_requires_legal/.test(e.message)) {
       return c.redirect(`/admin/shops/${shopId}?flash=publish_blocked`);
     }
+    if (e instanceof DbError && values.domain && /shops_domain_key/.test(e.message)) return c.redirect(`/admin/shops/${shopId}?flash=slug_domain_taken`);
     if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}?flash=${failCode(e)}`);
     throw e;
   }
@@ -1135,9 +1151,17 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, shopId, "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
-  const domain = normalizeDomain(f.domain ?? "");
+  // サブドメインモード: 空にするとひな形のドメイン（既定のアドレス）に戻す。ほかのスラッグのひな形のドメインは付けさせない
+  const tpl = domainTemplateFrom(c.get("adapters").config);
+  const templated = shopTemplateDomain(c, shop.slug);
+  const entered = normalizeDomain(f.domain ?? "");
+  const domain = entered === null && typeof templated === "string" && templated !== "invalid" ? templated : entered;
+  if (entered === null && templated === "invalid") return c.redirect(`${settingsPath(shopId, "domain")}?flash=slug_domain_invalid`);
   const own = [new URL(c.req.url).hostname, new URL(publicBaseUrl(c)).hostname];
   if (domain === "invalid" || (domain && (own.includes(domain) || domain.endsWith(".workers.dev")))) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_invalid`);
+  if (domain && tpl && templateSlug(tpl, domain) !== null && templateSlug(tpl, domain) !== shop.slug) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_invalid`);
+  // ひな形のドメインは提供元（DomainAdapter）に登録しない（デプロイのワイルドカードの DNS で届く）
+  const isTpl = (d: string | null) => Boolean(d && tpl && d === templated);
   // 独自ドメインを使うなら Banto 自身の URL（PUBLIC_BASE_URL）が要る。無いと、ショップのドメインで開いたときに Banto の URL が決まらず、
   // 管理画面への転送・サイトマップ・会員ページの戻り先が開いた Host で揺れる（docs/custom-domain.md §1）
   if (domain && !c.get("adapters").config.get("PUBLIC_BASE_URL")) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_needs_base_url`);
@@ -1146,7 +1170,7 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
   const provider = c.get("adapters").domain;
   const ref = { id: shop.id, slug: shop.slug };
   const previous = shop.domain ?? null;
-  if (provider && domain && domain !== previous) {
+  if (provider && domain && domain !== previous && !isTpl(domain)) {
     const r: DomainAttachResult = await provider.attach(domain, ref).catch(() => ({ ok: false, reason: "unavailable" }));
     if (!r.ok) {
       const detail = r.message ? `&detail=${encodeURIComponent(r.message.slice(0, 200))}` : "";
@@ -1157,14 +1181,14 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
     await updateShop(c, shopId, { domain });
   } catch (e) {
     // 提供元には登録したのに Banto 側で保存できなかった → 提供元の登録を戻す（失敗しても画面の結果は変えない）
-    if (provider && domain && domain !== previous) await provider.detach(domain, ref).catch(() => undefined);
+    if (provider && domain && domain !== previous && !isTpl(domain)) await provider.detach(domain, ref).catch(() => undefined);
     if (e instanceof DbError && (e.code === "23505" || /shops_domain_key/.test(e.message))) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_taken`);
     if (e instanceof DbError && (e.code === "23514" || /shops_domain_format/.test(e.message))) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_invalid`);
     if (e instanceof DbError) return c.redirect(`${settingsPath(shopId, "domain")}?flash=${failCode(e)}`);
     throw e;
   }
   // 外した・変えた: 前のドメインの登録を提供元から消す（失敗しても Banto 側の設定は戻さない）
-  if (provider && previous && previous !== domain) await provider.detach(previous, ref).catch(() => undefined);
+  if (provider && previous && previous !== domain && !isTpl(previous)) await provider.detach(previous, ref).catch(() => undefined);
   return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_saved`);
 });
 

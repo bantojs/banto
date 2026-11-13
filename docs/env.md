@@ -7,6 +7,7 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | **Secret**（`.dev.vars.example`） | 必須 | Supabase → Project Settings → API Keys の **Secret key**（`sb_secret_…`）。今までの service_role（`eyJ…`）も使える。誰にも見せない |
 | `SESSION_SECRET` | **Secret**（`.dev.vars.example`） | 新しい導入では必須 | 32 文字以上のランダム文字列（セットアップ画面が作って出す）。セッション・会員のログイン・hooks の署名・暗号化（LINE のトークン、LINE / Google のシークレット）の鍵のもと。**導入後は変えない**。2026-10-18 より前の導入で未設定なら service_role キーから導出して動き続ける（ダッシュボードに案内が出る。後から設定すると全員がログアウトし、暗号化した秘密は入れ直し） |
 | `PUBLIC_BASE_URL` | 変数 | 任意 | 独自ドメインを使うとき `https://shop.example.com`。未設定ならアクセスされた URL から自動 |
+| `SHOP_DOMAIN_TEMPLATE` | 変数 | 任意 | サブドメインモード。`{slug}.example-shop.jp` のように入れると、新しく作るショップにそのアドレスを付け、どのショップにも結ばれていないホストを 404 にする（docs/custom-domain.md §7）。ワイルドカードの DNS と Worker のルートを先に用意する |
 | `MEDIA_BASE_URL` | 変数 | 任意 | R2 のカスタムドメインから画像を配信するとき `https://media.example.com`（docs/setup.md §7） |
 | `BANTO_LOCALE` | 変数 | 任意 | `en` で英語 UI。既定は日本語 |
 | `BANTO_TIMEZONE` | 変数 | 任意 | 管理画面・CSV・メールの日時表示と、売上集計の日別・月別の区切りの時間帯（IANA 名、例 `Asia/Tokyo`、`America/Los_Angeles`）。既定 `Asia/Tokyo` |
