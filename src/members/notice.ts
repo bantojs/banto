@@ -8,7 +8,6 @@ import { type Mailer, sendMail } from "../mail/send";
 import { renderMailHtml } from "../mail/html";
 import { t, tf } from "../i18n";
 import { formatDateTime } from "../i18n/time";
-import { readCookie } from "../util/signed";
 import { deviceMark } from "./auth";
 
 export const DEVICE_SECONDS = 400 * 24 * 60 * 60;
@@ -17,9 +16,8 @@ export function deviceCookieName(shopId: string): string {
   return `banto_member_dev_${shopId.replace(/[^a-zA-Z0-9]/g, "")}`;
 }
 
-/** この端末でこの会員がログインしたことがあるか */
-export async function knownDevice(secret: string, shopId: string, customerId: string, cookieHeader: string | undefined): Promise<boolean> {
-  const v = readCookie(cookieHeader, deviceCookieName(shopId));
+/** この端末でこの会員がログインしたことがあるか（v は端末の印の Cookie の値。読み方は src/routes/common.ts の getScopedCookie） */
+export async function knownDevice(secret: string, shopId: string, customerId: string, v: string | undefined): Promise<boolean> {
   return Boolean(v) && v === (await deviceMark(secret, shopId, customerId));
 }
 

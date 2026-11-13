@@ -42,8 +42,7 @@ import { articleBlogOf, type AppBlockData, type ArticleBlockData } from "../../c
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
 import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
-import { isSecureRequest, mediaBaseUrl, publicBaseUrl, type Ctx } from "../common";
-import { readCookie } from "../../util/signed";
+import { clearScopedCookie, getScopedCookie, mediaBaseUrl, publicBaseUrl, setScopedCookie, type Ctx } from "../common";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
 import { themeStorage } from "../../themes/liquid/versions";
@@ -78,8 +77,7 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<ThemePreview | nu
   const secret = c.get("sessionSecret");
   if (!secret) return null;
   const q = c.req.query("preview_theme");
-  const cookie = (token: string, age: number) =>
-    c.header("Set-Cookie", `${PREVIEW_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${isSecureRequest(c) ? "; Secure" : ""}`, { append: true });
+  const cookie = (token: string, age: number) => (age > 0 ? setScopedCookie(c, PREVIEW_COOKIE, token, { path: "/", maxAge: age }) : clearScopedCookie(c, PREVIEW_COOKIE, { path: "/" }));
   if (q === "off") {
     cookie("", 0);
     return null;
@@ -89,7 +87,7 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<ThemePreview | nu
     cookie(c.req.query("preview_token")!, THEME_PREVIEW_SECONDS);
     return fromQuery;
   }
-  return openThemePreview(secret, readCookie(c.req.header("cookie"), PREVIEW_COOKIE), s.shop.id);
+  return openThemePreview(secret, getScopedCookie(c, PREVIEW_COOKIE, "/"), s.shop.id);
 }
 
 /** 描くテーマ（公開中の版か、プレビューの版）。描けないなら null */

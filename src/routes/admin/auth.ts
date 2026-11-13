@@ -1,13 +1,13 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { openSession, sealSession, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, type SessionData } from "../../auth/session";
+import { openSession, sealSession, SESSION_COOKIE, SESSION_COOKIE_LEGACY_PATH, SESSION_COOKIE_PATH, SESSION_COOKIE_SECONDS, type SessionData } from "../../auth/session";
 import type { AuthSession } from "../../auth/supabase";
-import { authClient, dbClient, isSecureRequest, sessionSecret, type AdminContext } from "./context";
+import { authClient, dbClient, sessionSecret, type AdminContext } from "./context";
 import { appliedMigrations } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ipHash, subjectHash } from "../../members/auth";
-import { clientIp } from "../common";
+import { clearScopedCookie, clientIp, getScopedCookie, setScopedCookie } from "../common";
 
 /** DB が「二段階認証がまだ」と言って止めたか（banto_pre_request の 'mfa_required:<state>'） */
 export function mfaRequiredOf(e: unknown): "challenge" | "enroll" | null {
@@ -27,16 +27,6 @@ export function sessionAal(session: SessionData): string {
   }
 }
 
-function readCookie(c: AdminContext, name: string): string | undefined {
-  const header = c.req.header("cookie");
-  if (!header) return undefined;
-  for (const part of header.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (k === name) return rest.join("=");
-  }
-  return undefined;
-}
-
 export function toSessionData(s: AuthSession): SessionData {
   return {
     access_token: s.access_token,
@@ -50,18 +40,18 @@ export function toSessionData(s: AuthSession): SessionData {
 export async function setSessionCookie(c: AdminContext, data: SessionData): Promise<void> {
   const secret = sessionSecret(c);
   if (!secret) throw new Error("SESSION_SECRET missing");
-  c.header("Set-Cookie", sessionCookieHeader(await sealSession(secret, data), { secure: isSecureRequest(c) }), { append: true });
+  setScopedCookie(c, SESSION_COOKIE, await sealSession(secret, data), { path: SESSION_COOKIE_PATH, maxAge: SESSION_COOKIE_SECONDS, legacyPath: SESSION_COOKIE_LEGACY_PATH });
 }
 
 export function clearSessionCookie(c: AdminContext): void {
-  c.header("Set-Cookie", clearSessionCookieHeader(), { append: true });
+  clearScopedCookie(c, SESSION_COOKIE, { path: SESSION_COOKIE_PATH, legacyPath: SESSION_COOKIE_LEGACY_PATH });
 }
 
 /** Cookie からセッションを復元し、期限が近ければ refresh する。無効なら null */
 export async function loadSession(c: AdminContext): Promise<SessionData | null> {
   const secret = sessionSecret(c);
   if (!secret) return null;
-  const data = await openSession(secret, readCookie(c, SESSION_COOKIE));
+  const data = await openSession(secret, getScopedCookie(c, SESSION_COOKIE, SESSION_COOKIE_PATH));
   if (!data) return null;
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at - now > 60) return data;

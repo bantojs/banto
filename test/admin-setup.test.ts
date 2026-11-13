@@ -190,7 +190,8 @@ describe("ログイン / セッション", () => {
     const cookie = res.headers.getSetCookie()[0]!;
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Lax");
-    expect(cookie).toContain("Path=/admin");
+    // 2026-11-13 から Path=/（HTTPS では __Host-banto_admin。src/util/cookie.ts）
+    expect(cookie).toContain("Path=/;");
     expect((await b.get("/admin")).status).toBe(200);
 
     // ログアウトで Cookie が消え、以後はログインへ

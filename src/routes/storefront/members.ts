@@ -40,13 +40,13 @@ import {
   type MemberSession,
 } from "../../members/auth";
 import { peekLogin, startLogin, verifyLogin, type LoginDeps } from "../../members/login";
-import { openJson, randomToken, readCookie, sealJson } from "../../util/signed";
+import { openJson, randomToken, sealJson } from "../../util/signed";
 import { moduleEnabled } from "../../modules/registry";
 import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, providerClientId, providerIdentity, providerModule, secretPurpose, type Provider } from "../../modules/social-login/providers";
 import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
+import { afterResponse, clearScopedCookie, clientIpFor, csrfGuard, formFields, getScopedCookie, navigateOnly, publicBaseUrl, readBodyLimited, setScopedCookie, yen, type Ctx } from "../common";
 import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
 import { memberReader } from "../audience-render";
 import { AUDIENCES_MODULE } from "../../members/audience";
@@ -88,16 +88,15 @@ const PENDING_SECONDS = 20 * 60;
 /** ログインした後に開く会員の注文（注文メールのリンクから来た、0066）。中身は注文番号だけ（秘密ではない） */
 const orderAfterLoginCookieName = (shopId: string) => `${customerCookieName(shopId)}_o`;
 
-function cookieHeader(name: string, value: string, path: string, secure: boolean, maxAge: number): string {
-  return [`${name}=${value}`, `Path=${path}`, "HttpOnly", "SameSite=Lax", `Max-Age=${maxAge}`, ...(secure ? ["Secure"] : [])].join("; ");
-}
+/** ショップの Cookie を置くパス（独自ドメインの上では "/"。HTTPS なら `__Host-` の名前になる。src/util/cookie.ts） */
+const shopCookiePath = (s: { shopPath: string }) => s.shopPath || "/";
 
 /**
  * 注文メールのリンク（?banto_order=&banto_member=1）から来た、ログインしていない会員。ログインしたら /account がこの注文へ戻す。
  * どのログインの方法（コード・リンク・パスワード・LINE・Google・パスキー）も成功したら /account へ戻るので、戻す場所は 1 か所
  */
 export function rememberOrderAfterLogin(c: Ctx, s: { shop: { id: string }; shopPath: string }, number: number): void {
-  c.header("Set-Cookie", cookieHeader(orderAfterLoginCookieName(s.shop.id), String(number), s.shopPath || "/", isSecureRequest(c), PENDING_SECONDS), { append: true });
+  setScopedCookie(c, orderAfterLoginCookieName(s.shop.id), String(number), { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
 }
 
 /** Cookie はショップのパス（独自ドメインの上ではドメイン全体）に置く */
@@ -105,8 +104,9 @@ async function writeSession(c: Ctx, s: { shop: { id: string }; shopPath: string 
   const secret = c.get("sessionSecret");
   if (!secret) return;
   const name = customerCookieName(s.shop.id);
-  const path = s.shopPath || "/";
-  c.header("Set-Cookie", session ? cookieHeader(name, await sealSession(secret, s.shop.id, session), path, isSecureRequest(c), SESSION_SECONDS) : cookieHeader(name, "", path, isSecureRequest(c), 0), { append: true });
+  const path = shopCookiePath(s);
+  if (session) setScopedCookie(c, name, await sealSession(secret, s.shop.id, session), { path, maxAge: SESSION_SECONDS });
+  else clearScopedCookie(c, name, { path });
 }
 
 const cookiePath = (c: Ctx, shop: { slug: string; domain?: string | null }) => (onShopDomain(c, shop) ? "" : `/${shop.slug}`);
@@ -135,7 +135,7 @@ function passkeyAddPath(c: Ctx): boolean {
 }
 
 async function verifySession(c: Ctx, shop: { id: string; slug: string; domain?: string | null }, secret: string): Promise<MemberSession | null> {
-  const v = await openSession(secret, shop.id, readCookie(c.req.header("cookie"), customerCookieName(shop.id)));
+  const v = await openSession(secret, shop.id, getScopedCookie(c, customerCookieName(shop.id), cookiePath(c, shop) || "/"));
   if (!v) return null;
   const target = { shop, shopPath: cookiePath(c, shop) };
   if (!v.sid) {
@@ -278,9 +278,9 @@ members.get("/:shop/account", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
-  const afterLogin = readCookie(c.req.header("cookie"), orderAfterLoginCookieName(s.shop.id));
+  const afterLogin = getScopedCookie(c, orderAfterLoginCookieName(s.shop.id), shopCookiePath(s));
   if (afterLogin) {
-    c.header("Set-Cookie", cookieHeader(orderAfterLoginCookieName(s.shop.id), "", s.shopPath || "/", isSecureRequest(c), 0), { append: true });
+    clearScopedCookie(c, orderAfterLoginCookieName(s.shop.id), { path: shopCookiePath(s) });
     if (/^[0-9]{1,9}$/.test(afterLogin)) return c.redirect(`${s.shopPath}/orders/lookup?banto_order=${afterLogin}&banto_member=1`);
   }
   const db = privilegedFor(c);
@@ -464,17 +464,17 @@ members.post("/:shop/account/login", async (c: Ctx) => {
     return c.redirect(`${s.shopPath}/account/login?error=${r.error === "limit" ? "mail_limit" : r.error}`);
   }
   const pending = await sealPending(deps.secret, s.shop.id, { id: r.challengeId, email: r.email, exp: Math.floor(Date.now() / 1000) + PENDING_SECONDS, ...(fields.next === "passkeys" ? { next: "passkeys" as const } : {}) });
-  c.header("Set-Cookie", cookieHeader(pendingCookieName(s.shop.id), pending, s.shopPath || "/", isSecureRequest(c), PENDING_SECONDS), { append: true });
+  setScopedCookie(c, pendingCookieName(s.shop.id), pending, { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
   return c.redirect(`${s.shopPath}/account/code`);
 });
 
 async function pendingOf(c: Ctx, s: Scope) {
   const secret = c.get("sessionSecret");
-  return secret ? openPending(secret, s.shop.id, readCookie(c.req.header("cookie"), pendingCookieName(s.shop.id))) : null;
+  return secret ? openPending(secret, s.shop.id, getScopedCookie(c, pendingCookieName(s.shop.id), shopCookiePath(s))) : null;
 }
 
 function clearPending(c: Ctx, s: Scope): void {
-  c.header("Set-Cookie", cookieHeader(pendingCookieName(s.shop.id), "", s.shopPath || "/", isSecureRequest(c), 0), { append: true });
+  clearScopedCookie(c, pendingCookieName(s.shop.id), { path: shopCookiePath(s) });
 }
 
 async function signIn(c: Ctx, s: Scope, v: { customer_id: string; session_epoch: number; email: string }): Promise<boolean> {
@@ -510,7 +510,7 @@ async function startWebSession(c: Ctx, s: { shop: { id: string }; shopPath: stri
 async function markDevice(c: Ctx, s: { shop: { id: string }; shopPath: string }, customerId: string): Promise<void> {
   const secret = c.get("sessionSecret");
   if (!secret) return;
-  c.header("Set-Cookie", cookieHeader(deviceCookieName(s.shop.id), await deviceMark(secret, s.shop.id, customerId), s.shopPath || "/", isSecureRequest(c), DEVICE_SECONDS), { append: true });
+  setScopedCookie(c, deviceCookieName(s.shop.id), await deviceMark(secret, s.shop.id, customerId), { path: shopCookiePath(s), maxAge: DEVICE_SECONDS });
 }
 
 members.get("/:shop/account/code", async (c: Ctx) => {
@@ -1024,7 +1024,7 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
     return c.redirect(`${s.shopPath}/account/login?error=${error}&email=${encodeURIComponent(email)}`);
   }
   // 初めての端末なら本人に知らせる（使い回しのパスワードで入られたときに気づけるように）
-  if (r.mail_from && r.email && !(await knownDevice(deps.secret, s.shop.id, r.customer_id, c.req.header("cookie")))) {
+  if (r.mail_from && r.email && !(await knownDevice(deps.secret, s.shop.id, r.customer_id, getScopedCookie(c, deviceCookieName(s.shop.id), shopCookiePath(s))))) {
     await afterResponse(c, sendPasswordLoginNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   }
   if (!(await signIn(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
@@ -1057,6 +1057,8 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
 // ---------- LINE・Google でログイン（0014、同梱モジュール line_login・google_login） ----------
 
 const OAUTH_COOKIE = "banto_oauth";
+/** 2026-11-13 まで LINE / Google の途中の Cookie を置いていたパス（今はホスト全体、HTTPS なら `__Host-`） */
+const OAUTH_COOKIE_LEGACY_PATH = "/_oauth";
 const OAUTH_SECONDS = 10 * 60;
 /**
  * LINE の自動ログインに失敗した印（中身は "line:<スラッグ>"、そのショップだけに効く）。次にそのショップで LINE のログインを始めるとき disable_auto_login を付ける。
@@ -1100,8 +1102,8 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
   if (shop.domain && !onShopDomain(c, shop)) return c.req.method === "GET" ? c.redirect(domainUrlFor(c, shop)!) : c.redirect(`https://${shop.domain}/account`, 303);
   const { verifier, challenge } = await pkce();
   const origin = shopOrigin(publicBaseUrl(c), shop);
-  const retry = p === "line" && readCookie(c.req.header("cookie"), OAUTH_RETRY_COOKIE) === `line:${shop.slug}`;
-  if (retry) c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, "", "/", isSecureRequest(c), 0), { append: true });
+  const retry = p === "line" && getScopedCookie(c, OAUTH_RETRY_COOKIE, "/") === `line:${shop.slug}`;
+  if (retry) clearScopedCookie(c, OAUTH_RETRY_COOKIE, { path: "/" });
   const st: OAuthState = {
     provider: p,
     state: `${shop.slug}.${randomToken(24)}`,
@@ -1115,7 +1117,7 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
     ...extra,
     exp: Math.floor(Date.now() / 1000) + OAUTH_SECONDS,
   };
-  c.header("Set-Cookie", cookieHeader(OAUTH_COOKIE, await sealJson(oauthSecret(secret), st), "/_oauth", isSecureRequest(c), OAUTH_SECONDS), { append: true });
+  setScopedCookie(c, OAUTH_COOKIE, await sealJson(oauthSecret(secret), st), { path: "/", maxAge: OAUTH_SECONDS, legacyPath: OAUTH_COOKIE_LEGACY_PATH });
   const bot = ((shop.settings ?? {})["oauth"] as Record<string, Record<string, unknown>> | undefined)?.["line"]?.["bot_prompt"];
   return c.redirect(authorizeUrl(p, clientId, { redirectUri: redirectUri(origin, p), state: st.state, nonce: st.nonce, challenge, botPrompt: bot === "normal" || bot === "aggressive" ? bot : null, disableAutoLogin: retry }));
 }
@@ -1162,8 +1164,8 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   const secret = c.get("sessionSecret");
   const db = privilegedFor(c);
   const p = providerOf(c);
-  const raw = readCookie(c.req.header("cookie"), OAUTH_COOKIE);
-  c.header("Set-Cookie", cookieHeader(OAUTH_COOKIE, "", "/_oauth", isSecureRequest(c), 0), { append: true });
+  const raw = getScopedCookie(c, OAUTH_COOKIE, "/");
+  clearScopedCookie(c, OAUTH_COOKIE, { path: "/", legacyPath: OAUTH_COOKIE_LEGACY_PATH });
   const st = secret ? ((await openJson(oauthSecret(secret), raw)) as OAuthState | null) : null;
   // state が合わない = この端末で始めたログインではない（他人の戻り URL を踏まされた等）。何もしない
   if (!st || !p || st.provider !== p || !db || !secret || st.exp < Math.floor(Date.now() / 1000) || c.req.query("state") !== st.state) {
@@ -1176,7 +1178,7 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
     // PUBLIC_BASE_URL が無い構成でも分かるように Host で引く（失敗のときだけ通るので、往復が 1 回増えても速度の予算に響かない）
     const hs = await hostShop(c);
     const slug = hs ? hs.slug : stateSlug;
-    if (p === "line") c.header("Set-Cookie", cookieHeader(OAUTH_RETRY_COOKIE, `line:${slug}`, "/", isSecureRequest(c), OAUTH_SECONDS), { append: true });
+    if (p === "line") setScopedCookie(c, OAUTH_RETRY_COOKIE, `line:${slug}`, { path: "/", maxAge: OAUTH_SECONDS });
     return c.redirect(`${hs ? "" : `/${slug}`}/account/login?error=oauth_retry`);
   }
   const shopPath = st.path;

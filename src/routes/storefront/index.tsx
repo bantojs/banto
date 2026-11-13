@@ -16,16 +16,16 @@ import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type Pr
 import type { CategoryRow } from "../../db/types";
 import { categoryUrl, listUrl, productUrl, productsUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
-import { addCoupon, addItem, cartCookieHeader, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
+import { addCoupon, addItem, CART_COOKIE_SECONDS, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { addsFrom, changeFrom, updatesFrom, usesLinePosition } from "../../cart/shopify-form";
 import { cartObject } from "../../themes/liquid/objects";
-import { openJson, readCookie } from "../../util/signed";
+import { openJson } from "../../util/signed";
 import { categoryPath, categoryTree } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
-import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, type Ctx } from "../common";
+import { clientIpFor, csrfGuard, formFields, getScopedCookie, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, setScopedCookie, type Ctx } from "../common";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
@@ -153,9 +153,10 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   const shop = await sf.shopBySlug(slug);
   if (!shop) return null;
   const secret = c.get("sessionSecret");
-  const cart = secret ? await openCart(secret, readCookie(c.req.header("cookie"), cartCookieName(shop.id))) : { items: [] };
   // 独自ドメインの上ではショップがドメインのトップ（パスにスラッグを付けない）
   const onDomain = onShopDomain(c, shop);
+  // カートは、`__Host-` の名前に移す前の Cookie も読む（中身は品物の一覧だけ。差し込まれても買う前の確認画面で見える）
+  const cart = secret ? await openCart(secret, getScopedCookie(c, cartCookieName(shop.id), onDomain ? "/" : `/${shop.slug}`, { legacy: true })) : { items: [] };
   const ctx: ThemeContext = {
     shop,
     shopPath: onDomain ? "" : `/${shop.slug}`,
@@ -291,9 +292,7 @@ storefront.route("/", inquiries);
 async function writeCart(c: Ctx, s: ShopScope, cart: Cart): Promise<void> {
   const secret = c.get("sessionSecret");
   if (!secret) return;
-  c.header("Set-Cookie", cartCookieHeader(cartCookieName(s.shop.id), await sealCart(secret, cart), { path: s.ctx.shopPath || "/", secure: isSecureRequest(c) }), {
-    append: true,
-  });
+  setScopedCookie(c, cartCookieName(s.shop.id), await sealCart(secret, cart), { path: s.ctx.shopPath || "/", maxAge: CART_COOKIE_SECONDS });
 }
 
 /** お店の画面で起きた出来事を積む（src/storefront/events.ts。受け取るモジュールが ON のときだけ外に出る。個人情報は入れない） */
@@ -1193,7 +1192,7 @@ storefront.post("/:shop/_x", async (c: Ctx) => {
   const shop = sf ? await sf.shopBySlug(param(c, "shop")).catch(() => null) : null;
   if (!shop) return c.body(null, 404);
   const secret = c.get("sessionSecret");
-  const session = secret && membersEnabled(shop) ? await openMemberSession(secret, shop.id, readCookie(c.req.header("cookie"), customerCookieName(shop.id))) : null;
+  const session = secret && membersEnabled(shop) ? await openMemberSession(secret, shop.id, getScopedCookie(c, customerCookieName(shop.id), onShopDomain(c, shop) ? "/" : `/${shop.slug}`)) : null;
   return acceptRelay(c, shop, session && !session.add ? session.cid : null, "storefront");
 });
 
