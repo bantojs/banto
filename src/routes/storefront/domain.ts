@@ -4,6 +4,7 @@ import { createDbClient } from "../../db/client";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { SLUG_RE, type Ctx } from "../common";
 import { markShopDomainRequest } from "../shop-domain-request";
+import { domainTemplateFrom, templateSlug } from "../../storefront/subdomain";
 
 /**
  * ショップごとの独自ドメイン（0015_shop_domain、docs/custom-domain.md）。
@@ -19,6 +20,12 @@ import { markShopDomainRequest } from "../shop-domain-request";
  * Host を信じてよいか: Cloudflare ではそのホスト名がこの Worker に向いているときだけ届く。違うショップを名乗っても、
  * 見えるのはそのショップの公開ページだけで、Cookie はホストごとなので他のショップのログインには触れない。
  * 戻り先（redirect_uri 等）は Host ではなく DB の domain から組む（src/storefront/urls.ts）。
+ *
+ * サブドメインモード（SHOP_DOMAIN_TEMPLATE、src/storefront/subdomain.ts）のとき:
+ * - ひな形に合うホストはスラッグでショップを引く。そのショップのドメインが別（独自ドメインに切り替えた）なら、そちらへ 302
+ * - どのショップにも結ばれていないホスト（ひな形にも Banto の URL にも合わず、どのショップのドメインでもない）は、どのパスも 404。
+ *   ワイルドカードの DNS では任意のサブドメインがこの Worker に届くので、そこで管理画面・/mcp・/api/v1 を出さない
+ *   （運営者の入口は 1 つのオリジン）
  */
 
 /** ショップのドメインでもスラッグを足さないパス（Banto 全体のもの） */
@@ -69,10 +76,32 @@ function isAdminPath(path: string): boolean {
 
 /** このリクエストのホストがショップの独自ドメインなら、そのショップ（Banto 自身の URL なら DB を引かない） */
 export async function hostShop(c: Ctx): Promise<PublicShop | null> {
+  const r = await resolveHost(c);
+  return r.kind === "shop" ? r.shop : null;
+}
+
+/**
+ * リクエストのホストの扱い。
+ * platform: Banto 自身の URL（または DB が無い）/ shop: ショップのドメイン / moved: サブドメインモードで、ショップが別のドメインへ移った /
+ * unknown: どのショップにも結ばれていない（サブドメインモードのときだけ。そうでなければ今までどおり platform と同じに通す）
+ */
+export type HostResolution = { kind: "platform" } | { kind: "shop"; shop: PublicShop } | { kind: "moved"; domain: string } | { kind: "unknown" };
+
+export async function resolveHost(c: Ctx): Promise<HostResolution> {
   const host = normalizeHost(new URL(c.req.url).hostname);
-  if (isPlatformHost(c, host)) return null;
+  if (isPlatformHost(c, host)) return { kind: "platform" };
   const sf = storefrontData(c);
-  return sf ? sf.shopByDomain(host) : null;
+  if (!sf) return { kind: "platform" };
+  const tpl = domainTemplateFrom(c.get("adapters").config);
+  const slug = tpl ? templateSlug(tpl, host) : null;
+  if (slug) {
+    const shop = await sf.shopByHostSlug(slug);
+    if (shop?.domain === host) return { kind: "shop", shop };
+    return shop?.domain ? { kind: "moved", domain: shop.domain } : { kind: "unknown" };
+  }
+  const shop = await sf.shopByDomain(host);
+  if (shop) return { kind: "shop", shop };
+  return tpl ? { kind: "unknown" } : { kind: "platform" };
 }
 
 /** 今のリクエストがショップの独自ドメインの上か */
@@ -98,6 +127,16 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
   return async (c, next) => {
     if (rewritten.has(c.req.raw)) return next();
     const url = new URL(c.req.url);
+    // サブドメインモード: どのショップにも結ばれていないホストは全部 404、移ったショップは新しいドメインへ（GET だけ）
+    if (domainTemplateFrom(c.get("adapters").config)) {
+      const r = await resolveHost(c);
+      if (r.kind === "unknown") return c.notFound();
+      if (r.kind === "moved") {
+        if (c.req.method !== "GET" && c.req.method !== "HEAD") return c.notFound();
+        // 302: ドメインを外して戻したとき、ブラウザに転送を覚えさせない（redirectToShopDomain と同じ）
+        return c.redirect(`https://${r.domain}${url.pathname}${url.search}`, 302);
+      }
+    }
     if (platformOnly(url.pathname)) {
       // 運営者と連携の入口はショップのドメインでは出さない
       return (await hostShop(c)) ? c.notFound() : next();
