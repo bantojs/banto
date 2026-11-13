@@ -305,11 +305,11 @@ export class StorefrontData {
 
   /**
    * 選んだ slug の商品を、その順で（本文の ::: products slugs=…、0112 の product_public_pick、問い合わせ 1 回）。
-   * 見えない商品（非公開・会員限定で合わない）は飛ばす。0112 の前の DB では空
+   * 見えない商品（非公開・会員限定で合わない）は飛ばす
    */
   async productsBySlugs(shop: PublicShop, slugs: readonly string[]): Promise<ProductSummary[]> {
     const list = [...new Set(slugs)].slice(0, PRODUCT_PICK_MAX);
-    if (list.length === 0 || !(await this.migratedTo(PRODUCT_PICK_MIGRATION))) return [];
+    if (list.length === 0) return [];
     const reader = this.reader;
     const key = `ppick:${shop.id}:${list.join(",")}`;
     const hit = reader ? null : await this.cache.get<ProductSummary[]>(key);
@@ -810,7 +810,6 @@ export interface ProductFacets {
 export const PRODUCT_PICK_MAX = 100;
 /** 実店舗に添える記事を 1 つのブロックで読む数（`::: stores articles=`。店舗ごとの数は limit） */
 export const STORE_ARTICLES_MAX = 300;
-export const PRODUCT_PICK_MIGRATION = "0112_product_pick";
 
 const summaryOf = (x: ListItem): ProductSummary => ({
   product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },

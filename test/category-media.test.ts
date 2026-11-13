@@ -61,13 +61,6 @@ describe("カテゴリーの説明と画像", () => {
     expect(storage.objects.has(second)).toBe(false);
   });
 
-  it("管理画面: 0113 が当たる前は欄を出さない", async () => {
-    const { app, base, sb, tops } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((v) => v !== "0113_category_media");
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await b.get(base)).text()).not.toContain(`${tops.id}/media`);
-  });
-
   it("お店の画面: カテゴリーの一覧の上に画像と説明、説明は検索エンジン向けの説明にも。格子のブロックに画像", async () => {
     const { app, sb, shop, tops, row } = setup();
     Object.assign(row(tops.id), { description: "秋冬の<羽織り>\n軽いもの", image: { key: `categories/${shop.id}/0123456789abcdef.webp`, width: 1600, height: 900 } });

@@ -6,7 +6,6 @@
  */
 import type { CategoryImage, CategoryRow } from "../db/types";
 
-export const CATEGORY_MEDIA_MIGRATION = "0113_category_media";
 export const CATEGORY_DESCRIPTION_MAX = 2000;
 /** 置く画像の横幅（ブラウザで縮小する上限）。カテゴリーの見出しの画像・格子のタイル */
 export const CATEGORY_IMAGE_WIDTH = 1600;

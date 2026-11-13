@@ -12,8 +12,8 @@
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "./client";
 
-/** v0.11.0 の土台（v0.10 系のセットアップで当たる 0001〜0111）。これ以前のマイグレーションは適用済みとみなす */
-export const BASELINE_MIGRATION = "0111_dialogs_api";
+/** v0.12.0 の土台（v0.11 系のセットアップで当たる 0001〜0120）。これ以前のマイグレーションは適用済みとみなす */
+export const BASELINE_MIGRATION = "0120_article_field_image";
 
 export const APPLIED_MIGRATIONS_CACHE_KEY = "migrations:applied";
 /** isolate ごとに覚える秒数。適用した isolate では即座に消すが、ほかの isolate は最大この秒数だけ古い一覧を使う */

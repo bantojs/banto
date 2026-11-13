@@ -30,9 +30,6 @@ export interface PageLayouts {
   blogs: Record<string, string>;
 }
 
-/** ブログの一覧のひな形のマイグレーション（割り当ての欄と保存は当たるまで出さない） */
-export const BLOG_LAYOUT_MIGRATION = "0114_page_layouts_blogs";
-
 const UUID = /^[0-9a-f-]{36}$/;
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 

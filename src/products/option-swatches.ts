@@ -6,7 +6,6 @@
  */
 import { imageUrl } from "../media/images";
 
-export const OPTION_SWATCHES_MIGRATION = "0115_option_swatches";
 /** 見本の画像の大きさ（ブラウザで縮める上限。正方形に近い小さな画像） */
 export const SWATCH_IMAGE_SIZE = 96;
 export const SWATCH_LIMITS = { total: 500, value: 60 } as const;

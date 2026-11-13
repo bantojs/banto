@@ -3,7 +3,6 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, followPreview } from "./helpers";
 import { composeLayout, pageLayoutsOf } from "../src/content/layouts";
 import { forgetThemes } from "../src/themes/liquid/cache";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /** ひな形の割り当て（0101、src/content/layouts.ts、docs/pages.md「ひな形の割り当て」）: お店のトップと記事 */
 
@@ -378,18 +377,12 @@ describe("ブログの一覧のひな形（0114）", () => {
     return { ...x, listTpl };
   }
 
-  it("管理画面: 0114 が当たればブログごとの一覧の欄を出して保存する。当たる前は出さず、送らない", async () => {
-    const { app, base, blog, listTpl, settings, sb } = blogSetup();
+  it("管理画面: ブログごとの一覧の欄を出して保存する", async () => {
+    const { app, base, blog, listTpl, settings } = blogSetup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     expect(await (await b.get(`${base}/layouts`)).text()).toContain(`name="bloglist_${blog.id}"`);
     expect((await b.post(`${base}/layouts`, { [`bloglist_${blog.id}`]: listTpl.id })).status).toBe(302);
     expect(settings()["page_layouts"]).toEqual({ blogs: { [blog.id]: listTpl.id } });
-    void sb;
-    // 当たる前: 欄を出さず、blogs の鍵を送らない（送ると断られる）
-    const old = blogSetup(undefined, BUNDLED_MIGRATIONS.filter((v) => v !== "0114_page_layouts_blogs"));
-    const b2 = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(`${old.base}/layouts`)).text()).not.toContain("bloglist_");
-    expect((await b2.post(`${old.base}/layouts`, { [`article_${old.blog.id}`]: old.listTpl.id })).status).toBe(302);
   });
 
   it("お店の画面: ひな形の並びで、パンくず・名前・説明・タグ・記事の並びとページ送り。タグで絞った一覧と 2 ページ目もひな形。商品の部品は空", async () => {

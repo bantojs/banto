@@ -31,10 +31,6 @@ import { FAVORITES_MIGRATION } from "../modules/registry";
 import { CARE_MIGRATION } from "../care-labels/care";
 import { STORE_FIELDS_MIGRATION } from "../stores/fields";
 
-/** ひな形の割り当てとメディアの取り込みの API（0119） */
-const LAYOUTS_MEDIA_MIGRATION = "0119_api_layouts_media";
-/** ブログの設定の API（0118） */
-const BLOG_UPDATE_MIGRATION = "0118_api_blog_update";
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
 import { lineTokenFor } from "../plugins/line_token";
@@ -802,12 +798,10 @@ export class ApiService {
   }
   /** ひな形の割り当て（0119）。ページは URL の名前、ブログは URL の名前、カテゴリーはスラッグの形 */
   async pageLayoutsGet() {
-    await this.requireMigration(LAYOUTS_MEDIA_MIGRATION);
     return this.call<Record<string, unknown>>("api_page_layouts_get", {});
   }
   /** ひな形を割り当てる（0119）。送った鍵だけ変える。null か "" で外す。表（articles・blogs・…）は鍵ごとに混ぜる */
   async pageLayoutsSet(changes: Record<string, unknown>) {
-    await this.requireMigration(LAYOUTS_MEDIA_MIGRATION);
     return this.call<Record<string, unknown>>("api_page_layouts_set", { p_changes: changes });
   }
   /**
@@ -821,7 +815,6 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "url must be an absolute http(s) URL", 400);
     }
-    await this.requireMigration(LAYOUTS_MEDIA_MIGRATION);
     // 外に取りに行く前・置き場に書く前に、書き込みのスコープを確かめる
     if (!(await this.call<boolean>("api_has_scope", { p_scope: "content:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     let image: Awaited<ReturnType<typeof fetchImage>>;
@@ -844,7 +837,6 @@ export class ApiService {
   }
   /** ブログの設定を変える（0118。題・説明・メニュー・並び順・フィード・記事の項目の定義。送らなかった鍵は今のまま） */
   async blogUpdate(blog: string, values: Record<string, unknown>) {
-    await this.requireMigration(BLOG_UPDATE_MIGRATION);
     return this.call<Record<string, unknown>>("api_blog_update", { p_blog: blog, p_values: values });
   }
   async articlesList(blog: string, q: { status?: string | undefined; query?: string | undefined; tag?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
