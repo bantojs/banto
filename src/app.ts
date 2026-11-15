@@ -1,6 +1,8 @@
 import { isSecureRequest } from "./routes/common";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
+import { bodyLimitFor } from "./routes/body-limit";
+import { carryShopDomainMark } from "./routes/shop-domain-request";
 import { Hono } from "hono";
 import type { ShopEvent } from "./storefront/events";
 import type { ShopAccess } from "./routes/admin/access";
@@ -59,21 +61,7 @@ function errorPage(): string {
   return `<!doctype html><html lang="${getLocale()}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${t("error.title")}</title><style>body{font-family:system-ui,sans-serif;margin:3rem auto;max-width:36rem;padding:0 1rem;line-height:1.6}</style></head><body><h1>${t("error.title")}</h1><p>${t("error.body")}</p></body></html>`;
 }
 
-/** お問い合わせの入口（添付 5MB × 3） */
-const INQUIRY_BODY_BYTES = 20 * 1024 * 1024;
-/** そのほかのお店の画面・公開 API のフォーム */
-const PUBLIC_BODY_BYTES = 2 * 1024 * 1024;
-
-/**
- * パスごとの本文の上限。null は、ここでは数えない入口: 運営者・AI 用 API（ログインかトークンが要り、画像・テーマの取り込みは
- * 入口ごとに読みながら数える）と、決済の Webhook（署名の確認の前に 256 KiB で止める）。
- * お店の画面（独自ドメインではスラッグの無いパス）と公開 API は、だれでも送れるのでここで止める
- */
-export function bodyLimitFor(path: string): number | null {
-  if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/v1/") || path === "/mcp" || path.startsWith("/webhooks/")) return null;
-  if (/(^|\/)inquiries(\/|$)/.test(path)) return INQUIRY_BODY_BYTES;
-  return PUBLIC_BODY_BYTES;
-}
+export { bodyLimitFor } from "./routes/body-limit";
 
 export function createApp(
   resolveAdapters: (bindings: Record<string, unknown>) => Adapters,
@@ -122,7 +110,13 @@ export function createApp(
     if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return next();
     const max = bodyLimitFor(c.req.path);
     if (max === null) return next();
-    return bodyLimit({ maxSize: max, onError: (ctx) => ctx.text("Payload Too Large", 413) })(c, next);
+    // 申告の長さが無い本文では、bodyLimit は数えながら読む流れに包んだ新しい Request に差し替える。
+    // ショップのドメインとして振り分けた印（WeakMap）は Request に結んであるので、差し替えた先に写す
+    const before = c.req.raw;
+    return bodyLimit({ maxSize: max, onError: (ctx) => ctx.text("Payload Too Large", 413) })(c, async () => {
+      if (c.req.raw !== before) carryShopDomainMark(before, c.req.raw);
+      await next();
+    });
   });
 
   // 予期しない例外: スタックや接続先の情報を外に出さない。ログには残す。

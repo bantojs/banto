@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { externalHookUrl } from "../../hooks/target";
+import { bundledPluginIdFromUrl } from "../../plugins/types";
 import type { AppEnv } from "../../app";
 import type { DbClient, Row } from "../../db/client";
 import { createPrivilegedDb, PrivilegedRpcError } from "../../db/privileged";
@@ -116,6 +118,14 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     if (rows !== undefined && !Array.isArray(rows)) return c.redirect(`${base}?flash=restore_invalid`);
     tables[name] = Array.isArray(rows) ? rows : [];
   }
+  // 連携の送信先: 今の決まり（0142）で受けない形の URL の行は飛ばして数える。1 行でも DB に断られると、商品・注文も含めて復元の全体が戻るため
+  const endpoints = tables["hook_endpoints"] ?? [];
+  const usable = endpoints.filter((r) => {
+    const u = r && typeof r === "object" ? (r as Record<string, unknown>)["url"] : null;
+    return typeof u === "string" && (bundledPluginIdFromUrl(u) !== null || externalHookUrl(u));
+  });
+  const skippedEndpoints = endpoints.length - usable.length;
+  tables["hook_endpoints"] = usable;
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -125,6 +135,7 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     // SKU を分ける軸（0065）: 戻す間はショップの既定を外す（商品を戻したときに既定が写り、SKU が合わずに止まらないように）。最後に戻す
     if (shop.option_axes !== null && shop.option_axes !== undefined) await privileged.restoreOptionAxes(shopId, { shop: null });
     const counts = await privileged.restoreShopData(shopId, tables);
+    if (skippedEndpoints > 0) Object.assign(counts, { hook_endpoints_skipped: skippedEndpoints });
     // 0006 が知らない列（タグ・カテゴリー・ブランド・カスタム項目・SKU の拡張）を戻す（0008）
     Object.assign(counts, await privileged.restoreCatalog(shopId, { categories: tables["categories"] ?? [], products: tables["products"] ?? [], skus: tables["skus"] ?? [] }));
     // 税の区分と注文の税率（0017）

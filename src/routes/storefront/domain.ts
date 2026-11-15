@@ -3,6 +3,7 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { SLUG_RE, readBodyLimited, type Ctx } from "../common";
+import { bodyLimitFor } from "../body-limit";
 import { markShopDomainRequest } from "../shop-domain-request";
 import { domainTemplateFrom, templateSlug } from "../../storefront/subdomain";
 
@@ -36,7 +37,7 @@ const PASSTHROUGH_FILES = new Set(["/robots.txt", "/sitemap.xml", "/sitemap-page
  */
 const PLATFORM_ONLY = ["/mcp", "/api/v1", "/webhooks"];
 
-/** ショップのドメインで受ける本文の上限（お店の画面でいちばん大きいのはお問い合わせの添付 5MB × 3） */
+/** ショップのドメインで受ける本文の上限の天井（パスごとの上限は body-limit.ts。お店の画面でいちばん大きいのはお問い合わせの添付 5MB × 3） */
 const SHOP_DOMAIN_BODY_BYTES = 20 * 1024 * 1024;
 
 /** Host を比べる形にそろえる（小文字・末尾のドットを落とす。`shop.example.jp.` も同じショップ） */
@@ -143,14 +144,9 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
         return c.redirect(`https://${r.domain}${url.pathname}${url.search}`, 302);
       }
     }
-    // 判定は符号を戻したパスで（ルーターは戻したパスで振り分けるので、/api/%761/… が /api/v1 に届く）
-    let decoded = url.pathname;
-    try {
-      decoded = decodeURIComponent(url.pathname);
-    } catch {
-      // 戻せないパスはそのまま見る
-    }
-    if (platformOnly(url.pathname) || platformOnly(decoded)) {
+    // 判定はルーターと同じ読み方のパス（c.req.path）でも行う。ルーターは戻せる列だけを戻して振り分けるので、
+    // 自前でパス全体を戻すと、不正な % の列を混ぜた /api/%761/…/%ff で判定だけが外れる
+    if (platformOnly(url.pathname) || platformOnly(c.req.path)) {
       // 運営者と連携の入口はショップのドメインでは出さない
       return (await hostShop(c)) ? c.notFound() : next();
     }
@@ -172,7 +168,7 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
     url.pathname = url.pathname === "/" ? `/${shop.slug}` : `/${shop.slug}${url.pathname}`;
     const method = c.req.method;
     // 本文は上限まで（振り分けの前に全部を読むので、上限が無いと匿名の POST でメモリを食わせられる）
-    const body = method === "GET" || method === "HEAD" ? undefined : await readBodyLimited(c.req.raw, SHOP_DOMAIN_BODY_BYTES);
+    const body = method === "GET" || method === "HEAD" ? undefined : await readBodyLimited(c.req.raw, bodyLimitFor(url.pathname) ?? SHOP_DOMAIN_BODY_BYTES);
     if (body === null) return c.text("Payload Too Large", 413);
     const req = new Request(url.toString(), { method, headers: c.req.raw.headers, body: body ? (body.buffer as ArrayBuffer) : undefined, redirect: "manual" });
     rewritten.add(req);

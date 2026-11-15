@@ -5,11 +5,13 @@
 --    今までの検査は正規表現でホストを取り出していたが、URL パーサー（Worker が実際に送るときの読み方）は
 --    バックスラッシュを区切りに読み、全角の数字・% の符号化・途中のタブを直してから読むので、DB とは別のホストになる書き方があった。
 --    つないだ連携（0088）の「送信先のホストは変えられない」も同じ取り出し方に頼っていた。
---    ホストは ASCII の名前か [IPv6] だけ、利用者情報（user@）・空白・制御文字・バックスラッシュは受けない。国際化ドメインは punycode（xn--）で書く。
+--    ホストは ASCII の名前（英数字・ハイフン・ドット。下線は Worker の行き先の判定が前から受けない）か [IPv6] だけ、利用者情報（user@）・空白・制御文字・バックスラッシュは受けない。国際化ドメインは punycode（xn--）で書く。
 -- 2. 送信先を足したときも監査ログに残す（今までは変更と削除だけ。出来事を別のホストへ流す行を足しても残らなかった）。
 -- 3. shops.settings.low_stock_threshold は 0 以上の整数だけ（数でない値が入ると、注文の確定の最後で型の誤りになり、確定が全部戻る）。
--- 4. inventory.low は、同じ送信先・同じ SKU の未配信があれば積まない（product.updated と同じ。入出庫をくり返して通知を積み上げられないように）。
--- 5. enqueue_hook のペイロードの id の確かめを、大文字の UUID にも（今までは小文字のときだけ確かめていた）。
+-- 4. inventory.low は、同じ送信先・同じ SKU の未配信があれば重ねて積まず、その行の中身（available・threshold）を新しい数に書き換える
+--    （入出庫をくり返して通知を積み上げられないように。受け手は available が 0 かで売り切れを見分けるので、届くのはいつも最後の数）。
+-- 5. enqueue_hook のペイロードの id（order_id・product_id・customer_id）は、あるなら uuid の形で、そのショップの行だけ
+--    （今までは小文字の 36 文字のときだけ確かめ、大文字・ほかの書き方は確かめずに通していた）。
 -- 6. checkout_status: 返金して済んだ予約（0128 の refunded）は、完了画面には今までどおり released で返す（「成立しなかった・返金される」の文面）。
 
 -- ---------- 1. hooks の送信先の URL ----------
@@ -113,6 +115,10 @@ alter table shops add constraint shops_low_stock_threshold
   check (not (settings ? 'low_stock_threshold') or coalesce(settings->>'low_stock_threshold', '') ~ '^\d{1,9}$');
 
 -- ---------- 4. inventory.low の重複 ----------
+-- 未配信の同じ SKU の知らせを探す索引（product.updated の hook_deliveries_pending_product と同じ形）
+create index if not exists hook_deliveries_pending_inventory_low on hook_deliveries (endpoint_id, (payload->>'sku_id'))
+  where status = 'pending' and attempts = 0 and event = 'inventory.low';
+
 create or replace function banto_enqueue_hook_internal(p_shop_id uuid, p_event text, p_payload jsonb)
 returns integer
 language plpgsql
@@ -125,6 +131,12 @@ begin
   if p_event = 'inventory.low' and coalesce(p_payload, '{}'::jsonb) ? 'sku_id' and not (p_payload ? 'product_id') then
     select k.product_id into v_product from skus k where k.shop_id = p_shop_id and k.id::text = p_payload->>'sku_id';
     if v_product is not null then p_payload := p_payload || jsonb_build_object('product_id', v_product); end if;
+  end if;
+  -- inventory.low: まだ送っていない同じ SKU の知らせがあれば、その中身を新しい数にする（重ねて積まない）
+  if p_event = 'inventory.low' and coalesce(p_payload, '{}'::jsonb) ? 'sku_id' then
+    update hook_deliveries d set payload = p_payload
+     where d.shop_id = p_shop_id and d.status = 'pending' and d.attempts = 0 and d.event = 'inventory.low'
+       and d.payload->>'sku_id' = p_payload->>'sku_id';
   end if;
   insert into hook_deliveries (shop_id, endpoint_id, event, payload)
   select e.shop_id, e.id, p_event, coalesce(p_payload, '{}'::jsonb)
@@ -164,14 +176,18 @@ begin
     if not banto_shop_perm(p_shop_id, v_perm) then
       raise exception 'shop_not_found' using errcode = '42501';
     end if;
-    -- ペイロードの id（uuid の形のもの。大文字でも）はそのショップの行だけ（別のショップの商品・無い注文で受け手を動かさない）
-    if lower(p_payload->>'order_id') ~ '^[0-9a-f-]{36}$' and not exists (select 1 from orders o where o.shop_id = p_shop_id and o.id::text = lower(p_payload->>'order_id')) then
+    -- ペイロードの id は、あるなら uuid の形（大文字でもよい）で、そのショップの行だけ（別のショップの商品・無い注文で受け手を動かさない。
+    -- ハイフンの無い形・{…} の形は、受け手が uuid に直して読むと確かめをすり抜けるので受けない）
+    if p_payload->>'order_id' is not null and (lower(p_payload->>'order_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or not exists (select 1 from orders o where o.shop_id = p_shop_id and o.id::text = lower(p_payload->>'order_id'))) then
       raise exception 'invalid_payload' using detail = 'order_id';
     end if;
-    if lower(p_payload->>'product_id') ~ '^[0-9a-f-]{36}$' and not exists (select 1 from products p where p.shop_id = p_shop_id and p.id::text = lower(p_payload->>'product_id')) then
+    if p_payload->>'product_id' is not null and (lower(p_payload->>'product_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or not exists (select 1 from products p where p.shop_id = p_shop_id and p.id::text = lower(p_payload->>'product_id'))) then
       raise exception 'invalid_payload' using detail = 'product_id';
     end if;
-    if lower(p_payload->>'customer_id') ~ '^[0-9a-f-]{36}$' and not exists (select 1 from customers c where c.shop_id = p_shop_id and c.id::text = lower(p_payload->>'customer_id')) then
+    if p_payload->>'customer_id' is not null and (lower(p_payload->>'customer_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or not exists (select 1 from customers c where c.shop_id = p_shop_id and c.id::text = lower(p_payload->>'customer_id'))) then
       raise exception 'invalid_payload' using detail = 'customer_id';
     end if;
   end if;

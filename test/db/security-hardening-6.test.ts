@@ -88,9 +88,18 @@ describe.skipIf(!dbAvailable)("セキュリティの締め直し 6（0142_securi
     const n = (await getPool().query<{ n: number }>("select count(*)::int as n from hook_deliveries where shop_id = $1 and event = 'inventory.low'", [f.shopId])).rows[0]!.n;
     expect(n).toBe(1);
     expect((await getPool().query<{ available: number }>("select available from inventory where sku_id = $1", [f.skuId])).rows[0]!.available).toBe(available);
+    // 未配信の知らせがあるあいだに売り切れた → 重ねては積まないが、中身は最後の数（0）になる（受け手は available が 0 かで売り切れを見分ける）
+    await asUser(f.ownerId, (c) => c.query("select stock_adjust($1, $2::jsonb)", [f.shopId, JSON.stringify([{ sku_id: f.skuId, delta: -(available - 2) }, { sku_id: f.skuId, delta: available - 2 }, { sku_id: f.skuId, delta: -available }])]));
+    const rows = (await getPool().query<{ payload: { available: number } }>("select payload from hook_deliveries where shop_id = $1 and event = 'inventory.low'", [f.shopId])).rows;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.payload.available).toBe(0);
+    await asUser(f.ownerId, (c) => c.query("select stock_adjust($1, $2::jsonb)", [f.shopId, JSON.stringify([{ sku_id: f.skuId, delta: available }])]));
   });
 
-  it("enqueue_hook: 大文字で書いた別のショップの商品の id も受けない", async () => {
+  it("enqueue_hook: 大文字・ハイフンなし・{…} で書いた別のショップの商品の id も受けない", async () => {
+    for (const id of [other.productId.replace(/-/g, ""), `{${other.productId}}`, "x"]) {
+      expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'product.updated', $2::jsonb)", [f.shopId, JSON.stringify({ product_id: id })]))), id).toMatch(/invalid_payload/);
+    }
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'product.updated', $2::jsonb)", [f.shopId, JSON.stringify({ product_id: other.productId.toUpperCase() })])))).toMatch(/invalid_payload/);
     await asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'product.updated', $2::jsonb)", [f.shopId, JSON.stringify({ product_id: f.productId.toUpperCase() })]));
   });

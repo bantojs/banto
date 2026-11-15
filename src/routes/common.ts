@@ -118,7 +118,7 @@ export const navigateOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
  * Origin が自分か。リクエストの URL のオリジンと同じか、ホストが同じ（TLS を終端するリバースプロキシの後ろでは
  * ブラウザの Origin は https、サーバーが見る URL は http になる）か、PUBLIC_BASE_URL のオリジンと同じなら自分
  */
-function originIsSelf(c: Ctx, origin: string): boolean {
+export function originIsSelf(c: Ctx, origin: string): boolean {
   const self = new URL(c.req.url);
   if (origin === self.origin) return true;
   let o: URL;

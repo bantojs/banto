@@ -8,7 +8,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx } from "../common";
+import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx, originIsSelf } from "../common";
 import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
@@ -80,7 +80,8 @@ export async function memberCors(c: Ctx, next: () => Promise<void>): Promise<Res
   // 許可していないサイトからの書き込みは受けない。CORS は応答を読ませないだけで、text/plain の POST はプリフライトなしで届くので、
   // よそのサイトが訪問者のブラウザからログインのメールを出させられる（訪問者の IP で数えられ、1 日のメールの上限を使い切る）。
   // Origin の無い呼び出し（サーバーから）と、Banto 自身・ショップのドメインの画面からはそのまま通す
-  if (origin && !ok && c.req.method !== "GET" && c.req.method !== "HEAD" && origin !== new URL(c.req.url).origin) {
+  // （自分のオリジンかは csrfGuard と同じ判定: TLS を終端するプロキシの後ろでは URL は http、ブラウザの Origin は https になる）
+  if (origin && !ok && c.req.method !== "GET" && c.req.method !== "HEAD" && !originIsSelf(c, origin)) {
     return c.json({ error: "origin_not_allowed" }, 403);
   }
   await next();

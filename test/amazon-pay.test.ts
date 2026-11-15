@@ -97,6 +97,8 @@ class FakeAmazonPay {
   charges = new Map<string, { state: string; permissionId: string; amount: string; refunded: string }>();
   permissions = new Map<string, { reservationId: string; shopId: string }>();
   refunds: { chargeId: string; amount: string; key: string | null }[] = [];
+  /** 次の返金の要求を何回失敗させるか（Amazon Pay の一時的な不調） */
+  failRefunds = 0;
   completes = 0;
   calls: string[] = [];
 
@@ -147,6 +149,10 @@ class FakeAmazonPay {
       const p = this.permissions.get(m[1]!);
       if (!p) return json(404, { reasonCode: "ResourceNotFound" });
       return json(200, { chargePermissionId: m[1], merchantMetadata: { merchantReferenceId: p.reservationId, customInformation: p.shopId } });
+    }
+    if (u.pathname === "/v2/refunds" && req.method === "POST" && this.failRefunds > 0) {
+      this.failRefunds--;
+      return json(503, { reasonCode: "ServiceUnavailable" });
     }
     if (u.pathname === "/v2/refunds" && req.method === "POST") {
       const body = (await req.json()) as { chargeId: string; refundAmount: { amount: string } };
@@ -376,6 +382,34 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn })).json()).toEqual({ received: true, duplicate: true });
     expect(amazon.calls.length).toBe(calls);
     expect(amazon.refunds).toHaveLength(1);
+  });
+
+  it("2 回目の支払いの返金に失敗したら済みにせず、やり直しで 1 回だけ返金する。IPN で届いた 2 回目の Charge も返金する", async () => {
+    const { sb, sku, app, amazon } = setup();
+    const b = new Browser(app);
+    const { start } = await startCheckout(b, sku.id);
+    const cfg = relayConfig(await (await b.get(start.slice(BASE.length))).text());
+    const payload = JSON.parse(cfg.payload) as { webCheckoutDetails: { checkoutResultReturnUrl: string } };
+    const ret = payload.webCheckoutDetails.checkoutResultReturnUrl.slice(BASE.length);
+    await b.get(`${ret}&amazonCheckoutSessionId=${amazon.open(cfg.payload)}`);
+    expect(sb.tables.orders).toHaveLength(1);
+    // 2 回目: 返金の API が落ちる → やり直しの画面（済みにしない）
+    const sid2 = amazon.open(cfg.payload);
+    amazon.failRefunds = 1;
+    const failed = await b.get(`${ret}&amazonCheckoutSessionId=${sid2}`);
+    expect(failed.status).toBe(503);
+    expect(amazon.refunds).toEqual([]);
+    // 開き直す → 同じ鍵で 1 回だけ返金
+    expect((await b.get(`${ret}&amazonCheckoutSessionId=${sid2}`)).status).toBe(303);
+    expect(amazon.refunds).toEqual([{ chargeId: "ch-2-bbbbbbbb", amount: "6000", key: "refund-ch-2-bbbbbbbb" }]);
+    // 3 回目の Charge は戻りが届かず IPN だけ → 同じく返金
+    const s = amazon.sessions.get(sid2)!;
+    amazon.charges.set("ch-9-dddddddd", { state: "Captured", permissionId: "cp-9-eeeeeeee", amount: s.amount, refunded: "0" });
+    amazon.permissions.set("cp-9-eeeeeeee", { reservationId: s.reservationId, shopId: s.shopId });
+    const ipn = JSON.stringify({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-9-dddddddd" });
+    expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn })).json()).toMatchObject({ refunded: true, ignored: "paid_elsewhere" });
+    expect(amazon.refunds.map((r) => r.chargeId)).toEqual(["ch-2-bbbbbbbb", "ch-9-dddddddd"]);
+    expect(sb.tables.orders).toHaveLength(1);
   });
 
   it("返金して済んだ予約にもう一度支払いが届いたら、その支払いも返金する。中継ページは期限切れを出す", async () => {

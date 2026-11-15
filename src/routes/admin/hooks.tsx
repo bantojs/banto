@@ -4,7 +4,7 @@ import { DbError } from "../../db/client";
 import { isHookEvent } from "../../hooks/events";
 import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
 import { endpointSecret, signHookPayload, signPluginTicket } from "../../hooks/signing";
-import { blockedHookTarget, externalHookUrl } from "../../hooks/target";
+import { asciiHookUrl, blockedHookTarget, externalHookUrl } from "../../hooks/target";
 import { ConnectConfirm, ConnectionCard, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
 import { t, tf, type MessageKey } from "../../i18n";
@@ -284,7 +284,7 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
-  const url = (f.url ?? "").trim();
+  const url = asciiHookUrl((f.url ?? "").trim());
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   const manifest = await fetchManifest(url, outboundFetch(c));
   // つなぐ手順に対応したプラグイン（0088）は、許す画面を出す（秘密を手で写さない）
@@ -312,11 +312,13 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   );
 });
 
-function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false, bundled = false): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
-  const url = (f.url ?? "").trim();
+function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false, bundled = false, currentUrl?: string): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
+  const typed = (f.url ?? "").trim();
+  // 変えていない URL はそのまま（前からある送信先の、出来事・有効 / 無効・設定だけの保存を止めない。DB も URL を変えるときだけ形を確かめる）
+  const url = typed === currentUrl ? typed : asciiHookUrl(typed);
   // 同梱プラグインの設定の保存は内部 URL（呼び出し側が元の URL に戻す）。外部プラグインは新規も更新も externalHookUrl
   // （私設のアドレス・localhost・banto.invalid への書き換えを受けない。外部として登録した行の URL は同梱の内部 URL に変えられない）
-  if (bundled ? !URL_RE.test(url) : !externalHookUrl(url)) return "invalid_url";
+  if (bundled ? !URL_RE.test(url) : url !== currentUrl && !externalHookUrl(url)) return "invalid_url";
   const values: Partial<EndpointRow> = {
     name: (f.name ?? "").trim().slice(0, 200) || url,
     url,
@@ -352,7 +354,7 @@ hooks.post("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const events = await eventsFromBody(c);
   const f = await formFields(c);
-  const url = (f.url ?? "").trim();
+  const url = asciiHookUrl((f.url ?? "").trim());
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   // マニフェストは登録時に再取得する（フォームの値を信用しない）
   const manifest = await fetchManifest(url, outboundFetch(c));
@@ -494,7 +496,7 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const bundled = bundledPluginIdFromUrl(endpoint.url) !== null;
   // 外部プラグインはマニフェストを読み直す（ブロックの提案などが増えたとき。取れなければ前のまま）
   const fresh = !bundled ? await fetchManifest(endpoint.url, outboundFetch(c)) : null;
-  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled, bundled);
+  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled, bundled, endpoint.url);
   if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
   if (bundled) values.url = endpoint.url;
   // つないだ連携（0088）の送信先は変えない（前の相手に渡したトークンとシークレットが残るため。DB も止める）

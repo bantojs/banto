@@ -3,6 +3,7 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, memoryAdapters } from "./helpers";
 import { createApp, bodyLimitFor } from "../src/app";
 import { onShopDomain } from "../src/routes/storefront/domain";
+import { carryShopDomainMark, markShopDomainRequest, shopDomainOfRequest } from "../src/routes/shop-domain-request";
 import type { Ctx } from "../src/routes/common";
 import type { DomainAdapter, DomainAttachResult, DomainState } from "../src/adapters/types";
 
@@ -27,7 +28,7 @@ function setup(storage?: MemoryStorage) {
 describe("ショップのドメインの判定", () => {
   it("運営者と連携の入口は、パスを符号化してもショップのドメインでは 404", async () => {
     const { app } = setup();
-    for (const path of ["/api/v1/shop", "/api/%761/shop", "/api/v%31/shop", "/%6dcp", "/%77ebhooks/stripe"]) {
+    for (const path of ["/api/v1/shop", "/api/%761/shop", "/api/v%31/shop", "/api/%761/products/%ff", "/%6dcp", "/%77ebhooks/stripe"]) {
       const res = await app.request(`https://shop.example.jp${path}`, { headers: { authorization: "Bearer banto_x" } });
       expect(res.status, path).toBe(404);
     }
@@ -114,15 +115,31 @@ describe("本文の上限", () => {
     expect(bodyLimitFor("/api/shops/my-shop/inquiries/reply")).toBe(20 * 1024 * 1024);
     expect(bodyLimitFor("/my-shop/inquiries")).toBe(20 * 1024 * 1024);
     for (const p of ["/admin/shops/x/products", "/api/v1/themes", "/mcp", "/webhooks/stripe"]) expect(bodyLimitFor(p), p).toBeNull();
+    // 運営者の入口でも、ログインの前に本文を読むものには掛ける
+    for (const p of ["/admin/login", "/admin/invite", "/admin/setup/owner", "/admin/mfa"]) expect(bodyLimitFor(p), p).toBe(2 * 1024 * 1024);
     expect(bodyLimitFor("/administrator")).toBe(2 * 1024 * 1024);
     const { app } = setup();
     const big = `email=${"a".repeat(3 * 1024 * 1024)}`;
     const form = (url: string, headers: Record<string, string> = {}) => app.request(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: new URL(url).origin, ...headers }, body: big });
     expect((await form(`${BASE}/other/account/login`)).status).toBe(413);
     expect((await form("https://shop.example.jp/account/login")).status).toBe(413);
+    expect((await form(`${BASE}/admin/login`)).status).toBe(413);
     // 申告の無い（流しながら送る）本文も、読んだ分で止める
     const stream = new Blob([big]).stream();
     const res = await app.request(`${BASE}/other/account/login`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", origin: BASE }, body: stream, duplex: "half" } as RequestInit);
     expect(res.status).toBe(413);
+  });
+});
+
+describe("ショップのドメインの印", () => {
+  it("本文の上限が要求を作り直しても、ショップのドメインとして振り分けた印は新しい要求に写る", () => {
+    const a = new Request("https://shop.example.jp/x", { method: "POST", body: "a" });
+    const b = new Request(a.url, { method: "POST", body: "a" });
+    markShopDomainRequest(a, "shop.example.jp");
+    carryShopDomainMark(a, b);
+    expect(shopDomainOfRequest(b)).toBe("shop.example.jp");
+    const c = new Request(a.url);
+    carryShopDomainMark(new Request(a.url), c);
+    expect(shopDomainOfRequest(c)).toBeNull();
   });
 });

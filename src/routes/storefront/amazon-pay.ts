@@ -48,7 +48,14 @@ export async function amazonPayStart(c: Ctx, shop: PublicShop, shopUrl: string):
   // 券は期限のあいだ何度でも開ける。支払いが済んだ予約（確定・返金）にはボタンを出さない（「戻る」で開き直して、もう一度支払わせない）
   const db = privilegedFor(c);
   if (!db) return expired(c, shopUrl);
-  const paid = await db.reservationPayment(ticket.reservationId, ticket.shopId);
+  let paid: Awaited<ReturnType<typeof db.reservationPayment>>;
+  try {
+    paid = await db.reservationPayment(ticket.reservationId, ticket.shopId);
+  } catch (e) {
+    // DB が一時的に答えない: 開き直せばやり直せる（支払いボタンは、予約の状態が分かるまで出さない）
+    console.error("[banto] amazon pay start: reservation lookup failed:", e instanceof Error ? e.message : e);
+    return page(c, t("amazon_pay.retry_title"), `<h1>${escapeHtml(t("amazon_pay.retry_title"))}</h1><p>${escapeHtml(t("amazon_pay.retry_body"))}</p><p><a href="${escapeHtml(`${shopUrl}/checkout/amazon-pay/start?t=${encodeURIComponent(token)}`)}">${escapeHtml(t("amazon_pay.retry_link"))}</a></p>`, { status: 503 });
+  }
   if (paid.status === "confirmed" || paid.paymentRef) return c.redirect(ticket.successUrl, 303);
   if (paid.status === "refunded" || paid.status === null) return expired(c, shopUrl);
   const q = `t=${encodeURIComponent(token)}`;
@@ -116,7 +123,7 @@ export async function amazonPayCancel(c: Ctx, shop: PublicShop, shopUrl: string)
   const ticket = secret ? await openAmazonPayTicket(secret, c.req.query("t"), shop.id) : null;
   if (!ticket || !db) return c.redirect(`${shopUrl}/cart`, 303);
   // 先読み（リンクの先取り）では予約を戻さない。券は URL に載るので、開いただけで支払い中の予約が戻らないように
-  const purpose = `${c.req.header("sec-purpose") ?? ""} ${c.req.header("purpose") ?? ""}`.toLowerCase();
+  const purpose = `${c.req.header("sec-purpose") ?? ""} ${c.req.header("purpose") ?? ""} ${c.req.header("x-moz") ?? ""}`.toLowerCase();
   if (/prefetch|prerender|preview/.test(purpose)) return c.redirect(ticket.cancelUrl, 303);
   await db.releaseReservation(ticket.reservationId, ticket.shopId).catch(() => false);
   return c.redirect(ticket.cancelUrl, 303);

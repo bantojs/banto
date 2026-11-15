@@ -5,6 +5,7 @@
  *   3. プラグインは裏で券を引き換える（POST /api/connect/exchange、src/routes/api/connect.ts）
  * 外すのは連携を消すこと（トークン・接続・拡張データがまとめて消える。監査ログに残る）。つなぎ直すと前のトークンは取り消し。
  */
+import { asciiHookUrl } from "../../hooks/target";
 import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
@@ -185,7 +186,7 @@ export function registerConnectRoutes(hooks: Hono<AppEnv>, externalHookUrl: (url
     if (!shop) return c.text(t("shop.not_found"), 404);
     const picked = await scopesFrom(c);
     const f = await formFields(c);
-    const url = (f.url ?? "").trim();
+    const url = asciiHookUrl((f.url ?? "").trim());
     if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
     const manifest = await fetchManifest(url, c.get("adapters").publicFetch ?? c.get("deps").fetch);
     if (!connectable(manifest)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=manifest_failed`);

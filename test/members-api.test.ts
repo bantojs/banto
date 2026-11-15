@@ -215,5 +215,8 @@ describe("return_to と、ほかのサイトからの書き込み", () => {
     expect((await post({ "content-type": "application/json" })).status).toBe(200);
     expect((await post({ origin: "https://wp.example.com", "content-type": "application/json" })).status).toBe(200);
     expect((await post({ origin: new URL(BASE).origin, "content-type": "application/json" })).status).toBe(200);
+    // TLS を終端するプロキシの後ろ（Node）: サーバーが見る URL は http、ブラウザの Origin は https。同じホストなら自分のオリジン
+    const proxied = await app.request("http://banto.example.com/api/shops/my-shop/members/login", { method: "POST", headers: { origin: "https://banto.example.com", "content-type": "application/json" }, body: JSON.stringify({ email: "y@example.com" }) });
+    expect(proxied.status).toBe(200);
   });
 });
