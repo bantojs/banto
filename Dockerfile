@@ -1,12 +1,12 @@
 # Node.js で動かす場合の最小イメージ（docs/run-on-node.md）。Cloudflare Workers では使わない。
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 RUN npm run build:node
 
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 ENV NODE_ENV=production PORT=8787
 COPY package.json package-lock.json ./
