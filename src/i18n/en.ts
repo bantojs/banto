@@ -1035,7 +1035,7 @@ export const en: Record<MessageKey, string> = {
   "views.save": "+ Save these conditions as a view",
   "views.name": "View name",
   "views.save_submit": "Save",
-  "views.shared_hint": "Views are shared with all members of this shop.",
+  "views.shared_hint": "Views are shared with all members of this shop. The keyword (a customer’s name or phone number, for example) is visible to everyone who works on this shop.",
   "views.delete": "Delete this view",
   "views.delete_confirm": "Delete this view? (The filtered results do not change.)",
   "views.invalid": "Could not save the view (names can be up to 40 characters).",

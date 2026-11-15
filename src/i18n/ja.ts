@@ -1036,7 +1036,7 @@ export const ja = {
   "views.save": "＋ この条件をビューに保存",
   "views.name": "ビューの名前",
   "views.save_submit": "保存",
-  "views.shared_hint": "ビューはこのショップのメンバーみんなで使えます。",
+  "views.shared_hint": "ビューはこのショップのメンバーみんなで使えます。キーワード（お客様の名前や電話番号など）も、このショップを扱う人みんなに見えます。",
   "views.delete": "このビューを消す",
   "views.delete_confirm": "このビューを消しますか？（条件で絞った結果は変わりません）",
   "views.invalid": "ビューを保存できませんでした（名前は 40 字まで）。",

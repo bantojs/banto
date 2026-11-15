@@ -108,6 +108,8 @@ const COLUMN_DENIES = [
   { role: "anon", table: "shops", privilege: "SELECT", columns: ["settings", "stripe_account_id", "order_seq", "tryon_seq", "owner_id", "org_id", "legal_links_state"] },
   { role: "anon", table: "customers", privilege: "SELECT", columns: ["id", "email", "password_hash"] },
   { role: "anon", table: "orders", privilege: "SELECT", columns: ["id", "customer_email"] },
+  // 0143: 決済の接続先・連番・法務のリンクの確認の結果は、管理画面の banto_admin_shop が項目に合う人にだけ返す
+  { role: "authenticated", table: "shops", privilege: "SELECT", columns: ["stripe_account_id", "order_seq", "tryon_seq", "inquiry_seq", "legal_links_state"] },
   { role: "authenticated", table: "customers", privilege: "SELECT", columns: ["password_hash", "legacy_password_hash", "session_epoch", "password_updated_at", "legacy_password_expires_at"] },
   // 0090: payment_account（返金に使う決済の口座）は confirm_reservation だけが書く
   { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["total_jpy", "customer_email", "customer_name", "shipping_address", "number", "shop_id", "payment_ref", "amount_paid_jpy", "discount_jpy", "tax_rate", "reservation_id", "customer_id", "payment_account"] },

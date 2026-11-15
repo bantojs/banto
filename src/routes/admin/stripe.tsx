@@ -67,7 +67,7 @@ stripe.get("/stripe/callback", requireOwner, async (c: AdminContext) => {
   if (!code || !client) return c.redirect(`${back}?flash=stripe_failed`);
   try {
     const { stripe_user_id } = await client.oauthToken(code);
-    const rows = await db.from<ShopRow>("shops").update({ stripe_account_id: stripe_user_id }, { id: state.shop_id });
+    const rows = await db.from<ShopRow>("shops").update({ stripe_account_id: stripe_user_id }, { id: state.shop_id }, "id");
     if (rows.length === 0) return c.redirect(`${back}?flash=stripe_failed`);
   } catch (e) {
     if (e instanceof StripeError || e instanceof DbError) return c.redirect(`${back}?flash=stripe_failed`);

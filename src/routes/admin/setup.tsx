@@ -393,7 +393,7 @@ setup.post("/shop", requireOwner, requireOrgAdmin, async (c) => {
   const domain = shopTemplateDomain(c, slug);
   if (domain === "invalid") return c.redirect("/admin/setup?error=slug_domain_invalid");
   try {
-    await db.from("shops").insert({ owner_id: session.user_id, slug, name, ...(domain ? { domain } : {}) });
+    await db.from("shops").insert({ owner_id: session.user_id, slug, name, ...(domain ? { domain } : {}) }, "id");
   } catch (e) {
     if (e instanceof DbError && domain && (e.code === "23505" || /shops_domain_key/.test(e.message))) return c.redirect("/admin/setup?error=slug_domain_taken");
     if (e instanceof DbError) return renderSetup(c, { error: "generic", info: e.message });

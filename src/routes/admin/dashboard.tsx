@@ -213,7 +213,7 @@ dashboard.post("/shops", requireOwner, requireOrgAdmin, async (c) => {
   const domain = shopTemplateDomain(c, slug);
   if (domain === "invalid") return c.redirect("/admin?flash=slug_domain_invalid");
   try {
-    const [shop] = await db.from<ShopRow>("shops").insert({ owner_id: session.user_id, slug, name, ...(domain ? { domain } : {}) });
+    const [shop] = await db.from<ShopRow>("shops").insert({ owner_id: session.user_id, slug, name, ...(domain ? { domain } : {}) }, "id");
     return c.redirect(`/admin/shops/${shop!.id}?flash=saved`);
   } catch (e) {
     // スラッグとドメインのどちらの重なりかを分けて出す（ドメインは、ほかのショップが手で同じ名前を付けているとき）
