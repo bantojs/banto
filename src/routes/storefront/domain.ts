@@ -2,7 +2,7 @@ import type { Hono, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
-import { SLUG_RE, type Ctx } from "../common";
+import { SLUG_RE, readBodyLimited, type Ctx } from "../common";
 import { markShopDomainRequest } from "../shop-domain-request";
 import { domainTemplateFrom, templateSlug } from "../../storefront/subdomain";
 
@@ -12,8 +12,7 @@ import { domainTemplateFrom, templateSlug } from "../../storefront/subdomain";
  * - 独自ドメインへのアクセス（Host がショップの domain）: パスの前にスラッグを足して、いつものストアフロントのルートで処理する
  *   （https://shop.example.jp/products/tee → /<スラッグ>/products/tee）。API・Webhook・画像・/_oauth などはそのまま。
  * - 管理画面（/admin）はショップのドメインでは出さない: Banto 自身の URL（PUBLIC_BASE_URL）へ転送する（無ければ 404）。
- *   店主がドメインの DNS を握っているので、そこに運営者のログイン画面が出ると、そっくりの偽画面を置いて運営者を誘える
- *   （2026-10-18 のコード監査の§3「独自ドメイン上の /admin」）。運営者の入口は 1 つのオリジンに限る。
+ *   店主がドメインの DNS を握っているので、そこに運営者のログイン画面が出ると、そっくりの偽画面を置いて運営者を誘える 運営者の入口は 1 つのオリジンに限る。
  * - Banto の URL のショップのページ（GET /<スラッグ>/...）: ショップに独自ドメインがあれば、そのドメインへ転送する。
  *   会員の Cookie・LINE / Google の戻り先がドメインごとなので、ショップの画面は 1 つのドメインにそろえる。
  *
@@ -33,9 +32,12 @@ const PASSTHROUGH = ["/api", "/media", "/health", "/_oauth"];
 const PASSTHROUGH_FILES = new Set(["/robots.txt", "/sitemap.xml", "/sitemap-pages.xml"]);
 /**
  * Banto 自身のホストでだけ出すパス（運営者と連携の入口）。ショップのドメインでは 404。
- * 店主がドメインの DNS を握る構成で、AI 用トークンや決済事業者の Webhook が店主のサーバーへ向かないように（2026-10-25 の監査）
+ * 店主がドメインの DNS を握る構成で、AI 用トークンや決済事業者の Webhook が店主のサーバーへ向かないように
  */
 const PLATFORM_ONLY = ["/mcp", "/api/v1", "/webhooks"];
+
+/** ショップのドメインで受ける本文の上限（お店の画面でいちばん大きいのはお問い合わせの添付 5MB × 3） */
+const SHOP_DOMAIN_BODY_BYTES = 20 * 1024 * 1024;
 
 /** Host を比べる形にそろえる（小文字・末尾のドットを落とす。`shop.example.jp.` も同じショップ） */
 export function normalizeHost(host: string): string {
@@ -106,7 +108,11 @@ export async function resolveHost(c: Ctx): Promise<HostResolution> {
 
 /** 今のリクエストがショップの独自ドメインの上か */
 export function onShopDomain(c: Ctx, shop: { domain?: string | null }): boolean {
-  return Boolean(shop.domain) && normalizeHost(new URL(c.req.url).hostname) === shop.domain;
+  if (!shop.domain) return false;
+  const host = normalizeHost(new URL(c.req.url).hostname);
+  // Banto 自身のホスト（管理画面のオリジン）はショップのドメインとして扱わない。画面は自分のホストをドメインに付けさせないが、
+  // DB には形の検査しか無い（直接の書き込み・復元で入りうる）。入っていても、テーマの JS を管理画面のオリジンで動かさない
+  return host === shop.domain && !isPlatformHost(c, host);
 }
 
 /**
@@ -137,7 +143,14 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
         return c.redirect(`https://${r.domain}${url.pathname}${url.search}`, 302);
       }
     }
-    if (platformOnly(url.pathname)) {
+    // 判定は符号を戻したパスで（ルーターは戻したパスで振り分けるので、/api/%761/… が /api/v1 に届く）
+    let decoded = url.pathname;
+    try {
+      decoded = decodeURIComponent(url.pathname);
+    } catch {
+      // 戻せないパスはそのまま見る
+    }
+    if (platformOnly(url.pathname) || platformOnly(decoded)) {
       // 運営者と連携の入口はショップのドメインでは出さない
       return (await hostShop(c)) ? c.notFound() : next();
     }
@@ -158,8 +171,10 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
     }
     url.pathname = url.pathname === "/" ? `/${shop.slug}` : `/${shop.slug}${url.pathname}`;
     const method = c.req.method;
-    const body = method === "GET" || method === "HEAD" ? undefined : await c.req.raw.arrayBuffer();
-    const req = new Request(url.toString(), { method, headers: c.req.raw.headers, body, redirect: "manual" });
+    // 本文は上限まで（振り分けの前に全部を読むので、上限が無いと匿名の POST でメモリを食わせられる）
+    const body = method === "GET" || method === "HEAD" ? undefined : await readBodyLimited(c.req.raw, SHOP_DOMAIN_BODY_BYTES);
+    if (body === null) return c.text("Payload Too Large", 413);
+    const req = new Request(url.toString(), { method, headers: c.req.raw.headers, body: body ? (body.buffer as ArrayBuffer) : undefined, redirect: "manual" });
     rewritten.add(req);
     // 画像の起点（common.ts の mediaBaseUrl）が、登録されたショップのドメインのリクエストだと分かるように
     if (shop.domain) markShopDomainRequest(req, shop.domain);

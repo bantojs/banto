@@ -411,7 +411,7 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
   });
 
   it("取り消し: 先読みの GET では予約を戻さない", async () => {
-    const { sb, sku, app, amazon } = setup();
+    const { sb, sku, app } = setup();
     const b = new Browser(app);
     const { start } = await startCheckout(b, sku.id);
     const html = await (await b.get(start.slice(BASE.length))).text();

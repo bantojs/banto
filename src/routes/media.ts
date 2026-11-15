@@ -12,7 +12,9 @@ export const media = new Hono<AppEnv>();
 media.get("/*", async (c) => {
   const key = c.req.path.replace(/^\/media\//, "");
   // テーマのファイル（themes/）はここでは配らない。テーマの JS・CSS を管理画面と同じオリジンで開かせない（docs/themes.md。資産はショップのドメインから）
-  if (!key || key.includes("..") || key.startsWith("themes/")) return c.notFound();
+  // キーは「区切りで始まらない・空の区切りが無い・バックスラッシュが無い」形だけ: ローカルの置き場は //themes/… を themes/… に畳んで読むので、
+  // 形をそろえてから判定する。.type（ローカルの置き場が種類を書く添えのファイル）も配らない
+  if (!key || key.includes("..") || key.startsWith("/") || key.includes("//") || key.includes("\\") || key.endsWith(".type") || key.startsWith("themes/")) return c.notFound();
   const storage = c.get("adapters").storage;
   const common = { "Cache-Control": mediaCacheControl(key) ?? "no-cache", "X-Content-Type-Options": "nosniff" };
   // 動画の再生（Range）。1 つの範囲（bytes=a- / bytes=a-b）だけに答え、終わりの無い範囲は RANGE_CHUNK までにする（Worker のメモリと CPU を食わない。

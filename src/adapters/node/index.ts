@@ -39,6 +39,8 @@ export class FsStorage implements StorageAdapter {
   ) {}
 
   private pathFor(key: string): string {
+    // 置き場のキーは相対の形だけ（/themes/… や a//b は、畳むと別のキーと同じファイルになる）
+    if (key.startsWith("/") || key.includes("//") || key.includes("\\")) throw new Error(`invalid storage key: ${key}`);
     const p = normalize(join(this.dir, key));
     const root = normalize(this.dir + sep);
     if (!p.startsWith(root)) throw new Error(`invalid storage key: ${key}`);
@@ -175,7 +177,7 @@ export function createNodeAdapters(env: Record<string, string | undefined> = pro
     config,
     cache: new MemoryCache(),
     scheduler: new IntervalScheduler(),
-    // 画像の URL 取り込みは、名前を引いた先が社内のアドレスなら繋がない（監査 M12）
+    // 画像の URL 取り込みは、名前を引いた先が社内のアドレスなら繋がない
     publicFetch: createPublicFetch(),
     cpuUnlimited: true,
     socket: nodeSockets,

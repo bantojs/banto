@@ -2,11 +2,10 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { webhookBody } from "./body";
 import { PrivilegedRpcError, createPrivilegedDb } from "../../db/privileged";
-import { migrated } from "../../db/migration-state";
-import { REPLAY_GUARD_MIGRATION } from "./stripe";
+import { replayGuard } from "./stripe";
 import { AmazonPayError, CHARGE_ID_RE, amazonPayFromConfig, type AmazonPayCharge } from "../../plugins/amazon_pay";
 import { AMAZON_PAY_PROVIDER, confirmAmazonPayCharge } from "../../payments/amazon-pay";
-import { clientIp, migrationStateFor, type Ctx } from "../common";
+import { clientIp, type Ctx } from "../common";
 import { rateLimiter } from "../../adapters/rate-limit";
 
 /**
@@ -51,8 +50,7 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
 
   // 済んだ Charge の通知（再送・戻りで確定済み）は、Amazon Pay の API を呼ぶ前に終える
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
-  const ms = migrationStateFor(c, url);
-  const guard = ms ? await migrated(ms, REPLAY_GUARD_MIGRATION) : false;
+  const guard = await replayGuard(c, url);
   if (guard && (await db.webhookEventSeen(AMAZON_PAY_PROVIDER, chargeId))) return c.json({ received: true, duplicate: true });
 
   // どの予約か: Charge → Charge Permission の merchantMetadata（ボタンの中身は Banto の署名つき）

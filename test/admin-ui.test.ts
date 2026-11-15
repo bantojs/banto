@@ -126,7 +126,10 @@ describe("管理画面の共通の見た目", () => {
     expect((await settings.get(`${base}/settings/members`)).status).toBe(404);
     expect((await settings.get(`${base}/settings/images`)).status).toBe(404);
     const adv = await (await settings.get(`${base}/settings/advanced`)).text();
-    expect(adv).toContain(`href="${base}/settings/domain"`);
+    expect(adv).toContain(`href="${base}/settings/terms"`);
+    // 独自ドメインは owner / admin だけ（DB と同じ）
+    expect(adv).not.toContain(`href="${base}/settings/domain"`);
+    expect((await settings.get(`${base}/settings/domain`)).status).toBe(404);
     expect(adv).not.toContain(`href="${base}/settings/backup"`);
     expect(adv).not.toContain(`href="${base}/settings/headless"`);
     // 配送と税の保存は会員機能の鍵に触らない（owner / admin の鍵、0129）

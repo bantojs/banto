@@ -1,5 +1,6 @@
 import { isSecureRequest } from "./routes/common";
 import { HTTPException } from "hono/http-exception";
+import { bodyLimit } from "hono/body-limit";
 import { Hono } from "hono";
 import type { ShopEvent } from "./storefront/events";
 import type { ShopAccess } from "./routes/admin/access";
@@ -58,6 +59,22 @@ function errorPage(): string {
   return `<!doctype html><html lang="${getLocale()}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${t("error.title")}</title><style>body{font-family:system-ui,sans-serif;margin:3rem auto;max-width:36rem;padding:0 1rem;line-height:1.6}</style></head><body><h1>${t("error.title")}</h1><p>${t("error.body")}</p></body></html>`;
 }
 
+/** お問い合わせの入口（添付 5MB × 3） */
+const INQUIRY_BODY_BYTES = 20 * 1024 * 1024;
+/** そのほかのお店の画面・公開 API のフォーム */
+const PUBLIC_BODY_BYTES = 2 * 1024 * 1024;
+
+/**
+ * パスごとの本文の上限。null は、ここでは数えない入口: 運営者・AI 用 API（ログインかトークンが要り、画像・テーマの取り込みは
+ * 入口ごとに読みながら数える）と、決済の Webhook（署名の確認の前に 256 KiB で止める）。
+ * お店の画面（独自ドメインではスラッグの無いパス）と公開 API は、だれでも送れるのでここで止める
+ */
+export function bodyLimitFor(path: string): number | null {
+  if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/v1/") || path === "/mcp" || path.startsWith("/webhooks/")) return null;
+  if (/(^|\/)inquiries(\/|$)/.test(path)) return INQUIRY_BODY_BYTES;
+  return PUBLIC_BODY_BYTES;
+}
+
 export function createApp(
   resolveAdapters: (bindings: Record<string, unknown>) => Adapters,
   deps: Partial<AppDeps> = {},
@@ -76,7 +93,7 @@ export function createApp(
     await next();
   });
 
-  // 共通のセキュリティヘッダ（監査 L 群、2026-10-18）。ルートが自分で付けたものは上書きしない（会員ページの Referrer-Policy: same-origin 等）
+  // 共通のセキュリティヘッダ。ルートが自分で付けたものは上書きしない（会員ページの Referrer-Policy: same-origin 等）
   app.use("*", async (c, next) => {
     await next();
     const h = c.res.headers;
@@ -99,6 +116,14 @@ export function createApp(
 
   // ショップごとの独自ドメイン（0015）: そのドメインへのアクセスをストアフロントのルートへ
   app.use("*", shopDomainRouting(app));
+  // 本文の上限（申告の Content-Length と、読んだバイト数の両方で止める）。フォームと multipart は上限なしに読む作りだったので、
+  // Node 実行では匿名の POST でメモリを食わせられた。運営者の入口と Webhook は入口ごとの数え方に任せる（bodyLimitFor）。ショップのドメインの振り分け（本文を読んで作り直した要求を目印で見分ける）の後に置く。入口ごとの細かい上限（公開 API の JSON 64KB・Webhook 256KiB・MCP 1MB）はそのまま
+  app.use("*", async (c, next) => {
+    if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return next();
+    const max = bodyLimitFor(c.req.path);
+    if (max === null) return next();
+    return bodyLimit({ maxSize: max, onError: (ctx) => ctx.text("Payload Too Large", 413) })(c, next);
+  });
 
   // 予期しない例外: スタックや接続先の情報を外に出さない。ログには残す。
   app.onError((err, c) => {

@@ -480,7 +480,7 @@ function clearPending(c: Ctx, s: Scope): void {
 async function signIn(c: Ctx, s: Scope, v: { customer_id: string; session_epoch: number; email: string }): Promise<boolean> {
   // この端末でログインし直した: 前のセッションは取り消す（一覧に残さない）
   const db = privilegedFor(c);
-  if (s.session?.sid && db) await db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(() => false);
+  if (s.session?.sid && db) await db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(revokeFailed);
   if (!(await startWebSession(c, s, v))) return false;
   await markDevice(c, s, v.customer_id);
   clearPending(c, s);
@@ -779,10 +779,18 @@ const passkeyExpected = (shop: PublicShop): Expected => ({ origin: `https://${sh
 const PASSKEY_FRESH_SECONDS = 14 * 60;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** ログアウトでセッションの行を取り消せなかった: Cookie は消すので画面は進めるが、行が生きたままなのでログに残す */
+const revokeFailed = (e: unknown): boolean => {
+  console.error("[banto] member logout: could not revoke the session:", e instanceof Error ? e.message : e);
+  return false;
+};
+
 async function jsonBody(c: Ctx): Promise<Record<string, unknown>> {
-  if (Number(c.req.header("content-length") ?? 0) > 64 * 1024) return {};
   try {
-    const b: unknown = await c.req.json();
+    // 申告の Content-Length だけでなく、読んだ分でも止める
+    const raw = await readBodyLimited(c.req.raw, 64 * 1024);
+    if (!raw) return {};
+    const b: unknown = JSON.parse(new TextDecoder().decode(raw));
     return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
   } catch {
     return {};
@@ -960,7 +968,7 @@ members.post("/:shop/account/passkey/register", async (c: Ctx) => {
   // ヘッドレスの追加（0070）: この端末のセッションは追加のためだけに作ったので取り消し、連携サイトへ戻す
   const returnTo = safeReturnUrl(b["return_to"], returnOrigins(s.shop.settings), "");
   if (returnTo) {
-    await deps.db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(() => false);
+    await deps.db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(revokeFailed);
     await writeSession(c, s, null);
     return c.json({ redirect: withQueryParam(returnTo, "banto_passkey", "added") });
   }
