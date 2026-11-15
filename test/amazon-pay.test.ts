@@ -93,7 +93,7 @@ describe("Amazon Pay の署名（AMZN-PAY-RSASSA-PSS-V2）", () => {
 
 /** 偽の Amazon Pay（Checkout Session・Charge・Charge Permission・Refund） */
 class FakeAmazonPay {
-  sessions = new Map<string, { state: string; reservationId: string; shopId: string; amount: string; chargeId: string | null; declineOnComplete?: boolean }>();
+  sessions = new Map<string, { state: string; reservationId: string; shopId: string; amount: string; chargeId: string | null; declineOnComplete?: boolean; throttleOnComplete?: boolean }>();
   charges = new Map<string, { state: string; permissionId: string; amount: string; refunded: string }>();
   permissions = new Map<string, { reservationId: string; shopId: string }>();
   refunds: { chargeId: string; amount: string; key: string | null }[] = [];
@@ -120,6 +120,7 @@ class FakeAmazonPay {
       if (m[2]) {
         this.completes++;
         if (s.state !== "Open") return json(422, { reasonCode: "InvalidCheckoutSessionStatus" });
+        if (s.throttleOnComplete) return json(429, { reasonCode: "TooManyRequests" });
         if (s.declineOnComplete) {
           s.state = "Canceled";
           return json(422, { reasonCode: "HardDeclined" });
@@ -348,6 +349,79 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     // 戻らなかったのでカートは前の 2 点が残ったまま（+1 点 = 9,000 円）
     expect(amazon.refunds).toEqual([{ chargeId: "ch-8-ffffffff", amount: "9000", key: "refund-ch-8-ffffffff" }]);
     expect(sb.tables.orders).toHaveLength(1);
+  });
+
+  it("同じ予約への 2 回目の支払い: 確定後は中継ページにボタンを出さず、届いた 2 回目の支払いは返金する", async () => {
+    const { sb, sku, app, amazon } = setup();
+    const b = new Browser(app);
+    const { start } = await startCheckout(b, sku.id);
+    const cfg = relayConfig(await (await b.get(start.slice(BASE.length))).text());
+    const payload = JSON.parse(cfg.payload) as { webCheckoutDetails: { checkoutResultReturnUrl: string } };
+    const ret = payload.webCheckoutDetails.checkoutResultReturnUrl.slice(BASE.length);
+    await b.get(`${ret}&amazonCheckoutSessionId=${amazon.open(cfg.payload)}`);
+    expect(sb.tables.orders).toHaveLength(1);
+    // 「戻る」で中継ページを開き直す → ボタンは出ず、完了画面へ
+    const again = await b.get(start.slice(BASE.length));
+    expect(again.status).toBe(303);
+    expect(again.headers.get("location")).toMatch(new RegExp(`^${BASE}/my-shop/checkout/done\\?s=`));
+    // 前に開いたままの中継ページから 2 回目を支払った（同じ署名済みの中身から別の Checkout Session）→ 2 回目の Charge は返金
+    const back = await b.get(`${ret}&amazonCheckoutSessionId=${amazon.open(cfg.payload)}`);
+    expect(back.status).toBe(303);
+    expect(sb.tables.orders).toHaveLength(1);
+    expect(sb.tables.orders[0]).toMatchObject({ payment_ref: "ch-1-bbbbbbbb" });
+    expect(amazon.refunds).toEqual([{ chargeId: "ch-2-bbbbbbbb", amount: "6000", key: "refund-ch-2-bbbbbbbb" }]);
+    // 開き直しても、IPN が来ても、返金は増えない（済んだ Charge は Amazon Pay の API を呼ぶ前に終える）
+    const calls = amazon.calls.length;
+    const ipn = JSON.stringify({ Type: "Notification", Message: JSON.stringify({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-2-bbbbbbbb" }) });
+    expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn })).json()).toEqual({ received: true, duplicate: true });
+    expect(amazon.calls.length).toBe(calls);
+    expect(amazon.refunds).toHaveLength(1);
+  });
+
+  it("返金して済んだ予約にもう一度支払いが届いたら、その支払いも返金する。中継ページは期限切れを出す", async () => {
+    const { sb, sku, app, amazon } = setup();
+    const b = new Browser(app);
+    const { start } = await startCheckout(b, sku.id);
+    const cfg = relayConfig(await (await b.get(start.slice(BASE.length))).text());
+    const payload = JSON.parse(cfg.payload) as { webCheckoutDetails: { checkoutResultReturnUrl: string } };
+    const ret = payload.webCheckoutDetails.checkoutResultReturnUrl.slice(BASE.length);
+    const r = sb.tables.reservations[0]!;
+    await sb.fetch(`${sb.url}/rest/v1/rpc/release_reservation`, { method: "POST", headers: { apikey: sb.serviceRoleKey, authorization: `Bearer ${sb.serviceRoleKey}`, "content-type": "application/json" }, body: JSON.stringify({ p_reservation_id: r["id"], p_shop_id: r["shop_id"] }) });
+    sb.tables.inventory[0]!["available"] = 0;
+    await b.get(`${ret}&amazonCheckoutSessionId=${amazon.open(cfg.payload)}`);
+    expect(r["status"]).toBe("refunded");
+    expect(amazon.refunds.map((x) => x.chargeId)).toEqual(["ch-1-bbbbbbbb"]);
+    await b.get(`${ret}&amazonCheckoutSessionId=${amazon.open(cfg.payload)}`);
+    expect(amazon.refunds.map((x) => x.chargeId)).toEqual(["ch-1-bbbbbbbb", "ch-2-bbbbbbbb"]);
+    expect(sb.tables.orders).toHaveLength(0);
+    expect((await b.get(start.slice(BASE.length))).status).toBe(400);
+  });
+
+  it("Complete が 429 なら断られた扱いにせず、予約を残してやり直しの画面を出す", async () => {
+    const { sb, sku, app, amazon } = setup();
+    const b = new Browser(app);
+    const { start } = await startCheckout(b, sku.id);
+    const cfg = relayConfig(await (await b.get(start.slice(BASE.length))).text());
+    const payload = JSON.parse(cfg.payload) as { webCheckoutDetails: { checkoutResultReturnUrl: string } };
+    const sid = amazon.open(cfg.payload);
+    amazon.sessions.get(sid)!.throttleOnComplete = true;
+    const back = await b.get(`${payload.webCheckoutDetails.checkoutResultReturnUrl.slice(BASE.length)}&amazonCheckoutSessionId=${sid}`);
+    expect(back.status).toBe(503);
+    expect(sb.tables.reservations[0]!["status"]).toBe("pending");
+  });
+
+  it("取り消し: 先読みの GET では予約を戻さない", async () => {
+    const { sb, sku, app, amazon } = setup();
+    const b = new Browser(app);
+    const { start } = await startCheckout(b, sku.id);
+    const html = await (await b.get(start.slice(BASE.length))).text();
+    const cancel = /href="([^"]+amazon-pay\/cancel[^"]+)"/.exec(html)![1]!.replace(/&amp;/g, "&");
+    const pre = await app.request(cancel, { headers: { "sec-purpose": "prefetch;prerender" } });
+    expect(pre.status).toBe(303);
+    expect(sb.tables.reservations[0]!["status"]).toBe("pending");
+    const res = await b.get(cancel.slice(BASE.length));
+    expect(res.headers.get("location")).toBe(`${BASE}/my-shop/cart`);
+    expect(sb.tables.reservations[0]!["status"]).toBe("released");
   });
 
   it("キャンセルの返金: 売り上げた額から返金済みを引いた額を、冪等キー付きで返す", async () => {

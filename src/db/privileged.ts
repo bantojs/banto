@@ -426,6 +426,8 @@ export interface PrivilegedDb {
   recordWebhookEvent(provider: string, eventId: string): Promise<boolean>;
   /** 記録済み（処理が済んだ）イベントか（0128。再配信なら何もしない） */
   webhookEventSeen(provider: string, eventId: string): Promise<boolean>;
+  /** 予約の状態と、その予約で確定した注文の支払いの参照（無ければ null）。同じ予約に 2 回目の支払いが来たかを決済の流れが確かめる */
+  reservationPayment(reservationId: string, shopId: string): Promise<{ status: string | null; paymentRef: string | null }>;
   /**
    * 「返金すると決めた」ことを返金の前に DB に残す（0128。pending なら在庫とクーポンの枠も戻す）。
    * marked = 今決めた（返金する）、same_event = 同じイベントで決めてある（返金をやり直してよい）、other_event = 別のイベントで決めてある（返金しない）
@@ -714,6 +716,16 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     releaseExpiredReservations: () => rpc<number>("release_expired_reservations", {}),
     recordWebhookEvent: (provider, eventId) => rpc<boolean>("record_webhook_event", { p_provider: provider, p_event_id: eventId }),
     webhookEventSeen: (provider, eventId) => rpc<boolean>("webhook_event_seen", { p_provider: provider, p_event_id: eventId }),
+    async reservationPayment(reservationId, shopId) {
+      const q = (table: string, select: string, key: string) =>
+        doFetch(`${base}/rest/v1/${table}?select=${select}&${key}=eq.${encodeURIComponent(reservationId)}&shop_id=eq.${encodeURIComponent(shopId)}`, { headers });
+      const [res, ord] = await Promise.all([q("reservations", "status", "id"), q("orders", "payment_ref", "reservation_id")]);
+      if (!res.ok) throw new PrivilegedRpcError("reservations.status", res.status, await res.text());
+      if (!ord.ok) throw new PrivilegedRpcError("orders.payment_ref", ord.status, await ord.text());
+      const status = ((await res.json()) as { status?: string }[])[0]?.status ?? null;
+      const ref = ((await ord.json()) as { payment_ref?: string | null }[])[0]?.payment_ref;
+      return { status, paymentRef: typeof ref === "string" && ref ? ref : null };
+    },
     reservationMarkRefunded: async (reservationId, shopId, provider, eventId) => {
       const r = await rpc<string>("reservation_mark_refunded", { p_reservation_id: reservationId, p_shop_id: shopId, p_provider: provider, p_event_id: eventId });
       return r === "same_event" || r === "other_event" ? r : "marked";
