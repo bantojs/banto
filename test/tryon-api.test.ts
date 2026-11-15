@@ -21,7 +21,7 @@ function setup(settings: Record<string, unknown> = {}) {
     legal_notice: "a",
     privacy_policy: "b",
     return_policy: "c",
-    settings: { modules: { store_tryon: true }, members_enabled: true, ...settings },
+    settings: { modules: { store_tryon: true }, members_enabled: true, headless: { return_origins: ["https://wp.example.com"] }, ...settings },
   });
   const tee = sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
   const sku = sb.addSku(shop.id, tee.id, { code: "TEE-M", name: "M", price_jpy: 3000, available: 5 });

@@ -95,6 +95,7 @@ export async function confirmAmazonPayCharge(a: { db: PrivilegedDb; client: Amaz
     },
     refund,
     guard: a.guard,
+    separatePaymentRef: a.chargeId,
   });
   return { kind: "confirmed", result };
 }
@@ -131,7 +132,8 @@ export async function handleAmazonPayReturn(a: { db: PrivilegedDb; client: Amazo
       chargeId = done.chargeId ?? chargeId;
     } catch (e) {
       // 断られた（CheckoutSessionCanceled・HardDeclined など）か、すでに完了・取り消し済み。どちらかは引き直して決める
-      if (!(e instanceof AmazonPayError) || e.status >= 500) {
+      // 429（流量の制限）と 408 は断られたのではない。予約を戻さずにやり直させる
+      if (!(e instanceof AmazonPayError) || e.status >= 500 || e.status === 429 || e.status === 408) {
         console.error("[banto] amazon pay return: complete failed:", e instanceof Error ? e.message : e);
         return { kind: "retry" };
       }

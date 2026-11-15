@@ -8,7 +8,7 @@ import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx } from "../common";
+import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx, originIsSelf } from "../common";
 import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
@@ -55,7 +55,7 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
  * refresh はログインのたびに作るセッションの行（0045 の member_sessions）と照合する。行の絶対の期限（90 日）を越えて更新はできない。
  * トークンは本文で受け渡す（Cookie を使わない）ので CSRF にはならないが、CORS は `*` ではなく
  * **ショップ設定の `headless.return_origins` のオリジンだけ**に返す（0029。login はメールを送るので、どのサイトからでも
- * 訪問者のブラウザで叩けてはいけない。監査 M10）。同梱テーマ（同一オリジン）には CORS は要らない。
+ * 訪問者のブラウザで叩けてはいけない）。同梱テーマ（同一オリジン）には CORS は要らない。
  * カート・チェックアウトの API には `Authorization: Bearer <access_token>` で付ける。
  */
 export const membersApi = new Hono<AppEnv>();
@@ -76,6 +76,13 @@ export async function memberCors(c: Ctx, next: () => Promise<void>): Promise<Res
       "Access-Control-Max-Age": "86400",
       Vary: "Origin",
     });
+  }
+  // 許可していないサイトからの書き込みは受けない。CORS は応答を読ませないだけで、text/plain の POST はプリフライトなしで届くので、
+  // よそのサイトが訪問者のブラウザからログインのメールを出させられる（訪問者の IP で数えられ、1 日のメールの上限を使い切る）。
+  // Origin の無い呼び出し（サーバーから）と、Banto 自身・ショップのドメインの画面からはそのまま通す
+  // （自分のオリジンかは csrfGuard と同じ判定: TLS を終端するプロキシの後ろでは URL は http、ブラウザの Origin は https になる）
+  if (origin && !ok && c.req.method !== "GET" && c.req.method !== "HEAD" && !originIsSelf(c, origin)) {
+    return c.json({ error: "origin_not_allowed" }, 403);
   }
   await next();
   if (ok) {

@@ -74,7 +74,7 @@ async function checkDb(c: AdminContext): Promise<DbState> {
       status: "ok",
       applied: s.migrations,
       pending: pendingMigrations(s.migrations),
-      // 0030 より前の DB でも、ショップがあれば運営者登録は閉じる（最初の運営者を消しても匿名に開かない。監査 M1）
+      // 0030 より前の DB でも、ショップがあれば運営者登録は閉じる（最初の運営者を消しても匿名に開かない）
       hasOwner: s.has_owner || s.shop_count > 0,
       shopCount: s.shop_count,
     };

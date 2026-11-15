@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * banto-theme — Liquid のテーマを Banto に取り込む・プレビューする・公開する（docs/themes.md「コマンドから」）。
- * 依存なし（Node 20 以上の fetch・fs だけ）。この 1 ファイルをテーマのリポジトリに写して使ってよい（MIT）。
+ * 依存なし（Node 22 以上の fetch・fs だけ）。この 1 ファイルをテーマのリポジトリに写して使ってよい（MIT）。
  *
  *   BANTO_URL=https://banto.example.com BANTO_TOKEN=banto_... node banto-theme.mjs push ./theme
  *

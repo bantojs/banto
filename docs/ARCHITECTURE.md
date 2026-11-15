@@ -216,7 +216,6 @@ Workers for Platforms によるサンドボックス実行（運営者がコー�
 | --- | --- |
 | `wrangler.jsonc` | Workers 設定。R2 バケットの Binding、環境変数名の定義 |
 | `supabase/migrations/` | DBスキーマ、RLSポリシー、RPC関数。Supabase CLI 形式 |
-| `supabase/seed.sql` | デモ用の商品データ（任意で投入） |
 | `.dev.vars.example` / `docs/env.md` | Secret の雛形（Deploy ボタンが読む）と環境変数の一覧 |
 | `docs/setup.md` | ボタンを使わない手動セットアップ手順（wrangler CLI 経由） |
 | `docs/upgrade.md` | アップデート手順（後述） |

@@ -143,7 +143,7 @@ export interface Adapters {
   /** 生の TCP（SMTP）。無いランタイムでは SMTP の送り手を選べない */
   socket?: SocketAdapter;
   /**
-   * 外から渡された URL（画像の取り込み）を開くための fetch。名前を引いた先が社内のアドレスなら繋がない（監査 M12）。
+   * 外から渡された URL（画像の取り込み）を開くための fetch。名前を引いた先が社内のアドレスなら繋がない。
    * Node で使う（src/adapters/node/public-fetch.ts）。Workers は社内の網にそもそも届かないので持たない（無ければ deps.fetch）
    */
   publicFetch?: typeof fetch;

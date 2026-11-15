@@ -31,10 +31,6 @@ export class DbError extends Error {
   get isMissingRelation(): boolean {
     return this.code === "PGRST205" || this.code === "PGRST202" || this.code === "42P01" || this.code === "42883";
   }
-  /** 列が無い（マイグレーション未適用で、新しい列を読もうとした） */
-  get isMissingColumn(): boolean {
-    return this.code === "42703" || this.code === "PGRST204";
-  }
   get isRlsViolation(): boolean {
     return this.code === "42501";
   }

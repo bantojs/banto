@@ -11,6 +11,12 @@ export function markShopDomainRequest(req: Request, domain: string): void {
   shopDomains.set(req, domain);
 }
 
+/** 印の付いたリクエストを作り直したとき（本文の上限のミドルウェアが流れを包み直す）、印を新しいほうにも付ける */
+export function carryShopDomainMark(from: Request, to: Request): void {
+  const d = shopDomains.get(from);
+  if (d !== undefined) shopDomains.set(to, d);
+}
+
 /** ショップの独自ドメインとして振り分けたリクエストなら、そのショップのドメイン（登録された値）。ほかは null */
 export function shopDomainOfRequest(req: Request): string | null {
   return shopDomains.get(req) ?? null;

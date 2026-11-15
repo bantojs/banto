@@ -38,7 +38,13 @@ export class FsStorage implements StorageAdapter {
     private readonly publicBaseUrl: string,
   ) {}
 
+  /** 置き場のキーは相対の形だけ（/themes/… や a//b は、畳むと別のキーと同じファイルになる） */
+  private validKey(key: string): boolean {
+    return !(key.startsWith("/") || key.includes("//") || key.includes("\\"));
+  }
+
   private pathFor(key: string): string {
+    if (!this.validKey(key)) throw new Error(`invalid storage key: ${key}`);
     const p = normalize(join(this.dir, key));
     const root = normalize(this.dir + sep);
     if (!p.startsWith(root)) throw new Error(`invalid storage key: ${key}`);
@@ -55,6 +61,8 @@ export class FsStorage implements StorageAdapter {
   }
 
   async get(key: string) {
+    // 形の合わないキー（読む側が URL の名前から組み立てたもの）は「無い」で返す。置く・消すは今までどおり例外
+    if (!this.validKey(key)) return null;
     const path = this.pathFor(key);
     try {
       const [data, type] = await Promise.all([readFile(path), readFile(`${path}.type`, "utf8").catch(() => "application/octet-stream")]);
@@ -72,6 +80,7 @@ export class FsStorage implements StorageAdapter {
   }
 
   async getRange(key: string, start: number, end: number | null): Promise<StorageRange | "unsatisfiable" | null> {
+    if (!this.validKey(key)) return null;
     const path = this.pathFor(key);
     let fh;
     try {
@@ -175,7 +184,7 @@ export function createNodeAdapters(env: Record<string, string | undefined> = pro
     config,
     cache: new MemoryCache(),
     scheduler: new IntervalScheduler(),
-    // 画像の URL 取り込みは、名前を引いた先が社内のアドレスなら繋がない（監査 M12）
+    // 画像の URL 取り込みは、名前を引いた先が社内のアドレスなら繋がない
     publicFetch: createPublicFetch(),
     cpuUnlimited: true,
     socket: nodeSockets,

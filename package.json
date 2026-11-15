@@ -44,13 +44,19 @@
         "description": "Supabase の プロジェクト設定 → Data API → **Project URL**（`https://xxxx.supabase.co`）。あとからでも設定できます（[docs/setup.md](https://github.com/bantojs/banto/blob/main/docs/setup.md)）。"
       },
       "SUPABASE_ANON_KEY": {
-        "description": "Supabase の プロジェクト設定 → API Keys → **anon public** の文字列。公開しても問題ないキーです。"
+        "description": "Supabase の プロジェクト設定 → API Keys → **Publishable key**（`sb_publishable_…`）の文字列。公開しても問題ないキーです（今までの **anon public** のキーも使えます）。"
       },
       "SUPABASE_SERVICE_ROLE_KEY": {
-        "description": "Supabase の プロジェクト設定 → API Keys → **service_role** の文字列を `REPLACE_ME` の代わりに貼ります。**誰にも見せないでください**。注文確定・在庫・Webhook の処理に使います。"
+        "description": "Supabase の プロジェクト設定 → API Keys → **Secret key**（`sb_secret_…`）の文字列を `REPLACE_ME` の代わりに貼ります（今までの **service_role** のキーも使えます）。**誰にも見せないでください**。注文確定・在庫・Webhook の処理に使います。"
+      },
+      "SESSION_SECRET": {
+        "description": "ログインの Cookie と暗号化に使う秘密。32 文字以上のランダムな文字列を `REPLACE_ME` の代わりに貼ります（[docs/env.md](https://github.com/bantojs/banto/blob/main/docs/env.md)）。**誰にも見せないでください**。後から変えると、暗号化して保存した値は入れ直しになります。"
       },
       "MEDIA": {
         "description": "商品画像を置く R2 バケット。名前は `banto-media` のままで構いません。"
+      },
+      "PRIVATE": {
+        "description": "公開しないファイル（お問い合わせの添付・テーマ）を置く R2 バケット。名前は `banto-private` のままで構いません。"
       }
     }
   },

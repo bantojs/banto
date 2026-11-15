@@ -69,3 +69,28 @@ describe("連携の URL の行き先", () => {
     expect(received).toEqual([]);
   });
 });
+
+describe("連携の URL の形（0142）", () => {
+  it("前からある形の合わない送信先も、URL を変えなければ出来事・有効 / 無効を保存できる。変えるときは今の決まり", async () => {
+    const { sb, shop, app } = setup();
+    externalHosts.set("https://old.example/", async () => new Response("{}", { status: 404 }));
+    sb.tables.hook_endpoints.push({ id: "ep-old", shop_id: shop.id, name: "old", url: "https://user:pw@old.example/h", events: ["order.paid"], enabled: true, manifest: null, settings: {}, created_at: "" });
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const path = `/admin/shops/${shop.id}/hooks/ep-old`;
+    let res = await b.post(path, { url: "https://user:pw@old.example/h", name: "old", events: "order.shipped" });
+    expect(res.headers.get("location")).toBe(`${path}?flash=saved`);
+    expect(sb.tables.hook_endpoints[0]).toMatchObject({ url: "https://user:pw@old.example/h", enabled: false, events: ["order.shipped"] });
+    res = await b.post(path, { url: "https://user:pw@old.example/h2", name: "old", events: "order.shipped" });
+    expect(res.headers.get("location")).toBe(`${path}?flash=invalid_url`);
+  });
+
+  it("国際化ドメインは xn-- の形に直して保存する。下線を含むホスト名は受けない（行き先の判定が前から受けない）", async () => {
+    const { sb, shop, app } = setup();
+    externalHosts.set("https://xn--r8jz45g.jp/", async () => new Response(JSON.stringify({ name: "P", events: ["order.paid"] }), { status: 200 }));
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const bad = await b.post(`/admin/shops/${shop.id}/hooks`, { url: "https://my_app.example.com/h", name: "a", events: "order.paid", enabled: "on" });
+    expect(bad.headers.get("location")).toContain("flash=invalid_url");
+    await b.post(`/admin/shops/${shop.id}/hooks`, { url: "https://例え.jp/hook", name: "b", events: "order.paid", enabled: "on" });
+    expect(sb.tables.hook_endpoints.map((e) => e["url"])).toEqual(["https://xn--r8jz45g.jp/hook"]);
+  });
+});

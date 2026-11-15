@@ -282,7 +282,7 @@ wooImport.post("/images", requireOwner, async (c: AdminContext) => {
   if (!product) return c.json({ error: "not_found" }, 404);
   const existing = await db.from<ProductImageRow>("product_images").select("storage_key,sort_order", { eq: { product_id: product.id } });
   const storage = c.get("adapters").storage;
-  // 外から渡された URL を開く（Node では社内のアドレスに繋がない。監査 M12）
+  // 外から渡された URL を開く（Node では社内のアドレスに繋がない）
   const fetchImpl = c.get("adapters").publicFetch ?? c.get("deps").fetch;
   let order = existing.reduce((n, i) => Math.max(n, i.sort_order + 1), 0);
   const rows: Partial<ProductImageRow>[] = [];

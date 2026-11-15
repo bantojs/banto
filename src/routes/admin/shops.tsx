@@ -207,7 +207,7 @@ const SECTION_PERM: Record<SettingsSection, ShopPerm | "admin"> = {
   payments: "settings",
   members: "admin",
   advanced: "settings",
-  domain: "settings",
+  domain: "admin",
   storefront: "admin",
   headless: "integrations",
   "legal-links": "integrations",
@@ -1148,7 +1148,9 @@ shops.post("/:shopId/customer-fields", requireOwner, async (c: AdminContext) => 
  */
 shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
-  const shop = await loadShop(c, shopId, "settings");
+  // ドメインを変えられるのは owner / admin だけ（DB の banto_shops_guard と同じ。項目 settings の人に画面だけ開けると、
+  // 保存は必ず DB に断られるのに、その前後の提供元への登録・取り消しだけが起きる）
+  const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   // サブドメインモード: 空にするとひな形のドメイン（既定のアドレス）に戻す。ほかのスラッグのひな形のドメインは付けさせない
@@ -1170,6 +1172,12 @@ shops.post("/:shopId/domain", requireOwner, async (c: AdminContext) => {
   const provider = c.get("adapters").domain;
   const ref = { id: shop.id, slug: shop.slug };
   const previous = shop.domain ?? null;
+  // 自分に見えるほかのショップ（同じ組織）が使っているドメインは、提供元に頼む前に断る。
+  // 提供元は同じ契約のドメインの登録を通すので、保存の失敗の後始末で、相手のショップの登録を取り消してしまう
+  if (domain && domain !== previous) {
+    const taken = await owner(c).db.from<{ id: string }>("shops").selectOne("id", { eq: { domain } });
+    if (taken && taken.id !== shop.id) return c.redirect(`${settingsPath(shopId, "domain")}?flash=domain_taken`);
+  }
   if (provider && domain && domain !== previous && !isTpl(domain)) {
     const r: DomainAttachResult = await provider.attach(domain, ref).catch(() => ({ ok: false, reason: "unavailable" }));
     if (!r.ok) {

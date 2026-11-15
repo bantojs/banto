@@ -30,3 +30,11 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Tokyo
+  # Node 実行のイメージ（リポジトリ直下の Dockerfile のベースイメージ）
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo

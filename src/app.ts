@@ -1,5 +1,8 @@
 import { isSecureRequest } from "./routes/common";
 import { HTTPException } from "hono/http-exception";
+import { bodyLimit } from "hono/body-limit";
+import { bodyLimitFor } from "./routes/body-limit";
+import { carryShopDomainMark } from "./routes/shop-domain-request";
 import { Hono } from "hono";
 import type { ShopEvent } from "./storefront/events";
 import type { ShopAccess } from "./routes/admin/access";
@@ -58,6 +61,8 @@ function errorPage(): string {
   return `<!doctype html><html lang="${getLocale()}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${t("error.title")}</title><style>body{font-family:system-ui,sans-serif;margin:3rem auto;max-width:36rem;padding:0 1rem;line-height:1.6}</style></head><body><h1>${t("error.title")}</h1><p>${t("error.body")}</p></body></html>`;
 }
 
+export { bodyLimitFor } from "./routes/body-limit";
+
 export function createApp(
   resolveAdapters: (bindings: Record<string, unknown>) => Adapters,
   deps: Partial<AppDeps> = {},
@@ -76,7 +81,7 @@ export function createApp(
     await next();
   });
 
-  // 共通のセキュリティヘッダ（監査 L 群、2026-10-18）。ルートが自分で付けたものは上書きしない（会員ページの Referrer-Policy: same-origin 等）
+  // 共通のセキュリティヘッダ。ルートが自分で付けたものは上書きしない（会員ページの Referrer-Policy: same-origin 等）
   app.use("*", async (c, next) => {
     await next();
     const h = c.res.headers;
@@ -99,6 +104,20 @@ export function createApp(
 
   // ショップごとの独自ドメイン（0015）: そのドメインへのアクセスをストアフロントのルートへ
   app.use("*", shopDomainRouting(app));
+  // 本文の上限（申告の Content-Length と、読んだバイト数の両方で止める）。フォームと multipart は上限なしに読む作りだったので、
+  // Node 実行では匿名の POST でメモリを食わせられた。運営者の入口と Webhook は入口ごとの数え方に任せる（bodyLimitFor）。ショップのドメインの振り分け（本文を読んで作り直した要求を目印で見分ける）の後に置く。入口ごとの細かい上限（公開 API の JSON 64KB・Webhook 256KiB・MCP 1MB）はそのまま
+  app.use("*", async (c, next) => {
+    if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") return next();
+    const max = bodyLimitFor(c.req.path);
+    if (max === null) return next();
+    // 申告の長さが無い本文では、bodyLimit は数えながら読む流れに包んだ新しい Request に差し替える。
+    // ショップのドメインとして振り分けた印（WeakMap）は Request に結んであるので、差し替えた先に写す
+    const before = c.req.raw;
+    return bodyLimit({ maxSize: max, onError: (ctx) => ctx.text("Payload Too Large", 413) })(c, async () => {
+      if (c.req.raw !== before) carryShopDomainMark(before, c.req.raw);
+      await next();
+    });
+  });
 
   // 予期しない例外: スタックや接続先の情報を外に出さない。ログには残す。
   app.onError((err, c) => {

@@ -156,6 +156,7 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   // 独自ドメインの上ではショップがドメインのトップ（パスにスラッグを付けない）
   const onDomain = onShopDomain(c, shop);
   // カートは、`__Host-` の名前に移す前の Cookie も読む（中身は品物の一覧だけ。差し込まれても買う前の確認画面で見える）
+  // 古い名前の Cookie（__Host- の前）を読むのはカートだけ。v0.13.0 で読むのをやめる（docs/knowledge/02-decisions.md 2026-11-15）
   const cart = secret ? await openCart(secret, getScopedCookie(c, cartCookieName(shop.id), onDomain ? "/" : `/${shop.slug}`, { legacy: true })) : { items: [] };
   const ctx: ThemeContext = {
     shop,
@@ -1614,7 +1615,7 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   const email = (f.email ?? "").trim();
   const values = { number: f.number ?? "", email };
   if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
-  const r = await guestOrderLookup(c, s.sf, s.shop, number, email);
+  const r = await guestOrderLookup(c, s.shop, number, email);
   if (!r.ok) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_too_many") }), 429);
   const result = r.order;
   if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
@@ -1631,7 +1632,7 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   const f = await formFields(c);
   const number = Number.parseInt((f.number ?? "").trim(), 10);
   const email = (f.email ?? "").trim();
-  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.sf, s.shop, number, email) : null;
+  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.shop, number, email) : null;
   if (r && !r.ok) return c.text(t("store.lookup_too_many"), 429);
   const order = (r?.order ?? null) as ReceiptOrder | null;
   if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);

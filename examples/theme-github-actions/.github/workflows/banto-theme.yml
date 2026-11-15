@@ -4,6 +4,7 @@
 # リポジトリの Settings → Secrets and variables → Actions に置くもの:
 #   BANTO_URL（変数。Banto の URL = 管理画面を開く URL。ショップの独自ドメインではない）、BANTO_TOKEN_PREVIEW（theme:write）、BANTO_TOKEN_PUBLISH（theme:write + theme:publish）
 # banto-theme.mjs は Banto の cli/banto-theme.mjs をこのリポジトリに写したもの（依存なし。Banto を上げたら写し直す）
+# Actions はコミットで固定している（公開のトークンを扱うジョブなので、タグの付け替えで中身が変わらないように）。上げるときは Dependabot か手で
 name: banto-theme
 on:
   pull_request:
@@ -21,8 +22,9 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - run: node .banto/banto-theme.mjs push theme --name "PR #${{ github.event.pull_request.number }} ${{ github.event.pull_request.head.sha }}"
@@ -38,8 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - run: node .banto/banto-theme.mjs push theme --name "main ${{ github.sha }}" --publish

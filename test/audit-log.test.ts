@@ -121,3 +121,25 @@ describe("監査ログ（0051、特権経路と Cron）", () => {
     expect(await run()).toEqual([{ p_days: 90 }]);
   });
 });
+
+describe("監査ログの出来事の表", () => {
+  it("DB が書く出来事は src/audit の表にあり、どれにも画面の文言がある（画面に英字の名前のまま出さない）", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { AUDIT_ACTIONS } = await import("../src/audit");
+    const { ja } = await import("../src/i18n/ja");
+    const dir = join(import.meta.dirname, "..", "supabase", "migrations");
+    const written = new Set<string>();
+    for (const f of readdirSync(dir)) {
+      const sql = readFileSync(join(dir, f), "utf8");
+      // banto_audit(組織, ショップ, '出来事', …) の 3 つ目の引数
+      for (const m of sql.matchAll(/banto_audit\(\s*[^,;]+,\s*[^,;]+,\s*'([a-z_]+\.[a-z_]+)'/g)) written.add(m[1]!);
+    }
+    // 'org_member.mfa_' || p_action（enabled / disabled）は組み立てる
+    written.delete("org_member.mfa_");
+    expect(written.size).toBeGreaterThan(20);
+    const table = new Set<string>(AUDIT_ACTIONS);
+    expect([...written].filter((a) => !table.has(a))).toEqual([]);
+    expect(AUDIT_ACTIONS.filter((a) => !(`audit.action.${a}` in ja))).toEqual([]);
+  });
+});

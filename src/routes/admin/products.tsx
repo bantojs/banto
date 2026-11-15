@@ -669,7 +669,6 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
   const base = `/admin/shops/${shopId}/products/${productId}`;
   const mediaBase = mediaBaseUrl(c);
   const catalog = await catalogContext(c, shop);
-  const variantsReady = true;
   const pluginMode = imagePluginMode(shop);
   // SKU を分ける軸（0065）。axes は null（決めていない）・[]（品番だけ）・軸
   const axes = optionAxesOf(product.option_axes);
@@ -831,7 +830,7 @@ products.get("/:shopId/products/:productId", requireOwner, async (c: AdminContex
         mediaBase={mediaBase}
         state={readImageView({ view: c.req.query("img"), axes: c.req.queries("axis") ?? [], to: c.req.query("to") }, skus)}
         uploadForm={(target, targets) => (
-          <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants={variantsReady ? "1" : "0"} data-processing={pluginMode ? "plugin" : "browser"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
+          <form method="post" action={`${base}/images`} enctype="multipart/form-data" id="image-form" class="card" data-max={String(imageMaxWidth(shop.settings))} data-variants="1" data-processing={pluginMode ? "plugin" : "browser"} data-resizing={t("image.resizing")} data-uploading={t("image.uploading")}>
             <label for="file">{t("image.file")}</label>
             <input id="file" type="file" name="file" accept="image/*" required />
             {targets.length > 0 ? (
@@ -1215,6 +1214,7 @@ products.post("/:shopId/products/:productId/skus/:skuId/stock", requireOwner, as
 products.post("/:shopId/products/:productId/skus/:skuId/delete", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const { shopId, productId, skuId } = params(c);
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
   await db.from("skus").delete({ id: skuId, product_id: productId, shop_id: shopId });
   return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved`);
 });
@@ -1249,8 +1249,7 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
   // 中間の段（0091 が当たってから。本画像の実際の横幅より狭いものだけ）
   const mainBytes = new Uint8Array(await file.arrayBuffer());
   const mainDim = imageSize(mainBytes, file.type);
-  const variantsOn = true;
-  const variants = variantsOn && !pluginMode ? await readVariantFiles(body, mainDim?.width ?? 0) : [];
+  const variants = !pluginMode ? await readVariantFiles(body, mainDim?.width ?? 0) : [];
   if (variants === null) return c.redirect(`${base}?flash=image_type`);
 
   const storage = c.get("adapters").storage;
@@ -1275,7 +1274,8 @@ products.post("/:shopId/products/:productId/images", requireOwner, async (c: Adm
       height: width && height ? height : null,
       sort_order: sortOrder,
       ...(target && Object.keys(target).length > 0 ? { options: target } : {}),
-      ...(variantsOn ? { variants: variants.map((v) => v.size), thumb_width: thumbWidth } : {}),
+      variants: variants.map((v) => v.size),
+      thumb_width: thumbWidth,
     });
   } catch (e) {
     await Promise.all([key, ...(tKey ? [tKey] : []), ...vKeys].map((k) => storage.delete(k)));
@@ -1320,6 +1320,7 @@ products.post("/:shopId/products/:productId/images/:imageId/move", requireOwner,
 products.post("/:shopId/products/:productId/images/:imageId/sort", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const { shopId, productId, imageId } = params(c);
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   const sort = Number.parseInt(f.sort_order ?? "", 10);
   if (Number.isInteger(sort)) {
@@ -1332,6 +1333,7 @@ products.post("/:shopId/products/:productId/images/:imageId/sort", requireOwner,
 products.post("/:shopId/products/:productId/images/:imageId/options", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const { shopId, productId, imageId } = params(c);
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
   const skus = await db.from<SkuRow>("skus").select("options", { eq: { product_id: productId, shop_id: shopId } });
   const keys = skuOptionChoices(skus).map((ch) => ch.key);
@@ -1350,11 +1352,17 @@ products.post("/:shopId/products/:productId/images/:imageId/options", requireOwn
 products.post("/:shopId/products/:productId/images/:imageId/delete", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
   const { shopId, productId, imageId } = params(c);
+  // 公開中の商品の画像の行は、商品を扱えない人にも読める（お店の画面と同じ公開の読み取り）。扱える人かを先に確かめ、
+  // 行が本当に消えたときだけ置き場のファイルを消す（行は残ってファイルだけ消える、を起こさない）
+  if (!(await loadShop(c, shopId, "catalog"))) return c.text(t("shop.not_found"), 404);
   const img = await db.from<ProductImageRow>("product_images").selectOne("*", { eq: { id: imageId, product_id: productId, shop_id: shopId } });
   if (img) {
-    await db.from("product_images").delete({ id: imageId });
-    const storage = c.get("adapters").storage;
-    await Promise.all(imageKeys(img).map((k) => storage.delete(k)));
+    await db.from("product_images").delete({ id: imageId, product_id: productId, shop_id: shopId });
+    const left = await db.from<ProductImageRow>("product_images").selectOne("id", { eq: { id: imageId } });
+    if (!left) {
+      const storage = c.get("adapters").storage;
+      await Promise.all(imageKeys(img).map((k) => storage.delete(k)));
+    }
   }
   return c.redirect(`/admin/shops/${shopId}/products/${productId}?flash=saved`);
 });

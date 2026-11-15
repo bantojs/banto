@@ -23,6 +23,19 @@ const RELEASE_EVENTS = new Set(["checkout.session.expired", "checkout.session.as
 export const REPLAY_GUARD_MIGRATION = "0128_webhook_replay";
 
 /**
+ * 再配信の守り（0128）が当たっているか。判定に要る anon キーが無いと確かめられない: 黙って「当たっていない」にすると、
+ * 当たっている DB でも古い流れ（記録済みを見ない・返金の印を付けない）で動くので、ログに出す
+ */
+export async function replayGuard(c: Ctx, url: string): Promise<boolean> {
+  const ms = migrationStateFor(c, url);
+  if (!ms) {
+    console.error("[banto] webhook: SUPABASE_ANON_KEY is not set; cannot tell whether the replay guard (0128) is applied, running without it");
+    return false;
+  }
+  return migrated(ms, REPLAY_GUARD_MIGRATION);
+}
+
+/**
  * paymentAccount: 決済した口座（0090 の orders.payment_account）。Connect のイベントなら event.account、API キー方式（自分のアカウント）なら
  * "platform" の印。返金はこの口座で行う（接続先を変えた後の旧注文も返金できる）
  */
@@ -81,8 +94,7 @@ stripeWebhook.post("/", async (c: Ctx) => {
     return c.json({ received: true, ignored: event.type });
   }
   // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。返金して済みにした決済が、在庫が戻った後に注文にならないように）
-  const ms = migrationStateFor(c, url);
-  const guard = ms ? await migrated(ms, REPLAY_GUARD_MIGRATION) : false;
+  const guard = await replayGuard(c, url);
   if (guard && (await db.webhookEventSeen("stripe", event.id))) return c.json({ received: true, duplicate: true });
 
   const session = event.data.object as unknown as CheckoutSession;
@@ -90,7 +102,7 @@ stripeWebhook.post("/", async (c: Ctx) => {
   const shopId = session.metadata?.["shop_id"] ?? null;
   if (!reservationId || !shopId) return c.json({ received: true, ignored: "no_reservation" });
 
-  // Connect のイベントは、そのショップの接続先アカウントからのものだけ受け付ける（別の接続済みアカウントが metadata を真似ても確定しない。監査 M7）
+  // Connect のイベントは、そのショップの接続先アカウントからのものだけ受け付ける（別の接続済みアカウントが metadata を真似ても確定しない）
   if (typeof event.account === "string") {
     const expected = await db.shopStripeAccount(shopId);
     if (expected !== event.account) {

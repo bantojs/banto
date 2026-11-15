@@ -87,7 +87,7 @@ export async function adminDbReady(c: AdminContext): Promise<boolean> {
 }
 
 /**
- * 管理者ログインの回数の制限（0030、監査 M2）。Supabase の /token の制限は Worker の出口 IP でまとめて掛かるので、Banto が
+ * 管理者ログインの回数の制限（0030）。Supabase の /token の制限は Worker の出口 IP でまとめて掛かるので、Banto が
  * アドレス（HMAC）と IP（HMAC）ごとに数える。計算（Supabase への問い合わせ）の前に判定する。
  * 戻り値の record は、試した結果を記録する（成功したらそのアドレスの失敗を消す）
  */
@@ -97,20 +97,28 @@ export async function adminLoginGuard(c: AdminContext, email: string): Promise<{
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!secret || !url || !serviceRoleKey) return none;
+  if (!secret || !url || !serviceRoleKey) {
+    // 数える先が無いと Banto 側の回数の制限は掛からない（Supabase Auth の制限だけになる）。黙って外さない
+    console.error("[banto] admin login: SESSION_SECRET / SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY is not set; the login attempt limit is off");
+    return none;
+  }
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   const emailHash = await subjectHash(secret, `admin:${email.trim().toLowerCase()}`);
   const ip = clientIp(c);
   const ipH = ip ? await ipHash(secret, ip) : null;
   const r = await db.adminLoginCheck(emailHash, ipH);
-  return { allowed: r.allowed !== false, record: (success) => db.adminLoginRecord(emailHash, ipH, success) };
+  // 答えが読めなければ通さない（答えが無いことを「許す」に読み替えない）
+  return { allowed: r?.allowed === true, record: (success) => db.adminLoginRecord(emailHash, ipH, success) };
 }
 
 /** ログアウト: 世代を上げて、この人のすべての Cookie を無効にする（0030） */
 export async function bumpSessionEpoch(c: AdminContext, session: SessionData): Promise<void> {
   const db = dbClient(c, session.access_token);
   if (!db) return;
-  await db.rpc("admin_session_bump", {}).catch(() => undefined);
+  await db.rpc("admin_session_bump", {}).catch((e: unknown) => {
+    // 世代が上がらないと、ほかの端末に残った Cookie は期限まで生きる。画面は止めないがログに残す
+    console.error("[banto] admin logout: could not bump the session epoch:", e instanceof Error ? e.message : e);
+  });
 }
 
 /**

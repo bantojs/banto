@@ -214,7 +214,7 @@ export function settingsFromForm(manifest: PluginManifest | null, form: Record<s
     const raw = form[`setting_${s.key}`];
     if (s.type === "boolean") out[s.key] = raw === "on";
     else if (s.type === "select") out[s.key] = s.options?.some((o) => o.value === raw) ? (raw as string) : (s.options?.[0]?.value ?? "");
-    // 制御文字（改行を含む）は落とす。値はメールの送信元などに使われる（2026-10-25 の監査）
+    // 制御文字（改行を含む）は落とす。値はメールの送信元などに使われる
     else out[s.key] = (raw ?? "").replace(/[\x00-\x1f\x7f]/g, "").slice(0, 1000);
   }
   return out;

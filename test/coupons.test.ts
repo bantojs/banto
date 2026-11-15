@@ -20,7 +20,7 @@ function setup(opts: { modules?: boolean; settings?: Record<string, unknown> } =
     privacy_policy: "b",
     return_policy: "c",
     stripe_account_id: "acct_connected",
-    settings: { shipping: { mode: "flat", flat_fee_jpy: 500, free_over_jpy: 100000, by_prefecture: {} }, ...(opts.modules === false ? {} : { modules: { coupons: true } }), ...opts.settings },
+    settings: { headless: { return_origins: ["https://wp.example.com"] }, shipping: { mode: "flat", flat_fee_jpy: 500, free_over_jpy: 100000, by_prefecture: {} }, ...(opts.modules === false ? {} : { modules: { coupons: true } }), ...opts.settings },
   });
   const tee = sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
   const teeM = sb.addSku(shop.id, tee.id, { code: "TEE-M", name: "M", price_jpy: 3000, available: 50 });

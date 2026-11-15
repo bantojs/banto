@@ -3,10 +3,9 @@ import type { AppEnv } from "../../app";
 import { webhookBody } from "./body";
 import { createPrivilegedDb } from "../../db/privileged";
 import { confirmFromWebhook } from "../../payments/webhook-confirm";
-import { migrated } from "../../db/migration-state";
-import { REPLAY_GUARD_MIGRATION } from "./stripe";
+import { replayGuard } from "./stripe";
 import { createKomojuClient, verifyKomojuSignature, type KomojuEvent } from "../../plugins/komoju";
-import { migrationStateFor, type Ctx } from "../common";
+import { type Ctx } from "../common";
 
 /**
  * KOMOJU Webhook。X-Komoju-Signature（HMAC-SHA256 hex）を検証し、
@@ -48,8 +47,7 @@ komojuWebhook.post("/", async (c: Ctx) => {
 
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。KOMOJU の署名には時刻が無いので、捕まえた本文はいつでも再送できる）
-  const ms = migrationStateFor(c, url);
-  const guard = ms ? await migrated(ms, REPLAY_GUARD_MIGRATION) : false;
+  const guard = await replayGuard(c, url);
   if (guard && (await db.webhookEventSeen("komoju", event.id))) return c.json({ received: true, duplicate: true });
 
   if (RELEASE.has(event.type)) {

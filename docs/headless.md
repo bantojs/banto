@@ -22,7 +22,7 @@ A と B では、特定商取引法の最終確認画面は Banto の画面が�
 
 公開読み取り API（`/api/shops`、`/api/shops/:shop`、`/api/shops/:shop/products`、`/api/shops/:shop/products/:product`。会員限定の商品は会員トークンを付けると読めます、docs/audiences.md「会員限定の商品」）とあわせて、
 `/api/shops/...` は CORS を許可しています（`Access-Control-Allow-Origin: *`）。Cookie は使わないので、別ドメインのブラウザから直接呼べます。
-ただし **会員の API（`/api/shops/<shop>/members/*`）だけは、ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンにしか CORS を返しません**（ログインはメールを送るので、どのサイトからでも訪問者のブラウザで叩けてはいけないため）。
+ただし **会員の API（`/api/shops/<shop>/members/*`）だけは、ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンにしか CORS を返しません**（ログインはメールを送るので、どのサイトからでも訪問者のブラウザで叩けてはいけないため）。それ以外のサイトのブラウザからの POST は、応答を読めないだけでなく **403（`origin_not_allowed`）** で断ります（`Origin` を付けないサーバーからの呼び出しはそのまま通ります）。連携サイトのブラウザから会員の API を呼ぶなら、そのオリジンを `return_origins` に入れてください。
 `/api/v1` と `/mcp`（AI 用トークンが必要）には CORS を付けていません。
 
 決済せずに在庫を押さえ続けられないように、同じ quote で `checkout` を呼べるのは 1 回（2 回目は 400 `invalid_quote`。quote を取り直す）、同じ人（メールアドレス）の未確定の予約は 3 つ・同じ IP は 20 までです（超えると 429 `too_many_reservations`。支払いが済むか、Stripe なら 40 分、KOMOJU ならショップの設定の時間で予約が解けます）。**連携側のサーバーが Banto を中継する構成では、必ず「サーバー側で中継するとき」を読んでください**（中継元を宣言しないと、同じ IP の上限がサイト全体の上限になります）。
@@ -345,7 +345,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 
 1. `POST /api/shops/<shop>/members/login` `{ "email": "...", "return_to": "https://wp.example.com/my-account/" }` → `{ "challenge_id": "..." }`
    - 登録の有無・送信回数の上限にかかわらず、同じ形で返します（どのアドレスが会員か外から分からないように）。初めてのアドレスは、verify の時点で会員になります。
-   - `return_to` はメールのリンクの行き先です。**ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンだけ** 使えます。リンクは `<return_to>?banto_challenge=<id>&banto_token=<token>` になります。省くか許可されていなければ、Banto の確認画面へのリンクになります。`return_to` に `banto_` で始まるクエリやフラグメント（`#`）があるものも受け付けません（Banto が付け足す鍵を先に埋め込ませないため。LINE・Google・パスキーの `return_to` も同じ）。
+   - `return_to` はメールのリンクの行き先です。**ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンだけ** 使えます。空白・改行を含む URL、クエリに `;` や `banto_` で始まる鍵を含む URL、`#` の付いた URL は使えません（Banto の画面に戻します。空白は `%20` に符号化してください）。リンクは `<return_to>?banto_challenge=<id>&banto_token=<token>` になります。省くか許可されていなければ、Banto の確認画面へのリンクになります。`return_to` に `banto_` で始まるクエリやフラグメント（`#`）があるものも受け付けません（Banto が付け足す鍵を先に埋め込ませないため。LINE・Google・パスキーの `return_to` も同じ）。
 2. 会員がコードを入れたら、またはリンクで連携側のページが開いたら:
    `POST /api/shops/<shop>/members/verify` `{ "challenge_id": "...", "code": "123456" }` か `{ "challenge_id": "...", "token": "<banto_token>" }`
    → `{ "access_token": "bm1....", "refresh_token": "bm1....", "expires_in": 900, "member": { "id", "email", "created" } }`

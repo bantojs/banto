@@ -23,6 +23,12 @@ export interface WebhookConfirmArgs {
   refund: () => Promise<boolean>;
   /** 0128_webhook_replay が当たっているか */
   guard: boolean;
+  /**
+   * イベントごとに別の支払いになる決済（Amazon Pay: 冪等の鍵が Charge ID）で、このイベントの支払いの参照。
+   * Stripe・KOMOJU の「別のイベント」は同じ支払いの別の通知なので何もしないが、こちらは別のお金が動いているので、
+   * 予約がほかの支払いで確定・返金済みならこの支払いを返金する（支払い済み・注文なし・返金なしにしない）
+   */
+  separatePaymentRef?: string;
 }
 
 export type WebhookConfirmResult = { received: true; order_id?: string; refunded?: boolean; ignored?: string };
@@ -31,6 +37,16 @@ export async function confirmFromWebhook(a: WebhookConfirmArgs): Promise<Webhook
   const record = () => a.db.recordWebhookEvent(a.provider, a.eventId);
   try {
     const orderId = await a.db.confirmReservation(a.reservationId, a.shopId, a.order);
+    if (a.separatePaymentRef) {
+      // 確定済みの予約は同じ注文 id を返す。注文がほかの支払いで確定していたら、この支払いは 2 回目なので返す
+      const paid = await a.db.reservationPayment(a.reservationId, a.shopId);
+      if (paid.paymentRef && paid.paymentRef !== a.separatePaymentRef) {
+        console.error(`[banto] ${a.provider} ${a.eventId}: reservation ${a.reservationId} is already paid by ${paid.paymentRef}; refunding this payment`);
+        const refunded = await a.refund();
+        await record();
+        return { received: true, refunded, ignored: "paid_elsewhere" };
+      }
+    }
     await record();
     return { received: true, order_id: orderId };
   } catch (e) {
@@ -43,10 +59,11 @@ export async function confirmFromWebhook(a: WebhookConfirmArgs): Promise<Webhook
       if (a.guard) {
         const marked = await a.db.reservationMarkRefunded(a.reservationId, a.shopId, a.provider, a.eventId);
         if (marked === "other_event") {
-          // 別のイベントで返金すると決めた予約。二重に返金しない
+          // 別のイベントで返金すると決めた予約。同じ支払いの別の通知なら二重に返金しない。別の支払いならその支払いを返す
           console.error(`[banto] ${a.provider} webhook ${a.eventId}: reservation ${a.reservationId} is already refunded by another event`);
+          const refunded = a.separatePaymentRef ? await a.refund() : undefined;
           await record();
-          return { received: true, ignored: "reservation_refunded" };
+          return { received: true, ...(refunded !== undefined ? { refunded } : {}), ignored: "reservation_refunded" };
         }
       }
       const refunded = await a.refund();
@@ -62,8 +79,9 @@ export async function confirmFromWebhook(a: WebhookConfirmArgs): Promise<Webhook
         await record();
         return { received: true, refunded };
       }
+      const refunded = a.separatePaymentRef ? await a.refund() : undefined;
       await record();
-      return { received: true, ignored: "reservation_refunded" };
+      return { received: true, ...(refunded !== undefined ? { refunded } : {}), ignored: "reservation_refunded" };
     }
     if (e.is("reservation_not_found")) {
       await record();
