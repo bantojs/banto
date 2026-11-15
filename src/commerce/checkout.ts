@@ -888,8 +888,22 @@ export function safeReturnUrl(url: unknown, allowed: string[], fallback: string)
   // 攻撃者の組を仕込んだ return_to でショップの本物のメールを被害者に送らせ、攻撃者のアカウントでログインさせられる。
   // フラグメント（#）があると付け足した鍵がその中に入るので、これも受けない
   const u = new URL(url);
-  if (u.hash || url.endsWith("#") || [...u.searchParams.keys()].some((k) => k.toLowerCase().startsWith("banto_"))) return fallback;
-  return url;
+  if (u.hash || url.endsWith("#") || u.search.includes(";") || [...u.searchParams.keys()].some(bantoKey)) return fallback;
+  // URL として読めても、空白・改行・制御文字・バックスラッシュを含む文字列はそのまま使わない: この値はメールの本文と Location に入るので、
+  // パスに文章を書かれると、ショップの本物のメールに他人の文とリンクが載る。ASCII の外の文字（日本語のパスなど）は符号化した形にして返す
+  if (/[\s\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(url)) return fallback;
+  return /^[\x21-\x7e]+$/.test(url) ? url : u.href;
+}
+
+/** Banto が付け足す鍵（banto_…）に読めるか。連携サイトの読み方の違い（. や空白を _ に直す・もう一度復号する）も同じ鍵として扱う */
+function bantoKey(key: string): boolean {
+  let k = key;
+  try {
+    k = decodeURIComponent(key);
+  } catch {
+    // 復号できない鍵はそのまま見る
+  }
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "_").startsWith("banto_");
 }
 
 /** 送料の案内（カート・確認画面・API で共通） */

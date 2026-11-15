@@ -77,6 +77,12 @@ export async function memberCors(c: Ctx, next: () => Promise<void>): Promise<Res
       Vary: "Origin",
     });
   }
+  // 許可していないサイトからの書き込みは受けない。CORS は応答を読ませないだけで、text/plain の POST はプリフライトなしで届くので、
+  // よそのサイトが訪問者のブラウザからログインのメールを出させられる（訪問者の IP で数えられ、1 日のメールの上限を使い切る）。
+  // Origin の無い呼び出し（サーバーから）と、Banto 自身・ショップのドメインの画面からはそのまま通す
+  if (origin && !ok && c.req.method !== "GET" && c.req.method !== "HEAD" && origin !== new URL(c.req.url).origin) {
+    return c.json({ error: "origin_not_allowed" }, 403);
+  }
   await next();
   if (ok) {
     c.res.headers.set("Access-Control-Allow-Origin", origin!);
