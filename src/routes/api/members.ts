@@ -55,7 +55,7 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
  * refresh はログインのたびに作るセッションの行（0045 の member_sessions）と照合する。行の絶対の期限（90 日）を越えて更新はできない。
  * トークンは本文で受け渡す（Cookie を使わない）ので CSRF にはならないが、CORS は `*` ではなく
  * **ショップ設定の `headless.return_origins` のオリジンだけ**に返す（0029。login はメールを送るので、どのサイトからでも
- * 訪問者のブラウザで叩けてはいけない。監査 M10）。同梱テーマ（同一オリジン）には CORS は要らない。
+ * 訪問者のブラウザで叩けてはいけない）。同梱テーマ（同一オリジン）には CORS は要らない。
  * カート・チェックアウトの API には `Authorization: Bearer <access_token>` で付ける。
  */
 export const membersApi = new Hono<AppEnv>();

@@ -119,7 +119,6 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_store_values")) throw new ApiError("invalid", "invalid_store_values: a store takes only fields and external_ref (name, address, hours… are changed in the admin screen)", 400);
     if (/store_field_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `${e.dbMessage.replace(/^.*?(store_field_invalid(:[a-z0-9_]+)?).*$/s, "$1")}: the key must be one of the organization's store fields and the value must fit its type`, 400);
     if (e.is("invalid_external_ref")) throw new ApiError("invalid", "invalid_external_ref: letters, digits and . _ : - (up to 64), or null", 400);
-    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another store of the organization uses this external code", 409);
     if (e.is("invalid_values_unknown_key")) throw new ApiError("invalid", "invalid_values_unknown_key: a blog takes title, description, nav, sort_order, seo_title, seo_description, template_suffix, article_order, article_from_today, article_until, feed and article_fields", 400);
     // 0125: 並び順・今日以降だけ・いつまで出すか（field:<キー> と article_until は日付・日時の項目だけ）
     if (/invalid_article_(order|until)/.test(e.dbMessage)) throw new ApiError("invalid", `${/invalid_article_until/.test(e.dbMessage) ? "invalid_article_until" : "invalid_article_order"}: new | title | manual | field:<key of a date or datetime field>; article_until is the key of a date or datetime field or null`, 400);
@@ -134,8 +133,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("coupon_in_use")) throw new ApiError("conflict", "coupon_in_use: a coupon that has been used cannot be deleted; set active to false instead", 409);
     if (e.is("usage_limit_below_used")) throw new ApiError("conflict", "usage_limit_below_used: usage_limit cannot be lower than the uses so far", 409);
     if (e.is("email_taken")) throw new ApiError("conflict", "email_taken: a member with this email address already exists", 409);
-    // 顧客マスタの外部連携（0047）
-    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another member already has this external_ref (provider + id)", 409);
+    // 顧客マスタの外部連携（0047）と実店舗の外部コード（0126）。DB の名前が同じなので文言は両方を言う
+    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another member already has this external_ref (provider + id), or another store of the organization uses this external code", 409);
     if (e.is("consent_requires_person")) throw new ApiError("invalid", "consent_requires_person: marketing_consent can only be set to true by the customer (checkout / account page); the API may only withdraw it (false)", 400);
     if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions") || e.is("invalid_variants") || e.is("invalid_thumb_width")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
     if (e.is("image_ids_mismatch")) throw new ApiError("invalid", "image_ids_mismatch: send every image id of the product exactly once, in the new order (GET /products/{id} lists them)", 400);
@@ -230,7 +229,7 @@ export class ApiService {
     private readonly fetchImpl: typeof fetch,
     private readonly config: ConfigAdapter,
     private readonly migrationState: MigrationStateDeps | null,
-    /** 外から渡された URL を開く fetch（Node では社内のアドレスに繋がない。監査 M12） */
+    /** 外から渡された URL を開く fetch（Node では社内のアドレスに繋がない） */
     private readonly publicFetch: typeof fetch = fetchImpl,
     private readonly inquiryMail: InquiryMailDeps | null = null,
     /** お問い合わせの添付の置き場（公開しない。無ければ添付を受け付けない） */

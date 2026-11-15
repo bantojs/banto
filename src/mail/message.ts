@@ -8,7 +8,7 @@ export interface MailAddress {
   email: string;
 }
 
-/** アドレスの形（空白・改行・< > , ; " ( ) を含まない。SMTP のコマンドとヘッダに出すので厳しく。2026-10-25 の監査） */
+/** アドレスの形（空白・改行・< > , ; " ( ) を含まない。SMTP のコマンドとヘッダに出すので厳しく） */
 const EMAIL_RE = /^[^\s<>@,;"()\\]+@[^\s<>@,;"()\\]+\.[^\s<>@,;"()\\]+$/;
 
 export class MailAddressError extends Error {

@@ -1,5 +1,5 @@
 /**
- * 外部の応答の本文を、上限のバイト数まで数えながら読む（Content-Length を信じない。2026-10-25 の監査）。
+ * 外部の応答の本文を、上限のバイト数まで数えながら読む（Content-Length を信じない）。
  * 上限を超えた分は捨てる（切り詰めた文字列を返す）。本文が無ければ ""
  */
 export async function readTextCapped(res: Response, maxBytes: number): Promise<string> {

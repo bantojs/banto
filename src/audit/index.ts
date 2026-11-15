@@ -35,6 +35,13 @@ export const AUDIT_ACTIONS = [
   "shop.page_layouts_changed",
   "org.store_fields_changed",
   "shop.legal_links_checked",
+  "org.require_mfa",
+  "org_member.mfa_enabled",
+  "org_member.mfa_disabled",
+  "customer.masked",
+  "shop.theme_version_updated",
+  "api_token.deleted",
+  "inquiry.deleted",
 ] as const;
 
 export interface AuditRow {

@@ -68,10 +68,9 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  const sizeCharts = SIZE_CHART_TABLES;
   // お気に入り（0123）はモジュールが ON のショップだけ（ON にできるのは表がある DB だけ）。書き出すだけで、復元では戻さない（会員と商品の id を振り直すため）
   const favorites: typeof TABLES = moduleEnabled(shop.settings, FAVORITES_MODULE) ? [{ name: "customer_favorites", order: "created_at.asc" }] : [];
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...sizeCharts, ...favorites]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...SIZE_CHART_TABLES, ...favorites]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,

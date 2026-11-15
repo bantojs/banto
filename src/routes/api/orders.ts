@@ -41,7 +41,7 @@ ordersApi.post("/shops/:shop/orders/lookup", async (c: Ctx) => {
   const number = typeof b["number"] === "number" ? b["number"] : Number.parseInt(String(b["number"] ?? "").trim(), 10);
   const email = typeof b["email"] === "string" ? b["email"].trim() : "";
   if (!Number.isInteger(number) || number <= 0 || !email || email.length > 254) return c.json({ error: "invalid_request" }, 400);
-  const r = await guestOrderLookup(c, s.sf, s.shop, number, email);
+  const r = await guestOrderLookup(c, s.shop, number, email);
   if (!r.ok) return c.json({ error: "too_many_requests" }, 429, NO_STORE);
   const order = r.order;
   // 番号とアドレスのどちらが違ったかは返さない
@@ -57,7 +57,7 @@ ordersApi.post("/shops/:shop/orders/receipt", async (c: Ctx) => {
   const b = await body(c);
   const ot = await openOrderToken(s.secret, s.shop.id, typeof b["order_token"] === "string" ? b["order_token"] : undefined);
   if (!ot) return c.json({ error: "invalid_order_token" }, 400);
-  const r = await guestOrderLookup(c, s.sf, s.shop, ot.number, ot.email);
+  const r = await guestOrderLookup(c, s.shop, ot.number, ot.email);
   if (!r.ok) return c.json({ error: "too_many_requests" }, 429, NO_STORE);
   const order = r.order as ReceiptOrder | null;
   if (!order) return c.json({ error: "not_found" }, 404, NO_STORE);

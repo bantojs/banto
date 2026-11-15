@@ -87,7 +87,7 @@ export function maskEmail(email: string): string {
 
 // ---------- セッション ----------
 /**
- * 端末ごとのセッション（0045_member_sessions、監査 M9）。ログインのたびに DB に 1 行作り、Cookie とトークンにその ID（sid）を入れる。
+ * 端末ごとのセッション（0045_member_sessions）。ログインのたびに DB に 1 行作り、Cookie とトークンにその ID（sid）を入れる。
  * ログアウト・一覧からの取り消し・refresh の使い回しの検知で、その端末だけを止められる。
  * sid の無い Cookie・トークン（0045 より前に発行したもの）は通さない。
  */
@@ -175,7 +175,7 @@ export function deviceLabel(ua: string | undefined | null): string | null {
 }
 
 // ---------- ヘッドレスのトークン ----------
-/** 中身は署名付きの平文（暗号化していない）なので、メールアドレスなどの個人情報は入れない（監査 M9） */
+/** 中身は署名付きの平文（暗号化していない）なので、メールアドレスなどの個人情報は入れない */
 export interface MemberToken {
   /** 種類: access（15 分）/ refresh（30 日。セッションの絶対の期限を越えない） */
   typ: "a" | "r";

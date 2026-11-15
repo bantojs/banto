@@ -8,3 +8,10 @@ dist
 test
 docs
 *.log
+# 自前の構成の秘密と DB のデータ（selfhost/docker-compose.yml はリポジトリ直下をビルドの文脈にする。ビルドの層に入れない）
+.env
+.env.*
+selfhost/.env
+selfhost/*.env
+selfhost/data
+data

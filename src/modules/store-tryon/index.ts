@@ -197,10 +197,6 @@ export function parseSpecialDays(text: string, today: string): { days: SpecialDa
   return { days: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, MAX_SPECIAL_DAYS), errors };
 }
 
-export function formatSpecialDays(days: SpecialDay[]): string {
-  return days.map((d) => [d.date, d.closed ? "休業" : formatRanges(d.hours), d.note ?? ""].join(" ").trim()).join("\n");
-}
-
 export function weekdayOf(ymd: string): number {
   return new Date(`${ymd}T00:00:00Z`).getUTCDay();
 }

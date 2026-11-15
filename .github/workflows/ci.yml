@@ -8,11 +8,14 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm }
       - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high   # 実行時の依存（4 つ）に既知の脆弱性が無いこと
       - run: npm run lint
       - run: npm run build:workers
       - run: npm run check:size     # Worker 本体の圧縮後サイズの予算（docs/ARCHITECTURE.md「速度の予算」）
@@ -37,8 +40,10 @@ jobs:
           --health-retries 10
     env:
       BANTO_TEST_DB_URL: postgres://postgres:postgres@127.0.0.1:54322/postgres
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: 22, cache: npm }
       - run: npm ci

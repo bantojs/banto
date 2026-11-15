@@ -44,6 +44,13 @@ const ACTION_LABEL: Record<string, MessageKey> = {
   "shop.page_layouts_changed": "audit.action.shop.page_layouts_changed",
   "org.store_fields_changed": "audit.action.org.store_fields_changed",
   "shop.legal_links_checked": "audit.action.shop.legal_links_checked",
+  "org.require_mfa": "audit.action.org.require_mfa",
+  "org_member.mfa_enabled": "audit.action.org_member.mfa_enabled",
+  "org_member.mfa_disabled": "audit.action.org_member.mfa_disabled",
+  "customer.masked": "audit.action.customer.masked",
+  "shop.theme_version_updated": "audit.action.shop.theme_version_updated",
+  "api_token.deleted": "audit.action.api_token.deleted",
+  "inquiry.deleted": "audit.action.inquiry.deleted",
 };
 
 const STATUS_LABEL: Record<string, MessageKey> = {

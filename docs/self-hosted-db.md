@@ -72,7 +72,7 @@ compose の中の通信なので TLS は使いません（`sslmode=disable`）�
 
 ```bash
 docker compose up -d                                   # db / rest / auth / gateway
-docker compose --profile tools run --rm migrate        # マイグレーションを当てる
+docker compose --profile tools run --rm migrate        # マイグレーションを当てる（接続先は compose が環境変数 DATABASE_URL で渡す）
 ```
 
 Workers の設定（docs/setup.md）では、Supabase の値の代わりに次を入れます。

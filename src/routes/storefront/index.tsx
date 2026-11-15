@@ -1614,7 +1614,7 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   const email = (f.email ?? "").trim();
   const values = { number: f.number ?? "", email };
   if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
-  const r = await guestOrderLookup(c, s.sf, s.shop, number, email);
+  const r = await guestOrderLookup(c, s.shop, number, email);
   if (!r.ok) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_too_many") }), 429);
   const result = r.order;
   if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
@@ -1631,7 +1631,7 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   const f = await formFields(c);
   const number = Number.parseInt((f.number ?? "").trim(), 10);
   const email = (f.email ?? "").trim();
-  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.sf, s.shop, number, email) : null;
+  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.shop, number, email) : null;
   if (r && !r.ok) return c.text(t("store.lookup_too_many"), 429);
   const order = (r?.order ?? null) as ReceiptOrder | null;
   if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
