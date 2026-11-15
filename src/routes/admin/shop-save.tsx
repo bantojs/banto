@@ -16,7 +16,8 @@ export class NotSaved extends DbError {
 }
 
 export async function updateShop(c: AdminContext, shopId: string, values: Partial<ShopRow>): Promise<void> {
-  const rows = await owner(c).db.from<ShopRow>("shops").update(values, { id: shopId });
+  // 返す列は id だけ（0143 から、運営者にも直接は読めない列がある。全部を返させると権限の誤りになる）
+  const rows = await owner(c).db.from<ShopRow>("shops").update(values, { id: shopId }, "id");
   if (rows.length === 0) throw new NotSaved();
 }
 

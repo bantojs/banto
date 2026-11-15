@@ -160,7 +160,7 @@ tryonAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
   try {
     await owner(c)
       .db.from<ShopRow>("shops")
-      .update({ settings: { ...(shop.settings ?? {}), store_tryon } }, { id: shop.id });
+      .update({ settings: { ...(shop.settings ?? {}), store_tryon } }, { id: shop.id }, "id");
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`${base(shop)}?flash=generic`);
     throw e;

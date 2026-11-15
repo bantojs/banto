@@ -4,6 +4,11 @@ CLAUDE.md に書いてある規約の「なぜ」と、規約には書ききれ�
 
 ## 2026-11-15
 
+- **ショップを扱う人（member）に見える `shops` の列を絞る（0143、メンテナの決定 2026-11-15）**。決済の接続先（`stripe_account_id`）・注文や申し込みの連番・法務のリンクの確認の結果は、`authenticated` が PostgREST から直接は読めない列にし、管理画面がショップを引く `banto_admin_shop` が、その画面を使う項目の人にだけ返す（決済の接続先は settings・integrations・orders_cancel、法務のリンクは integrations。連番は member には返さない。owner / admin には今までどおり全部）。
+  - **行は隠さず、列を絞る**: 商品・SKU・画像・カテゴリーの公開のポリシーが、呼び手の権限で `shops`（`id`・`published`）を読む。行を見えなくすると、member の画面で商品が読めなくなる。
+  - **`shops` の書き込みは、返す列を指定する**（`DbClient` の `update` / `insert` の `returning`。`shops` は `"id"`）。読めない列のある表で全部を返させると、権限の誤りになる。
+  - **これから `shops` に列を足すときは、`authenticated` に見せる列なら `grant select (<列>) on shops to authenticated` を書く**（表の全体の SELECT を外したので、足した列は自動では見えない）。見せない列なら `scripts/check-rls.mjs` の `COLUMN_DENIES` に足す。
+
 - **`shops.owner_id` は残す（メンテナの決定 2026-11-15）**。`0024_organizations.sql` の注釈「`owner_id` は 1 マイナー残して後で消す」は取り下げる（マイグレーションのファイルは書き換えないので、ここが正）。
   - **理由**: CLAUDE.md §1-10 は「常に `owner_id` を持たせる」で、コード（セットアップ・ダッシュボード・トークンの発行）も今も書いている。権限の判定は 0024 から組織（`org_id`）と役割が正で、`owner_id` は「このショップを作った人」の記録として残る。消すと復元・書き出し・トークンの発行まで触ることになり、得るものは列 1 つ。
   - 権限を足すときに `owner_id` で判定しない（`banto_shop_perm`・`banto_admin_shop`・`banto_owns_shop` を使う）のは今までどおり。
