@@ -2444,6 +2444,7 @@ export const en: Record<MessageKey, string> = {
   "audit.action.shop.theme_published": "Published or withdrew a theme",
   "audit.action.shop.theme_previewed": "Opened a theme preview",
   "audit.action.org_member.mfa_reset": "Removed two-factor authentication",
+  "audit.action.hook_endpoint.created": "Added a plugin endpoint",
   "audit.action.hook_endpoint.changed": "Changed a plugin endpoint",
   "audit.action.hook_endpoint.deleted": "Deleted a plugin endpoint",
   "audit.action.blog.deleted": "Deleted a blog",

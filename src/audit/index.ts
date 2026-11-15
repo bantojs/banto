@@ -28,6 +28,7 @@ export const AUDIT_ACTIONS = [
   "app.connected",
   "app.storefront_events",
   "app.disconnected",
+  "hook_endpoint.created",
   "hook_endpoint.changed",
   "hook_endpoint.deleted",
   "blog.deleted",

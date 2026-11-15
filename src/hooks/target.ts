@@ -17,6 +17,11 @@ export function isBundledHookHost(hostname: string): boolean {
  */
 export function externalHookUrl(url: string): boolean {
   if (!/^https?:\/\/[^\s]+$/.test(url)) return false;
+  // DB（banto_hook_url_shape_ok、0142）と同じ形だけ: ホストは ASCII の名前か [IPv6]、利用者情報（user@）・制御文字・バックスラッシュは受けない。
+  // URL パーサーは \ を区切りに読み、全角の数字や % の符号化を直すので、文字のまま比べる DB の検査と別のホストになる書き方を入口で断る
+  if (url.length > 2000 || /[\\\u0000-\u001f\u007f]/.test(url)) return false;
+  const authority = /^https?:\/\/([^/?#]*)/i.exec(url)?.[1]?.toLowerCase() ?? "";
+  if (!/^(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.?)(:[0-9]{1,5})?$/.test(authority)) return false;
   try {
     const host = new URL(url).hostname;
     if (isBundledHookHost(host)) return false;

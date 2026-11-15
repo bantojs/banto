@@ -37,6 +37,7 @@ const ACTION_LABEL: Record<string, MessageKey> = {
   "app.connected": "audit.action.app.connected",
   "app.storefront_events": "audit.action.app.storefront_events",
   "app.disconnected": "audit.action.app.disconnected",
+  "hook_endpoint.created": "audit.action.hook_endpoint.created",
   "hook_endpoint.changed": "audit.action.hook_endpoint.changed",
   "hook_endpoint.deleted": "audit.action.hook_endpoint.deleted",
   "blog.deleted": "audit.action.blog.deleted",
@@ -92,6 +93,7 @@ function describe(r: AuditRow): string {
       return `${label}: ${d["published"] === true ? t("audit.published.on") : t("audit.published.off")}`;
     case "hook_endpoint.changed":
       return `${label}: ${str(d["name"])}${d["host_to"] ? `（${str(d["host_from"])} → ${str(d["host_to"])}）` : ""}${d["enabled"] === true ? `（${t("audit.enabled.on")}）` : d["enabled"] === false ? `（${t("audit.enabled.off")}）` : ""}`;
+    case "hook_endpoint.created":
     case "hook_endpoint.deleted":
       return `${label}: ${str(d["name"])}（${str(d["host"])}）`;
     case "blog.deleted":

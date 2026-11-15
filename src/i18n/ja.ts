@@ -2451,6 +2451,7 @@ export const ja = {
   "audit.action.shop.theme_published": "テーマを公開・取り下げ",
   "audit.action.shop.theme_previewed": "テーマのプレビューを開いた",
   "audit.action.org_member.mfa_reset": "二段階認証を外した",
+  "audit.action.hook_endpoint.created": "連携の送信先を追加",
   "audit.action.hook_endpoint.changed": "連携の送信先を変更",
   "audit.action.hook_endpoint.deleted": "連携の送信先を削除",
   "audit.action.blog.deleted": "ブログを削除",
