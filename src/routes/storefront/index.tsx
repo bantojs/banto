@@ -156,6 +156,7 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   // 独自ドメインの上ではショップがドメインのトップ（パスにスラッグを付けない）
   const onDomain = onShopDomain(c, shop);
   // カートは、`__Host-` の名前に移す前の Cookie も読む（中身は品物の一覧だけ。差し込まれても買う前の確認画面で見える）
+  // 古い名前の Cookie（__Host- の前）を読むのはカートだけ。v0.13.0 で読むのをやめる（docs/knowledge/02-decisions.md 2026-11-15）
   const cart = secret ? await openCart(secret, getScopedCookie(c, cartCookieName(shop.id), onDomain ? "/" : `/${shop.slug}`, { legacy: true })) : { items: [] };
   const ctx: ThemeContext = {
     shop,
