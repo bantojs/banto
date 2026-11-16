@@ -94,6 +94,7 @@ v1.get("/products", async (c) =>
 );
 v1.get("/categories", async (c) => api(c).categoriesList().then((r) => c.json({ categories: r })).catch((e) => errorJson(c, e)));
 v1.post("/categories", async (c) => body(c).then((b) => api(c).categorySave(b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/audiences", async (c) => api(c).audiencesList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.post("/products", async (c) => body(c).then((b) => api(c).productCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
 v1.get("/products/:id", async (c) => api(c).productGet({ id: c.req.param("id") }).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.patch("/products/:id", async (c) => body(c).then((b) => api(c).productUpdate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));

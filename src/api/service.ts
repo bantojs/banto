@@ -28,6 +28,7 @@ import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
 import { FAVORITES_MIGRATION } from "../modules/registry";
+import { AUDIENCE_API_MIGRATION } from "../members/audience";
 import { CARE_MIGRATION } from "../care-labels/care";
 import { STORE_FIELDS_MIGRATION } from "../stores/fields";
 
@@ -92,7 +93,14 @@ function mapRpcError(e: unknown): never {
     // 公開の切り替えと回数の上限は、発行者が owner / admin のときだけ（0129）
     if (e.is("admin_required")) throw new ApiError("forbidden", "admin_required: only an organization owner or admin can change this", 403);
     // クーポンと会員（0036）
-    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
+    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences) in the admin screen", 409);
+    // 商品の会員限定（0144）
+    if (e.is("audience_not_found")) throw new ApiError("invalid", "audience_not_found: no audience with this id or name in this shop (GET /audiences lists them)", 400);
+    if (e.is("audience_display_only")) throw new ApiError("invalid", "audience_display_only: this audience uses URL parameters and cannot be put on products (product_usable is false in GET /audiences)", 400);
+    if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
+    if (e.is("invalid_audience_mode")) throw new ApiError("invalid", "invalid_audience_mode: hide or buy", 400);
+    if (e.is("invalid_audience_hide")) throw new ApiError("invalid", "invalid_audience_hide: true or false", 400);
+    if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -280,8 +288,23 @@ export class ApiService {
       p_offset: q.offset ?? 0,
     });
   productGet = (ref: { id?: string; slug?: string }) => this.call<Record<string, unknown>>("api_product_get", { p_product_id: ref.id ?? null, p_slug: ref.slug ?? null });
-  productCreate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_product_create", { p_values: values });
-  productUpdate = (id: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
+  productCreate = async (values: Record<string, unknown>) => {
+    await this.requireAudienceFields(values);
+    return this.call<Record<string, unknown>>("api_product_create", { p_values: values });
+  };
+  productUpdate = async (id: string, values: Record<string, unknown>) => {
+    await this.requireAudienceFields(values);
+    return this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
+  };
+  /** 会員の条件の一覧（products:read、0144。モジュール audiences が ON のショップだけ） */
+  audiencesList = async () => {
+    await this.requireMigration(AUDIENCE_API_MIGRATION);
+    return this.call<{ items: { id: string; name: string; product_usable: boolean }[] }>("api_audiences_list", {});
+  };
+  /** 会員の条件の欄（0144）は、当てていない DB では黙って捨てられるので先に断る */
+  private async requireAudienceFields(values: Record<string, unknown>): Promise<void> {
+    if (["audience", "audience_mode", "audience_hide"].some((k) => k in values)) await this.requireMigration(AUDIENCE_API_MIGRATION);
+  }
   skuCreate = (productId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_create", { p_product_id: productId, p_values: values });
   skuUpdate = (skuId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_update", { p_sku_id: skuId, p_values: values });
   categoriesList = () => this.call<Record<string, unknown>[]>("api_categories_list", {});

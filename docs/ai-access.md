@@ -357,3 +357,25 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - `PUT /api/v1/products/{ref}/care`・`PUT /api/v1/categories/{ref}/care`: `ref` は ID か URL の名前。本文は `{ "symbols": [JIS L 0001:2024 の記号番号], "notes": [付記] }`、`{}` で外す。区分（番号の 1 桁目）ごとに 1 つ・7 つまで、付記は 8 つまで・40 文字まで（違えば 400 `invalid_care`）。
 - MCP は `care_set`。記号の絵は管理画面だけで変えます（docs/care-labels.md）。
 - データベースの更新 `0127_mod_care_labels` が要ります。当たるまでは 409（`migration_required`）です。
+
+## 18. 商品の会員限定（0144）
+
+同梱モジュール「会員の条件」の会員限定の商品（docs/audiences.md「会員限定の商品」）を、管理画面と同じ欄で読み書きします。ほかのカートから商品を移すときに、1 件ずつ管理画面で付け直さずに済みます。
+
+- スコープは `products:read` / `products:write`（項目 `catalog`）のままです。新しいスコープは作っていません（管理画面でも、商品の項目を持つ人が付けます）。
+- `POST /api/v1/products`・`PATCH /api/v1/products/{id}`（MCP の `product_create`・`product_update`）の欄:
+
+  | 欄 | 形 | 意味 |
+  | --- | --- | --- |
+  | `audience` | 文字列か `null` | 会員の条件の id か名前。`null` で外す |
+  | `audience_mode` | `"hide"` / `"buy"` | hide = 合わない人には見せない（既定）、buy = だれにでも見せるが、買えるのは合う会員だけ |
+  | `audience_hide` | 真偽 | hide のとき、ゲストにも「会員の方だけ」と出さず 404 にする |
+
+  - 送らなかった欄は今の値のままです。`audience_mode: "buy"` だけを送ると、`audience_hide` は false になります（存在も隠すのは hide のときだけの印のため）。
+  - `audience_mode: "buy"` と `audience_hide: true` を一緒に送ると 400 `audience_hide_requires_hide` です（黙って直しません）。
+  - 判定はデータベースのままです。よそのショップの条件・無い名前は 400 `audience_not_found`、URL のパラメータを使う表示用の条件は 400 `audience_display_only` で断ります。
+  - 条件を付ける・付けたまま扱いを変えるのは、モジュール audiences が ON のショップだけです（OFF なら 409 `module_disabled`）。外す（`null`）のは OFF でもできます。
+- 商品の読み取り（一覧・詳細・作成と更新の応答）には `audience`（`{ "id", "name" }` か `null`）・`audience_mode`・`audience_hide` が載ります。
+- `GET /api/v1/audiences`（MCP の `audiences_list`、`products:read`）: `{ "items": [{ "id", "name", "product_usable" }] }`。`product_usable` が false の条件は商品に付けられません。条件の中身は返しません。モジュールが OFF なら 409 `module_disabled`。
+- 公開中の商品に hide を付けると、その場でお店の一覧・検索・件数・サイトマップ・商品フィードから消えます。まとめて付ける前に、数件で見え方を確かめてください。
+- データベースの更新 `0144_api_product_audience` が要ります。当たるまでは、会員の条件の欄と `GET /audiences` を 409（`migration_required`）で断ります（欄を黙って捨てないため）。

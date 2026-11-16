@@ -3227,8 +3227,27 @@ export class FakeSupabase {
           if (extra === false) return json({ code: "P0001", message: "category_not_found" }, 400);
           p["extra_category_ids"] = extra.filter((id) => id !== p["category_id"]);
         }
+        // 0144: 会員の条件（id か名前）。形の本物の検査は test/db/api-product-audience.test.ts
+        if (v["audience"] !== undefined) {
+          const ref = v["audience"];
+          const a = ref === null ? null : this.tables.audiences.find((x) => x["shop_id"] === shopId && (x["id"] === ref || x["name"] === ref));
+          if (a === undefined) return json({ code: "22023", message: "audience_not_found" }, 400);
+          p["audience_id"] = a ? a["id"] : null;
+        }
+        if (v["audience_mode"] !== undefined) p["audience_mode"] = v["audience_mode"];
+        if (v["audience_hide"] !== undefined) p["audience_hide"] = v["audience_hide"];
         this.enqueue(shopId, "product.updated", { product_id: p["id"] });
         return json(product(p));
+      }
+      case "api_audiences_list": {
+        if (!need("products:read")) return unauthorized();
+        const shop = this.tables.shops.find((x) => x["id"] === shopId);
+        if ((((shop?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["audiences"]) !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+        const items = this.tables.audiences
+          .filter((a) => a["shop_id"] === shopId)
+          .map((a) => ({ id: a["id"], name: a["name"], product_usable: !audienceDisplayOnly(a["condition"]) }))
+          .sort((x, y) => String(x.name).localeCompare(String(y.name)));
+        return json({ items });
       }
       case "api_sku_create": {
         if (!need("products:write")) return unauthorized();
