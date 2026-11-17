@@ -296,6 +296,7 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
       {flash === "oauth_unlinked" ? <p class="notice">{t("member.oauth_unlinked_done")}</p> : null}
       {flash === "coupon_claimed" ? <p class="notice">{t("claim.done")}</p> : null}
       {flash === "tryon_cancelled" ? <p class="notice">{t("member.tryon_cancelled")}</p> : null}
+      {flash === "tryon_extended" ? <p class="notice">{t("member.tryon_extended")}</p> : null}
       {error ? <p class="error">{error}</p> : null}
       {coupons ? (
         <section>
@@ -372,6 +373,11 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
                     ) : null}
                   </td>
                   <td>
+                    {r.extendable ? (
+                      <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/extend`}>
+                        <button type="submit">{t("member.tryon_extend")}</button> <span class="muted">{tf("member.tryon_extend_left", { n: String(r.extend_left ?? 0) })}</span>
+                      </form>
+                    ) : null}
                     {r.cancellable ? (
                       <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/cancel`}>
                         <button type="submit">{t("member.tryon_cancel")}</button>

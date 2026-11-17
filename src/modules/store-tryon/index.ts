@@ -91,6 +91,26 @@ export interface TryonSettings {
   max_items: number;
   /** 申し込みの画面に出す案内（例: 「店舗へは 3〜5 日でお届けします」） */
   notice: string;
+  /** 会員が取り置きの期限を延ばせる回数（0 = 延ばせない）と 1 回に延ばす日数（0151。判定は DB の member_tryon_extend） */
+  extend_max: number;
+  extend_days: number;
+  /** 進行中の申し込み（requested・sent・ready）の上限: 同じメールアドレス・同じ IP（0029。判定は DB の tryon_request） */
+  max_open_per_customer: number;
+  max_open_per_ip: number;
+  /** 店舗に送る前の申し込みを期限切れにする日数（0090。Cron の tryon_expire） */
+  request_days: number;
+}
+
+/** 取り置きの延長（0151）が当たっていれば DB が延長を受ける */
+export const TRYON_EXTEND_MIGRATION = "0151_tryon_extend";
+export const TRYON_EXTEND_MAX = 5;
+
+/**
+ * 会員がこの申し込みの取り置きを延ばせるか（画面の出し分け。判定の正は DB の member_tryon_extend）。
+ * 取り置き中（ready）で期限が今日か先、延ばした回数が上限より少ないとき。extend_count が無い（0151 の前）なら延ばせない
+ */
+export function memberExtendable(r: { status: string; hold_until: string | null; extend_count?: number }, s: Pick<TryonSettings, "extend_max">, today: string): boolean {
+  return r.status === "ready" && typeof r.extend_count === "number" && r.hold_until !== null && r.hold_until >= today && r.extend_count < s.extend_max;
 }
 
 const int = (v: unknown, min: number, max: number, fallback: number) => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : fallback);
@@ -106,6 +126,12 @@ export function tryonSettings(settings: Record<string, unknown> | null | undefin
     max_days: Math.max(min, int(o["max_days"], 0, 90, 14)),
     max_items: int(o["max_items"], 1, 20, 5),
     notice: typeof o["notice"] === "string" ? o["notice"].slice(0, 500) : "",
+    extend_max: int(o["extend_max"], 0, TRYON_EXTEND_MAX, 0),
+    extend_days: int(o["extend_days"], 1, 30, 3),
+    // 既定は DB の banto_shop_limit と同じ（保存し直しても今の上限を変えない）
+    max_open_per_customer: int(o["max_open_per_customer"], 1, 99, 3),
+    max_open_per_ip: int(o["max_open_per_ip"], 1, 999, 10),
+    request_days: int(o["request_days"], 1, 90, 14),
   };
 }
 

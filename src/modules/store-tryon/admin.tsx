@@ -9,7 +9,7 @@ import { requireOwner } from "../../routes/admin/auth";
 import { can } from "../../routes/admin/access";
 import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
-import { TRYON_MODULE, tryonSettings, type OrgStore, type ShopStoreLink } from "./index";
+import { TRYON_EXTEND_MAX, TRYON_MODULE, tryonSettings, type OrgStore, type ShopStoreLink } from "./index";
 import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, type RequestRow } from "./requests";
 
 /**
@@ -134,6 +134,12 @@ tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
         {intOpt("max_days", s.max_days, 0, 90)}
         <label for="max_items">{t("tryon.max_items")}</label>
         {intOpt("max_items", s.max_items, 1, 20)}
+        <label for="max_open_per_customer">{t("tryon.max_open_per_customer")}</label>
+        {intOpt("max_open_per_customer", s.max_open_per_customer, 1, 99)}
+        <label for="extend_max">{t("tryon.extend_max")}</label>
+        {intOpt("extend_max", s.extend_max, 0, TRYON_EXTEND_MAX)}
+        <label for="extend_days">{t("tryon.extend_days")}</label>
+        {intOpt("extend_days", s.extend_days, 1, 30)}
         <label for="notice">{t("tryon.notice")}</label>
         <textarea id="notice" name="notice" rows={3} maxlength={500}>
           {s.notice}
@@ -155,7 +161,19 @@ tryonAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
     return Number.isInteger(n) ? n : undefined;
   };
   const store_tryon = tryonSettings({
-    store_tryon: { mode: f.mode, hold_days: int(f.hold_days), min_days: int(f.min_days), max_days: int(f.max_days), max_items: int(f.max_items), notice: (f.notice ?? "").trim() },
+    // 画面に無い項目（同じ IP の上限・申し込みの期限切れの日数）は今の値を保つ
+    store_tryon: {
+      ...tryonSettings(shop.settings),
+      mode: f.mode,
+      hold_days: int(f.hold_days),
+      min_days: int(f.min_days),
+      max_days: int(f.max_days),
+      max_items: int(f.max_items),
+      max_open_per_customer: int(f.max_open_per_customer),
+      extend_max: int(f.extend_max),
+      extend_days: int(f.extend_days),
+      notice: (f.notice ?? "").trim(),
+    },
   });
   try {
     await owner(c)

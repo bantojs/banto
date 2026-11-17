@@ -14,7 +14,8 @@ import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
-import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
+import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, memberExtendable, todayHere, tryonSettings } from "../../modules/store-tryon";
+import { storefrontData } from "../storefront/domain";
 import { PrivilegedRpcError, type PrivilegedDb } from "../../db/privileged";
 import { PASSKEY_MODULE } from "../../modules/passkey";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
@@ -43,6 +44,7 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
  *   POST /api/shops/:shop/members/logout-all  全端末からログアウト（世代を上げる）
  *   GET  /api/shops/:shop/members/tryon       自分のお店で試着の申し込み（同梱モジュール store_tryon、0026）
  *   POST /api/shops/:shop/members/tryon/:number/cancel  申し込みを取り消す（取り置きが終わる前だけ）
+ *   POST /api/shops/:shop/members/tryon/:number/extend  取り置きの期限を延ばす（回数・日数はショップの設定、0151）
  *   POST /api/shops/:shop/members/password-login { email, password } → トークン（店の設定 members_password がオンのとき、0013）
  *   POST /api/shops/:shop/members/password    { password }（Bearer）パスワードを決める・変える → 新しいトークン（ほかの端末はログアウト）
  *   GET  /api/shops/:shop/members/oauth/:provider?return_to=…  LINE・Google へ送り出す（ブラウザで開く。0014）。戻ってきたら
@@ -419,7 +421,9 @@ membersApi.get("/shops/:shop/members/tryon", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   const rows = await db.memberTryonRequests(s.shop.id, s.member.id, s.member.epoch);
   if (!rows) return c.json({ error: "invalid_member_token" }, 401);
-  return c.json({ requests: rows.map((r) => ({ ...r, cancellable: MEMBER_CANCELLABLE.includes(r.status) })) });
+  const conf = tryonSettings(s.shop.settings);
+  const today = todayHere();
+  return c.json({ requests: rows.map((r) => ({ ...r, cancellable: MEMBER_CANCELLABLE.includes(r.status), extendable: memberExtendable(r, conf, today), extend_left: Math.max(0, conf.extend_max - (r.extend_count ?? 0)) })) });
 });
 
 membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/cancel", async (c: Ctx) => {
@@ -430,6 +434,21 @@ membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/cancel", async (c: C
   if (!db) return c.json({ error: "not_configured" }, 503);
   const r = await db.memberTryonCancel(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")));
   if (r.ok) return c.json({ ok: true });
+  if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
+  return c.json({ error: r.reason }, r.reason === "not_found" ? 404 : 409);
+});
+
+membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/extend", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!moduleEnabled(s.shop.settings, TRYON_MODULE)) return c.json({ error: "tryon_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const sf = storefrontData(c);
+  if (!sf || !(await sf.migratedTo(TRYON_EXTEND_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  if (tryonSettings(s.shop.settings).extend_max < 1) return c.json({ error: "limit" }, 409);
+  const r = await db.memberTryonExtend(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")), todayHere());
+  if (r.ok) return c.json({ ok: true, hold_until: r.hold_until, extend_count: r.extend_count });
   if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
   return c.json({ error: r.reason }, r.reason === "not_found" ? 404 : 409);
 });

@@ -4563,6 +4563,25 @@ export class FakeSupabase {
     }
     if (fn === "restore_shop_data") return this.restoreShopData(String(args["p_shop_id"]), args["p_data"] as Record<string, Row[]>);
     if (fn === "tryon_request") return this.tryonRequest(args);
+    if (fn === "member_tryon_extend") {
+      // 0151 の再現（本物の休みの日の繰り越しは test/db/tryon-extend.test.ts）。休みの日は見ない
+      if (!this.appliedMigrations.includes("0151_tryon_extend")) return json({ code: "PGRST202", message: "Could not find the function public.member_tryon_extend" }, 404);
+      const cust = this.tables.customers.find((c) => c["shop_id"] === args["p_shop_id"] && c["id"] === args["p_customer_id"] && Number(c["session_epoch"] ?? 0) === Number(args["p_epoch"]));
+      if (!cust) return json({ ok: false, reason: "session" });
+      const r = this.tables.tryon_requests.find((x) => x["shop_id"] === args["p_shop_id"] && x["customer_id"] === args["p_customer_id"] && x["number"] === Number(args["p_number"]));
+      if (!r) return json({ ok: false, reason: "not_found" });
+      if (r["status"] !== "ready" || !r["hold_until"] || String(r["hold_until"]) < String(args["p_today"])) return json({ ok: false, reason: "not_extendable" });
+      const st = ((this.tables.shops.find((x) => x["id"] === args["p_shop_id"])?.["settings"] ?? {}) as Row)["store_tryon"] as Row | undefined;
+      const max = Math.min(Number(st?.["extend_max"] ?? 0), 5);
+      const days = Math.min(Math.max(Number(st?.["extend_days"] ?? 3), 1), 30);
+      const count = Number(r["extend_count"] ?? 0);
+      if (count >= max) return json({ ok: false, reason: "limit" });
+      const prev = String(r["hold_until"]);
+      r["hold_until"] = new Date(Date.parse(`${prev}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+      r["extend_count"] = count + 1;
+      this.enqueue(String(r["shop_id"]), "tryon.updated", { request_id: r["id"], number: r["number"], shop_id: r["shop_id"], store_id: r["store_id"], status: "ready", hold_until: r["hold_until"], customer_id: r["customer_id"] ?? null, extended: true, previous_hold_until: prev, extend_count: count + 1 });
+      return json({ ok: true, hold_until: r["hold_until"], extend_count: count + 1 });
+    }
     if (fn === "member_tryon_requests" || fn === "member_tryon_cancel") {
       // 0026 の再現（世代の確認・取り消せる状態）
       const cust = this.tables.customers.find((c) => c["shop_id"] === args["p_shop_id"] && c["id"] === args["p_customer_id"] && Number(c["session_epoch"] ?? 0) === Number(args["p_epoch"]));
@@ -4574,6 +4593,7 @@ export class FakeSupabase {
             .reverse()
             .map((r) => ({
               number: r["number"], status: r["status"], store_id: r["store_id"], store_name: this.tables.stores.find((x) => x["id"] === r["store_id"])?.["name"] ?? "", visit_date: r["visit_date"] ?? null, hold_until: r["hold_until"] ?? null, created_at: r["created_at"],
+              ...(this.appliedMigrations.includes("0151_tryon_extend") ? { extend_count: Number(r["extend_count"] ?? 0) } : {}),
               items: this.tables.tryon_items.filter((i) => i["request_id"] === r["id"]).map((i) => { const k = this.tables.skus.find((x) => x["id"] === i["sku_id"]); return { name: this.tables.products.find((p) => p["id"] === k?.["product_id"])?.["name"] ?? null, sku: k?.["name"] ?? k?.["code"] ?? null, qty: i["qty"] }; }),
             })),
         );

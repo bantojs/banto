@@ -194,7 +194,20 @@ export interface Theme {
      * お店で試着の申し込み（同梱モジュール store_tryon、0026）。null なら欄を出さない。
      * cancellable なら「取り消す」は POST `${shopPath}/account/tryon/<番号>/cancel`
      */
-    tryon?: { number: number; status: string; store_name: string; /** 表示用の日付（「10月24日（土）」） */ visit_label: string | null; hold_label: string | null; created_at: string; items: { name: string | null; sku: string | null; qty: number }[]; cancellable: boolean }[] | null;
+    tryon?: {
+      number: number;
+      status: string;
+      store_name: string;
+      /** 表示用の日付（「10月24日（土）」） */
+      visit_label: string | null;
+      hold_label: string | null;
+      created_at: string;
+      items: { name: string | null; sku: string | null; qty: number }[];
+      cancellable: boolean;
+      /** 取り置きを延ばせる（0151）なら「延長する」は POST `${shopPath}/account/tryon/<番号>/extend`。extend_left は残りの回数 */
+      extendable?: boolean;
+      extend_left?: number;
+    }[] | null;
     /**
      * お気に入り（同梱モジュール favorites、0123）。null なら欄を出さない。新しい順。
      * 「外す」は POST `${shopPath}/account/favorites/remove`（product_id）
