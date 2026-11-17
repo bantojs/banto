@@ -60,7 +60,7 @@ begin
   -- 条件を付けたまま（付け直す・扱いを変える）はモジュールが ON のときだけ。外すのはいつでも
   if audience_id is not null
      and not exists (select 1 from shops s where s.id = p_shop_id and s.settings->'modules'->'audiences' = 'true'::jsonb) then
-    raise exception 'module_disabled';
+    raise exception 'module_disabled:audiences';
   end if;
 end;
 $$;
@@ -168,7 +168,7 @@ declare v_tok api_tokens;
 begin
   v_tok := api_require(p_token_hash, 'products:read');
   if not exists (select 1 from shops s where s.id = v_tok.shop_id and s.settings->'modules'->'audiences' = 'true'::jsonb) then
-    raise exception 'module_disabled';
+    raise exception 'module_disabled:audiences';
   end if;
   return jsonb_build_object('items', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name,
                                                                                    'product_usable', not banto_audience_display_only(a.condition))

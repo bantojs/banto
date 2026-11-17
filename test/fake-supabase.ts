@@ -3248,7 +3248,7 @@ export class FakeSupabase {
       case "api_audiences_list": {
         if (!need("products:read")) return unauthorized();
         const shop = this.tables.shops.find((x) => x["id"] === shopId);
-        if ((((shop?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["audiences"]) !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+        if ((((shop?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["audiences"]) !== true) return json({ code: "P0001", message: "module_disabled:audiences" }, 400);
         const items = this.tables.audiences
           .filter((a) => a["shop_id"] === shopId)
           .map((a) => ({ id: a["id"], name: a["name"], product_usable: !audienceDisplayOnly(a["condition"]) }))

@@ -50,7 +50,7 @@ describe("REST /api/v1", () => {
     const s = await setup({ on: false });
     const r = await s.rest("GET", "/audiences");
     expect(r.status).toBe(409);
-    expect(JSON.stringify(await r.json())).toMatch(/module_disabled/);
+    expect(JSON.stringify(await r.json())).toMatch(/module_disabled: .*audience: null/);
   });
 
   it("0144 が当たるまでは会員の条件の欄と GET /audiences を 409 migration_required（黙って捨てない）。ほかの欄の更新はそのまま", async () => {

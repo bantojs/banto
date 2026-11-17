@@ -93,6 +93,8 @@ function mapRpcError(e: unknown): never {
     // 公開の切り替えと回数の上限は、発行者が owner / admin のときだけ（0129）
     if (e.is("admin_required")) throw new ApiError("forbidden", "admin_required: only an organization owner or admin can change this", 403);
     // クーポンと会員（0036）
+    // 会員の条件（0144）: OFF でも外す（audience: null）ことはできると伝える
+    if (e.is("module_disabled:audiences")) throw new ApiError("conflict", "module_disabled: turn on the module audiences in the admin screen to set an audience; removing it (audience: null) works even while it is off", 409);
     if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences) in the admin screen", 409);
     // 商品の会員限定（0144）
     if (e.is("audience_not_found")) throw new ApiError("invalid", "audience_not_found: no audience with this id or name in this shop (GET /audiences lists them)", 400);
