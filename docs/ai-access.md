@@ -402,16 +402,16 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   | `public` | 真偽（商品だけ、既定 true） | お店の画面と公開 API に出すか |
   | `card` | 真偽（商品の公開の項目だけ） | 一覧のカードにも出すか |
 
-- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。
-- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白は取ります。
-- 会員の項目はお客様の画面に出さないので、`public: true`・`card: true` は断ります。
+- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。読んでから書くまでのあいだに管理画面で定義やほかの設定を保存すると、後から書いた方が残ります（同じ時刻に両方から書かないでください）。
+- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白（全角スペース・タブ・改行を含む）は取り、文字数は 1 文字ずつ（絵文字も 1 文字）数えます。
+- 会員の項目はお客様の画面に出さないので、種類の `image`・`public: true`・`card: true` は断ります。
 - GET は、保存されている定義を管理画面と同じ読み方で返します（管理画面で入れた古い形の行も同じに見えます）。
 - データベースの更新 `0145_api_field_definitions` が要ります。当たるまでは 409（`migration_required`）です。
 
 ## 20. 商品の発売日（0146）
 
 - `POST /api/v1/products`・`PATCH /api/v1/products/{id}`（MCP の `product_create`・`product_update`）の `released_at`: 日時の文字列（ISO 8601。時差を付けてください、例 `2024-05-01T10:00:00+09:00`。日付だけなら UTC の 0 時）か `null`（外す）。1990 年から今の 10 年後まで。違えば 400 `invalid_released_at`。スコープは今の `products:write` のままです。
-- ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）を入れてください。作成日（`created_at`）は移した日のまま変えません。
+- ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）をこの API で入れてください（管理画面の商品の CSV・WooCommerce の取り込みでは、今は入れられません）。作成日（`created_at`）は移した日のまま変えません。範囲は管理画面・API・バックアップの復元のどれから書いても同じです（データベースが確かめます）。時差の無い値は UTC として読みます。
 - 新着順（お店の画面の `?sort=new`・公開 API の `sort=new`）と、テーマの `product.published_at`（「NEW」の札）は、発売日があればその日、無ければ作成日です。商品の読み取り（AI 用 API・公開 API の一覧と詳細）に `released_at` が載ります。
 - 予約公開ではありません。未来の日付でも、公開中なら見えます（並びだけが変わります）。
 - データベースの更新 `0146_product_released_at` が要ります。当たるまでは、`released_at` を送ると 409（`migration_required`）です（ほかの欄はそのまま）。

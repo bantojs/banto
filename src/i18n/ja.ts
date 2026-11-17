@@ -152,6 +152,7 @@ export const ja = {
   "product.extra_categories_hint": "主カテゴリーのほかに、この商品を並べるカテゴリー（20 個まで）。お店の画面のカテゴリー別一覧とクーポンの条件で、主カテゴリーと同じに扱います。パンくずと商品フィードの分類は主カテゴリーだけです。",
   "product.brand": "ブランド",
   "product.released_at": "発売日",
+  "product.released_at_invalid": "発売日は 1990 年から 10 年後までの日時で入れてください。",
   "product.released_at_hint": "任意。新着順と、テーマの「新しい商品」の印はこの日で決まります（空なら商品を作った日）。予約公開ではないので、未来の日でも公開中なら見えます。",
   "product.fields": "カスタム項目",
   "product.section_basic": "基本情報",

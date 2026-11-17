@@ -108,7 +108,7 @@ function mapRpcError(e: unknown): never {
     if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
     if (e.is("invalid_released_at")) throw new ApiError("invalid", "invalid_released_at: a date-time string with an offset (e.g. 2024-05-01T10:00:00+09:00; a date alone is 00:00 UTC) between 1990 and 10 years from now, or null to remove it", 400);
     // 項目の定義（0145）: invalid_fields:<番号>:<理由>
-    if (/invalid_fields:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_fields:[a-z_0-9:]+).*$/s, "$1") + ": send an array of up to 150 { key: ^[a-z][a-z0-9_]{0,39}$ (unique), label (1-60 chars), type: text | textarea | number | url | select | image, options (select only, up to 50 of 1-60 chars), public, card (public only) }; customer fields cannot use image, public or card (see docs/ai-access.md §19)", 400);
+    if (/invalid_fields:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_fields:[a-z_0-9:]+).*$/s, "$1") + ": send an array of up to 150 { key: ^[a-z][a-z0-9_]{0,39}$ (unique), label (1-60 chars), type: text | textarea | number | url | select | image, options (select only, up to 50 of 1-60 chars), public, card (public only) }; customer fields cannot use image, and public / card cannot be true (see docs/ai-access.md §19)", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -316,7 +316,9 @@ export class ApiService {
   fieldDefsSet = async (kind: "product" | "customer", body: unknown) => {
     await this.requireMigration(FIELD_DEFS_MIGRATION);
     const fields = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>)["fields"] : body;
-    return this.call<{ fields: unknown[] }>("api_field_defs_set", { p_kind: kind, p_fields: fields ?? null });
+    const r = await this.call<{ fields: unknown }>("api_field_defs_set", { p_kind: kind, p_fields: fields ?? null });
+    // 応答も読み取りと同じ読み手を通す（PUT と GET で形を揃える）
+    return { fields: kind === "product" ? productFields({ product_fields: r.fields }) : customerFields({ customer_fields: r.fields }) };
   };
   /** 会員の条件の一覧（products:read、0144。モジュール audiences が ON のショップだけ） */
   audiencesList = async () => {
