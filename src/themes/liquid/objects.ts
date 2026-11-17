@@ -24,6 +24,7 @@ import { Drop } from "liquidjs/dist/liquid.browser.mjs";
 import { swatchView, type OptionSwatches } from "../../products/option-swatches";
 import { displayOptionAxes } from "../../products/option-axes";
 import { categoryDescriptionHtml } from "../../products/category-media";
+import { comingSoon } from "../../products/sale";
 import { categoryUrl, productUrl, productsUrl } from "../../storefront/urls";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -127,6 +128,7 @@ export function productFromSummary(u: UrlBase, p: ProductSummary) {
     // 発売日（0146、無ければ null）と、Shopify の名前の published_at（発売日、無ければ作成日。「NEW」の札はこれで）
     released_at: p.product.released_at ?? null,
     published_at: p.product.released_at ?? p.product.created_at,
+    coming_soon: p.saleDates === true && comingSoon(p.product),
     // 一覧のカードの独自項目（0121。定義で card を付けた公開の項目だけが一覧に来る）
     ...productFieldsLiquid(u, p.attributes),
   };
@@ -155,7 +157,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       // 会員価格（0099）: member_price はこの見る人に効く会員価格（会員）か、ゲストに見せる会員価格。regular_price は通常の価格
       member_price: s.regular_price_jpy !== undefined && s.regular_price_jpy > s.price_jpy ? money(s.price_jpy) : s.member_price_jpy !== undefined && s.member_price_jpy < s.price_jpy ? money(s.member_price_jpy) : null,
       regular_price: money(s.regular_price_jpy ?? s.price_jpy),
-      available: s.available > 0,
+      // カートに入れられない商品（会員限定・発売前など、src/products/sale.ts）は、在庫があっても false（テーマの「カートに入れる」を出さない）
+      available: s.available > 0 && d.purchasable !== false,
       options: opts.filter((x): x is string => x !== null),
       option1: opts[0] ?? null,
       option2: opts[1] ?? null,
@@ -185,6 +188,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     available: available.length > 0 && d.purchasable !== false,
     members_only: Boolean(p.audience_id),
     purchasable: d.purchasable !== false,
+    // 発売日の前（0148）。お店には見えるが買えない。「11月20日 発売」の文言はテーマが released_at で
+    coming_soon: d.purchase_block === "coming_soon",
     vendor: p.brand ?? "",
     type: "",
     tags: p.tags ?? [],

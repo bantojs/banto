@@ -1877,6 +1877,8 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
           skus,
           category: (categoryPath ?? []).map((cat) => cat.name),
           reviews,
+          block: detail.purchase_block ?? null,
+          releasedAt: product.released_at ?? null,
         })
       : undefined,
   };
@@ -1974,7 +1976,11 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
             {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
             <label for="qty">{t("store.qty")}</label>
             <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
-            {detail.purchasable === false ? (
+            {detail.purchase_block === "coming_soon" ? (
+              <p class="notice" data-coming-soon="">
+                {detail.product.released_at ? tf("store.coming_soon_on", { date: formatDateTime(detail.product.released_at, { dateOnly: true }) }) : t("store.coming_soon_buy")}
+              </p>
+            ) : detail.purchasable === false ? (
               <p class="notice" data-members-only="">
                 {ctx.member ? (
                   t("store.members_only_buy")

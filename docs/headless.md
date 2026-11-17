@@ -85,6 +85,11 @@ GET /api/shops/<shop>/categories
 
 ---
 
+
+### 発売前の商品（Coming Soon、0148）
+
+商品の詳細と一覧に `coming_soon`（発売日の前か）と `released_at`（発売日）が入ります。発売前の商品は `purchasable` も false で、カートに入れると 403 `coming_soon` です（会員限定の 403 `members_only` と同じ形）。「11月20日 発売」のような文言は連携側で出してください。docs/storefront.md「発売日と公開日」。
+
 ## A. 購入リンク
 
 ```

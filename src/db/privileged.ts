@@ -290,6 +290,10 @@ export interface PrivilegedDb {
   memberTryonCancel(shopId: string, customerId: string, epoch: number, number: number): Promise<{ ok: true } | { ok: false; reason: "session" | "not_found" | "not_cancellable" }>;
   /** 取り置きの期限切れ（Cron。today はショップの時間帯の日付） */
   tryonExpire(today: string): Promise<number>;
+  /** 当たっているマイグレーションの版（banto_setup_state。Cron が新しい関数を呼ぶ前に確かめる） */
+  appliedMigrations(): Promise<string[]>;
+  /** 公開日を過ぎた非公開の商品を公開する（0148）。公開した数 */
+  publishScheduledProducts(): Promise<number>;
   /** 終わった試着の申し込みの個人情報を消す（Cron） */
   maskTryonRequests(days: number): Promise<number>;
   /** お問い合わせ（同梱モジュール inquiries、0061）。お客様の経路だけ（運営側は RLS と authenticated の関数） */
@@ -482,6 +486,8 @@ export interface PrivilegedDb {
   restoreOptionAxes(shopId: string, data: { shop?: unknown; categories?: unknown[]; products?: unknown[]; option_names?: unknown }): Promise<Record<string, number>>;
   /** 0146: 商品の発売日を URL の名前で戻す（restore_catalog の後） */
   restoreProductReleasedAt(shopId: string, items: { slug: unknown; released_at: unknown }[]): Promise<Record<string, number>>;
+  /** 0148: 非公開の商品の公開日（予約公開）を URL の名前で戻す */
+  restoreProductPublishAt(shopId: string, items: { slug: unknown; publish_at: unknown }[]): Promise<Record<string, number>>;
   /**
    * AI 用トークン経由の操作（docs/ai-access.md）。呼べるのは api_* だけで、各 RPC が SQL 側で
    * トークン・スコープ・ショップ所有を検証する。p_token_hash は Worker で SHA-256 にした値。
@@ -574,6 +580,11 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     tryonContact: (requestId, shopId) => rpc("tryon_contact", { p_request_id: requestId, p_shop_id: shopId }),
     tryonLineRecipient: (requestId, shopId) => rpc("tryon_line_recipient", { p_request_id: requestId, p_shop_id: shopId }),
     tryonExpire: (today) => rpc("tryon_expire", { p_today: today }),
+    appliedMigrations: async () => {
+      const r = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
+      return Array.isArray(r?.migrations) ? r.migrations.filter((x): x is string => typeof x === "string") : [];
+    },
+    publishScheduledProducts: () => rpc<number>("publish_scheduled_products", {}),
     maskTryonRequests: (days) => rpc("mask_tryon_requests", { p_days: days }),
     inquiryOrderCheck: (shopId, number, email, ipHash, emailHash) => rpc("inquiry_order_check", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, p_email_hash: emailHash }),
     inquiryOrderRef: (shopId, ref) => rpc("inquiry_order_ref", { p_shop_id: shopId, p_ref: ref }),
@@ -757,6 +768,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     restoreProductImageOptions: (shopId, items) => rpc("restore_product_image_options", { p_shop_id: shopId, p_items: items }),
     restoreOptionAxes: (shopId, data) => rpc("restore_option_axes", { p_shop_id: shopId, p_data: data }),
     restoreProductReleasedAt: (shopId, items) => rpc("restore_product_released_at", { p_shop_id: shopId, p_items: items }),
+    restoreProductPublishAt: (shopId, items) => rpc("restore_product_publish_at", { p_shop_id: shopId, p_items: items }),
     async shopStripeAccount(shopId) {
       // お客様の画面（anon）には渡さない列（0028）。決済ページを作るときだけ service_role で読む
       const res = await doFetch(`${base}/rest/v1/shops?select=stripe_account_id&id=eq.${encodeURIComponent(shopId)}`, { headers });

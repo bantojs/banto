@@ -96,13 +96,13 @@ export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, 
     run = { run: now.getTime().toString(36), started_at: now.toISOString(), after: null, parts: 1, items: 0, skipped: { no_image: 0, no_price: 0 } };
     await putText(storage, partKey(shop.id, run.run, 0), feedHead(target), "application/xml; charset=utf-8");
   }
-  const [categories, plan] = await Promise.all([sf.listCategories(shop), sf.sitePlan()]);
+  const [categories, plan, saleDates] = await Promise.all([sf.listCategories(shop), sf.sitePlan(), sf.migratedTo("0148_product_sale_dates")]);
   const budget = PAGES_PER_RUN[plan];
   let xml = "";
   let done = false;
   for (let i = 0; i < budget && xml.length < PART_CHARS; i++) {
     const page = await sf.feedPage(shop, run.after, FEED_PAGE);
-    const result = buildFeed({ ...page, categories }, target);
+    const result = buildFeed({ ...page, categories, saleDates }, target);
     xml += feedItemsXml(result);
     run.items += result.items.length;
     run.skipped.no_image += result.skipped.no_image;

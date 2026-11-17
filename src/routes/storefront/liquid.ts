@@ -456,6 +456,8 @@ export function liquidProductJsonLd(c: Ctx, s: LiquidScope, p: { detail: Product
     skus: p.detail.skus,
     category: p.categoryNames,
     reviews: productReviews(p.detail.product),
+    block: p.detail.purchase_block ?? null,
+    releasedAt: p.detail.product.released_at ?? null,
   });
   return { jsonLd, path };
 }

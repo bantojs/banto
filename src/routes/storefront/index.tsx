@@ -1345,7 +1345,8 @@ async function cartAddJs(c: Ctx): Promise<Response> {
   if (adds.length === 0) return c.json({ status: 422, message: "invalid", description: "id and quantity are required" }, 422);
   const found = await s.sf.skusForCart(s.shop, adds.map((a) => a.skuId));
   if (adds.some((a) => !found.has(a.skuId))) return c.json({ status: 404, message: "not found", description: "this variant is not available" }, 404);
-  if (adds.some((a) => found.get(a.skuId)?.purchasable === false)) return c.json({ status: 422, message: "Cart Error", description: t("store.members_only_buy") }, 422);
+  const blocked = adds.map((a) => found.get(a.skuId)).find((h) => h?.purchasable === false);
+  if (blocked) return c.json({ status: 422, message: "Cart Error", description: t(blocked.purchase_block === "coming_soon" ? "store.coming_soon_buy" : "store.members_only_buy") }, 422);
   const cart = adds.reduce((cart, a) => addItem(cart, a.skuId, a.qty), s.cart);
   // 在庫を超えるなら入れない（Shopify と同じく 422）
   const { lines } = await priceCart(s.sf, s.shop, cart);

@@ -185,4 +185,16 @@ describe("商品フィードのモジュール（product_feed）", () => {
     const admin = await Browser.loggedIn(app, "o@example.com", "password-123");
     expect((await admin.get(`/admin/shops/${shop.id}/modules/product-feed`)).status).toBe(404);
   });
+
+  it("発売前の商品（0148）は在庫があっても out_of_stock。0148 を当てる前は在庫のとおり", () => {
+    const cat: FeedCatalog = {
+      products: [product({ released_at: "2999-01-01T00:00:00Z" })],
+      skus: [sku({})],
+      inventory: [{ sku_id: "k1", available: 3 }] as FeedCatalog["inventory"],
+      images: [{ id: "i1", shop_id: "s", product_id: "p1", storage_key: "a.webp", thumb_key: null, width: null, height: null, sort_order: 0, created_at: now }],
+      categories: [],
+    };
+    expect(buildFeed({ ...cat, saleDates: true }, target).items[0]!.availability).toBe("out_of_stock");
+    expect(buildFeed(cat, target).items[0]!.availability).toBe("in_stock");
+  });
 });

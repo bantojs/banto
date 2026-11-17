@@ -60,6 +60,8 @@ export interface ProductRow {
   audience_mode?: "hide" | "buy";
   /** 0146。発売日（任意）。新着順とテーマの「新しい商品」はこの日、無ければ created_at */
   released_at?: string | null;
+  /** 0148。公開日（非公開の商品をこの日時に公開する予約。公開している商品には残らない） */
+  publish_at?: string | null;
   audience_hide?: boolean;
   published: boolean;
   created_at: string;

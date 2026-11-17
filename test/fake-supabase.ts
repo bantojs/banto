@@ -1307,7 +1307,8 @@ export class FakeSupabase {
     const since = args["p_updated_since"] ? Date.parse(String(args["p_updated_since"])) : null;
     type Entry = { p: Row; key: string | number; price: number | null; compareAt: number | null };
     const keyOf: Record<string, (e: { p: Row; price: number | null }) => string | number> = {
-      new: (e) => String(e.p["created_at"]),
+      // 0146: 発売日、無ければ作成日（banto_product_list の coalesce(released_at, created_at)）
+      new: (e) => String(e.p["released_at"] ?? e.p["created_at"]),
       updated: (e) => String(e.p["updated_at"]),
       price_asc: (e) => e.price ?? 2147483647,
       price_desc: (e) => e.price ?? -1,
@@ -1342,6 +1343,7 @@ export class FakeSupabase {
       return {
         id: e.p["id"], slug: e.p["slug"], name: e.p["name"], brand: e.p["brand"] ?? null, category_id: e.p["category_id"] ?? null,
         extra_category_ids: e.p["extra_category_ids"] ?? [], tags: tagsOf(e.p), created_at: e.p["created_at"], updated_at: e.p["updated_at"],
+        ...(this.appliedMigrations.includes("0146_product_released_at") ? { released_at: e.p["released_at"] ?? null } : {}),
         min_price_jpy: e.price, compare_at_price_jpy: e.compareAt,
         ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(e.p) } : {}),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
@@ -4126,6 +4128,20 @@ export class FakeSupabase {
   }
 
   private serviceRpc(fn: string, args: Record<string, unknown>): Response {
+    // Cron が新しい関数を呼ぶ前に確かめる（src/jobs/index.ts）
+    if (fn === "banto_setup_state") return this.rpc(fn, args, null);
+    // 0148: 公開日を過ぎた非公開の商品を公開する
+    if (fn === "publish_scheduled_products") {
+      let n = 0;
+      for (const p of this.tables.products) {
+        if (p["published"] !== true && typeof p["publish_at"] === "string" && Date.parse(p["publish_at"]) <= Date.parse(this.now())) {
+          p["published"] = true;
+          p["publish_at"] = null;
+          n++;
+        }
+      }
+      return json(n);
+    }
     // 0098: 会員の読み取りの経路（中身は rpc() の product_member_*）
     if (fn.startsWith("product_member_") || fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page" || fn === "articles_member_multi") return this.rpc(fn, args, null);
     if (fn === "theme_preview_settings") {

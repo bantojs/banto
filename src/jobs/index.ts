@@ -18,6 +18,7 @@ import { setTimeZone } from "../i18n/time";
 import { registerFeedJob } from "../modules/product-feed/job";
 import { registerImageImportJob } from "../modules/woo-import/job";
 import { todayHere } from "../modules/store-tryon";
+import { SALE_DATES_MIGRATION } from "../products/fields";
 import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
 import { PAGES_TRASH_DAYS } from "../pages";
@@ -56,6 +57,12 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     await db.maskShippedOrders(days);
     // 監査ログの保持（0051）
     await db.pruneAuditLog(auditKeepDays(cfg.get("AUDIT_LOG_KEEP_DAYS")));
+  });
+
+  // 商品の予約公開（0148）: 公開日を過ぎた非公開の商品を公開する。当てる前の DB では何もしない（関数が無いまま呼んで Cron を止めない）
+  adapters.scheduler.register("publish_scheduled_products", async () => {
+    if (!(await db.appliedMigrations()).includes(SALE_DATES_MIGRATION)) return;
+    await db.publishScheduledProducts();
   });
 
   // ショップのページ（0080）とブログの記事（0081）のゴミ箱: 30 日を過ぎたものを消す

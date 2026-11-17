@@ -17,7 +17,7 @@ import { SLUG_RE, formFields, mediaBaseUrl, owner, param, params, type AdminCont
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { normalizeTags } from "../../products/tags";
-import { RELEASED_AT_MIGRATION, cleanAttributes, productFields, type ProductField } from "../../products/fields";
+import { RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, cleanAttributes, productFields, type ProductField } from "../../products/fields";
 import { isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { FIELD_IMAGE_SCRIPT, FieldImageInput, fieldImageUpload } from "./field-image";
 import { categoryOptions, loadCategories } from "./categories";
@@ -409,15 +409,19 @@ interface CatalogContext {
   audiences?: { id: string; name: string }[];
   /** 発売日の欄（0146 が当たっていれば） */
   releasedAt?: boolean;
+  /** 公開日の欄（0148 が当たっていれば） */
+  publishAt?: boolean;
 }
 
 async function catalogContext(c: AdminContext, shop: ShopRow): Promise<CatalogContext> {
-  const [categories, audiences, releasedAt] = await Promise.all([
+  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
+  const [categories, audiences, releasedAt, publishAt] = await Promise.all([
     loadCategories(owner(c).db, shop.id),
     productAudiences(c, shop),
-    migrated({ db: owner(c).db, cache: c.get("adapters").cache }, RELEASED_AT_MIGRATION),
+    migrated(deps, RELEASED_AT_MIGRATION),
+    migrated(deps, SALE_DATES_MIGRATION),
   ]);
-  return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}), ...(releasedAt ? { releasedAt } : {}) };
+  return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}), ...(releasedAt ? { releasedAt } : {}), ...(publishAt ? { publishAt } : {}) };
 }
 
 /** 会員限定の商品（0098）で選べる会員の条件。モジュールが OFF なら null（欄を出さない） */
@@ -520,7 +524,7 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
               <input id="released_at" type="datetime-local" name="released_at" value={isoToZonedInput(p?.released_at ?? null)} min="1990-01-01T00:00" />
               {/* 開いたときの値（分まで）。変えていなければ書かない（API で入れた秒を、ほかの欄の保存で消さない） */}
               <input type="hidden" name="released_orig" value={isoToZonedInput(p?.released_at ?? null)} />
-              <p class="muted">{t("product.released_at_hint")}</p>
+              <p class="muted">{t(props.catalog.publishAt ? "product.released_at_hint_sale" : "product.released_at_hint")}</p>
             </>
           ) : null}
         </div>
@@ -577,6 +581,14 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
         <label>
           <input type="checkbox" name="published" value="on" checked={p?.published ?? false} /> {t("product.published")}
         </label>
+        {props.catalog.publishAt ? (
+          <label>
+            <input type="hidden" name="publish_present" value="1" />
+            {t("product.publish_at")} <input type="datetime-local" name="publish_at" value={isoToZonedInput(p?.publish_at ?? null)} aria-describedby="publish-at-hint" />
+            <input type="hidden" name="publish_orig" value={isoToZonedInput(p?.publish_at ?? null)} />
+            <span class="muted" id="publish-at-hint">{t("product.publish_at_hint")}</span>
+          </label>
+        ) : null}
         <button type="submit">{t("product.save")}</button>
       </div>
     </form>
@@ -615,6 +627,8 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
     // 発売日（0146）: 欄があったときだけ書く。空なら外す（新着順は作成日に戻る）
     ...(f.released_present === "1" && (f.released_at ?? "") !== (f.released_orig ?? "") ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
+    // 公開日（0148）: 非公開の商品の予約公開。公開に印を付けたら DB のトリガーが外す
+    ...(f.publish_present === "1" && (f.publish_at ?? "") !== (f.publish_orig ?? "") ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。
     // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
     ...(f.audience_present === "1"
