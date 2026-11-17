@@ -3,6 +3,7 @@
  *   tryon.requested                → お客様に「受け付けました」、店舗に「申し込みがありました」（店舗のメール通知が ON のとき）
  *   tryon.updated（ready）         → お客様に「ご試着いただけます」（取り置きの期限）
  *   tryon.updated（cancelled）     → お客様に「取り消しました」
+ *   tryon.updated（ready・extended）→ お客様に「取り置きを延長しました」、店舗に「延長がありました」（店舗のメール通知が ON のとき。0151）
  * 店舗の住所・営業時間・臨時休業も載せる（何時ごろ行けばよいか分かるように）。
  */
 import { shopHome } from "../../storefront/urls";
@@ -83,7 +84,7 @@ function itemLines(c: TryonContact): string {
     .join("\n");
 }
 
-export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: string | undefined): TryonMail[] {
+export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: string | undefined, opts: { extended?: boolean; previousHoldUntil?: string | null } = {}): TryonMail[] {
   const out: TryonMail[] = [];
   const shopName = c.shop.name;
   const head = `${c.customer_name ?? "お客"} 様\n\n`;
@@ -108,6 +109,25 @@ export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: s
         key: "store",
         subject: `【${shopName}】お店で試着の申し込み（${c.store.name}・受付番号 ${c.number}）`,
         text: `${c.store.name} に、お店で試着の申し込みがありました。\n\n受付番号: ${c.number}\n${c.visit_date ? `来店予定日: ${dateLabel(c.visit_date)}\n` : ""}お名前: ${c.customer_name ?? ""}\n電話: ${c.customer_phone ?? ""}\nメール: ${c.customer_email ?? ""}\n${c.note ? `ご要望: ${c.note}\n` : ""}\n${itemLines(c)}\n\n管理画面の「お店で試着」で状態を進めてください。\n`,
+      });
+    }
+  } else if (event === "tryon.updated" && c.status === "ready" && opts.extended) {
+    // 会員が会員ページで取り置きを延ばした（0151）
+    const until = c.hold_until ? dateLabel(c.hold_until) : "";
+    if (c.customer_email) {
+      out.push({
+        to: c.customer_email,
+        key: "customer",
+        subject: `【${shopName}】お取り置きの期限を延長しました（受付番号 ${c.number}）`,
+        text: `${head}${c.store.name}でのお取り置きを${until}まで延長しました。営業時間をご確認のうえ、お越しください。\n\n受付番号: ${c.number}\n\n${itemLines(c)}\n\n${storeBlock(c)}\n${foot}`,
+      });
+    }
+    if (c.store.notify_email && c.store.email) {
+      out.push({
+        to: c.store.email,
+        key: "store",
+        subject: `【${shopName}】お店で試着の取り置きの延長（${c.store.name}・受付番号 ${c.number}）`,
+        text: `${c.store.name} でお取り置き中のお申し込みの期限が、お客様の操作で延長されました。\n\n受付番号: ${c.number}\n${opts.previousHoldUntil ? `延長前の期限: ${dateLabel(opts.previousHoldUntil)}\n` : ""}新しい期限: ${until}\nお名前: ${c.customer_name ?? ""}\n\n${itemLines(c)}\n`,
       });
     }
   } else if (event === "tryon.updated" && c.customer_email) {

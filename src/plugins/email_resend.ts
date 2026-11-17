@@ -132,7 +132,8 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
   if (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"]))) return;
   const contact = (await ctx.privileged.tryonContact(requestId, shop_id)) as unknown as TryonContact;
   const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
-  for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"))) {
+  const opts = data["extended"] === true ? { extended: true, previousHoldUntil: typeof data["previous_hold_until"] === "string" ? data["previous_hold_until"] : null } : {};
+  for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"), opts)) {
     await sendMail(mailer, {
       from,
       to: m.to,

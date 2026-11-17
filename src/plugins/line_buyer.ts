@@ -16,8 +16,12 @@ export function buyerMessage(event: string, r: { number: number; total_jpy: numb
   return null;
 }
 
-/** お店で試着（0025）: 受付・取り置き開始・取り消しだけ知らせる */
-export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }): string | null {
+/** お店で試着（0025）: 受付・取り置き開始・取り置きの延長（0151）・取り消しだけ知らせる */
+export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }, opts: { extended?: boolean } = {}): string | null {
+  if (event === "tryon.updated" && r.status === "ready" && opts.extended) {
+    const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日まで` : "";
+    return `【${r.shop_name}】${r.store_name}でのお取り置きを${until}延長しました。\n受付番号 ${r.number}`;
+  }
   if (event === "tryon.requested") return `【${r.shop_name}】お店で試着のお申し込みを承りました。\n受付番号 ${r.number}\n店舗 ${r.store_name}\n店舗でご用意ができしだい、お知らせします。`;
   if (event === "tryon.updated" && r.status === "ready") {
     const until = r.hold_until ? `\n${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日までお取り置きします。` : "";
@@ -60,7 +64,7 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
     const id = typeof data["request_id"] === "string" ? data["request_id"] : "";
     if (!id || (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"])))) return null;
     const r = await ctx.privileged.tryonLineRecipient(id, shop_id);
-    const text = r ? tryonLineMessage(event, r) : null;
+    const text = r ? tryonLineMessage(event, r, { extended: data["extended"] === true }) : null;
     return r && text ? { to: r.line_user_id, text } : null;
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";

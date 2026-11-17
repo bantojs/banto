@@ -9,7 +9,8 @@ import { requireOwner } from "../../routes/admin/auth";
 import { can } from "../../routes/admin/access";
 import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
-import { TRYON_MODULE, tryonSettings, type OrgStore, type ShopStoreLink } from "./index";
+import { TRYON_EXTEND_MAX, TRYON_EXTEND_MIGRATION, TRYON_LIMIT_DEFAULTS, TRYON_MODULE, tryonSettings, type OrgStore, type ShopStoreLink } from "./index";
+import { migrated } from "../../db/migration-state";
 import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, type RequestRow } from "./requests";
 
 /**
@@ -50,6 +51,8 @@ tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const eq: Record<string, string> = { shop_id: shop.id };
   if (statusFilter) eq["status"] = statusFilter;
   if (storeFilter) eq["store_id"] = storeFilter;
+  // 取り置きの延長の欄は 0151 を当ててから
+  const extendReady = await migrated({ db, cache: c.get("adapters").cache }, TRYON_EXTEND_MIGRATION);
   const [stores, links, requests] = await Promise.all([
     shop.org_id ? db.from<OrgStore>("stores").select("id,name,active,sort_order", { eq: { org_id: shop.org_id }, order: "sort_order.asc" }) : Promise.resolve([] as OrgStore[]),
     db.from<ShopStoreLink>("shop_stores").select("store_id,tryon,sort_order", { eq: { shop_id: shop.id } }),
@@ -134,6 +137,16 @@ tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
         {intOpt("max_days", s.max_days, 0, 90)}
         <label for="max_items">{t("tryon.max_items")}</label>
         {intOpt("max_items", s.max_items, 1, 20)}
+        <label for="max_open_per_customer">{t("tryon.max_open_per_customer")}</label>
+        {intOpt("max_open_per_customer", s.max_open_per_customer, 1, 9999)}
+        {extendReady ? (
+          <>
+            <label for="extend_max">{t("tryon.extend_max")}</label>
+            {intOpt("extend_max", s.extend_max, 0, TRYON_EXTEND_MAX)}
+            <label for="extend_days">{t("tryon.extend_days")}</label>
+            {intOpt("extend_days", s.extend_days, 1, 30)}
+          </>
+        ) : null}
         <label for="notice">{t("tryon.notice")}</label>
         <textarea id="notice" name="notice" rows={3} maxlength={500}>
           {s.notice}
@@ -154,9 +167,18 @@ tryonAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
     const n = Number.parseInt(v ?? "", 10);
     return Number.isInteger(n) ? n : undefined;
   };
-  const store_tryon = tryonSettings({
-    store_tryon: { mode: f.mode, hold_days: int(f.hold_days), min_days: int(f.min_days), max_days: int(f.max_days), max_items: int(f.max_items), notice: (f.notice ?? "").trim() },
-  });
+  // 送られた欄だけを今の値に重ねる（画面に無い項目・出していない欄は今の値を保つ）
+  const sent: Record<string, unknown> = { mode: f.mode, notice: (f.notice ?? "").trim() };
+  for (const k of ["hold_days", "min_days", "max_days", "max_items", "max_open_per_customer", "extend_max", "extend_days"] as const) {
+    const v = int(f[k]);
+    if (v !== undefined) sent[k] = v;
+  }
+  const next: Record<string, unknown> = { ...tryonSettings({ store_tryon: { ...tryonSettings(shop.settings), ...sent } }) };
+  // 上限が既定のままで、前から入っていなければ書かない（公開のショップ行に上限の値を載せない）
+  const raw = (shop.settings ?? {})["store_tryon"];
+  const had = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  for (const [k, d] of Object.entries(TRYON_LIMIT_DEFAULTS)) if (!(k in had) && next[k] === d) delete next[k];
+  const store_tryon = next;
   try {
     await owner(c)
       .db.from<ShopRow>("shops")

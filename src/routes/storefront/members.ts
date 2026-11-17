@@ -60,7 +60,7 @@ import type { AccountPageProps, AddressFormValues } from "../../themes/types";
 import { liquidThemeFor, renderAccount, renderCustomerLogin, type CustomerLoginInput } from "./liquid";
 import { type PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
-import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
+import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, dateLabel, memberExtendLeft, memberExtendable, todayHere, tryonSettings, ymdOrNull } from "../../modules/store-tryon";
 import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
 import { PASSKEY_CLIENT_JS, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
 import { COSE_ALGS, WebAuthnError, b64urlEncode, newChallenge, readAssertion, sameUserHandle, userHandleOf, verifyAssertion, verifyRegistration, type Expected } from "../../members/webauthn";
@@ -257,6 +257,7 @@ const ACCOUNT_ERRORS: Record<string, MessageKey> = {
   other_linked: "member.oauth_other_linked",
   last_method: "member.oauth_last_method",
   tryon_not_cancellable: "member.tryon_not_cancellable",
+  tryon_not_extendable: "member.tryon_not_extendable",
 };
 
 const LOGIN_ERRORS: Record<string, MessageKey> = {
@@ -310,6 +311,8 @@ members.get("/:shop/account", async (c: Ctx) => {
   const linked = rec.customer.providers ?? [];
   const security = { password: opts.password, hasPassword: rec.customer.has_password === true, providers: opts.providers.map((id) => ({ id, linked: linked.includes(id) })) };
   const errorKey = ACCOUNT_ERRORS[c.req.query("error") ?? ""];
+  const tryonConf = tryonSettings(s.shop.settings);
+  const today = todayHere();
   const props: AccountPageProps = {
       ctx: ctxOf(s, { email: rec.customer.email ?? s.session.email }),
       customer: rec.customer,
@@ -334,6 +337,10 @@ members.get("/:shop/account", async (c: Ctx) => {
             created_at: r.created_at,
             items: r.items,
             cancellable: MEMBER_CANCELLABLE.includes(r.status),
+            // 取り置きの延長（0151）。回数の上限と残りはショップの設定（判定の正は DB）
+            extendable: memberExtendable(r, tryonConf, today),
+            extend_left: memberExtendLeft(r, tryonConf),
+            hold_until: r.hold_until,
           }))
         : null,
   };
@@ -358,6 +365,22 @@ members.post("/:shop/account/tryon/:number{[0-9]+}/cancel", async (c: Ctx) => {
   if (r.ok) return c.redirect(`${s.shopPath}/account?flash=tryon_cancelled`);
   if (r.reason === "session") return c.redirect(`${s.shopPath}/account/login`);
   return c.redirect(`${s.shopPath}/account?error=tryon_not_cancellable`);
+});
+
+/** お店で試着の取り置きの期限を延ばす（会員本人。回数・日数はショップの設定、0151） */
+members.post("/:shop/account/tryon/:number{[0-9]+}/extend", async (c: Ctx) => {
+  const s = await scope(c);
+  const db = privilegedFor(c);
+  if (!s || !db || !moduleEnabled(s.shop.settings, TRYON_MODULE)) return notFound(c);
+  if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
+  const sf = storefrontData(c);
+  if (tryonSettings(s.shop.settings).extend_max < 1 || !sf || !(await sf.migratedTo(TRYON_EXTEND_MIGRATION))) return c.redirect(`${s.shopPath}/account?error=tryon_not_extendable`);
+  // 画面に出していた期限（hold_until）を添える。二度押し・送り直しは changed（もう延ばしてある）
+  const f = await c.req.parseBody();
+  const r = await db.memberTryonExtend(s.shop.id, s.session.cid, s.session.ep, Number(c.req.param("number")), todayHere(), ymdOrNull(f["hold_until"]));
+  if (r.ok || r.reason === "changed") return c.redirect(`${s.shopPath}/account?flash=tryon_extended`);
+  if (r.reason === "session") return c.redirect(`${s.shopPath}/account/login`);
+  return c.redirect(`${s.shopPath}/account?error=tryon_not_extendable`);
 });
 
 // ---------- 先着のクーポン（同梱モジュール coupons、0020） ----------

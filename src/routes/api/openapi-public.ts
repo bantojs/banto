@@ -347,8 +347,9 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       },
       "/shops/{shop}/members/orders/{number}": { get: { summary: "会員の注文 1 件（注文照会のページ。lookup_order と同じ形）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ order: orderView, receipt_available: bool })), 401: err("invalid_member_token・member_token_required"), 404: err("not_found（この会員の注文ではない）"), 409: err("members_disabled"), 503: common[503] } } },
       "/shops/{shop}/members/orders/{number}/receipt": { get: { summary: "会員の注文の領収書のデータ（同梱モジュール receipt）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ receipt })), 401: err("invalid_member_token・member_token_required"), 404: err("not_found・receipt_disabled"), 409: err("receipt_not_available（支払い済みでない）・members_disabled"), 503: common[503] } } },
-      "/shops/{shop}/members/tryon": { get: { summary: "会員の試着の申し込みの一覧（同梱モジュール「お店で試着」）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ requests: arr(any("number・status・店舗・来店日・商品・cancellable")) })), 401: err("invalid_member_token"), 404: err("tryon_disabled"), 409: err("members_disabled"), 503: common[503] } } },
+      "/shops/{shop}/members/tryon": { get: { summary: "会員の試着の申し込みの一覧（同梱モジュール「お店で試着」）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ requests: arr(any("number・status・店舗・来店日・商品・cancellable・extendable・extend_left・extend_count（0151）")) })), 401: err("invalid_member_token"), 404: err("tryon_disabled"), 409: err("members_disabled"), 503: common[503] } } },
       "/shops/{shop}/members/tryon/{number}/cancel": { post: { summary: "試着の申し込みを取り消す", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ ok: bool })), 401: err("invalid_member_token"), 404: err("not_found・tryon_disabled"), 409: err("取り消せない状態"), 503: common[503] } } },
+      "/shops/{shop}/members/tryon/{number}/extend": { post: { summary: "取り置きの期限を延ばす（回数・日数はショップの設定、休みの日は次の営業日へ。0151）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ ok: bool, hold_until: str, extend_count: int })), 401: err("invalid_member_token"), 404: err("not_found・tryon_disabled"), 409: err("limit・not_extendable・changed（本文の hold_until と今の期限が違う）・migration_required"), 503: common[503] } } },
 
       "/shops/{shop}/stores": { get: { summary: "実店舗と試着の設定（同梱モジュール「お店で試着」）", security: memberOptional, parameters: [shopPath], responses: { 200: ok(obj({ stores: arr(store), tryon: obj({ mode: str, hold_days: int, max_items: int, notice: nStr }), today: str })), ...common } } },
       "/shops/{shop}/tryon": {
@@ -479,6 +480,7 @@ const OPERATION_IDS: Record<string, string> = {
   "get /shops/{shop}/members/orders/{number}/receipt": "getMemberOrderReceipt",
   "get /shops/{shop}/members/tryon": "listMemberTryonRequests",
   "post /shops/{shop}/members/tryon/{number}/cancel": "cancelMemberTryonRequest",
+  "post /shops/{shop}/members/tryon/{number}/extend": "extendMemberTryonRequest",
   "get /shops/{shop}/stores": "listStores",
   "post /shops/{shop}/tryon": "createTryonRequest",
   "get /shops/{shop}/inquiries/config": "getInquiryConfig",

@@ -610,6 +610,12 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         items: r.items,
         cancellable: r.cancellable,
         cancel_url: r.cancellable ? `${s.ctx.shopPath}/account/tryon/${r.number}/cancel` : null,
+        // 取り置きの延長（0151）: POST で送る。extend_left は残りの回数
+        extendable: r.extendable === true,
+        extend_left: r.extend_left ?? 0,
+        extend_url: r.extendable ? `${s.ctx.shopPath}/account/tryon/${r.number}/extend` : null,
+        // 延長のフォームに hold_until として添える今の期限（二度押しで 2 回延ばさない）
+        hold_until: r.hold_until ?? null,
       }))
     : null;
   const customer = props.customer
