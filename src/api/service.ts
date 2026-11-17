@@ -29,6 +29,8 @@ import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
 import { FAVORITES_MIGRATION } from "../modules/registry";
 import { AUDIENCE_API_MIGRATION } from "../members/audience";
+import { FIELD_DEFS_MIGRATION, productFields } from "../products/fields";
+import { customerFields } from "../customers/fields";
 import { CARE_MIGRATION } from "../care-labels/care";
 import { STORE_FIELDS_MIGRATION } from "../stores/fields";
 
@@ -104,6 +106,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_audience_hide")) throw new ApiError("invalid", "invalid_audience_hide: true or false", 400);
     if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
     if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
+    // 項目の定義（0145）: invalid_fields:<番号>:<理由>
+    if (/invalid_fields:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_fields:[a-z_0-9:]+).*$/s, "$1") + ": send an array of up to 150 { key: ^[a-z][a-z0-9_]{0,39}$ (unique), label (1-60 chars), type: text | textarea | number | url | select | image, options (select only, up to 50 of 1-60 chars), public, card (public only) }; customer fields cannot use image, and public / card cannot be true (see docs/ai-access.md §19)", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -298,6 +302,22 @@ export class ApiService {
   productUpdate = async (id: string, values: Record<string, unknown>) => {
     await this.requireAudienceFields(values);
     return this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
+  };
+  /**
+   * 項目の定義（0145）。product = 商品の項目（products:read / write）、customer = 会員の項目（customers:read / write）。
+   * 読み取りは管理画面と同じ読み手（fieldDefinitions）を通す。書き込みは丸ごと置き換えで、形の検査は DB
+   */
+  fieldDefsGet = async (kind: "product" | "customer") => {
+    await this.requireMigration(FIELD_DEFS_MIGRATION);
+    const r = await this.call<{ fields: unknown }>("api_field_defs_get", { p_kind: kind });
+    return { fields: kind === "product" ? productFields({ product_fields: r.fields }) : customerFields({ customer_fields: r.fields }) };
+  };
+  fieldDefsSet = async (kind: "product" | "customer", body: unknown) => {
+    await this.requireMigration(FIELD_DEFS_MIGRATION);
+    const fields = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>)["fields"] : body;
+    const r = await this.call<{ fields: unknown }>("api_field_defs_set", { p_kind: kind, p_fields: fields ?? null });
+    // 応答も読み取りと同じ読み手を通す（PUT と GET で形を揃える）
+    return { fields: kind === "product" ? productFields({ product_fields: r.fields }) : customerFields({ customer_fields: r.fields }) };
   };
   /** 会員の条件の一覧（products:read、0144。モジュール audiences が ON のショップだけ） */
   audiencesList = async () => {

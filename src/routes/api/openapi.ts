@@ -11,6 +11,7 @@ export function openapiDocument(origin: string, version: string): Record<string,
   const objAny = { type: "object", additionalProperties: { type: ["string", "number"] } };
   const nullableInt = { type: ["integer", "null"] };
   const nullableStr = { type: ["string", "null"] };
+  const fieldDef = obj({ key: { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" }, label: { type: "string", maxLength: 60 }, type: { type: "string", enum: ["text", "textarea", "number", "url", "select", "image"] }, options: { type: "array", items: str, maxItems: 50 }, public: bool, card: bool }, ["key", "type"]);
   const audienceRef = { type: ["string", "null"], description: "会員限定にする会員の条件の id か名前（GET /audiences、null で外す）。同梱モジュール audiences が ON のショップだけ（0144）" };
   const audienceMode = { type: "string", enum: ["hide", "buy"], description: "hide = 合わない人には見せない、buy = だれにでも見せるが買えるのは合う会員だけ" };
   const audienceHide = { type: "boolean", description: "hide のとき、ゲストにも「会員の方だけ」と出さず 404（buy とは一緒に使えない）" };
@@ -82,6 +83,14 @@ export function openapiDocument(origin: string, version: string): Record<string,
       "/products": {
         get: { summary: "商品一覧（products:read）", security: bearer, parameters: [{ name: "q", in: "query", schema: str }, { name: "published", in: "query", schema: bool }, { name: "limit", in: "query", schema: int }, { name: "offset", in: "query", schema: int }], responses: { 200: resp("ok", list(product)), ...errors } },
         post: { summary: "商品を作成（products:write）", security: bearer, requestBody: { content: { "application/json": { schema: obj({ slug: str, name: str, description: str, tags, category: str, extra_categories: { type: "array", items: str, maxItems: 20 }, brand: str, attributes: objAny, published: bool, audience: audienceRef, audience_mode: audienceMode, audience_hide: audienceHide }, ["slug", "name"]) } } }, responses: { 201: resp("created", product), ...errors } },
+      },
+      "/product-fields": {
+        get: { summary: "商品の項目（カスタム項目）の定義（products:read、0145）。値は商品の attributes", security: bearer, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
+        put: { summary: "商品の項目の定義を丸ごと置き換える（products:write、0145）。送らなかった項目は消える（値は残る）。形が違えば 400 invalid_fields:<番号>:<理由>", security: bearer, requestBody: { content: { "application/json": { schema: obj({ fields: { type: "array", items: fieldDef, maxItems: 150 } }, ["fields"]) } } }, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
+      },
+      "/customer-fields": {
+        get: { summary: "会員の項目の定義（customers:read、0145）。値は会員の attributes", security: bearer, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
+        put: { summary: "会員の項目の定義を丸ごと置き換える（customers:write、0145）。image・public・card は使えない", security: bearer, requestBody: { content: { "application/json": { schema: obj({ fields: { type: "array", items: fieldDef, maxItems: 150 } }, ["fields"]) } } }, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
       },
       "/audiences": {
         get: { summary: "会員の条件の一覧（products:read、0144、同梱モジュール audiences が ON のショップだけ）。product_usable が false の条件（URL のパラメータを使う表示用の条件）は商品に付けられない。条件の中身は返さない", security: bearer, responses: { 200: resp("ok", obj({ items: { type: "array", items: obj({ id: str, name: str, product_usable: bool }) } })), ...errors, 409: resp("モジュールが OFF（module_disabled）か、データベースの更新（0144）が要る") } },

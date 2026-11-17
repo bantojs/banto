@@ -3245,6 +3245,22 @@ export class FakeSupabase {
         this.enqueue(shopId, "product.updated", { product_id: p["id"] });
         return json(product(p));
       }
+      // 0145: 項目の定義（形の本物の検査は test/db/api-field-definitions.test.ts。ここは配列かだけ見て丸ごと置き換える）
+      case "api_field_defs_get":
+      case "api_field_defs_set": {
+        const kind = String(args["p_kind"]);
+        const write = fn === "api_field_defs_set";
+        if (!need(kind === "product" ? (write ? "products:write" : "products:read") : write ? "customers:write" : "customers:read")) return unauthorized();
+        const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+        const settings = ((shop["settings"] as Row | undefined) ?? {}) as Row;
+        if (write) {
+          if (!Array.isArray(args["p_fields"])) return json({ code: "22023", message: "invalid_fields:not_array" }, 400);
+          shop["settings"] = { ...settings, [`${kind}_fields`]: args["p_fields"] };
+          return json({ fields: args["p_fields"] });
+        }
+        const defs = settings[`${kind}_fields`];
+        return json({ fields: Array.isArray(defs) ? defs : [] });
+      }
       case "api_audiences_list": {
         if (!need("products:read")) return unauthorized();
         const shop = this.tables.shops.find((x) => x["id"] === shopId);
