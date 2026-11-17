@@ -83,6 +83,8 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
   const items: FeedItem[] = [];
   const skipped = { no_image: 0, no_price: 0 };
   for (const p of cat.products) {
+    // 店頭のみの商品（0149）はネットでは買えないので、フィード（ネットで買える商品の一覧）に載せない
+    if (p.store_only === true) continue;
     const skus = skusBy.get(p.id) ?? [];
     const productImages = imagesBy.get(p.id) ?? [];
     const path = p.category_id ? categoryPath(cat.categories, p.category_id).map((c) => c.name) : [];

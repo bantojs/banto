@@ -91,7 +91,9 @@ export const FREE_PROVIDER = "free";
 // ---------- カートの値付け ----------
 
 export interface PricedCart {
+  /** カートの行。店頭のみの商品（0149）は storeOnly の印つきで入る（購入手続きでは外す） */
   lines: CartLine[];
+  /** 購入手続きに進める行の小計（店頭のみの行は入れない） */
   subtotal: number;
   /** 非公開になった・削除された SKU と、見る人が買えない会員限定の商品の SKU（カートから外す） */
   dropped: string[];
@@ -116,8 +118,13 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
       dropped.push(item.sku_id);
       continue;
     }
-    // 会員限定の商品（0098）: 買えるかは会員なら DB が判定した値、ゲストは条件のある商品は買えない。確定もこの値付けを通る
+    // 買えない商品（src/products/sale.ts）: 会員限定（0098。会員なら DB が判定した値、ゲストは条件のある商品は買えない）・発売前（0148）は
+    // カートから外す。店頭のみ（0149）は、お店で試着が ON ならカートに残すが購入手続きには進めない（storeOnly）。確定もこの値付けを通る
     if (!hit.purchasable) {
+      if (hit.cartable && hit.purchase_block === "store_only") {
+        lines.push({ sku: hit.sku, product: hit.product, qty: item.qty, short: hit.sku.available < item.qty, storeOnly: true });
+        continue;
+      }
       dropped.push(item.sku_id);
       restricted.push(item.sku_id);
       continue;
@@ -126,7 +133,7 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
   }
   return {
     lines,
-    subtotal: lines.reduce((n, l) => n + l.sku.price_jpy * l.qty, 0),
+    subtotal: lines.reduce((n, l) => n + (l.storeOnly ? 0 : l.sku.price_jpy * l.qty), 0),
     dropped,
     ...(restricted.length > 0 ? { restricted } : {}),
     cart: { items: lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })) },
@@ -340,8 +347,17 @@ export interface Quote {
 }
 
 export type QuoteResult =
-  | { ok: true; quote: Quote; token: string; confirmation: Confirmation; lines: CartLine[]; discount: DiscountResult }
-  | { ok: false; error: "empty_cart" | "stock" | "invalid_address" | "minimum_amount"; invalid?: string[]; dropped?: string[] };
+  | { ok: true; quote: Quote; token: string; confirmation: Confirmation; lines: CartLine[]; discount: DiscountResult; /** 購入手続きから外した店頭のみの行（0149。カートには残る） */ excluded?: CartLine[] }
+  | { ok: false; error: "empty_cart" | "stock" | "invalid_address" | "minimum_amount" | "store_only"; invalid?: string[]; dropped?: string[] };
+
+/** 購入手続きに進める行だけの値付け（店頭のみの行を外す。0149） */
+export function checkoutPart(priced: PricedCart): { priced: PricedCart; excluded: CartLine[] } {
+  const excluded = priced.lines.filter((l) => l.storeOnly);
+  if (excluded.length === 0) return { priced, excluded };
+  const lines = priced.lines.filter((l) => !l.storeOnly);
+  const keep = new Set(lines.map((l) => l.sku.id));
+  return { priced: { ...priced, lines, cart: { ...priced.cart, items: priced.cart.items.filter((i) => keep.has(i.sku_id)) } }, excluded };
+}
 
 export interface QuoteContext {
   sf: StorefrontData;
@@ -361,8 +377,10 @@ export interface QuoteContext {
 /** カート + 配送先から最終確認の内容を作り、署名付きの quote を発行する */
 export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provider, rawAddress: Record<string, unknown>): Promise<QuoteResult> {
   const normalized = normalizeCart(cart);
-  const priced = await priceCart(ctx.sf, ctx.shop, normalized);
-  if (priced.lines.length === 0) return { ok: false, error: "empty_cart", dropped: priced.dropped };
+  const all = await priceCart(ctx.sf, ctx.shop, normalized);
+  // 店頭のみの商品（0149）は購入手続きから外して知らせる（カートには残す）。それしか無ければ進めない
+  const { priced, excluded } = checkoutPart(all);
+  if (priced.lines.length === 0) return { ok: false, error: excluded.length > 0 ? "store_only" : "empty_cart", dropped: priced.dropped };
   const { address, invalid } = validateAddress(rawAddress);
   if (invalid.length > 0) return { ok: false, error: "invalid_address", invalid };
   const dl = checkDelivery(ctx.shop.settings, address.delivery_date, address.delivery_slot, (ctx.now ?? Date.now)());
@@ -403,7 +421,7 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     total: quote.total,
     exp: quote.expiresAt,
   };
-  return { ok: true, quote, token: await sealJson(ctx.secret, payload), confirmation: confirmationOf(ctx, priced.lines, priced.subtotal, quote, discount), lines: priced.lines, discount };
+  return { ok: true, quote, token: await sealJson(ctx.secret, payload), confirmation: confirmationOf(ctx, priced.lines, priced.subtotal, quote, discount), lines: priced.lines, discount, ...(excluded.length > 0 ? { excluded } : {}) };
 }
 
 /** 同意の欄を出すか: ショップの設定（settings.marketing_consent）が ON */
@@ -485,9 +503,12 @@ export async function openQuote(secret: string, token: string | undefined, shopI
 export async function recheckQuote(
   ctx: QuoteContext,
   quote: Quote,
-): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" }> {
-  const priced = await priceCart(ctx.sf, ctx.shop, quote.cart);
+): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" | "store_only" }> {
+  const all = await priceCart(ctx.sf, ctx.shop, quote.cart);
   const again = (cart: Cart) => createQuote(ctx, { ...cart, coupons: quote.coupons }, quote.provider, quote.address);
+  // 確認のあとで店頭のみになった商品（0149）は、外して確認画面を出し直す
+  const { priced, excluded } = checkoutPart(all);
+  if (excluded.length > 0) return priced.lines.length === 0 ? { ok: false, error: "store_only" } : { ok: false, error: "changed", fresh: await again(priced.cart) };
   if (priced.dropped.length > 0 || priced.lines.some((l) => l.short)) {
     if (priced.lines.length === 0 || priced.lines.some((l) => l.short)) return { ok: false, error: "stock" };
     return { ok: false, error: "changed", fresh: await again(priced.cart) };

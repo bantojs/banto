@@ -386,12 +386,16 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     }
     const cart = parts.includes("cart"), buy = parts.includes("buy");
     if ((cart || buy) && detail.skus.length > 0) {
-      if (detail.purchasable === false) out.push(`<p class="banto-product__note">${esc(t("store.members_only_login"))}</p>`);
+      // 買えない理由で分ける（src/products/sale.ts）。店頭のみでカートに入れられる（お店で試着が ON）なら「カートに入れる」だけ（今すぐ買うは出さない）
+      const block = detail.purchase_block ?? (detail.purchasable === false ? "members_only" : null);
+      const cartOnly = block === "store_only" && detail.cartable === true;
+      if (block && !cartOnly) out.push(`<p class="banto-product__note">${esc(t(block === "coming_soon" ? "store.coming_soon_buy" : block === "store_only" ? "store.store_only_buy" : "store.members_only_login"))}</p>`);
       else {
         const inStock = detail.skus.filter((k) => k.available > 0);
         const select = detail.skus.length > 1 ? `<select name="sku_id" aria-label="${esc(t("store.variant"))}">${detail.skus.map((k) => `<option value="${esc(k.id)}"${k.available > 0 ? "" : " disabled"}>${esc(k.name || k.code)} — ${esc(yen(k.price_jpy))}</option>`).join("")}</select>` : `<input type="hidden" name="sku_id" value="${esc(detail.skus[0]!.id)}">`;
         const disabled = inStock.length === 0 ? " disabled" : "";
-        const buttons = `${cart ? `<button type="submit"${disabled}>${esc(inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart"))}</button>` : ""}${buy ? `<button type="submit" name="buy" value="1"${disabled}>${esc(t("blocks.buy_now"))}</button>` : ""}`;
+        const showCart = cart || cartOnly;
+        const buttons = `${cartOnly ? `<p class="banto-product__note">${esc(t("store.store_only_tryon"))}</p>` : ""}${showCart ? `<button type="submit"${disabled}>${esc(inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart"))}</button>` : ""}${buy && !cartOnly ? `<button type="submit" name="buy" value="1"${disabled}>${esc(t("blocks.buy_now"))}</button>` : ""}`;
         out.push(`<form method="post" action="${esc(`${d.shopPath}/cart/add`)}">${select}<input type="hidden" name="qty" value="1">${buttons}</form>`);
       }
     }
