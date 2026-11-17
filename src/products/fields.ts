@@ -28,6 +28,8 @@ export interface ProductField {
 }
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
+/** 前後の空白を落として n 文字（コードポイント）まで。DB の banto_field_defs_norm（0145）と同じ数え方（サロゲートの組を割らない） */
+const clip = (s: string, n: number) => Array.from(s.trim()).slice(0, n).join("");
 
 export function productFields(settings: Record<string, unknown> | null | undefined): ProductField[] {
   return fieldDefinitions((settings ?? {})["product_fields"]);
@@ -46,8 +48,8 @@ export function fieldDefinitions(raw: unknown, opts: { publicDefault?: boolean }
     const key = typeof o["key"] === "string" ? o["key"] : "";
     const type = o["type"] as FieldType;
     if (!KEY_RE.test(key) || !FIELD_TYPES.includes(type) || out.some((f) => f.key === key)) continue;
-    const label = typeof o["label"] === "string" && o["label"].trim() ? o["label"].trim().slice(0, 60) : key;
-    const options = type === "select" && Array.isArray(o["options"]) ? o["options"].filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim().slice(0, 60)).slice(0, 50) : undefined;
+    const label = typeof o["label"] === "string" && o["label"].trim() ? clip(o["label"], 60) : key;
+    const options = type === "select" && Array.isArray(o["options"]) ? o["options"].filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => clip(x, 60)).slice(0, 50) : undefined;
     const pub = opts.publicDefault === false ? o["public"] === true : o["public"] !== false;
     out.push({ key, label, type, ...(options ? { options } : {}), public: pub, ...(pub && o["card"] === true ? { card: true } : {}) });
     if (out.length >= MAX_FIELDS) break;
