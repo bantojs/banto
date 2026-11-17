@@ -17,7 +17,7 @@ import { SLUG_RE, formFields, mediaBaseUrl, owner, param, params, type AdminCont
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { normalizeTags } from "../../products/tags";
-import { RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, cleanAttributes, productFields, type ProductField } from "../../products/fields";
+import { RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, STORE_ONLY_MIGRATION, cleanAttributes, productFields, type ProductField } from "../../products/fields";
 import { isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { FIELD_IMAGE_SCRIPT, FieldImageInput, fieldImageUpload } from "./field-image";
 import { categoryOptions, loadCategories } from "./categories";
@@ -410,17 +410,27 @@ interface CatalogContext {
   releasedAt?: boolean;
   /** 公開日の欄（0148 が当たっていれば） */
   publishAt?: boolean;
+  /** 店頭のみの印（0149 が当たっていれば） */
+  storeOnly?: boolean;
 }
 
 async function catalogContext(c: AdminContext, shop: ShopRow): Promise<CatalogContext> {
   const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [categories, audiences, releasedAt, publishAt] = await Promise.all([
+  const [categories, audiences, releasedAt, publishAt, storeOnly] = await Promise.all([
     loadCategories(owner(c).db, shop.id),
     productAudiences(c, shop),
     migrated(deps, RELEASED_AT_MIGRATION),
     migrated(deps, SALE_DATES_MIGRATION),
+    migrated(deps, STORE_ONLY_MIGRATION),
   ]);
-  return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}), ...(releasedAt ? { releasedAt } : {}), ...(publishAt ? { publishAt } : {}) };
+  return {
+    categories,
+    fields: productFields(shop.settings),
+    ...(audiences ? { audiences } : {}),
+    ...(releasedAt ? { releasedAt } : {}),
+    ...(publishAt ? { publishAt } : {}),
+    ...(storeOnly ? { storeOnly } : {}),
+  };
 }
 
 /** 会員限定の商品（0098）で選べる会員の条件。モジュールが OFF なら null（欄を出さない） */
@@ -516,6 +526,15 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
           ) : null}
           <label for="brand">{t("product.brand")}</label>
           <input id="brand" type="text" name="brand" value={p?.brand ?? ""} maxlength={100} />
+          {props.catalog.storeOnly ? (
+            <>
+              <input type="hidden" name="store_only_present" value="1" />
+              <label>
+                <input type="checkbox" name="store_only" value="on" checked={p?.store_only === true} /> {t("product.store_only")}
+              </label>
+              <p class="muted">{t("product.store_only_hint")}</p>
+            </>
+          ) : null}
           {props.catalog.releasedAt ? (
             <>
               <input type="hidden" name="released_present" value="1" />
@@ -623,6 +642,8 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
     // 発売日（0146）: 欄があったときだけ書く。空なら外す（新着順は作成日に戻る）
     ...(f.released_present === "1" ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
+    // 店頭のみ（0149）: 欄があったときだけ書く
+    ...(f.store_only_present === "1" ? { store_only: f.store_only === "on" } : {}),
     // 公開日（0148）: 非公開の商品の予約公開。公開に印を付けたら DB のトリガーが外す
     ...(f.publish_present === "1" ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。

@@ -30,6 +30,18 @@ describe.skipIf(!dbAvailable)("発売日と公開日（0148）", () => {
     await reserve(f.skuId);
   });
 
+  it("在庫の予約: 店頭のみの商品（0149）は sku_not_available。会員のカートの SKU にも store_only が載る", async () => {
+    const pool = getPool();
+    await pool.query("update products set store_only = true where id = $1", [f.productId]);
+    expect(await expectDbError(() => reserve(f.skuId))).toMatch(/sku_not_available/);
+    const rows = await asService(async (c) => (await c.query<{ r: { product: J }[] }>("select product_member_skus($1, $2, 0, $3, $4) as r", [f.shopId, randomUUID(), randomUUID(), [f.skuId]])).rows[0]!.r);
+    expect(rows[0]!.product["store_only"]).toBe(true);
+    const api = await asService(async (c) => (await c.query<{ r: J }>("select api_product_update($1, $2, $3) as r", [hash(tok), f.productId, JSON.stringify({ store_only: false })])).rows[0]!.r);
+    expect(api["store_only"]).toBe(false);
+    expect(await expectDbError(() => asService((c) => c.query("select api_product_update($1, $2, $3)", [hash(tok), f.productId, JSON.stringify({ store_only: "yes" })])))).toMatch(/invalid_store_only/);
+    await reserve(f.skuId);
+  });
+
   it("会員のカートの SKU（product_member_skus）の商品に released_at が載る", async () => {
     const pool = getPool();
     await pool.query("update products set released_at = '2030-01-01T00:00:00Z' where id = $1", [f.productId]);

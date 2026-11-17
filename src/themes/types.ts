@@ -67,6 +67,8 @@ export interface CartLine {
   qty: number;
   /** 在庫不足 */
   short: boolean;
+  /** 店頭のみの商品（0149）。カートには入るが購入手続きには進めない（小計に入れない、お店で試着で申し込む） */
+  storeOnly?: boolean;
 }
 
 /** カート画面のクーポン欄（同梱モジュール coupons が ON のときだけ渡る）。discount は商品の値引き（送料無料は確認画面で反映） */

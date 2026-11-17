@@ -649,8 +649,10 @@ export const defaultTheme: Theme = {
   },
 
   CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon }) {
-    const checkoutEnabled = payments.stripe || payments.komoju || payments.amazon_pay;
-    const short = lines.some((l) => l.short);
+    // 店頭のみの行（0149）だけのカートは購入手続きに進めない（お店で試着で申し込む）。在庫不足は購入手続きに進む行だけで見る
+    const buyable = lines.filter((l) => !l.storeOnly);
+    const checkoutEnabled = (payments.stripe || payments.komoju || payments.amazon_pay) && buyable.length > 0;
+    const short = buyable.some((l) => l.short);
     return (
       <Layout title={t("store.cart")} ctx={ctx} seo={{ noindex: true }}>
         <h1>{t("store.cart")}</h1>
@@ -676,6 +678,11 @@ export const defaultTheme: Theme = {
                     <td>
                       <a href={productUrl(ctx.shopPath, l.product.slug)}>{l.product.name}</a>
                       {l.sku.name ? <span class="muted"> / {l.sku.name}</span> : null}
+                      {l.storeOnly ? (
+                        <div class="muted" data-store-only="">
+                          {t("store.store_only_line")}
+                        </div>
+                      ) : null}
                       {l.short ? (
                         <div class="error">
                           {t("store.short_stock")} ({l.sku.available})
@@ -690,7 +697,7 @@ export const defaultTheme: Theme = {
                         <button type="submit">{t("store.update")}</button>
                       </form>
                     </td>
-                    <td>{yen(l.sku.price_jpy * l.qty)}</td>
+                    <td>{l.storeOnly ? "—" : yen(l.sku.price_jpy * l.qty)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1974,7 +1981,20 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
             {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
             <label for="qty">{t("store.qty")}</label>
             <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
-            {detail.purchase_block === "coming_soon" ? (
+            {detail.purchase_block === "store_only" ? (
+              <>
+                <p class="notice" data-store-only="">
+                  {t(detail.cartable ? "store.store_only_tryon" : "store.store_only_buy")}
+                </p>
+                {detail.cartable ? (
+                  <p>
+                    <button type="submit" disabled={inStock.length === 0}>
+                      {inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart")}
+                    </button>
+                  </p>
+                ) : null}
+              </>
+            ) : detail.purchase_block === "coming_soon" ? (
               <p class="notice" data-coming-soon="">
                 {detail.product.released_at ? tf("store.coming_soon_on", { date: formatDateTime(detail.product.released_at, { dateOnly: true }) }) : t("store.coming_soon_buy")}
               </p>

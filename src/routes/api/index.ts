@@ -219,6 +219,9 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       purchasable: detail.purchasable !== false,
       /** 発売日の前（0148）。見えるが買えない（カートに入れると 403 coming_soon） */
       coming_soon: detail.purchase_block === "coming_soon",
+      /** 店頭のみ（0149）。ネットでは買えない。cartable が true ならカートに入れてお店で試着を申し込める（quote では外す） */
+      store_only: detail.purchase_block === "store_only",
+      cartable: detail.cartable ?? detail.purchasable !== false,
       /** カスタム項目のうち公開するもの（表示名つき） */
       attributes: publicAttributes(productFields(shop.settings), p.attributes),
       updated_at: p.updated_at,

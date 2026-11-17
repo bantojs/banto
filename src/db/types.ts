@@ -62,6 +62,8 @@ export interface ProductRow {
   released_at?: string | null;
   /** 0148。公開日（非公開の商品をこの日時に公開する予約。公開している商品には残らない） */
   publish_at?: string | null;
+  /** 0149。店頭のみ（ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める） */
+  store_only?: boolean;
   audience_hide?: boolean;
   published: boolean;
   created_at: string;

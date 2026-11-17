@@ -184,11 +184,14 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     compare_at_price_min: compare.length ? Math.min(...compare) : null,
     compare_at_price_max: compare.length ? Math.max(...compare) : null,
     // 会員限定で買えない商品（0098）は売り切れと同じに見せ、members_only でテーマが「会員の方だけ」を出せる
-    available: available.length > 0 && d.purchasable !== false,
+    // カートに入れられるか（店頭のみの商品はお店で試着が ON なら入る。0149）
+    available: available.length > 0 && (d.cartable ?? d.purchasable !== false),
     members_only: Boolean(p.audience_id),
     purchasable: d.purchasable !== false,
     // 発売日の前（0148）。お店には見えるが買えない。「11月20日 発売」の文言はテーマが released_at で
     coming_soon: d.purchase_block === "coming_soon",
+    // 店頭のみ（0149）。ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める（available が true）
+    store_only: d.purchase_block === "store_only",
     vendor: p.brand ?? "",
     type: "",
     tags: p.tags ?? [],
@@ -408,9 +411,12 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
       requires_shipping: true,
       // 在庫が足りない行（Banto の判定。確認画面へは進めない）
       available: !l.short,
+      // 店頭のみの商品（0149）。購入手続きには含めず、合計にも入れない（お店で試着で申し込む）
+      store_only: l.storeOnly === true,
     };
   });
-  const subtotal = items.reduce((n, x) => n + x.line_price, 0);
+  // 合計は購入手続きに進める行だけ（店頭のみの行は item_count には数えるが金額に入れない）
+  const subtotal = items.reduce((n, x) => n + (x.store_only ? 0 : x.line_price), 0);
   const discount = money(discounts?.discount ?? 0)!;
   return {
     item_count: items.reduce((n, x) => n + x.quantity, 0),
@@ -421,7 +427,9 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
     total_price: Math.max(0, subtotal - discount),
     cart_level_discount_applications: (discounts?.applied ?? []).map((a) => ({ title: a.name, code: a.code, total_allocated_amount: money(a.amount_jpy), type: "discount_code", value_type: a.free_shipping ? "shipping" : "fixed_amount" })),
     discount_codes: [...(discounts?.applied ?? []).map((a) => ({ code: a.code, applicable: true })), ...(discounts?.rejected ?? []).map((r) => ({ code: r.code, applicable: false, banto_message: r.message }))],
-    requires_shipping: items.length > 0,
+    requires_shipping: items.some((x) => !x.store_only),
+    // 店頭のみの行があるか（0149。「この商品はお店で試着だけ」の知らせに）
+    has_store_only_items: items.some((x) => x.store_only),
     currency: { iso_code: "JPY" },
     note: null,
     attributes: {},

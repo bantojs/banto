@@ -963,6 +963,8 @@ async function cartLines(s: ShopScope): Promise<{ lines: CartLine[]; total: numb
 
 /** カート画面のクーポン欄（モジュールが OFF なら null。コードが無ければ DB に問い合わせない） */
 async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: number) {
+  // 店頭のみの行（0149）は購入手続きに進まないので、値引きの判定に入れない（subtotal はもともと入れていない）
+  lines = lines.filter((l) => !l.storeOnly);
   const source = couponSource(c, s.shop);
   if (!source) return null;
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
@@ -988,6 +990,7 @@ const CART_ERRORS: Record<string, MessageKey> = {
   quote_used: "confirm.expired",
   price: "confirm.changed",
   limit: "store.checkout_error_limit",
+  store_only: "store.checkout_error_store_only",
   coupon: "store.checkout_error_coupon",
   minimum: "store.checkout_error_minimum",
   coupon_invalid: "store.coupon_invalid",
@@ -1211,8 +1214,9 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
   const found = await s.sf.skusForCart(s.shop, [skuId]);
   const hit = found.get(skuId);
   if (!hit) return notFound(c, s);
-  // 会員限定で買えない商品（0098）は入れない（商品のページが「会員の方だけ購入できます」を出している）
-  if (!hit.purchasable) return c.redirect(productUrl(s.ctx.shopPath, hit.product.slug));
+  // カートに入れられない商品（会員限定 0098・発売前 0148・お店で試着が OFF のショップの店頭のみ 0149）は入れない
+  // （商品のページが理由を出している。src/products/sale.ts）
+  if (!hit.cartable) return c.redirect(productUrl(s.ctx.shopPath, hit.product.slug));
   const next = addItem(s.cart, skuId, qty);
   await writeCart(c, s, next);
   // 本文の「今すぐ買う」（src/pages/shop-blocks.ts）: カートに入れて、そのまま購入手続き（配送先 → 最終確認）へ
@@ -1345,8 +1349,8 @@ async function cartAddJs(c: Ctx): Promise<Response> {
   if (adds.length === 0) return c.json({ status: 422, message: "invalid", description: "id and quantity are required" }, 422);
   const found = await s.sf.skusForCart(s.shop, adds.map((a) => a.skuId));
   if (adds.some((a) => !found.has(a.skuId))) return c.json({ status: 404, message: "not found", description: "this variant is not available" }, 404);
-  const blocked = adds.map((a) => found.get(a.skuId)).find((h) => h?.purchasable === false);
-  if (blocked) return c.json({ status: 422, message: "Cart Error", description: t(blocked.purchase_block === "coming_soon" ? "store.coming_soon_buy" : "store.members_only_buy") }, 422);
+  const blocked = adds.map((a) => found.get(a.skuId)).find((h) => h && !h.cartable);
+  if (blocked) return c.json({ status: 422, message: "Cart Error", description: t(blocked.purchase_block === "coming_soon" ? "store.coming_soon_buy" : blocked.purchase_block === "store_only" ? "store.store_only_buy" : "store.members_only_buy") }, 422);
   const cart = adds.reduce((cart, a) => addItem(cart, a.skuId, a.qty), s.cart);
   // 在庫を超えるなら入れない（Shopify と同じく 422）
   const { lines } = await priceCart(s.sf, s.shop, cart);
@@ -1453,7 +1457,10 @@ async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): P
   const setup = await paymentOptions(c, s);
   const provider = f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe";
   if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
-  const { lines, total } = await cartLines(s);
+  const { lines: all, total } = await cartLines(s);
+  // 店頭のみの商品（0149）は購入手続きに含めない（カートには残る）。それしか無ければカートに戻して知らせる
+  const lines = all.filter((l) => !l.storeOnly);
+  if (lines.length === 0 && all.length > 0 && all.every((l) => l.storeOnly)) return c.redirect(`${cartUrl}?error=store_only`);
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
   const edited = addressValues(f);
   const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
@@ -1509,10 +1516,12 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
       const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
       return addressPage(c, s, { provider, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
     }
-    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : "stock"}`);
+    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : r.error === "store_only" ? "store_only" : "stock"}`);
     const conf = r.confirmation;
     track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
-    return confirmPage(c, s, { confirmation: conf, quote: r.token, lines: r.lines });
+    // 店頭のみの商品（0149）を外したときは、確認画面で知らせる（カートには残っている）
+    const excludedNote = r.excluded?.length ? tf("confirm.store_only_excluded", { items: r.excluded.map((l) => l.product.name).join("、") }) : undefined;
+    return confirmPage(c, s, { confirmation: conf, quote: r.token, lines: r.lines, ...(excludedNote ? { error: excludedNote } : {}) });
   }
 
   // 2. 確認済みの quote → 確定
@@ -1644,6 +1653,16 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   return c.html(renderReceipt({ shopName: s.shop.name, settings: receiptSettings(s.shop), shopSettings: s.shop.settings, order, addressee: name, issuedAt: new Date(), nameForm: { action: `${s.ctx.shopPath}/orders/receipt`, method: "post", hidden: { number: String(number), email } } }));
 });
 
+/**
+ * 購入手続きのあとでカートに残す行: 店頭のみの商品（0149。購入手続きに含めていないので、お店で試着で申し込めるよう残す）。
+ * お店で試着が OFF なら店頭のみの商品はカートに入らないので、DB に問い合わせずに空にする
+ */
+async function storeOnlyItems(s: ShopScope): Promise<Cart["items"]> {
+  if (s.cart.items.length === 0 || !moduleEnabled(s.shop.settings, TRYON_MODULE)) return [];
+  const keep = new Set((await priceCart(s.sf, s.shop, s.cart)).lines.filter((l) => l.storeOnly).map((l) => l.sku.id));
+  return s.cart.items.filter((i) => keep.has(i.sku_id));
+}
+
 /** 「確認中」の自動更新を続ける時間。これを過ぎたら「受付済み。メールでお知らせ」の表示に戻す（Webhook が遅れている・届いていない） */
 const DONE_REFRESH_WINDOW_SECONDS = 10 * 60;
 
@@ -1654,7 +1673,7 @@ const DONE_REFRESH_WINDOW_SECONDS = 10 * 60;
 storefront.get("/:shop/checkout/done", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  await writeCart(c, s, { items: [] });
+  await writeCart(c, s, { items: await storeOnlyItems(s) });
   const free = c.req.query("free") === "1";
   const secret = c.get("sessionSecret");
   const token = secret ? await openStatusToken(secret, c.req.query("s"), s.shop.id) : null;
