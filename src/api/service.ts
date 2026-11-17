@@ -29,7 +29,7 @@ import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
 import { FAVORITES_MIGRATION } from "../modules/registry";
 import { AUDIENCE_API_MIGRATION } from "../members/audience";
-import { FIELD_DEFS_MIGRATION, productFields } from "../products/fields";
+import { FIELD_DEFS_MIGRATION, RELEASED_AT_MIGRATION, productFields } from "../products/fields";
 import { customerFields } from "../customers/fields";
 import { CARE_MIGRATION } from "../care-labels/care";
 import { STORE_FIELDS_MIGRATION } from "../stores/fields";
@@ -106,6 +106,7 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_audience_hide")) throw new ApiError("invalid", "invalid_audience_hide: true or false", 400);
     if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
     if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
+    if (e.is("invalid_released_at")) throw new ApiError("invalid", "invalid_released_at: a date-time string with an offset (e.g. 2024-05-01T10:00:00+09:00; a date alone is 00:00 UTC) between 1990 and 10 years from now, or null to remove it", 400);
     // 項目の定義（0145）: invalid_fields:<番号>:<理由>
     if (/invalid_fields:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_fields:[a-z_0-9:]+).*$/s, "$1") + ": send an array of up to 150 { key: ^[a-z][a-z0-9_]{0,39}$ (unique), label (1-60 chars), type: text | textarea | number | url | select | image, options (select only, up to 50 of 1-60 chars), public, card (public only) }; customer fields cannot use image, and public / card cannot be true (see docs/ai-access.md §19)", 400);
     // お店の画面のダイアログ（0111）
@@ -327,6 +328,7 @@ export class ApiService {
   /** 会員の条件の欄（0144）は、当てていない DB では黙って捨てられるので先に断る */
   private async requireAudienceFields(values: Record<string, unknown>): Promise<void> {
     if (["audience", "audience_mode", "audience_hide"].some((k) => k in values)) await this.requireMigration(AUDIENCE_API_MIGRATION);
+    if ("released_at" in values) await this.requireMigration(RELEASED_AT_MIGRATION);
   }
   skuCreate = (productId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_create", { p_product_id: productId, p_values: values });
   skuUpdate = (skuId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_update", { p_sku_id: skuId, p_values: values });

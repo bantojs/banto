@@ -120,7 +120,7 @@ export interface CouponClaimInfo {
 }
 
 /** 一覧に出す商品の列（0058 の product_public_list が返すもの。説明・独自項目は含まない） */
-export type ProductListRow = Pick<ProductRow, "id" | "slug" | "name" | "tags" | "category_id" | "extra_category_ids" | "brand" | "created_at" | "updated_at">;
+export type ProductListRow = Pick<ProductRow, "id" | "slug" | "name" | "tags" | "category_id" | "extra_category_ids" | "brand" | "created_at" | "updated_at" | "released_at">;
 export type ProductListImage = Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height" | "variants" | "thumb_width">;
 
 export interface ProductSummary {
@@ -812,7 +812,7 @@ export const PRODUCT_PICK_MAX = 100;
 export const STORE_ARTICLES_MAX = 300;
 
 const summaryOf = (x: ListItem): ProductSummary => ({
-  product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },
+  product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at, released_at: x.released_at ?? null },
   image: x.image,
   minPrice: x.min_price_jpy,
   compareAt: x.compare_at_price_jpy,

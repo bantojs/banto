@@ -17,7 +17,8 @@ import { SLUG_RE, formFields, mediaBaseUrl, owner, param, params, type AdminCont
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { normalizeTags } from "../../products/tags";
-import { cleanAttributes, productFields, type ProductField } from "../../products/fields";
+import { RELEASED_AT_MIGRATION, cleanAttributes, productFields, type ProductField } from "../../products/fields";
+import { isoToZonedInput, zonedInputToIso } from "../../i18n/time";
 import { FIELD_IMAGE_SCRIPT, FieldImageInput, fieldImageUpload } from "./field-image";
 import { categoryOptions, loadCategories } from "./categories";
 import { TAX_CLASSES, isTaxClass, taxClassOf } from "../../commerce/tax";
@@ -56,6 +57,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     infer_failed: "axes.infer_failed",
     matrix_empty: "axes.matrix_empty",
     audience_display_only: "product.audience_display_only",
+    released_at_invalid: "product.released_at_invalid",
     image_order_update: "image.order_needs_update",
   };
   if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
@@ -405,11 +407,17 @@ interface CatalogContext {
   fields: ProductField[];
   /** 会員限定にするときに選べる会員の条件（同梱モジュール audiences が ON で 0098 が当たっていれば。表示用の条件は除く） */
   audiences?: { id: string; name: string }[];
+  /** 発売日の欄（0146 が当たっていれば） */
+  releasedAt?: boolean;
 }
 
 async function catalogContext(c: AdminContext, shop: ShopRow): Promise<CatalogContext> {
-  const [categories, audiences] = await Promise.all([loadCategories(owner(c).db, shop.id), productAudiences(c, shop)]);
-  return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}) };
+  const [categories, audiences, releasedAt] = await Promise.all([
+    loadCategories(owner(c).db, shop.id),
+    productAudiences(c, shop),
+    migrated({ db: owner(c).db, cache: c.get("adapters").cache }, RELEASED_AT_MIGRATION),
+  ]);
+  return { categories, fields: productFields(shop.settings), ...(audiences ? { audiences } : {}), ...(releasedAt ? { releasedAt } : {}) };
 }
 
 /** 会員限定の商品（0098）で選べる会員の条件。モジュールが OFF なら null（欄を出さない） */
@@ -505,6 +513,16 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
           ) : null}
           <label for="brand">{t("product.brand")}</label>
           <input id="brand" type="text" name="brand" value={p?.brand ?? ""} maxlength={100} />
+          {props.catalog.releasedAt ? (
+            <>
+              <input type="hidden" name="released_present" value="1" />
+              <label for="released_at">{t("product.released_at")}</label>
+              <input id="released_at" type="datetime-local" name="released_at" value={isoToZonedInput(p?.released_at ?? null)} min="1990-01-01T00:00" />
+              {/* 開いたときの値（分まで）。変えていなければ書かない（API で入れた秒を、ほかの欄の保存で消さない） */}
+              <input type="hidden" name="released_orig" value={isoToZonedInput(p?.released_at ?? null)} />
+              <p class="muted">{t("product.released_at_hint")}</p>
+            </>
+          ) : null}
         </div>
       <label for="tax_class">{t("tax.class")}</label>
       <select id="tax_class" name="tax_class">
@@ -595,6 +613,8 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     brand: brand || null,
     attributes: cleanAttributes(fields, attrInput, mediaBase),
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
+    // 発売日（0146）: 欄があったときだけ書く。空なら外す（新着順は作成日に戻る）
+    ...(f.released_present === "1" && (f.released_at ?? "") !== (f.released_orig ?? "") ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。
     // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
     ...(f.audience_present === "1"
@@ -622,6 +642,7 @@ products.post("/:shopId/products/new", requireOwner, async (c: AdminContext) => 
   } catch (e) {
     if (e instanceof DbError && e.status === 409) return c.redirect(`/admin/shops/${shopId}/products/new?flash=slug_taken`);
     if (e instanceof DbError && planLimitOf(e)) return c.redirect(`/admin/shops/${shopId}/products/new?flash=plan_limit`);
+    if (e instanceof DbError && /invalid_released_at/.test(e.message)) return c.redirect(`/admin/shops/${shopId}/products/new?flash=released_at_invalid`);
     if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/products/new?flash=generic`);
     throw e;
   }
@@ -882,6 +903,7 @@ products.post("/:shopId/products/:productId", requireOwner, async (c: AdminConte
   } catch (e) {
     if (e instanceof DbError && e.status === 409) return c.redirect(`${base}?flash=slug_taken`);
     if (e instanceof DbError && /audience_display_only/.test(e.message)) return c.redirect(`${base}?flash=audience_display_only`);
+    if (e instanceof DbError && /invalid_released_at/.test(e.message)) return c.redirect(`${base}?flash=released_at_invalid`);
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
   }

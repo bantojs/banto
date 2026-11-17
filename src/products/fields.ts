@@ -11,6 +11,8 @@ export const FIELD_TYPES: readonly FieldType[] = ["text", "textarea", "number", 
 export const MAX_FIELDS = 150;
 /** 項目の定義を AI 用 API で読み書きする（0145、docs/ai-access.md §19）。当たるまで口を出さない */
 export const FIELD_DEFS_MIGRATION = "0145_api_field_definitions";
+/** 商品の発売日（0146、products.released_at）。当たるまで欄を出さない・受け付けない */
+export const RELEASED_AT_MIGRATION = "0146_product_released_at";
 
 export interface ProductField {
   /** 値の保存キー（英小文字・数字・アンダースコア、1〜40 文字） */
