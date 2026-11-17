@@ -54,6 +54,7 @@
 - `src/modules/inquiries/mail.ts`: メールの文面（本文を載せない）。`admin.tsx`: 運営者の画面。
 - `src/routes/storefront/inquiries.ts`（同梱テーマ、`/inquiries/*`。お店の画面の使い方に関係なく残す）、`src/routes/api/inquiries.ts`（ヘッドレス、CORS `*`）。
 - テーマの口は `InquiryPage`（省略したテーマでは出ない）。本文はテキストとして出す（`white-space: pre-wrap`、HTML として描画しない）。
+- Liquid のテーマは `templates/inquiry`（メンテナの決定 2026-11-17、docs/themes.md）。渡すのは `InquiryPage` と同じ値で、本文は Banto がエスケープした `body_html`。確かめた値・リンクの券・会員の受付番号は `{% form %}` に Banto が隠しの値で入れる（`renderInquiry`、`src/routes/storefront/liquid.ts`）。
 - 管理画面のタブ「お問い合わせ」は `support` の項目とモジュールの ON で出す（モジュールの一覧は `settings` の項目が要るため、別に出す）。
 
 ## 6. AI 用の操作・定型文・バックアップ（2026-10-27 追加）

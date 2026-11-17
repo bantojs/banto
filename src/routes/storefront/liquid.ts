@@ -27,7 +27,7 @@ import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSort, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
 import { listUrl, productUrl, shopHome, shopOrigin } from "../../storefront/urls";
-import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
+import type { AccountPageProps, Theme, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
 import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
 import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
@@ -155,7 +155,7 @@ interface PageParts {
    * 住所・連絡先が載る画面（レジの配送先・最終確認、会員ページ）: 外のスクリプトを止め（CSP）、覚えさせず、切り離したプレビューではテーマで描かない。
    * confirm は {% banto_confirmation %} を描いたときだけ
    */
-  checkout?: "address" | "confirm" | "account" | "login" | "tryon" | "order";
+  checkout?: "address" | "confirm" | "account" | "login" | "tryon" | "order" | "inquiry";
   /** 最終確認画面: Banto が描いた表示（特商法の項目と確定のボタン）。{% banto_confirmation %} の印の場所に、描き終えてから入れる */
   confirmation?: string;
   /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
@@ -791,6 +791,76 @@ export async function renderOrderLookup(c: Ctx, s: LiquidScope, choice: LiquidCh
     noindex: true,
     categories: await s.sf.listCategories(s.shop),
     checkout: "order",
+    ...(p.status ? { status: p.status } : {}),
+  });
+}
+
+/** お問い合わせ（templates/inquiry）の材料。InquiryPage と同じ（src/themes/types.ts） */
+export type InquiryInput = Omit<Parameters<NonNullable<Theme["InquiryPage"]>>[0], "ctx"> & { status?: 200 | 400 | 404 | 409 | 429 };
+
+/**
+ * お問い合わせ（同梱モジュール inquiries、templates/inquiry、メンテナの決定 2026-11-17）。段は inquiry.step（InquiryPage と同じ）。
+ * フォームは {% form 'inquiry_details' %}（category・body・name・email・order_number）→ {% form 'inquiry_submit' %}（確かめた値はすべて Banto が隠しの値で入れる）、
+ * 直すのは {% form 'inquiry_edit' %}、メールのリンクを開くのは {% form 'inquiry_open' %}（券を隠しの値で）、返事は {% form 'inquiry_reply' %}（body と files。
+ * いつも multipart、会員の受付番号は隠しの値で）、リンクの送り直しは {% form 'inquiry_resend' %}（number・email）。
+ * 本文はテキスト（body）と、エスケープして改行を <br> にした HTML（body_html、そのまま出してよい）。連絡先とやり取りが載るので、レジと同じく外のスクリプトを止める（CSP）。テーマに無ければ既定のテーマ
+ */
+export async function renderInquiry(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: InquiryInput): Promise<Response | null> {
+  const shopPath = s.ctx.shopPath;
+  const v = p.values;
+  const o = p.order ?? null;
+  const th = p.inquiry ?? null;
+  const textHtml = (text: string) => new SafeHtml(escapeHtml(text).replace(/\r?\n/g, "<br>"));
+  const inquiry = {
+    step: p.step,
+    error: p.error ?? null,
+    info: p.info ?? null,
+    categories: p.categories,
+    values: { category: v.category ?? "", body: v.body ?? "", body_html: textHtml(v.body ?? ""), name: v.name ?? "", email: v.email ?? "", order_number: v.order_number ?? "" },
+    ask_email: Boolean(p.askEmail),
+    // 結ぶ注文の要約（住所・連絡先は入らない）
+    order: o ? { number: o.number, name: `#${o.number}`, status: o.status, status_label: t(`order.status.${o.status}` as MessageKey), created_at: o.created_at, total_price: money(o.total_jpy), items: o.items.map((i) => ({ title: i.name ?? "", quantity: i.qty })) } : null,
+    orders: p.orders ?? null,
+    order_unmatched: Boolean(p.orderUnmatched),
+    sent: p.sent ? { number: p.sent.number, verified: p.sent.verified, mail_sent: p.sent.mailSent } : null,
+    thread: th
+      ? {
+          number: th.number,
+          status: th.status,
+          status_label: th.statusLabel,
+          category_label: th.categoryLabel,
+          created_at: th.created_at,
+          order_number: th.order?.number ?? null,
+          claimed_order_number: th.claimed_order_number,
+          messages: th.messages.map((m) => ({ author: m.author, body: m.body, body_html: textHtml(m.body), created_at: m.created_at, attachments: m.attachments.map((a) => ({ url: a.href, filename: a.filename, content_type: a.content_type, size: a.size })) })),
+          can_reply: th.canReply,
+          can_attach: th.canAttach,
+          attach_accept: th.attachAccept,
+        }
+      : null,
+    list: p.list ? p.list.map((r) => ({ number: r.number, status: r.status, status_label: r.statusLabel, category_label: r.categoryLabel, created_at: r.created_at, last_message_at: r.last_message_at, order_number: r.order_number, url: `${shopPath}/inquiries/thread?n=${r.number}` })) : null,
+    new_url: `${shopPath}/inquiries/new`,
+    list_url: `${shopPath}/inquiries`,
+    resend_url: `${shopPath}/inquiries/resend`,
+  };
+  const hidden = p.hidden ?? {};
+  // 書く欄のフォームには注文の券（s・o）だけ。確かめた値は送る・直すのフォームに
+  const orderTokens = Object.fromEntries(Object.entries(hidden).filter(([k]) => k === "s" || k === "o"));
+  const forms = {
+    inquiry_details: orderTokens,
+    inquiry_submit: hidden,
+    inquiry_edit: hidden,
+    ...(p.token ? { inquiry_open: { t: p.token } } : {}),
+    ...(th ? { inquiry_reply: th.replyHidden } : {}),
+  };
+  return render(c, s, choice, {
+    template: "inquiry",
+    values: { inquiry, __banto_forms: forms },
+    title: t("inq.title"),
+    path: "/inquiries",
+    noindex: true,
+    categories: await s.sf.listCategories(s.shop),
+    checkout: "inquiry",
     ...(p.status ? { status: p.status } : {}),
   });
 }

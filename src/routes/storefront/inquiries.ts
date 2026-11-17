@@ -55,6 +55,7 @@ import { shopHome } from "../../storefront/urls";
 import { privilegedFor } from "../payment-deps";
 import { afterResponse, clientIpFor, csrfGuard, formFields, getScopedCookie, publicBaseUrl, setScopedCookie, yen, type Ctx } from "../common";
 import { customerSession, type MemberSession } from "./members";
+import { liquidThemeFor, renderInquiry } from "./liquid";
 import type { InquiryView } from "../../db/privileged";
 
 interface Scope {
@@ -102,8 +103,14 @@ function privatePage(c: Ctx): void {
 }
 
 type PageProps = Omit<Parameters<Ready["page"]>[0], "ctx" | "categories">;
-function render(c: Ctx, s: Ready, props: PageProps, status: 200 | 400 | 404 | 409 | 429 = 200) {
+/** Liquid のテーマに templates/inquiry があればそれ（メンテナの決定 2026-11-17）、無ければ・描けなければ既定のテーマ */
+async function render(c: Ctx, s: Ready, props: PageProps, status: 200 | 400 | 404 | 409 | 429 = 200): Promise<Response> {
   privatePage(c);
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = await renderInquiry(c, s, lt, { categories: CATEGORIES(), ...props, status });
+    if (res) return res;
+  }
   return c.html(s.page({ ctx: s.ctx, categories: CATEGORIES(), ...props }), status);
 }
 

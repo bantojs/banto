@@ -492,6 +492,13 @@ const FORM_ACTIONS: Readonly<Record<string, string>> = {
   order_lookup: "/orders/lookup",
   order_receipt: "/orders/receipt",
   order_inquiry: "/inquiries/new",
+  // お問い合わせ（templates/inquiry、同梱モジュール inquiries）: 書く → 確かめる → 送る、直す、リンクを開く、返事、リンクの送り直し
+  inquiry_details: "/inquiries/confirm",
+  inquiry_submit: "/inquiries/submit",
+  inquiry_edit: "/inquiries/new",
+  inquiry_open: "/inquiries/open",
+  inquiry_reply: "/inquiries/reply",
+  inquiry_resend: "/inquiries/resend",
 };
 
 /**
@@ -682,8 +689,10 @@ export function registerShopifyTags(liquid: Liquid): void {
         const provider = this.formType === "checkout_address" && isObject(e.globals["checkout"]) ? String((e.globals["checkout"] as Record<string, unknown>)["provider"] ?? "") : "";
         const action = /^(stripe|komoju|amazon_pay)$/.test(provider) ? `${e.shopPath}/checkout/${provider}` : FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
         if (!action) e.errors.push(`form '${this.formType}' is not supported yet`);
+        // お問い合わせの返事はファイルを添付できるので、いつも multipart（Banto が決める。テーマの enctype は使わない）
+        const multipart = this.formType === "inquiry_reply";
         const extra = Object.entries(h)
-          .filter(([k, v]) => /^[a-z][a-z0-9_-]*$/.test(k) && v !== undefined && k !== "return_to")
+          .filter(([k, v]) => /^[a-z][a-z0-9_-]*$/.test(k) && v !== undefined && k !== "return_to" && !(multipart && k === "enctype"))
           .map(([k, v]) => attr(k.replace(/_/g, "-"), v))
           .join("");
         // Banto が決める隠しの値（試着の確かめた値・ログインのリンクの券など）。テーマの変数からは書き換えられない（globals の __banto_forms）
@@ -694,7 +703,7 @@ export function registerShopifyTags(liquid: Liquid): void {
               .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(String(v))}">`)
               .join("")
           : "";
-        emitter.write(`<form method="post" action="${escapeHtml(action ?? "#")}" accept-charset="UTF-8"${extra}><input type="hidden" name="form_type" value="${escapeHtml(this.formType)}">${hidden}`);
+        emitter.write(`<form method="post" action="${escapeHtml(action ?? "#")}" accept-charset="UTF-8"${multipart ? ' enctype="multipart/form-data"' : ""}${extra}><input type="hidden" name="form_type" value="${escapeHtml(this.formType)}">${hidden}`);
         ctx.push({ form: { errors: null, posted_successfully: false } });
         yield this.liquid.renderer.renderTemplates(this.templates, ctx, emitter);
         ctx.pop();
