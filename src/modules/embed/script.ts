@@ -137,9 +137,9 @@ var want=attr(host,"sku"),cur=null;for(var i=0;i<skus.length;i++){if(skus[i].id=
 if(!cur){for(var j=0;j<skus.length;j++){if(skus[j].in_stock){cur=skus[j];break}}}if(!cur)cur=skus[0]||null;
 var sel=null;if(skus.length>1){sel=el("select");sel.setAttribute("aria-label",I.choose);skus.forEach(function(k){var o=el("option",null,skuLabel(k)+(k.in_stock?"":" ("+I.soldOut+")"));o.value=k.id;if(cur&&k.id===cur.id)o.selected=true;sel.appendChild(o)});card.appendChild(sel)}
 var btn=el("button",null,I.addToCart);btn.type="button";card.appendChild(btn);var msg=el("p","msg");msg.setAttribute("aria-live","polite");card.appendChild(msg);
-function show(){price.textContent="";if(!cur){btn.disabled=true;return}price.appendChild(document.createTextNode(yen(cur.price_jpy)));if(cur.compare_at_price_jpy&&cur.compare_at_price_jpy>cur.price_jpy)price.appendChild(el("span","was",yen(cur.compare_at_price_jpy)));price.appendChild(el("span","muted"," "+I.taxIncluded));btn.disabled=!cur.in_stock;btn.textContent=cur.in_stock?I.addToCart:I.soldOut}
+function show(){price.textContent="";if(!cur){btn.disabled=true;return}price.appendChild(document.createTextNode(yen(cur.price_jpy)));if(cur.compare_at_price_jpy&&cur.compare_at_price_jpy>cur.price_jpy)price.appendChild(el("span","was",yen(cur.compare_at_price_jpy)));price.appendChild(el("span","muted"," "+I.taxIncluded));var ok=cur.in_stock&&p.purchasable!==false;btn.disabled=!ok;btn.textContent=p.purchasable===false?(p.coming_soon?I.comingSoon:I.notBuyable):cur.in_stock?I.addToCart:I.soldOut}
 if(sel)sel.addEventListener("change",function(){for(var i=0;i<skus.length;i++)if(skus[i].id===sel.value)cur=skus[i];msg.textContent="";show()});
-btn.addEventListener("click",function(){if(!cur)return;btn.disabled=true;msg.textContent="";var added=cur.id;cartOp(shop,{op:"add",sku_id:cur.id,qty:1}).then(function(v){trackAdd(shop,v,added,1);addedMsg(msg,shop,v)},function(e){msg.textContent=errText(e)}).then(function(){btn.disabled=!cur.in_stock})});
+btn.addEventListener("click",function(){if(!cur)return;btn.disabled=true;msg.textContent="";var added=cur.id;cartOp(shop,{op:"add",sku_id:cur.id,qty:1}).then(function(v){trackAdd(shop,v,added,1);addedMsg(msg,shop,v)},function(e){msg.textContent=errText(e)}).then(function(){btn.disabled=!(cur.in_stock&&p.purchasable!==false)})});
 show();onSeen(host,function(){var d={product_id:p.id};if(p.tags&&p.tags.length)d.tags=p.tags;track("product_view",d,shop)})})}});
 
 define("banto-products",{connectedCallback:function(){if(this._done)return;this._done=1;var host=this,shop=attr(this,"shop");var root=shadow(this);var grid=el("div","grid");root.appendChild(grid);
@@ -207,6 +207,8 @@ const KEYS = {
   checkoutNote: "embed.js.checkout_note",
   soldOut: "embed.js.sold_out",
   unavailable: "embed.js.unavailable",
+  comingSoon: "embed.js.coming_soon",
+  notBuyable: "embed.js.not_buyable",
   error: "embed.js.error",
   loading: "embed.js.loading",
   choose: "embed.js.choose",

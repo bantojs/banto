@@ -3410,6 +3410,8 @@ export const en: Record<MessageKey, string> = {
   "embed.js.checkout_note": "Shipping details, final confirmation and payment are on the next page.",
   "embed.js.sold_out": "Sold out",
   "embed.js.unavailable": "This product can't be shown.",
+  "embed.js.coming_soon": "Coming soon",
+  "embed.js.not_buyable": "Not available here",
   "embed.js.error": "Something went wrong. Please try again later.",
   "embed.js.loading": "Loading…",
   "embed.js.choose": "Choose a variant",

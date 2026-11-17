@@ -56,6 +56,13 @@ describe.skipIf(!dbAvailable)("発売日と公開日（0148）", () => {
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select publish_scheduled_products()")))).toMatch(/permission denied/);
   });
 
+  it("復元: 非公開の商品の公開日を URL の名前で戻す（公開中の商品・形の違う値は飛ばす）", async () => {
+    const pool = getPool();
+    await pool.query("insert into products (shop_id, slug, name, published) values ($1, 'r-sched', 'r', false), ($1, 'r-pub', 'r', true)", [f.shopId]);
+    const r = await asService(async (c) => (await c.query<{ r: J }>("select restore_product_publish_at($1, $2) as r", [f.shopId, JSON.stringify([{ slug: "r-sched", publish_at: "2031-01-01T00:00:00Z" }, { slug: "r-pub", publish_at: "2031-01-01T00:00:00Z" }, { slug: "r-sched", publish_at: "tomorrow" }])])).rows[0]!.r);
+    expect(r).toEqual({ products_publish_at: 1 });
+  });
+
   it("AI 用 API の publish_at: 受けて返す、形の違いは断る", async () => {
     const at = "2031-01-01T00:00:00+09:00";
     const p = await asService(async (c) => (await c.query<{ r: J }>("select api_product_create($1, $2) as r", [hash(tok), JSON.stringify({ slug: "sched", name: "sched", publish_at: at })])).rows[0]!.r);

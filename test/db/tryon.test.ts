@@ -144,4 +144,11 @@ describe.skipIf(!dbAvailable)("お店で試着（0025_store_tryon）", () => {
     const events = (await pool.query<{ events: string[] }>("select events from hook_endpoints where shop_id = $1", [other.shopId])).rows[0]!.events;
     expect(events.sort()).toEqual(["order.paid", "order.shipped", "tryon.requested", "tryon.updated"]);
   });
+
+  it("発売前の商品（0148）は申し込めない", async () => {
+    const pool = getPool();
+    await pool.query("update products set released_at = now() + interval '1 day' where id = $1", [f.productId]);
+    expect(await expectDbError(() => request([{ sku_id: f.skuId, qty: 1 }]))).toMatch(/not_available|invalid_items|sku/);
+    await pool.query("update products set released_at = null where id = $1", [f.productId]);
+  });
 });

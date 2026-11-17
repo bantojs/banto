@@ -585,6 +585,7 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
           <label>
             <input type="hidden" name="publish_present" value="1" />
             {t("product.publish_at")} <input type="datetime-local" name="publish_at" value={isoToZonedInput(p?.publish_at ?? null)} aria-describedby="publish-at-hint" />
+            <input type="hidden" name="publish_orig" value={isoToZonedInput(p?.publish_at ?? null)} />
             <span class="muted" id="publish-at-hint">{t("product.publish_at_hint")}</span>
           </label>
         ) : null}
@@ -627,7 +628,7 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     // 発売日（0146）: 欄があったときだけ書く。空なら外す（新着順は作成日に戻る）
     ...(f.released_present === "1" && (f.released_at ?? "") !== (f.released_orig ?? "") ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
     // 公開日（0148）: 非公開の商品の予約公開。公開に印を付けたら DB のトリガーが外す
-    ...(f.publish_present === "1" ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
+    ...(f.publish_present === "1" && (f.publish_at ?? "") !== (f.publish_orig ?? "") ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。
     // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
     ...(f.audience_present === "1"

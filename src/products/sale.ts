@@ -15,8 +15,12 @@ export function comingSoon(p: { released_at?: string | null }, now: number = Dat
 }
 
 /** 買えない理由（買えれば null）。audienceOk は会員の条件の判定（会員は DB の答え、ゲストは条件の無い商品だけ true） */
-export function purchaseBlockOf(p: { released_at?: string | null }, audienceOk: boolean, now: number = Date.now()): PurchaseBlock | null {
-  if (comingSoon(p, now)) return "coming_soon";
+export function purchaseBlockOf(
+  p: { released_at?: string | null },
+  audienceOk: boolean,
+  opts: { /** 発売日で買えなくするか（0148 が当たっていれば。0146 だけの DB では発売日は並びだけ） */ saleDates?: boolean; now?: number } = {},
+): PurchaseBlock | null {
+  if ((opts.saleDates ?? true) && comingSoon(p, opts.now ?? Date.now())) return "coming_soon";
   if (!audienceOk) return "members_only";
   return null;
 }

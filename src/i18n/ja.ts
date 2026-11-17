@@ -3417,6 +3417,8 @@ export const ja = {
   "embed.js.checkout_note": "配送先の入力・最終確認・お支払いは次の画面で行います。",
   "embed.js.sold_out": "在庫切れ",
   "embed.js.unavailable": "この商品は表示できません。",
+  "embed.js.coming_soon": "発売前です",
+  "embed.js.not_buyable": "ここでは購入できません",
   "embed.js.error": "うまくいきませんでした。時間をおいてもう一度お試しください。",
   "embed.js.loading": "読み込み中…",
   "embed.js.choose": "種類を選ぶ",
