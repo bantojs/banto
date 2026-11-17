@@ -1,6 +1,7 @@
 -- 0147_tryon_contact_options: お店で試着のお知らせの品目に、SKU の選択肢（カラー・サイズ）と品番を載せる
 --   - tryon_contact（0069）の items に code（品番）と options（SKU の options、鍵は 0094 の key）、shop に option_names（key → 表示名）を足す。
---     メールは「品名 / カラー: ネイビー・サイズ: M（品番）× 数」で出す（src/modules/store-tryon/mail.ts）。ほかは 0069 と同じ
+--     メールは「品名 / カラー: ネイビー・サイズ: M（品番）× 数」で出す（src/modules/store-tryon/mail.ts）。
+--     options は jsonb なので鍵の順は保たれない（短い順）。並べる順のために商品の軸（option_axes、0065）も items に添える。ほかは 0069 と同じ
 create or replace function tryon_contact(p_request_id uuid, p_shop_id uuid)
 returns jsonb
 language plpgsql
@@ -25,7 +26,7 @@ begin
     'shop', jsonb_build_object('name', v_s.name, 'slug', v_s.slug, 'domain', v_s.domain, 'contact_email', v_s.settings->>'contact_email', 'settings', v_s.settings->'store_tryon',
                                'storefront', jsonb_build_object('mode', v_s.settings->'storefront'->>'mode', 'site_url', v_s.settings->'storefront'->>'site_url'),
                                'option_names', v_s.option_names),
-    'items', (select coalesce(jsonb_agg(jsonb_build_object('name', p.name, 'sku', coalesce(k.name, k.code), 'code', k.code, 'options', k.options,
+    'items', (select coalesce(jsonb_agg(jsonb_build_object('name', p.name, 'sku', coalesce(k.name, k.code), 'code', k.code, 'options', k.options, 'axes', p.option_axes,
                                                            'qty', t.qty, 'unit_price_jpy', t.unit_price_jpy) order by t.id), '[]'::jsonb)
                 from tryon_items t join skus k on k.id = t.sku_id join products p on p.id = k.product_id where t.request_id = v_r.id));
 end;

@@ -28,6 +28,13 @@ describe.skipIf(!dbAvailable)("商品の発売日（0146）", () => {
     const id = p["id"] as string;
     expect(new Date((await update(id, { released_at: "2020-01-01" }))["released_at"] as string).toISOString()).toBe("2020-01-01T00:00:00.000Z");
     expect((await update(id, { name: "old2" }))["released_at"]).not.toBeNull();
+    // 時差の無い日時は、DB の時間帯に関係なく UTC として読む
+    await getPool().query("set timezone to 'Asia/Tokyo'");
+    try {
+      expect(new Date((await update(id, { released_at: "2020-01-01T10:00" }))["released_at"] as string).toISOString()).toBe("2020-01-01T10:00:00.000Z");
+    } finally {
+      await getPool().query("reset timezone");
+    }
     expect((await update(id, { released_at: null }))["released_at"]).toBeNull();
     for (const bad of ["yesterday", "epoch", "2020-13-01", 20200101, "1980-01-01T00:00:00Z", "2999-01-01T00:00:00Z"]) {
       expect(await expectDbError(() => update(id, { released_at: bad }))).toMatch(/invalid_released_at/);
@@ -57,6 +64,11 @@ describe.skipIf(!dbAvailable)("商品の発売日（0146）", () => {
     expect(rows[0]!.released_at).not.toBeNull();
     const d = await asAnon(async (c) => (await c.query<{ r: J }>("select product_public_get($1, 'c') as r", [f.shopId])).rows[0]!.r);
     expect(d["released_at"]).not.toBeNull();
+  });
+
+  it("範囲は書き込みの経路を問わず DB が確かめる（管理画面の JWT で直接書いても断る）", async () => {
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update products set released_at = '1985-04-01' where shop_id = $1 and slug = 'a'", [f.shopId])))).toMatch(/invalid_released_at/);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("update products set released_at = now() + interval '11 years' where shop_id = $1 and slug = 'a'", [f.shopId])))).toMatch(/invalid_released_at/);
   });
 
   it("復元: URL の名前で発売日を戻す。形の違う値は飛ばす。service_role だけ", async () => {

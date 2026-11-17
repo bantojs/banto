@@ -155,6 +155,7 @@ export const ja = {
   "product.released_at_hint_sale": "任意。この日から買えます（それまではお店に「発売予定」と出て、カートに入れられません）。新着順と、テーマの「新しい商品」の印もこの日で決まります（空なら商品を作った日）。",
   "product.publish_at": "公開日",
   "product.publish_at_hint": "非公開の商品を、この日時に公開します（数分の遅れがあります）。",
+  "product.released_at_invalid": "発売日は 1990 年から 10 年後までの日時で入れてください。",
   "product.released_at_hint": "任意。新着順と、テーマの「新しい商品」の印はこの日で決まります（空なら商品を作った日）。予約公開ではないので、未来の日でも公開中なら見えます。",
   "product.fields": "カスタム項目",
   "product.section_basic": "基本情報",

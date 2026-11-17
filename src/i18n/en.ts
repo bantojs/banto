@@ -156,6 +156,7 @@ export const en: Record<MessageKey, string> = {
   "product.released_at_hint_sale": "Optional. The product can be bought from this date (until then the shop shows \"coming soon\" and it cannot be added to the cart). Sorting by newest and the theme's \"new\" badge also use this date (empty: the date the product was created).",
   "product.publish_at": "Publish at",
   "product.publish_at_hint": "Publishes an unpublished product at this date and time (a few minutes of delay).",
+  "product.released_at_invalid": "Enter a release date between 1990 and ten years from now.",
   "product.released_at_hint": "Optional. Sorting by newest and the theme's \"new\" badge use this date (empty: the date the product was created). It does not schedule publishing: a future date is still visible while published.",
   "product.fields": "Custom fields",
   "product.section_basic": "Basics",
