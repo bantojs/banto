@@ -6,7 +6,19 @@
 --     管理画面の shops.settings の鍵ごとの項目（banto_shop_settings_perm、0129）と同じ割り当て
 --   - 定義を消しても値（attributes）は残る（管理画面と同じ）
 
--- 定義の配列を検査して、管理画面と同じ形に組み直す。p_kind は product か customer
+-- 前後の空白を JS の String.prototype.trim と同じ集合で落とす（btrim は半角スペースしか落とさない。全角スペース・タブ・改行・NBSP・BOM も落とす。
+-- 管理画面の読み手 fieldDefinitions と同じ値にしないと、会員の select の値（banto_customer_attributes の一致）が管理画面から入れられなくなる）
+create or replace function banto_js_trim(p text)
+returns text
+language sql
+immutable
+as $$
+  select regexp_replace(p, '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$', '', 'g');
+$$;
+revoke execute on function banto_js_trim(text) from public, anon, authenticated;
+
+-- 定義の配列を検査して、管理画面と同じ形に組み直す。p_kind は product か customer。
+-- 文字数はコードポイントで数える（読み手も Array.from で数える）
 --   行の鍵: key（必須、^[a-z][a-z0-9_]{0,39}$、重ならない）・label（1〜60 文字、無ければ key）・type・options（select だけ、1〜60 文字を 50 個まで）・
 --   public・card（商品だけ。card は public のときだけ）。会員の項目は image を使えず、public は false（お客様の画面に出さない）
 create or replace function banto_field_defs_norm(p jsonb, p_kind text)
@@ -39,7 +51,7 @@ begin
     end if;
     if v_row ? 'label' and jsonb_typeof(v_row->'label') <> 'null' then
       if jsonb_typeof(v_row->'label') <> 'string' then raise exception 'invalid_fields:%:label', v_i using errcode = '22023'; end if;
-      v_label := btrim(v_row->>'label');
+      v_label := banto_js_trim(v_row->>'label');
       if v_label = '' or char_length(v_label) > 60 then raise exception 'invalid_fields:%:label', v_i using errcode = '22023'; end if;
     else
       v_label := v_key;
@@ -52,10 +64,10 @@ begin
       end if;
       v_opts := '[]'::jsonb;
       for v_opt in select value from jsonb_array_elements(v_row->'options') loop
-        if jsonb_typeof(v_opt) <> 'string' or btrim(v_opt #>> '{}') = '' or char_length(btrim(v_opt #>> '{}')) > 60 then
+        if jsonb_typeof(v_opt) <> 'string' or banto_js_trim(v_opt #>> '{}') = '' or char_length(banto_js_trim(v_opt #>> '{}')) > 60 then
           raise exception 'invalid_fields:%:options', v_i using errcode = '22023';
         end if;
-        v_opts := v_opts || to_jsonb(btrim(v_opt #>> '{}'));
+        v_opts := v_opts || to_jsonb(banto_js_trim(v_opt #>> '{}'));
       end loop;
     end if;
     if v_row ? 'public' and jsonb_typeof(v_row->'public') not in ('boolean', 'null') then raise exception 'invalid_fields:%:public', v_i using errcode = '22023'; end if;

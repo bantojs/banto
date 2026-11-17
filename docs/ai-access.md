@@ -402,9 +402,9 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   | `public` | 真偽（商品だけ、既定 true） | お店の画面と公開 API に出すか |
   | `card` | 真偽（商品の公開の項目だけ） | 一覧のカードにも出すか |
 
-- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。
-- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白は取ります。
-- 会員の項目はお客様の画面に出さないので、`public: true`・`card: true` は断ります。
+- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。読んでから書くまでのあいだに管理画面で定義やほかの設定を保存すると、後から書いた方が残ります（同じ時刻に両方から書かないでください）。
+- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白（全角スペース・タブ・改行を含む）は取り、文字数は 1 文字ずつ（絵文字も 1 文字）数えます。
+- 会員の項目はお客様の画面に出さないので、種類の `image`・`public: true`・`card: true` は断ります。
 - GET は、保存されている定義を管理画面と同じ読み方で返します（管理画面で入れた古い形の行も同じに見えます）。
 - データベースの更新 `0145_api_field_definitions` が要ります。当たるまでは 409（`migration_required`）です。
 

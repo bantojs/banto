@@ -245,8 +245,8 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "customer_fields_set",
-    description: "【書き込み】会員の項目の定義を丸ごと置き換える（送らなかった項目は消える。値は残る）。image・public・card は使えない（会員の項目はお客様の画面に出さない）。スコープ customers:write。",
-    inputSchema: obj({ fields: s("array", "項目の定義（150 個まで）", { items: { type: "object", properties: { key: { type: "string", description: "保存キー（^[a-z][a-z0-9_]{0,39}$、重ならない）" }, label: { type: "string", description: "表示名（60 文字まで、無ければ key）" }, type: { type: "string", enum: ["text", "textarea", "number", "url", "select", "image"] }, options: { type: "array", items: { type: "string" }, description: "select の選択肢（50 個まで）" }, public: { type: "boolean", description: "お店の画面と公開 API に出すか（商品だけ、既定 true）" }, card: { type: "boolean", description: "一覧のカードにも出すか（商品の公開の項目だけ）" } }, required: ["key", "type"] } }) }, ["fields"]),
+    description: "【書き込み】会員の項目の定義を丸ごと置き換える（送らなかった項目は消える。値は残る）。種類に image は使えず、public / card は送らない（会員の項目はお客様の画面に出さない）。スコープ customers:write。",
+    inputSchema: obj({ fields: s("array", "項目の定義（150 個まで）", { items: { type: "object", properties: { key: { type: "string", description: "保存キー（^[a-z][a-z0-9_]{0,39}$、重ならない）" }, label: { type: "string", description: "表示名（60 文字まで、無ければ key）" }, type: { type: "string", enum: ["text", "textarea", "number", "url", "select"] }, options: { type: "array", items: { type: "string" }, description: "select の選択肢（50 個まで）" } }, required: ["key", "type"] } }) }, ["fields"]),
     readOnly: false,
     run: (api, a) => api.fieldDefsSet("customer", { fields: a["fields"] }),
   },
