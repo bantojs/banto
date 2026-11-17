@@ -17,6 +17,8 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
+import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
+import { RECEIPT_STATUSES } from "../../modules/receipt/render";
 import { isoToZonedDate } from "../../i18n/time";
 import { promoteLeadImage } from "../../pages/lead-image";
 import { categoryTree, type CategoryNode } from "../../products/categories";
@@ -148,12 +150,12 @@ interface PageParts {
   categories: CategoryRow[];
   currentCategory?: string;
   paginate?: Paginate | null;
-  status?: 200 | 400 | 404 | 409;
+  status?: 200 | 400 | 404 | 409 | 429;
   /**
    * 住所・連絡先が載る画面（レジの配送先・最終確認、会員ページ）: 外のスクリプトを止め（CSP）、覚えさせず、切り離したプレビューではテーマで描かない。
    * confirm は {% banto_confirmation %} を描いたときだけ
    */
-  checkout?: "address" | "confirm" | "account" | "login" | "tryon";
+  checkout?: "address" | "confirm" | "account" | "login" | "tryon" | "order";
   /** 最終確認画面: Banto が描いた表示（特商法の項目と確定のボタン）。{% banto_confirmation %} の印の場所に、描き終えてから入れる */
   confirmation?: string;
   /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
@@ -722,6 +724,73 @@ export async function renderTryon(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     noindex: true,
     categories: await s.sf.listCategories(s.shop),
     checkout: "tryon",
+    ...(p.status ? { status: p.status } : {}),
+  });
+}
+
+/** 注文照会（templates/order_lookup）の材料。OrderLookupPage と同じ（src/themes/types.ts） */
+export interface OrderLookupInput {
+  result?: Record<string, unknown> | null;
+  error?: string;
+  values: { number?: string; email?: string };
+  receipt?: boolean;
+  inquiry?: { token: string } | null;
+  member?: { receiptUrl: string | null; inquiryUrl: string | null };
+  status?: 200 | 400 | 404 | 429;
+}
+
+/**
+ * 注文照会（templates/order_lookup、メンテナの決定 2026-11-17）。注文は番号とメールアドレスで開く（{% form 'order_lookup' %}、number・email）か、
+ * ログイン中の会員の自分の注文（注文メールのリンクから）。領収書は {% form 'order_receipt' %}（name だけをテーマが置く。番号とアドレスは Banto が隠しの値で入れる）、
+ * この注文について問い合わせるのは {% form 'order_inquiry' %}（注文の券は Banto が隠しの値で入れる）。会員の注文は receipt_url・inquiry_url のリンク。
+ * 注文の中身が載るので、レジと同じく外のスクリプトを止める（CSP）。テーマに無ければ既定のテーマ
+ */
+export async function renderOrderLookup(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: OrderLookupInput): Promise<Response | null> {
+  const r = p.result ?? null;
+  const items = r && Array.isArray(r["items"]) ? (r["items"] as { name?: string; sku?: string; qty?: number; unit_price_jpy?: number }[]) : [];
+  const discounts = r && Array.isArray(r["discounts"]) ? (r["discounts"] as { code?: string; name?: string; amount_jpy?: number }[]) : [];
+  const tr = r ? trackingOf(r["tracking"]) : null;
+  const status = r ? String(r["status"] ?? "") : "";
+  const order = r
+    ? {
+        number: Number(r["number"]),
+        name: `#${String(r["number"])}`,
+        status,
+        status_label: t(`order.status.${status}` as MessageKey),
+        created_at: typeof r["created_at"] === "string" ? r["created_at"] : null,
+        shipped_at: typeof r["shipped_at"] === "string" ? r["shipped_at"] : null,
+        tracking: tr ? { carrier: tr.carrier, carrier_label: carrierLabel(tr.carrier), number: tr.number, url: trackingUrl(tr.carrier, tr.number) } : null,
+        line_items: items.map((i) => ({ title: i.name ?? "", variant_title: i.sku ?? "", quantity: Number(i.qty ?? 0), price: money(Number(i.unit_price_jpy ?? 0)), line_price: money(Number(i.unit_price_jpy ?? 0) * Number(i.qty ?? 0)) })),
+        discounts: discounts.map((d) => ({ code: d.code ?? "", title: d.name ?? d.code ?? "", amount: money(Number(d.amount_jpy ?? 0)) })),
+        shipping_price: money(Number(r["shipping_jpy"] ?? 0)),
+        total_price: money(Number(r["total_jpy"] ?? 0)),
+      }
+    : null;
+  const receiptForm = Boolean(r && p.receipt && RECEIPT_STATUSES.includes(status) && !p.member);
+  const lookup = {
+    member: Boolean(p.member),
+    error: p.error ?? null,
+    values: { number: p.values.number ?? "", email: p.values.email ?? "" },
+    order,
+    // 番号とアドレスで開いた注文の領収書（{% form 'order_receipt' %}）・問い合わせ（{% form 'order_inquiry' %}）を出せるか
+    receipt: receiptForm,
+    inquiry: Boolean(r && p.inquiry),
+    // 会員の自分の注文のリンク
+    receipt_url: p.member?.receiptUrl ?? null,
+    inquiry_url: p.member?.inquiryUrl ?? null,
+  };
+  const forms = {
+    ...(receiptForm && r ? { order_receipt: { number: String(r["number"]), email: p.values.email ?? "" } } : {}),
+    ...(r && p.inquiry ? { order_inquiry: { o: p.inquiry.token } } : {}),
+  };
+  return render(c, s, choice, {
+    template: "order_lookup",
+    values: { lookup, __banto_forms: forms },
+    title: t("store.lookup_title"),
+    path: "/orders/lookup",
+    noindex: true,
+    categories: await s.sf.listCategories(s.shop),
+    checkout: "order",
     ...(p.status ? { status: p.status } : {}),
   });
 }
