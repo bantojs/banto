@@ -488,6 +488,10 @@ const FORM_ACTIONS: Readonly<Record<string, string>> = {
   customer_password_login: "/account/password-login",
   tryon_details: "/tryon/confirm",
   tryon_submit: "/tryon/submit",
+  // 注文照会（templates/order_lookup）: 番号とメールアドレスで開く・領収書（同梱モジュール receipt）・この注文について問い合わせる（同梱モジュール inquiries）
+  order_lookup: "/orders/lookup",
+  order_receipt: "/orders/receipt",
+  order_inquiry: "/inquiries/new",
 };
 
 /**

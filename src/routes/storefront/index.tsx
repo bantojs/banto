@@ -56,7 +56,7 @@ import { BLOG_LIST_PARTS, COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } 
 import { blogListParts, listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon } from "./liquid";
+import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon, renderOrderLookup } from "./liquid";
 import { listSortOf } from "../../storefront/list-sort";
 import { filterNoindex, listFilterOf, type ListFilter } from "../../storefront/list-filter";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
@@ -1655,11 +1655,11 @@ storefront.get("/:shop/orders/lookup", async (c: Ctx) => {
       c.header("Cache-Control", "no-store");
       const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && RECEIPT_STATUSES.includes(String(result["status"]));
       const links = { receiptUrl: receipt ? `${s.ctx.shopPath}/account/orders/${number}/receipt` : null, inquiryUrl: s.ctx.inquiries ? `${s.ctx.shopPath}/inquiries/new?order=${number}` : null };
-      return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, member: links }));
+      return lookupRender(c, s, { values, result, member: links });
     }
     // 別の会員の注文・ゲストで買った注文: 番号とメールアドレスで開く画面に戻す
   }
-  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values }));
+  return lookupRender(c, s, { values });
 });
 
 storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
@@ -1669,16 +1669,28 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   const number = Number.parseInt((f.number ?? "").trim(), 10);
   const email = (f.email ?? "").trim();
   const values = { number: f.number ?? "", email };
-  if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
+  if (!Number.isInteger(number) || !email) return lookupRender(c, s, { values, error: t("store.lookup_not_found") }, 400);
   const r = await guestOrderLookup(c, s.shop, number, email);
-  if (!r.ok) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_too_many") }), 429);
+  if (!r.ok) return lookupRender(c, s, { values, error: t("store.lookup_too_many") }, 429);
   const result = r.order;
-  if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
+  if (!result) return lookupRender(c, s, { values, error: t("store.lookup_not_found") }, 404);
   // この注文について問い合わせる（同梱モジュール inquiries）: 番号とメールアドレスが合った組を署名して、フォームに POST で渡す
   const secret = c.get("sessionSecret");
   const inquiry = secret && s.ctx.inquiries ? { token: await sealOrderToken(secret, s.shop.id, number, email) } : null;
-  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE), inquiry }));
+  return lookupRender(c, s, { values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE), inquiry });
 });
+
+type LookupProps = Omit<Parameters<ShopScope["theme"]["OrderLookupPage"]>[0], "ctx">;
+
+/** 注文照会の画面: Liquid のテーマに templates/order_lookup があればそれ（メンテナの決定 2026-11-17）、無ければ・描けなければ既定のテーマ */
+async function lookupRender(c: Ctx, s: ShopScope, props: LookupProps, status: 200 | 400 | 404 | 429 = 200): Promise<Response> {
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = await renderOrderLookup(c, s, lt, { ...props, status });
+    if (res) return res;
+  }
+  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, ...props }), status);
+}
 
 /** 領収書（同梱モジュール receipt）。注文照会と同じく注文番号とメールアドレスで引く（GET の URL にメールアドレスを載せない） */
 storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
