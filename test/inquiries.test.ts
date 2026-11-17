@@ -4,6 +4,8 @@ import { BASE, Browser, MemoryStorage, appWith, externalHosts, memberLogin, memb
 import { checkInquiry, fillTemplate, inquiryTemplates, openOrderToken, sealOrderToken } from "../src/modules/inquiries";
 import { buildCustomerMail, buildShopNotice } from "../src/modules/inquiries/mail";
 import { pageKind } from "../src/storefront/mode";
+import { forgetThemes } from "../src/themes/liquid/cache";
+import { CHECKOUT_CSP } from "../src/routes/storefront/liquid";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 
 /**
@@ -204,7 +206,10 @@ function fakeInquiries(sb: FakeSupabase) {
   return tickets;
 }
 
-function setup(opts: { module?: boolean; members?: boolean; storefront?: string; privateStorage?: MemoryStorage } = {}) {
+const THEME_VERSION = "11111111-2222-4333-8444-555555555555";
+
+function setup(opts: { module?: boolean; members?: boolean; storefront?: string; privateStorage?: MemoryStorage; theme?: Record<string, string> } = {}) {
+  if (opts.theme) forgetThemes();
   const sb = new FakeSupabase();
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, {
@@ -220,8 +225,18 @@ function setup(opts: { module?: boolean; members?: boolean; storefront?: string;
   const mail = memberMail(sb, shop.id);
   disposers.push(mail.dispose);
   const tickets = fakeInquiries(sb);
-  const app = appWith(sb, { RESEND_API_KEY: "re_test" }, undefined, undefined, opts.privateStorage);
-  return { sb, shop, app, mail, tickets, b: new Browser(app) };
+  // Liquid のテーマ（templates/inquiry、メンテナの決定 2026-11-17）: 有料プラン・独自ドメイン・公開中の版
+  let storage: MemoryStorage | undefined;
+  if (opts.theme) {
+    sb.sitePlan = "paid";
+    const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    row["domain"] = "shop.example.jp";
+    row["theme_public"] = { id: THEME_VERSION, storage_key: `themes/${shop.id}/${THEME_VERSION}/bundle.json`, settings: {} };
+    storage = new MemoryStorage(`${BASE}/media`);
+    void storage.put(`themes/${shop.id}/${THEME_VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files: opts.theme, assets: [] })).buffer as ArrayBuffer, "application/json");
+  }
+  const app = appWith(sb, { RESEND_API_KEY: "re_test" }, storage, undefined, opts.privateStorage);
+  return { sb, shop, app, mail, tickets, b: new Browser(app, opts.theme ? "https://shop.example.jp" : BASE) };
 }
 
 describe("お問い合わせの部品（src/modules/inquiries）", () => {
@@ -733,5 +748,58 @@ describe("お問い合わせ（ヘッドレス API）", () => {
   it("モジュールが OFF なら 404", async () => {
     const { app } = setup({ module: false });
     expect((await post(app, "/api/shops/my-shop/inquiries", { category: "other", body: "x", email: "a@example.com" })).status).toBe(404);
+  });
+});
+
+/** Liquid のテーマで描くお問い合わせ（templates/inquiry、メンテナの決定 2026-11-17） */
+const INQUIRY_THEME: Record<string, string> = {
+  "layout/theme.liquid": `<html><head>{{ content_for_header }}</head><body><main>{{ content_for_layout }}</main></body></html>`,
+  "templates/index.liquid": "<h1>top</h1>",
+  "templates/inquiry.liquid": `<section class="inq" data-step="{{ inquiry.step }}">{% if inquiry.error %}<p class="err">{{ inquiry.error }}</p>{% endif %}
+{% case inquiry.step %}
+{% when 'form' %}{% form 'inquiry_details' %}<select name="category">{% for c in inquiry.categories %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}</select><textarea name="body">{{ inquiry.values.body }}</textarea>{% if inquiry.ask_email %}<input name="email" value="{{ inquiry.values.email }}">{% endif %}<input name="name"><button>確認</button>{% endform %}
+{% when 'confirm' %}<div class="body">{{ inquiry.values.body_html }}</div>{% form 'inquiry_submit' %}<button>送る</button>{% endform %}{% form 'inquiry_edit' %}<button>直す</button>{% endform %}
+{% when 'sent' %}<p class="sent">受付 {{ inquiry.sent.number }} {{ inquiry.sent.verified }}</p>
+{% when 'open' %}<p class="open">{{ inquiry.sent.number }}</p>{% form 'inquiry_open' %}<button>開く</button>{% endform %}
+{% when 'thread' %}<h2>{{ inquiry.thread.number }} {{ inquiry.thread.status_label }}</h2>{% for m in inquiry.thread.messages %}<div class="m {{ m.author }}">{{ m.body_html }}</div>{% endfor %}{% if inquiry.thread.can_reply %}{% form 'inquiry_reply' %}<textarea name="body"></textarea><button>返事</button>{% endform %}{% endif %}
+{% when 'resend' %}{% form 'inquiry_resend' %}<input name="number"><input name="email"><button>送り直す</button>{% endform %}
+{% endcase %}</section>`,
+};
+
+describe("テーマで描くお問い合わせ（templates/inquiry）", () => {
+  it("書く → 確かめる（値は Banto が隠しの値で）→ 送る → リンクを開く → やり取り → 返事。本文はエスケープ。CSP と覚えさせない", async () => {
+    const { b, mail, tickets } = setup({ theme: INQUIRY_THEME });
+    let res = await b.get("/inquiries/new");
+    expect(res.headers.get("content-security-policy")).toBe(CHECKOUT_CSP);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    let html = await res.text();
+    expect(html).toContain('data-step="form"');
+    expect(html).toContain('action="/inquiries/confirm"');
+    html = await (await b.post("/inquiries/confirm", { category: "product", body: "サイズは？\n<b>太字</b>", email: "Guest@Example.com", name: "山田", order_number: "" })).text();
+    expect(html).toContain('data-step="confirm"');
+    expect(html).toContain("サイズは？<br>");
+    expect(html).toContain("&lt;b&gt;太字&lt;/b&gt;");
+    // 確かめた値は送る・直すのフォームに Banto が隠しの値で入れる
+    expect(html).toMatch(/action="\/inquiries\/submit"[\s\S]*?name="email" value="guest@example.com"/);
+    expect(html).toMatch(/action="\/inquiries\/new"[\s\S]*?name="category" value="product"/);
+    html = await (await b.post("/inquiries/submit", { category: "product", body: "サイズは？", email: "guest@example.com", name: "山田", order_number: "" })).text();
+    expect(html).toContain('<p class="sent">受付 1 false</p>');
+    const link = mail.link("guest@example.com");
+    html = await (await b.get(new URL(link).pathname + new URL(link).search)).text();
+    expect(html).toContain('<p class="open">1</p>');
+    expect(html).toMatch(/action="\/inquiries\/open"[\s\S]*?name="t" value="[^"]+"/);
+    await b.post("/inquiries/open", { t: new URL(link).searchParams.get("t")! });
+    html = await (await b.get("/inquiries/thread")).text();
+    expect(html).toContain('<div class="m customer">サイズは？</div>');
+    // 返事のフォームはいつも multipart（添付のため）
+    expect(html).toContain('action="/inquiries/reply" accept-charset="UTF-8" enctype="multipart/form-data"');
+    expect(tickets[0]!.verified).toBe(true);
+  });
+
+  it("テーマに templates/inquiry が無ければ既定の画面", async () => {
+    const { b } = setup({ theme: { ...INQUIRY_THEME, "templates/inquiry.liquid": undefined as unknown as string } });
+    const html = await (await b.get("/inquiries/new")).text();
+    expect(html).not.toContain('class="inq"');
+    expect(html).toContain('action="/inquiries/confirm"');
   });
 });
