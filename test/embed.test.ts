@@ -78,7 +78,7 @@ describe("貼るコードの画面", () => {
     sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
     sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms: ["orders"] });
     const staff = await Browser.loggedIn(app, "s@example.com", "password-123");
-    expect((await staff.get(base)).status).toBe(404);
+    expect((await staff.get(base)).status).toBe(403);
   });
 
   it("貼るコードの属性は引用符を逃がさない", () => {

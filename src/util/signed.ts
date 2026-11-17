@@ -51,11 +51,3 @@ export function randomToken(bytes = 32): string {
   return b64url(buf);
 }
 
-export function readCookie(cookieHeader: string | undefined, name: string): string | undefined {
-  if (!cookieHeader) return undefined;
-  for (const part of cookieHeader.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (k === name) return rest.join("=");
-  }
-  return undefined;
-}

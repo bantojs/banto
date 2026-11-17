@@ -3,7 +3,8 @@ import type { AppEnv } from "../../app";
 import { createAuthClient, type AuthClient } from "../../auth/supabase";
 import { createDbClient, type DbClient } from "../../db/client";
 import type { SessionData } from "../../auth/session";
-import { param } from "../common";
+import { param, publicBaseUrl } from "../common";
+import { domainTemplateFrom, templateDomain } from "../../storefront/subdomain";
 
 export { csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, SLUG_RE } from "../common";
 
@@ -55,4 +56,17 @@ export function params(c: AdminContext): { shopId: string; productId: string; sk
     skuId: param(c, "skuId"),
     imageId: param(c, "imageId"),
   };
+}
+
+/**
+ * サブドメインモード（SHOP_DOMAIN_TEMPLATE、src/storefront/subdomain.ts）で、このスラッグのショップに付けるドメイン。
+ * ひな形が無ければ null（今までどおりドメインなし）。作れない（ラベルが長すぎる・使えない並び・Banto 自身のホストと重なる）なら "invalid"
+ */
+export function shopTemplateDomain(c: AdminContext, slug: string): string | null | "invalid" {
+  const tpl = domainTemplateFrom(c.get("adapters").config);
+  if (!tpl) return null;
+  const domain = templateDomain(tpl, slug);
+  if (!domain) return "invalid";
+  const own = [new URL(c.req.url).hostname, new URL(publicBaseUrl(c)).hostname];
+  return own.includes(domain) ? "invalid" : domain;
 }

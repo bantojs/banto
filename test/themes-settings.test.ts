@@ -151,7 +151,7 @@ describe("管理画面の設定とお店の画面", () => {
     sb.orgMembers.push({ org_id: String(shop["org_id"]), user_id: staff.id, role: "member", created_at: new Date().toISOString() });
     sb.orgMemberShops.push({ org_id: String(shop["org_id"]), user_id: staff.id, shop_id: shop.id, perms: ["catalog"] });
     const s = await Browser.loggedIn(app, "staff@example.com", "password-123");
-    expect((await s.get(url)).status).toBe(404);
+    expect((await s.get(url)).status).toBe(403);
     expect((await s.post(url, {})).status).toBe(404);
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
     expect((await admin.get(url.replace(VERSION, "99999999-2222-4333-8444-555555555555"))).status).toBe(404);

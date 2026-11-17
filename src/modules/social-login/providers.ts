@@ -44,7 +44,7 @@ export async function pkce(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: b64url(digest) };
 }
 
-export function authorizeUrl(p: Provider, clientId: string, o: { redirectUri: string; state: string; nonce: string; challenge: string; botPrompt?: "normal" | "aggressive" | null }): string {
+export function authorizeUrl(p: Provider, clientId: string, o: { redirectUri: string; state: string; nonce: string; challenge: string; botPrompt?: "normal" | "aggressive" | null; disableAutoLogin?: boolean }): string {
   const q = new URLSearchParams({
     response_type: "code",
     client_id: clientId,
@@ -58,6 +58,9 @@ export function authorizeUrl(p: Provider, clientId: string, o: { redirectUri: st
     ...(p === "google" ? { prompt: "select_account" } : {}),
     // LINE: ログインの画面で公式アカウントの友だち追加を促す（購入者に LINE で知らせるため。0021、docs/line.md）
     ...(p === "line" && o.botPrompt ? { bot_prompt: o.botPrompt } : {}),
+    // LINE: 自動ログイン（LINE アプリへ移ってから戻る）に一度失敗した後のやり直し。LINE アプリを経由せず、このブラウザの LINE の画面でログインさせる
+    // （自動ログインのままだと同じ失敗を繰り返す。LINE の案内「自動ログインに失敗した時の対応方法」）
+    ...(p === "line" && o.disableAutoLogin ? { disable_auto_login: "true" } : {}),
   });
   return `${ENDPOINTS[p].authorize}?${q}`;
 }

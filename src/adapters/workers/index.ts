@@ -1,5 +1,5 @@
 import { MemoryCache } from "../memory-cache";
-import { clampRange, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type StorageAdapter, type StorageRange } from "../types";
+import { clampRange, mediaCacheControl, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type StorageAdapter, type StorageRange } from "../types";
 import { normalizeConfigValue } from "../types";
 import { workersSockets } from "./socket";
 
@@ -37,9 +37,11 @@ export interface WorkersEnv {
 }
 
 class R2Storage implements StorageAdapter {
-  constructor(private bucket: R2Bucket, private baseUrl: string) {}
+  /** publicCache: 公開の置き場（MEDIA）。R2 のカスタムドメインから Worker を通らずに配られるので、置くときに Cache-Control を付ける */
+  constructor(private bucket: R2Bucket, private baseUrl: string, private publicCache = false) {}
   async put(key: string, body: ReadableStream | ArrayBuffer | Blob, contentType: string) {
-    await this.bucket.put(key, body, { httpMetadata: { contentType } });
+    const cacheControl = this.publicCache ? mediaCacheControl(key) : null;
+    await this.bucket.put(key, body, { httpMetadata: { contentType, ...(cacheControl ? { cacheControl } : {}) } });
     return { url: `${this.baseUrl}/${key}` };
   }
   async get(key: string) {
@@ -93,7 +95,7 @@ class CronScheduler implements SchedulerAdapter {
 
 export function createWorkersAdapters(env: WorkersEnv): Adapters {
   return {
-    storage: new R2Storage(env.MEDIA, env.MEDIA_BASE_URL),
+    storage: new R2Storage(env.MEDIA, env.MEDIA_BASE_URL, true),
     ...(env.PRIVATE ? { privateStorage: new R2Storage(env.PRIVATE, "") } : {}),
     config: new EnvConfig(env),
     cache: isolateCache,

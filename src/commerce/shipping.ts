@@ -80,7 +80,3 @@ export function taxRate(settings: Record<string, unknown>): number {
   return typeof v === "number" && v >= 0 && v <= 100 ? v : 10;
 }
 
-/** 税込価格から内税額を求める（切り捨て） */
-export function includedTax(priceJpy: number, rate: number): number {
-  return Math.floor((priceJpy * rate) / (100 + rate));
-}

@@ -97,7 +97,7 @@ describe("お気に入り（運営者）", () => {
     await b.postJson("/s/account/favorites", { product_id: tee.id, on: true });
     const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const cid = String(sb.tables.customers[0]!["id"]);
-    expect(await (await owner.get(`/admin/shops/${shop.id}/customers`)).text()).toContain(`/admin/shops/${shop.id}/customers/${cid}/favorites`);
+    expect(await (await owner.get(`/admin/shops/${shop.id}/customers/${cid}`)).text()).toContain(`/admin/shops/${shop.id}/customers/${cid}/favorites`);
     const page = await (await owner.get(`/admin/shops/${shop.id}/customers/${cid}/favorites`)).text();
     expect(page).toContain(`<a href="/admin/shops/${shop.id}/products/${tee.id}">Tシャツ</a>`);
     const products = await (await owner.get(`/admin/shops/${shop.id}/products`)).text();

@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import { type PublicShop } from "../../storefront/data";
 import { createMailer } from "../../mail/send";
 import { openStatusToken, returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/checkout";
 import { shopHome } from "../../storefront/urls";
@@ -25,7 +24,7 @@ import {
 } from "../../modules/inquiries";
 import { privilegedFor } from "../payment-deps";
 import { memberFromRequest, type ApiMember } from "./members";
-import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, clientIpFor, publicBaseUrl, publicJsonBody, publicShop, type Ctx } from "../common";
 import type { InquiryView } from "../../db/privileged";
 import { t } from "../../i18n";
 import { inquiryLinkHash } from "../../members/auth";
@@ -56,29 +55,20 @@ interface Scope {
 }
 
 async function scope(c: Ctx): Promise<Scope | Response> {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
   const secret = c.get("sessionSecret");
   const db = privilegedFor(c);
-  if (!url || !anonKey || !secret || !db) return c.json({ error: "not_configured" }, 503);
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
-  const shop = await sf.shopBySlug(param(c, "shop"));
-  if (!shop) return c.json({ error: "not_found" }, 404);
+  if (!secret || !db) return c.json({ error: "not_configured" }, 503);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { shop } = p;
   if (!inquiriesReady(shop)) return c.json({ error: "inquiries_disabled" }, 404);
   const m = await memberFromRequest(c, shop);
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
   return { shop, member: m.member, deps: { db, secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), adminBase: publicBaseUrl(c), privateStorage: c.get("adapters").privateStorage ?? null } };
 }
 
-async function body(c: Ctx): Promise<Record<string, unknown> | null> {
-  try {
-    const b: unknown = await c.req.json();
-    return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
+/** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば null */
+const body = (c: Ctx): Promise<Record<string, unknown> | null> => publicJsonBody(c);
 
 const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : undefined);
 const STATUS: Record<InquiryError, 400 | 401 | 404 | 409 | 429 | 503> = {

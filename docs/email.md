@@ -114,6 +114,8 @@ SPF と DKIM が通ったら、DMARC のレコードを 1 つ追加すると Gma
 
 ## 届かないとき
 
+会員のログイン・メンバーの招待のメールを送れなかったときは、Workers のログに `[banto] member login: mail failed (<送り手> <コード>): <応答>` の行が出ます（招待は `[banto] invite: …`。宛先のアドレスは `***@` に伏せています）。SMTP の応答コードの無い失敗には、どの段階で起きたか（`connect` / `greeting` / `EHLO` / `EHLO after STARTTLS (TLS handshake)` / `AUTH` など）が付きます。
+
 | 症状 | 確認すること |
 | --- | --- |
 | 送り手のログに出ない | プラグインが有効か、`MAIL_TRANSPORT` と送り手の値が揃っているか（プラグインの画面に足りない名前が出る）、`hook_deliveries` の失敗（管理画面 → 連携 → 配信履歴。送り手の応答がそのまま残る） |
@@ -122,5 +124,8 @@ SPF と DKIM が通ったら、DMARC のレコードを 1 つ追加すると Gma
 | SMTP で `does not offer STARTTLS` | サーバーが 587 で STARTTLS を出していない。465 なら `SMTP_TLS=on`、同じホストのサーバーなら `SMTP_TLS=off` |
 | SMTP で `timeout waiting for server` / つながらない | ポートが 25 になっていないか（Cloudflare は 25 を塞ぐ）。ホスト名・ファイアウォール |
 | SMTP で `535` | ID かパスワードが違う。レンタルサーバーは「メールアドレス全体」が ID のことが多い |
+| SMTP で `EHLO after STARTTLS (TLS handshake): connection closed by server` | `SMTP_HOST` に IP アドレスを書いていないか。TLS ではサーバーの証明書をホスト名で確かめるので、IP では通らない。レンタルサーバーのホスト名（例 `アカウント名.sakura.ne.jp`）にする（プラグインの画面にも警告が出る） |
+| SMTP で `greeting: connection closed by server` | つないだ直後に切られている。`SMTP_TLS=on`（465）なら、まず `SMTP_HOST` が IP アドレスでないかを確かめる（つないだ時点で TLS が始まるので、証明書の確認の失敗がこの行に出る。プラグインの画面にも警告が出る）。そうでなければ、サーバーの「国外 IP 制限」など接続元の制限を、メールの送信について外す。Workers の外向きの TCP の送信元 IP は固定できない（[Cloudflare の文書](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/) では、公開されている IP の一覧に含まれない範囲から出るとされている）ので、許可リストで通すのは勧めない。外せなければ HTTP の送り手（Resend / SendGrid / SES）にする |
+| SMTP で `connect <host>:<port> …` | つながらない。ホスト名とポート。`SMTP_TLS=on`（465）なら `SMTP_HOST` が IP アドレスでないかも確かめる（証明書の確認の失敗がここに出ることがある）。Cloudflare のプロキシ（オレンジの雲）を通るホスト名には Workers からつなげないので、「DNS のみ」のホスト名かサーバー会社のホスト名にする |
 | 会員のログインのメールで「メールの設定が済んでいません」 | プラグインの送信元が空か、送り手の値が足りない |
 | 会員の登録確認メールが来ない | Supabase の Custom SMTP が有効か。Rate Limits。Email Templates の確認リンクが正しいか |

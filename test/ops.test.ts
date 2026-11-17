@@ -84,7 +84,7 @@ describe("運用: /health とバックアップ書き出し", () => {
     const anon = await app.request(`${BASE}/admin/shops/${shop.id}/export.json`);
     expect(anon.status).toBe(302);
     // 設定画面にリンクがある
-    expect(await (await b.get(`/admin/shops/${shop.id}`)).text()).toContain(`/admin/shops/${shop.id}/export.json`);
+    expect(await (await b.get(`/admin/shops/${shop.id}/settings/backup`)).text()).toContain(`/admin/shops/${shop.id}/export.json`);
   });
 });
 
@@ -133,7 +133,7 @@ describe("運用: Cron ハートビートと復元", () => {
     const dst = sb.addShop(owner.id, { slug: "dst", name: "Dst", published: false, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
     let res = await b.postMultipart(`/admin/shops/${dst.id}/restore`, { file: new File([exported], "backup.json", { type: "application/json" }) });
     const loc = res.headers.get("location")!;
-    expect(loc).toMatch(new RegExp(`^/admin/shops/${dst.id}\\?flash=restored&detail=`));
+    expect(loc).toMatch(new RegExp(`^/admin/shops/${dst.id}/settings/backup\\?flash=restored&detail=`));
     const detail = decodeURIComponent(loc.split("detail=")[1]!);
     expect(detail).toContain("products: 1");
     expect(detail).toContain("orders: 1");
@@ -161,12 +161,12 @@ describe("運用: Cron ハートビートと復元", () => {
 
     // 二度目は空でないので拒否。壊れた JSON と banto_export 無しも拒否
     res = await b.postMultipart(`/admin/shops/${dst.id}/restore`, { file: new File([exported], "backup.json", { type: "application/json" }) });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${dst.id}?flash=restore_not_empty`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${dst.id}/settings/backup?flash=restore_not_empty`);
     const empty = sb.addShop(owner.id, { slug: "empty", name: "E", published: false, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
     res = await b.postMultipart(`/admin/shops/${empty.id}/restore`, { file: new File(["{not json"], "x.json", { type: "application/json" }) });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${empty.id}?flash=restore_invalid`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${empty.id}/settings/backup?flash=restore_invalid`);
     res = await b.postMultipart(`/admin/shops/${empty.id}/restore`, { file: new File([JSON.stringify({ tables: {} })], "x.json", { type: "application/json" }) });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${empty.id}?flash=restore_invalid`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${empty.id}/settings/backup?flash=restore_invalid`);
     // 他人のショップには復元できない
     const other = sb.addUser("x@example.com", "password-456", { owner: true });
     const theirs = sb.addShop(other.id, { slug: "theirs", name: "T", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });

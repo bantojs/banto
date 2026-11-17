@@ -1489,7 +1489,7 @@ export function wooImporter() {
     couponImport: string;
     /** 本画像の横幅（ショップの設定、src/media/variants.ts）。無ければ 1600 */
     imageMax?: number;
-    /** 作る中間の段の横幅（0091 が当たっていなければ空） */
+    /** 作る中間の段の横幅（0091。ショップの設定に無ければ空） */
     variantSizes?: number[];
   }
 

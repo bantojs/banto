@@ -38,7 +38,7 @@ function crumbs(shop: ShopRow, here?: string): Crumb[] {
   ];
 }
 
-const tabs = (c: AdminContext, shop: ShopRow): ShopTabs => ({ shop, access: c.get("shopAccess"), active: "modules" });
+const tabs = (c: AdminContext, shop: ShopRow): ShopTabs => ({ shop, access: c.get("shopAccess"), active: "modules", here: "store-tryon" });
 
 tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
@@ -160,7 +160,7 @@ tryonAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
   try {
     await owner(c)
       .db.from<ShopRow>("shops")
-      .update({ settings: { ...(shop.settings ?? {}), store_tryon } }, { id: shop.id });
+      .update({ settings: { ...(shop.settings ?? {}), store_tryon } }, { id: shop.id }, "id");
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`${base(shop)}?flash=generic`);
     throw e;

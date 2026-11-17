@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { externalHookUrl } from "../../hooks/target";
+import { bundledPluginIdFromUrl } from "../../plugins/types";
 import type { AppEnv } from "../../app";
 import type { DbClient, Row } from "../../db/client";
 import { createPrivilegedDb, PrivilegedRpcError } from "../../db/privileged";
@@ -68,10 +70,9 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const tables: Record<string, Row[]> = {};
-  const sizeCharts = SIZE_CHART_TABLES;
   // お気に入り（0123）はモジュールが ON のショップだけ（ON にできるのは表がある DB だけ）。書き出すだけで、復元では戻さない（会員と商品の id を振り直すため）
   const favorites: typeof TABLES = moduleEnabled(shop.settings, FAVORITES_MODULE) ? [{ name: "customer_favorites", order: "created_at.asc" }] : [];
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...sizeCharts, ...favorites]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...SIZE_CHART_TABLES, ...favorites]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,
@@ -95,7 +96,7 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
  */
 exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
   const shopId = param(c, "shopId");
-  const base = `/admin/shops/${shopId}`;
+  const base = `/admin/shops/${shopId}/settings/backup`;
   const shop = await loadShop(c, shopId, "admin");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const body = await c.req.parseBody();
@@ -117,6 +118,14 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     if (rows !== undefined && !Array.isArray(rows)) return c.redirect(`${base}?flash=restore_invalid`);
     tables[name] = Array.isArray(rows) ? rows : [];
   }
+  // 連携の送信先: 今の決まり（0142）で受けない形の URL の行は飛ばして数える。1 行でも DB に断られると、商品・注文も含めて復元の全体が戻るため
+  const endpoints = tables["hook_endpoints"] ?? [];
+  const usable = endpoints.filter((r) => {
+    const u = r && typeof r === "object" ? (r as Record<string, unknown>)["url"] : null;
+    return typeof u === "string" && (bundledPluginIdFromUrl(u) !== null || externalHookUrl(u));
+  });
+  const skippedEndpoints = endpoints.length - usable.length;
+  tables["hook_endpoints"] = usable;
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -126,6 +135,7 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
     // SKU を分ける軸（0065）: 戻す間はショップの既定を外す（商品を戻したときに既定が写り、SKU が合わずに止まらないように）。最後に戻す
     if (shop.option_axes !== null && shop.option_axes !== undefined) await privileged.restoreOptionAxes(shopId, { shop: null });
     const counts = await privileged.restoreShopData(shopId, tables);
+    if (skippedEndpoints > 0) Object.assign(counts, { hook_endpoints_skipped: skippedEndpoints });
     // 0006 が知らない列（タグ・カテゴリー・ブランド・カスタム項目・SKU の拡張）を戻す（0008）
     Object.assign(counts, await privileged.restoreCatalog(shopId, { categories: tables["categories"] ?? [], products: tables["products"] ?? [], skus: tables["skus"] ?? [] }));
     // 税の区分と注文の税率（0017）
@@ -160,7 +170,7 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
         counts,
         await privileged.restoreOptionAxes(shopId, {
           shop: shopAxes ?? null,
-          // SKU の選択肢の表示名（0094。0094 の前の DB は読まない）
+          // SKU の選択肢の表示名（0094。古いバックアップの JSON には無い）
           ...(backupShop && backupShop.option_names && typeof backupShop.option_names === "object" ? { option_names: backupShop.option_names } : {}),
           categories: rows("categories").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"] })),
           products: rows("products").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"], option_axes_custom: r["option_axes_custom"] === true })),

@@ -51,7 +51,7 @@ describe.skipIf(!dbAvailable)("hooks（0002_hooks）", () => {
   });
 
   it("enqueue_hook: 購読している有効な送信先ごとに1行。owner は自ショップのみ、イベント名を検証", async () => {
-    const n = await asUser(f.ownerId, async (c) => (await c.query<{ n: number }>("select enqueue_hook($1, 'product.updated', '{\"product_id\":\"p1\"}') as n", [f.shopId])).rows[0]!.n);
+    const n = await asUser(f.ownerId, async (c) => (await c.query<{ n: number }>("select enqueue_hook($1, 'product.updated', jsonb_build_object('product_id', $2::text)) as n", [f.shopId, f.productId])).rows[0]!.n);
     expect(n).toBe(1);
     const zero = await asUser(f.ownerId, async (c) => (await c.query<{ n: number }>("select enqueue_hook($1, 'order.shipped', '{}') as n", [f.shopId])).rows[0]!.n);
     expect(zero).toBe(0); // 購読していない
@@ -96,7 +96,7 @@ describe.skipIf(!dbAvailable)("hooks（0002_hooks）", () => {
   });
 
   it("claim → finish: 失敗は指数バックオフ、5回で failed。成功は delivered。リース中は再取得されない", async () => {
-    await asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'product.updated', '{\"product_id\":\"p1\"}')", [f.shopId]));
+    await asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'product.updated', jsonb_build_object('product_id', $2::text))", [f.shopId, f.productId]));
 
     const claim = () => asService(async (c) => (await c.query<{ id: string; attempts: number; url: string; event: string }>("select * from claim_hook_deliveries(10)")).rows);
     let picked = await claim();

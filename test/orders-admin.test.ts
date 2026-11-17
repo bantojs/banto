@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
-import { ADDRESS, BASE, Browser, WEBHOOK_SECRET, appWith, checkout, externalHosts, memoryAdapters } from "./helpers";
+import { BASE, Browser, WEBHOOK_SECRET, appWith, checkout, externalHosts, memoryAdapters } from "./helpers";
 import { generateApiToken, hashApiToken, tokenPrefix } from "../src/api/tokens";
 import { deliverPendingHooks } from "../src/hooks/deliver";
 import { createPrivilegedDb } from "../src/db/privileged";
@@ -111,7 +111,7 @@ describe("注文の検索と CSV", () => {
 
 describe("メール通知（既定の送り手 Resend）", () => {
   it("order.paid で購入者に注文確認、運営者に控え。order.shipped で発送通知", async () => {
-    const { sb, shop, order, app, admin } = await setup();
+    const { sb, shop, order, admin } = await setup();
     sb.tables.hook_endpoints.push({ id: "ep-mail", shop_id: shop.id, name: "メール", url: bundledPluginUrl("email_resend"), events: ["order.paid", "order.shipped"], enabled: true, manifest: null, settings: { from: "マイショップ <order@example.com>", bcc_owner: true }, created_at: "" });
     // 注文は setup で確定済み（その時点では送信先が無かった）ので、改めて積む
     sb.enqueue(shop.id, "order.paid", { order_id: order["id"], order_number: order["number"] });

@@ -167,7 +167,7 @@ describe("管理画面のデザイン（Liquid のテーマ）", () => {
     sb.orgMembers.push({ org_id: String(shop["org_id"]), user_id: staff.id, role: "member", created_at: new Date().toISOString() });
     sb.orgMemberShops.push({ org_id: String(shop["org_id"]), user_id: staff.id, shop_id: shop.id, perms: ["catalog"] });
     const s = await Browser.loggedIn(app, "staff@example.com", "password-123");
-    expect((await s.get(base)).status).toBe(404);
+    expect((await s.get(base)).status).toBe(403);
     expect((await s.postJson(`${base}/versions`, { name: "x", bundle })).status).toBe(404);
   });
 });

@@ -85,8 +85,5 @@ export function addItem(cart: Cart, skuId: string, qty: number): Cart {
   return setQty(cart, skuId, current + qty);
 }
 
-export function cartCookieHeader(name: string, value: string, opts: { path: string; secure: boolean }): string {
-  const parts = [`${name}=${value}`, `Path=${opts.path}`, "HttpOnly", "SameSite=Lax", `Max-Age=${60 * 60 * 24 * 14}`];
-  if (opts.secure) parts.push("Secure");
-  return parts.join("; ");
-}
+/** カートの Cookie を残す長さ（14 日）。名前と見出しは src/routes/common.ts の setScopedCookie（HTTPS で Path=/ なら `__Host-`） */
+export const CART_COOKIE_SECONDS = 60 * 60 * 24 * 14;

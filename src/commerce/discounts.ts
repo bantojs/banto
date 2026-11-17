@@ -31,7 +31,7 @@ export interface CouponConditions {
   /** 除くブランド */
   exclude_brands?: string[];
   /**
-   * 使える支払い方法（0044）。"stripe" / "komoju"（KOMOJU のどれでも）/ "komoju:<種類>"（credit_card・konbini・paypay など）。
+   * 使える支払い方法（0044）。"stripe" / "komoju"（KOMOJU のどれでも）/ "komoju:<種類>"（credit_card・konbini・paypay など）/ "amazon_pay"（0130）。
    * 支払い方法は確認画面の前に選ぶので、確認画面と確定で判定する（カートでは仮に通す）。
    * KOMOJU で種類を絞ったクーポンを使うと、決済ページに出す支払い方法もその種類だけにする（DiscountResult.paymentTypes）
    */
@@ -135,6 +135,29 @@ export interface RejectedCoupon {
   shortfall?: number;
 }
 
+/**
+ * 購入者に返す理由。コードの存在・開始前・配布数・会員限定・配られた相手のような「キャンペーンの中身」が分かる理由は
+ * not_found に畳む（短い手入力のコードを探られても、期間前のキャンペーンの存在が漏れない）。管理画面・AI 用 API・ログは元の理由のまま
+ */
+export function buyerRejectReason(reason: RejectReason): RejectReason {
+  switch (reason) {
+    case "inactive":
+    case "not_started":
+    case "exhausted":
+    case "members_only":
+    case "grant_used":
+    case "grant_other":
+      return "not_found";
+    default:
+      return reason;
+  }
+}
+
+export function buyerRejected(r: RejectedCoupon): RejectedCoupon {
+  const reason = buyerRejectReason(r.reason);
+  return reason === r.reason ? r : { code: r.code, reason };
+}
+
 export interface DiscountResult {
   applied: AppliedDiscount[];
   rejected: RejectedCoupon[];
@@ -151,7 +174,7 @@ export interface DiscountResult {
 }
 
 /** 支払い方法の条件の値の形 */
-export const PAYMENT_METHOD_RE = /^(stripe|komoju|komoju:[a-z_]{1,40})$/;
+export const PAYMENT_METHOD_RE = /^(stripe|komoju|komoju:[a-z_]{1,40}|amazon_pay)$/;
 
 export const MAX_COUPONS = 5;
 export const COUPON_CODE_RE = /^[A-Z0-9][A-Z0-9_-]{0,31}$/;
@@ -174,7 +197,7 @@ export interface EvaluateContext {
   /** 商品のカテゴリーから最上位までの id（自分を含む）。カテゴリーの条件で子孫を含めるために使う */
   ancestors: (categoryId: string) => string[];
   /** 選んだ支払い方法（確認画面と確定）。カートではまだ決まっていないので無し（支払い方法の条件は仮に通す） */
-  payment?: { provider: "stripe" | "komoju" };
+  payment?: { provider: "stripe" | "komoju" | "amazon_pay" };
   /** ログイン中の会員の独自項目（0049。coupon_lookup が載せる）。会員でなければ無し */
   attributes?: Record<string, unknown> | null;
 }
@@ -389,6 +412,7 @@ function paymentAllowed(methods: string[] | undefined, ctx: EvaluateContext): bo
   const list = (Array.isArray(methods) ? methods : []).filter((m) => typeof m === "string" && PAYMENT_METHOD_RE.test(m));
   if (list.length === 0 || !ctx.payment) return true;
   if (ctx.payment.provider === "stripe") return list.includes("stripe");
+  if (ctx.payment.provider === "amazon_pay") return list.includes("amazon_pay");
   const allowed = komojuAllowed(list);
   return allowed === null || allowed.length > 0;
 }

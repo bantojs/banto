@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { HOOK_EVENTS, isHookEvent } from "../../hooks/events";
+import { isHookEvent } from "../../hooks/events";
 import { APP_HANDLE_RE, fetchManifest, parseManifest, settingsFromForm, type PluginManifest } from "../../hooks/manifest";
 import { endpointSecret, signHookPayload, signPluginTicket } from "../../hooks/signing";
-import { blockedHookTarget, externalHookUrl } from "../../hooks/target";
+import { asciiHookUrl, blockedHookTarget, externalHookUrl } from "../../hooks/target";
 import { ConnectConfirm, ConnectionCard, connectable, connectionOf, registerConnectRoutes, signingSecretFor } from "./connect";
 import { bundledPluginIdFromUrl, findBundledPlugin } from "../../plugins";
-import { t, type MessageKey } from "../../i18n";
+import { t, tf, type MessageKey } from "../../i18n";
+import { EventChips, EventPicker, ScopeList, eventLabel } from "./purposes";
 import { formatDateTime } from "../../i18n/time";
 import { AdminLayout, Copyable, PageHead } from "./layout";
 import { formFields, owner, param, sessionSecret, type AdminContext } from "./context";
@@ -38,9 +39,6 @@ interface EndpointRow {
   storefront_events?: { types: string[]; custom?: string[]; visitors: "members" | "all" } | null;
 }
 
-/** 拡張データ（0084）が DB に入ったか。入る前は app_handle の列が無い */
-
-
 interface DeliveryRow {
   id: string;
   endpoint_id: string;
@@ -58,6 +56,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     saved: "shop.saved",
     deleted: "hooks.deleted",
     invalid_url: "hooks.invalid_url",
+    app_connected_url_locked: "hooks.url_locked",
     invalid_app_handle: "hooks.app_handle_invalid",
     app_handle_taken: "hooks.app_handle_taken",
     connect_scope: "connect.scope_error",
@@ -86,7 +85,7 @@ function receivesEvents(url: string | undefined): boolean {
   return Boolean(findBundledPlugin(id)?.handle);
 }
 
-function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest: PluginManifest | null; apps?: boolean }) {
+function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest: PluginManifest | null; apps?: boolean; connected?: boolean }) {
   const e = props.endpoint;
   const events = new Set(e?.events ?? props.manifest?.events ?? []);
   const showEvents = receivesEvents(e?.url);
@@ -100,17 +99,18 @@ function EndpointForm(props: { action: string; endpoint?: EndpointRow; manifest:
           <input type="hidden" name="url" value={e.url} />
           <span class="badge">{t("plugins.bundled")}</span>
         </div>
+      ) : props.connected ? (
+        <div>
+          <input type="hidden" name="url" value={e?.url ?? ""} />
+          <code>{e?.url}</code> <span class="muted">{t("hooks.url_locked")}</span>
+        </div>
       ) : (
         <input id="url" type="text" name="url" value={e?.url ?? ""} required pattern="https?://.*" />
       )}
       {showEvents ? (
         <fieldset style="border:0;padding:0">
           <legend>{t("hooks.events")}</legend>
-          {HOOK_EVENTS.map((ev) => (
-            <label style="display:inline-block;margin-right:1rem">
-              <input type="checkbox" name="events" value={ev} checked={events.has(ev)} /> <code>{ev}</code>
-            </label>
-          ))}
+          <EventPicker checked={(ev) => events.has(ev)} />
         </fieldset>
       ) : (
         <p class="muted">{t("hooks.no_events_plugin")}</p>
@@ -215,7 +215,7 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
                 <td>
                   <code>{e.url}</code>
                 </td>
-                <td>{e.events.join(", ")}</td>
+                <td>{e.events.filter(isHookEvent).map(eventLabel).join("・")}</td>
                 <td>{e.manifest?.admin_url ? <a href={`/admin/shops/${shop.id}/hooks/${e.id}/ui`}>{t("hooks.plugin_ui")}</a> : null}</td>
               </tr>
             ))}
@@ -267,6 +267,7 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
                 <td>{d.attempts}</td>
                 <td>
                   {d.last_status ?? ""} {d.last_error ? <span class="muted">{d.last_error.slice(0, 80)}</span> : null}
+                  {d.status === "pending" && d.attempts > 0 && d.next_attempt_at ? <div class="muted">{tf("hooks.next_retry", { time: formatDateTime(d.next_attempt_at) })}</div> : null}
                 </td>
               </tr>
             ))}
@@ -279,12 +280,11 @@ hooks.get("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
 
 /** URL を受け取り、マニフェストを取得して登録フォームを出す */
 hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
-  const { db } = owner(c);
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "integrations");
   if (!shop) return c.text(t("shop.not_found"), 404);
   const f = await formFields(c);
-  const url = (f.url ?? "").trim();
+  const url = asciiHookUrl((f.url ?? "").trim());
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   const manifest = await fetchManifest(url, outboundFetch(c));
   // つなぐ手順に対応したプラグイン（0088）は、許す画面を出す（秘密を手で写さない）
@@ -312,11 +312,13 @@ hooks.post("/:shopId/hooks/new", requireOwner, async (c: AdminContext) => {
   );
 });
 
-function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false, bundled = false): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
-  const url = (f.url ?? "").trim();
+function endpointValues(f: Record<string, string>, eventsRaw: string[], manifest: PluginManifest | null, apps = false, bundled = false, currentUrl?: string): Partial<EndpointRow> | "invalid_url" | "invalid_app_handle" {
+  const typed = (f.url ?? "").trim();
+  // 変えていない URL はそのまま（前からある送信先の、出来事・有効 / 無効・設定だけの保存を止めない。DB も URL を変えるときだけ形を確かめる）
+  const url = typed === currentUrl ? typed : asciiHookUrl(typed);
   // 同梱プラグインの設定の保存は内部 URL（呼び出し側が元の URL に戻す）。外部プラグインは新規も更新も externalHookUrl
   // （私設のアドレス・localhost・banto.invalid への書き換えを受けない。外部として登録した行の URL は同梱の内部 URL に変えられない）
-  if (bundled ? !URL_RE.test(url) : !externalHookUrl(url)) return "invalid_url";
+  if (bundled ? !URL_RE.test(url) : url !== currentUrl && !externalHookUrl(url)) return "invalid_url";
   const values: Partial<EndpointRow> = {
     name: (f.name ?? "").trim().slice(0, 200) || url,
     url,
@@ -352,7 +354,7 @@ hooks.post("/:shopId/hooks", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const events = await eventsFromBody(c);
   const f = await formFields(c);
-  const url = (f.url ?? "").trim();
+  const url = asciiHookUrl((f.url ?? "").trim());
   if (!externalHookUrl(url)) return c.redirect(`/admin/shops/${shopId}/hooks?flash=invalid_url`);
   // マニフェストは登録時に再取得する（フォームの値を信用しない）
   const manifest = await fetchManifest(url, outboundFetch(c));
@@ -384,7 +386,10 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
   const { shop, endpoint } = data;
   const secret = sessionSecret(c);
   // つないだ連携（0088）は接続ごとの署名シークレットをプラグインに渡し済み。画面には出さない
-  const conn = await connectionOf(c, endpoint.id);
+  const [conn, deliveries] = await Promise.all([
+    connectionOf(c, endpoint.id),
+    owner(c).db.from<DeliveryRow>("hook_deliveries").select("id,endpoint_id,event,status,attempts,last_status,last_error,created_at,next_attempt_at", { eq: { shop_id: shop.id, endpoint_id: endpoint.id }, order: "created_at.desc", limit: 20 }),
+  ]);
   const signing = secret && !conn ? await endpointSecret(secret, endpoint.id) : null;
   const base = `/admin/shops/${shop.id}/hooks/${endpoint.id}`;
   const f = flash(c.req.query("flash"));
@@ -402,10 +407,25 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         sub={<code>{endpoint.url}</code>}
       />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
+      {/* このアプリは何をしているか（許したこと・受け取っている出来事）を先に言葉で */}
+      <div class="split">
+        {conn ? (
+          <section class="card">
+            <h2>{t("hooks.allowed_title")}</h2>
+            <ScopeList scopes={conn.scopes} />
+          </section>
+        ) : null}
+        {receivesEvents(endpoint.url) ? (
+          <section class="card">
+            <h2>{t("hooks.receives_title")}</h2>
+            <EventChips events={endpoint.events} />
+          </section>
+        ) : null}
+      </div>
       {conn ? <ConnectionCard shopId={shop.id} endpointId={endpoint.id} conn={conn} canReconnect={connectable(endpoint.manifest)} /> : null}
       {/* 登録・保存のときにマニフェストを読めなかった外部の送信先。プラグインの欄（設定・お店の行動を渡す等）が出ない理由を見せる */}
       {!endpoint.manifest && bundledPluginIdFromUrl(endpoint.url) === null ? <p class="muted">{t("hooks.manifest_absent")}</p> : null}
-      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps />
+      <EndpointForm action={base} endpoint={endpoint} manifest={endpoint.manifest} apps connected={Boolean(conn)} />
       {relayOn && endpoint.manifest?.storefront_events ? <StorefrontEventsForm action={`${base}/storefront-events`} requested={endpoint.manifest.storefront_events} granted={endpoint.storefront_events ?? null} /> : null}
 
       {bundledPluginIdFromUrl(endpoint.url) === null ? (
@@ -429,10 +449,38 @@ hooks.get("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =>
         </p>
       ) : null}
 
-      <h2>{t("hooks.delete")}</h2>
-      <form method="post" action={`${base}/delete`}>
-        <button type="submit">{t("hooks.delete")}</button>
-      </form>
+      <h2>{t("hooks.endpoint_deliveries")}</h2>
+      {deliveries.length === 0 ? (
+        <p class="muted">{t("hooks.no_deliveries")}</p>
+      ) : (
+        <table>
+          <tbody>
+            {deliveries.map((d) => (
+              <tr>
+                <td>{formatDateTime(d.created_at)}</td>
+                <td>{isHookEvent(d.event) ? eventLabel(d.event) : <code>{d.event}</code>}</td>
+                <td>
+                  <span class={`status ${d.status === "delivered" ? "on" : d.status === "failed" ? "warn" : "info"}`}>{t(`hooks.status.${d.status}` as MessageKey)}</span>
+                  {d.status === "pending" && d.attempts > 0 && d.next_attempt_at ? <div class="muted">{tf("hooks.next_retry", { time: formatDateTime(d.next_attempt_at) })}</div> : null}
+                </td>
+                <td>
+                  {d.last_status ?? ""} {d.last_error ? <span class="muted">{d.last_error.slice(0, 80)}</span> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <section class="card danger-zone">
+        <h2>{t("hooks.danger")}</h2>
+        <p class="muted">{t("hooks.delete_hint")}</p>
+        <form method="post" action={`${base}/delete`} onsubmit={`return confirm(${JSON.stringify(t("hooks.delete_confirm"))})`}>
+          <button type="submit" class="danger">
+            {t("hooks.delete")}
+          </button>
+        </form>
+      </section>
     </AdminLayout>,
   );
 });
@@ -448,9 +496,11 @@ hooks.post("/:shopId/hooks/:endpointId", requireOwner, async (c: AdminContext) =
   const bundled = bundledPluginIdFromUrl(endpoint.url) !== null;
   // 外部プラグインはマニフェストを読み直す（ブロックの提案などが増えたとき。取れなければ前のまま）
   const fresh = !bundled ? await fetchManifest(endpoint.url, outboundFetch(c)) : null;
-  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled, bundled);
+  const values = endpointValues(f, events, fresh ?? endpoint.manifest, !bundled, bundled, endpoint.url);
   if (typeof values === "string") return c.redirect(`${base}?flash=${values}`);
   if (bundled) values.url = endpoint.url;
+  // つないだ連携（0088）の送信先は変えない（前の相手に渡したトークンとシークレットが残るため。DB も止める）
+  if (await connectionOf(c, endpoint.id)) values.url = endpoint.url;
   if (fresh) values.manifest = fresh;
   try {
     await db.from<EndpointRow>("hook_endpoints").update(values, { id: endpoint.id, shop_id: shop.id });

@@ -61,7 +61,7 @@ careLabelsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const categories = await owner(c).db.from<CategoryRow>("categories").select("id,name,parent_id,care", { eq: { shop_id: shop.id }, order: "sort_order.asc" });
   const base = `/admin/shops/${shop.id}/modules/care-labels`;
   return c.html(
-    <AdminLayout title={t("care.title")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("care.title") }]}>
+    <AdminLayout title={t("care.title")} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("care.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), here: "care-labels" }}>
       <PageHead title={t("care.title")} />
       {flashOf(c.req.query("flash"))}
       <p>{t("care.intro")}</p>
@@ -205,7 +205,7 @@ async function editPage(c: AdminContext, shop: ShopRow, target: Target) {
   const base = `/admin/shops/${shop.id}/modules/care-labels`;
   const back = target.kind === "product" ? `/admin/shops/${shop.id}/products/${target.row.id}` : `/admin/shops/${shop.id}/categories`;
   return c.html(
-    <AdminLayout title={title} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("care.title"), href: base }, { label: target.row.name }]}>
+    <AdminLayout title={title} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("care.title"), href: base }, { label: target.row.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), here: "care-labels" }}>
       <PageHead title={`${title}: ${target.row.name}`} />
       {flashOf(c.req.query("flash"))}
       {inherited ? (

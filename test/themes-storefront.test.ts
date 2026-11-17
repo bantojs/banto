@@ -59,7 +59,8 @@ describe("お店の画面を Liquid のテーマで描く", () => {
     expect(html).toContain("<title>テストのお店 | テストのお店</title>");
     expect(html).toContain('<div id="shopify-section-main" class="shopify-section"><h2>おすすめ</h2>');
     expect(html).toContain("<span>Tシャツ &lt;b&gt;</span> <b>¥1,200</b>");
-    expect(html).toContain(`<img src="${BASE}/media/img/tee.t.webp" alt="Tシャツ &lt;b&gt;" width="400" height="300" loading="lazy">`);
+    // ショップのドメインで開いたページの画像は、そのドメインの /media から（Worker が置き場のとき）
+    expect(html).toContain(`<img src="${DOMAIN}/media/img/tee.t.webp" alt="Tシャツ &lt;b&gt;" width="400" height="300" loading="lazy">`);
     expect(html).toContain('href="/products/tee"');
     expect(html).toContain('<a href="/categories/tops">トップス</a>');
     expect(html).toContain('<a href="/legal">特定商取引法に基づく表記</a>');

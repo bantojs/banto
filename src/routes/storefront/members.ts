@@ -40,22 +40,22 @@ import {
   type MemberSession,
 } from "../../members/auth";
 import { peekLogin, startLogin, verifyLogin, type LoginDeps } from "../../members/login";
-import { openJson, randomToken, readCookie, sealJson } from "../../util/signed";
+import { openJson, randomToken, sealJson } from "../../util/signed";
 import { moduleEnabled } from "../../modules/registry";
 import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, providerClientId, providerIdentity, providerModule, secretPurpose, type Provider } from "../../modules/social-login/providers";
 import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, navigateOnly, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
+import { afterResponse, clearScopedCookie, clientIpFor, csrfGuard, formFields, getScopedCookie, navigateOnly, publicBaseUrl, readBodyLimited, setScopedCookie, yen, type Ctx } from "../common";
 import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
 import { memberReader } from "../audience-render";
 import { AUDIENCES_MODULE } from "../../members/audience";
 import type { ProductSummary } from "../../storefront/data";
-import { GUEST, audienceAttrsOf, type AudienceContext } from "../../members/audience";
+import { audienceAttrsOf } from "../../members/audience";
 import { DEVICE_SECONDS, deviceCookieName, knownDevice, sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { createMailer } from "../../mail/send";
 import { memberAccountUrl, shopHome, shopOrigin } from "../../storefront/urls";
-import { domainUrlFor, onShopDomain, storefrontData } from "./domain";
+import { domainUrlFor, hostShop, onShopDomain, storefrontData } from "./domain";
 import type { AccountPageProps, AddressFormValues } from "../../themes/types";
 import { liquidThemeFor, renderAccount, renderCustomerLogin, type CustomerLoginInput } from "./liquid";
 import { type PublicShop } from "../../storefront/data";
@@ -88,16 +88,15 @@ const PENDING_SECONDS = 20 * 60;
 /** ログインした後に開く会員の注文（注文メールのリンクから来た、0066）。中身は注文番号だけ（秘密ではない） */
 const orderAfterLoginCookieName = (shopId: string) => `${customerCookieName(shopId)}_o`;
 
-function cookieHeader(name: string, value: string, path: string, secure: boolean, maxAge: number): string {
-  return [`${name}=${value}`, `Path=${path}`, "HttpOnly", "SameSite=Lax", `Max-Age=${maxAge}`, ...(secure ? ["Secure"] : [])].join("; ");
-}
+/** ショップの Cookie を置くパス（独自ドメインの上では "/"。HTTPS なら `__Host-` の名前になる。src/util/cookie.ts） */
+const shopCookiePath = (s: { shopPath: string }) => s.shopPath || "/";
 
 /**
  * 注文メールのリンク（?banto_order=&banto_member=1）から来た、ログインしていない会員。ログインしたら /account がこの注文へ戻す。
  * どのログインの方法（コード・リンク・パスワード・LINE・Google・パスキー）も成功したら /account へ戻るので、戻す場所は 1 か所
  */
 export function rememberOrderAfterLogin(c: Ctx, s: { shop: { id: string }; shopPath: string }, number: number): void {
-  c.header("Set-Cookie", cookieHeader(orderAfterLoginCookieName(s.shop.id), String(number), s.shopPath || "/", isSecureRequest(c), PENDING_SECONDS), { append: true });
+  setScopedCookie(c, orderAfterLoginCookieName(s.shop.id), String(number), { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
 }
 
 /** Cookie はショップのパス（独自ドメインの上ではドメイン全体）に置く */
@@ -105,8 +104,9 @@ async function writeSession(c: Ctx, s: { shop: { id: string }; shopPath: string 
   const secret = c.get("sessionSecret");
   if (!secret) return;
   const name = customerCookieName(s.shop.id);
-  const path = s.shopPath || "/";
-  c.header("Set-Cookie", session ? cookieHeader(name, await sealSession(secret, s.shop.id, session), path, isSecureRequest(c), SESSION_SECONDS) : cookieHeader(name, "", path, isSecureRequest(c), 0), { append: true });
+  const path = shopCookiePath(s);
+  if (session) setScopedCookie(c, name, await sealSession(secret, s.shop.id, session), { path, maxAge: SESSION_SECONDS });
+  else clearScopedCookie(c, name, { path });
 }
 
 const cookiePath = (c: Ctx, shop: { slug: string; domain?: string | null }) => (onShopDomain(c, shop) ? "" : `/${shop.slug}`);
@@ -129,19 +129,13 @@ export function customerSession(c: Ctx, s: { shop: { id: string; slug: string; d
   return p;
 }
 
-/** 会員の条件（0097）の判定の材料。ゲストは GUEST。値は Cookie に入れたもの（最大数分遅れる。画面の出し分けだけに使う） */
-export async function memberAudience(c: Ctx, s: { shop: { id: string; slug: string; domain?: string | null; settings?: Record<string, unknown> } }): Promise<AudienceContext> {
-  const session = await customerSession(c, s);
-  return session ? { member: true, attrs: session.at ?? {} } : GUEST;
-}
-
 /** `add` のセッションで通してよい場所: パスキーの登録（options・register）とログアウトだけ */
 function passkeyAddPath(c: Ctx): boolean {
   return /\/account\/(?:passkey\/register(?:\/options)?|logout)$/.test(new URL(c.req.url).pathname);
 }
 
 async function verifySession(c: Ctx, shop: { id: string; slug: string; domain?: string | null }, secret: string): Promise<MemberSession | null> {
-  const v = await openSession(secret, shop.id, readCookie(c.req.header("cookie"), customerCookieName(shop.id)));
+  const v = await openSession(secret, shop.id, getScopedCookie(c, customerCookieName(shop.id), cookiePath(c, shop) || "/"));
   if (!v) return null;
   const target = { shop, shopPath: cookiePath(c, shop) };
   if (!v.sid) {
@@ -197,15 +191,6 @@ export function loginDeps(c: Ctx): LoginDeps | null {
   if (!secret || !db) return null;
   const doFetch = c.get("deps").fetch;
   return { db, secret, fetch: doFetch, mailer: createMailer(c.get("adapters"), doFetch) };
-}
-
-/**
- * 0090 が当たっているか（会員の再認証: 退会・連携の解除・パスキーの削除・全端末ログアウトはログインしてから 15 分以内のセッションだけ）。
- * 当たっていれば今のセッションの行の id を渡し、DB が確かめる。古い DB には渡さない（引数の無い関数しか無い）
- */
-async function reauthSessionId(c: Ctx, session: MemberSession): Promise<string | undefined> {
-  const sf = storefrontData(c);
-  return session.sid || undefined;
 }
 
 /** 15 分を過ぎたセッションからの操作（reauth_required）: この端末のセッションを終えて、ログイン画面に理由を出す */
@@ -278,6 +263,7 @@ const LOGIN_ERRORS: Record<string, MessageKey> = {
   password: "member.password_invalid",
   locked: "member.password_locked",
   oauth: "member.oauth_failed",
+  oauth_retry: "member.oauth_retry",
   reauth: "member.reauth_required",
   invalid_email: "member.invalid_email",
   unavailable: "member.unavailable",
@@ -292,9 +278,9 @@ members.get("/:shop/account", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
-  const afterLogin = readCookie(c.req.header("cookie"), orderAfterLoginCookieName(s.shop.id));
+  const afterLogin = getScopedCookie(c, orderAfterLoginCookieName(s.shop.id), shopCookiePath(s));
   if (afterLogin) {
-    c.header("Set-Cookie", cookieHeader(orderAfterLoginCookieName(s.shop.id), "", s.shopPath || "/", isSecureRequest(c), 0), { append: true });
+    clearScopedCookie(c, orderAfterLoginCookieName(s.shop.id), { path: shopCookiePath(s) });
     if (/^[0-9]{1,9}$/.test(afterLogin)) return c.redirect(`${s.shopPath}/orders/lookup?banto_order=${afterLogin}&banto_member=1`);
   }
   const db = privilegedFor(c);
@@ -478,23 +464,23 @@ members.post("/:shop/account/login", async (c: Ctx) => {
     return c.redirect(`${s.shopPath}/account/login?error=${r.error === "limit" ? "mail_limit" : r.error}`);
   }
   const pending = await sealPending(deps.secret, s.shop.id, { id: r.challengeId, email: r.email, exp: Math.floor(Date.now() / 1000) + PENDING_SECONDS, ...(fields.next === "passkeys" ? { next: "passkeys" as const } : {}) });
-  c.header("Set-Cookie", cookieHeader(pendingCookieName(s.shop.id), pending, s.shopPath || "/", isSecureRequest(c), PENDING_SECONDS), { append: true });
+  setScopedCookie(c, pendingCookieName(s.shop.id), pending, { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
   return c.redirect(`${s.shopPath}/account/code`);
 });
 
 async function pendingOf(c: Ctx, s: Scope) {
   const secret = c.get("sessionSecret");
-  return secret ? openPending(secret, s.shop.id, readCookie(c.req.header("cookie"), pendingCookieName(s.shop.id))) : null;
+  return secret ? openPending(secret, s.shop.id, getScopedCookie(c, pendingCookieName(s.shop.id), shopCookiePath(s))) : null;
 }
 
 function clearPending(c: Ctx, s: Scope): void {
-  c.header("Set-Cookie", cookieHeader(pendingCookieName(s.shop.id), "", s.shopPath || "/", isSecureRequest(c), 0), { append: true });
+  clearScopedCookie(c, pendingCookieName(s.shop.id), { path: shopCookiePath(s) });
 }
 
 async function signIn(c: Ctx, s: Scope, v: { customer_id: string; session_epoch: number; email: string }): Promise<boolean> {
   // この端末でログインし直した: 前のセッションは取り消す（一覧に残さない）
   const db = privilegedFor(c);
-  if (s.session?.sid && db) await db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(() => false);
+  if (s.session?.sid && db) await db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(revokeFailed);
   if (!(await startWebSession(c, s, v))) return false;
   await markDevice(c, s, v.customer_id);
   clearPending(c, s);
@@ -524,7 +510,7 @@ async function startWebSession(c: Ctx, s: { shop: { id: string }; shopPath: stri
 async function markDevice(c: Ctx, s: { shop: { id: string }; shopPath: string }, customerId: string): Promise<void> {
   const secret = c.get("sessionSecret");
   if (!secret) return;
-  c.header("Set-Cookie", cookieHeader(deviceCookieName(s.shop.id), await deviceMark(secret, s.shop.id, customerId), s.shopPath || "/", isSecureRequest(c), DEVICE_SECONDS), { append: true });
+  setScopedCookie(c, deviceCookieName(s.shop.id), await deviceMark(secret, s.shop.id, customerId), { path: shopCookiePath(s), maxAge: DEVICE_SECONDS });
 }
 
 members.get("/:shop/account/code", async (c: Ctx) => {
@@ -597,7 +583,7 @@ members.post("/:shop/account/logout-all", async (c: Ctx) => {
   if (s.session && db) {
     try {
       // 0090: ログインしてから 15 分以内のセッションだけ（盗まれた Cookie から本人を締め出さない）
-      await db.memberLogoutAll(s.shop.id, s.session.cid, s.session.ep, await reauthSessionId(c, s.session));
+      await db.memberLogoutAll(s.shop.id, s.session.cid, s.session.ep, s.session.sid || undefined);
     } catch (e) {
       if (isReauthRequired(e)) return reauthRedirect(c, s);
       throw e;
@@ -728,7 +714,7 @@ members.post("/:shop/account/delete", navigateOnly, async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
   try {
-    r = await db.memberWithdraw(s.shop.id, s.session.cid, s.session.ep, await reauthSessionId(c, s.session));
+    r = await db.memberWithdraw(s.shop.id, s.session.cid, s.session.ep, s.session.sid || undefined);
   } catch (e) {
     if (isReauthRequired(e)) return reauthRedirect(c, s);
     throw e;
@@ -793,10 +779,18 @@ const passkeyExpected = (shop: PublicShop): Expected => ({ origin: `https://${sh
 const PASSKEY_FRESH_SECONDS = 14 * 60;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** ログアウトでセッションの行を取り消せなかった: Cookie は消すので画面は進めるが、行が生きたままなのでログに残す */
+const revokeFailed = (e: unknown): boolean => {
+  console.error("[banto] member logout: could not revoke the session:", e instanceof Error ? e.message : e);
+  return false;
+};
+
 async function jsonBody(c: Ctx): Promise<Record<string, unknown>> {
-  if (Number(c.req.header("content-length") ?? 0) > 64 * 1024) return {};
   try {
-    const b: unknown = await c.req.json();
+    // 申告の Content-Length だけでなく、読んだ分でも止める
+    const raw = await readBodyLimited(c.req.raw, 64 * 1024);
+    if (!raw) return {};
+    const b: unknown = JSON.parse(new TextDecoder().decode(raw));
     return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
   } catch {
     return {};
@@ -904,7 +898,7 @@ members.post("/:shop/account/passkey/login", async (c: Ctx) => {
   if (returnTo) {
     const token = randomToken(32);
     const id = await deps.db.memberHandoffCreate(s.shop.id, r.customer_id, r.session_epoch, await linkHash(deps.secret, token));
-    return c.json({ redirect: `${returnTo}${returnTo.includes("?") ? "&" : "?"}banto_handoff=${id}.${token}` });
+    return c.json({ redirect: withQueryParam(returnTo, "banto_handoff", `${id}.${token}`) });
   }
   if (!(await signIn(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return c.json({ error: "failed" }, 401);
   return c.json({ redirect: `${s.shopPath}/account` });
@@ -974,7 +968,7 @@ members.post("/:shop/account/passkey/register", async (c: Ctx) => {
   // ヘッドレスの追加（0070）: この端末のセッションは追加のためだけに作ったので取り消し、連携サイトへ戻す
   const returnTo = safeReturnUrl(b["return_to"], returnOrigins(s.shop.settings), "");
   if (returnTo) {
-    await deps.db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(() => false);
+    await deps.db.memberSessionRevoke(s.shop.id, s.session.cid, s.session.ep, s.session.sid, "logout").catch(revokeFailed);
     await writeSession(c, s, null);
     return c.json({ redirect: withQueryParam(returnTo, "banto_passkey", "added") });
   }
@@ -1014,7 +1008,7 @@ members.post("/:shop/account/passkeys/:id{[0-9a-f-]{36}}/delete", async (c: Ctx)
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   // false は「無い・他人のもの」か「古いセッション」。古いセッションなら一覧の画面がログインへ送る。0090: 15 分を過ぎていれば入り直す
   try {
-    const ok = await db.memberPasskeyDelete(s.shop.id, s.session.cid, s.session.ep, c.req.param("id") ?? "", await reauthSessionId(c, s.session));
+    const ok = await db.memberPasskeyDelete(s.shop.id, s.session.cid, s.session.ep, c.req.param("id") ?? "", s.session.sid || undefined);
     return c.redirect(ok ? `${s.shopPath}/account/passkeys?flash=deleted` : `${s.shopPath}/account/passkeys`);
   } catch (e) {
     if (isReauthRequired(e)) return reauthRedirect(c, s);
@@ -1038,7 +1032,7 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
     return c.redirect(`${s.shopPath}/account/login?error=${error}&email=${encodeURIComponent(email)}`);
   }
   // 初めての端末なら本人に知らせる（使い回しのパスワードで入られたときに気づけるように）
-  if (r.mail_from && r.email && !(await knownDevice(deps.secret, s.shop.id, r.customer_id, c.req.header("cookie")))) {
+  if (r.mail_from && r.email && !(await knownDevice(deps.secret, s.shop.id, r.customer_id, getScopedCookie(c, deviceCookieName(s.shop.id), shopCookiePath(s))))) {
     await afterResponse(c, sendPasswordLoginNotice(deps, s.shop, { from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   }
   if (!(await signIn(c, s, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
@@ -1060,14 +1054,8 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
     await writeSession(c, s, null);
     return c.redirect(`${s.shopPath}/account/login${r.reason === "reauth" ? "?error=reauth" : ""}`);
   }
-  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代で続ける（0057）。0045 より前の Cookie（sid 無し）は行を作り直す
-  if (s.session.sid) {
-    const now = Math.floor(Date.now() / 1000);
-    await writeSession(c, s, { ...s.session, ep: r.epoch, chk: now });
-  } else if (!(await startWebSession(c, s, { customer_id: s.session.cid, session_epoch: r.epoch, email: s.session.email }))) {
-    await writeSession(c, s, null);
-    return c.redirect(`${s.shopPath}/account/login`);
-  }
+  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代で続ける（0057。sid の無い Cookie は verifySession が通さない）
+  await writeSession(c, s, { ...s.session, ep: r.epoch, chk: Math.floor(Date.now() / 1000) });
   // 本人に知らせる（盗まれたセッションから足されても気づけるように。送信元が無ければ送らない）
   const ld = loginDeps(c);
   if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
@@ -1077,7 +1065,17 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
 // ---------- LINE・Google でログイン（0014、同梱モジュール line_login・google_login） ----------
 
 const OAUTH_COOKIE = "banto_oauth";
+/** 2026-11-13 まで LINE / Google の途中の Cookie を置いていたパス（今はホスト全体、HTTPS なら `__Host-`） */
+const OAUTH_COOKIE_LEGACY_PATH = "/_oauth";
 const OAUTH_SECONDS = 10 * 60;
+/**
+ * LINE の自動ログインに失敗した印（中身は "line:<スラッグ>"、そのショップだけに効く）。次にそのショップで LINE のログインを始めるとき disable_auto_login を付ける。
+ * iOS などで LINE アプリへ移ったあと、戻りが別のブラウザ（既定のブラウザ。別のブラウザや別のアプリの中のブラウザから始めたとき）で開くと、
+ * そのブラウザには state の Cookie が無い。自動ログインのまま始め直すと同じことを繰り返すので、やり直しは LINE アプリを経由させない
+ */
+const OAUTH_RETRY_COOKIE = "banto_oauth_retry";
+/** state の頭に付けるショップのスラッグ（Cookie が無い戻りで、やり直しのログイン画面へ案内するためだけに使う。信用はしない） */
+const STATE_SHOP = /^([a-z0-9][a-z0-9-]{0,62})\./;
 
 interface OAuthState {
   provider: Provider;
@@ -1112,9 +1110,11 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
   if (shop.domain && !onShopDomain(c, shop)) return c.req.method === "GET" ? c.redirect(domainUrlFor(c, shop)!) : c.redirect(`https://${shop.domain}/account`, 303);
   const { verifier, challenge } = await pkce();
   const origin = shopOrigin(publicBaseUrl(c), shop);
+  const retry = p === "line" && getScopedCookie(c, OAUTH_RETRY_COOKIE, "/") === `line:${shop.slug}`;
+  if (retry) clearScopedCookie(c, OAUTH_RETRY_COOKIE, { path: "/" });
   const st: OAuthState = {
     provider: p,
-    state: randomToken(24),
+    state: `${shop.slug}.${randomToken(24)}`,
     nonce: randomToken(24),
     verifier,
     shop: shop.id,
@@ -1125,9 +1125,9 @@ export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OA
     ...extra,
     exp: Math.floor(Date.now() / 1000) + OAUTH_SECONDS,
   };
-  c.header("Set-Cookie", cookieHeader(OAUTH_COOKIE, await sealJson(oauthSecret(secret), st), "/_oauth", isSecureRequest(c), OAUTH_SECONDS), { append: true });
+  setScopedCookie(c, OAUTH_COOKIE, await sealJson(oauthSecret(secret), st), { path: "/", maxAge: OAUTH_SECONDS, legacyPath: OAUTH_COOKIE_LEGACY_PATH });
   const bot = ((shop.settings ?? {})["oauth"] as Record<string, Record<string, unknown>> | undefined)?.["line"]?.["bot_prompt"];
-  return c.redirect(authorizeUrl(p, clientId, { redirectUri: redirectUri(origin, p), state: st.state, nonce: st.nonce, challenge, botPrompt: bot === "normal" || bot === "aggressive" ? bot : null }));
+  return c.redirect(authorizeUrl(p, clientId, { redirectUri: redirectUri(origin, p), state: st.state, nonce: st.nonce, challenge, botPrompt: bot === "normal" || bot === "aggressive" ? bot : null, disableAutoLogin: retry }));
 }
 
 function providerOf(c: Ctx): Provider | null {
@@ -1159,7 +1159,7 @@ members.post("/:shop/account/oauth/:provider/unlink", async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ
-    const ok = await db.memberUnlinkIdentity(s.shop.id, s.session.cid, s.session.ep, p, await reauthSessionId(c, s.session));
+    const ok = await db.memberUnlinkIdentity(s.shop.id, s.session.cid, s.session.ep, p, s.session.sid || undefined);
     return c.redirect(ok ? `${s.shopPath}/account?flash=oauth_unlinked` : `${s.shopPath}/account`);
   } catch (e) {
     if (isReauthRequired(e)) return reauthRedirect(c, s);
@@ -1172,15 +1172,27 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   const secret = c.get("sessionSecret");
   const db = privilegedFor(c);
   const p = providerOf(c);
-  const raw = readCookie(c.req.header("cookie"), OAUTH_COOKIE);
-  c.header("Set-Cookie", cookieHeader(OAUTH_COOKIE, "", "/_oauth", isSecureRequest(c), 0), { append: true });
+  const raw = getScopedCookie(c, OAUTH_COOKIE, "/");
+  clearScopedCookie(c, OAUTH_COOKIE, { path: "/", legacyPath: OAUTH_COOKIE_LEGACY_PATH });
   const st = secret ? ((await openJson(oauthSecret(secret), raw)) as OAuthState | null) : null;
   // state が合わない = この端末で始めたログインではない（他人の戻り URL を踏まされた等）。何もしない
-  if (!st || !p || st.provider !== p || !db || !secret || st.exp < Math.floor(Date.now() / 1000) || c.req.query("state") !== st.state) return c.text(t("member.oauth_failed"), 400);
+  if (!st || !p || st.provider !== p || !db || !secret || st.exp < Math.floor(Date.now() / 1000) || c.req.query("state") !== st.state) {
+    // Cookie が無い・合わない戻り。多くは「LINE アプリへ移って、戻りが別のブラウザで開いた」（このブラウザには Cookie が無い）。
+    // ほかに、2 つのタブで同時に始めた・古い戻りを開いた・期限切れ。どれもログインはさせず（認可コードを使わない）、
+    // このブラウザでやり直せるように、ショップのログイン画面へ案内する（LINE はやり直しで自動ログインを使わない）
+    const stateSlug = p && db && secret ? STATE_SHOP.exec(c.req.query("state") ?? "")?.[1] : undefined;
+    if (!stateSlug) return c.text(t("member.oauth_failed"), 400);
+    // 独自ドメインの上の戻りなら、Host のショップを正にして、そのドメインのパス（スラッグを付けない）。
+    // PUBLIC_BASE_URL が無い構成でも分かるように Host で引く（失敗のときだけ通るので、往復が 1 回増えても速度の予算に響かない）
+    const hs = await hostShop(c);
+    const slug = hs ? hs.slug : stateSlug;
+    if (p === "line") setScopedCookie(c, OAUTH_RETRY_COOKIE, `line:${slug}`, { path: "/", maxAge: OAUTH_SECONDS });
+    return c.redirect(`${hs ? "" : `/${slug}`}/account/login?error=oauth_retry`);
+  }
   const shopPath = st.path;
   const fail = (reason: string) =>
     st.mode === "api" && st.return_to
-      ? c.redirect(`${st.return_to}${st.return_to.includes("?") ? "&" : "?"}banto_error=${reason}`)
+      ? c.redirect(withQueryParam(st.return_to, "banto_error", reason))
       : c.redirect(st.mode === "link" ? `${shopPath}/account?error=${reason}` : `${shopPath}/account/login?error=oauth`);
   const code = c.req.query("code");
   if (!code) return fail("oauth");
@@ -1209,7 +1221,7 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
     // ヘッドレス: 1 回限り・2 分の引き換え券を渡す（会員のトークンを URL に載せない）
     const token = randomToken(32);
     const id = await db.memberHandoffCreate(st.shop, r.customer_id, r.session_epoch, await linkHash(secret, token));
-    return c.redirect(`${st.return_to}${st.return_to.includes("?") ? "&" : "?"}banto_handoff=${id}.${token}`);
+    return c.redirect(withQueryParam(st.return_to, "banto_handoff", `${id}.${token}`));
   }
   const target = { shop: { id: st.shop }, shopPath };
   if (!(await startWebSession(c, target, { customer_id: r.customer_id, session_epoch: r.session_epoch, email: r.email ?? "" }))) return fail("oauth");

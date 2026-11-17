@@ -10,6 +10,7 @@ import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
 import { INVOICE_NUMBER_RE, RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "./render";
 import { selectIn } from "../../db/select-in";
+import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
 export { RECEIPT_MODULE };
 
@@ -32,10 +33,11 @@ receiptAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const raw = ((shop.settings ?? {})["receipt"] ?? {}) as Record<string, unknown>;
   const flash = c.req.query("flash");
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("receipt.module_title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("receipt.module_title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("receipt.module_title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("receipt.module_title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "settings", here: "receipt" }}>
       <PageHead title={t("receipt.module_title")} />
       {flash === "saved" ? <p class="notice">{t("receipt.saved")}</p> : null}
       {flash === "invalid" ? <p class="error">{t("receipt.invalid_number")}</p> : null}
+      <NotSavedNotice flash={flash} />
       <p>{t("receipt.module_intro")}</p>
       <form method="post" action={`/admin/shops/${shop.id}/modules/receipt`}>
         <label for="issuer">{t("receipt.issuer")}</label>
@@ -63,9 +65,9 @@ receiptAdmin.post("/", requireOwner, async (c: AdminContext) => {
   if (num && !INVOICE_NUMBER_RE.test(num)) return c.redirect(`${base}?flash=invalid`);
   const receipt = { issuer: (f.issuer ?? "").trim().slice(0, 200), invoice_number: num || null, proviso: (f.proviso ?? "").trim().slice(0, 100) };
   try {
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...(shop.settings ?? {}), receipt } }, { id: shop.id });
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), receipt } });
   } catch (e) {
-    if (e instanceof DbError) return c.redirect(`${base}?flash=invalid`);
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${failCode(e, "invalid")}`);
     throw e;
   }
   return c.redirect(`${base}?flash=saved`);

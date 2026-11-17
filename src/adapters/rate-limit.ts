@@ -13,10 +13,14 @@ export function memoryRateLimit(now: () => number = () => Date.now()): RateLimit
       const t = now();
       const w = windows.get(key);
       if (!w || t - w.start >= windowSeconds * 1000) {
-        // 鍵が増えすぎたら古い窓を捨てる（メモリを食い続けない）
+        // 鍵が増えすぎたら、期限切れ → 古い順に必要な数だけ捨てる（メモリを食い続けない。全部は消さない:
+        // 鍵を大量に送って全員の窓を消させないため。Map は入れた順なので先頭が古い）
         if (windows.size >= MAX_KEYS) {
           for (const [k, v] of windows) if (t - v.start >= windowSeconds * 1000) windows.delete(k);
-          if (windows.size >= MAX_KEYS) windows.clear();
+          for (const k of windows.keys()) {
+            if (windows.size < MAX_KEYS) break;
+            windows.delete(k);
+          }
         }
         windows.set(key, { start: t, count: 1 });
         return limit >= 1;

@@ -11,7 +11,6 @@ import type { HeadTag, StorefrontHeadContributor } from "../../storefront/head";
 import { moduleEnabled } from "../registry";
 
 export const FAVORITES_MODULE = "favorites";
-export const FAVORITES_MIGRATION = "0123_mod_favorites";
 /** 1 人のお気に入りの上限（DB の banto_favorites_limit と同じ） */
 export const FAVORITES_MAX = 200;
 /** ゲストがブラウザに覚える数（DB の member_favorites_merge が受ける数と同じ） */

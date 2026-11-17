@@ -80,7 +80,7 @@ describe("運営者の二段階認証（管理画面）", () => {
   });
 
   it("組織の全員必須: owner は自分が有効にしてから。未登録のメンバーは登録の画面へ回される", async () => {
-    const { app, sb, owner, orgId } = setup();
+    const { app, sb, orgId } = setup();
     const staff = sb.addUser("staff@example.com", "staff-pass-1");
     sb.orgMembers.push({ org_id: orgId, user_id: staff.id, role: "admin", created_at: "2026-01-01T00:00:00Z" });
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");

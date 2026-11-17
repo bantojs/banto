@@ -149,21 +149,6 @@ export function layoutEnd(rows: readonly string[], from: number): number {
   return rows.length;
 }
 
-/** 書き戻すときの始まりの行（見たままの編集・テストが使う。値は既定と同じなら省く） */
-export function layoutOpenLine(o: Pick<LayoutOpen, "kind" | "attrs"> & Partial<Pick<LayoutOpen, "image" | "alt" | "title" | "style">>, colons = 3): string {
-  const parts = [`${":".repeat(Math.max(3, colons))} ${o.kind}`];
-  for (const [k, vs] of Object.entries(LAYOUT_ATTRS[o.kind])) {
-    const v = o.attrs[k];
-    if (v && vs.includes(v) && v !== (DEFAULTS[`${o.kind}.${k}`] ?? vs[0])) parts.push(`${k}=${v}`);
-  }
-  if (o.style && /^[a-z0-9][a-z0-9-]{0,29}$/.test(o.style)) parts.push(`style=${o.style}`);
-  if (o.image && !/[\s"]/.test(o.image)) parts.push(`image=${o.image}`);
-  const q = (s: string) => s.replace(/["\n\r]/g, "").trim().slice(0, 200);
-  if (o.alt && q(o.alt)) parts.push(`alt="${q(o.alt)}"`);
-  if (o.title && q(o.title)) parts.push(`title="${q(o.title)}"`);
-  return parts.join(" ");
-}
-
 /**
  * 並べ方の最小の CSS（テーマの CSS が無くても崩れない形だけ）。色・余白・高さは変数で、テーマが上書きする:
  *   --banto-bg-subtle / --banto-bg-accent / --banto-fg-accent / --banto-bg-dark / --banto-fg-dark

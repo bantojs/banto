@@ -350,8 +350,8 @@ export interface CartDiscounts {
 }
 
 /** カートの決済手段の選択肢（cart.banto_payment_methods。{% form 'cart' %} の provider の欄に入れる id） */
-export function paymentMethodsObject(options: { stripe: boolean; komoju: boolean }, label: (provider: "stripe" | "komoju") => string): { id: string; name: string }[] {
-  return (["stripe", "komoju"] as const).filter((p) => options[p]).map((p) => ({ id: p, name: label(p) }));
+export function paymentMethodsObject(options: { stripe: boolean; komoju: boolean; amazon_pay: boolean }, label: (provider: "stripe" | "komoju" | "amazon_pay") => string): { id: string; name: string }[] {
+  return (["stripe", "komoju", "amazon_pay"] as const).filter((p) => options[p]).map((p) => ({ id: p, name: label(p) }));
 }
 
 /**

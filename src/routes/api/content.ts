@@ -1,16 +1,15 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
-import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
+import { PAGES_MODULE, absoluteMedia, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { articleFieldDefs, articleFieldsReady, blogFieldSort } from "../../blog/fields";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, articleHandleOk, articleSortFor, articleSummary, blogHasFeed, blogHandleOk, type ArticleRow, type BlogRow } from "../../blog";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks } from "../../content/body-blocks";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
-import { mediaBaseUrl, param, publicBaseUrl, type Ctx } from "../common";
+import { mediaBaseUrl, param, publicBaseUrl, publicShop, type Ctx } from "../common";
 import { hasAudienceBlocks } from "../../content/audience-blocks";
 import { apiViewerData, viewerBody } from "../audience-render";
 import { withIncludes } from "../../content/include";
@@ -38,13 +37,10 @@ interface Scope {
 }
 
 async function scope(c: Ctx, module: string): Promise<Scope | Response> {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
-  if (!url || !anonKey) return c.json({ error: "not_configured" }, 503);
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
-  const shop = await sf.shopBySlug(param(c, "shop"));
-  if (!shop || !moduleEnabled(shop.settings, module)) return c.json({ error: "not_found" }, 404);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { sf, shop } = p;
+  if (!moduleEnabled(shop.settings, module)) return c.json({ error: "not_found" }, 404);
   // 会員トークンの会員には会員限定のページ・記事も（0100。同梱モジュール audiences が ON のショップだけ。壊れたトークンは 401）
   const viewer = await apiViewerData(c, sf, shop);
   if (viewer instanceof Response) return viewer;
@@ -53,7 +49,8 @@ async function scope(c: Ctx, module: string): Promise<Scope | Response> {
 }
 
 /** アイキャッチ（保存した URL。/media/ から始まるものは絶対 URL に） */
-const absImage = (s: Scope, url: string | null | undefined) => (url ? (url.startsWith("/") ? `${s.origin}${url}` : url) : null);
+/** アイキャッチの絶対 URL（/media/… は置き場の起点 MEDIA_BASE_URL から。本文の画像と同じ規則） */
+const absImage = (s: Scope, url: string | null | undefined) => (url ? absoluteMedia(url, s.origin, s.mediaBaseUrl) : null);
 
 /**
  * 見る人に合わせた本文の書式と HTML（書式 → HTML、商品・記事のブロックに既定のカード）。

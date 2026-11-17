@@ -1,8 +1,11 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createPrivilegedDb, PrivilegedRpcError, type OrderInput } from "../../db/privileged";
+import { webhookBody } from "./body";
+import { createPrivilegedDb, type OrderInput } from "../../db/privileged";
+import { confirmFromWebhook } from "../../payments/webhook-confirm";
+import { migrated } from "../../db/migration-state";
 import { createStripeClient, verifyStripeSignature, type CheckoutSession, type StripeEvent } from "../../payments/stripe";
-import { type Ctx } from "../common";
+import { migrationStateFor, type Ctx } from "../common";
 import { PLATFORM_PAYMENT_ACCOUNT } from "../../orders/cancel";
 
 /**
@@ -10,11 +13,27 @@ import { PLATFORM_PAYMENT_ACCOUNT } from "../../orders/cancel";
  *   checkout.session.completed / async_payment_succeeded → confirm_reservation（注文確定）
  *   checkout.session.expired  / async_payment_failed     → release_reservation（在庫を戻す）
  * 処理に成功したイベントだけ record_webhook_event に記録する（失敗時は 500 を返して Stripe に再送させる）。
+ * 記録済みのイベントの再配信は何もしない（0128。src/payments/webhook-confirm.ts）。
  */
 export const stripeWebhook = new Hono<AppEnv>();
 
 const CONFIRM_EVENTS = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded"]);
 const RELEASE_EVENTS = new Set(["checkout.session.expired", "checkout.session.async_payment_failed"]);
+/** 記録済みのイベントを処理の前に見る・返金すると決めた予約を確定しない（0128） */
+export const REPLAY_GUARD_MIGRATION = "0128_webhook_replay";
+
+/**
+ * 再配信の守り（0128）が当たっているか。判定に要る anon キーが無いと確かめられない: 黙って「当たっていない」にすると、
+ * 当たっている DB でも古い流れ（記録済みを見ない・返金の印を付けない）で動くので、ログに出す
+ */
+export async function replayGuard(c: Ctx, url: string): Promise<boolean> {
+  const ms = migrationStateFor(c, url);
+  if (!ms) {
+    console.error("[banto] webhook: SUPABASE_ANON_KEY is not set; cannot tell whether the replay guard (0128) is applied, running without it");
+    return false;
+  }
+  return migrated(ms, REPLAY_GUARD_MIGRATION);
+}
 
 /**
  * paymentAccount: 決済した口座（0090 の orders.payment_account）。Connect のイベントなら event.account、API キー方式（自分のアカウント）なら
@@ -54,7 +73,9 @@ stripeWebhook.post("/", async (c: Ctx) => {
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!webhookSecret || !url || !serviceRoleKey) return c.json({ error: "not_configured" }, 503);
 
-  const payload = await c.req.text();
+  const body = await webhookBody(c);
+  if ("res" in body) return body.res;
+  const payload = body.text;
   if (!(await verifyStripeSignature(payload, c.req.header("stripe-signature"), webhookSecret))) {
     return c.json({ error: "invalid_signature" }, 400);
   }
@@ -72,16 +93,21 @@ stripeWebhook.post("/", async (c: Ctx) => {
   if (!CONFIRM_EVENTS.has(event.type) && !RELEASE_EVENTS.has(event.type)) {
     return c.json({ received: true, ignored: event.type });
   }
+  // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。返金して済みにした決済が、在庫が戻った後に注文にならないように）
+  const guard = await replayGuard(c, url);
+  if (guard && (await db.webhookEventSeen("stripe", event.id))) return c.json({ received: true, duplicate: true });
 
   const session = event.data.object as unknown as CheckoutSession;
   const reservationId = session.metadata?.["reservation_id"] ?? session.client_reference_id ?? null;
   const shopId = session.metadata?.["shop_id"] ?? null;
   if (!reservationId || !shopId) return c.json({ received: true, ignored: "no_reservation" });
 
-  // Connect のイベントは、そのショップの接続先アカウントからのものだけ受け付ける（別の接続済みアカウントが metadata を真似ても確定しない。監査 M7）
+  // Connect のイベントは、そのショップの接続先アカウントからのものだけ受け付ける（別の接続済みアカウントが metadata を真似ても確定しない）
   if (typeof event.account === "string") {
     const expected = await db.shopStripeAccount(shopId);
     if (expected !== event.account) {
+      // 運営者が決済の途中で接続先を変えた・外したときに起きる。支払いは済んでいて注文も返金も無いので、ログに残して運営者が気づけるように
+      console.error(`[banto] stripe webhook ${event.id}: event from account ${event.account} but shop ${shopId} is connected to ${expected ?? "none"}; ignored (payment is neither confirmed nor refunded)`);
       await db.recordWebhookEvent("stripe", event.id);
       return c.json({ received: true, ignored: "wrong_account" });
     }
@@ -98,7 +124,7 @@ stripeWebhook.post("/", async (c: Ctx) => {
   if (session.payment_status !== "paid") return c.json({ received: true, ignored: "unpaid" });
 
   // 決済済みなのに確定できないとき（解放後の在庫切れ・支払額の不一致）は返金する（冪等キー = イベント ID）。
-  // 返金できなければ例外 → 500 で Stripe に再送させる（決済済み・注文なし・返金なしで静かに終わらせない。監査 L-4）
+  // 返金できなければ例外 → 500 で Stripe に再送させる（決済済み・注文なし・返金なしで静かに終わらせない）
   const refund = async (): Promise<boolean> => {
     const secretKey = cfg.get("STRIPE_SECRET_KEY");
     const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : null;
@@ -111,30 +137,6 @@ stripeWebhook.post("/", async (c: Ctx) => {
     return true;
   };
 
-  try {
-    const orderId = await db.confirmReservation(reservationId, shopId, orderInputFromSession(session, typeof event.account === "string" ? event.account : PLATFORM_PAYMENT_ACCOUNT));
-    await db.recordWebhookEvent("stripe", event.id);
-    return c.json({ received: true, order_id: orderId });
-  } catch (e) {
-    if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock_after_release") || e.is("quote_superseded") || e.is("coupon_exhausted_after_release"))) {
-      // TTL 切れで在庫が他の人に渡ってしまった / 解放の後に同じ quote で出し直した予約が生きている / クーポンの先着枠が埋まった（0090）。
-      // どれも確定できないので返金して、イベントは済みにする
-      const refunded = await refund();
-      await db.recordWebhookEvent("stripe", event.id);
-      return c.json({ received: true, refunded });
-    }
-    if (e instanceof PrivilegedRpcError && e.is("amount_mismatch")) {
-      // 支払額・通貨が Banto の計算と違う（0029）。確定せず返金し、在庫を戻す
-      console.error(`[banto] stripe webhook ${event.id}: amount mismatch for reservation ${reservationId} (${e.details ?? ""})`);
-      const refunded = await refund();
-      await db.releaseReservation(reservationId, shopId).catch(() => false);
-      await db.recordWebhookEvent("stripe", event.id);
-      return c.json({ received: true, refunded, ignored: "amount_mismatch" });
-    }
-    if (e instanceof PrivilegedRpcError && e.is("reservation_not_found")) {
-      await db.recordWebhookEvent("stripe", event.id);
-      return c.json({ received: true, ignored: "reservation_not_found" });
-    }
-    throw e; // 500 → Stripe が再送する
-  }
+  const order = orderInputFromSession(session, typeof event.account === "string" ? event.account : PLATFORM_PAYMENT_ACCOUNT);
+  return c.json(await confirmFromWebhook({ db, provider: "stripe", eventId: event.id, reservationId, shopId, order, refund, guard }));
 });

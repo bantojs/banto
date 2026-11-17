@@ -3,7 +3,6 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
 import { forgetThemes } from "../src/themes/liquid/cache";
 import { colorFromForm, optionSwatchesOf } from "../src/products/option-swatches";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /** 選択肢の値ごとの見本（0115、src/products/option-swatches.ts、docs/storefront.md「選択肢の見本」） */
 const DOMAIN = "https://shop.example.jp";
@@ -103,7 +102,7 @@ describe("お店の画面", () => {
 });
 
 describe("管理画面", () => {
-  it("色と画像を保存し、置き換えた画像は消す。0115 の前は欄を出さない", async () => {
+  it("色と画像を保存し、置き換えた画像は消す", async () => {
     const { app, row, storage, shop } = setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const page = await (await b.get(`/admin/shops/${shop.id}/categories`)).text();
@@ -146,8 +145,5 @@ describe("管理画面", () => {
     expect(storage.objects.has(imgKey)).toBe(false);
     res = await b.postMultipart(`/admin/shops/${shop.id}/option-swatches/color`, { v_0: "ネイビー", clear_0: "1", v_1: "ホワイト", clear_1: "1" });
     expect(res.headers.get("location")).toContain("flash=swatch_cleared");
-    const before = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0115_option_swatches") });
-    const b2 = await Browser.loggedIn(before.app, "owner@example.com", "password-123");
-    expect(await (await b2.get(`/admin/shops/${before.shop.id}/categories`)).text()).not.toContain("option-swatches/");
   });
 });

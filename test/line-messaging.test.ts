@@ -3,7 +3,11 @@ import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
 import { buyerMessage, lineBuyerNotify } from "../src/plugins/line_buyer";
 import { lineToken } from "../src/plugins/line_token";
-import { lineNotify } from "../src/plugins/line_notify";
+import { LINE_LOW_STOCK_LIST_MAX, LINE_PUSH_URL, batchRetryKey, lineLowStockSummary, lineNotify } from "../src/plugins/line_notify";
+import { deliverPendingHooks } from "../src/hooks/deliver";
+import { createPrivilegedDb } from "../src/db/privileged";
+import { bundledPluginUrl } from "../src/plugins";
+import type { ConfigAdapter } from "../src/adapters/types";
 import { sealSecret } from "../src/members/secret-box";
 import { authorizeUrl } from "../src/modules/social-login/providers";
 import type { PluginContext } from "../src/plugins/types";
@@ -91,5 +95,77 @@ describe("LINE の Messaging API（0021）", () => {
     expect(page).not.toContain(token);
     await admin.post(`${base}/delete`, {});
     expect(sb.tables.shop_secret_boxes).toHaveLength(0);
+  });
+});
+
+describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在庫を減らしたときも届くため）", () => {
+  it("同じ回に取り出した inventory.low は送信先ごとに 1 通。ほかの出来事は今までどおり 1 件ずつ", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("o@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "s", name: "S" });
+    sb.tables.hook_endpoints.push({ id: "ep-line", shop_id: shop.id, name: "LINE 通知", url: bundledPluginUrl("line_notify"), events: ["order.paid", "inventory.low"], enabled: true, manifest: null, settings: { to: "Uowner" }, created_at: "" });
+    for (let i = 0; i < 30; i++) sb.enqueue(shop.id, "inventory.low", { shop_id: shop.id, sku_id: `sku-${String(i).padStart(4, "0")}-xxxx`, available: 1, threshold: 3 });
+    sb.enqueue(shop.id, "order.paid", { order_id: "order-1", total_jpy: 3000, items: [{ qty: 1 }] });
+    const pushes: { text: string; retry: string }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === LINE_PUSH_URL) {
+        const body = JSON.parse(String(init!.body)) as { messages: { text: string }[] };
+        pushes.push({ text: body.messages[0]!.text, retry: (init!.headers as Record<string, string>)["X-Line-Retry-Key"]! });
+        return new Response("{}", { status: 200 });
+      }
+      return sb.fetch(input, init);
+    }) as typeof fetch;
+    const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
+    const config = { get: () => undefined, secret: (n: string) => (n === "LINE_CHANNEL_ACCESS_TOKEN" ? "env-token" : undefined) } as unknown as ConfigAdapter;
+    const r = await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config });
+    expect(r).toEqual({ claimed: 31, delivered: 31, failed: 0 });
+    expect(pushes).toHaveLength(2);
+    const low = pushes.find((p) => p.text.includes("残りわずか"))!;
+    expect(low.text.split("\n")[0]).toBe("【Banto】在庫が残りわずかな SKU が 30 件あります（閾値 3）");
+    expect(low.text.split("\n").filter((l) => l.startsWith("・SKU"))).toHaveLength(LINE_LOW_STOCK_LIST_MAX);
+    expect(low.text.endsWith("ほか 10 件")).toBe(true);
+    expect(sb.tables.hook_deliveries.every((d) => d["status"] === "delivered")).toBe(true);
+  });
+
+  it("再送キー: まとめた id 全部から UUID の形で作る（順は問わない・組が変われば別のキー）。409 は送れたとして扱う", async () => {
+    const k = await batchRetryKey(["b", "a", "c"]);
+    expect(k).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(await batchRetryKey(["c", "a", "b"])).toBe(k);
+    expect(await batchRetryKey(["a", "b", "c", "d"])).not.toBe(k);
+    // LINE には届いたが応答が落ちた → 再送で 409 → 送れたとして配信済みにする（5 回で failed にしない）
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("o@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "s", name: "S" });
+    sb.tables.hook_endpoints.push({ id: "ep-line", shop_id: shop.id, name: "LINE 通知", url: bundledPluginUrl("line_notify"), events: ["inventory.low", "order.paid"], enabled: true, manifest: null, settings: { to: "Uowner" }, created_at: "" });
+    for (let i = 0; i < 2; i++) sb.enqueue(shop.id, "inventory.low", { shop_id: shop.id, sku_id: `sku-${i}`, available: 0, threshold: 3 });
+    sb.enqueue(shop.id, "order.paid", { order_id: "o", total_jpy: 1, items: [] });
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === LINE_PUSH_URL) return new Response("{}", { status: 409 });
+      return sb.fetch(input, init);
+    }) as typeof fetch;
+    const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
+    const config = { get: () => undefined, secret: () => "env-token" } as unknown as ConfigAdapter;
+    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 3, failed: 0 });
+  });
+
+  it("まとめた送信に失敗したら、まとめた配信はどれも再送に回る。1 件だけなら今までの文面", async () => {
+    const one = lineLowStockSummary([{ envelope: { id: "e1", event: "inventory.low", created_at: "", shop_id: "s", attempt: 1, data: { sku_id: "abcdefgh-1", available: 2, threshold: 3 } } } as unknown as PluginContext]);
+    expect(one).toBe("【Banto】在庫が残りわずかです\nSKU: abcdefgh…\n残り 2 点（閾値 3）");
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("o@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "s", name: "S" });
+    sb.tables.hook_endpoints.push({ id: "ep-line", shop_id: shop.id, name: "LINE 通知", url: bundledPluginUrl("line_notify"), events: ["inventory.low"], enabled: true, manifest: null, settings: { to: "Uowner" }, created_at: "" });
+    for (let i = 0; i < 3; i++) sb.enqueue(shop.id, "inventory.low", { shop_id: shop.id, sku_id: `sku-${i}`, available: 0, threshold: 3 });
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === LINE_PUSH_URL) return new Response("quota", { status: 429 });
+      return sb.fetch(input, init);
+    }) as typeof fetch;
+    const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
+    const config = { get: () => undefined, secret: () => "env-token" } as unknown as ConfigAdapter;
+    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 0, failed: 3 });
+    expect(sb.tables.hook_deliveries.map((d) => [d["status"], d["attempts"], String(d["last_error"]).slice(0, 12)])).toEqual(Array(3).fill(["pending", 1, "LINE API 429"]));
   });
 });

@@ -36,6 +36,18 @@ export function mailTransportMissing(config: ConfigAdapter): string[] {
   return REQUIRED[name].filter((n) => !config.get(n));
 }
 
+/**
+ * SMTP_HOST が IP アドレスで、TLS（starttls / on）を使う設定か。証明書はホスト名に対して出ているので、IP では TLS の確認が通らずに切られる。
+ * 管理画面のメール通知のカードが警告する（docs/email.md「届かないとき」）
+ */
+export function smtpHostIsIpWithTls(config: ConfigAdapter): boolean {
+  if (mailTransportName(config) !== "smtp") return false;
+  const host = (config.get("SMTP_HOST") ?? "").trim().replace(/^\[|\]$/g, "");
+  if (!host) return false;
+  // IPv6 は "::" を含むか ":" が 2 つ以上（"cafe:587" のようにポートを付けたホスト名を IP とみなさない）
+  return smtpOptions(config).tls !== "off" && (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || (/^[0-9a-f:.]+$/i.test(host) && (host.includes("::") || host.split(":").length > 2)));
+}
+
 function smtpOptions(config: ConfigAdapter) {
   const tlsRaw = (config.get("SMTP_TLS") ?? "starttls").toLowerCase();
   const tls: "on" | "starttls" | "off" = tlsRaw === "on" || tlsRaw === "tls" ? "on" : tlsRaw === "off" || tlsRaw === "none" ? "off" : "starttls";
@@ -71,6 +83,15 @@ export function createMailer(adapters: Pick<Adapters, "config" | "socket">, doFe
       if (!adapters.socket) return null;
       return smtpMailer(adapters.socket, smtpOptions(config));
   }
+}
+
+/**
+ * 送れなかったときにログへ出す 1 行。送り手の応答には宛先のアドレスが入ることがある（SMTP の RCPT の拒否、HTTP の送り手の 4xx の本文、形の誤り）。
+ * 会員のログインはまだ会員でない人のアドレスでも呼べるので、アドレスの @ の前を伏せてから出す（ログに個人情報を入れない）
+ */
+export function mailFailureLog(context: string, mailer: Pick<Mailer, "name"> | null, e: MailError): string {
+  const message = e.message.replace(/[^\s<>"'(),;:\[\]]+@([^\s<>"'(),;:\[\]]+)/g, "***@$1");
+  return `[banto] ${context}: mail failed (${mailer?.name ?? "none"} ${e.status}): ${message}`;
 }
 
 /** 送る。送り手が無ければ MailError(0)（会員のログインは「設定が済んでいない」と出す） */

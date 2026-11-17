@@ -74,7 +74,10 @@ describe("チェックアウト（Step 6）", () => {
     const doneHtml = await done.text();
     expect(doneHtml).toContain("ご注文ありがとうございます");
     expect(doneHtml).toContain("お支払いの確認中です");
-    expect(doneHtml).toContain('<meta http-equiv="refresh" content="4"');
+    // 読み込み直す先は # の無い URL を明示する（決済事業者が戻り先に #credit_card のような # を付けても読み込み直す）
+    expect(doneHtml).toContain(`<meta http-equiv="refresh" content="4;url=${donePath.replace(/&/g, "&amp;")}"`);
+    const withHash = await (await b.get(`${donePath}&session_id=abc`)).text();
+    expect(withHash).toContain(`content="4;url=${donePath.replace(/&/g, "&amp;")}"`);
     // トークンなしで開いた（古いブックマーク等）なら今までどおりの表示
     const plain = await (await b.get("/my-shop/checkout/done")).text();
     expect(plain).toContain("決済が完了すると、ショップから注文確認のご連絡をお送りします。");
@@ -258,7 +261,7 @@ describe("チェックアウト（Step 6）", () => {
 
     // 管理画面のショップ設定は API キー方式が有効と表示し、Connect は折りたたみ
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    const html = await (await admin.get(`/admin/shops/${shop.id}/settings/payments`)).text();
     expect(html).toContain("有効（API キー方式）");
     expect(html).toContain("上級者向け: Stripe Connect");
   });
@@ -290,7 +293,7 @@ describe("Stripe Connect（管理画面）", () => {
     const { sb, stripe, shop, app } = setup({ connected: false });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
 
-    let html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    let html = await (await admin.get(`/admin/shops/${shop.id}/settings/payments`)).text();
     expect(html).toContain("未接続");
     expect(html).toContain(`/admin/shops/${shop.id}/stripe/connect`);
     expect(html).toContain(`${BASE}/webhooks/stripe`);
@@ -310,24 +313,24 @@ describe("Stripe Connect（管理画面）", () => {
 
     // 無効なコード
     cb = await admin.get(`/admin/stripe/callback?code=ac_bad&state=${state}`);
-    expect(cb.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=stripe_failed`);
+    expect(cb.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/payments?flash=stripe_failed`);
 
     // ユーザーが拒否した
     cb = await admin.get(`/admin/stripe/callback?error=access_denied&state=${state}`);
-    expect(cb.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=stripe_failed`);
+    expect(cb.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/payments?flash=stripe_failed`);
 
     // 成功
     cb = await admin.get(`/admin/stripe/callback?code=ac_valid&state=${state}`);
-    expect(cb.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=stripe_connected`);
+    expect(cb.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/payments?flash=stripe_connected`);
     expect(sb.shops[0]!.stripe_account_id).toBe("acct_connected");
-    html = await (await admin.get(`/admin/shops/${shop.id}?flash=stripe_connected`)).text();
+    html = await (await admin.get(`/admin/shops/${shop.id}/settings/payments?flash=stripe_connected`)).text();
     expect(html).toContain("接続済み");
     expect(html).toContain("acct_connected");
     expect(html).not.toContain("sk_should_not_be_stored");
 
     // 解除
     const off = await admin.post(`/admin/shops/${shop.id}/stripe/disconnect`, {});
-    expect(off.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=stripe_disconnected`);
+    expect(off.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/payments?flash=stripe_disconnected`);
     expect(sb.shops[0]!.stripe_account_id).toBeNull();
     expect(stripe.deauthorized).toEqual(["acct_connected"]);
   });
@@ -335,9 +338,9 @@ describe("Stripe Connect（管理画面）", () => {
   it("STRIPE_* 未設定なら接続できず案内を出す", async () => {
     const { shop, app } = setup({ connected: false, stripeConfigured: false });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
+    const html = await (await admin.get(`/admin/shops/${shop.id}/settings/payments`)).text();
     expect(html).toContain("Connect を使うには STRIPE_CLIENT_ID と STRIPE_SECRET_KEY の Secret が必要");
     const go = await admin.get(`/admin/shops/${shop.id}/stripe/connect`);
-    expect(go.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=stripe_not_configured`);
+    expect(go.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/payments?flash=stripe_not_configured`);
   });
 });

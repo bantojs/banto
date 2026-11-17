@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { BASE, Browser, appWith } from "./helpers";
+import { BASE, Browser, appWith, fieldForm } from "./helpers";
 
 function setup(settings: Record<string, unknown> = {}) {
   const sb = new FakeSupabase();
@@ -21,11 +21,21 @@ describe("商品マスタの拡張: 管理画面", () => {
     const { sb, shop, app } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
 
-    // カスタム項目の定義（1 行 1 項目）
-    let res = await admin.post(`/admin/shops/${shop.id}/fields`, { definitions: "material | 素材 | text\norigin | 原産国 | select | 日本/中国\ncost | 原価 | number | | private\nBad Key | x | text" });
+    // カスタム項目の定義（表の 1 行 1 項目）。形の違う鍵があれば、何も保存せずに知らせる
+    const rows = [
+      { key: "material", label: "素材" },
+      { key: "origin", label: "原産国", type: "select", options: "日本, 中国" },
+      { key: "cost", label: "原価", type: "number", vis: "private" as const },
+    ];
+    let res = await admin.post(`/admin/shops/${shop.id}/fields`, fieldForm([...rows, { key: "Bad Key", label: "x" }]));
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/fields?flash=fields_invalid&detail=${encodeURIComponent("Bad Key")}`);
+    expect((sb.tables.shops[0]!["settings"] as Record<string, unknown>)["product_fields"]).toBeUndefined();
+    res = await admin.post(`/admin/shops/${shop.id}/fields`, fieldForm([...rows, { key: "", label: "" }]));
     expect(res.headers.get("location")).toContain("flash=fields_saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({ product_fields: FIELDS });
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain("origin | 原産国 | select | 日本/中国");
+    const page = await (await admin.get(`/admin/shops/${shop.id}/fields`)).text();
+    expect(page).toContain('<code>origin</code><input type="hidden" name="f_orig_1" value="origin"/>');
+    expect(page).toContain('name="f_options_1" value="日本, 中国"');
 
     // カテゴリー
     res = await admin.post(`/admin/shops/${shop.id}/categories`, { name: "ウェア", slug: "wear", parent_id: "", sort_order: "0" });
@@ -185,7 +195,7 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
   it("定義を保存し、会員の一覧に独自項目と外部の ID が出る", async () => {
     const { sb, shop, app } = setup({ members_enabled: true });
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const res = await admin.post(`/admin/shops/${shop.id}/customer-fields`, { definitions: "rank | 会員ランク | select | regular/gold\nnewsletter | メルマガ | select | yes/no\nBad Key | x | text" });
+    const res = await admin.post(`/admin/shops/${shop.id}/customer-fields`, fieldForm([{ key: "rank", label: "会員ランク", type: "select", options: "regular, gold" }, { key: "newsletter", label: "メルマガ", type: "select", options: "yes、no" }]));
     expect(res.headers.get("location")).toContain("flash=customer_fields_saved");
     expect(sb.tables.shops[0]!["settings"]).toMatchObject({
       customer_fields: [
@@ -193,13 +203,15 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
         { key: "newsletter", label: "メルマガ", type: "select", options: ["yes", "no"], public: false },
       ],
     });
-    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain("rank | 会員ランク | select | regular/gold");
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customer-fields`)).text()).toContain('name="f_options_0" value="regular, gold"');
 
-    sb.tables.customers.push({ id: crypto.randomUUID(), shop_id: shop.id, email: "m@example.com", name: "会員", attributes: { rank: "gold", stale: "x" }, external_ref: { provider: "hubspot", id: "101" }, created_at: "2026-10-23T00:00:00Z" });
+    const cid = crypto.randomUUID();
+    sb.tables.customers.push({ id: cid, shop_id: shop.id, email: "m@example.com", name: "会員", attributes: { rank: "gold", stale: "x" }, external_ref: { provider: "hubspot", id: "101" }, created_at: "2026-10-23T00:00:00Z" });
     const html = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();
     expect(html).toContain("会員ランク: gold");
-    expect(html).toContain("hubspot / 101");
     expect(html).not.toContain("stale"); // 定義に無い鍵は出さない
+    // 外部の ID は会員の詳細の画面
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text()).toContain("hubspot / 101");
   });
 
   it("独自項目を手で直す（customer_set_attributes）、項目の値で絞る、CSV に書き出す", async () => {
@@ -211,20 +223,22 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
     sb.tables.customers.push({ id: m2, shop_id: shop.id, email: "plain@example.com", name: "普通", attributes: {}, external_ref: null, default_address: null, created_at: "2026-10-22T00:00:00Z" });
 
     // 編集: 選択肢と数。空欄は消す
-    let res = await admin.post(`/admin/shops/${shop.id}/customers/${m2}/attributes?f=rank&v=gold`, { attr_rank: "gold", attr_score: "12.5" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?f=rank&v=gold&flash=attributes_saved`);
+    // 保存のあとは会員の詳細の画面へ戻る
+    let res = await admin.post(`/admin/shops/${shop.id}/customers/${m2}/attributes`, { attr_rank: "gold", attr_score: "12.5" });
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${m2}?flash=attributes_saved`);
     expect(sb.tables.customers.find((c) => c["id"] === m2)!["attributes"]).toEqual({ rank: "gold", score: 12.5 });
     res = await admin.post(`/admin/shops/${shop.id}/customers/${m2}/attributes`, { attr_rank: "", attr_score: "" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?flash=attributes_saved`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${m2}?flash=attributes_saved`);
     expect(sb.tables.customers.find((c) => c["id"] === m2)!["attributes"]).toEqual({});
     res = await admin.post(`/admin/shops/${shop.id}/customers/${m2}/attributes`, { attr_rank: "platinum" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?error=attributes_invalid`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${m2}?error=attributes_invalid`);
 
     // 絞り込み
     let html = await (await admin.get(`/admin/shops/${shop.id}/customers?f=rank&v=gold`)).text();
     expect(html).toContain("gold@example.com");
     expect(html).not.toContain("plain@example.com");
-    expect(html).toContain('name="attr_rank"'); // 編集フォーム
+    // 編集フォームは会員の詳細の画面
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customers/${m1}`)).text()).toContain('name="attr_rank"');
     html = await (await admin.get(`/admin/shops/${shop.id}/customers?f=rank&v=`)).text();
     expect(html).toContain("plain@example.com");
 
@@ -232,7 +246,7 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
     const csv = await admin.get(`/admin/shops/${shop.id}/customers.csv?f=rank&v=gold`);
     expect(csv.headers.get("content-type")).toContain("text/csv");
     const text = await csv.text();
-    expect(text.split("\r\n")[0]).toBe("id,email,name,phone,postal_code,state,city,line1,line2,created_at,last_login_at,marketing_consent,marketing_consent_at,marketing_consent_source,external_provider,external_id,rank,score"); // 先頭の BOM は text() が落とす
+    expect(text.split("\r\n")[0]).toBe("id,email,name,phone,postal_code,state,city,line1,line2,created_at,last_login_at,marketing_consent,marketing_consent_at,marketing_consent_source,external_provider,external_id,rank,score,orders_count,total_spent_jpy,last_order_at,note"); // 先頭の BOM は text() が落とす（0133 からは購入の集計と社内メモの列も）
     expect(text).toContain(`${m1},gold@example.com,金,090,,東京都,,,,`);
     expect(text).toContain(",hubspot,7,gold,");
     expect(text).not.toContain("plain@example.com");

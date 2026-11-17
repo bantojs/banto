@@ -154,7 +154,9 @@ describe("管理画面: 宣伝の月の上限（0105）", () => {
 
     // プラグインの画面: LINE の 2 つのカードから設定の画面へ
     const plugins = await (await admin.get(`/admin/shops/${shop.id}/plugins`)).text();
-    expect(plugins.split(`href="${base}"`).length - 1).toBe(3);
+    // 本文の中だけを数える（左の目次にも LINE 公式アカウントがある）
+    const main = plugins.slice(plugins.indexOf("<main>"), plugins.indexOf("</main>"));
+    expect(main.split(`href="${base}"`).length - 1).toBe(3);
     expect(plugins).toContain("宣伝のメッセージの月の上限");
   });
 });

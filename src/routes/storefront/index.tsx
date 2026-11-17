@@ -16,17 +16,16 @@ import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type Pr
 import type { CategoryRow } from "../../db/types";
 import { categoryUrl, listUrl, productUrl, productsUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
-import { addCoupon, addItem, cartCookieHeader, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
+import { addCoupon, addItem, CART_COOKIE_SECONDS, cartCookieName, changeQty, openCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { addsFrom, changeFrom, updatesFrom, usesLinePosition } from "../../cart/shopify-form";
 import { cartObject } from "../../themes/liquid/objects";
-import { openJson, readCookie } from "../../util/signed";
+import { openJson } from "../../util/signed";
 import { categoryPath, categoryTree } from "../../products/categories";
 import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
-import { clientIpFor, csrfGuard, formFields, isSecureRequest, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, yen, type Ctx } from "../common";
-import { formatDateTime } from "../../i18n/time";
+import { clientIpFor, csrfGuard, formFields, getScopedCookie, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, setScopedCookie, type Ctx } from "../common";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
@@ -34,18 +33,21 @@ import { articleFieldsReady, blogFieldSort } from "../../blog/fields";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
-import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articlePath, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
+import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { amazonPayCancel, amazonPayRelayScript, amazonPayReturn, amazonPayStart } from "./amazon-pay";
+import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
-import { ADDRESS_FIELDS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
 import { PAGES_MODULE, pageBodyHtml, pageHandleOk, pagePublishedAt, type PageRow } from "../../pages";
 import { markdownToHtml } from "../../pages/markdown";
+import { promoteLeadImage } from "../../pages/lead-image";
 import { audienceShow } from "../../content/audience-blocks";
 import { contentPreviewFrameOrigin, openContentPreview } from "../../content/preview-ticket";
 import { BLOG_PARTS_CSS, CURRENT_CSS, PRODUCT_PARTS_CSS, articleParts, blogLayoutId, collectionLayoutId, composeLayout, fillCurrent, legalLayoutId, legalParts, pageLayoutsOf, pageParts, productLayoutId, usesPart } from "../../content/layouts";
@@ -151,9 +153,11 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   const shop = await sf.shopBySlug(slug);
   if (!shop) return null;
   const secret = c.get("sessionSecret");
-  const cart = secret ? await openCart(secret, readCookie(c.req.header("cookie"), cartCookieName(shop.id))) : { items: [] };
   // 独自ドメインの上ではショップがドメインのトップ（パスにスラッグを付けない）
   const onDomain = onShopDomain(c, shop);
+  // カートは、`__Host-` の名前に移す前の Cookie も読む（中身は品物の一覧だけ。差し込まれても買う前の確認画面で見える）
+  // 古い名前の Cookie（__Host- の前）を読むのはカートだけ。v0.13.0 で読むのをやめる（docs/knowledge/02-decisions.md 2026-11-15）
+  const cart = secret ? await openCart(secret, getScopedCookie(c, cartCookieName(shop.id), onDomain ? "/" : `/${shop.slug}`, { legacy: true })) : { items: [] };
   const ctx: ThemeContext = {
     shop,
     shopPath: onDomain ? "" : `/${shop.slug}`,
@@ -289,9 +293,7 @@ storefront.route("/", inquiries);
 async function writeCart(c: Ctx, s: ShopScope, cart: Cart): Promise<void> {
   const secret = c.get("sessionSecret");
   if (!secret) return;
-  c.header("Set-Cookie", cartCookieHeader(cartCookieName(s.shop.id), await sealCart(secret, cart), { path: s.ctx.shopPath || "/", secure: isSecureRequest(c) }), {
-    append: true,
-  });
+  setScopedCookie(c, cartCookieName(s.shop.id), await sealCart(secret, cart), { path: s.ctx.shopPath || "/", maxAge: CART_COOKIE_SECONDS });
 }
 
 /** お店の画面で起きた出来事を積む（src/storefront/events.ts。受け取るモジュールが ON のときだけ外に出る。個人情報は入れない） */
@@ -577,11 +579,11 @@ async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: Rende
     // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
     const values = collectionPartValues(c, s, { page: d.page, ...(d.category ? { category: d.category } : {}), ...(d.tag ? { tag: d.tag } : {}), tags: d.facets.tags, link: d.link, ...(d.after ? { after: d.after } : {}) });
     const themed = themeLayoutParts(c, s, lt, { body: view.body, names: COLLECTION_PARTS, defaults: only(parts), values, title: page.title, path: d.path, categories: d.categories });
-    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: d.path, ...(d.after || d.q ? { noindex: true } : {}) });
+    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: d.path, lead: true, ...(d.after || d.q ? { noindex: true } : {}) });
     if (res) return res;
   }
   const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
-  return c.html(s.theme.ShopHome({ ...props, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+  return c.html(s.theme.ShopHome({ ...props, layout: (parts) => promoteLeadImage(`<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts))) }));
 }
 
 storefront.get("/:shop/products/:product", async (c: Ctx) => {
@@ -648,11 +650,11 @@ async function productPageResponse(c: Ctx, s: ShopScope, detail0: ProductDetail,
       // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
       const themed = themeLayoutParts(c, s, lt, { body: view.body, names: PRODUCT_LAYOUT_PARTS, defaults: only(parts), values: productPartValues(c, s, detail, props.selectedSku), title: detail.product.name, path, categories });
       const page: PageRow = { ...layout, title: detail.product.name, seo_title: null, seo_description: detail.product.description ? detail.product.description.slice(0, 200) : null, image_url: null };
-      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd });
+      const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${PRODUCT_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path, jsonLd, lead: true });
       if (res) return res;
     }
     const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
-    return c.html(s.theme.ProductPage({ ...props, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+    return c.html(s.theme.ProductPage({ ...props, layout: (parts) => promoteLeadImage(`<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts))) }));
   }
   if (lt) {
     const res = renderProduct(c, s, lt, { detail, categories, categoryNames: props.categoryPath.map((x) => x.name), selectedSku: props.selectedSku });
@@ -738,13 +740,16 @@ async function contentPageResponse(c: Ctx, s: ShopScope, page: PageRow, body: st
   // 「今の記事・商品の部品」はふつうのページ（お店のトップのひな形を含む）ではそのページ自身のタイトル・アイキャッチ・抜粋（SEO の説明）
   const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), { published: pagePublishedAt(page), updated: page.updated_at }), pageParts({ mediaBase: s.ctx.mediaBaseUrl, page }));
   const layout = o.layoutPath !== undefined;
+  // 本文の最初の画像をすぐ読む（ひな形は本文がページ全体。ふつうのページはアイキャッチが上に出るときは上げない）
+  const lead = layout || !page.image_url;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, ...(layout ? { path: o.layoutPath } : {}) });
+    const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, lead, ...(layout ? { path: o.layoutPath } : {}) });
     if (res) return res;
   }
   if (!s.theme.ContentPage) return notFoundPage(c, s);
-  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), ...(layout ? { bare: true, path: `${s.ctx.shopPath}${o.layoutPath}` || "/" } : {}) }));
+  const filled = fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards);
+  return c.html(s.theme.ContentPage({ ctx: s.ctx, page, html: lead ? promoteLeadImage(filled) : filled, ...(layout ? { bare: true, path: `${s.ctx.shopPath}${o.layoutPath}` || "/" } : {}) }));
 }
 
 /** 記事の本文・ひな形の中のブロックに渡す「今の記事」（0117: field:<key>=@article と from=@field:<key>） */
@@ -780,20 +785,23 @@ async function articlePageResponse(c: Ctx, s: ShopScope, blog: BlogRow, article:
     if (lt) {
       // Liquid: ひな形のページとして templates/page（ひな形の template_suffix があればそれ）で描く。見出しなどは記事のもの
       const page: PageRow = { ...layout, title: article.title, seo_title: article.seo_title, seo_description: article.seo_description || article.excerpt, image_url: article.image_url };
-      const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, path });
+      const res = renderContentPage(c, s, lt, { page, html, categories, blocks, cards, ablocks, acards, apps, appCards, path, lead: true });
       if (res) return res;
     }
-    if (s.theme.ArticlePage) return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl, bare: true }));
+    if (s.theme.ArticlePage) return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: promoteLeadImage(fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards)), feedUrl, bare: true }));
   }
   const { blocks, cards, ablocks, acards, apps, appCards, shopCards } = await bodyProducts(s, body, categories, articleCurrent(article));
   const html = (o.prefix ?? "") + fillCurrent(fillDateBlocks(fillShopBlocks(raw, shopCards), dates));
+  // アイキャッチが本文の上に出る記事は、本文の画像を上げない
+  const lead = !article.image_url;
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards });
+    const res = renderArticlePage(c, s, lt, { blog, article, html, categories, blocks, cards, ablocks, acards, apps, appCards, lead });
     if (res) return res;
   }
   if (!s.theme.ArticlePage) return notFoundPage(c, s);
-  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards), feedUrl }));
+  const filled = fillAppBlocks(fillArticleBlocks(fillProductBlocks(html, cards), acards), appCards);
+  return c.html(s.theme.ArticlePage({ ctx: s.ctx, blog, article, html: lead ? promoteLeadImage(filled) : filled, feedUrl }));
 }
 
 
@@ -846,11 +854,11 @@ async function blogListResponse(c: Ctx, s: ShopScope, blog: BlogRow, q: { tag: s
         // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
         const themed = themeLayoutParts(c, s, lt, { body: view.body, names: BLOG_LIST_PARTS, defaults: only(parts), values: blogPartValues(s, { blog, articles, tag, tags, pageNo, newer, older }), title, path: lpath, categories });
         const page: PageRow = { ...layout, title: tag ? tf("blog.tagged", { tag }) : blog.title, seo_title: title, seo_description: blog.seo_description || blog.description, image_url: null };
-        const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${BLOG_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path: lpath, ...(tag ? { noindex: true } : {}) });
+        const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}${BLOG_PARTS_CSS}</style>` + fillCurrent(doc, themed), categories, blocks, cards, ablocks, acards, apps, appCards, path: lpath, lead: true, ...(tag ? { noindex: true } : {}) });
         if (res) return res;
       }
       const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
-      return c.html(s.theme.BlogPage({ ...props, feedUrl, layout: (parts) => `<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts)) }));
+      return c.html(s.theme.BlogPage({ ...props, feedUrl, layout: (parts) => promoteLeadImage(`<style>${CURRENT_CSS}</style>` + fillCurrent(html, only(parts))) }));
     }
   }
   if (lt) {
@@ -932,11 +940,11 @@ async function legalResponse(c: Ctx, s: ShopScope, kind: LegalKind, o: RenderOpt
       const only = Object.fromEntries(LEGAL_PARTS.map((k) => [k, parts[k] ?? ""]));
       if (lt) {
         const pg: PageRow = { ...layout, title, seo_title: null, seo_description: null, image_url: null };
-        const res = renderContentPage(c, s, lt, { page: pg, html: fillCurrent(doc, only), categories, blocks, cards, ablocks, acards, apps, appCards, path: `/${kind}` });
+        const res = renderContentPage(c, s, lt, { page: pg, html: fillCurrent(doc, only), categories, blocks, cards, ablocks, acards, apps, appCards, path: `/${kind}`, lead: true });
         if (res) return res;
       }
       const html = fillCurrent(fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards), only);
-      return c.html(s.theme.LegalPage({ ctx: s.ctx, title, body, layout: () => html }));
+      return c.html(s.theme.LegalPage({ ctx: s.ctx, title, body, layout: () => promoteLeadImage(html) }));
     }
   }
   // Liquid のテーマの templates/page（文面は Banto が作る）。無ければ既定のテーマ
@@ -962,7 +970,7 @@ async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: nu
   const d = await discountCart({ sf: s.sf, shop: s.shop, coupons: source, member: member ? { id: member.cid } : null }, { lines, subtotal, dropped: [], cart: s.cart }, s.cart.coupons, 0, null);
   return {
     applied: d.applied.map((a) => ({ code: a.code, name: a.name, amount_jpy: a.amount_jpy, free_shipping: a.kind === "free_shipping" })),
-    rejected: d.rejected.map(couponNotice),
+    rejected: d.rejected.map((r) => couponNotice(buyerRejected(r))),
     discount: d.itemDiscount,
   };
 }
@@ -974,6 +982,7 @@ function paymentOptions(c: Ctx, s: ShopScope): Promise<PaymentSetup> {
 const CART_ERRORS: Record<string, MessageKey> = {
   stock: "store.checkout_error_stock",
   payment: "store.checkout_error_payment",
+  unpaid: "store.checkout_error_unpaid",
   config: "store.checkout_error_config",
   expired: "confirm.expired",
   quote_used: "confirm.expired",
@@ -1184,7 +1193,7 @@ storefront.post("/:shop/_x", async (c: Ctx) => {
   const shop = sf ? await sf.shopBySlug(param(c, "shop")).catch(() => null) : null;
   if (!shop) return c.body(null, 404);
   const secret = c.get("sessionSecret");
-  const session = secret && membersEnabled(shop) ? await openMemberSession(secret, shop.id, readCookie(c.req.header("cookie"), customerCookieName(shop.id))) : null;
+  const session = secret && membersEnabled(shop) ? await openMemberSession(secret, shop.id, getScopedCookie(c, customerCookieName(shop.id), onShopDomain(c, shop) ? "/" : `/${shop.slug}`)) : null;
   return acceptRelay(c, shop, session && !session.add ? session.cid : null, "storefront");
 });
 
@@ -1441,7 +1450,7 @@ storefront.post("/:shop/checkout", async (c: Ctx) => {
 async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): Promise<Response> {
   const cartUrl = `${s.ctx.shopPath}/cart`;
   const setup = await paymentOptions(c, s);
-  const provider = f.provider ?? (["stripe", "komoju"] as const).find((p) => providerAvailable(setup, p)) ?? "stripe";
+  const provider = f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe";
   if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
   const { lines, total } = await cartLines(s);
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
@@ -1477,7 +1486,7 @@ async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation
  *   配送先（住所の項目）を受け取ったら → 最終確認画面（署名付きの quote を埋め込む）
  *   quote を受け取ったら → 内容を引き直して一致すれば在庫を予約し、決済ページへ転送する
  */
-storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
+storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const cartUrl = `${s.ctx.shopPath}/cart`;
@@ -1525,6 +1534,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
     // 決済の後はショップのドメインへ戻す（独自ドメインがあればそちら）。照会トークン（0035）を付けて、完了画面で注文番号を出す
     successUrl: statusToken ? withQueryParam(`${shopHome(base, s.shop)}/checkout/done`, "s", statusToken) : `${shopHome(base, s.shop)}/checkout/done`,
     cancelUrl: `${shopHome(base, s.shop)}/cart`,
+    shopUrl: shopHome(base, s.shop),
     ...(member ? { customerId: member.cid, customerEpoch: member.ep } : {}),
     limits: await reserveLimits(secret, quote, await clientIpFor(c, s.shop), member ? { id: member.cid } : null),
   });
@@ -1533,6 +1543,27 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju}", async (c: Ctx) => {
   if (!placed.ok) return c.redirect(`${cartUrl}?error=${placed.error}`);
   // 0 円の注文はこの時点で確定している
   return c.redirect(placed.free ? withQueryParam(placed.url, "free", "1") : placed.url, 303);
+});
+
+// ---------- Amazon Pay の中継ページ・戻り（同梱プラグイン amazon_pay。src/routes/storefront/amazon-pay.ts） ----------
+// テーマは描かない。ショップの行だけを引く（カート・会員は見ない）
+async function amazonPayShop(c: Ctx): Promise<{ shop: PublicShop; shopUrl: string } | null> {
+  const sf = data(c);
+  const shop = sf ? await sf.shopBySlug(param(c, "shop")) : null;
+  return shop ? { shop, shopUrl: shopHome(publicBaseUrl(c), shop) } : null;
+}
+storefront.get("/:shop/checkout/amazon-pay/start", async (c: Ctx) => {
+  const s = await amazonPayShop(c);
+  return s ? amazonPayStart(c, s.shop, s.shopUrl) : notFound(c);
+});
+storefront.get("/:shop/checkout/amazon-pay/relay.js", (c: Ctx) => amazonPayRelayScript(c));
+storefront.get("/:shop/checkout/amazon-pay/return", async (c: Ctx) => {
+  const s = await amazonPayShop(c);
+  return s ? amazonPayReturn(c, s.shop, s.shopUrl) : notFound(c);
+});
+storefront.get("/:shop/checkout/amazon-pay/cancel", async (c: Ctx) => {
+  const s = await amazonPayShop(c);
+  return s ? amazonPayCancel(c, s.shop, s.shopUrl) : notFound(c);
 });
 
 // ---------- 送料ページ・注文照会 ----------
@@ -1584,7 +1615,7 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   const email = (f.email ?? "").trim();
   const values = { number: f.number ?? "", email };
   if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
-  const r = await guestOrderLookup(c, s.sf, s.shop, number, email);
+  const r = await guestOrderLookup(c, s.shop, number, email);
   if (!r.ok) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_too_many") }), 429);
   const result = r.order;
   if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
@@ -1601,7 +1632,7 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   const f = await formFields(c);
   const number = Number.parseInt((f.number ?? "").trim(), 10);
   const email = (f.email ?? "").trim();
-  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.sf, s.shop, number, email) : null;
+  const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.shop, number, email) : null;
   if (r && !r.ok) return c.text(t("store.lookup_too_many"), 429);
   const order = (r?.order ?? null) as ReceiptOrder | null;
   if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
@@ -1636,7 +1667,10 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     // この注文について問い合わせる（同梱モジュール inquiries）: 同じ状態トークンをフォームに渡す（返事は注文時のアドレスへ）
     const inquiryUrl = r.status === "confirmed" && s.ctx.inquiries && inquiriesReady(s.shop, s.theme) ? `${s.ctx.shopPath}/inquiries/new?s=${encodeURIComponent(c.req.query("s") ?? "")}` : null;
     c.header("cache-control", "no-store");
-    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, inquiryUrl });
+    // 読み込み直す先は # の無い URL で明示する。決済事業者が戻り先に # を付けると（KOMOJU の #credit_card など）、
+    // URL を書かない refresh は「同じ文書の中の移動」になり、ブラウザが読み込み直さない
+    const refreshUrl = refresh ? withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? "") : null;
+    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, refreshUrl, inquiryUrl });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);
     return doneView(c, s, { free });
@@ -1644,13 +1678,13 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
 });
 
 /** 完了画面（Liquid のテーマの templates/checkout_done、無ければ既定のテーマ）。文言は既定のテーマと同じ */
-async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; inquiryUrl?: string | null }): Promise<Response> {
+async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; refreshUrl?: string | null; inquiryUrl?: string | null }): Promise<Response> {
   const lt = await liquidThemeFor(c, s);
   if (lt) {
     const message =
       p.status === "confirmed" && p.orderNumber != null ? tf("store.thanks_confirmed", { n: p.orderNumber }) : p.status === "released" ? t("store.thanks_released") : p.status === "pending" && p.refresh ? t("store.thanks_pending") : p.free ? t("store.thanks_free") : t("store.thanks_body");
-    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), free: p.free, inquiryUrl: p.inquiryUrl ?? null, categories: await s.sf.listCategories(s.shop) });
+    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), refreshUrl: p.refreshUrl ?? null, free: p.free, inquiryUrl: p.inquiryUrl ?? null, categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
-  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}) }));
+  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.refreshUrl ? { refreshUrl: p.refreshUrl } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}) }));
 }

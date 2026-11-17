@@ -31,7 +31,6 @@ import { parseEmbedUrl } from "./embeds";
 import { isPosterUrl, isVideoUrl } from "../media/video";
 
 export type ShopBlockKind = "search" | "categories" | "card" | "product" | "icon" | "date" | "embed" | "video" | "current" | "toc" | "stores" | "include";
-export const SHOP_BLOCK_KINDS: readonly ShopBlockKind[] = ["search", "categories", "card", "product", "icon", "date", "embed", "video", "current", "toc", "stores", "include"];
 /** データを引かないブロック（印を数えない・body-blocks に渡さない） */
 export const LOCAL_SHOP_BLOCKS: readonly ShopBlockKind[] = ["icon", "date", "embed", "video", "current", "toc", "include"];
 /** データを引くブロックの数の上限（1 ページ） */
@@ -39,8 +38,7 @@ export const SHOP_BLOCKS_MAX = 8;
 
 /** ひな形の「今の記事」の部品（並びは編集の画面の選択肢の順） */
 export const CURRENT_PARTS = ["title", "image", "price", "buy", "content", "excerpt", "author", "tags", "attributes", "breadcrumb", "size-chart", "care", "reviews", "prev-next", "products", "filters", "subcategories", "legal", "articles", "sort"] as const;
-/** 記事のひな形で使える部品・商品詳細のひな形で使える部品（ほかの部品は空） */
-export const ARTICLE_PARTS: readonly CurrentPart[] = ["title", "image", "content", "excerpt", "author", "tags", "prev-next"];
+/** 商品詳細のひな形で使える部品（ほかの部品は空） */
 export const PRODUCT_LAYOUT_PARTS: readonly CurrentPart[] = ["title", "image", "price", "buy", "content", "tags", "attributes", "breadcrumb", "size-chart", "care", "reviews"];
 /** 商品一覧のひな形で使える部品（0103。image・content はカテゴリーの画像と説明、0113） */
 export const COLLECTION_PARTS: readonly CurrentPart[] = ["title", "image", "content", "products", "filters", "sort", "subcategories", "breadcrumb"];

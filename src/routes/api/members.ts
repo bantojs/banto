@@ -3,12 +3,12 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
-import { consentCollected, returnOrigins, safeReturnUrl } from "../../commerce/checkout";
+import { consentCollected, returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/checkout";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, type Ctx } from "../common";
+import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx, originIsSelf } from "../common";
 import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
@@ -55,7 +55,7 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
  * refresh はログインのたびに作るセッションの行（0045 の member_sessions）と照合する。行の絶対の期限（90 日）を越えて更新はできない。
  * トークンは本文で受け渡す（Cookie を使わない）ので CSRF にはならないが、CORS は `*` ではなく
  * **ショップ設定の `headless.return_origins` のオリジンだけ**に返す（0029。login はメールを送るので、どのサイトからでも
- * 訪問者のブラウザで叩けてはいけない。監査 M10）。同梱テーマ（同一オリジン）には CORS は要らない。
+ * 訪問者のブラウザで叩けてはいけない）。同梱テーマ（同一オリジン）には CORS は要らない。
  * カート・チェックアウトの API には `Authorization: Bearer <access_token>` で付ける。
  */
 export const membersApi = new Hono<AppEnv>();
@@ -76,6 +76,13 @@ export async function memberCors(c: Ctx, next: () => Promise<void>): Promise<Res
       "Access-Control-Max-Age": "86400",
       Vary: "Origin",
     });
+  }
+  // 許可していないサイトからの書き込みは受けない。CORS は応答を読ませないだけで、text/plain の POST はプリフライトなしで届くので、
+  // よそのサイトが訪問者のブラウザからログインのメールを出させられる（訪問者の IP で数えられ、1 日のメールの上限を使い切る）。
+  // Origin の無い呼び出し（サーバーから）と、Banto 自身・ショップのドメインの画面からはそのまま通す
+  // （自分のオリジンかは csrfGuard と同じ判定: TLS を終端するプロキシの後ろでは URL は http、ブラウザの Origin は https になる）
+  if (origin && !ok && c.req.method !== "GET" && c.req.method !== "HEAD" && !originIsSelf(c, origin)) {
+    return c.json({ error: "origin_not_allowed" }, 403);
   }
   await next();
   if (ok) {
@@ -133,14 +140,8 @@ async function shopFor(c: Ctx, slug: string = param(c, "shop")): Promise<PublicS
   return sf.shopBySlug(slug);
 }
 
-async function body(c: Ctx): Promise<Record<string, unknown>> {
-  try {
-    const b: unknown = await c.req.json();
-    return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
-}
+/** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば空 */
+const body = async (c: Ctx): Promise<Record<string, unknown>> => (await publicJsonBody(c)) ?? {};
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const NO_STORE = { "cache-control": "no-store" };
@@ -163,7 +164,7 @@ membersApi.post("/shops/:shop/members/login", async (c: Ctx) => {
   const banto = `${shopHome(publicBaseUrl(c), shop)}/account/verify`;
   // 許可リストに無い戻り先は使わない（Banto の確認画面にする。オープンリダイレクトにしない）
   const returnTo = safeReturnUrl(b["return_to"], returnOrigins(shop.settings), "");
-  const link = (id: string, token: string) => (returnTo ? `${returnTo}${returnTo.includes("?") ? "&" : "?"}banto_challenge=${id}&banto_token=${token}` : `${banto}?c=${id}&t=${token}`);
+  const link = (id: string, token: string) => (returnTo ? withQueryParam(withQueryParam(returnTo, "banto_challenge", id), "banto_token", token) : `${banto}?c=${id}&t=${token}`);
   const r = await startLogin(deps, shop, str(b["email"]), { ip: await clientIpFor(c, shop), returnTo: returnTo || null, link });
   if (!r.ok) {
     if (r.error === "invalid_email") return c.json({ error: "invalid_email" }, 400);
@@ -374,7 +375,7 @@ membersApi.post("/shops/:shop/members/withdraw", async (c: Ctx) => {
   let r: Awaited<ReturnType<PrivilegedDb["memberWithdraw"]>>;
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth_required。連携側はログインし直させる）
-    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid ?? undefined);
+    r = await deps.db.memberWithdraw(s.shop.id, s.member.id, s.member.epoch, s.member.sid);
   } catch (e) {
     if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
     throw e;
@@ -440,7 +441,7 @@ membersApi.post("/shops/:shop/members/logout-all", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   try {
     // 0090: ログインしてから 15 分以内のセッションだけ
-    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid ?? undefined);
+    const ok = await db.memberLogoutAll(s.shop.id, s.member.id, s.member.epoch, s.member.sid);
     return ok ? c.json({ ok: true }) : c.json({ error: "invalid_member_token" }, 401);
   } catch (e) {
     if (isReauthRequired(e)) return c.json({ error: "reauth_required" }, 403);
@@ -478,7 +479,7 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   if (!r.ok) return r.reason === "reauth" ? c.json({ error: "reauth" }, 403) : c.json({ error: "invalid_member_token" }, 401);
   // ほかの端末はログアウト（世代を上げた）。この端末は新しい世代のトークンで続ける。本人にも知らせる（0057）
   if (r.mail_from && r.email) await afterResponse(c, sendAccountChangeNotice(deps, s.shop, { kind: "password", from: r.mail_from, to: r.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
-  // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）。古い DB には渡さない
+  // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）
   const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
 });

@@ -63,6 +63,11 @@ export function zonedInputToIso(value: string, tz: string = currentTimeZone): st
   return new Date(t).toISOString();
 }
 
+/** ISO → 運営者の時間帯の日付 "2026-11-06"（data-date・<time datetime> 用。ロケールによらない形）。null や不正な値は "" */
+export function isoToZonedDate(iso: string | null | undefined, tz: string = currentTimeZone): string {
+  return isoToZonedInput(iso, tz).slice(0, 10);
+}
+
 /** ISO → 管理画面の datetime-local の値（運営者の時間帯）。null や不正な値は "" */
 export function isoToZonedInput(iso: string | null | undefined, tz: string = currentTimeZone): string {
   if (!iso) return "";

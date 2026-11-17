@@ -2,7 +2,10 @@ import type { Hono, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { StorefrontData, type PublicShop } from "../../storefront/data";
-import { SLUG_RE, type Ctx } from "../common";
+import { SLUG_RE, readBodyLimited, type Ctx } from "../common";
+import { bodyLimitFor } from "../body-limit";
+import { markShopDomainRequest } from "../shop-domain-request";
+import { domainTemplateFrom, templateSlug } from "../../storefront/subdomain";
 
 /**
  * ショップごとの独自ドメイン（0015_shop_domain、docs/custom-domain.md）。
@@ -10,14 +13,19 @@ import { SLUG_RE, type Ctx } from "../common";
  * - 独自ドメインへのアクセス（Host がショップの domain）: パスの前にスラッグを足して、いつものストアフロントのルートで処理する
  *   （https://shop.example.jp/products/tee → /<スラッグ>/products/tee）。API・Webhook・画像・/_oauth などはそのまま。
  * - 管理画面（/admin）はショップのドメインでは出さない: Banto 自身の URL（PUBLIC_BASE_URL）へ転送する（無ければ 404）。
- *   店主がドメインの DNS を握っているので、そこに運営者のログイン画面が出ると、そっくりの偽画面を置いて運営者を誘える
- *   （2026-10-18 のコード監査の§3「独自ドメイン上の /admin」）。運営者の入口は 1 つのオリジンに限る。
+ *   店主がドメインの DNS を握っているので、そこに運営者のログイン画面が出ると、そっくりの偽画面を置いて運営者を誘える 運営者の入口は 1 つのオリジンに限る。
  * - Banto の URL のショップのページ（GET /<スラッグ>/...）: ショップに独自ドメインがあれば、そのドメインへ転送する。
  *   会員の Cookie・LINE / Google の戻り先がドメインごとなので、ショップの画面は 1 つのドメインにそろえる。
  *
  * Host を信じてよいか: Cloudflare ではそのホスト名がこの Worker に向いているときだけ届く。違うショップを名乗っても、
  * 見えるのはそのショップの公開ページだけで、Cookie はホストごとなので他のショップのログインには触れない。
  * 戻り先（redirect_uri 等）は Host ではなく DB の domain から組む（src/storefront/urls.ts）。
+ *
+ * サブドメインモード（SHOP_DOMAIN_TEMPLATE、src/storefront/subdomain.ts）のとき:
+ * - ひな形に合うホストはスラッグでショップを引く。そのショップのドメインが別（独自ドメインに切り替えた）なら、そちらへ 302
+ * - どのショップにも結ばれていないホスト（ひな形にも Banto の URL にも合わず、どのショップのドメインでもない）は、どのパスも 404。
+ *   ワイルドカードの DNS では任意のサブドメインがこの Worker に届くので、そこで管理画面・/mcp・/api/v1 を出さない
+ *   （運営者の入口は 1 つのオリジン）
  */
 
 /** ショップのドメインでもスラッグを足さないパス（Banto 全体のもの） */
@@ -25,9 +33,12 @@ const PASSTHROUGH = ["/api", "/media", "/health", "/_oauth"];
 const PASSTHROUGH_FILES = new Set(["/robots.txt", "/sitemap.xml", "/sitemap-pages.xml"]);
 /**
  * Banto 自身のホストでだけ出すパス（運営者と連携の入口）。ショップのドメインでは 404。
- * 店主がドメインの DNS を握る構成で、AI 用トークンや決済事業者の Webhook が店主のサーバーへ向かないように（2026-10-25 の監査）
+ * 店主がドメインの DNS を握る構成で、AI 用トークンや決済事業者の Webhook が店主のサーバーへ向かないように
  */
 const PLATFORM_ONLY = ["/mcp", "/api/v1", "/webhooks"];
+
+/** ショップのドメインで受ける本文の上限の天井（パスごとの上限は body-limit.ts。お店の画面でいちばん大きいのはお問い合わせの添付 5MB × 3） */
+const SHOP_DOMAIN_BODY_BYTES = 20 * 1024 * 1024;
 
 /** Host を比べる形にそろえる（小文字・末尾のドットを落とす。`shop.example.jp.` も同じショップ） */
 export function normalizeHost(host: string): string {
@@ -68,15 +79,41 @@ function isAdminPath(path: string): boolean {
 
 /** このリクエストのホストがショップの独自ドメインなら、そのショップ（Banto 自身の URL なら DB を引かない） */
 export async function hostShop(c: Ctx): Promise<PublicShop | null> {
+  const r = await resolveHost(c);
+  return r.kind === "shop" ? r.shop : null;
+}
+
+/**
+ * リクエストのホストの扱い。
+ * platform: Banto 自身の URL（または DB が無い）/ shop: ショップのドメイン / moved: サブドメインモードで、ショップが別のドメインへ移った /
+ * unknown: どのショップにも結ばれていない（サブドメインモードのときだけ。そうでなければ今までどおり platform と同じに通す）
+ */
+export type HostResolution = { kind: "platform" } | { kind: "shop"; shop: PublicShop } | { kind: "moved"; domain: string } | { kind: "unknown" };
+
+export async function resolveHost(c: Ctx): Promise<HostResolution> {
   const host = normalizeHost(new URL(c.req.url).hostname);
-  if (isPlatformHost(c, host)) return null;
+  if (isPlatformHost(c, host)) return { kind: "platform" };
   const sf = storefrontData(c);
-  return sf ? sf.shopByDomain(host) : null;
+  if (!sf) return { kind: "platform" };
+  const tpl = domainTemplateFrom(c.get("adapters").config);
+  const slug = tpl ? templateSlug(tpl, host) : null;
+  if (slug) {
+    const shop = await sf.shopByHostSlug(slug);
+    if (shop?.domain === host) return { kind: "shop", shop };
+    return shop?.domain ? { kind: "moved", domain: shop.domain } : { kind: "unknown" };
+  }
+  const shop = await sf.shopByDomain(host);
+  if (shop) return { kind: "shop", shop };
+  return tpl ? { kind: "unknown" } : { kind: "platform" };
 }
 
 /** 今のリクエストがショップの独自ドメインの上か */
 export function onShopDomain(c: Ctx, shop: { domain?: string | null }): boolean {
-  return Boolean(shop.domain) && normalizeHost(new URL(c.req.url).hostname) === shop.domain;
+  if (!shop.domain) return false;
+  const host = normalizeHost(new URL(c.req.url).hostname);
+  // Banto 自身のホスト（管理画面のオリジン）はショップのドメインとして扱わない。画面は自分のホストをドメインに付けさせないが、
+  // DB には形の検査しか無い（直接の書き込み・復元で入りうる）。入っていても、テーマの JS を管理画面のオリジンで動かさない
+  return host === shop.domain && !isPlatformHost(c, host);
 }
 
 /**
@@ -97,7 +134,19 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
   return async (c, next) => {
     if (rewritten.has(c.req.raw)) return next();
     const url = new URL(c.req.url);
-    if (platformOnly(url.pathname)) {
+    // サブドメインモード: どのショップにも結ばれていないホストは全部 404、移ったショップは新しいドメインへ（GET だけ）
+    if (domainTemplateFrom(c.get("adapters").config)) {
+      const r = await resolveHost(c);
+      if (r.kind === "unknown") return c.notFound();
+      if (r.kind === "moved") {
+        if (c.req.method !== "GET" && c.req.method !== "HEAD") return c.notFound();
+        // 302: ドメインを外して戻したとき、ブラウザに転送を覚えさせない（redirectToShopDomain と同じ）
+        return c.redirect(`https://${r.domain}${url.pathname}${url.search}`, 302);
+      }
+    }
+    // 判定はルーターと同じ読み方のパス（c.req.path）でも行う。ルーターは戻せる列だけを戻して振り分けるので、
+    // 自前でパス全体を戻すと、不正な % の列を混ぜた /api/%761/…/%ff で判定だけが外れる
+    if (platformOnly(url.pathname) || platformOnly(c.req.path)) {
       // 運営者と連携の入口はショップのドメインでは出さない
       return (await hostShop(c)) ? c.notFound() : next();
     }
@@ -118,9 +167,13 @@ export function shopDomainRouting(app: Hono<AppEnv>): MiddlewareHandler<AppEnv> 
     }
     url.pathname = url.pathname === "/" ? `/${shop.slug}` : `/${shop.slug}${url.pathname}`;
     const method = c.req.method;
-    const body = method === "GET" || method === "HEAD" ? undefined : await c.req.raw.arrayBuffer();
-    const req = new Request(url.toString(), { method, headers: c.req.raw.headers, body, redirect: "manual" });
+    // 本文は上限まで（振り分けの前に全部を読むので、上限が無いと匿名の POST でメモリを食わせられる）
+    const body = method === "GET" || method === "HEAD" ? undefined : await readBodyLimited(c.req.raw, bodyLimitFor(url.pathname) ?? SHOP_DOMAIN_BODY_BYTES);
+    if (body === null) return c.text("Payload Too Large", 413);
+    const req = new Request(url.toString(), { method, headers: c.req.raw.headers, body: body ? (body.buffer as ArrayBuffer) : undefined, redirect: "manual" });
     rewritten.add(req);
+    // 画像の起点（common.ts の mediaBaseUrl）が、登録されたショップのドメインのリクエストだと分かるように
+    if (shop.domain) markShopDomainRequest(req, shop.domain);
     let ctx;
     try {
       ctx = c.executionCtx;

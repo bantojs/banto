@@ -1,7 +1,8 @@
-import type { Ctx } from "./common";
+import { migrationStateFor, type Ctx } from "./common";
 import { createPrivilegedDb, type PrivilegedDb } from "../db/privileged";
 import { createStripeClient, type StripeClient } from "../payments/stripe";
 import { createKomojuClient } from "../plugins/komoju";
+import { amazonPayFromConfig } from "../plugins/amazon_pay";
 import type { CouponSource, PaymentSetup, PlaceOrderDeps } from "../commerce/checkout";
 import type { PublicShop } from "../storefront/data";
 import { moduleEnabled } from "../modules/registry";
@@ -31,7 +32,14 @@ export function privilegedFor(c: Ctx): PrivilegedDb | null {
 export function placeOrderDeps(c: Ctx, setup: PaymentSetup): PlaceOrderDeps | null {
   const privileged = privilegedFor(c);
   if (!privileged) return null;
-  return { privileged, stripe: stripeFor(c), komoju: komojuFor(c), setup };
+  const url = c.get("adapters").config.get("SUPABASE_URL") ?? "";
+  const secret = c.get("sessionSecret");
+  return { privileged, stripe: stripeFor(c), komoju: komojuFor(c), amazonPay: setup.amazonPay && secret ? { secret } : null, setup, migrationState: migrationStateFor(c, url) };
+}
+
+/** Amazon Pay のクライアント（中継ページ・戻り・IPN）。設定が足りなければ null */
+export function amazonPayFor(c: Ctx): ReturnType<typeof amazonPayFromConfig> {
+  return amazonPayFromConfig(c.get("adapters").config, c.get("deps").fetch);
 }
 
 /**

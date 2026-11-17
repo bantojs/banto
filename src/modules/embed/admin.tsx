@@ -53,7 +53,7 @@ embedAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const s = embedSnippets(publicBaseUrl(c), shop.slug);
   const mode = storefrontSettings(shop.settings).mode;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("mod.embed.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.embed.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mod.embed.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.embed.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "embed" }}>
       <PageHead title={t("mod.embed.name")} />
       {mode === "off" ? <p class="error">{t("embed.mode_off")}</p> : null}
       {!shop.published ? <p class="error">{t("embed.unpublished")}</p> : null}

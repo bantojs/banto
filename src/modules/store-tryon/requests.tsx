@@ -3,7 +3,6 @@
  * 1 件は tryon_request_detail（ショップの stores の項目か、その実店舗の tryon の項目）で読む。
  * 在庫を EC に戻すボタンは、ショップの stores の項目を持つ人にだけ出す（DB の tryon_restock も同じ項目で止める）。
  */
-import type { Child } from "hono/jsx";
 import { DbError } from "../../db/client";
 import { t, tf, type MessageKey } from "../../i18n";
 import { formatDateTime } from "../../i18n/time";

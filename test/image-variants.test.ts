@@ -112,7 +112,7 @@ describe("管理画面のアップロードとショップの設定", () => {
 
   it("ショップの設定で大きさを選ぶ（決まった値だけ）", async () => {
     const { sb, shop, b } = await setup();
-    const html = await (await b.get(`/admin/shops/${shop.id}`)).text();
+    const html = await (await b.get(`/admin/shops/${shop.id}/settings/images`)).text();
     expect(html).toContain('name="image_max"');
     const form = { mode: "flat", flat_fee_jpy: "0", free_over_jpy: "", tax_rate: "10", tax_rate_reduced: "8", tax_rounding: "floor", contact_email: "" };
     const action = /<form method="post" action="([^"]+)"[^>]*>(?:(?!<\/form>)[\s\S])*name="image_max"/.exec(html)?.[1];

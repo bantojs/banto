@@ -176,7 +176,11 @@ describe("商品管理（Step 4）", () => {
     const served = await app.request(`${BASE}/media/${key}`);
     expect(served.status).toBe(200);
     expect(served.headers.get("content-type")).toBe("image/png");
-    expect(served.headers.get("cache-control")).toContain("immutable");
+    expect(served.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    // 同じキーを上書きする商品フィードは覚えさせない
+    await storage.put(`feeds/${shop.id}/meta.json`, new TextEncoder().encode("{}").buffer as ArrayBuffer, "application/json");
+    expect((await app.request(`${BASE}/media/feeds/${shop.id}/meta.json`)).headers.get("cache-control")).toBe("no-cache");
+    await storage.delete(`feeds/${shop.id}/meta.json`);
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(png);
     expect((await app.request(`${BASE}/media/nope.png`)).status).toBe(404);
     expect((await app.request(`${BASE}/media/../etc/passwd`)).status).toBe(404);

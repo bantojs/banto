@@ -64,20 +64,24 @@ describe("送料・税（ストアフロント）", () => {
     expect(sb.tables.reservations[1]!["shipping_jpy"]).toBe(0);
   });
 
-  it("管理画面で送料・税・連絡先を保存できる", async () => {
+  it("管理画面で送料・税（配送と税）と連絡先（基本と法定表記）を保存できる", async () => {
     const { app, shop, sb } = setup();
     const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    let html = await (await admin.get(`/admin/shops/${shop.id}`)).text();
-    expect(html).toContain("送料・税・連絡先");
+    let html = await (await admin.get(`/admin/shops/${shop.id}/settings/shipping`)).text();
+    expect(html).toContain("<h1>配送と税</h1>");
     expect(html).toContain('name="pref_北海道"');
     // 「全国一律」のまま都道府県別の表に入れて使われない、を防ぐ: 表に入力すると「都道府県別」が選ばれる
     expect(html).toContain('data-autocheck="mode" data-autocheck-value="by_prefecture"');
-    const res = await admin.post(`/admin/shops/${shop.id}/shipping`, { mode: "flat", flat_fee_jpy: "600", free_over_jpy: "", pref_北海道: "1200", tax_rate: "8", contact_email: "shop@example.com" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}?flash=shipping_saved`);
-    const settings = sb.shops[0]!["settings"] as Record<string, unknown>;
-    expect(settings).toMatchObject({ shipping: { mode: "flat", flat_fee_jpy: 600, free_over_jpy: null, by_prefecture: { 北海道: 1200 } }, tax_rate: 8, contact_email: "shop@example.com" });
-    html = await (await admin.get(`/admin/shops/${shop.id}?flash=shipping_saved`)).text();
-    expect(html).toContain("送料・税・連絡先を保存しました");
+    const res = await admin.post(`/admin/shops/${shop.id}/shipping`, { mode: "flat", flat_fee_jpy: "600", free_over_jpy: "", pref_北海道: "1200", tax_rate: "8" });
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/settings/shipping?flash=shipping_saved`);
+    expect(sb.shops[0]!["settings"]).toMatchObject({ shipping: { mode: "flat", flat_fee_jpy: 600, free_over_jpy: null, by_prefecture: { 北海道: 1200 } }, tax_rate: 8 });
+    html = await (await admin.get(`/admin/shops/${shop.id}/settings/shipping?flash=shipping_saved`)).text();
+    expect(html).toContain("配送と税を保存しました");
+    // 連絡先は基本と法定表記の画面
+    expect(await (await admin.get(`/admin/shops/${shop.id}`)).text()).toContain('name="contact_email"');
+    const s = sb.shops[0]!;
+    await admin.post(`/admin/shops/${shop.id}`, { name: String(s["name"]), slug: String(s["slug"]), contact_email: "shop@example.com" });
+    expect(sb.shops[0]!["settings"]).toMatchObject({ contact_email: "shop@example.com", tax_rate: 8 });
   });
 });
 

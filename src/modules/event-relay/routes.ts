@@ -8,14 +8,12 @@
  * 回数を超えたら 429。ゲストは本文の visitor（ブラウザが作る訪問者 ID、0108）で渡す
  */
 import type { PublicShop } from "../../storefront/data";
-import { afterResponse, clientIp, param, readBodyLimited, type Ctx } from "../../routes/common";
+import { afterResponse, clientIp, publicShop, readBodyLimited, type Ctx } from "../../routes/common";
 import { privilegedFor } from "../../routes/payment-deps";
 import { moduleEnabled } from "../registry";
 import { rateLimiter } from "../../adapters/rate-limit";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
-import { StorefrontData } from "../../storefront/data";
 import { openToken } from "../../members/auth";
 import { CUSTOM_ALL, EVENT_RELAY_MODULE, RELAY_MAX_BYTES, RELAY_PER_MINUTE, RELAY_TARGETS_TTL, forwardRelay, parseRelayBody, relayTargets } from "./relay";
 
@@ -35,7 +33,8 @@ export async function acceptRelay(c: Ctx, shop: PublicShop, customerId: string |
   if (!customerId && shop.relay_guests !== true) return noContent();
   const targets = await relayTargets({ db, cache: c.get("adapters").cache }, shop.id).catch(() => []);
   if (targets.length === 0) return noContent();
-  await afterResponse(c, forwardRelay({ targets, shopId: shop.id, customerId, visitor: body.visitor, source, events: body.events, sessionSecret: secret, fetch: c.get("deps").fetch }).catch(() => 0));
+  // 行き先は hooks の配信と同じく、Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）
+  await afterResponse(c, forwardRelay({ targets, shopId: shop.id, customerId, visitor: body.visitor, source, events: body.events, sessionSecret: secret, fetch: c.get("adapters").publicFetch ?? c.get("deps").fetch }).catch(() => 0));
   return noContent();
 }
 
@@ -43,22 +42,16 @@ export async function acceptRelay(c: Ctx, shop: PublicShop, customerId: string |
 
 export const eventsApi = new Hono<AppEnv>();
 
-async function publicShop(c: Ctx): Promise<PublicShop | null | "not_configured"> {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
-  if (!url || !anonKey) return "not_configured";
-  return new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache).shopBySlug(param(c, "shop"));
-}
 
 /**
  * 貼れるタグ（同梱モジュール embed）が、送ってよい種類を知る（0109）。許しのある連携の和: 決まった種類・独自の出来事・ゲストも渡すか。
  * 送り先の URL や連携の名前は返さない。許しが無ければ空（タグは何も送らない）
  */
 eventsApi.get("/shops/:shop/events/config", async (c) => {
-  const shop = await publicShop(c);
-  if (shop === "not_configured") return c.json({ error: "not_configured" }, 503);
-  if (!shop || !moduleEnabled(shop.settings, EVENT_RELAY_MODULE)) return c.json({ error: "not_found" }, 404);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { shop } = p;
+  if (!moduleEnabled(shop.settings, EVENT_RELAY_MODULE)) return c.json({ error: "not_found" }, 404);
   const db = privilegedFor(c);
   const targets = db ? await relayTargets({ db, cache: c.get("adapters").cache }, shop.id).catch(() => []) : [];
   const types = new Set<string>();
@@ -77,9 +70,10 @@ eventsApi.get("/shops/:shop/events/config", async (c) => {
 
 /** 連携サイトが送る（CORS は公開の *）。会員トークンがあれば署名と期限だけで確かめる（壊れていれば 401）。無ければゲスト */
 eventsApi.post("/shops/:shop/events", async (c) => {
-  const shop = await publicShop(c);
-  if (shop === "not_configured") return c.json({ error: "not_configured" }, 503);
-  if (!shop || !moduleEnabled(shop.settings, EVENT_RELAY_MODULE)) return c.json({ error: "not_found" }, 404);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { shop } = p;
+  if (!moduleEnabled(shop.settings, EVENT_RELAY_MODULE)) return c.json({ error: "not_found" }, 404);
   const header = c.req.header("authorization") ?? "";
   let customerId: string | null = null;
   if (header) {

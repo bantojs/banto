@@ -74,18 +74,11 @@ export function generateSecret(bytes = 32): string {
   return randomToken(bytes);
 }
 
-export function sessionCookieHeader(value: string, opts: { secure: boolean; maxAgeSeconds?: number }): string {
-  const parts = [
-    `${SESSION_COOKIE}=${value}`,
-    "Path=/admin",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Max-Age=${opts.maxAgeSeconds ?? 60 * 60 * 24 * 30}`,
-  ];
-  if (opts.secure) parts.push("Secure");
-  return parts.join("; ");
-}
-
-export function clearSessionCookieHeader(): string {
-  return `${SESSION_COOKIE}=; Path=/admin; HttpOnly; SameSite=Lax; Max-Age=0`;
-}
+/**
+ * 管理画面のセッションの Cookie を置くパスと、前に置いていたパス（2026-11-13 まで Path=/admin）。
+ * HTTPS では `__Host-banto_admin`（Path=/ が必須、src/util/cookie.ts）。お店と管理画面が同じ登録ドメインの兄弟のホストに並ぶ構成でも、
+ * お店の側から管理画面のログインを差し込まれない
+ */
+export const SESSION_COOKIE_PATH = "/";
+export const SESSION_COOKIE_LEGACY_PATH = "/admin";
+export const SESSION_COOKIE_SECONDS = 60 * 60 * 24 * 30;

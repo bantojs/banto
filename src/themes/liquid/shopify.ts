@@ -676,7 +676,7 @@ export function registerShopifyTags(liquid: Liquid): void {
         const h = (yield this.hash.render(ctx)) as Record<string, unknown>;
         // 配送先のフォーム: 送り先は選んだ決済手段の確認（Banto が渡す checkout.provider）
         const provider = this.formType === "checkout_address" && isObject(e.globals["checkout"]) ? String((e.globals["checkout"] as Record<string, unknown>)["provider"] ?? "") : "";
-        const action = /^(stripe|komoju)$/.test(provider) ? `${e.shopPath}/checkout/${provider}` : FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
+        const action = /^(stripe|komoju|amazon_pay)$/.test(provider) ? `${e.shopPath}/checkout/${provider}` : FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
         if (!action) e.errors.push(`form '${this.formType}' is not supported yet`);
         const extra = Object.entries(h)
           .filter(([k, v]) => /^[a-z][a-z0-9_-]*$/.test(k) && v !== undefined && k !== "return_to")

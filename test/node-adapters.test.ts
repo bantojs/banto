@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { createNodeAdapters, EnvConfig, FsStorage, IntervalScheduler, MemoryCache } from "../src/adapters/node";
+import { createNodeAdapters, createPrivateStorage, createStorage, EnvConfig, FsStorage, IntervalScheduler, MemoryCache } from "../src/adapters/node";
 import { encodeKey, S3Storage, signS3Request } from "../src/adapters/node/s3";
 import { createPublicFetch } from "../src/adapters/node/public-fetch";
 import { createServer } from "node:http";
@@ -109,6 +109,36 @@ describe("S3 SigV4", () => {
     await s.delete("shops/日本/a b.png");
     expect(calls.map((c) => c.method)).toEqual(["PUT", "GET", "GET", "DELETE"]);
     expect(encodeKey("a/b c/d*e")).toBe("a/b%20c/d%2Ae");
+  });
+});
+
+describe("S3 の公開の置き場の Cache-Control", () => {
+  it("publicCache なら PUT に cache-control を付けて署名し、feeds/ には付けない", async () => {
+    const calls: { url: string; auth: string; cacheControl: string | null }[] = [];
+    const fake: typeof fetch = async (input, init) => {
+      const req = new Request(input, init);
+      calls.push({ url: req.url, auth: req.headers.get("authorization") ?? "", cacheControl: req.headers.get("cache-control") });
+      return new Response(null, { status: 200 });
+    };
+    const s = new S3Storage({ endpoint: "https://s3.example", region: "auto", bucket: "b", accessKeyId: "AK", secretAccessKey: "SK", publicBaseUrl: "https://media.example", publicCache: true, fetch: fake });
+    await s.put("shops/s/a.webp", new Uint8Array([1]).buffer, "image/webp");
+    await s.put("feeds/s/meta.json", new Uint8Array([1]).buffer, "application/json");
+    expect(calls[0]!.cacheControl).toBe("public, max-age=31536000, immutable");
+    expect(calls[0]!.auth).toContain("SignedHeaders=cache-control;content-type;host;x-amz-content-sha256;x-amz-date,");
+    expect(calls[1]!.cacheControl).toBeNull();
+    expect(calls[1]!.auth).toContain("SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,");
+  });
+
+  it("公開の S3 の置き場は publicCache で作る", async () => {
+    const calls: (string | null)[] = [];
+    const fake: typeof fetch = async (input, init) => {
+      calls.push(new Request(input, init).headers.get("cache-control"));
+      return new Response(null, { status: 200 });
+    };
+    const config = { get: (n: string) => ({ S3_ENDPOINT: "https://s3.example", S3_BUCKET: "b", S3_PRIVATE_BUCKET: "p", S3_ACCESS_KEY_ID: "k", S3_SECRET_ACCESS_KEY: "s", MEDIA_BASE_URL: "https://cdn.example" } as Record<string, string>)[n], secret: (n: string) => ({ S3_BUCKET: "b", S3_ACCESS_KEY_ID: "k", S3_SECRET_ACCESS_KEY: "s" } as Record<string, string>)[n]! };
+    await createStorage(config, fake).put("shops/s/a.webp", new Uint8Array([1]).buffer, "image/webp");
+    await createPrivateStorage(config, fake)!.put("inquiries/s/a.png", new Uint8Array([1]).buffer, "image/png");
+    expect(calls).toEqual(["public, max-age=31536000, immutable", null]);
   });
 });
 

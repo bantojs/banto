@@ -68,7 +68,7 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   adapters.scheduler.register("deliver_hooks", async () => {
     const sessionSecret = await resolveSessionSecret(cfg);
     if (!sessionSecret) return;
-    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信は素の fetch
+    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信（メール・LINE）も同じ fetch を通る
     await deliverPendingHooks({ db, sessionSecret, fetch: adapters.publicFetch ?? doFetch, config: cfg, socket: adapters.socket });
   });
 

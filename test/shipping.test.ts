@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeShipping, includedTax, parseShippingSettings, shippingFee, taxRate } from "../src/commerce/shipping";
+import { describeShipping, parseShippingSettings, shippingFee, taxRate } from "../src/commerce/shipping";
 
 describe("送料・税", () => {
   it("設定の読み込みは壊れた値を捨てる", () => {
@@ -28,11 +28,8 @@ describe("送料・税", () => {
     expect(d.table).toHaveLength(47);
   });
 
-  it("内税の計算", () => {
+  it("税率の読み取り", () => {
     expect(taxRate({})).toBe(10);
     expect(taxRate({ tax_rate: 8 })).toBe(8);
-    expect(includedTax(1100, 10)).toBe(100);
-    expect(includedTax(1080, 8)).toBe(80);
-    expect(includedTax(3000, 10)).toBe(272);
   });
 });

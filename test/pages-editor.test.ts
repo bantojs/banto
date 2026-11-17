@@ -168,6 +168,15 @@ describe("見たままの編集 → 決まった書式", () => {
 });
 
 describe("新しいブロック（グリッド・タブ・お店のブロック）", () => {
+  it("記事を並べる: ブログをまたぐ書き方（名前を並べる・*、0140）も同じ 1 行に戻す。形の違う名前は捨てる", () => {
+    for (const body of ["::: articles blog=news,staff limit=3 layout=grid", "::: articles blog=* limit=5 layout=list sort=title"]) {
+      expect(back(markdownToHtml(body, { articlesLabel: () => "記事" }))).toBe(body);
+    }
+    expect(back('<div data-banto-block="articles" data-blog="news,Bad" data-limit="3">x</div>')).toBe("");
+    const twenty = Array.from({ length: 20 }, (_, i) => `b${i}`).join(",");
+    expect(back(markdownToHtml(`::: articles blog=${twenty} limit=3 layout=grid`, { articlesLabel: () => "記事" }))).toBe(`::: articles blog=${twenty} limit=3 layout=grid`);
+  });
+
   it("書式 → 編集の画面の HTML → 書式 で同じ形に戻る", () => {
     const md = [
       ":::: grid cols=4",

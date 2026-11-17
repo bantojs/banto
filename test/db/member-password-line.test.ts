@@ -128,7 +128,11 @@ describe.skipIf(!dbAvailable)("会員のパスワード（0013）と LINE ログ
     const get = (id: string, epoch: number) => asService(async (c) => (await c.query<{ r: { customer: Record<string, unknown> } | null }>("select member_get($1, $2, $3) as r", [f.shopId, id, epoch])).rows[0]!.r);
     expect((await get(ja.id, ja.session_epoch))!.customer).toMatchObject({ providers: ["line"], has_password: true });
 
-    const unlink = (id: string, epoch: number) => asService(async (c) => (await c.query("select member_unlink_identity($1, $2, $3, 'line') as ok", [f.shopId, id, epoch])).rows[0].ok);
+    const unlink = (id: string, epoch: number) =>
+      asService(async (c) => {
+        const sid = (await c.query<{ r: string }>("select member_session_start($1, $2, $3, 'web', null, 3600) as r", [f.shopId, id, epoch])).rows[0]!.r;
+        return (await c.query("select member_unlink_identity($1, $2, $3, 'line', $4) as ok", [f.shopId, id, epoch, sid])).rows[0].ok;
+      });
     expect(await unlink(ja.id, ja.session_epoch)).toBe(true);
     const lineOnly = await oauth("U-only", null, false);
     expect(await expectDbError(() => unlink(lineOnly.customer_id!, 0))).toMatch(/last_login_method/);
@@ -172,6 +176,14 @@ describe.skipIf(!dbAvailable)("会員のパスワード（0013）と LINE ログ
     expect(await asService(async (c) => (await c.query("select shop_oauth_client($1, 'google') as r", [f.shopId])).rows[0].r)).toEqual({ client_id: "abc.apps.googleusercontent.com", secret_box: "v1.aaaa.bbbb" });
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select shop_oauth_client($1, 'google')", [f.shopId])))).toMatch(/permission denied/);
     await asUser(f.ownerId, (c) => c.query("select shop_oauth_client_delete($1, 'google')", [f.shopId]));
+    expect((await getPool().query("select settings->'oauth' as o from shops where id = $1", [f.shopId])).rows[0].o).toEqual({});
+  });
+
+  it("提供元を保存し直しても、ほかの設定（LINE の友だち追加）は残す（0131）", async () => {
+    await getPool().query(`update shops set settings = jsonb_set(coalesce(settings, '{}'::jsonb), '{oauth}', '{"line": {"client_id": "old", "bot_prompt": "aggressive"}}'::jsonb) where id = $1`, [f.shopId]);
+    await asUser(f.ownerId, (c) => c.query("select shop_oauth_client_save($1, 'line', ' 1650000000 ', 'v1.aaaa.bbbb')", [f.shopId]));
+    expect((await getPool().query("select settings->'oauth' as o from shops where id = $1", [f.shopId])).rows[0].o).toEqual({ line: { client_id: "1650000000", bot_prompt: "aggressive" } });
+    await asUser(f.ownerId, (c) => c.query("select shop_oauth_client_delete($1, 'line')", [f.shopId]));
     expect((await getPool().query("select settings->'oauth' as o from shops where id = $1", [f.shopId])).rows[0].o).toEqual({});
   });
 

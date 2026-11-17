@@ -66,14 +66,37 @@ function safeLink(url: string): string | null {
  * 本文とアイキャッチに使える画像の URL（ショップの画像の置き場のものだけ）。描くときの URL を返し、使えなければ null。
  * 管理画面と別の入口（独自ドメインのお店）や、MEDIA_BASE_URL を後から付けた前の画像の URL も、/media/ からとして受ける
  */
+/**
+ * 保存する画像の URL に整える（アイキャッチ・項目の画像。置き場のものだけ、使えなければ null）。
+ * 置き場の起点（MEDIA_BASE_URL）からの URL はそのまま、/media/<キー> とほかの入口の /media/<キー> はホストを外した /media/<キー>
+ * （ほかのホストの URL をそのまま残すと外の画像を指せてしまい、入口を変えると画像が消えるため）。描くときは shopImageSrc を通す
+ */
 export function shopImageUrl(url: string, mediaBase: string | undefined): string | null {
-  return safeImage(url, { mediaBase });
+  return mediaPath(url, { mediaBase });
+}
+
+/**
+ * 描く画像の URL（本文の画像・アイキャッチ・項目の画像。置き場のものだけ、使えなければ null）。
+ * /media/<キー>（Worker の置き場）は、置き場の起点が Worker の外（MEDIA_BASE_URL に R2 のドメインなど）ならそこからの URL にする。
+ * 後から R2 のドメインを付けても、置いた時の入口の URL のまま Worker から配り続けないため。
+ * Worker の /media/ の後ろは置き場のキーそのものなので、起点の後ろに付ければ同じ画像を指す。
+ * 起点が Worker の置き場（…/media。MEDIA_BASE_URL が無いとき）なら /media/ のまま（見ている入口のオリジンから読む。独自ドメインのお店で、
+ * PUBLIC_BASE_URL の入口へ取りに行かない）
+ */
+export function shopImageSrc(url: string, mediaBase: string | undefined): string | null {
+  return safeImage(url, mediaBase ? { mediaBase } : {});
 }
 
 function safeImage(url: string, opts: MarkdownOptions): string | null {
   const u = mediaPath(url, opts);
-  return u && opts.origin && u.startsWith("/media/") ? `${opts.origin.replace(/\/+$/, "")}${u}` : u;
+  if (!u || !u.startsWith("/media/")) return u;
+  const base = opts.mediaBase?.replace(/\/+$/, "");
+  if (base && !workerMedia(base)) return `${base}${u.slice("/media".length)}`;
+  return opts.origin ? `${opts.origin.replace(/\/+$/, "")}${u}` : u;
 }
+
+/** 置き場の起点が Worker の /media（MEDIA_BASE_URL が無いときの `<入口>/media`）か */
+const workerMedia = (base: string): boolean => /^(?:https?:\/\/[^/?#]+)?\/media$/i.test(base);
 
 function mediaPath(url: string, opts: MarkdownOptions): string | null {
   const u = url.trim();

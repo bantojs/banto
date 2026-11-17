@@ -616,6 +616,20 @@ describe("お問い合わせ（AI 用 API の添付、0064）", () => {
     await app.request(`${BASE}/api/shops/my-shop/inquiries`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ category: "order", body: "破損していました", email: "att-ai@example.com" }) });
   }
 
+  it("inquiries:write の無いトークンは、添付を置き場に置く前に 401（置き場に書かない）", async () => {
+    const priv = new MemoryStorage(`${BASE}/never`);
+    const { app, sb } = setup({ privateStorage: priv });
+    await ticket(app, sb);
+    const raw = generateApiToken();
+    const shop = sb.tables.shops[0]!;
+    sb.tables.api_tokens.push({ id: "tok-ro", shop_id: shop["id"], owner_id: shop["owner_id"], name: "ro", token_hash: await hashApiToken(raw), prefix: tokenPrefix(raw), scopes: ["inquiries:read", "orders:pii"], expires_at: null, revoked_at: null, last_used_at: null, created_at: "" });
+    const m = await multipart({ body: "x", files: new File([jpeg], "a.jpg", { type: "image/jpeg" }) });
+    const res = await app.request(`${BASE}/api/v1/inquiries/1/reply`, { method: "POST", headers: { authorization: `Bearer ${raw}`, ...m.headers }, body: m.body });
+    expect(res.status).toBe(401);
+    expect(priv.objects.size).toBe(0);
+    expect(sb.calls.some((x) => x.includes("api_inquiry_reply"))).toBe(false);
+  });
+
   it("返事に添付する（multipart）→ 公開しない置き場に置き、そのチケットの添付として受け取れる。メールに本文も添付も載せない", async () => {
     const priv = new MemoryStorage(`${BASE}/never`);
     const { app, sb, mail, tickets } = setup({ privateStorage: priv });

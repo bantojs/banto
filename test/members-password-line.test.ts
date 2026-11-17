@@ -268,10 +268,23 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     const b = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }));
     expect(await (await b.get("/my-shop/account/login")).text()).toContain('href="/my-shop/account/oauth/line"');
     let start = await b.get("/my-shop/account/oauth/line");
-    expect(start.headers.getSetCookie().find((c) => c.startsWith("banto_oauth="))).toContain("Path=/_oauth");
+    // http の Banto の URL では今までの名前で、ホスト全体（2026-11-13 まで Path=/_oauth）
+    expect(start.headers.getSetCookie().find((c) => c.startsWith("banto_oauth="))).toContain("Path=/;");
     const auth = new URL(start.headers.get("location")!);
     expect(auth.searchParams.get("client_id")).toBe("line-channel");
-    expect((await new Browser(app).get(`/_oauth/line/callback?code=good&state=${auth.searchParams.get("state")}`)).status).toBe(400);
+    expect(auth.searchParams.get("state")).toMatch(/^my-shop\./);
+    expect(auth.searchParams.has("disable_auto_login")).toBe(false);
+    // 戻りが別のブラウザで開いた（LINE アプリの自動ログインから既定のブラウザへ）: ログインはさせず、そのブラウザでのやり直しへ。
+    // やり直しは LINE アプリを経由しない（disable_auto_login）。印は 1 回で消える
+    const other = new Browser(app);
+    const back = await other.get(`/_oauth/line/callback?code=good&state=${auth.searchParams.get("state")}`);
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe("/my-shop/account/login?error=oauth_retry");
+    expect(await (await other.get("/my-shop/account/login?error=oauth_retry")).text()).toContain("別のブラウザに切り替わった");
+    expect(new URL((await other.get("/my-shop/account/oauth/line")).headers.get("location")!).searchParams.get("disable_auto_login")).toBe("true");
+    expect(new URL((await other.get("/my-shop/account/oauth/line")).headers.get("location")!).searchParams.has("disable_auto_login")).toBe(false);
+    expect(await (await other.get("/my-shop/account")).text()).not.toContain("LINE と連携しています");
+    // ショップの分からない state は今までどおり何もしない
     expect((await b.get(`/_oauth/line/callback?code=good&state=wrong`)).status).toBe(400);
 
     start = await b.get("/my-shop/account/oauth/line");
@@ -366,14 +379,33 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     const start = await b.get("/account/oauth/google");
     const auth = new URL(start.headers.get("location")!);
     expect(auth.searchParams.get("redirect_uri")).toBe(`${DOMAIN}/_oauth/google/callback`);
-    expect(start.headers.getSetCookie().some((c) => c.startsWith("banto_oauth=") && c.includes("Path=/_oauth"))).toBe(true);
+    // https のショップのドメインでは __Host-（Secure・Path=/）
+    expect(start.headers.getSetCookie().some((c) => c.startsWith("__Host-banto_oauth=") && c.includes("Path=/;") && c.includes("Secure"))).toBe(true);
     fake.nonces.set("good", auth.searchParams.get("nonce")!);
     const back = await b.get(`/_oauth/google/callback?code=good&state=${auth.searchParams.get("state")}`);
     expect(back.headers.get("location")).toBe("/account");
-    expect(back.headers.getSetCookie().some((c) => c.startsWith("banto_member_") && c.includes("Path=/;"))).toBe(true);
+    expect(back.headers.getSetCookie().some((c) => c.startsWith("__Host-banto_member_") && c.includes("Path=/;") && c.includes("Secure"))).toBe(true);
     // 提供元にも同じ戻り先を渡す（違えば提供元が断る）
     expect(fake.calls.at(-1)!.form["redirect_uri"]).toBe(`${DOMAIN}/_oauth/google/callback`);
     expect(await (await b.get("/account")).text()).toContain("d@example.com");
+  });
+
+  it("独自ドメインのショップで、LINE の戻りが別のブラウザで開いた: PUBLIC_BASE_URL が無くても、そのドメインのログイン画面へ案内する", async () => {
+    const { sb, shop, app } = setup();
+    const DOMAIN = "https://shop.example.jp";
+    sb.tables.shops.find((s) => s["id"] === shop.id)!["domain"] = "shop.example.jp";
+    await configure(app, shop.id, "line", "line-channel", "line-secret");
+    const app2 = appWith(sb, { RESEND_API_KEY: "re_test", PUBLIC_BASE_URL: undefined });
+    const start = await new Browser(app2, DOMAIN).get("/account/oauth/line");
+    const auth = new URL(start.headers.get("location")!);
+    expect(auth.searchParams.get("redirect_uri")).toBe(`${DOMAIN}/_oauth/line/callback`);
+
+    const other = new Browser(app2, DOMAIN);
+    const back = await other.get(`/_oauth/line/callback?code=good&state=${auth.searchParams.get("state")}`);
+    expect(back.status).toBe(302);
+    expect(back.headers.get("location")).toBe("/account/login?error=oauth_retry");
+    expect((await other.get("/account/login?error=oauth_retry")).status).toBe(200);
+    expect(new URL((await other.get("/account/oauth/line")).headers.get("location")!).searchParams.get("disable_auto_login")).toBe("true");
   });
 
   it("モジュールが OFF なら設定画面も入口も無い", async () => {

@@ -186,6 +186,8 @@ mfa.post("/mfa/setup/verify", async (c: AdminContext) => {
   const session = await loadSession(c);
   const auth = authClient(c);
   if (!session || !auth) return c.redirect("/admin/login");
+  // 6 桁を求められている途中（aal1）では、新しい認証アプリを足させない（登録の開始と同じ）
+  if (session.mfa === "challenge") return c.redirect("/admin/mfa");
   const form = await formFields(c);
   const code = (form.code ?? "").trim();
   const factorId = form.factor_id ?? "";

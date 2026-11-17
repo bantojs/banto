@@ -31,7 +31,7 @@ services:
     # ports は書かない（5432 をインターネットに出さない）
 
   auth:
-    image: supabase/gotrue:v2.164.0
+    image: supabase/gotrue:v2.197.0
     restart: unless-stopped
     depends_on:
       db:
@@ -55,7 +55,7 @@ services:
       GOTRUE_MAILER_AUTOCONFIRM: "true"
 
   rest:
-    image: postgrest/postgrest:v12.2.3
+    image: postgrest/postgrest:v16.5
     restart: unless-stopped
     depends_on:
       db:
@@ -71,7 +71,7 @@ services:
       PGRST_DB_CHANNEL_ENABLED: "true"
 
   gateway:
-    image: caddy:2.8
+    image: caddy:2.10
     restart: unless-stopped
     depends_on: [rest, auth]
     ports:

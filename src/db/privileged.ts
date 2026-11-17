@@ -6,6 +6,7 @@
  */
 import { AuthError } from "../auth/supabase";
 import { supabaseHeaders } from "./api-keys";
+import { ACTOR_HEADER } from "../audit";
 
 export interface PrivilegedDbOptions {
   url: string;
@@ -49,7 +50,7 @@ export interface OrderInput {
   amount_paid_jpy?: number | null;
   /** 決済事業者の通貨（jpy 以外なら amount_mismatch） */
   currency?: string | null;
-  /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"）。返金はこの口座で行う */
+  /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"、Amazon Pay は "amazon_pay"）。返金はこの口座で行う */
   payment_account?: string | null;
 }
 
@@ -250,7 +251,8 @@ export interface PrivilegedDb {
   /** プレビューの版に保存した設定の値（0074）。券を確かめてから呼ぶ。版が無ければ null */
   themePreviewSettings(shopId: string, versionId: string): Promise<Record<string, unknown> | null>;
   /** 在庫を原子的に減算して予約を作る。在庫不足なら insufficient_stock */
-  reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null): Promise<string>;
+  /** customerId: ログイン中の会員（会員限定の商品を DB でも確かめる、0129） */
+  reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null, customerId?: string | null): Promise<string>;
   /** 予約を注文に変換（冪等）。戻り値は order id */
   confirmReservation(reservationId: string, shopId: string, order: OrderInput): Promise<string>;
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
@@ -374,8 +376,8 @@ export interface PrivilegedDb {
   /** 0112: 選んだ slug の商品（product_member_pick） */
   productMemberPick(args: Record<string, unknown>): Promise<unknown>;
   productMemberSkus(args: Record<string, unknown>): Promise<unknown>;
-  /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page） */
-  contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page", args: Record<string, unknown>): Promise<unknown>;
+  /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page。ブログをまたぐ articles_member_multi は 0140） */
+  contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page" | "articles_member_multi", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
   shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
@@ -422,6 +424,15 @@ export interface PrivilegedDb {
   releaseExpiredReservations(): Promise<number>;
   /** Webhook の冪等化。初見なら true */
   recordWebhookEvent(provider: string, eventId: string): Promise<boolean>;
+  /** 記録済み（処理が済んだ）イベントか（0128。再配信なら何もしない） */
+  webhookEventSeen(provider: string, eventId: string): Promise<boolean>;
+  /** 予約の状態と、その予約で確定した注文の支払いの参照（無ければ null）。同じ予約に 2 回目の支払いが来たかを決済の流れが確かめる */
+  reservationPayment(reservationId: string, shopId: string): Promise<{ status: string | null; paymentRef: string | null }>;
+  /**
+   * 「返金すると決めた」ことを返金の前に DB に残す（0128。pending なら在庫とクーポンの枠も戻す）。
+   * marked = 今決めた（返金する）、same_event = 同じイベントで決めてある（返金をやり直してよい）、other_event = 別のイベントで決めてある（返金しない）
+   */
+  reservationMarkRefunded(reservationId: string, shopId: string, provider: string, eventId: string): Promise<"marked" | "same_event" | "other_event">;
   /** 発送から p_days 日経過した注文の個人情報をマスク（Cron） */
   maskShippedOrders(days?: number): Promise<number>;
   /** 監査ログの保持（0051）。既定 365 日より古い行を消す（30 日より短くはならない）。戻り値: 消した行数 */
@@ -509,7 +520,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     ...supabaseHeaders(opts.serviceRoleKey),
     "Content-Type": "application/json",
   };
-  if (opts.actor) headers["X-Banto-Actor"] = opts.actor;
+  if (opts.actor) headers[ACTOR_HEADER] = opts.actor;
 
   async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
     const res = await doFetch(`${base}/rest/v1/rpc/${fn}`, { method: "POST", headers, body: JSON.stringify(args) });
@@ -532,11 +543,13 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
 
   return {
     themePreviewSettings: (shopId, versionId) => rpc<Record<string, unknown> | null>("theme_preview_settings", { p_shop_id: shopId, p_version_id: versionId }),
-    reserveStock: (shopId, items, ttlSeconds, limits) =>
+    reserveStock: (shopId, items, ttlSeconds, limits, customerId) =>
       rpc<string>("reserve_stock", {
         p_shop_id: shopId, p_items: items, p_ttl_seconds: ttlSeconds,
         // 予約の上限の材料（0029、reserveLimits() で作る）
         ...(limits ? { p_quote_id: limits.quoteId, p_subject_hash: limits.subjectHash, p_ip_hash: limits.ipHash } : {}),
+        // 会員限定の商品の判定（0129）
+        ...(customerId ? { p_customer_id: customerId } : {}),
       }),
     confirmReservation: (reservationId, shopId, order) =>
       rpc<string>("confirm_reservation", { p_reservation_id: reservationId, p_shop_id: shopId, p_order: order }),
@@ -589,11 +602,9 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberSaveAddress: (shopId, customerId, epoch, name, address) =>
       rpc("member_save_address", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_name: name, p_address: address }),
     memberWithdraw: async (shopId, customerId, epoch, sessionId) => {
-      const r = await rpc<boolean | { ok?: boolean; email?: string | null; mail_from?: string | null } | null>("member_withdraw", {
+      const r = await rpc<{ ok?: boolean; email?: string | null; mail_from?: string | null } | null>("member_withdraw", {
         p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}),
       });
-      // 0090 より前の DB は boolean を返す（知らせの材料は無い）
-      if (r === true) return { ok: true, email: null, mail_from: null };
       if (!r || typeof r !== "object" || r.ok !== true) return { ok: false };
       return { ok: true, email: r.email ?? null, mail_from: r.mail_from ?? null };
     },
@@ -627,8 +638,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberSessionStart: (shopId, customerId, epoch, kind, label, ttlSeconds, authenticatedAt) =>
       rpc("member_session_start", {
         p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_kind: kind, p_label: label, p_ttl_seconds: ttlSeconds,
-        // 0090 より前の DB は 6 引数の関数しか無いので、渡されたときだけ付ける
-        ...(authenticatedAt !== undefined ? { p_authenticated_at: authenticatedAt } : {}),
+        // ログインを確かめた時刻を引き継ぐとき（0090）。null なら今
+        p_authenticated_at: authenticatedAt ?? null,
       }),
     memberSessionCheck: (shopId, customerId, epoch, sessionId) => rpc("member_session_check", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
     memberSessionCheckAttrs: async (shopId, customerId, epoch, sessionId) => {
@@ -704,6 +715,21 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     releaseReservationAbandoned: (reservationId, shopId) => rpc<boolean>("release_reservation_abandoned", { p_reservation_id: reservationId, p_shop_id: shopId }),
     releaseExpiredReservations: () => rpc<number>("release_expired_reservations", {}),
     recordWebhookEvent: (provider, eventId) => rpc<boolean>("record_webhook_event", { p_provider: provider, p_event_id: eventId }),
+    webhookEventSeen: (provider, eventId) => rpc<boolean>("webhook_event_seen", { p_provider: provider, p_event_id: eventId }),
+    async reservationPayment(reservationId, shopId) {
+      const q = (table: string, select: string, key: string) =>
+        doFetch(`${base}/rest/v1/${table}?select=${select}&${key}=eq.${encodeURIComponent(reservationId)}&shop_id=eq.${encodeURIComponent(shopId)}`, { headers });
+      const [res, ord] = await Promise.all([q("reservations", "status", "id"), q("orders", "payment_ref", "reservation_id")]);
+      if (!res.ok) throw new PrivilegedRpcError("reservations.status", res.status, await res.text());
+      if (!ord.ok) throw new PrivilegedRpcError("orders.payment_ref", ord.status, await ord.text());
+      const status = ((await res.json()) as { status?: string }[])[0]?.status ?? null;
+      const ref = ((await ord.json()) as { payment_ref?: string | null }[])[0]?.payment_ref;
+      return { status, paymentRef: typeof ref === "string" && ref ? ref : null };
+    },
+    reservationMarkRefunded: async (reservationId, shopId, provider, eventId) => {
+      const r = await rpc<string>("reservation_mark_refunded", { p_reservation_id: reservationId, p_shop_id: shopId, p_provider: provider, p_event_id: eventId });
+      return r === "same_event" || r === "other_event" ? r : "marked";
+    },
     maskShippedOrders: (days = 180) => rpc<number>("mask_shipped_orders", { p_days: days }),
     pruneAuditLog: (days = 365) => rpc<number>("prune_audit_log", { p_days: days }),
     purgePagesTrash: (days = 30) => rpc<number>("pages_purge_trash", { p_days: days }),

@@ -11,6 +11,12 @@ import { loadShop } from "../../routes/admin/shops";
 import { sealSecret } from "../../members/secret-box";
 import { moduleEnabled } from "../registry";
 import { PROVIDER_NAMES, callbackPath, providerClientId, providerModule, secretPurpose, type Provider } from "./providers";
+import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
+import { can } from "../../routes/admin/access";
+import { migrated } from "../../db/migration-state";
+
+/** 提供元の保存し直しで、ほかの設定（友だち追加）を DB が残す */
+const OAUTH_KEEP_SETTINGS_MIGRATION = "0131_oauth_client_keep_settings";
 
 /**
  * 同梱モジュール「LINE でログイン」「Google でログイン」の設定画面（ショップごと）。
@@ -42,14 +48,15 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     const flash = c.req.query("flash");
     const base = `/admin/shops/${shop.id}/modules/${p}-login`;
     return c.html(
-      <AdminLayout title={`${shop.name} · ${tf("social.title", { name })}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+      <AdminLayout title={`${shop.name} · ${tf("social.title", { name })}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("settings.tab_members"), href: `/admin/shops/${shop.id}/settings/members` }, { label: name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "settings", here: "settings-members" }}>
         <PageHead title={tf("social.title", { name })} />
         {flash === "saved" ? <p class="notice">{t("social.saved")}</p> : null}
         {flash === "deleted" ? <p class="notice">{t("social.deleted")}</p> : null}
+        <NotSavedNotice flash={flash} />
         {c.req.query("error") === "invalid" ? <p class="error">{t("social.invalid")}</p> : null}
         {(shop.settings ?? {})["members_enabled"] !== true ? (
           <p class="error">
-            {t("social.members_off")} <a href={`/admin/shops/${shop.id}#members`}>{t("shop.members_open_settings")}</a>
+            {t("social.members_off")} <a href={`/admin/shops/${shop.id}/settings/members`}>{t("shop.members_open_settings")}</a>
           </p>
         ) : null}
         <p>{tf("social.intro", { name })}</p>
@@ -70,7 +77,7 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
             <button type="submit">{t("social.save")}</button>
           </p>
         </form>
-        {p === "line" && clientId ? (
+        {p === "line" && clientId && can(c.get("shopAccess"), "settings") ? (
           <form method="post" action={`${base}/bot-prompt`}>
             <label for="bot_prompt">{t("social.bot_prompt")}</label>
             <select id="bot_prompt" name="bot_prompt">
@@ -109,13 +116,14 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     const box = clientSecret ? await sealSecret(siteSecret, shop.id, secretPurpose(p), clientSecret) : null;
     try {
       await owner(c).db.rpc("shop_oauth_client_save", { p_shop_id: shop.id, p_provider: p, p_client_id: clientId, p_secret_box: box });
-      // shop_oauth_client_save は settings.oauth.<provider> を { client_id } で置き換えるので、友だち追加の設定を戻す
-      const bot = p === "line" ? botPrompt(shop) : "";
-      if (bot) {
+      // 0131 より前の shop_oauth_client_save は settings.oauth.<provider> を { client_id } で置き換えるので、友だち追加の設定を戻す
+      // （0131 からは DB が残す）。戻すのは shops の行の更新なので settings の項目も要る（RLS、0024）
+      const bot = p === "line" && can(c.get("shopAccess"), "settings") ? botPrompt(shop) : "";
+      if (bot && !(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, OAUTH_KEEP_SETTINGS_MIGRATION))) {
         const fresh = await loadShop(c, shop.id, "integrations");
         const settings = fresh?.settings ?? {};
         const oauth = (settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>;
-        await owner(c).db.from<ShopRow>("shops").update({ settings: { ...settings, oauth: { ...oauth, line: { ...(oauth["line"] ?? {}), bot_prompt: bot } } } }, { id: shop.id });
+        await updateShop(c, shop.id, { settings: { ...settings, oauth: { ...oauth, line: { ...(oauth["line"] ?? {}), bot_prompt: bot } } } });
       }
     } catch (e) {
       if (e instanceof DbError) return c.redirect(`${base}?error=invalid`);
@@ -130,11 +138,16 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     if (!shop || p !== "line") return c.notFound();
     const v = (await formFields(c)).bot_prompt;
     const settings = shop.settings ?? {};
-    const oauth = ((settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>) ?? {};
+    const oauth = (settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>;
     const line = { ...(oauth["line"] ?? {}) };
     if (v === "normal" || v === "aggressive") line["bot_prompt"] = v;
     else delete line["bot_prompt"];
-    await owner(c).db.from<ShopRow>("shops").update({ settings: { ...settings, oauth: { ...oauth, line } } }, { id: shop.id });
+    try {
+      await updateShop(c, shop.id, { settings: { ...settings, oauth: { ...oauth, line } } });
+    } catch (e) {
+      if (e instanceof DbError) return c.redirect(`/admin/shops/${shop.id}/modules/line-login?flash=${failCode(e, "generic")}`);
+      throw e;
+    }
     return c.redirect(`/admin/shops/${shop.id}/modules/line-login?flash=saved`);
   });
 

@@ -1,13 +1,13 @@
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { openSession, sealSession, sessionCookieHeader, clearSessionCookieHeader, SESSION_COOKIE, type SessionData } from "../../auth/session";
+import { openSession, sealSession, SESSION_COOKIE, SESSION_COOKIE_LEGACY_PATH, SESSION_COOKIE_PATH, SESSION_COOKIE_SECONDS, type SessionData } from "../../auth/session";
 import type { AuthSession } from "../../auth/supabase";
-import { authClient, dbClient, isSecureRequest, sessionSecret, type AdminContext } from "./context";
+import { authClient, dbClient, sessionSecret, type AdminContext } from "./context";
 import { appliedMigrations } from "../../db/migration-state";
 import { createPrivilegedDb } from "../../db/privileged";
 import { ipHash, subjectHash } from "../../members/auth";
-import { clientIp } from "../common";
+import { clearScopedCookie, clientIp, getScopedCookie, setScopedCookie } from "../common";
 
 /** DB が「二段階認証がまだ」と言って止めたか（banto_pre_request の 'mfa_required:<state>'） */
 export function mfaRequiredOf(e: unknown): "challenge" | "enroll" | null {
@@ -27,16 +27,6 @@ export function sessionAal(session: SessionData): string {
   }
 }
 
-function readCookie(c: AdminContext, name: string): string | undefined {
-  const header = c.req.header("cookie");
-  if (!header) return undefined;
-  for (const part of header.split(";")) {
-    const [k, ...rest] = part.trim().split("=");
-    if (k === name) return rest.join("=");
-  }
-  return undefined;
-}
-
 export function toSessionData(s: AuthSession): SessionData {
   return {
     access_token: s.access_token,
@@ -50,18 +40,18 @@ export function toSessionData(s: AuthSession): SessionData {
 export async function setSessionCookie(c: AdminContext, data: SessionData): Promise<void> {
   const secret = sessionSecret(c);
   if (!secret) throw new Error("SESSION_SECRET missing");
-  c.header("Set-Cookie", sessionCookieHeader(await sealSession(secret, data), { secure: isSecureRequest(c) }), { append: true });
+  setScopedCookie(c, SESSION_COOKIE, await sealSession(secret, data), { path: SESSION_COOKIE_PATH, maxAge: SESSION_COOKIE_SECONDS, legacyPath: SESSION_COOKIE_LEGACY_PATH });
 }
 
 export function clearSessionCookie(c: AdminContext): void {
-  c.header("Set-Cookie", clearSessionCookieHeader(), { append: true });
+  clearScopedCookie(c, SESSION_COOKIE, { path: SESSION_COOKIE_PATH, legacyPath: SESSION_COOKIE_LEGACY_PATH });
 }
 
 /** Cookie からセッションを復元し、期限が近ければ refresh する。無効なら null */
 export async function loadSession(c: AdminContext): Promise<SessionData | null> {
   const secret = sessionSecret(c);
   if (!secret) return null;
-  const data = await openSession(secret, readCookie(c, SESSION_COOKIE));
+  const data = await openSession(secret, getScopedCookie(c, SESSION_COOKIE, SESSION_COOKIE_PATH));
   if (!data) return null;
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at - now > 60) return data;
@@ -97,7 +87,7 @@ export async function adminDbReady(c: AdminContext): Promise<boolean> {
 }
 
 /**
- * 管理者ログインの回数の制限（0030、監査 M2）。Supabase の /token の制限は Worker の出口 IP でまとめて掛かるので、Banto が
+ * 管理者ログインの回数の制限（0030）。Supabase の /token の制限は Worker の出口 IP でまとめて掛かるので、Banto が
  * アドレス（HMAC）と IP（HMAC）ごとに数える。計算（Supabase への問い合わせ）の前に判定する。
  * 戻り値の record は、試した結果を記録する（成功したらそのアドレスの失敗を消す）
  */
@@ -107,20 +97,28 @@ export async function adminLoginGuard(c: AdminContext, email: string): Promise<{
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!secret || !url || !serviceRoleKey) return none;
+  if (!secret || !url || !serviceRoleKey) {
+    // 数える先が無いと Banto 側の回数の制限は掛からない（Supabase Auth の制限だけになる）。黙って外さない
+    console.error("[banto] admin login: SESSION_SECRET / SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY is not set; the login attempt limit is off");
+    return none;
+  }
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   const emailHash = await subjectHash(secret, `admin:${email.trim().toLowerCase()}`);
   const ip = clientIp(c);
   const ipH = ip ? await ipHash(secret, ip) : null;
   const r = await db.adminLoginCheck(emailHash, ipH);
-  return { allowed: r.allowed !== false, record: (success) => db.adminLoginRecord(emailHash, ipH, success) };
+  // 答えが読めなければ通さない（答えが無いことを「許す」に読み替えない）
+  return { allowed: r?.allowed === true, record: (success) => db.adminLoginRecord(emailHash, ipH, success) };
 }
 
 /** ログアウト: 世代を上げて、この人のすべての Cookie を無効にする（0030） */
 export async function bumpSessionEpoch(c: AdminContext, session: SessionData): Promise<void> {
   const db = dbClient(c, session.access_token);
   if (!db) return;
-  await db.rpc("admin_session_bump", {}).catch(() => undefined);
+  await db.rpc("admin_session_bump", {}).catch((e: unknown) => {
+    // 世代が上がらないと、ほかの端末に残った Cookie は期限まで生きる。画面は止めないがログに残す
+    console.error("[banto] admin logout: could not bump the session epoch:", e instanceof Error ? e.message : e);
+  });
 }
 
 /**

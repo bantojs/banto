@@ -56,8 +56,9 @@ describe("組織とメンバー（0024、管理画面）", () => {
     expect(dash).not.toContain("/admin/org");
     expect(dash).not.toContain(`/admin/shops/${shop.id}/orders`);
     expect((await b.get(`/admin/shops/${shop.id}/products`)).status).toBe(200);
-    expect((await b.get(`/admin/shops/${shop.id}/orders`)).status).toBe(404);
-    expect((await b.get(`/admin/shops/${shop.id}/tokens`)).status).toBe(404);
+    // ショップに入れるが項目の無い画面は、どの項目が要るかを出す（403）
+    expect((await b.get(`/admin/shops/${shop.id}/orders`)).status).toBe(403);
+    expect((await b.get(`/admin/shops/${shop.id}/tokens`)).status).toBe(403);
     expect((await b.get(`/admin/shops/${second.id}/products`)).status).toBe(404);
     // ショップの設定の項目が無い: メニューだけ
     const overview = await (await b.get(`/admin/shops/${shop.id}`)).text();
@@ -80,7 +81,7 @@ describe("組織とメンバー（0024、管理画面）", () => {
     expect(sb.orgInvitations[0]!["shops"]).toEqual([{ shop_id: shop.id, perms: ["orders", "orders_cancel"] }]);
     const { b } = await accept(app, link, "ops-pass-12");
     expect((await b.get(`/admin/shops/${shop.id}/orders`)).status).toBe(200);
-    expect((await b.get(`/admin/shops/${shop.id}/products`)).status).toBe(404);
+    expect((await b.get(`/admin/shops/${shop.id}/products`)).status).toBe(403);
 
     const ops = [...sb.users.values()].find((u) => u.email === "ops@example.com")!;
     expect((await admin.get(`/admin/org/members/${ops.id}?org=${orgId}`)).status).toBe(200);
@@ -88,7 +89,7 @@ describe("組織とメンバー（0024、管理画面）", () => {
     await admin.postRaw(`/admin/org/members/${ops.id}?org=${orgId}`, multi, "application/x-www-form-urlencoded");
     expect(sb.orgMemberShops.find((x) => x.user_id === ops.id)!.perms).toEqual(["catalog", "reports"]);
     expect((await b.get(`/admin/shops/${shop.id}/products`)).status).toBe(200);
-    expect((await b.get(`/admin/shops/${shop.id}/orders`)).status).toBe(404);
+    expect((await b.get(`/admin/shops/${shop.id}/orders`)).status).toBe(403);
 
     expect((await admin.post(`/admin/org/members/${owner.id}?org=${orgId}`, { role: "admin" })).headers.get("location")).toContain("flash=last_owner");
     expect((await admin.post(`/admin/org/members/${ops.id}?org=${orgId}`, { remove: "1" })).headers.get("location")).toContain("flash=removed");

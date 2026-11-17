@@ -4,11 +4,13 @@ import { t } from "../i18n";
 import { createDbClient } from "../db/client";
 import type { MigrationStateDeps } from "../db/migration-state";
 import { canonicalIp, relayIps } from "../commerce/checkout";
-import { STOREFRONT_CACHE_TTL } from "../storefront/data";
+import { HTTPException } from "hono/http-exception";
+import { STOREFRONT_CACHE_TTL, StorefrontData, type PublicShop } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
-import { migrated } from "../db/migration-state";
+import { shopDomainOfRequest } from "./shop-domain-request";
+import { readScopedCookie, scopedClearCookies, scopedSetCookies, type CookieScope } from "../util/cookie";
 
 export type Ctx = Context<AppEnv>;
 
@@ -45,21 +47,58 @@ export async function readBodyLimited(req: Request, max: number): Promise<Uint8A
   return out;
 }
 
+/** 公開 API（/api/shops/...）の JSON の本文の上限。カート・注文照会・お問い合わせの本文には十分で、Node 実行でメモリを食わせられない */
+export const PUBLIC_JSON_BODY_BYTES = 64 * 1024;
+
+/**
+ * 公開 API の JSON の本文を上限まで読む。超えたら 413（HTTPException。app.onError がそのまま返す）。
+ * JSON でない・オブジェクトでなければ null（呼ぶ側が 400 か空として扱う）
+ */
+export async function publicJsonBody(c: Ctx, max = PUBLIC_JSON_BODY_BYTES): Promise<Record<string, unknown> | null> {
+  const raw = await readBodyLimited(c.req.raw, max);
+  if (!raw) throw new HTTPException(413, { res: Response.json({ error: "too_large" }, { status: 413 }) });
+  try {
+    const b: unknown = JSON.parse(new TextDecoder().decode(raw));
+    return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 公開 API の入口: anon の StorefrontData と、URL のショップ（キャッシュ済みの公開のショップ行）。
+ * Supabase の設定が無ければ 503、ショップが無ければ 404 の Response を返す
+ */
+export async function publicShop(c: Ctx): Promise<{ sf: StorefrontData; shop: PublicShop } | Response> {
+  const cfg = c.get("adapters").config;
+  const url = cfg.get("SUPABASE_URL");
+  const anonKey = cfg.get("SUPABASE_ANON_KEY");
+  if (!url || !anonKey) return c.json({ error: "not_configured" }, 503);
+  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
+  const shop = await sf.shopBySlug(param(c, "shop"));
+  if (!shop) return c.json({ error: "not_found" }, 404);
+  return { sf, shop };
+}
+
+/**
+ * ほかのサイトからの遷移・fetch か（Origin が付いていて自分と違う、または Sec-Fetch-Site が cross-site / same-site）。
+ * csrfGuard の判定の本体。GET でも、Worker に外へ取りに行かせる口など、ほかのサイトから呼ばせたくない入口が使う
+ */
+export function crossSiteRequest(c: Ctx): boolean {
+  const origin = c.req.header("origin");
+  if (origin !== undefined && !originIsSelf(c, origin)) return true;
+  const site = c.req.header("sec-fetch-site");
+  return Boolean(site && site !== "same-origin" && site !== "none");
+}
+
 /**
  * フォーム POST の CSRF 対策。Cookie は SameSite=Lax だが、念のため Origin / Sec-Fetch-Site も見る。
  * Origin が付いていて自分と違えば 403（`null`（sandbox の iframe・data: 由来）も違うとみなす。ホスティングで他人のサイトと兄弟サブドメインに並ぶと
- * Lax の Cookie が same-site の POST に付くため。監査 L-1）。Sec-Fetch-Site は Origin の有無にかかわらず、cross-site / same-site なら 403。
+ * Lax の Cookie が same-site の POST に付くため）。Sec-Fetch-Site は Origin の有無にかかわらず、cross-site / same-site なら 403。
  */
 export const csrfGuard: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE" || c.req.method === "PATCH") {
-    const origin = c.req.header("origin");
-    if (origin !== undefined && !originIsSelf(c, origin)) {
-      return c.text(t("error.csrf"), 403);
-    }
-    const site = c.req.header("sec-fetch-site");
-    if (site && site !== "same-origin" && site !== "none") {
-      return c.text(t("error.csrf"), 403);
-    }
+  if ((c.req.method === "POST" || c.req.method === "PUT" || c.req.method === "DELETE" || c.req.method === "PATCH") && crossSiteRequest(c)) {
+    return c.text(t("error.csrf"), 403);
   }
   await next();
 };
@@ -79,7 +118,7 @@ export const navigateOnly: MiddlewareHandler<AppEnv> = async (c, next) => {
  * Origin が自分か。リクエストの URL のオリジンと同じか、ホストが同じ（TLS を終端するリバースプロキシの後ろでは
  * ブラウザの Origin は https、サーバーが見る URL は http になる）か、PUBLIC_BASE_URL のオリジンと同じなら自分
  */
-function originIsSelf(c: Ctx, origin: string): boolean {
+export function originIsSelf(c: Ctx, origin: string): boolean {
   const self = new URL(c.req.url);
   if (origin === self.origin) return true;
   let o: URL;
@@ -126,7 +165,9 @@ export function clientIp(c: Ctx): string | null {
   // （TRUSTED_PROXY_HOPS、既定 1 = 直前のプロキシが足した値）。Cloudflare の CF-Connecting-IP は常に 1 つ
   const hopsRaw = cfg.get("TRUSTED_PROXY_HOPS");
   const hops = hopsRaw && /^[1-9][0-9]?$/.test(hopsRaw) ? Number(hopsRaw) : 1;
-  const pick = parts[Math.max(0, parts.length - hops)]!;
+  // 段数が要素の数より多い（設定した段数のプロキシを通っていない）なら、先頭は依頼側が書けた値なので使わない（IP ごとの上限は掛けない側に倒す）
+  if (hops > parts.length) return null;
+  const pick = parts[parts.length - hops]!;
   return pick.length <= 64 ? pick : null;
 }
 
@@ -218,10 +259,19 @@ export function publicBaseUrl(c: Ctx): string {
   return (configured || new URL(c.req.url).origin).replace(/\/+$/, "");
 }
 
-/** 画像 URL の起点。MEDIA_BASE_URL が未設定なら <publicBaseUrl>/media（Worker 自身が配信） */
+/**
+ * 画像 URL の起点。MEDIA_BASE_URL が未設定なら Worker 自身が配信する <入口>/media。
+ * 入口は Banto の URL（PUBLIC_BASE_URL）だが、ショップの独自ドメインとして振り分けたページ（src/routes/storefront/domain.ts）では、
+ * そのショップのドメインの /media にする（お店の画面の画像を Banto の URL（workers.dev など）へ取りに行かせない）。
+ * 決めるのは Host の形ではなく、DB に登録されたショップのドメインとして振り分けたかどうか（別名・IP・プロキシの書き換えた Host では
+ * 切り替えない）。URL は登録されたドメインから https で組む（ショップのドメインは https だけ。手前で TLS を終える構成でも http にしない）
+ */
 export function mediaBaseUrl(c: Ctx): string {
-  const configured = c.get("adapters").config.get("MEDIA_BASE_URL");
-  return (configured || `${publicBaseUrl(c)}/media`).replace(/\/+$/, "");
+  const configured = c.get("adapters").config.get("MEDIA_BASE_URL")?.replace(/\/+$/, "");
+  // MEDIA_BASE_URL に Worker 自身の <Banto の URL>/media を書いた構成も、置き場は Worker なので未設定と同じに扱う
+  if (configured && configured !== `${publicBaseUrl(c)}/media`) return configured;
+  const shopDomain = shopDomainOfRequest(c.req.raw);
+  return shopDomain ? `https://${shopDomain}/media` : configured || `${publicBaseUrl(c)}/media`;
 }
 
 /** migrated() に渡す anon の DbClient とキャッシュ（anon キーが無ければ null = 新しいマイグレーションの機能は出さない） */
@@ -234,4 +284,31 @@ export function migrationStateFor(c: Ctx, url: string): MigrationStateDeps | nul
 export function inquiryMailFor(c: Ctx): InquiryMailDeps | null {
   const secret = c.get("sessionSecret");
   return secret ? { secret, mailer: createMailer(c.get("adapters"), c.get("deps").fetch), publicBase: publicBaseUrl(c) } : null;
+}
+
+/**
+ * このリクエストで Cookie を置く・読む場面（src/util/cookie.ts）。HTTPS で Path=/ なら `__Host-` の名前になる。
+ * ショップの Cookie の path は、独自ドメイン（サブドメインモードを含む）の上では "/"、Banto の URL では "/<スラッグ>"
+ */
+export function cookieScope(c: Ctx, path: string): CookieScope {
+  return { path, secure: isSecureRequest(c) };
+}
+
+/** Cookie を置く（接頭辞の付く場面で古い名前が届いていれば、それも消す） */
+export function setScopedCookie(c: Ctx, base: string, value: string, opts: { path: string; maxAge: number; legacyPath?: string }): void {
+  for (const h of scopedSetCookies(c.req.header("cookie"), base, value, { ...cookieScope(c, opts.path), maxAge: opts.maxAge, ...(opts.legacyPath ? { legacyPath: opts.legacyPath } : {}) })) {
+    c.header("Set-Cookie", h, { append: true });
+  }
+}
+
+/** Cookie を消す（今の名前と古い名前の両方） */
+export function clearScopedCookie(c: Ctx, base: string, opts: { path: string; legacyPath?: string }): void {
+  for (const h of scopedClearCookies(base, { ...cookieScope(c, opts.path), ...(opts.legacyPath ? { legacyPath: opts.legacyPath } : {}) })) {
+    c.header("Set-Cookie", h, { append: true });
+  }
+}
+
+/** この場面の Cookie の値（src/util/cookie.ts の readScopedCookie） */
+export function getScopedCookie(c: Ctx, base: string, path: string, opts: { legacy?: boolean } = {}): string | undefined {
+  return readScopedCookie(c.req.header("cookie"), base, cookieScope(c, path), opts);
 }

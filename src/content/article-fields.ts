@@ -8,7 +8,7 @@ import { articlePath, articleSummary, type ArticleRow, type BlogRow } from "../b
 import { articleFieldDefs, fieldDateLabel, fieldValues, type ArticleFieldDef } from "../blog/fields";
 import { formatDateTime } from "../i18n/time";
 import { productUrl } from "../storefront/urls";
-import { shopImageUrl } from "../pages/markdown";
+import { shopImageSrc } from "../pages/markdown";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -63,7 +63,7 @@ export async function articleFieldParts(d: ArticleFieldDeps, blog: BlogRow, arti
         // 日付・日時（0124）: <time> に機械の読める値も入れる
         html = `<time class="banto-field banto-field--${f.key}" datetime="${esc(vs[0]!)}">${esc(fieldDateLabel(f.type, vs[0]!, formatDateTime))}</time>`;
       } else if (f.type === "image") {
-        const src = shopImageUrl(vs[0]!, d.mediaBase);
+        const src = shopImageSrc(vs[0]!, d.mediaBase);
         html = src ? `<img class="banto-field banto-field--${f.key} banto-field--image" src="${esc(src)}" alt="${esc(f.label)}" loading="lazy">` : "";
       } else html = `<span class="banto-field banto-field--${f.key}">${esc(vs.join(", "))}</span>`;
     }
@@ -74,7 +74,7 @@ export async function articleFieldParts(d: ArticleFieldDeps, blog: BlogRow, arti
 
 function authorCard(d: ArticleFieldDeps, blog: BlogRow, a: ArticleRow): string {
   const url = articlePath(d.shopPath, blog.handle, a.handle);
-  const img = a.image_url ? shopImageUrl(a.image_url, d.mediaBase) : null;
+  const img = a.image_url ? shopImageSrc(a.image_url, d.mediaBase) : null;
   const summary = articleSummary(a, 120);
   return (
     `<div class="banto-author">${img ? `<a class="banto-author__photo" href="${esc(url)}"><img src="${esc(img)}" alt="" loading="lazy" decoding="async"></a>` : ""}` +

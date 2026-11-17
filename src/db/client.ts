@@ -31,10 +31,6 @@ export class DbError extends Error {
   get isMissingRelation(): boolean {
     return this.code === "PGRST205" || this.code === "PGRST202" || this.code === "42P01" || this.code === "42883";
   }
-  /** 列が無い（マイグレーション未適用で、新しい列を読もうとした） */
-  get isMissingColumn(): boolean {
-    return this.code === "42703" || this.code === "PGRST204";
-  }
   get isRlsViolation(): boolean {
     return this.code === "42501";
   }
@@ -93,8 +89,9 @@ export interface TableQuery<T extends Row> {
   selectOne(columns?: string, opts?: SelectOptions): Promise<T | null>;
   /** 条件に合う行の数（PostgREST の Prefer: count=exact。行そのものは読まない）。数が大きい表では絞り込みに使う列にインデックスがあること */
   count(opts?: SelectOptions): Promise<number>;
-  insert(rows: Partial<T> | Partial<T>[]): Promise<T[]>;
-  update(values: Partial<T>, eq: Record<string, Scalar>): Promise<T[]>;
+  /** returning: 返してもらう列（既定は全部）。読めない列のある表（shops）では、読める列だけを指定する */
+  insert(rows: Partial<T> | Partial<T>[], returning?: string): Promise<T[]>;
+  update(values: Partial<T>, eq: Record<string, Scalar>, returning?: string): Promise<T[]>;
   delete(eq: Record<string, Scalar>): Promise<void>;
 }
 
@@ -177,14 +174,14 @@ export function createDbClient(opts: DbClientOptions): DbClient {
           const rows = await request<T[]>(`${table}${buildQuery(columns, { ...o, limit: 1 })}`, { headers: headers() });
           return rows[0] ?? null;
         },
-        insert: (rows) =>
-          request<T[]>(table, {
+        insert: (rows, returning) =>
+          request<T[]>(`${table}${buildQuery(returning, undefined)}`, {
             method: "POST",
             headers: headers({ Prefer: "return=representation" }),
             body: JSON.stringify(Array.isArray(rows) ? rows : [rows]),
           }),
-        update: (values, eq) =>
-          request<T[]>(`${table}${buildQuery(undefined, undefined, eq)}`, {
+        update: (values, eq, returning) =>
+          request<T[]>(`${table}${buildQuery(returning, undefined, eq)}`, {
             method: "PATCH",
             headers: headers({ Prefer: "return=representation" }),
             body: JSON.stringify(values),

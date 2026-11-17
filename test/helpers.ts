@@ -84,14 +84,14 @@ export function appWith(supabase: FakeSupabase, overrides: Record<string, string
 export const ADDRESS = { customer_name: "山田 太郎", customer_email: "buyer@example.com", phone: "0312345678", postal_code: "100-0001", state: "東京都", city: "千代田区", line1: "千代田1-1", line2: "" };
 
 /** 「購入手続きへ」→ 配送先入力 → 最終確認 → 決済ページへ転送、までを行い、最後の応答を返す */
-export async function checkout(b: Browser, shopPath: string, provider: "stripe" | "komoju" = "stripe", address: Record<string, string> = ADDRESS): Promise<Response> {
+export async function checkout(b: Browser, shopPath: string, provider: "stripe" | "komoju" | "amazon_pay" = "stripe", address: Record<string, string> = ADDRESS): Promise<Response> {
   const step1 = await b.post(`${shopPath}/checkout`, { provider });
   if (step1.status !== 200) return step1;
   return confirmAddress(b, shopPath, provider, address);
 }
 
 /** 配送先を送って最終確認画面を出し、そのまま「注文を確定する」を押す */
-export async function confirmAddress(b: Browser, shopPath: string, provider: "stripe" | "komoju", address: Record<string, string>): Promise<Response> {
+export async function confirmAddress(b: Browser, shopPath: string, provider: "stripe" | "komoju" | "amazon_pay", address: Record<string, string>): Promise<Response> {
   const review = await b.post(`${shopPath}/checkout/${provider}`, address);
   if (review.status !== 200) return review;
   return b.post(`${shopPath}/checkout/${provider}`, { quote: quoteFrom(await review.text()) });
@@ -131,8 +131,8 @@ export class Browser {
     }
   }
 
-  async get(path: string): Promise<Response> {
-    const res = await this.app.request(`${this.base}${path}`, { headers: { cookie: this.cookieHeader() } });
+  async get(path: string, headers: Record<string, string> = {}): Promise<Response> {
+    const res = await this.app.request(`${this.base}${path}`, { headers: { ...headers, cookie: this.cookieHeader() } });
     this.storeCookies(res);
     if ((res.headers.get("content-type") ?? "").includes("text/html")) this.referrerPolicy = res.headers.get("referrer-policy");
     return res;
@@ -251,4 +251,21 @@ export async function followPreview(app: ReturnType<typeof appWith>, handoff: Re
   for (const m of html.matchAll(/<input type="hidden" name="([a-z]+)" value="([^"]*)">/g)) fields[m[1]!] = dec(m[2]!);
   edit?.(fields);
   return app.request(dec(action[1]!), { method: "POST", body: new URLSearchParams(fields).toString(), headers: { "content-type": "application/x-www-form-urlencoded", origin: "null", "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate" } });
+}
+
+/**
+ * 独自項目の表（商品・会員の項目の画面）に送る欄。行は [鍵, 表示名, 種類, 選択肢, お客様の画面]。
+ * orig: true の行は今ある項目（鍵は固定で f_orig_<n>）、del: true は消す
+ */
+export function fieldForm(rows: { key: string; label?: string; type?: string; options?: string; vis?: "public" | "card" | "private"; orig?: boolean; del?: boolean }[]): Record<string, string> {
+  const out: Record<string, string> = { f_n: String(rows.length) };
+  rows.forEach((r, i) => {
+    out[r.orig ? `f_orig_${i}` : `f_key_${i}`] = r.key;
+    out[`f_label_${i}`] = r.label ?? "";
+    out[`f_type_${i}`] = r.type ?? "text";
+    out[`f_options_${i}`] = r.options ?? "";
+    out[`f_vis_${i}`] = r.vis ?? "public";
+    if (r.del) out[`f_del_${i}`] = "on";
+  });
+  return out;
 }

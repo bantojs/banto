@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { stripeWebhook } from "./stripe";
 import { komojuWebhook } from "./komoju";
+import { amazonPayWebhook } from "./amazon-pay";
 
 /**
  * 外部サービスからの Webhook 受信。署名検証 + イベント ID で冪等化（CLAUDE.md §5）。
@@ -9,6 +10,7 @@ import { komojuWebhook } from "./komoju";
  */
 export const webhooks = new Hono<AppEnv>();
 
-webhooks.get("/", (c) => c.json({ endpoints: ["/webhooks/stripe", "/webhooks/komoju"] }));
+webhooks.get("/", (c) => c.json({ endpoints: ["/webhooks/stripe", "/webhooks/komoju", "/webhooks/amazon-pay"] }));
 webhooks.route("/stripe", stripeWebhook);
 webhooks.route("/komoju", komojuWebhook);
+webhooks.route("/amazon-pay", amazonPayWebhook);

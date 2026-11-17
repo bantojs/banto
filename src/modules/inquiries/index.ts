@@ -25,7 +25,6 @@ export const INQUIRIES_MODULE = "inquiries";
 export const INQUIRY_CATEGORIES = ["product", "order", "account", "other"] as const;
 export type InquiryCategory = (typeof INQUIRY_CATEGORIES)[number];
 export const INQUIRY_STATUSES = ["waiting_shop", "waiting_customer", "closed"] as const;
-export type InquiryStatus = (typeof INQUIRY_STATUSES)[number];
 export const BODY_MAX = 5000;
 export { ORDER_TOKEN_SECONDS } from "../../orders/lookup";
 /** チケットを開いた端末に置く Cookie の期限（リンクのトークンの期限と同じ 30 日。DB が期限を確かめる） */

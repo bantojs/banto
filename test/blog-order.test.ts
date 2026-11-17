@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { parseArticlesLine, articlesLine } from "../src/pages/blocks";
 
 /** ブログの記事の並び順とフィード（0116、docs/blog.md「並び順とフィード」） */
@@ -103,17 +102,6 @@ describe("管理画面", () => {
     expect(res.headers.get("location")).toContain("flash=order_invalid");
   });
 
-  it("0116 の前: 欄を出さず、一覧は新しい順のまま（::: articles の sort= も効かない）", async () => {
-    const { sb, shop, blog, app, base } = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v !== "0116_blog_order") });
-    expect(sb.tables.blogs[0]).not.toHaveProperty("article_order");
-    const owner = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await owner.get(`${base}/${blog.id}/settings`)).text()).not.toContain('name="article_order"');
-    expect(await (await owner.get(base)).text()).not.toContain('name="article_order"');
-    sb.addPage(shop.id, { handle: "about", title: "About", body: "::: articles blog=staff limit=3 layout=list sort=title", published: true });
-    const html = await (await new Browser(app, BASE).get("/my-shop/pages/about")).text();
-    expect([...html.matchAll(/font-weight:600">([^<]+)</g)].map((m) => m[1])).toEqual(["う 天田", "い 加藤", "あ 佐藤"]);
-    expect(order(await (await new Browser(app, BASE).get("/my-shop/blogs/staff")).text())).toEqual(["う 天田", "い 加藤", "あ 佐藤"]);
-  });
 });
 
 describe("::: articles tag=@product（商品詳細のひな形）", () => {

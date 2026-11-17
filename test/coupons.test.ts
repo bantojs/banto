@@ -20,7 +20,7 @@ function setup(opts: { modules?: boolean; settings?: Record<string, unknown> } =
     privacy_policy: "b",
     return_policy: "c",
     stripe_account_id: "acct_connected",
-    settings: { shipping: { mode: "flat", flat_fee_jpy: 500, free_over_jpy: 100000, by_prefecture: {} }, ...(opts.modules === false ? {} : { modules: { coupons: true } }), ...opts.settings },
+    settings: { headless: { return_origins: ["https://wp.example.com"] }, shipping: { mode: "flat", flat_fee_jpy: 500, free_over_jpy: 100000, by_prefecture: {} }, ...(opts.modules === false ? {} : { modules: { coupons: true } }), ...opts.settings },
   });
   const tee = sb.addProduct(shop.id, { slug: "tee", name: "Tシャツ", published: true });
   const teeM = sb.addSku(shop.id, tee.id, { code: "TEE-M", name: "M", price_jpy: 3000, available: 50 });
@@ -216,7 +216,7 @@ describe("クーポン: 同梱テーマのレジ", () => {
     const guest = new Browser(app);
     await guest.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" });
     await guest.get("/my-shop/cart?coupon=MEMBER");
-    expect(await (await guest.get("/my-shop/cart")).text()).toContain("会員の方だけ");
+    expect(await (await guest.get("/my-shop/cart")).text()).toContain("見つかりません");
 
     const m = new Browser(app);
     await memberLogin(m, mail, "/my-shop", "member@example.com");
@@ -403,7 +403,7 @@ describe("クーポン: ヘッドレスの会員（Authorization: Bearer）", ()
     // トークンなし（ゲスト）では会員限定は使えない
     let v = await cartOp(app, { op: "add", sku_id: teeM.id });
     v = await cartOp(app, { cart: v.cart, op: "coupon_add", code: "VIP" });
-    expect(v["coupons"]).toMatchObject({ applied: [], rejected: [{ code: "VIP", reason: "members_only" }] });
+    expect(v["coupons"]).toMatchObject({ applied: [], rejected: [{ code: "VIP", reason: "not_found" }] });
     expect(v["member"]).toBeNull();
     // トークン付きなら使える
     let res = await withToken(app, token, `/api/shops/my-shop/cart?cart=${encodeURIComponent(v.cart)}`);

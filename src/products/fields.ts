@@ -80,6 +80,70 @@ export function parseFieldRows(input: string): Record<string, unknown>[] {
     });
 }
 
+/** 選択肢を表の欄に出す形（fieldRowsFromForm は、欄がこのままなら元の配列を使う） */
+export const optionsText = (options: readonly string[] | undefined): string => (options ?? []).join(", ");
+/** 選択肢に区切りの文字を含むか（含めば、欄を編集すると分かれる） */
+export const optionsHaveSeparator = (options: readonly string[] | undefined): boolean => (options ?? []).some((o) => /[,、\n]/.test(o));
+
+/**
+ * 欄の文字が表示したときのままか。<input type="text"> はブラウザが値から改行を落とすので、両方から改行を除いて比べる
+ * （改行を含む選択肢も、触っていなければ元の配列のまま）
+ */
+const sameOptionsText = (sent: string, shown: string): boolean => sent.replace(/[\r\n]/g, "") === shown.replace(/[\r\n]/g, "");
+
+function originalOptions(raw: string | undefined): string[] | null {
+  if (!raw) return null;
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 表の「公開」の欄の値（商品だけ。会員の項目はお客様の画面に出さない） */
+export type FieldVisibility = "public" | "card" | "private";
+export const fieldVisibility = (f: ProductField): FieldVisibility => (!f.public ? "private" : f.card ? "card" : "public");
+
+/**
+ * 管理画面の項目の表（メンテナの決定 2026-11-08「独自項目は表で決める」）→ 生の行（検査は fieldDefinitions）と、受け付けない行。
+ * 行ごとの欄は f_key_<n>（新しい行だけ。今ある行の鍵は f_orig_<n> で固定。鍵を変えると入力済みの値と切れるため）・f_label_<n>・f_type_<n>・
+ * f_options_<n>（「,」「、」か改行で区切る。今ある行は表示したときの配列を f_options_orig_<n> に JSON で持ち、欄の文字が表示したときのままなら
+ * 元の配列を使う。区切りの文字を含む選択肢（WooCommerce から取り込んだ「A, B」など）が、触っていないのに分かれて、商品の値が選択肢から外れないように）・
+ * f_vis_<n>・f_del_<n>。鍵も表示名も空の行は飛ばす。形の違う鍵・重なる鍵は invalid に入れ、呼び手は保存しない
+ */
+export function fieldRowsFromForm(form: Record<string, string | undefined>): { rows: Record<string, unknown>[]; invalid: string[] } {
+  const n = Math.min(Number.parseInt(form["f_n"] ?? "0", 10) || 0, MAX_FIELDS + 20);
+  const rows: Record<string, unknown>[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < n; i++) {
+    if (form[`f_del_${i}`] === "on") continue;
+    const key = (form[`f_orig_${i}`] ?? form[`f_key_${i}`] ?? "").trim();
+    const label = (form[`f_label_${i}`] ?? "").trim();
+    if (!key && !label) continue;
+    if (!KEY_RE.test(key) || seen.has(key)) {
+      invalid.push(key || label);
+      continue;
+    }
+    seen.add(key);
+    const type = form[`f_type_${i}`] ?? "text";
+    const vis = form[`f_vis_${i}`];
+    const text = form[`f_options_${i}`] ?? "";
+    const before = originalOptions(form[`f_options_orig_${i}`]);
+    const options = before && sameOptionsText(text, optionsText(before)) ? before : text.split(/[,、\n]/).map((x) => x.trim()).filter(Boolean);
+    rows.push({
+      key,
+      label: label || key,
+      type: (FIELD_TYPES as readonly string[]).includes(type) ? type : "text",
+      ...(options.length ? { options } : {}),
+      public: vis !== "private",
+      ...(vis === "card" ? { card: true } : {}),
+    });
+  }
+  return { rows, invalid };
+}
+
 export function formatFieldDefinitions(fields: ProductField[]): string {
   return fields.map((f) => [f.key, f.label, f.type, (f.options ?? []).join("/"), f.public ? (f.card ? "card" : "") : "private"].join(" | ").replace(/( \| )+$/, "")).join("\n");
 }

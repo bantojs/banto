@@ -69,6 +69,28 @@ export function skuOptionChoices(skus: readonly { options?: unknown }[]): { key:
   return [...out].slice(0, 5).map(([key, values]) => ({ key, values }));
 }
 
+/** 2 つの画像の options が同じか（鍵の順は問わない） */
+export function sameImageOptions(a: ImageOptions, b: ImageOptions): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => b[k] === a[k]);
+}
+
+/**
+ * 管理画面の「オプション」のまとめ方の組: 選んだ軸（1 つでも組み合わせでも）の値の組を、SKU に出てくる順に（メンテナの決定 2026-11-08）。
+ * 例: 軸 [color] → [{color:レッド},{color:ブルー}]、軸 [color,size] → SKU ごとの組
+ */
+export function imageOptionGroups(skus: readonly { options?: unknown }[], axes: readonly string[]): ImageOptions[] {
+  const out: ImageOptions[] = [];
+  if (axes.length === 0) return out;
+  for (const s of skus) {
+    const o = imageOptionsOf(s.options);
+    if (!axes.every((k) => o[k])) continue;
+    const g = Object.fromEntries(axes.map((k) => [k, o[k]!]));
+    if (!out.some((x) => sameImageOptions(x, g))) out.push(g);
+  }
+  return out;
+}
+
 /**
  * お店の商品ページで、SKU を選んだときにその場で画像を並べ替えるスクリプト（読み込み直さない。スクリプトが無くても ?sku= で同じ並びになる）。
  * 画像は [data-image-options]、SKU の選択肢は <option data-options> に JSON で載せる。固定の文字列（利用者の入力を含まない）

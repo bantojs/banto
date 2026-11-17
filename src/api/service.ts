@@ -27,6 +27,11 @@ import { getLocale } from "../i18n";
 import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
+import { FAVORITES_MIGRATION } from "../modules/registry";
+import { AUDIENCE_API_MIGRATION } from "../members/audience";
+import { CARE_MIGRATION } from "../care-labels/care";
+import { STORE_FIELDS_MIGRATION } from "../stores/fields";
+
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
 import { lineTokenFor } from "../plugins/line_token";
@@ -50,11 +55,6 @@ export interface InquiryMailDeps {
 export const INQUIRY_API_STATUSES = ["closed", "waiting_shop", "waiting_customer"] as const;
 export type InquiryApiStatus = (typeof INQUIRY_API_STATUSES)[number];
 export const isInquiryApiStatus = (v: unknown): v is InquiryApiStatus => typeof v === "string" && (INQUIRY_API_STATUSES as readonly string[]).includes(v);
-
-/** 商品画像のファイルを送る（api_image_add_file）版 */
-/** クーポンの条件のブランドと支払い方法（banto_api_coupon_apply が受け付ける版） */
-
-/** 購入前の確認画面の文言（checkout_terms）を api_shop_get / api_shop_update が扱う版 */
 
 export type ApiErrorCode = "unauthorized" | "forbidden" | "not_found" | "invalid" | "conflict" | "migration_required" | "upstream";
 
@@ -90,10 +90,17 @@ function mapRpcError(e: unknown): never {
   if (e instanceof PrivilegedRpcError) {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
+    // 公開の切り替えと回数の上限は、発行者が owner / admin のときだけ（0129）
+    if (e.is("admin_required")) throw new ApiError("forbidden", "admin_required: only an organization owner or admin can change this", 403);
     // クーポンと会員（0036）
-    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog) in the admin screen", 409);
-    // ページ・記事（0083）
-    // 拡張データ（0084）
+    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences) in the admin screen", 409);
+    // 商品の会員限定（0144）
+    if (e.is("audience_not_found")) throw new ApiError("invalid", "audience_not_found: no audience with this id or name in this shop (GET /audiences lists them)", 400);
+    if (e.is("audience_display_only")) throw new ApiError("invalid", "audience_display_only: this audience uses URL parameters and cannot be put on products (product_usable is false in GET /audiences)", 400);
+    if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
+    if (e.is("invalid_audience_mode")) throw new ApiError("invalid", "invalid_audience_mode: hide or buy", 400);
+    if (e.is("invalid_audience_hide")) throw new ApiError("invalid", "invalid_audience_hide: true or false", 400);
+    if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -120,7 +127,6 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_store_values")) throw new ApiError("invalid", "invalid_store_values: a store takes only fields and external_ref (name, address, hours… are changed in the admin screen)", 400);
     if (/store_field_invalid/.test(e.dbMessage)) throw new ApiError("invalid", `${e.dbMessage.replace(/^.*?(store_field_invalid(:[a-z0-9_]+)?).*$/s, "$1")}: the key must be one of the organization's store fields and the value must fit its type`, 400);
     if (e.is("invalid_external_ref")) throw new ApiError("invalid", "invalid_external_ref: letters, digits and . _ : - (up to 64), or null", 400);
-    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another store of the organization uses this external code", 409);
     if (e.is("invalid_values_unknown_key")) throw new ApiError("invalid", "invalid_values_unknown_key: a blog takes title, description, nav, sort_order, seo_title, seo_description, template_suffix, article_order, article_from_today, article_until, feed and article_fields", 400);
     // 0125: 並び順・今日以降だけ・いつまで出すか（field:<キー> と article_until は日付・日時の項目だけ）
     if (/invalid_article_(order|until)/.test(e.dbMessage)) throw new ApiError("invalid", `${/invalid_article_until/.test(e.dbMessage) ? "invalid_article_until" : "invalid_article_order"}: new | title | manual | field:<key of a date or datetime field>; article_until is the key of a date or datetime field or null`, 400);
@@ -135,8 +141,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("coupon_in_use")) throw new ApiError("conflict", "coupon_in_use: a coupon that has been used cannot be deleted; set active to false instead", 409);
     if (e.is("usage_limit_below_used")) throw new ApiError("conflict", "usage_limit_below_used: usage_limit cannot be lower than the uses so far", 409);
     if (e.is("email_taken")) throw new ApiError("conflict", "email_taken: a member with this email address already exists", 409);
-    // 顧客マスタの外部連携（0047）
-    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another member already has this external_ref (provider + id)", 409);
+    // 顧客マスタの外部連携（0047）と実店舗の外部コード（0126）。DB の名前が同じなので文言は両方を言う
+    if (e.is("external_ref_taken")) throw new ApiError("conflict", "external_ref_taken: another member already has this external_ref (provider + id), or another store of the organization uses this external code", 409);
     if (e.is("consent_requires_person")) throw new ApiError("invalid", "consent_requires_person: marketing_consent can only be set to true by the customer (checkout / account page); the API may only withdraw it (false)", 400);
     if (e.is("invalid_storage_key") || e.is("invalid_thumb_key") || e.is("invalid_dimensions") || e.is("invalid_variants") || e.is("invalid_thumb_width")) throw new ApiError("invalid", e.dbMessage.replace(/^(invalid_[a-z_]+).*$/s, "$1"), 400);
     if (e.is("image_ids_mismatch")) throw new ApiError("invalid", "image_ids_mismatch: send every image id of the product exactly once, in the new order (GET /products/{id} lists them)", 400);
@@ -231,7 +237,7 @@ export class ApiService {
     private readonly fetchImpl: typeof fetch,
     private readonly config: ConfigAdapter,
     private readonly migrationState: MigrationStateDeps | null,
-    /** 外から渡された URL を開く fetch（Node では社内のアドレスに繋がない。監査 M12） */
+    /** 外から渡された URL を開く fetch（Node では社内のアドレスに繋がない） */
     private readonly publicFetch: typeof fetch = fetchImpl,
     private readonly inquiryMail: InquiryMailDeps | null = null,
     /** お問い合わせの添付の置き場（公開しない。無ければ添付を受け付けない） */
@@ -282,8 +288,23 @@ export class ApiService {
       p_offset: q.offset ?? 0,
     });
   productGet = (ref: { id?: string; slug?: string }) => this.call<Record<string, unknown>>("api_product_get", { p_product_id: ref.id ?? null, p_slug: ref.slug ?? null });
-  productCreate = (values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_product_create", { p_values: values });
-  productUpdate = (id: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
+  productCreate = async (values: Record<string, unknown>) => {
+    await this.requireAudienceFields(values);
+    return this.call<Record<string, unknown>>("api_product_create", { p_values: values });
+  };
+  productUpdate = async (id: string, values: Record<string, unknown>) => {
+    await this.requireAudienceFields(values);
+    return this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
+  };
+  /** 会員の条件の一覧（products:read、0144。モジュール audiences が ON のショップだけ） */
+  audiencesList = async () => {
+    await this.requireMigration(AUDIENCE_API_MIGRATION);
+    return this.call<{ items: { id: string; name: string; product_usable: boolean }[] }>("api_audiences_list", {});
+  };
+  /** 会員の条件の欄（0144）は、当てていない DB では黙って捨てられるので先に断る */
+  private async requireAudienceFields(values: Record<string, unknown>): Promise<void> {
+    if (["audience", "audience_mode", "audience_hide"].some((k) => k in values)) await this.requireMigration(AUDIENCE_API_MIGRATION);
+  }
   skuCreate = (productId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_create", { p_product_id: productId, p_values: values });
   skuUpdate = (skuId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_update", { p_sku_id: skuId, p_values: values });
   categoriesList = () => this.call<Record<string, unknown>[]>("api_categories_list", {});
@@ -465,7 +486,6 @@ export class ApiService {
     return this.call<Record<string, unknown>>("api_product_set_option_axes", { p_product_id: productId, p_axes: axes });
   }
 
-  /** 画像を SKU の options の一部に結ぶ（0063。{} で商品全体）。返すのは商品 */
   /** 商品の画像の並び順を決める（0078）。その商品の画像の id をすべて、並べたい順に。1 枚目がメインの画像 */
   async imagesReorder(productId: string, imageIds: unknown): Promise<Record<string, unknown>> {
     uuidOr404(productId);
@@ -596,7 +616,7 @@ export class ApiService {
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
   /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
   careSet = async (target: "product" | "category", ref: string, care: unknown) => {
-    await this.requireMigration("0127_mod_care_labels");
+    await this.requireMigration(CARE_MIGRATION);
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
     if (care !== null && (typeof care !== "object" || Array.isArray(care))) throw new ApiError("invalid", "invalid_care: send an object { symbols, notes } or null", 400);
     // 記号も付記も無いもの（{} や空の配列）は外すのと同じ（null = 上の段を使う）。「何も無い」を段に残さない
@@ -608,7 +628,7 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
   /** 実店舗の独自項目の値と外部コード（0126、stores:write）。店舗は id か ext:<外部コード> */
   storeUpdate = async (ref: string, values: Record<string, unknown>) => {
-    await this.requireMigration("0126_store_fields");
+    await this.requireMigration(STORE_FIELDS_MIGRATION);
     // id（uuid）か ext:<外部コード>。外部コードは大文字・小文字を区別する
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
     if (!uuid && !/^ext:[A-Za-z0-9._:-]{1,64}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
@@ -651,6 +671,8 @@ export class ApiService {
     let stored: string[] = [];
     if (files.length > 0) {
       const storage = this.attachmentStorage();
+      // 置き場に書く前に、返事の書き込みのスコープを確かめる（スコープの無いトークンに置かせない）
+      if (!(await this.call<boolean>("api_has_scope", { p_scope: "inquiries:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
       const shopId = (await this.call<{ shop_id: string }>("api_token_shop", {})).shop_id;
       const r = await storeAttachments(storage, shopId, files);
       if (!r.ok) {
@@ -740,12 +762,12 @@ export class ApiService {
   customerGet = async (id: string) => this.call<Record<string, unknown>>("api_customer_get", { p_customer_id: uuidOr404(id) });
   /** 会員のお気に入り（0123、新しい順）。customers:read */
   customerFavorites = async (id: string) => {
-    await this.requireMigration("0123_mod_favorites");
+    await this.requireMigration(FAVORITES_MIGRATION);
     return this.call<{ items: Record<string, unknown>[] }>("api_customer_favorites", { p_customer_id: uuidOr404(id) });
   };
   /** お気に入りを足した順にたどる（0123）。商品で絞れる。続きは前の応答の cursor（since と after） */
   async favoritesList(q: { product?: string | undefined; since?: string | undefined; after?: string | undefined; limit?: number | undefined } = {}) {
-    await this.requireMigration("0123_mod_favorites");
+    await this.requireMigration(FAVORITES_MIGRATION);
     const [afterCustomer, afterProduct] = q.after ? q.after.split(":") : [undefined, undefined];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (q.after !== undefined && (!q.since || !afterCustomer || !afterProduct || !uuid.test(afterCustomer) || !uuid.test(afterProduct))) {
@@ -798,12 +820,10 @@ export class ApiService {
   }
   /** ひな形の割り当て（0119）。ページは URL の名前、ブログは URL の名前、カテゴリーはスラッグの形 */
   async pageLayoutsGet() {
-    await this.requireMigration("0119_api_layouts_media");
     return this.call<Record<string, unknown>>("api_page_layouts_get", {});
   }
   /** ひな形を割り当てる（0119）。送った鍵だけ変える。null か "" で外す。表（articles・blogs・…）は鍵ごとに混ぜる */
   async pageLayoutsSet(changes: Record<string, unknown>) {
-    await this.requireMigration("0119_api_layouts_media");
     return this.call<Record<string, unknown>>("api_page_layouts_set", { p_changes: changes });
   }
   /**
@@ -817,7 +837,6 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("invalid", e instanceof ImageFetchError ? e.message : "url must be an absolute http(s) URL", 400);
     }
-    await this.requireMigration("0119_api_layouts_media");
     // 外に取りに行く前・置き場に書く前に、書き込みのスコープを確かめる
     if (!(await this.call<boolean>("api_has_scope", { p_scope: "content:write" }))) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     let image: Awaited<ReturnType<typeof fetchImage>>;
@@ -840,7 +859,6 @@ export class ApiService {
   }
   /** ブログの設定を変える（0118。題・説明・メニュー・並び順・フィード・記事の項目の定義。送らなかった鍵は今のまま） */
   async blogUpdate(blog: string, values: Record<string, unknown>) {
-    await this.requireMigration("0118_api_blog_update");
     return this.call<Record<string, unknown>>("api_blog_update", { p_blog: blog, p_values: values });
   }
   async articlesList(blog: string, q: { status?: string | undefined; query?: string | undefined; tag?: string | undefined; limit?: number | undefined; offset?: number | undefined } = {}) {
@@ -891,8 +909,8 @@ export class ApiService {
   async appDataSet(productId: string, kind: string, data: unknown, isPublic = true, key?: string) {
     await this.appDataReady(kind, key);
     if (kind === "custom.v1" && key === undefined) throw new ApiError("invalid", "invalid_app_data_key: custom.v1 needs a key (PUT /products/{id}/app-data/custom.v1/{key})", 400);
-    // p_key は custom.v1 のときだけ送る（0085 の前の DB の関数は p_key を知らない）
-    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic, ...(key !== undefined ? { p_key: key } : {}) });
+    // p_key は custom.v1 の名前（ほかの種類は '' = 名前なし、0085）
+    return this.call<Record<string, unknown>>("api_app_data_set", { p_product_id: uuidOr404(productId), p_kind: kind, p_data: data, p_public: isPublic, p_key: key ?? "" });
   }
   /** 消す。custom.v1 で名前を省くと、その種類の自分の行をすべて */
   async appDataDelete(productId: string, kind: string, key?: string) {

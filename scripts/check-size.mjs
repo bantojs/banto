@@ -5,7 +5,6 @@
 // 先に npm run build:workers を実行しておくこと。上限を上げるときは理由を docs/knowledge/02-decisions.md に書く。
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
-import { Script, runInNewContext } from "node:vm";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 

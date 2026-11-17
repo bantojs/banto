@@ -12,6 +12,9 @@ import { publicShopSettings } from "../src/storefront/data";
 import { audienceDisplayOnly, audienceOk } from "../src/members/audience";
 import { legalLinksOf } from "../src/storefront/legal-links";
 
+/** PostgREST の db-max-rows（Supabase の既定）。本物と同じく 1 回の応答をここまでで切る */
+const FAKE_MAX_ROWS = 1000;
+
 export interface FakeSupabaseOptions {
   url?: string;
   anonKey?: string;
@@ -89,11 +92,6 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
 const moduleOn = (shop: Row, id: string) => ((shop["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.[id] === true;
 
 /** POST の本文は 1 行のオブジェクトか行の配列。列の有無を見るために先頭の行を返す */
-function firstRow(body: unknown): Record<string, unknown> {
-  const row = Array.isArray(body) ? body[0] : body;
-  return row && typeof row === "object" ? (row as Record<string, unknown>) : {};
-}
-
 /** jsonb の @> の小さな写し（オブジェクトは鍵ごと、配列は要素を含むか、ほかは等しいか） */
 function jsonContainsFake(a: unknown, b: unknown): boolean {
   if (Array.isArray(b)) return Array.isArray(a) && b.every((x) => a.some((y) => jsonContainsFake(y, x)));
@@ -813,15 +811,16 @@ export class FakeSupabase {
     return this.ownedShopIds(uid).has(row["shop_id"] as string);
   }
 
-  private uniqueViolation(table: TableName, row: Row, excludeId?: unknown): boolean {
+  /** 一意制約に当たれば、その制約の名前（PostgreSQL のエラーの文に入る。shops.domain は shops_domain_key）。当たらなければ null */
+  private uniqueViolation(table: TableName, row: Row, excludeId?: unknown): string | null {
     for (const cols of UNIQUE[table] ?? []) {
       // PostgreSQL と同じく null 同士は重複にしない（shops.domain 等）
       if (cols.some((c) => row[c] === null || row[c] === undefined)) continue;
       // 0080: ページの URL の名前の一意はゴミ箱の外だけ
       if ((table === "pages" || table === "articles") && row["deleted_at"]) continue;
-      if (this.tables[table].some((r) => !((table === "pages" || table === "articles") && r["deleted_at"]) && r["id"] !== excludeId && cols.every((c) => r[c] === row[c]))) return true;
+      if (this.tables[table].some((r) => !((table === "pages" || table === "articles") && r["deleted_at"]) && r["id"] !== excludeId && cols.every((c) => r[c] === row[c]))) return `${table}_${cols.join("_")}_key`;
     }
-    return false;
+    return null;
   }
 
   private isService(req: Request): boolean {
@@ -939,7 +938,15 @@ export class FakeSupabase {
       const offset = Number(u.searchParams.get("offset") ?? 0);
       const limit = u.searchParams.get("limit");
       const total = out.length;
-      out = out.slice(offset, limit ? offset + Number(limit) : undefined);
+      // PostgREST の max_rows（Supabase の既定 1,000）: limit を大きくしても 1 回に返すのはそこまで
+      out = out.slice(offset, offset + Math.min(limit ? Number(limit) : FAKE_MAX_ROWS, FAKE_MAX_ROWS));
+      // PostgREST の埋め込み: skus の inventory(available)（一対一。src/routes/admin/products.tsx の商品の CSV）
+      if (table === "skus" && (u.searchParams.get("select") ?? "").includes("inventory(")) {
+        out = out.map((k) => {
+          const inv = this.tables.inventory.find((i) => i["sku_id"] === k["id"]);
+          return { ...k, inventory: inv ? { available: inv["available"] } : null };
+        });
+      }
       // Prefer: count=exact（DbClient の count）
       if ((req.headers.get("prefer") ?? "").includes("count=exact")) {
         const res = json(out);
@@ -953,7 +960,8 @@ export class FakeSupabase {
       const created: Row[] = [];
       for (const r of incoming) {
         if (!this.writable(table, r, uid)) return rlsError(table);
-        if (this.uniqueViolation(table, r)) return json({ code: "23505", message: "duplicate key value violates unique constraint" }, 409);
+        const dup = this.uniqueViolation(table, r);
+        if (dup) return json({ code: "23505", message: `duplicate key value violates unique constraint "${dup}"` }, 409);
         if (table === "shops" || table === "products" || table === "customers") {
           const hit = this.planLimitHit(table);
           if (hit) return hit;
@@ -1012,7 +1020,8 @@ export class FakeSupabase {
         if (table === "shops" && next["published"] === true && !(next["legal_notice"] && next["privacy_policy"] && next["return_policy"])) {
           return json({ code: "23514", message: 'new row for relation "shops" violates check constraint "shops_publish_requires_legal"' }, 400);
         }
-        if (this.uniqueViolation(table, next, r["id"])) return json({ code: "23505", message: "duplicate key value violates unique constraint" }, 409);
+        const dup = this.uniqueViolation(table, next, r["id"]);
+        if (dup) return json({ code: "23505", message: `duplicate key value violates unique constraint "${dup}"` }, 409);
         // 0065 の守り（規則は test/db/sku-option-axes.test.ts）
         if (table === "skus" && "options" in values) {
           const bad = this.axesViolation(next);
@@ -1581,16 +1590,24 @@ export class FakeSupabase {
       }
       return json(n);
     }
-    if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") {
+    if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page" || fn === "articles_member_multi") {
+      // 0140: ブログをまたぐ一覧（ブログの配列。並びは new / title / field:<key> だけ）
+      if (fn === "articles_member_multi") {
+        if (!this.appliedMigrations.includes("0140_articles_multi_blog")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_multi" }, 404);
+        const ids = args["p_blog_ids"];
+        if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20) return json({ code: "22023", message: "invalid_blogs" }, 400);
+        if (args["p_sort"] === "manual") return json({ code: "22023", message: "invalid_sort" }, 400);
+      }
       const aud = this.memberAudienceIds(args);
       const open = (x: Row) => this.pageLive(x) && (!x["audience_id"] || aud.includes(String(x["audience_id"])));
       if (fn === "page_member_get") return json(this.tables.pages.find((p) => p["shop_id"] === args["p_shop_id"] && p["handle"] === args["p_handle"] && open(p)) ?? null);
-      const arts = this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && a["blog_id"] === args["p_blog_id"] && Boolean(a["published_at"]) && open(a));
+      const inBlog = (a: Row) => (fn === "articles_member_multi" ? (args["p_blog_ids"] as unknown[]).includes(a["blog_id"]) : a["blog_id"] === args["p_blog_id"]);
+      const arts = this.tables.articles.filter((a) => a["shop_id"] === args["p_shop_id"] && inBlog(a) && Boolean(a["published_at"]) && open(a));
       if (fn === "article_member_get") return json(arts.find((a) => a["handle"] === args["p_handle"]) ?? null);
       const tag = args["p_tag"] as string | null;
       // 0116: p_sort が無ければブログの並び順（同じなら新しい順）
       if ("p_sort" in args && !this.appliedMigrations.includes("0116_blog_order")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
-      const sort = (args["p_sort"] as string | undefined) ?? String(this.tables.blogs.find((b) => b["id"] === args["p_blog_id"])?.["article_order"] ?? "new");
+      const sort = (args["p_sort"] as string | undefined) ?? (fn === "articles_member_multi" ? "new" : String(this.tables.blogs.find((b) => b["id"] === args["p_blog_id"])?.["article_order"] ?? "new"));
       const newer = (x: Row, y: Row) => String(y["published_at"]).localeCompare(String(x["published_at"])) || String(y["id"]).localeCompare(String(x["id"]));
       const cmp = (x: Row, y: Row) =>
         (sort === "manual" ? Number(x["position"] ?? 0) - Number(y["position"] ?? 0) : 0) || (sort === "title" ? (String(x["title"]) < String(y["title"]) ? -1 : String(x["title"]) > String(y["title"]) ? 1 : 0) : 0) || newer(x, y);
@@ -1786,8 +1803,6 @@ export class FakeSupabase {
       if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("content"))) return json({ code: "42501", message: "forbidden" }, 403);
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
       const l = args["p_layouts"] as { home?: string | null; articles?: Record<string, string>; product?: string | null; product_categories?: Record<string, string>; collection?: string | null; collection_categories?: Record<string, string>; legal?: string | null; legal_pages?: Record<string, string>; blogs?: Record<string, string> };
-      // 0114 の前の DB は blogs の鍵を断る
-      if (l.blogs !== undefined && !this.appliedMigrations.includes("0114_page_layouts_blogs")) return json({ code: "P0001", message: "invalid_page_layouts" }, 400);
       const pageOk = (id: string) => this.tables.pages.some((p) => p["id"] === id && p["shop_id"] === shopId && !p["deleted_at"]);
       const out: Record<string, unknown> = {};
       if (l.home) {
@@ -2053,7 +2068,8 @@ export class FakeSupabase {
     }
     if (fn.startsWith("image_import_")) {
       const shopId = args["p_shop_id"] as string;
-      if (!uid || !this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      // 本物（0039）は banto_shop_perm(p_shop_id, 'catalog')。owner / admin のほか catalog の項目の member も通す
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
       const mine = this.imageJobs.filter((j) => j.shop_id === shopId);
       if (fn === "image_import_enqueue") {
         const r = { queued: 0, skipped: 0, missing: 0 };
@@ -2144,18 +2160,58 @@ export class FakeSupabase {
     // 0059: 管理画面の部分一致の検索（本物は権限を 1 回確かめて RLS の外でインデックスを使う）
     if (fn === "admin_search_ids") {
       const shopId = String(args["p_shop_id"]);
-      if (!uid || !this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "forbidden" }, 403);
       const kind = String(args["p_kind"]) as "products" | "orders" | "customers";
-      const q = String(args["p_q"] ?? "").trim().toLowerCase();
+      // 本物と同じく、その種類の項目を持つメンバーも（0059）
+      const kindPerm = ({ products: "catalog", orders: "orders", customers: "customers" } as Record<string, string>)[kind] ?? "";
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes(kindPerm))) return json({ code: "42501", message: "forbidden" }, 403);
+      const raw = String(args["p_q"] ?? "").trim();
+      const q = raw.toLowerCase();
       const f = (args["p_filters"] ?? {}) as Record<string, string>;
+      // 0132: 並び・キーワードの読み取り・条件（本物は supabase/migrations/0132_admin_search.sql、test/db/admin-search.test.ts）
+      const ext = this.appliedMigrations.includes("0132_admin_search");
+      const desc = !ext || f["sort"] !== "old";
       const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
+      // 0132 は先頭の 81 だけ、0134 からは「+81 (0)90-…」の括弧の 0 も吸収する
+      const jpPhone = (v: string) => v.replace(/[^0-9]/g, "").replace(this.appliedMigrations.includes("0134_admin_search_phone") ? /^810?/ : /^81/, "0");
+      const digits = raw.replace(/[^0-9]/g, "");
+      const phone = ext && /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? jpPhone(raw) : null;
+      const track = ext && /^[0-9A-Za-z-]{4,60}$/.test(raw) && raw.replace(/-/g, "").length <= 40 ? raw.replace(/-/g, "") : null;
+      const num = (ext ? /^#?\d{1,9}$/ : /^\d{1,9}$/).test(raw) ? Number(raw.replace(/^#/, "")) : null;
+      const jst = (d: string, plus = 0) => new Date(Date.parse(`${d}T00:00:00+09:00`) + plus * 86400000).toISOString();
+      const inStock = (productId: unknown) => this.tables.skus.some((k) => k["product_id"] === productId && this.tables.inventory.some((i) => i["sku_id"] === k["id"] && Number(i["available"]) > 0));
       const afterK = args["p_after_k"] as string | null;
       const afterId = args["p_after_id"] as string | null;
       const rows = this.tables[kind]
         .filter((r) => r["shop_id"] === shopId)
         .filter((r) => {
-          if (kind === "products") return (!q || has(r["name"]) || has(r["slug"])) && (f["state"] !== "published" || r["published"] === true) && (f["state"] !== "draft" || r["published"] !== true);
-          if (kind === "orders") return (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === q || (/^\d{1,9}$/.test(q) && Number(r["number"]) === Number(q))) && (!f["status"] || r["status"] === f["status"]);
+          if (kind === "products") {
+            const bySku = ext && q !== "" && this.tables.skus.some((k) => k["shop_id"] === shopId && k["product_id"] === r["id"] && (k["code"] === raw || k["gtin"] === raw));
+            const cats = [r["category_id"], ...((r["extra_category_ids"] as unknown[] | undefined) ?? [])];
+            return (
+              (!q || has(r["name"]) || has(r["slug"]) || bySku) &&
+              (f["state"] !== "published" || r["published"] === true) &&
+              (f["state"] !== "draft" || r["published"] !== true) &&
+              (!ext || !f["category"] || !/^[0-9a-f-]{36}$/.test(f["category"]) || cats.includes(f["category"])) &&
+              (!ext || f["stock"] !== "out" || !inStock(r["id"])) &&
+              (!ext || f["stock"] !== "in" || inStock(r["id"]))
+            );
+          }
+          if (kind === "orders") {
+            const addr = (r["shipping_address"] ?? {}) as Record<string, unknown>;
+            const total = Number(r["total_jpy"]);
+            const created = String(r["created_at"]);
+            const tags = (r["tags"] as string[] | undefined) ?? [];
+            return (
+              (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === raw || (num !== null && Number(r["number"]) === num) || (phone !== null && jpPhone(String(addr["phone"] ?? "")) === phone) || (track !== null && r["tracking_number"] === track)) &&
+              (!f["status"] || r["status"] === f["status"]) &&
+              (!ext || !f["payment"] || r["payment_provider"] === f["payment"]) &&
+              (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["from"] ?? "") || created >= jst(f["from"]!)) &&
+              (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["to"] ?? "") || created < jst(f["to"]!, 1)) &&
+              (!ext || !/^\d{1,9}$/.test(f["min"] ?? "") || total >= Number(f["min"])) &&
+              (!ext || !/^\d{1,9}$/.test(f["max"] ?? "") || total <= Number(f["max"])) &&
+              (!ext || !f["tag"] || tags.includes(f["tag"].trim()))
+            );
+          }
           const attrs = (r["attributes"] ?? {}) as Record<string, unknown>;
           const consent = r["marketing_consent"];
           return (
@@ -2164,8 +2220,16 @@ export class FakeSupabase {
             (f["consent"] !== "yes" || consent === true) && (f["consent"] !== "no" || consent === false) && (f["consent"] !== "none" || consent === null || consent === undefined)
           );
         })
-        .filter((r) => !afterK || !afterId || String(r["created_at"]) < afterK || (String(r["created_at"]) === afterK && String(r["id"]) < afterId))
-        .sort((a, b) => (String(a["created_at"]) === String(b["created_at"]) ? (String(a["id"]) < String(b["id"]) ? 1 : -1) : String(a["created_at"]) < String(b["created_at"]) ? 1 : -1));
+        .filter((r) => {
+          if (!afterK || !afterId) return true;
+          const k = String(r["created_at"]);
+          const id = String(r["id"]);
+          return desc ? k < afterK || (k === afterK && id < afterId) : k > afterK || (k === afterK && id > afterId);
+        })
+        .sort((a, b) => {
+          const cmp = String(a["created_at"]) === String(b["created_at"]) ? (String(a["id"]) < String(b["id"]) ? -1 : 1) : String(a["created_at"]) < String(b["created_at"]) ? -1 : 1;
+          return desc ? -cmp : cmp;
+        });
       return json(rows.slice(0, Math.min(Number(args["p_limit"] ?? 50), 1000)).map((r) => r["id"]));
     }
     if (fn === "coupon_grant_counts") {
@@ -2188,7 +2252,7 @@ export class FakeSupabase {
     }
     if (fn === "shop_oauth_client_save" || fn === "shop_oauth_client_delete") {
       const shopId = String(args["p_shop_id"]);
-      if (!this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      if (!this.ownedShopIds(uid).has(shopId) && !this.memberPerms(uid, shopId).includes("integrations")) return json({ code: "42501", message: "shop_not_found" }, 403);
       const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
       const settings = { ...((shop["settings"] ?? {}) as Row) };
       const oauth = { ...((settings["oauth"] ?? {}) as Row) };
@@ -2204,7 +2268,9 @@ export class FakeSupabase {
         const row = { shop_id: shopId, provider, client_id: clientId, secret_box: args["p_secret_box"] ?? this.oauthClients[i]!["secret_box"] };
         if (i >= 0) this.oauthClients[i] = row;
         else this.oauthClients.push(row);
-        oauth[provider] = { client_id: clientId };
+        // 0131 からはほかの鍵（友だち追加の設定）を残す
+        const keep = this.appliedMigrations.includes("0131_oauth_client_keep_settings") && oauth[provider] && typeof oauth[provider] === "object" ? (oauth[provider] as Row) : {};
+        oauth[provider] = { ...keep, client_id: clientId };
       }
       settings["oauth"] = oauth;
       shop["settings"] = settings;
@@ -2224,6 +2290,152 @@ export class FakeSupabase {
       return json(before - this.memberPasskeys.length);
     }
     // 0048: 運営者が会員の独自項目を直す（定義に無い鍵は断る。渡した鍵だけ重ね、null で消す）
+    if (fn === "views_add" || fn === "views_remove") {
+      // 0135: その画面の項目の人だけ。並びは今の値から 1 つ足す / 名前で消す（形と大きさの検査の本物は test/db/admin-views.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      const screen = String(args["p_screen"]);
+      const perm = ({ orders: "orders", customers: "customers", products: "catalog", inquiries: "support" } as Record<string, string>)[screen];
+      if (!perm) return json({ code: "22023", message: "invalid_screen" }, 400);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes(perm))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const settings = (shop["settings"] ?? {}) as Row;
+      const name = String(args["p_name"] ?? "").trim();
+      const cur = ((Array.isArray(settings[`views_${screen}`]) ? settings[`views_${screen}`] : []) as { name: string }[]).filter((v) => v.name !== name);
+      if (fn === "views_add" && (!name || name.length > 40)) return json({ code: "22023", message: "invalid_view_name" }, 400);
+      const out = fn === "views_add" ? [...cur, { name, query: args["p_query"] }] : cur;
+      if (out.length > 20) return json({ code: "22023", message: "views_full" }, 400);
+      shop["settings"] = { ...settings, [`views_${screen}`]: out };
+      return json(out);
+    }
+    if (fn === "shop_home") {
+      // 0139: 見る人の項目にある分だけ数える（本物は test/db/shop-home.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      const owns = !!uid && this.ownedShopIds(uid).has(shopId);
+      const perms = owns ? null : uid ? this.memberPerms(uid, shopId) : [];
+      if (!owns && !this.orgMemberShops.some((m) => m.user_id === uid && m.shop_id === shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const has = (p: string) => owns || perms!.includes(p);
+      const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+      const orders = this.tables.orders.filter((o) => o["shop_id"] === shopId);
+      const products = this.tables.products.filter((p) => p["shop_id"] === shopId);
+      const out: Row = {};
+      if (has("orders")) out["orders"] = { to_ship: orders.filter((o) => o["status"] === "paid").length };
+      if (has("reports")) {
+        const recent = orders.filter((o) => (o["status"] === "paid" || o["status"] === "shipped") && Date.parse(String(o["created_at"])) >= Date.now() - 30 * 86400_000);
+        out["sales"] = { orders: recent.length, revenue_jpy: recent.reduce((n, o) => n + Number(o["total_jpy"]), 0) };
+      }
+      if (has("catalog")) {
+        const published = new Set(products.filter((p) => p["published"]).map((p) => p["id"]));
+        const out0 = this.tables.skus.filter((k) => k["shop_id"] === shopId && published.has(k["product_id"]) && Number(this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0) === 0).length;
+        out["catalog"] = { out_of_stock: out0, drafts: products.filter((p) => !p["published"]).length, products: products.length };
+      }
+      if (has("support")) out["support"] = { waiting: this.tables.inquiries.filter((q) => q["shop_id"] === shopId && q["status"] === "waiting_shop" && !(q["origin"] === "form" && !q["email_verified_at"])).length };
+      if (has("content")) out["content"] = { scheduled: 0, drafts: 0 };
+      if (owns) out["setup"] = { legal: Boolean(shop["legal_notice"] && shop["privacy_policy"] && shop["return_policy"]), product: products.some((p) => p["published"]), published: Boolean(shop["published"]) };
+      return json(out);
+    }
+    if (fn === "product_images_order") {
+      // 0138: 項目 catalog の人だけ。その商品の画像ちょうど全部を受け取り、0 から振り直す（本物は test/db/product-images-order.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const mine = this.tables.product_images.filter((i) => i["shop_id"] === shopId && i["product_id"] === args["p_product_id"]);
+      const ids = (Array.isArray(args["p_ids"]) ? args["p_ids"] : []) as string[];
+      if (new Set(ids).size !== ids.length || ids.length !== mine.length || ids.some((id) => !mine.some((i) => i["id"] === id))) return json({ code: "22023", message: "invalid_images" }, 400);
+      let n = 0;
+      ids.forEach((id, i) => { const row = mine.find((x) => x["id"] === id)!; if (row["sort_order"] !== i) { row["sort_order"] = i; n++; } });
+      return json(n);
+    }
+    if (fn === "catalog_bulk_update") {
+      // 0137: 項目 catalog の人だけ。開いたときの値と比べ、誤りが 1 つでもあれば何も変えない（形の決まりの本物は test/db/catalog-bulk.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const changes = (Array.isArray(args["p_changes"]) ? args["p_changes"] : []) as Row[];
+      const text = (row: Row, col: string): string | null => {
+        const v = row[col];
+        if (col === "tags") return ((v as string[] | undefined) ?? []).join(", ") || null;
+        if (col === "tax_class") return String(v ?? "standard");
+        return v === null || v === undefined ? null : String(v);
+      };
+      const errors: Row[] = [];
+      const rows = new Map<Row, Row>();
+      for (const x of changes) {
+        const table = x["kind"] === "product" ? this.tables.products : this.tables.skus;
+        const row = table.find((r) => r["id"] === x["id"] && r["shop_id"] === shopId);
+        const base = { kind: x["kind"], id: x["id"], col: x["col"] };
+        if (!row) { errors.push({ ...base, error: "not_found" }); continue; }
+        const col = String(x["col"]);
+        const to = x["to"] == null ? null : String(x["to"]).trim() || null;
+        const norm = (v: unknown) => (typeof v === "string" ? v.trim() || null : null);
+        if (norm(text(row, col)) !== norm(x["from"])) { errors.push({ ...base, error: "changed", current: text(row, col) }); continue; }
+        const ok = col === "name" ? to !== null && to.length <= 200 : col === "published" ? to === "true" || to === "false" : col === "price_jpy" ? to !== null && /^\d{1,9}$/.test(to) : col === "compare_at_price_jpy" ? to === null || /^\d{1,9}$/.test(to) : col === "gtin" ? to === null || /^(\d{8}|\d{12,14})$/.test(to) : col === "category_id" ? to === null || this.tables.categories.some((k) => k["id"] === to && k["shop_id"] === shopId) : true;
+        if (!ok) { errors.push({ ...base, error: "invalid" }); continue; }
+        rows.set(row, { ...(rows.get(row) ?? {}), [col]: to });
+      }
+      for (const [row, vals] of rows) {
+        if (!("price_jpy" in vals) && !("compare_at_price_jpy" in vals)) continue;
+        const price = Number(vals["price_jpy"] ?? row["price_jpy"]);
+        const cmp = "compare_at_price_jpy" in vals ? vals["compare_at_price_jpy"] : row["compare_at_price_jpy"];
+        if (cmp != null && Number(cmp) <= price) errors.push({ kind: "sku", id: row["id"], col: "compare_at_price_jpy" in vals ? "compare_at_price_jpy" : "price_jpy", error: "compare_at_low" });
+      }
+      if (errors.length > 0) return json({ ok: false, errors });
+      let products = 0;
+      let skus = 0;
+      for (const [row, vals] of rows) {
+        for (const [col, v] of Object.entries(vals)) {
+          row[col] = col === "published" ? v === "true" : col === "price_jpy" || col === "compare_at_price_jpy" ? (v == null ? null : Number(v)) : col === "tags" ? normalizeTags(String(v ?? "").split(",")) : v;
+        }
+        if (this.tables.products.includes(row)) products++;
+        else skus++;
+      }
+      return json({ ok: true, products, skus });
+    }
+    if (fn === "stock_adjust" || fn === "stock_count" || fn === "inventory_list") {
+      // 0136: 項目 catalog の人だけ（形の決まり・全部か無しか・同時の更新の本物は test/db/inventory-ops.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("catalog"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const inv = (skuId: unknown) => this.tables.inventory.find((i) => i["sku_id"] === skuId && i["shop_id"] === shopId);
+      const sku = (skuId: unknown) => this.tables.skus.find((k) => k["id"] === skuId && k["shop_id"] === shopId);
+      const items = (Array.isArray(args["p_items"]) ? args["p_items"] : []) as Row[];
+      if (fn === "stock_adjust") {
+        if (items.some((x) => !Number.isInteger(x["delta"]) || !inv(x["sku_id"]))) return json({ code: "22023", message: "invalid_items" }, 400);
+        const after = new Map<unknown, number>();
+        for (const x of items) after.set(x["sku_id"], (after.get(x["sku_id"]) ?? Number(inv(x["sku_id"])!["available"])) + Number(x["delta"]));
+        for (const [id, n] of after) if (n < 0) return json({ code: "P0001", message: `insufficient_stock:${String(sku(id)!["code"])}` }, 400);
+        for (const [id, n] of after) inv(id)!["available"] = n;
+        return json([...after].map(([sku_id, available]) => ({ sku_id, available })));
+      }
+      if (fn === "stock_count") {
+        if (items.some((x) => !Number.isInteger(x["expected"]) || !Number.isInteger(x["available"]) || Number(x["available"]) < 0 || !inv(x["sku_id"]))) return json({ code: "22023", message: "invalid_items" }, 400);
+        const conflicts = items
+          .filter((x) => Number(inv(x["sku_id"])!["available"]) !== x["expected"])
+          .map((x) => ({ sku_id: x["sku_id"], code: sku(x["sku_id"])!["code"], expected: x["expected"], current: inv(x["sku_id"])!["available"], available: x["available"] }));
+        if (conflicts.length > 0) return json({ ok: false, conflicts });
+        let updated = 0;
+        for (const x of items) if (inv(x["sku_id"])!["available"] !== x["available"]) { inv(x["sku_id"])!["available"] = x["available"]; updated++; }
+        return json({ ok: true, updated });
+      }
+      const q = String(args["p_q"] ?? "").trim();
+      const after = args["p_after_code"] == null ? null : String(args["p_after_code"]);
+      const rows = this.tables.skus
+        .filter((k) => k["shop_id"] === shopId)
+        .map((k) => ({ k, p: this.tables.products.find((p) => p["id"] === k["product_id"])!, i: inv(k["id"])! }))
+        .filter(({ k, p }) => !q || k["code"] === q || k["gtin"] === q || String(p["name"]).toLowerCase().includes(q.toLowerCase()) || String(k["code"]).toLowerCase().includes(q.toLowerCase()))
+        .filter(({ i }) => args["p_stock"] !== "out" || Number(i["available"]) === 0)
+        .filter(({ k }) => after === null || String(k["code"]) > after)
+        .sort((x, y) => (String(x.k["code"]) < String(y.k["code"]) ? -1 : 1))
+        .slice(0, Math.min(Math.max(Number(args["p_limit"] ?? 100), 1), 500));
+      return json(rows.map(({ k, p, i }) => ({ sku_id: k["id"], code: k["code"], gtin: k["gtin"] ?? null, name: k["name"] ?? null, options: k["options"] ?? {}, product_id: p["id"], product_name: p["name"], available: i["available"] })));
+    }
+    if (fn === "customer_set_note") {
+      // 0133: 項目 customers の人だけ。2,000 字まで、空は消す（本物は test/db/customer-stats-note.test.ts）
+      const shopId = String(args["p_shop_id"]);
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("customers"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const note = String(args["p_note"] ?? "").replace(/\r\n/g, "\n").trim();
+      if (note.length > 2000) return json({ code: "22023", message: "note_too_long" }, 400);
+      const row = this.tables.customers.find((x) => x["shop_id"] === shopId && x["id"] === args["p_customer_id"]);
+      if (!row) return json({ code: "P0002", message: "customer_not_found" }, 404);
+      row["note"] = note || null;
+      return json(null);
+    }
     if (fn === "customer_set_attributes") {
       if (!this.ownedShopIds(uid).has(String(args["p_shop_id"]))) return json({ code: "42501", message: "shop_not_found" }, 403);
       const cur = this.tables.customers.find((c) => c["shop_id"] === args["p_shop_id"] && c["id"] === args["p_customer_id"]);
@@ -2279,9 +2491,14 @@ export class FakeSupabase {
     const items = args["p_items"] as { sku_id: string; qty: number }[];
     const customer = args["p_customer"] as Row;
     if (!String(customer["customer_email"] ?? "").includes("@")) return fail("invalid_customer");
+    const cid = customer["customer_id"] ? String(customer["customer_id"]) : null;
+    const aud = cid ? this.memberAudienceIdsFor(shopId, cid) : [];
     for (const it of items) {
       const sku = this.tables.skus.find((k) => k["id"] === it.sku_id && k["shop_id"] === shopId);
       if (!sku || !this.productPublished(sku["product_id"])) return fail("sku_not_available");
+      // 0129: 会員限定の商品は条件に合う会員だけ
+      const prod = this.tables.products.find((p) => p["id"] === sku["product_id"]);
+      if (prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
       const inv = this.tables.inventory.find((i) => i["sku_id"] === it.sku_id)!;
       if (Number(inv["available"]) < it.qty) return fail("insufficient_stock");
     }
@@ -2310,11 +2527,11 @@ export class FakeSupabase {
     return n;
   }
 
-  /** 0028: 決済プラグイン（stripe / komoju）の、表示に要る設定だけ */
+  /** 0028: 決済プラグイン（stripe / komoju / amazon_pay（0130））の、表示に要る設定だけ */
   paymentOptions(shopId: unknown): Row[] {
     const prefix = "https://banto.invalid/plugins/";
     return this.tables.hook_endpoints
-      .filter((e) => e["shop_id"] === shopId && e["enabled"] === true && ["stripe", "komoju"].includes(String(e["url"]).slice(prefix.length)) && this.shopPublished(shopId))
+      .filter((e) => e["shop_id"] === shopId && e["enabled"] === true && ["stripe", "komoju", "amazon_pay"].includes(String(e["url"]).slice(prefix.length)) && this.shopPublished(shopId))
       .map((e) => {
         const settings = (e["settings"] ?? {}) as Record<string, unknown>;
         const pick: Record<string, unknown> = {};
@@ -3010,8 +3227,27 @@ export class FakeSupabase {
           if (extra === false) return json({ code: "P0001", message: "category_not_found" }, 400);
           p["extra_category_ids"] = extra.filter((id) => id !== p["category_id"]);
         }
+        // 0144: 会員の条件（id か名前）。形の本物の検査は test/db/api-product-audience.test.ts
+        if (v["audience"] !== undefined) {
+          const ref = v["audience"];
+          const a = ref === null ? null : this.tables.audiences.find((x) => x["shop_id"] === shopId && (x["id"] === ref || x["name"] === ref));
+          if (a === undefined) return json({ code: "22023", message: "audience_not_found" }, 400);
+          p["audience_id"] = a ? a["id"] : null;
+        }
+        if (v["audience_mode"] !== undefined) p["audience_mode"] = v["audience_mode"];
+        if (v["audience_hide"] !== undefined) p["audience_hide"] = v["audience_hide"];
         this.enqueue(shopId, "product.updated", { product_id: p["id"] });
         return json(product(p));
+      }
+      case "api_audiences_list": {
+        if (!need("products:read")) return unauthorized();
+        const shop = this.tables.shops.find((x) => x["id"] === shopId);
+        if ((((shop?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["audiences"]) !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+        const items = this.tables.audiences
+          .filter((a) => a["shop_id"] === shopId)
+          .map((a) => ({ id: a["id"], name: a["name"], product_usable: !audienceDisplayOnly(a["condition"]) }))
+          .sort((x, y) => String(x.name).localeCompare(String(y.name)));
+        return json({ items });
       }
       case "api_sku_create": {
         if (!need("products:write")) return unauthorized();
@@ -3869,7 +4105,7 @@ export class FakeSupabase {
 
   private serviceRpc(fn: string, args: Record<string, unknown>): Response {
     // 0098: 会員の読み取りの経路（中身は rpc() の product_member_*）
-    if (fn.startsWith("product_member_") || fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page") return this.rpc(fn, args, null);
+    if (fn.startsWith("product_member_") || fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page" || fn === "articles_member_multi") return this.rpc(fn, args, null);
     if (fn === "theme_preview_settings") {
       const v = this.tables.theme_versions.find((x) => x["id"] === args["p_version_id"] && x["shop_id"] === args["p_shop_id"]);
       return json(v ? (v["settings"] ?? {}) : null);
@@ -4088,13 +4324,23 @@ export class FakeSupabase {
       return json(r["items"]);
     }
     if (fn === "reserve_stock") {
+      // 0129 の前の DB の関数は p_customer_id を知らない（渡すと PostgREST は関数が無いと言う）
+      if ("p_customer_id" in args && !this.appliedMigrations.includes("0129_security_hardening_5")) {
+        return json({ code: "PGRST202", message: "Could not find the function public.reserve_stock(p_customer_id, ...) in the schema cache" }, 404);
+      }
       const items = args["p_items"] as { sku_id: string; qty: number }[];
       if (!Array.isArray(items) || items.length === 0) return fail("empty_items");
       const shopId = args["p_shop_id"];
       // 全件検証してから減算（失敗時は何も変えない = ロールバック相当）
+      const customerId = (args["p_customer_id"] as string | null | undefined) ?? null;
+      const aud = customerId ? this.memberAudienceIdsFor(String(shopId), customerId) : [];
       for (const it of items) {
         const sku = this.tables.skus.find((k) => k["id"] === it.sku_id && k["shop_id"] === shopId);
         if (!sku || !this.productPublished(sku["product_id"])) return fail("sku_not_available");
+        // 0129: 会員限定の商品は条件に合う会員だけ
+        const prod = this.tables.products.find((p) => p["id"] === sku["product_id"]);
+        // 0129 から: 会員限定の商品は予約でも確かめる（それまでの DB は見ない。買えるかは Worker の priceCart だけ）
+        if (this.appliedMigrations.includes("0129_security_hardening_5") && prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
         if (!Number.isInteger(it.qty) || it.qty <= 0) return fail("invalid_item");
         if ((inv(it.sku_id)!["available"] as number) < it.qty) return fail("insufficient_stock");
       }
@@ -4153,6 +4399,8 @@ export class FakeSupabase {
       if (!res) return fail("reservation_not_found");
       const existing = this.tables.orders.find((o) => o["reservation_id"] === res["id"]);
       if (existing) return json(existing["id"]);
+      // 0128: 返金すると決めた予約は二度と確定しない（detail にどのイベントで決めたか）
+      if (res["status"] === "refunded") return json({ code: "P0001", message: "reservation_refunded", details: String(res["refund_event"] ?? "") }, 400);
       const items = res["items"] as { sku_id: string; qty: number; unit_price_jpy: number }[];
       const order = (args["p_order"] ?? {}) as Record<string, unknown>;
       const cust = (res["customer"] ?? {}) as Record<string, unknown>;
@@ -4379,6 +4627,22 @@ export class FakeSupabase {
       const fresh = !this.webhookEvents.has(key);
       this.webhookEvents.add(key);
       return json(fresh);
+    }
+    // 0128: 記録済みのイベントか
+    if (fn === "webhook_event_seen") return json(this.webhookEvents.has(`${args["p_provider"]}:${args["p_event_id"]}`));
+    // 0128: 返金すると決めたことを DB に残す（pending なら在庫とクーポンの枠を戻す）
+    if (fn === "reservation_mark_refunded") {
+      const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"]);
+      if (!res) return fail("reservation_not_found");
+      const ev = `${args["p_provider"]}:${args["p_event_id"]}`;
+      if (res["status"] === "refunded") return json(res["refund_event"] === ev ? "same_event" : "other_event");
+      if (res["status"] === "confirmed") return fail("reservation_confirmed");
+      if (res["status"] === "pending") {
+        for (const it of res["items"] as { sku_id: string; qty: number }[]) inv(it.sku_id)!["available"] = (inv(it.sku_id)!["available"] as number) + it.qty;
+        this.releaseCoupons(res["id"]);
+      }
+      Object.assign(res, { status: "refunded", refund_event: ev, customer: null });
+      return json("marked");
     }
     // 監査ログの保持（0051。Cron の mask_shipped_orders と同じ回）。監査ログの行はここでは持たない
     if (fn === "prune_audit_log") return json(0);

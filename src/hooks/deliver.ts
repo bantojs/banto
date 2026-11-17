@@ -36,19 +36,56 @@ export async function deliverPendingHooks(opts: {
   // プロパティ経由で呼ばない（Workers の "Illegal invocation" 対策）
   const rawFetch = opts.fetch;
   const doFetch: typeof fetch = (input, init) => rawFetch(input, init);
-  const rows = await opts.db.claimHookDeliveries(opts.limit ?? 50);
-  const result: DeliverResult = { claimed: rows.length, delivered: 0, failed: 0 };
+  const claimed = await opts.db.claimHookDeliveries(opts.limit ?? 50);
+  const result: DeliverResult = { claimed: claimed.length, delivered: 0, failed: 0 };
+  type Row = (typeof claimed)[number];
+  const envelopeOf = (row: Row): HookEnvelope => ({
+    id: row.id,
+    event: row.event,
+    created_at: row.created_at,
+    shop_id: row.shop_id,
+    attempt: row.attempts,
+    data: row.payload,
+  });
+
+  // 同梱プラグインが「まとめて受け取る」と決めた出来事は、送信先と出来事ごとに 1 回で渡す（batchEvents、LINE 通知の inventory.low など）
+  const batches = new Map<string, Row[]>();
+  const rows: Row[] = [];
+  for (const row of claimed) {
+    const id = bundledPluginIdFromUrl(row.url);
+    const plugin = id !== null ? findBundledPlugin(id) : undefined;
+    if (plugin?.handleBatch && plugin.batchEvents?.includes(row.event)) {
+      const key = `${row.endpoint_id} ${row.event}`;
+      batches.set(key, [...(batches.get(key) ?? []), row]);
+    } else rows.push(row);
+  }
+  await Promise.all(
+    [...batches.values()].map(async (group) => {
+      const plugin = findBundledPlugin(bundledPluginIdFromUrl(group[0]!.url)!)!;
+      let ok = true;
+      let error: string | null = null;
+      try {
+        if (!opts.config) throw new Error("config adapter missing");
+        const config = opts.config;
+        await plugin.handleBatch!.call(
+          plugin,
+          group.map((row) => ({ envelope: envelopeOf(row), settings: row.settings ?? {}, config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret })),
+        );
+      } catch (e) {
+        ok = false;
+        error = e instanceof Error ? e.message : String(e);
+      }
+      for (const row of group) {
+        await opts.db.finishHookDelivery(row.id, ok, ok ? 200 : null, error);
+        if (ok) result.delivered++;
+        else result.failed++;
+      }
+    }),
+  );
 
   await Promise.all(
     rows.map(async (row) => {
-      const envelope: HookEnvelope = {
-        id: row.id,
-        event: row.event,
-        created_at: row.created_at,
-        shop_id: row.shop_id,
-        attempt: row.attempts,
-        data: row.payload,
-      };
+      const envelope = envelopeOf(row);
       // 同梱プラグイン: HTTP ではなくプロセス内で呼ぶ
       const pluginId = bundledPluginIdFromUrl(row.url);
       if (pluginId !== null) {

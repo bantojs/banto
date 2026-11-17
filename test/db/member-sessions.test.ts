@@ -46,7 +46,7 @@ describe.skipIf(!dbAvailable)("会員のセッション（0045_member_sessions�
     expect(await revoke(a.shopId, bob, sid)).toBe(false);
     expect(await check(a.shopId, alice, sid)).toBe(true);
 
-    await asService((c) => c.query("select member_logout_all($1, $2, 0)", [a.shopId, alice]));
+    await asService((c) => c.query("select member_logout_all($1, $2, 0, $3)", [a.shopId, alice, sid]));
     expect(await check(a.shopId, alice, sid)).toBe(false);
     expect(await check(a.shopId, alice, sid, 1)).toBe(false);
     expect(await list(alice, 0)).toBeNull();
@@ -107,7 +107,7 @@ describe.skipIf(!dbAvailable)("会員のセッション（0045_member_sessions�
     await getPool().query("update member_sessions set expires_at = now() - interval '1 second' where id = $1", [old]);
     expect(await q<number>("select member_session_cleanup() as r", [])).toBe(1);
     expect((await getPool().query("select id from member_sessions")).rows.map((r) => r.id)).toEqual([live]);
-    await asService((c) => c.query("select member_withdraw($1, $2, 0)", [a.shopId, bob]));
+    await asService((c) => c.query("select member_withdraw($1, $2, 0, $3)", [a.shopId, bob, live]));
     expect((await getPool().query("select count(*)::int as n from member_sessions")).rows[0].n).toBe(0);
     bob = (await getPool().query("insert into customers (shop_id, email) values ($1, 'bob@example.com') returning id", [a.shopId])).rows[0].id;
   });

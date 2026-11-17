@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, appWith, memberMail } from "./helpers";
 import { issueTokens } from "../src/members/auth";
+import { safeReturnUrl } from "../src/commerce/checkout";
 
 let dispose: (() => void) | null = null;
 afterEach(() => {
@@ -139,11 +140,83 @@ describe("ヘッドレスの会員 API（店ごと・パスワードなし）", 
     expect(mail.link("jiro@example.com").startsWith(`${BASE}/my-shop/account/verify?c=`)).toBe(true);
   });
 
+  it("return_to に banto_ の鍵やフラグメントを先に埋め込んだもの（ログイン CSRF）は受けず、Banto の確認画面にする", async () => {
+    const { mail, call } = setup();
+    // 攻撃者が自分の組（ATTACKER-…）を仕込み、被害者のアドレスで本物のメールを送らせる。連携サイトは最初の値を読むので、被害者が攻撃者としてログインしてしまう
+    for (const bad of [
+      "https://wp.example.com/cb?banto_challenge=ATTACKER-CHALLENGE&banto_token=ATTACKER-TOKEN#",
+      "https://wp.example.com/cb?BANTO_handoff=x",
+      "https://wp.example.com/cb#/login",
+      "https://wp.example.com/cb?lang=ja#",
+    ]) {
+      await call("/api/shops/my-shop/members/login", { email: "taro@example.com", return_to: bad });
+      const link = mail.link("taro@example.com");
+      expect(link.startsWith(`${BASE}/my-shop/account/verify?c=`), bad).toBe(true);
+      // 仕込んだ値は券（ランダムな base64url）にたまたま出てこない長さ・形にしてある
+      expect(link.includes("ATTACKER-")).toBe(false);
+    }
+    // 連携サイト自身のクエリはそのまま残り、組はその後ろに 1 つだけ付く
+    await call("/api/shops/my-shop/members/login", { email: "taro@example.com", return_to: "https://wp.example.com/cb?lang=ja&x=1" });
+    const link = new URL(mail.link("taro@example.com"));
+    expect(link.searchParams.getAll("banto_challenge")).toHaveLength(1);
+    expect(link.searchParams.get("x")).toBe("1");
+    expect(link.hash).toBe("");
+  });
+
   it("不正なアドレス。他店のチャレンジは通らない", async () => {
     const { call } = setup();
     expect((await call("/api/shops/my-shop/members/login", { email: "bad" })).json).toEqual({ error: "invalid_email" });
     // 他店のチャレンジは自店では通らない
     const r = await call("/api/shops/other/members/login", { email: "x@example.com" });
     expect((await call("/api/shops/my-shop/members/verify", { challenge_id: r.json["challenge_id"], code: "123456" })).json).toEqual({ error: "invalid_code" });
+  });
+});
+
+describe("return_to と、ほかのサイトからの書き込み", () => {
+  const ALLOWED = ["https://wp.example.com"];
+  it("文章を書き込んだ return_to・; 区切り・読み方で banto_ になる鍵は使わない", () => {
+    const bad = [
+      "https://wp.example.com/ \n\n【重要】至急 https://evil.example/reset から\n\n",
+      "https://wp.example.com/a b",
+      "https://wp.example.com/a\tb",
+      "https://wp.example.com/\\evil",
+      "https://wp.example.com/a b",
+      "https://wp.example.com/a　b",
+      "https://wp.example.com/?a=1;banto_token=x",
+      "https://wp.example.com/?banto.token=x",
+      "https://wp.example.com/?banto+token=x",
+      "https://wp.example.com/?%2562anto_token=x",
+      "https://wp.example.com/?BANTO_challenge=x",
+    ];
+    for (const u of bad) expect(safeReturnUrl(u, ALLOWED, "FALLBACK"), u).toBe("FALLBACK");
+    // 今までの形はそのまま、ASCII の外の文字は符号化した形で返す
+    expect(safeReturnUrl("https://wp.example.com", ALLOWED, "")).toBe("https://wp.example.com");
+    expect(safeReturnUrl("https://wp.example.com/my-account/?lang=ja&bantam=1", ALLOWED, "")).toBe("https://wp.example.com/my-account/?lang=ja&bantam=1");
+    expect(safeReturnUrl("https://wp.example.com/会員/【重要】https://evil.example", ALLOWED, "")).toBe(new URL("https://wp.example.com/会員/【重要】https://evil.example").href);
+    expect(safeReturnUrl("https://wp.example.com/会員", ALLOWED, "")).not.toMatch(/[^\x21-\x7e]/);
+  });
+
+  it("文章を書き込んだ return_to でログインを始めても、メールには Banto のリンクしか載らない", async () => {
+    const { mail, call } = setup();
+    const r = await call("/api/shops/my-shop/members/login", { email: "victim@example.com", return_to: "https://wp.example.com/ \n\n【重要】至急 https://evil.example/reset から\n\n" });
+    expect(r.status).toBe(200);
+    expect(mail.sent.filter((m) => m.to === "victim@example.com").map((m) => m.text + (m.html ?? "")).join("")).not.toContain("evil.example");
+    expect(mail.link("victim@example.com").startsWith(`${BASE}/my-shop/account/verify?`)).toBe(true);
+  });
+
+  it("許可していないサイトからの POST は 403（text/plain でも）。Origin の無い呼び出しと許可したサイトは通る", async () => {
+    const { sb, mail } = setup();
+    const app = appWith(sb, { RESEND_API_KEY: "re_test" });
+    const post = (headers: Record<string, string>) => app.request(`${BASE}/api/shops/my-shop/members/login`, { method: "POST", headers, body: JSON.stringify({ email: "x@example.com" }) });
+    const res = await post({ origin: "https://evil.example", "content-type": "text/plain", "sec-fetch-site": "cross-site" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "origin_not_allowed" });
+    expect(mail.sent.filter((m) => m.to === "x@example.com").length).toBe(0);
+    expect((await post({ "content-type": "application/json" })).status).toBe(200);
+    expect((await post({ origin: "https://wp.example.com", "content-type": "application/json" })).status).toBe(200);
+    expect((await post({ origin: new URL(BASE).origin, "content-type": "application/json" })).status).toBe(200);
+    // TLS を終端するプロキシの後ろ（Node）: サーバーが見る URL は http、ブラウザの Origin は https。同じホストなら自分のオリジン
+    const proxied = await app.request("http://banto.example.com/api/shops/my-shop/members/login", { method: "POST", headers: { origin: "https://banto.example.com", "content-type": "application/json" }, body: JSON.stringify({ email: "y@example.com" }) });
+    expect(proxied.status).toBe(200);
   });
 });

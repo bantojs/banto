@@ -2,7 +2,6 @@ import { ja, type MessageKey } from "./ja";
 import { en } from "./en";
 
 export type Locale = "ja" | "en";
-export const LOCALES: readonly Locale[] = ["ja", "en"];
 const dictionaries: Record<Locale, Record<MessageKey, string>> = { ja, en };
 
 /**

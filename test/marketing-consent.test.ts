@@ -146,8 +146,8 @@ describe("案内メールの同意: 管理画面と AI 用 API", () => {
     expect(csv).toContain(",yes,");
     expect(csv).toContain(",checkout,");
     expect(csv).not.toContain("no@example.com");
-    const res = await admin.post(`/admin/shops/${shop.id}/customers/${yes}/consent/withdraw?consent=yes`, {});
-    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers?consent=yes&flash=consent_withdrawn`);
+    const res = await admin.post(`/admin/shops/${shop.id}/customers/${yes}/consent/withdraw`, {});
+    expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/customers/${yes}?flash=consent_withdrawn`);
     expect(sb.tables.customers.find((c) => c["id"] === yes)).toMatchObject({ marketing_consent: false, marketing_consent_source: "admin" });
   });
 

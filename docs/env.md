@@ -7,6 +7,7 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | **Secret**（`.dev.vars.example`） | 必須 | Supabase → Project Settings → API Keys の **Secret key**（`sb_secret_…`）。今までの service_role（`eyJ…`）も使える。誰にも見せない |
 | `SESSION_SECRET` | **Secret**（`.dev.vars.example`） | 新しい導入では必須 | 32 文字以上のランダム文字列（セットアップ画面が作って出す）。セッション・会員のログイン・hooks の署名・暗号化（LINE のトークン、LINE / Google のシークレット）の鍵のもと。**導入後は変えない**。2026-10-18 より前の導入で未設定なら service_role キーから導出して動き続ける（ダッシュボードに案内が出る。後から設定すると全員がログアウトし、暗号化した秘密は入れ直し） |
 | `PUBLIC_BASE_URL` | 変数 | 任意 | 独自ドメインを使うとき `https://shop.example.com`。未設定ならアクセスされた URL から自動 |
+| `SHOP_DOMAIN_TEMPLATE` | 変数 | 任意 | サブドメインモード。`{slug}.example-shop.jp` のように入れると、新しく作るショップにそのアドレスを付け、どのショップにも結ばれていないホストを 404 にする（docs/custom-domain.md §7）。ワイルドカードの DNS と Worker のルートを先に用意する |
 | `MEDIA_BASE_URL` | 変数 | 任意 | R2 のカスタムドメインから画像を配信するとき `https://media.example.com`（docs/setup.md §7） |
 | `BANTO_LOCALE` | 変数 | 任意 | `en` で英語 UI。既定は日本語 |
 | `BANTO_TIMEZONE` | 変数 | 任意 | 管理画面・CSV・メールの日時表示と、売上集計の日別・月別の区切りの時間帯（IANA 名、例 `Asia/Tokyo`、`America/Los_Angeles`）。既定 `Asia/Tokyo` |
@@ -22,6 +23,9 @@
 | `STRIPE_CLIENT_ID` | Secret | Connect を使うなら | Stripe → Connect の設定 → クライアント ID（上級者向け） |
 | `STRIPE_CONTEXT` | 変数 | 組織キーを使うなら | Stripe の「組織」で発行した API キーを使うとき、対象アカウントの ID（`acct_…`、Stripe → 設定 → ビジネス → アカウント ID）。アカウント内で発行したキーなら不要 |
 | `KOMOJU_SECRET_KEY` / `KOMOJU_WEBHOOK_SECRET` | Secret | KOMOJU を使うなら | KOMOJU の管理画面 |
+| `AMAZON_PAY_PRIVATE_KEY` | Secret | Amazon Pay を使うなら | Amazon Pay の Seller Central → インテグレーションセントラルで作った秘密鍵（`.pem` の中身。docs/plugins.md「Amazon Pay」） |
+| `AMAZON_PAY_PUBLIC_KEY_ID` / `AMAZON_PAY_MERCHANT_ID` / `AMAZON_PAY_STORE_ID` | 変数 | Amazon Pay を使うなら | 同じ画面の公開鍵 ID・出品者 ID・ストア ID |
+| `AMAZON_PAY_SANDBOX` | 変数 | 任意 | 公開鍵 ID が `SANDBOX-` / `LIVE-` で始まらない鍵で、テスト環境を使うときだけ `true` |
 | `MAIL_TRANSPORT` | 変数 | 任意 | メールの送り手: `resend`（既定）/ `smtp` / `sendgrid` / `ses`（docs/email.md §1）。注文メール・会員のログインのコード・招待がすべてこれで送られる |
 | `RESEND_API_KEY` | Secret | `resend` のとき | Resend → API Keys（docs/email.md） |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_TLS` | `SMTP_HOST` は Secret 扱い、他は変数（`SMTP_PASS` は Secret） | `smtp` のとき | 自分のメールサーバーや SMTP リレー。`SMTP_PORT` は既定 587（`SMTP_TLS=on` なら 465）、`SMTP_TLS` は `starttls`（既定）/ `on` / `off`。**25 番は使えない**（Cloudflare が塞ぐ） |
@@ -29,7 +33,7 @@
 | `SES_REGION` / `SES_ACCESS_KEY_ID` / `SES_SECRET_ACCESS_KEY` / `SES_ENDPOINT` | `SES_REGION` と `SES_ENDPOINT` は変数、鍵は Secret | `ses` のとき | Amazon SES（`ses:SendEmail` だけの IAM ユーザー）。`SES_ENDPOINT` は省略可（VPC エンドポイント等） |
 | `DB_MIGRATION_HOSTS` | 変数 | 自前の PostgreSQL なら | セットアップ・アップデートの画面から接続文字列でマイグレーションを当ててよいホスト（カンマ区切り、完全一致）。Supabase のホストと localhost は書かなくても使える（docs/self-hosted-db.md） |
 | `CLIENT_IP_HEADER` | 変数 | 任意 | 回数の制限（会員のログイン・在庫の予約・運営者のログイン）に使う IP のヘッダー。Cloudflare の既定は `cf-connecting-ip`。Node の既定は `x-forwarded-for`（リバースプロキシの後ろに置く前提） |
-| `TRUSTED_PROXY_HOPS` | 変数 | 任意 | `x-forwarded-for` のとき、信頼するプロキシの段数（既定 1 = 直前のプロキシが足した値を使う）。先頭の値は依頼側が自由に書けるので使わない。前段に CDN とリバースプロキシの 2 段があるなら 2 |
+| `TRUSTED_PROXY_HOPS` | 変数 | 任意 | `x-forwarded-for` のとき、信頼するプロキシの段数（既定 1 = 直前のプロキシが足した値を使う）。先頭の値は依頼側が自由に書けるので使わない。前段に CDN とリバースプロキシの 2 段があるなら 2。実際の段数ちょうどに（要素が段数より少ないリクエストでは IP を取らない） |
 | `LINE_CHANNEL_ACCESS_TOKEN` | Secret | LINE 通知を使うなら | LINE Developers → Messaging API 設定 → チャネルアクセストークン |
 
 - 値が空、または `REPLACE_ME` のままの項目は「未設定」として扱われます（`.dev.vars.example` の雛形をそのまま配置しても壊れません）。

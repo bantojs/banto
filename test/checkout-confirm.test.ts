@@ -192,3 +192,114 @@ describe("Webhook: 解放済みの予約を確定できないときは返金し�
     expect(sb.tables.orders[0]).toMatchObject({ payment_provider: "komoju", payment_account: "komoju" });
   });
 });
+
+describe("Webhook の再配信（0128）: 返金して済みにした決済は、在庫が戻っても注文にならない", () => {
+  const komojuHost = (refunds: string[]) =>
+    externalHosts.set("https://komoju.com/", async (req) => {
+      const u = new URL(req.url);
+      if (u.pathname === "/api/v1/sessions") return new Response(JSON.stringify({ id: "ses_1", session_url: "https://komoju.com/sessions/ses_1", status: "pending" }), { status: 200 });
+      if (/\/api\/v1\/payments\/.+\/refund$/.test(u.pathname)) {
+        refunds.push(req.headers.get("idempotency-key") ?? "");
+        return new Response(JSON.stringify({ id: "ref_1", status: "refunded" }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+  const komojuDeliver = (app: ReturnType<typeof appWith>, id: string, reservationId: unknown, shopId: string, amount = 3000) => {
+    const payload = JSON.stringify({ id, type: "payment.captured", data: { id: "pay_1", status: "captured", amount, currency: "JPY", metadata: { reservation_id: reservationId, shop_id: shopId } } });
+    return signKomojuPayload(payload, "whsec_komoju").then((sig) => app.request(`${BASE}/webhooks/komoju`, { method: "POST", headers: { "content-type": "application/json", "x-komoju-signature": sig }, body: payload }));
+  };
+
+  it("Stripe: 解放後の在庫切れで返金したイベントを、在庫が戻った後に再配信しても注文にならず、二重に返金もしない", async () => {
+    const { sb, stripe, teeM, app, b } = setup();
+    await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "2" });
+    await checkout(b, "/my-shop");
+    const [sid] = [...stripe.sessions.keys()];
+    const res = sb.tables.reservations[0]!;
+    // TTL 切れで解放され、在庫は他の人に渡った
+    res["status"] = "released";
+    sb.tables.inventory[0]!["available"] = 0;
+    const ev = stripe.event(sid!, "checkout.session.completed");
+    let wh = await stripe.deliver(app, BASE, ev, WEBHOOK_SECRET);
+    expect(await wh.json()).toMatchObject({ refunded: true });
+    expect(res["status"]).toBe("refunded");
+    expect(res["refund_event"]).toBe(`stripe:${ev.id}`);
+    // 在庫が戻った後に同じイベントが再配信される
+    sb.tables.inventory[0]!["available"] = 5;
+    wh = await stripe.deliver(app, BASE, ev, WEBHOOK_SECRET);
+    expect(wh.status).toBe(200);
+    expect(await wh.json()).toEqual({ received: true, duplicate: true });
+    expect(sb.tables.orders).toHaveLength(0);
+    expect(stripe.refunds).toHaveLength(1);
+    expect(stock(sb, teeM.id)).toBe(5);
+    // 記録される前に落ちていたとしても（記録を消して再現）、DB が refunded を覚えているので注文にならない。同じイベントなら返金をやり直す（冪等）
+    sb.webhookEvents.clear();
+    wh = await stripe.deliver(app, BASE, ev, WEBHOOK_SECRET);
+    expect(await wh.json()).toEqual({ received: true, refunded: true });
+    expect(sb.tables.orders).toHaveLength(0);
+    expect(stripe.refunds).toHaveLength(2);
+    expect(stripe.refunds[1]!.idempotencyKey).toBe(stripe.refunds[0]!.idempotencyKey);
+    // 別のイベントが同じ予約を確定しようとしても、注文にも返金にもならない
+    sb.webhookEvents.clear();
+    const other = stripe.event(sid!, "checkout.session.async_payment_succeeded");
+    wh = await stripe.deliver(app, BASE, other, WEBHOOK_SECRET);
+    expect(await wh.json()).toEqual({ received: true, ignored: "reservation_refunded" });
+    expect(sb.tables.orders).toHaveLength(0);
+    expect(stripe.refunds).toHaveLength(2);
+    expect(stock(sb, teeM.id)).toBe(5);
+  });
+
+  it("Stripe: 支払額の不一致は、返金すると決めた時点で在庫を戻し、再配信しても何もしない", async () => {
+    const { sb, stripe, teeM, app, b } = setup();
+    await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "2" });
+    await checkout(b, "/my-shop");
+    const [sid] = [...stripe.sessions.keys()];
+    expect(stock(sb, teeM.id)).toBe(3);
+    const ev = stripe.event(sid!, "checkout.session.completed", { amount_total: 1 });
+    let wh = await stripe.deliver(app, BASE, ev, WEBHOOK_SECRET);
+    expect(await wh.json()).toMatchObject({ refunded: true, ignored: "amount_mismatch" });
+    expect(stock(sb, teeM.id)).toBe(5);
+    expect(sb.tables.reservations[0]!["status"]).toBe("refunded");
+    wh = await stripe.deliver(app, BASE, ev, WEBHOOK_SECRET);
+    expect(await wh.json()).toEqual({ received: true, duplicate: true });
+    expect(stripe.refunds).toHaveLength(1);
+    expect(sb.tables.orders).toHaveLength(0);
+  });
+
+  it("KOMOJU: 署名に時刻が無いので同じ本文をいつでも再送できるが、記録済みなら何もしない。記録の前に落ちていても注文にならない", async () => {
+    const { sb, teeM, shop, app, b } = setup({ komoju: true });
+    const refunds: string[] = [];
+    komojuHost(refunds);
+    await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" });
+    await checkout(b, "/my-shop", "komoju");
+    const res = sb.tables.reservations[0]!;
+    res["status"] = "released";
+    sb.tables.inventory[0]!["available"] = 0;
+    let wh = await komojuDeliver(app, "evt_k1", res["id"], shop.id);
+    expect(await wh.json()).toMatchObject({ refunded: true });
+    expect(res["status"]).toBe("refunded");
+    sb.tables.inventory[0]!["available"] = 5;
+    wh = await komojuDeliver(app, "evt_k1", res["id"], shop.id);
+    expect(await wh.json()).toEqual({ received: true, duplicate: true });
+    sb.webhookEvents.clear();
+    wh = await komojuDeliver(app, "evt_k1", res["id"], shop.id);
+    expect(await wh.json()).toEqual({ received: true, refunded: true });
+    expect(refunds).toEqual(["refund-evt_k1", "refund-evt_k1"]);
+    sb.webhookEvents.clear();
+    wh = await komojuDeliver(app, "evt_k2", res["id"], shop.id);
+    expect(await wh.json()).toEqual({ received: true, ignored: "reservation_refunded" });
+    expect(refunds).toHaveLength(2);
+    expect(sb.tables.orders).toHaveLength(0);
+    expect(stock(sb, teeM.id)).toBe(5);
+  });
+
+  it("0128 が当たるまでは今までどおり（成功したら記録するだけ）", async () => {
+    const { sb, stripe, teeM, app, b } = setup();
+    sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== "0128_webhook_replay");
+    await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" });
+    await checkout(b, "/my-shop");
+    const [sid] = [...stripe.sessions.keys()];
+    const wh = await stripe.deliver(app, BASE, stripe.event(sid!, "checkout.session.completed"), WEBHOOK_SECRET);
+    expect(await wh.json()).toMatchObject({ order_id: expect.any(String) });
+    expect(sb.tables.orders).toHaveLength(1);
+  });
+});

@@ -1,19 +1,22 @@
 import { Hono } from "hono";
+import { mediaCacheControl } from "../adapters/types";
 import type { AppEnv } from "../app";
 
 /**
  * 商品画像の配信。MEDIA_BASE_URL が Worker 自身を指す構成（既定）で使う。
  * R2 の公開バケット / カスタムドメインを MEDIA_BASE_URL にした場合はこのルートを通らない。
- * キーはランダムなので、長期キャッシュしてよい。テーマのファイル（themes/）は配らない。
+ * キーはランダムなので、長期キャッシュしてよい（値は置き場に付ける値と同じ、mediaCacheControl）。上書きする商品フィード（feeds/）は覚えさせない。テーマのファイル（themes/）は配らない。
  */
 export const media = new Hono<AppEnv>();
 
 media.get("/*", async (c) => {
   const key = c.req.path.replace(/^\/media\//, "");
   // テーマのファイル（themes/）はここでは配らない。テーマの JS・CSS を管理画面と同じオリジンで開かせない（docs/themes.md。資産はショップのドメインから）
-  if (!key || key.includes("..") || key.startsWith("themes/")) return c.notFound();
+  // キーは「区切りで始まらない・空の区切りが無い・バックスラッシュが無い」形だけ: ローカルの置き場は //themes/… を themes/… に畳んで読むので、
+  // 形をそろえてから判定する。.type（ローカルの置き場が種類を書く添えのファイル）も配らない
+  if (!key || key.includes("..") || key.startsWith("/") || key.includes("//") || key.includes("\\") || key.endsWith(".type") || key.startsWith("themes/")) return c.notFound();
   const storage = c.get("adapters").storage;
-  const common = { "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" };
+  const common = { "Cache-Control": mediaCacheControl(key) ?? "no-cache", "X-Content-Type-Options": "nosniff" };
   // 動画の再生（Range）。1 つの範囲（bytes=a- / bytes=a-b）だけに答え、終わりの無い範囲は RANGE_CHUNK までにする（Worker のメモリと CPU を食わない。
   // ブラウザは続きを次の Range で取りに来る）。後ろから数える範囲・複数の範囲は無視して全体を返す（HTTP では Range を無視してよい）
   const range = /^bytes=(\d{1,15})-(\d{0,15})$/.exec(c.req.header("range") ?? "");

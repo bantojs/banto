@@ -100,7 +100,7 @@ couponsAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const f = flash(c.req.query("flash"));
   const now = Date.now();
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("mod.coupons.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.coupons.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("mod.coupons.name")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("modules.title"), href: `/admin/shops/${shop.id}/modules` }, { label: t("mod.coupons.name") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={t("mod.coupons.name")}>
         <a class="btn secondary" href={`${base}/import`}>
           {t("coupons.import.title")}
@@ -303,7 +303,7 @@ function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormCont
       </select>
       {!members ? (
         <p class="muted">
-          {t("coupons.members_disabled")} <a href={`/admin/shops/${fc.shop.id}#members`}>{t("shop.members_open_settings")}</a>
+          {t("coupons.members_disabled")} <a href={`/admin/shops/${fc.shop.id}/settings/members`}>{t("shop.members_open_settings")}</a>
         </p>
       ) : null}
 
@@ -352,6 +352,9 @@ function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormCont
           value={(cond.payment_methods ?? []).filter((m) => m.startsWith("komoju:")).map((m) => m.slice(7)).join(", ")}
           placeholder="credit_card, paypay"
         />
+        <label>
+          <input type="checkbox" name="pm_amazon_pay" checked={(cond.payment_methods ?? []).includes("amazon_pay")} /> {t("coupons.pm_amazon_pay")}
+        </label>
       </fieldset>
       <fieldset>
         <legend>{t("coupons.attributes")}</legend>
@@ -465,7 +468,7 @@ function campaignValues(f: Record<string, string>, fc: FormContext): Partial<Cou
   // 支払い方法: どれにも印が無ければ条件なし（どの支払い方法でも使える）
   const komojuTypes = (f.pm_komoju_types ?? "").split(/[\s,、]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
   if (komojuTypes.some((x) => !/^[a-z_]{1,40}$/.test(x))) return "invalid";
-  const methods = [...(f.pm_stripe === "on" ? ["stripe"] : []), ...(f.pm_komoju === "on" ? ["komoju"] : komojuTypes.map((x) => `komoju:${x}`))];
+  const methods = [...(f.pm_stripe === "on" ? ["stripe"] : []), ...(f.pm_komoju === "on" ? ["komoju"] : komojuTypes.map((x) => `komoju:${x}`)), ...(f.pm_amazon_pay === "on" ? ["amazon_pay"] : [])];
   if (methods.length > 0) conditions.payment_methods = [...new Set(methods)].slice(0, 20);
   // 会員の項目の条件（0049）: select は選択肢の印、それ以外はカンマ区切りの値。空なら条件なし
   const attributes: Record<string, (string | number)[]> = {};
@@ -510,7 +513,7 @@ couponsAdmin.get("/new", requireOwner, async (c: AdminContext) => {
   const fc = await formContext(c, shop);
   const f = flash(c.req.query("flash"));
   return c.html(
-    <AdminLayout title={`${shop.name} · ${t("coupons.new")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: t("coupons.new") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${t("coupons.new")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: t("coupons.new") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={t("coupons.new")} />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       <CampaignForm fc={fc} row={null} action={fc.base} />
@@ -546,7 +549,7 @@ couponsAdmin.get("/:campaignId", requireOwner, async (c: AdminContext) => {
   const f = flash(c.req.query("flash"));
   const link = row.code ? `${shopHome(publicBaseUrl(c), shop)}/cart?coupon=${encodeURIComponent(row.code)}` : null;
   return c.html(
-    <AdminLayout title={`${shop.name} · ${row.name}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: row.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules" }}>
+    <AdminLayout title={`${shop.name} · ${row.name}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("mod.coupons.name"), href: fc.base }, { label: row.name }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "modules", here: "coupons" }}>
       <PageHead title={row.name} />
       {f ? <p class={f.kind === "ok" ? "notice" : "error"}>{f.text}</p> : null}
       <CampaignForm fc={fc} row={row} action={`${fc.base}/${row.id}`} stats={stats[row.id] ?? { used: 0, held: 0 }} link={link} claimUrl={`${shopHome(publicBaseUrl(c), shop)}/coupons`} />

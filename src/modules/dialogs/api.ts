@@ -7,9 +7,7 @@
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
-import { createDbClient } from "../../db/client";
-import { StorefrontData } from "../../storefront/data";
-import { param, type Ctx } from "../../routes/common";
+import { publicShop, type Ctx } from "../../routes/common";
 import { moduleEnabled } from "../registry";
 import { memberFromRequest } from "../../routes/api/members";
 import { shopAudiences } from "../../routes/audience-render";
@@ -22,12 +20,10 @@ export const dialogsApi = new Hono<AppEnv>();
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 dialogsApi.get("/shops/:shop/dialogs", async (c: Ctx) => {
-  const cfg = c.get("adapters").config;
-  const url = cfg.get("SUPABASE_URL");
-  const anonKey = cfg.get("SUPABASE_ANON_KEY");
-  if (!url || !anonKey) return c.json({ error: "not_configured" }, 503);
-  const shop = await new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache).shopBySlug(param(c, "shop"));
-  if (!shop || !moduleEnabled(shop.settings, DIALOGS_MODULE)) return c.json({ error: "not_found" }, 404);
+  const p = await publicShop(c);
+  if (p instanceof Response) return p;
+  const { shop } = p;
+  if (!moduleEnabled(shop.settings, DIALOGS_MODULE)) return c.json({ error: "not_found" }, 404);
   const kind = c.req.query("kind") ?? "";
   if (!(DIALOG_PAGE_KINDS as readonly string[]).includes(kind) || kind === "all") return c.json({ error: "invalid_request", field: "kind" }, 400);
   const productId = c.req.query("product_id");

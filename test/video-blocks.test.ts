@@ -54,7 +54,8 @@ describe("動画のブロック", () => {
   it("お店の画面: 自動で再生するときは音を消し、iPhone で全画面にしない。編集の画面は再生しない", () => {
     const html = markdownToHtml(`::: video src="https://media.example.jp/pages/${SHOP}/a.mp4" autoplay=1 loop=1 controls=0`, { mediaBase: "https://media.example.jp" });
     expect(html).toContain(`<video src="https://media.example.jp/pages/${SHOP}/a.mp4" preload="metadata" playsinline autoplay muted loop></video>`);
-    expect(markdownToHtml(`::: video src="${src}"`, { mediaBase: "https://m" })).toContain(`<video src="${src}" preload="metadata" playsinline controls></video>`);
+    // /media/<キー> は置き場の起点から（R2 のドメインも Range に答える）
+    expect(markdownToHtml(`::: video src="${src}"`, { mediaBase: "https://m" })).toContain(`<video src="https://m${src.slice("/media".length)}" preload="metadata" playsinline controls></video>`);
     const ed = markdownToHtml(`::: video src="${src}" autoplay=1`, { mediaBase: "https://m", editor: true });
     expect(ed).toContain('data-kind="video"');
     expect(ed).not.toContain(" autoplay");

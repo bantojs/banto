@@ -3,7 +3,7 @@ import type { Child } from "hono/jsx";
 import { t, tf, getLocale, type MessageKey } from "../../i18n";
 import { BANTO_VERSION } from "../../version";
 import { adminBrand } from "./brand";
-import { moduleEnabled } from "../../modules/registry";
+import { MODULES, moduleEnabled } from "../../modules/registry";
 
 /**
  * 管理画面の見た目（全画面で共通）。白と黒を基調に、細い線・余白・角丸のカードで組む。
@@ -145,13 +145,22 @@ section.step[data-state="ng"]{border-color:color-mix(in srgb,var(--err) 45%,var(
 .crumbs a:hover{color:var(--fg)}
 .crumbs .here{color:var(--fg);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:18rem}
 .crumbs .sep{color:var(--border-strong);font-weight:300}
-/* ショップのタブ */
-.tabs{position:sticky;top:56px;z-index:9;display:flex;gap:.25rem;overflow-x:auto;padding:0 1rem;background:color-mix(in srgb,var(--bg) 85%,transparent);
-  backdrop-filter:saturate(180%) blur(8px);border-bottom:1px solid var(--border);scrollbar-width:none}
-.tabs a{position:relative;padding:.75rem .7rem;font-size:.875rem;color:var(--fg-muted);text-decoration:none;white-space:nowrap}
-.tabs a:hover{color:var(--fg)}
-.tabs a[aria-current=page]{color:var(--fg)}
-.tabs a[aria-current=page]::after{content:"";position:absolute;left:.5rem;right:.5rem;bottom:-1px;height:2px;border-radius:2px;background:var(--fg)}
+/* 左の目次（ショップの中の画面）と、画面の中のタブ */
+.shell{display:grid;grid-template-columns:13.5rem minmax(0,1fr);min-height:calc(100vh - 56px)}
+.shell-main{min-width:0}
+.sidenav{position:sticky;top:56px;align-self:start;max-height:calc(100vh - 56px);overflow:auto;padding:1rem .6rem 2rem;border-right:1px solid var(--border);background:var(--bg)}
+.sidehead{padding:.15rem .6rem .8rem;font-weight:600;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.navgroup+.navgroup{margin-top:1rem}
+.navlabel{padding:0 .6rem;margin-bottom:.2rem;font-size:.72rem;font-weight:600;letter-spacing:.05em;color:var(--fg-muted)}
+.sidenav a{display:block;padding:.4rem .6rem;border-radius:6px;font-size:.88rem;color:var(--fg-muted);text-decoration:none}
+.sidenav a:hover{background:var(--bg-subtle);color:var(--fg)}
+.sidenav a[aria-current=page]{background:var(--bg-subtle);color:var(--fg);font-weight:500}
+.subtabs{display:flex;gap:.25rem;overflow-x:auto;max-width:72rem;margin:0 auto;padding:0 1.5rem;border-bottom:1px solid var(--border);scrollbar-width:none}
+.subtabs a{position:relative;padding:.75rem .7rem;font-size:.875rem;color:var(--fg-muted);text-decoration:none;white-space:nowrap}
+.subtabs a:hover{color:var(--fg)}
+.subtabs a[aria-current=page]{color:var(--fg)}
+.subtabs a[aria-current=page]::after{content:"";position:absolute;left:.5rem;right:.5rem;bottom:-1px;height:2px;border-radius:2px;background:var(--fg)}
+@media (max-width:860px){.shell{grid-template-columns:minmax(0,1fr)}.sidenav{z-index:9;display:flex;gap:.2rem;max-height:none;overflow-x:auto;padding:.4rem 1rem;border-right:0;border-bottom:1px solid var(--border);scrollbar-width:none}.navgroup{display:contents}.navlabel,.sidehead{display:none}.sidenav a{white-space:nowrap}}
 /* 危ない操作（削除・取り消し・キャンセル・切断・個人情報のマスク）は赤。form の送り先で決めるので、各画面は書き換えない */
 button.danger,form[action*="/delete"] button,form[action*="/revoke"] button,form[action*="/cancel"] button,form[action*="/disconnect"] button,form[action*="/mask"] button{
   background:var(--bg);color:var(--err);border-color:color-mix(in srgb,var(--err) 45%,var(--border-strong))}
@@ -168,6 +177,33 @@ td:first-child>a:hover{text-decoration:underline}
 .toolbar input[type=search],.toolbar input[type=text],.toolbar select{width:auto;min-width:14rem;max-width:100%;min-height:36px;padding:.35rem .7rem}
 .toolbar select{min-width:9rem}
 .toolbar .count{margin-left:auto;color:var(--fg-muted);font-size:.85rem}
+/* 一覧のビュー（src/routes/admin/views.tsx）: 保存した条件のタブ */
+.views{margin:0 0 .6rem}
+.viewtabs{display:flex;gap:.2rem;flex-wrap:wrap;border-bottom:1px solid var(--border);margin-bottom:.6rem}
+.viewtabs a{padding:.45rem .8rem;font-size:.875rem;color:var(--fg-muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.viewtabs a[aria-current=page]{color:var(--fg);border-bottom-color:var(--fg);font-weight:600}
+.views .view-save,.views .view-save summary{display:inline-block;margin:0;padding:0;border:0;background:none;box-shadow:none;font-size:.85rem;color:var(--accent,#0a66c2);cursor:pointer}
+.views .view-save[open]{display:block}
+.views .view-save form{display:flex;gap:.5rem;align-items:end;flex-wrap:wrap;margin-top:.4rem}
+.views .view-save input{width:auto;min-width:14rem;margin:0}
+.views .view-save label{display:flex;flex-direction:column;gap:.2rem;margin:0;font-size:.8rem;color:var(--fg-muted)}
+.views .view-save p{margin:0;flex-basis:100%}
+.views .view-delete{display:inline-block;margin:0 0 0 .5rem}
+.views .view-delete button{background:none;border:0;box-shadow:none;color:var(--fg-muted);padding:0;height:auto;min-height:0;font-size:.85rem;text-decoration:underline;cursor:pointer}
+/* 一覧の検索（src/routes/admin/search.tsx）: キーワード・並び・＋ 条件・チップ */
+.search{margin:0 0 1rem}
+.search-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.search-row input[type=search]{flex:1 1 16rem;width:auto;min-height:36px;padding:.35rem .7rem;margin:0}
+.search-row select{width:auto;min-width:8rem;min-height:36px;margin:0}
+.search .search-more{margin:.5rem 0 0;padding:0;border:0;background:none;box-shadow:none}
+.search-row button{min-height:36px}
+.search-more summary{display:inline-block;cursor:pointer;font-size:.85rem;color:var(--fg-muted);padding:.2rem .6rem;border:1px solid var(--border-strong);border-radius:999px}
+.search-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(12rem,1fr));gap:.5rem 1rem;margin-top:.6rem;padding:.8rem;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+.search-fields label{margin:0;font-size:.8rem;color:var(--fg-muted)}
+.search-fields input,.search-fields select{margin:.2rem 0 0;width:100%}
+.chips{display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;margin:.6rem 0 0;font-size:.85rem}
+.chip{display:inline-flex;gap:.3rem;align-items:center;padding:.15rem .6rem;border-radius:999px;border:1px solid var(--border-strong);background:var(--bg-subtle);color:var(--fg);text-decoration:none}
+.chip:hover{border-color:var(--fg-muted)}
 .btn.small,button.small{height:32px;padding:0 .75rem;font-size:.85rem}
 /* 詳細の画面: 本体と右の列、カードの中の見出し・表・合計・項目と値 */
 .split{display:grid;grid-template-columns:minmax(0,1fr) 20rem;gap:1.25rem;align-items:start}
@@ -188,14 +224,41 @@ td:first-child>.status>a:hover{text-decoration:underline}
   background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 -4px 16px rgba(0,0,0,.04)}
 .savebar label{margin:0}
 .danger-zone:not(aside .danger-zone) button{width:auto}
-/* 設定の画面: 左の目次と、項目ごとのカード */
-.settings{display:grid;grid-template-columns:12rem minmax(0,1fr);gap:2rem;align-items:start}
-.settings>div>.card:first-child{margin-top:0}
-.side-nav{position:sticky;top:120px;display:flex;flex-direction:column;gap:.1rem}
-.side-nav a{padding:.4rem .65rem;border-radius:6px;font-size:.875rem;color:var(--fg-muted);text-decoration:none}
-.side-nav a:hover{color:var(--fg);background:var(--bg-subtle)}
-.card{scroll-margin-top:120px}
-@media (max-width:900px){.settings{grid-template-columns:minmax(0,1fr)}.side-nav{position:static;flex-direction:row;flex-wrap:wrap}}
+/* 独自項目の表: 狭い画面では横に送る */
+.table-scroll{overflow-x:auto}
+.lockline{font-size:.85rem;color:var(--fg-muted);border-left:3px solid var(--border-strong);padding:.2rem .6rem;margin:.4rem 0}
+.timeline{list-style:none;margin:0;padding:0}.timeline li{padding:.2rem 0}
+.badge.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent);background:var(--warn-bg);margin-left:.35rem}
+.purpose-groups{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));margin:.4rem 0}
+.purpose-group{border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .75rem;margin:0}.purpose-group legend{font-weight:600;padding:0 .3rem}
+.purpose-line{display:flex;gap:.4rem;align-items:flex-start;margin:.3rem 0;font-weight:400}.purpose-line code{font-size:.75rem;color:var(--fg-muted)}
+.plainlist{list-style:none;padding:0;margin:.3rem 0}.plainlist li{margin:.25rem 0}.plainlist code{font-size:.75rem;color:var(--fg-muted)}
+.hours-row{display:flex;flex-wrap:wrap;gap:.4rem .6rem;align-items:center;padding:.35rem 0;border-top:1px solid var(--border)}.hours-row:first-of-type{border-top:0}
+.hours-day{width:2.5rem}.hours-range{display:inline-flex;gap:.25rem;align-items:center}.hours-range input{width:auto}
+.hours-add{display:flex;flex-wrap:wrap;gap:.4rem .6rem;align-items:center;margin:.6rem 0;padding:.6rem;border:1px dashed var(--border-strong);border-radius:var(--radius)}
+.kpis{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));margin:.6rem 0}.kpi{border:1px solid var(--border);border-radius:var(--radius);padding:.6rem .8rem}.kpi strong{display:block;font-size:1.6rem;font-variant-numeric:tabular-nums}
+.req-cards{display:grid;gap:.6rem}.req-card{border:1px solid var(--border);border-radius:var(--radius);padding:.7rem .8rem}.req-card .actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
+.big-btn{min-height:44px;padding:.6rem 1rem;font-size:1rem}
+.csv-export{margin:1rem 0;border:1px solid var(--border);border-radius:var(--radius);padding:.5rem .8rem}.csv-export>summary{cursor:pointer;font-weight:600}.csv-export form{margin-top:.6rem}
+.checklist{margin:.4rem 0 0;padding-left:1.4rem}.checklist li{margin:.25rem 0}.checklist li.done{color:var(--fg-muted)}
+.todo-list{list-style:none;margin:.4rem 0 0;padding:0}.todo-list li{border-top:1px solid var(--border)}.todo-list li:first-child{border-top:0}
+.todo-list a{display:block;padding:.6rem .2rem;text-decoration:none;color:var(--fg)}.todo-list a:hover{background:var(--bg-subtle)}.todo-list strong{display:inline-block;min-width:2.5rem;font-variant-numeric:tabular-nums}
+.chip[aria-pressed=false]{background:transparent;color:var(--fg-muted);border-style:dashed}
+.bulk-table th[scope=row]{font-weight:500;white-space:nowrap}
+.bulk-table .bulk-sku th[scope=row]{padding-left:1.5rem;font-weight:400}
+.bulk-table td{padding:.25rem .35rem;vertical-align:top}
+.bulk-table .cell{width:100%;min-width:6rem;margin:0}
+.bulk-table .cell.chg{background:var(--warn-bg)}
+.bulk-table .cell.err{border-color:var(--err);background:var(--err-bg)}
+.cell-error{display:block;font-size:.75rem;margin-top:.15rem}
+.fields-table td{vertical-align:middle}
+.fields-table th{white-space:nowrap}
+.fields-table input[type=text],.fields-table select{width:100%;min-width:8rem;margin:0}
+/* 設定の画面: 上級者向けの一覧 */
+.setting-list{list-style:none}
+.setting-list li{display:flex;flex-direction:column;gap:.15rem;padding:.7rem 0;border-bottom:1px solid var(--border)}
+.setting-list li:last-child{border-bottom:0}
+.card{scroll-margin-top:72px}
 th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
 dl.sum{display:grid;grid-template-columns:1fr auto;gap:.4rem 0;margin:1rem 0 0;font-size:.9rem}
 dl.sum dt{color:var(--fg-muted)}
@@ -244,38 +307,185 @@ export interface Crumb {
   href?: string;
 }
 
-/** ショップの中の画面の上に出すタブ。権限の無い項目は出さない（ShopAccess は loadShop が c.set("shopAccess") に置く） */
+/**
+ * ショップの中の画面の左の目次と、画面の中のタブ（メンテナの決定 2026-11-08「目次は仕事ごと」）。
+ * 権限の無い項目と OFF の同梱モジュールは出さない（ShopAccess は loadShop が c.set("shopAccess") に置く）
+ */
 export interface ShopTabs {
-  /** settings があれば、ON の同梱モジュールのタブも出す（お問い合わせ） */
+  /** settings があれば、ON の同梱モジュールの項目も出す */
   shop: { id: string; name: string; settings?: Record<string, unknown> | null };
   access?: { role: string; perms: readonly string[] };
   active?: ShopTab;
+  /** 今いる画面（目次と画面の中のタブのどこを選ぶか）。active で決まらない画面（同梱モジュールなど）で渡す */
+  here?: ShopHere;
 }
 export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages" | "blog" | "design" | "modules" | "plugins" | "hooks" | "tokens" | "settings";
+export type ShopHere =
+  | ShopTab
+  | "shipping-labels"
+  | "home"
+  | "inventory"
+  | "categories"
+  | "size-charts"
+  | "care-labels"
+  | "woo-import"
+  | "audiences"
+  | "member-prices"
+  | "store-tryon"
+  | "coupons"
+  | "dialogs"
+  | "line-messaging"
+  | "product-feed"
+  | "ga4"
+  | "layouts"
+  | "embed"
+  | "receipt"
+  | "product-fields"
+  | "customer-fields"
+  | "settings-shipping"
+  | "settings-payments"
+  | "settings-members"
+  | "settings-advanced";
 
-const TABS: { id: ShopTab; path: string; label: MessageKey; perm: string; module?: string }[] = [
-  { id: "products", path: "/products", label: "product.list", perm: "catalog" },
-  { id: "orders", path: "/orders", label: "order.list", perm: "orders" },
-  { id: "customers", path: "/customers", label: "customers.title", perm: "customers" },
-  // お問い合わせ（同梱モジュール inquiries。support の項目だけの人が入れるように、モジュールの一覧とは別にタブを出す）
-  { id: "inquiries", path: "/modules/inquiries", label: "mod.inquiries.name", perm: "support", module: "inquiries" },
-  // ショップのページ（同梱モジュール pages、0079。content の項目だけの人も入れるように）
-  { id: "pages", path: "/modules/pages", label: "mod.pages.name", perm: "content", module: "pages" },
-  // ブログ（同梱モジュール blog、0081。ページと同じ content の項目）
-  { id: "blog", path: "/modules/blog", label: "mod.blog.name", perm: "content", module: "blog" },
-  // デザイン（Liquid のテーマ、0071）
-  { id: "design", path: "/design", label: "design.title", perm: "design" },
-  { id: "modules", path: "/modules", label: "modules.title", perm: "settings" },
-  { id: "plugins", path: "/plugins", label: "plugins.title", perm: "integrations" },
-  { id: "hooks", path: "/hooks", label: "tabs.hooks", perm: "integrations" },
-  { id: "tokens", path: "/tokens", label: "tabs.tokens", perm: "integrations" },
-  { id: "settings", path: "", label: "shop.settings", perm: "any" },
+/** 目次の 1 項目の中の画面（画面の中のタブ）。同梱モジュールの項目に要る権限はモジュールの一覧（registry の perm）から引く */
+interface NavSub {
+  id: ShopHere;
+  path: string;
+  label: MessageKey;
+  perm: string;
+  module?: string;
+}
+interface NavItem {
+  label: MessageKey;
+  subs: NavSub[];
+}
+
+const page = (id: ShopHere, path: string, label: MessageKey, perm: string): NavSub => ({ id, path, label, perm });
+/** 同梱モジュールの画面（/modules/<adminPath>） */
+const mod = (id: ShopHere, moduleId: string, label: MessageKey, sub = ""): NavSub => {
+  const m = MODULES.find((x) => x.id === moduleId);
+  return { id, path: `/modules/${m?.adminPath ?? moduleId}${sub}`, label, perm: m?.perm ?? "settings", module: moduleId };
+};
+
+const NAV: { label: MessageKey; items: NavItem[] }[] = [
+  {
+    label: "nav.group.daily",
+    items: [
+      { label: "nav.home", subs: [page("home", "/home", "nav.home", "any")] },
+      { label: "order.list", subs: [page("orders", "/orders", "order.list", "orders"), mod("shipping-labels", "shipping_labels", "mod.shipping_labels.name")] },
+      {
+        label: "product.list",
+        subs: [
+          page("products", "/products", "product.list", "catalog"),
+          page("inventory", "/inventory", "inventory.title", "catalog"),
+          page("categories", "/categories", "category.title", "catalog"),
+          page("product-fields", "/fields", "fields.title", "catalog+settings"),
+          mod("size-charts", "size_charts", "sizechart.title"),
+          mod("care-labels", "care_labels", "mod.care_labels.name"),
+          mod("woo-import", "woo_import", "mod.woo_import.name"),
+        ],
+      },
+      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), page("customer-fields", "/customer-fields", "customer_fields.title", "customers+settings"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices")] },
+      { label: "mod.inquiries.name", subs: [mod("inquiries", "inquiries", "mod.inquiries.name")] },
+      { label: "mod.store_tryon.name", subs: [mod("store-tryon", "store_tryon", "mod.store_tryon.name")] },
+    ],
+  },
+  {
+    label: "nav.group.marketing",
+    items: [
+      { label: "mod.coupons.name", subs: [mod("coupons", "coupons", "mod.coupons.name")] },
+      { label: "mod.dialogs.name", subs: [mod("dialogs", "dialogs", "mod.dialogs.name")] },
+      { label: "linemsg.title", subs: [page("line-messaging", "/line-messaging", "linemsg.title", "integrations")] },
+      { label: "mod.product_feed.name", subs: [mod("product-feed", "product_feed", "mod.product_feed.name")] },
+      { label: "mod.ga4.name", subs: [mod("ga4", "ga4", "mod.ga4.name")] },
+    ],
+  },
+  {
+    label: "nav.group.store",
+    items: [
+      { label: "design.title", subs: [page("design", "/design", "design.title", "design")] },
+      { label: "nav.content", subs: [mod("pages", "pages", "mod.pages.name"), mod("blog", "blog", "mod.blog.name"), mod("layouts", "pages", "pages.layouts", "/layouts")] },
+      { label: "mod.embed.name", subs: [mod("embed", "embed", "mod.embed.name")] },
+    ],
+  },
+  {
+    label: "nav.group.extend",
+    items: [
+      { label: "modules.title", subs: [page("modules", "/modules", "modules.title", "settings")] },
+      { label: "nav.connections", subs: [page("hooks", "/hooks", "tabs.hooks", "integrations"), page("plugins", "/plugins", "plugins.title", "integrations"), page("tokens", "/tokens", "tabs.tokens", "integrations")] },
+    ],
+  },
+  {
+    label: "nav.group.shop",
+    items: [
+      {
+        label: "shop.settings",
+        subs: [
+          page("settings", "", "settings.tab_general", "any"),
+          page("settings-shipping", "/settings/shipping", "settings.tab_shipping", "settings"),
+          page("settings-payments", "/settings/payments", "settings.tab_payments", "settings"),
+          page("settings-members", "/settings/members", "settings.tab_members", "admin|integrations"),
+          mod("receipt", "receipt", "mod.receipt.name"),
+          page("settings-advanced", "/settings/advanced", "settings.tab_advanced", "settings"),
+        ],
+      },
+    ],
+  },
 ];
 
+/** その人に見せる画面（権限の項目があり、同梱モジュールなら ON のもの） */
+function visibleSubs(tabs: ShopTabs, item: NavItem): NavSub[] {
+  return item.subs.filter((s) => tabAllowed(tabs.access, s.perm) && (!s.module || moduleEnabled(tabs.shop.settings, s.module)));
+}
+
+/** 左の目次 */
+function SideNav(props: { tabs: ShopTabs; here: ShopHere | undefined }) {
+  const { tabs, here } = props;
+  const base = `/admin/shops/${tabs.shop.id}`;
+  return (
+    <nav class="sidenav" aria-label={tabs.shop.name}>
+      <div class="sidehead">{tabs.shop.name}</div>
+      {NAV.map((g) => {
+        const items = g.items.map((it) => ({ it, subs: visibleSubs(tabs, it) })).filter((x) => x.subs.length > 0);
+        if (items.length === 0) return null;
+        return (
+          <div class="navgroup">
+            <div class="navlabel">{t(g.label)}</div>
+            {items.map(({ it, subs }) => (
+              <a href={`${base}${subs[0]!.path}`} aria-current={subs.some((s) => s.id === here) ? "page" : undefined}>
+                {t(it.label)}
+              </a>
+            ))}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** 画面の中のタブ（目次の 1 項目に画面が 2 つ以上あるとき） */
+function SubTabs(props: { tabs: ShopTabs; here: ShopHere | undefined }) {
+  const { tabs, here } = props;
+  const item = NAV.flatMap((g) => g.items).find((it) => it.subs.some((s) => s.id === here));
+  if (!item) return null;
+  const subs = visibleSubs(tabs, item);
+  if (subs.length < 2) return null;
+  return (
+    <nav class="subtabs" aria-label={t(item.label)}>
+      {subs.map((s) => (
+        <a href={`/admin/shops/${tabs.shop.id}${s.path}`} aria-current={s.id === here ? "page" : undefined}>
+          {t(s.label)}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+/** perm: 権限の項目（"a|b" はどれか 1 つ、"a+b" は両方）、"admin" = 組織の owner / admin、"any" = だれでも */
 function tabAllowed(access: ShopTabs["access"], perm: string): boolean {
   if (!access) return true;
   if (perm === "any") return true;
-  return access.role === "owner" || access.role === "admin" || access.perms.includes(perm);
+  return access.role === "owner" || access.role === "admin" || perm.split("|").some((alt) => alt.split("+").every((p) => access.perms.includes(p)));
 }
 
 /**
@@ -357,14 +567,26 @@ export function PageHead(props: { title: Child; sub?: Child; children?: Child })
   );
 }
 
+function Footer() {
+  return (
+    <footer>
+      <p>{t("app.disclaimer")}</p>
+      <p>Banto v{BANTO_VERSION} · MIT License</p>
+    </footer>
+  );
+}
+
 export function AdminLayout(props: { title: string; nav?: boolean; user?: string; crumbs?: Crumb[]; shopTabs?: ShopTabs; children?: Child }) {
   // パンくずの最後が今の画面でなければ（リンクなら）、題名を今の画面として足す
   const crumbs: Crumb[] = [...(props.crumbs ?? [])];
   if (crumbs.length === 0 || crumbs[crumbs.length - 1]!.href) crumbs.push({ label: props.title });
   const tabs = props.shopTabs;
   const brand = adminBrand();
+  // doctype が無いとブラウザは互換モード（quirks mode）で描く。JSX では書けないので raw で先頭に置く
   return (
-    <html lang={getLocale()}>
+    <>
+      {raw("<!doctype html>")}
+      <html lang={getLocale()}>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -409,21 +631,23 @@ export function AdminLayout(props: { title: string; nav?: boolean; user?: string
           ) : null}
         </header>
         {tabs ? (
-          <nav class="tabs" aria-label={tabs.shop.name}>
-            {TABS.filter((tb) => tabAllowed(tabs.access, tb.perm) && (!tb.module || moduleEnabled(tabs.shop.settings, tb.module))).map((tb) => (
-              <a href={`/admin/shops/${tabs.shop.id}${tb.path}`} aria-current={tabs.active === tb.id ? "page" : undefined}>
-                {t(tb.label)}
-              </a>
-            ))}
-          </nav>
-        ) : null}
-        <main>{props.children}</main>
-        <footer>
-          <p>{t("app.disclaimer")}</p>
-          <p>Banto v{BANTO_VERSION} · MIT License</p>
-        </footer>
+          <div class="shell">
+            <SideNav tabs={tabs} here={tabs.here ?? tabs.active} />
+            <div class="shell-main">
+              <SubTabs tabs={tabs} here={tabs.here ?? tabs.active} />
+              <main>{props.children}</main>
+              <Footer />
+            </div>
+          </div>
+        ) : (
+          <>
+            <main>{props.children}</main>
+            <Footer />
+          </>
+        )}
         <script>{raw(COPY_SCRIPT)}</script>
       </body>
-    </html>
+      </html>
+    </>
   );
 }

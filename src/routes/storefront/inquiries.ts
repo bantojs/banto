@@ -52,9 +52,8 @@ async function accessOf(s: Ready, a: { token: string } | { customerId: string; e
 import { createMailer } from "../../mail/send";
 import { openStatusToken } from "../../commerce/checkout";
 import { shopHome } from "../../storefront/urls";
-import { readCookie } from "../../util/signed";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clientIpFor, csrfGuard, formFields, isSecureRequest, publicBaseUrl, yen, type Ctx } from "../common";
+import { afterResponse, clientIpFor, csrfGuard, formFields, getScopedCookie, publicBaseUrl, setScopedCookie, yen, type Ctx } from "../common";
 import { customerSession, type MemberSession } from "./members";
 import type { InquiryView } from "../../db/privileged";
 
@@ -218,14 +217,14 @@ inquiries.post("/:shop/inquiries/open", async (c: Ctx) => {
   if (!validLinkToken(token)) return render(c, s, { step: "resend", values: {}, error: t("inq.link_expired") }, 404);
   const name = threadCookieName(s.shop.id);
   const path = s.ctx.shopPath || "/";
-  c.header("Set-Cookie", [`${name}=${await sealThread(s.deps.secret, s.shop.id, token)}`, `Path=${path}`, "HttpOnly", "SameSite=Lax", `Max-Age=${THREAD_COOKIE_SECONDS}`, ...(isSecureRequest(c) ? ["Secure"] : [])].join("; "), { append: true });
+  setScopedCookie(c, name, await sealThread(s.deps.secret, s.shop.id, token), { path, maxAge: THREAD_COOKIE_SECONDS });
   return c.redirect(`${s.ctx.shopPath}/inquiries/thread`, 303);
 });
 
 /** やり取りの画面で開く手段（会員の受付番号が先。無ければこの端末の Cookie のリンク） */
 async function accessFor(c: Ctx, s: Ready, n: string | undefined): Promise<{ token: string } | { customerId: string; epoch: number; number: number } | null> {
   if (s.member && n && /^[0-9]{1,9}$/.test(n)) return { customerId: s.member.cid, epoch: s.member.ep, number: Number(n) };
-  const token = await openThread(s.deps.secret, s.shop.id, readCookie(c.req.header("cookie"), threadCookieName(s.shop.id)));
+  const token = await openThread(s.deps.secret, s.shop.id, getScopedCookie(c, threadCookieName(s.shop.id), s.ctx.shopPath || "/"));
   return token ? { token } : null;
 }
 

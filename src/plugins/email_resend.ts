@@ -12,8 +12,6 @@ import { trackingOf, trackingUrl } from "../orders/tracking";
 import { orderLink } from "../orders/lookup";
 import { buildTryonMails, type TryonContact } from "../modules/store-tryon/mail";
 
-export { RESEND_API_URL } from "../mail/transports/resend";
-
 interface Contact {
   order_id: string;
   number: number;

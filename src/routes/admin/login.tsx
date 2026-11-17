@@ -101,8 +101,9 @@ login.post("/logout", async (c: AdminContext) => {
   if (session && auth) {
     try {
       await auth.signOut(session.access_token);
-    } catch {
-      /* Cookie は消したので無視 */
+    } catch (e) {
+      // Cookie は消したので画面は進める。Supabase 側のセッションが残ったことはログに残す
+      console.error("[banto] admin logout: sign-out failed:", e instanceof Error ? e.message : e);
     }
   }
   return c.redirect("/admin/login");

@@ -163,6 +163,8 @@ export interface MemberReader {
   page(handle: string): Promise<unknown>;
   article(blogId: string, handle: string): Promise<unknown>;
   articles(blogId: string, offset: number, limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
+  /** 0140: ブログをまたぐ「記事を並べる」（articles_member_multi） */
+  articlesMulti(blogIds: string[], limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
 }
 
 /** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
@@ -216,6 +218,23 @@ export class StorefrontData {
     if (hit) return hit;
     const shop = await this.fetchShop({ slug });
     if (shop) await this.cache.set(key, shop, STOREFRONT_CACHE_TTL);
+    return shop;
+  }
+
+  /**
+   * サブドメインモードのホストのスラッグ → 公開中のショップ（src/storefront/subdomain.ts）。
+   * shopBySlug と違い、無いスラッグも短時間覚える（ワイルドカードの DNS では、知らない名前のホストに毎回 DB を引かない。
+   * キャッシュは件数の上限つき）
+   */
+  async shopByHostSlug(slug: string): Promise<PublicShop | null> {
+    const hit = await this.cache.get<PublicShop>(`shop:${slug}`);
+    if (hit) return hit;
+    const key = `hostslug:${slug}`;
+    const miss = await this.cache.get<{ shop: null }>(key);
+    if (miss) return null;
+    const shop = await this.fetchShop({ slug });
+    if (shop) await this.cache.set(`shop:${slug}`, shop, STOREFRONT_CACHE_TTL);
+    else await this.cache.set(key, { shop: null }, STOREFRONT_CACHE_TTL);
     return shop;
   }
 
@@ -286,11 +305,11 @@ export class StorefrontData {
 
   /**
    * 選んだ slug の商品を、その順で（本文の ::: products slugs=…、0112 の product_public_pick、問い合わせ 1 回）。
-   * 見えない商品（非公開・会員限定で合わない）は飛ばす。0112 の前の DB では空
+   * 見えない商品（非公開・会員限定で合わない）は飛ばす
    */
   async productsBySlugs(shop: PublicShop, slugs: readonly string[]): Promise<ProductSummary[]> {
     const list = [...new Set(slugs)].slice(0, PRODUCT_PICK_MAX);
-    if (list.length === 0 || !(await this.migratedTo(PRODUCT_PICK_MIGRATION))) return [];
+    if (list.length === 0) return [];
     const reader = this.reader;
     const key = `ppick:${shop.id}:${list.join(",")}`;
     const hit = reader ? null : await this.cache.get<ProductSummary[]>(key);
@@ -535,6 +554,34 @@ export class StorefrontData {
     return out;
   }
 
+  /**
+   * ブログをまたぐ「記事を並べる」（0140）: 選んだブログの記事を 1 つの並びで先頭から limit 件。並びは new / title / 日付の項目の順だけ
+   * （手で並べた順はブログごとなので呼ぶ側が渡さない）。ゲストは RLS（blog_id の in）、会員は articles_member_multi。短時間キャッシュ
+   */
+  async articlesMulti(shop: PublicShop, blogIds: readonly string[], opts: { limit: number; tag?: string | null; sort?: "new" | "title"; fields?: Record<string, unknown> | null; withFields?: boolean; fieldSort?: FieldSort | null }): Promise<ArticleRow[]> {
+    const ids = [...new Set(blogIds)].slice(0, 20);
+    if (ids.length === 0) return [];
+    if (this.reader) {
+      const rows = (await this.reader.articlesMulti(ids, opts.limit, opts.tag ?? null, opts.sort, opts.fields ?? null, opts.fieldSort ?? null)) as ArticleRow[] | null;
+      return (Array.isArray(rows) ? rows : []).slice(0, opts.limit);
+    }
+    const fs = opts.fieldSort ? fieldSortQuery(opts.fieldSort) : null;
+    const key = `articles-multi:${ids.join(",")}:${opts.limit}:${opts.tag ?? ""}:${opts.sort ?? ""}:${opts.fields ? JSON.stringify(opts.fields) : ""}:${opts.withFields ? 1 : 0}:${opts.fieldSort ? `${opts.fieldSort.key}>${opts.fieldSort.from ?? ""}>${opts.fieldSort.until ? `${opts.fieldSort.until.key}>${opts.fieldSort.until.from}` : ""}` : ""}`;
+    const hit = await this.cache.get<ArticleRow[]>(key);
+    if (hit) return hit;
+    const rows = await this.db.from<ArticleRow>("articles").select(opts.withFields ? `${ARTICLE_LIST_COLUMNS},fields` : ARTICLE_LIST_COLUMNS, {
+      eq: { shop_id: shop.id, published: true },
+      in: { blog_id: ids },
+      ...(opts.tag ? { arrayContains: { tags: [opts.tag] } } : {}),
+      ...(opts.fields && opts.withFields ? { jsonContains: { fields: opts.fields } } : {}),
+      ...(fs?.where.length ? { where: fs.where } : {}),
+      order: fs ? fs.order : articleOrderParam(opts.sort),
+      limit: opts.limit,
+    });
+    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    return rows;
+  }
+
   /** 記事の項目（0117）が指す記事: そのブログの公開中の記事を URL の名前でまとめて 1 回（RLS。書いた順には並べない）。短時間キャッシュ */
   async articlesByHandles(shop: PublicShop, blogId: string, handles: readonly string[]): Promise<ArticleRow[]> {
     const list = [...new Set(handles)].slice(0, 48);
@@ -763,7 +810,6 @@ export interface ProductFacets {
 export const PRODUCT_PICK_MAX = 100;
 /** 実店舗に添える記事を 1 つのブロックで読む数（`::: stores articles=`。店舗ごとの数は limit） */
 export const STORE_ARTICLES_MAX = 300;
-export const PRODUCT_PICK_MIGRATION = "0112_product_pick";
 
 const summaryOf = (x: ListItem): ProductSummary => ({
   product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },

@@ -62,7 +62,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   ...ANON_FUNCTIONS,
   "banto_admin_shop", "banto_my_shops", "banto_my_stores", "banto_admin_me", "admin_session_bump",
   "coupon_grant_revoke", "coupon_grants_for_emails", "coupon_grants_issue", "coupon_stats", "coupon_stats_for", "coupon_grant_counts", "admin_search_ids",
-  "enqueue_hook", "import_catalog", "import_coupon_usage", "import_coupons", "import_orders", "import_tax_classes", "mask_customer", "member_set_email", "member_passkeys_reset", "customer_set_attributes", "customer_marketing_consent_withdraw",
+  "enqueue_hook", "import_catalog", "import_coupon_usage", "import_coupons", "import_orders", "import_tax_classes", "mask_customer", "member_set_email", "member_passkeys_reset", "customer_set_attributes", "customer_set_note", "views_add", "views_remove", "stock_adjust", "stock_count", "inventory_list", "catalog_bulk_update", "product_images_order", "shop_home", "customer_marketing_consent_withdraw",
   "org_invitation_accept", "org_invitation_revoke", "org_invite", "org_member_remove", "org_member_set", "org_members_list",
   "image_import_cancel", "image_import_enqueue", "image_import_resolve", "image_import_retry", "image_import_summary", "site_settings_set",
   "org_set_require_mfa", "org_members_mfa", "org_member_mfa_reset_authorize", // 0054: 中で組織の owner / admin を確かめる
@@ -108,6 +108,8 @@ const COLUMN_DENIES = [
   { role: "anon", table: "shops", privilege: "SELECT", columns: ["settings", "stripe_account_id", "order_seq", "tryon_seq", "owner_id", "org_id", "legal_links_state"] },
   { role: "anon", table: "customers", privilege: "SELECT", columns: ["id", "email", "password_hash"] },
   { role: "anon", table: "orders", privilege: "SELECT", columns: ["id", "customer_email"] },
+  // 0143: 決済の接続先・連番・法務のリンクの確認の結果は、管理画面の banto_admin_shop が項目に合う人にだけ返す
+  { role: "authenticated", table: "shops", privilege: "SELECT", columns: ["stripe_account_id", "order_seq", "tryon_seq", "inquiry_seq", "legal_links_state"] },
   { role: "authenticated", table: "customers", privilege: "SELECT", columns: ["password_hash", "legacy_password_hash", "session_epoch", "password_updated_at", "legacy_password_expires_at"] },
   // 0090: payment_account（返金に使う決済の口座）は confirm_reservation だけが書く
   { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["total_jpy", "customer_email", "customer_name", "shipping_address", "number", "shop_id", "payment_ref", "amount_paid_jpy", "discount_jpy", "tax_rate", "reservation_id", "customer_id", "payment_account"] },
@@ -122,6 +124,11 @@ const COLUMN_DENIES = [
   // 0089: 在庫の正確な数は anon に読ませない（product_public_stock の段階値だけ）。shops の採番・判定だけが書く列は運営者の JWT から UPDATE できない
   { role: "anon", table: "inventory", privilege: "SELECT", columns: ["available"] },
   { role: "authenticated", table: "shops", privilege: "UPDATE", columns: ["inquiry_seq", "order_seq", "tryon_seq", "legal_links_state", "theme_version_id"] },
+  // 0094 / 0115 / 0127: 選択肢の名前・見本・洗濯表示の絵は option_names_set / option_swatches_set / care_symbols_set だけが書く
+  { role: "authenticated", table: "shops", privilege: "UPDATE", columns: ["option_names", "option_swatches", "care_symbols"] },
+  // 0106: 注文の印とメモは order_annotate だけ。0126: 実店舗の独自項目の定義は store_fields_set だけ
+  { role: "authenticated", table: "orders", privilege: "UPDATE", columns: ["tags", "note"] },
+  { role: "authenticated", table: "organizations", privilege: "UPDATE", columns: ["store_fields"] },
 ];
 
 /** 表の権限。must: その役割がその表にその権限を持ってはいけない（0055: AI 用トークンの削除は無し。失効は revoked_at） */
@@ -131,6 +138,17 @@ const TABLE_DENIES = [
   { role: "authenticated", table: "pages", privilege: "DELETE" },
   { role: "authenticated", table: "blogs", privilege: "DELETE" },
   { role: "authenticated", table: "articles", privilege: "DELETE" },
+  // 0123: お気に入りは本人だけ（member_favorite_*）。0084: 拡張データは連携のトークンだけ。0105: LINE の記録は Worker だけ。0071: テーマの版は関数だけ
+  { role: "authenticated", table: "customer_favorites", privilege: "INSERT" },
+  { role: "authenticated", table: "customer_favorites", privilege: "UPDATE" },
+  { role: "authenticated", table: "customer_favorites", privilege: "DELETE" },
+  { role: "authenticated", table: "app_data", privilege: "INSERT" },
+  { role: "authenticated", table: "app_data", privilege: "UPDATE" },
+  { role: "authenticated", table: "line_messages", privilege: "INSERT" },
+  { role: "authenticated", table: "line_messages", privilege: "UPDATE" },
+  { role: "authenticated", table: "theme_versions", privilege: "INSERT" },
+  { role: "authenticated", table: "theme_versions", privilege: "UPDATE" },
+  { role: "authenticated", table: "theme_versions", privilege: "DELETE" },
 ];
 
 /**
@@ -151,7 +169,21 @@ const REQUIRED_TRIGGERS = [
   ["skus", "skus_product_updated"], ["product_images", "product_images_product_updated"], ["inventory", "inventory_product_updated"],
   // 0089: hooks の送信先の URL（私設のアドレス・同梱の内部 URL への書き換え）、テーマの版と AI 用トークンの削除の監査ログ
   ["hook_endpoints", "hook_endpoints_guard"], ["theme_versions", "theme_versions_audit"], ["api_tokens", "api_tokens_audit_delete"],
+  // 0051: 監査ログ
+  ["shops", "shops_audit"], ["orders", "orders_audit_status"], ["org_members", "org_members_audit_insert"], ["org_members", "org_members_audit_role"], ["org_members", "org_members_audit_delete"],
+  ["org_member_shops", "org_member_shops_audit"], ["api_tokens", "api_tokens_audit_insert"], ["api_tokens", "api_tokens_audit_revoke"], ["shops", "shops_audit_theme"],
+  ["app_connections", "app_connections_audit_delete"], ["hook_endpoints", "hook_endpoints_audit"],
+  // 0106: 社内のメモはマスキングで一緒に消す。0107: お店の行動を渡す許しは hook_storefront_events_set だけ。0110 / 0111: ダイアログの形と連携の結び付け
+  ["orders", "orders_mask_note"], ["hook_endpoints", "hook_endpoints_storefront_events_guard"], ["dialogs", "dialogs_guard"], ["dialogs", "dialogs_endpoint_guard"],
+  // 0097〜0100: 会員の条件と会員価格の形。表示用の条件は商品に使わせない
+  ["products", "products_audience_guard"], ["pages", "pages_audience_guard"], ["articles", "articles_audience_guard"], ["audiences", "audiences_guard"], ["price_rules", "price_rules_guard"],
+  // 0053: 1 日のメールの数。0094: 選択肢の鍵。0129: メディアライブラリの数
+  ["member_login_challenges", "member_login_challenges_plan_mail"], ["org_invitations", "org_invitations_plan_mail"], ["shops", "shops_option_keys"], ["skus", "skus_00_option_keys"],
+  ["page_media", "page_media_shop_limit"],
 ];
+
+/** 名前に守りの印（_guard / _audit / _plan_ / _norm / _shape / _mask）を含むトリガーは、列挙していなくても全部有効であること */
+const GUARD_TRIGGER_RE = /_guard|_audit|_plan_|_norm|_shape|_mask|_shop_limit/;
 
 const client = new pg.Client({ connectionString: url });
 await client.connect();
@@ -227,7 +259,29 @@ try {
     if (r.rowCount === 0) fail(`トリガー ${table}.${trigger} がありません（守りの判定が外れています）`);
     else if (r.rows[0].tgenabled === "D") fail(`トリガー ${table}.${trigger} が無効です`);
   }
-  console.log(`check-rls: required triggers checked (${REQUIRED_TRIGGERS.length})`);
+  const guards = await client.query(
+    `select c.relname as table_name, t.tgname, t.tgenabled from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and not t.tgisinternal order by 1, 2`,
+  );
+  let guardCount = 0;
+  for (const r of guards.rows) {
+    if (!GUARD_TRIGGER_RE.test(r.tgname)) continue;
+    guardCount++;
+    if (r.tgenabled === "D") fail(`守りのトリガー ${r.table_name}.${r.tgname} が無効です`);
+  }
+  console.log(`check-rls: required triggers checked (${REQUIRED_TRIGGERS.length} listed, ${guardCount} guard-like)`);
+
+  // ---------- 5b. PUBLIC の EXECUTE ----------
+  // PostgreSQL の既定は PUBLIC に EXECUTE が付く。anon / authenticated から剥奪するだけでは足りない（CLAUDE.md §6）
+  const pub = await client.query(
+    `select p.proname as name from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and (p.proacl is null or exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE'))
+      order by 1`,
+  );
+  const pubNames = [...new Set(pub.rows.map((x) => x.name))].filter((n) => !EXTENSION_FUNCTIONS.has(n));
+  for (const n of pubNames) fail(`PUBLIC が EXECUTE できる関数があります: ${n}（revoke execute ... from public を忘れていませんか）`);
+  console.log(`check-rls: public execute checked${pubNames.length === 0 ? " (ok)" : ""}`);
 
   // ---------- 6. SECURITY DEFINER の search_path ----------
   // 固定していないと、呼び手が search_path に置いた同名のオブジェクトで判定をすり替えられる

@@ -97,6 +97,7 @@ WooCommerce の「ロール」や「会員ランクのメタ」で分けてい�
 - **URL のパラメータを使う条件は選べません**（だれでも付けられるため）。商品に使っている条件に、あとから URL のパラメータの条件を足すこともできません。商品に使っている条件は消せません。
 - ヘッドレス: 商品の一覧・詳細に `Authorization: Bearer <会員トークン>` を付けると、その会員に合わせて返します（モジュールが ON のショップだけ。壊れたトークンは 401 `invalid_member_token`）。詳細には `members_only`（会員限定の商品か）と `purchasable`（この見る人が買えるか）が入ります。ゲストが見せる相手を絞った商品を開くと 403 `members_only`（存在も隠す商品は 404）。カートに買えない商品を入れると 403 `members_only`。
 - Liquid のテーマでは `product.members_only` と `product.purchasable` が使えます（買えないときは `product.available` も false）。
+- AI 用トークンの API（`/api/v1` と MCP）からも、商品の `audience`（条件の id か名前）・`audience_mode`・`audience_hide` を読み書きできます（データベースの変更 `0144_api_product_audience`、docs/ai-access.md §18）。
 
 ## 会員価格
 

@@ -22,7 +22,7 @@ A と B では、特定商取引法の最終確認画面は Banto の画面が�
 
 公開読み取り API（`/api/shops`、`/api/shops/:shop`、`/api/shops/:shop/products`、`/api/shops/:shop/products/:product`。会員限定の商品は会員トークンを付けると読めます、docs/audiences.md「会員限定の商品」）とあわせて、
 `/api/shops/...` は CORS を許可しています（`Access-Control-Allow-Origin: *`）。Cookie は使わないので、別ドメインのブラウザから直接呼べます。
-ただし **会員の API（`/api/shops/<shop>/members/*`）だけは、ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンにしか CORS を返しません**（ログインはメールを送るので、どのサイトからでも訪問者のブラウザで叩けてはいけないため）。
+ただし **会員の API（`/api/shops/<shop>/members/*`）だけは、ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンにしか CORS を返しません**（ログインはメールを送るので、どのサイトからでも訪問者のブラウザで叩けてはいけないため）。それ以外のサイトのブラウザからの POST は、応答を読めないだけでなく **403（`origin_not_allowed`）** で断ります（`Origin` を付けないサーバーからの呼び出しはそのまま通ります）。連携サイトのブラウザから会員の API を呼ぶなら、そのオリジンを `return_origins` に入れてください。
 `/api/v1` と `/mcp`（AI 用トークンが必要）には CORS を付けていません。
 
 決済せずに在庫を押さえ続けられないように、同じ quote で `checkout` を呼べるのは 1 回（2 回目は 400 `invalid_quote`。quote を取り直す）、同じ人（メールアドレス）の未確定の予約は 3 つ・同じ IP は 20 までです（超えると 429 `too_many_reservations`。支払いが済むか、Stripe なら 40 分、KOMOJU ならショップの設定の時間で予約が解けます）。**連携側のサーバーが Banto を中継する構成では、必ず「サーバー側で中継するとき」を読んでください**（中継元を宣言しないと、同じ IP の上限がサイト全体の上限になります）。
@@ -168,7 +168,7 @@ GET /api/shops/<shop>/cart?cart=<トークン>
 - `checkout_url` を開くと、そのブラウザのカートになり、Banto のカート画面から配送先 → 最終確認 → 決済へ進みます（B の終点）。クーポンのコードも引き継ぎます。
 - `delivery` は配送日時の選択肢（同梱モジュール「配送日時の指定」が ON のときだけ。OFF なら `null`）。`dates[].value`（`YYYY-MM-DD`）と `slots[].value` を、チェックアウト API の配送先の `delivery_date` / `delivery_slot` にそのまま渡します。`label` は表示用（デプロイのロケール）。日付は応答した時点の「今日」から数えるので、カートの応答を使い回さないでください（日付をまたいで古い日を送ると quote が `invalid_address` の `delivery_date` を返すので、カートを取り直して選び直してもらいます）。
 - `coupons.discount_jpy` は商品の値引きです。送料無料のクーポンは、送料が決まる quote（最終確認の内容）で反映されます。
-- `coupons.rejected` は入力されたが使えないクーポンと理由です（`reason`: `not_found` / `inactive` / `not_started` / `ended` / `members_only` / `limit_reached` / `exhausted` / `not_combinable` / `too_many` / `no_eligible_items` / `min_subtotal` / `max_subtotal` / `min_qty`）。`message` をそのまま表示できます。条件を満たせば使えるようになるもの（`min_subtotal` など）はトークンに残しています。
+- `coupons.rejected` は入力されたが使えないクーポンと理由です（`reason`: `not_found` / `ended` / `limit_reached` / `grant_expired` / `not_combinable` / `too_many` / `no_eligible_items` / `min_subtotal` / `max_subtotal` / `min_qty` / `attributes` / `payment_method`）。`message` をそのまま表示できます。無効・開始前・配布数の上限・会員限定・ほかの会員に配られたクーポンは、購入者には `not_found`（コードが見つからない）として返します（キャンペーンの存在や期間をコードの探索で知られないため。管理画面と AI 用 API では元の理由が見えます）。条件を満たせば使えるようになるもの（`min_subtotal` など）はトークンに残しています。
 - 1 人あたりの回数は、ゲストではカートの時点で分からない（購入者のメールアドレスが未定）ので、quote で判定します。会員のトークン（下の「会員」）を付けると、カートの時点から会員 ID で判定し、会員限定のクーポンも使えます。
 
 ### エラー
@@ -204,7 +204,7 @@ POST /api/shops/<shop>/checkout/quote
 }
 ```
 
-`provider` は `stripe` か `komoju`（カートの `payments` で true のもの）。`state` は都道府県名。`line2` 以外は必須です。
+`provider` は `stripe`・`komoju`・`amazon_pay` のどれか（カートの `payments` で true のもの）。`amazon_pay` の `payment_url` は Banto の中継ページ（ショップのドメインの `/checkout/amazon-pay/start`）で、そこから Amazon Pay の画面へ移ります（docs/plugins.md「Amazon Pay」）。`state` は都道府県名。`line2` 以外は必須です。
 
 応答:
 
@@ -345,7 +345,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 
 1. `POST /api/shops/<shop>/members/login` `{ "email": "...", "return_to": "https://wp.example.com/my-account/" }` → `{ "challenge_id": "..." }`
    - 登録の有無・送信回数の上限にかかわらず、同じ形で返します（どのアドレスが会員か外から分からないように）。初めてのアドレスは、verify の時点で会員になります。
-   - `return_to` はメールのリンクの行き先です。**ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンだけ** 使えます。リンクは `<return_to>?banto_challenge=<id>&banto_token=<token>` になります。省くか許可されていなければ、Banto の確認画面へのリンクになります。
+   - `return_to` はメールのリンクの行き先です。**ショップ設定の「決済後の戻り先として許可するサイト」（`return_origins`）のオリジンだけ** 使えます。空白・改行を含む URL、クエリに `;` や `banto_` で始まる鍵を含む URL、`#` の付いた URL は使えません（Banto の画面に戻します。空白は `%20` に符号化してください）。リンクは `<return_to>?banto_challenge=<id>&banto_token=<token>` になります。省くか許可されていなければ、Banto の確認画面へのリンクになります。`return_to` に `banto_` で始まるクエリやフラグメント（`#`）があるものも受け付けません（Banto が付け足す鍵を先に埋め込ませないため。LINE・Google・パスキーの `return_to` も同じ）。
 2. 会員がコードを入れたら、またはリンクで連携側のページが開いたら:
    `POST /api/shops/<shop>/members/verify` `{ "challenge_id": "...", "code": "123456" }` か `{ "challenge_id": "...", "token": "<banto_token>" }`
    → `{ "access_token": "bm1....", "refresh_token": "bm1....", "expires_in": 900, "member": { "id", "email", "created" } }`

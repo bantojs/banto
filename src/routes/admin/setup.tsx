@@ -15,6 +15,7 @@ import {
   dbClient,
   formFields,
   owner,
+  shopTemplateDomain,
   type AdminContext,
 } from "./context";
 import { ensureOwnerRow, loadSession, requireOwner, setSessionCookie, toSessionData } from "./auth";
@@ -73,7 +74,7 @@ async function checkDb(c: AdminContext): Promise<DbState> {
       status: "ok",
       applied: s.migrations,
       pending: pendingMigrations(s.migrations),
-      // 0030 より前の DB でも、ショップがあれば運営者登録は閉じる（最初の運営者を消しても匿名に開かない。監査 M1）
+      // 0030 より前の DB でも、ショップがあれば運営者登録は閉じる（最初の運営者を消しても匿名に開かない）
       hasOwner: s.has_owner || s.shop_count > 0,
       shopCount: s.shop_count,
     };
@@ -88,6 +89,8 @@ function errorMessage(code: string | undefined): string | null {
     taken: "setup.owner.taken",
     signup_disabled: "setup.owner.signup_disabled",
     invalid_slug: "setup.shop.invalid_slug",
+    slug_domain_invalid: "shop.slug_domain_invalid",
+    slug_domain_taken: "shop.slug_domain_taken",
     blocked: "setup.blocked",
     generic: "error.generic",
     secret_missing: "error.secret_missing",
@@ -386,9 +389,13 @@ setup.post("/shop", requireOwner, requireOrgAdmin, async (c) => {
   const slug = (form.slug ?? "").trim();
   if (!name || name.length > 200) return c.redirect("/admin/setup?error=generic");
   if (!SLUG_RE.test(slug)) return c.redirect("/admin/setup?error=invalid_slug");
+  // サブドメインモード: ひな形からショップのドメインを決める（作れないスラッグは断る）
+  const domain = shopTemplateDomain(c, slug);
+  if (domain === "invalid") return c.redirect("/admin/setup?error=slug_domain_invalid");
   try {
-    await db.from("shops").insert({ owner_id: session.user_id, slug, name });
+    await db.from("shops").insert({ owner_id: session.user_id, slug, name, ...(domain ? { domain } : {}) }, "id");
   } catch (e) {
+    if (e instanceof DbError && domain && (e.code === "23505" || /shops_domain_key/.test(e.message))) return c.redirect("/admin/setup?error=slug_domain_taken");
     if (e instanceof DbError) return renderSetup(c, { error: "generic", info: e.message });
     throw e;
   }

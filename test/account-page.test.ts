@@ -19,11 +19,11 @@ describe("会員ページの URL", () => {
     const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
     const s = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ" });
     const admin = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
-    expect(await (await admin.get(`/admin/shops/${s.id}`)).text()).toContain('name="account_page_url"');
+    expect(await (await admin.get(`/admin/shops/${s.id}/settings/headless`)).text()).toContain('name="account_page_url"');
     let res = await admin.post(`/admin/shops/${s.id}/headless`, { return_origins: "https://wp.example.com", account_page_url: "https://evil.example.com/my/" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${s.id}?flash=account_page_invalid#headless`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${s.id}/settings/headless?flash=account_page_invalid`);
     res = await admin.post(`/admin/shops/${s.id}/headless`, { return_origins: "https://wp.example.com", account_page_url: "https://wp.example.com/my/" });
-    expect(res.headers.get("location")).toBe(`/admin/shops/${s.id}?flash=headless_saved`);
+    expect(res.headers.get("location")).toBe(`/admin/shops/${s.id}/settings/headless?flash=headless_saved`);
     const headless = () => (sb.shops[0]!["settings"] as Record<string, Record<string, unknown>>)["headless"]!;
     expect(headless()["account_page_url"]).toBe("https://wp.example.com/my/");
     await admin.post(`/admin/shops/${s.id}/headless`, { return_origins: "https://wp.example.com", account_page_url: "" });

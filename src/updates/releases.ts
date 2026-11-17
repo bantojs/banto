@@ -9,6 +9,10 @@ import type { CacheAdapter } from "../adapters/types";
 export const RELEASES_URL = "https://api.github.com/repos/bantojs/banto/releases/latest";
 export const RELEASES_CACHE_TTL = 60 * 60;
 
+/** リリースの一覧（リンク先として許すのはこの下だけ） */
+export const RELEASES_PAGE = "https://github.com/bantojs/banto/releases";
+const RELEASE_PAGE_PREFIX = "https://github.com/bantojs/banto/";
+
 export interface LatestRelease {
   version: string;
   url: string;
@@ -47,7 +51,9 @@ export async function fetchLatestRelease(deps: { fetch: typeof fetch; cache: Cac
       await deps.cache.set(key, "none", RELEASES_CACHE_TTL);
       return null;
     }
-    const release: LatestRelease = { version: j.tag_name.replace(/^v/, ""), url: j.html_url ?? "https://github.com/bantojs/banto/releases" };
+    // リンクにするのは Banto のリリースの URL だけ（応答をそのまま画面に出さない）
+    const url = typeof j.html_url === "string" && j.html_url.startsWith(RELEASE_PAGE_PREFIX) ? j.html_url : RELEASES_PAGE;
+    const release: LatestRelease = { version: j.tag_name.replace(/^v/, ""), url };
     await deps.cache.set(key, release, RELEASES_CACHE_TTL);
     return release;
   } catch {
