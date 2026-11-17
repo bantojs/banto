@@ -796,6 +796,23 @@ describe("テーマで描くお問い合わせ（templates/inquiry）", () => {
     expect(tickets[0]!.verified).toBe(true);
   });
 
+  it("リンクの券を外に出さない（Referrer-Policy）。外れたリンクは 404 でも CSP と覚えさせない", async () => {
+    const { b } = setup({ theme: INQUIRY_THEME });
+    const bad = await b.get("/inquiries/open?t=nope");
+    expect(bad.status).toBe(404);
+    expect(bad.headers.get("content-security-policy")).toBe(CHECKOUT_CSP);
+    expect(bad.headers.get("cache-control")).toContain("no-store");
+    expect(bad.headers.get("referrer-policy")).toBe("same-origin");
+  });
+
+  it("書く欄のフォームには注文の券だけ（確かめた値は送る・直すのフォームに）", async () => {
+    const { b } = setup({ theme: INQUIRY_THEME });
+    const html = await (await b.post("/inquiries/confirm", { category: "product", body: "a", email: "guest@example.com", name: "山田", order_number: "" })).text();
+    expect(html).not.toMatch(/action="\/inquiries\/confirm"/);
+    const form = await (await b.post("/inquiries/new", { o: "not-a-token", category: "product" })).text();
+    expect(form).toMatch(/action="\/inquiries\/confirm"[^>]*><input type="hidden" name="form_type" value="inquiry_details"><select/);
+  });
+
   it("テーマに templates/inquiry が無ければ既定の画面", async () => {
     const { b } = setup({ theme: { ...INQUIRY_THEME, "templates/inquiry.liquid": undefined as unknown as string } });
     const html = await (await b.get("/inquiries/new")).text();

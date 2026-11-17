@@ -844,8 +844,10 @@ export async function renderInquiry(c: Ctx, s: LiquidScope, choice: LiquidChoice
     resend_url: `${shopPath}/inquiries/resend`,
   };
   const hidden = p.hidden ?? {};
+  // 書く欄のフォームには注文の券（s・o）だけ。確かめた値は送る・直すのフォームに
+  const orderTokens = Object.fromEntries(Object.entries(hidden).filter(([k]) => k === "s" || k === "o"));
   const forms = {
-    inquiry_details: hidden,
+    inquiry_details: orderTokens,
     inquiry_submit: hidden,
     inquiry_edit: hidden,
     ...(p.token ? { inquiry_open: { t: p.token } } : {}),
