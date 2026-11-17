@@ -11,7 +11,7 @@
 | 商品の詳細 | `/products/<商品>`（SKU を選んだ状態は `?sku=<品番>`） |
 | カテゴリーの一覧 | `/categories/<カテゴリー>`（子のカテゴリーの商品も含む） |
 | タグで絞る・探す・ページ送り | どの一覧にも `?tag=<タグ>`・`?q=<語>`・`?after=<位置>`（例: `/categories/tops?tag=秋&q=ニット`） |
-| 並べ替え | どの一覧にも `?sort=`（`price_asc` 安い順・`price_desc` 高い順・`name` 名前順・`updated` 更新の新しい順。無ければ新しい順）。Shopify のテーマの `?sort_by=`（`price-ascending`・`price-descending`・`title-ascending`・`created-descending`）も読みます（メンテナの決定 2026-11-06） |
+| 並べ替え | どの一覧にも `?sort=`（`price_asc` 安い順・`price_desc` 高い順・`name` 名前順・`updated` 更新の新しい順。無ければ新しい順 = 商品の発売日（0146、管理画面の商品の編集・AI 用 API の `released_at`）の新しい順、発売日の無い商品は作った日で並べる）。Shopify のテーマの `?sort_by=`（`price-ascending`・`price-descending`・`title-ascending`・`created-descending`）も読みます（メンテナの決定 2026-11-06） |
 
 - 独自ドメインの無いショップは、この前に `/<ショップ>` が付きます。
 - 検索の結果（`?q=`）と 2 ページ目以降は検索エンジンに載せません。並べ替えた一覧の canonical は並べ方を外した URL です（同じ一覧を別のページにしない）。サイトマップには `/products`・カテゴリーの一覧・商品が載ります。

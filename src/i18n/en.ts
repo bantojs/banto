@@ -152,6 +152,8 @@ export const en: Record<MessageKey, string> = {
   "product.extra_categories": "Extra categories",
   "product.extra_categories_hint": "Other categories this product is listed in besides the main one (up to 20). Treated like the main category in storefront category pages and coupon conditions. Breadcrumbs and the product feed use the main category only.",
   "product.brand": "Brand",
+  "product.released_at": "Release date",
+  "product.released_at_hint": "Optional. Sorting by newest and the theme's \"new\" badge use this date (empty: the date the product was created). It does not schedule publishing: a future date is still visible while published.",
   "product.fields": "Custom fields",
   "product.section_basic": "Basics",
   "settings.not_saved": "Not saved. Changing shop settings requires the Shop settings permission.",

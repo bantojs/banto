@@ -11,6 +11,8 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
+import { migrated } from "../../db/migration-state";
+import { RELEASED_AT_MIGRATION } from "../../products/fields";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -176,6 +178,15 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
           products: rows("products").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"], option_axes_custom: r["option_axes_custom"] === true })),
         }),
       );
+    }
+    // 商品の発売日（0146。古いバックアップの JSON には無い）
+    {
+      const released = pick("products")
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && typeof (r as Record<string, unknown>)["released_at"] === "string")
+        .map((r) => ({ slug: r["slug"], released_at: r["released_at"] }));
+      if (released.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, RELEASED_AT_MIGRATION))) {
+        Object.assign(counts, await privileged.restoreProductReleasedAt(shopId, released));
+      }
     }
     const detail = Object.entries(counts)
       .map(([k, v]) => `${k}: ${v}`)

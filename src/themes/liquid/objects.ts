@@ -124,6 +124,9 @@ export function productFromSummary(u: UrlBase, p: ProductSummary) {
     options_with_values: [],
     created_at: p.product.created_at,
     updated_at: p.product.updated_at,
+    // 発売日（0146、無ければ null）と、Shopify の名前の published_at（発売日、無ければ作成日。「NEW」の札はこれで）
+    released_at: p.product.released_at ?? null,
+    published_at: p.product.released_at ?? p.product.created_at,
     // 一覧のカードの独自項目（0121。定義で card を付けた公開の項目だけが一覧に来る）
     ...productFieldsLiquid(u, p.attributes),
   };
@@ -215,6 +218,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     first_available_variant: available[0] ?? null,
     created_at: p.created_at,
     updated_at: p.updated_at,
+    released_at: p.released_at ?? null,
+    published_at: p.released_at ?? p.created_at,
     // 商品の独自項目（公開のものだけ。値は product_public_get が公開の項目だけを返す）。{{ product.fields.material }}・
     // 定義の順に並べた field_list（key・label・type・value）
     ...productFieldsLiquid(u, p.attributes),

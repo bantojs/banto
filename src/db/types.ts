@@ -58,6 +58,8 @@ export interface ProductRow {
   /** 0098。会員の条件（null = だれでも）と扱い（hide 見せない / buy 見せるが買えない）、存在も隠すか */
   audience_id?: string | null;
   audience_mode?: "hide" | "buy";
+  /** 0146。発売日（任意）。新着順とテーマの「新しい商品」はこの日、無ければ created_at */
+  released_at?: string | null;
   audience_hide?: boolean;
   published: boolean;
   created_at: string;

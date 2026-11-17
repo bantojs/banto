@@ -140,6 +140,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
       attributes: cardAttributes(cardFields, attributes),
       created_at: product.created_at,
       updated_at: product.updated_at,
+      /** 発売日（0146、無ければ null）。新着順（sort=new）はこの日、無ければ created_at */
+      released_at: product.released_at ?? null,
     })),
     total: page.total,
     total_capped: page.totalCapped,
@@ -216,6 +218,8 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       /** カスタム項目のうち公開するもの（表示名つき） */
       attributes: publicAttributes(productFields(shop.settings), p.attributes),
       updated_at: p.updated_at,
+      /** 発売日（0146、無ければ null） */
+      released_at: p.released_at ?? null,
       images: detail.images.map((i) => imageUrl(d.mediaBaseUrl, i.storage_key)),
       image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height, options: imageOptionsOf(i.options) })),
       // price_jpy はこの見る人の単価（会員トークンの会員なら会員価格。0099）、regular_price_jpy は通常の価格、
