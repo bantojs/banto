@@ -12,7 +12,7 @@ import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { migrated } from "../../db/migration-state";
-import { RELEASED_AT_MIGRATION } from "../../products/fields";
+import { RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION } from "../../products/fields";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -186,6 +186,13 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
         .map((r) => ({ slug: r["slug"], released_at: r["released_at"] }));
       if (released.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, RELEASED_AT_MIGRATION))) {
         Object.assign(counts, await privileged.restoreProductReleasedAt(shopId, released));
+      }
+      // 公開日（予約公開、0148）
+      const scheduled = pick("products")
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && typeof (r as Record<string, unknown>)["publish_at"] === "string")
+        .map((r) => ({ slug: r["slug"], publish_at: r["publish_at"] }));
+      if (scheduled.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SALE_DATES_MIGRATION))) {
+        Object.assign(counts, await privileged.restoreProductPublishAt(shopId, scheduled));
       }
     }
     const detail = Object.entries(counts)

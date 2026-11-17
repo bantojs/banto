@@ -16,7 +16,9 @@ import { PAGE_PARTS_MIGRATION, PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageR
 import type { IncludePart } from "../content/include";
 import { fieldSortQuery, type FieldSort } from "../blog/fields";
 import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
-import { cartableOf, purchaseBlockOf, type PurchaseBlock } from "../products/sale";
+import { cartableOf, comingSoon, purchaseBlockOf, type PurchaseBlock } from "../products/sale";
+/** 発売前は買えない（0148）。src/products/fields.ts の SALE_DATES_MIGRATION と同じ（循環を避けて文字で持つ） */
+const SALE_DATES_MIGRATION = "0148_product_sale_dates";
 
 
 export const STOREFRONT_CACHE_TTL = 30;
@@ -133,6 +135,8 @@ export interface ProductSummary {
   compareAt?: number | null;
   /** カードに出す独自項目の値（0121。定義で card を付けた公開の項目だけ。当てる前の DB では無い） */
   attributes?: Record<string, unknown>;
+  /** 発売日で買えなくする判定が効いているか（0148 が当たっていれば true）。カードの coming_soon はこれが true のときだけ */
+  saleDates?: boolean;
 }
 
 export interface SkuWithStock extends SkuRow {
@@ -185,8 +189,8 @@ export interface MemberReader {
 /** ゲストが会員の条件で弾かれないか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
 const guestAudienceOk = (p: ProductRow) => !p.audience_id;
 /** 買えるか・買えない理由（会員の条件と発売日。src/products/sale.ts） */
-const saleOf = (shop: PublicShop, p: ProductRow, audienceOk: boolean) => {
-  const block = purchaseBlockOf(p, audienceOk);
+const saleOf = (shop: PublicShop, p: ProductRow, audienceOk: boolean, saleDates: boolean) => {
+  const block = purchaseBlockOf(p, audienceOk, { saleDates });
   // お店で試着（同梱モジュール store_tryon）が ON か。キャッシュ済みのショップ行で判定する（DB に問い合わせない）
   const tryonOn = ((shop.settings?.["modules"] ?? {}) as Record<string, unknown>)["store_tryon"] === true;
   return { purchasable: block === null, cartable: cartableOf(block, tryonOn), ...(block ? { purchase_block: block } : {}) };
@@ -216,6 +220,15 @@ export class StorefrontData {
 
   /** 適用済みの版の一覧（このインスタンスでは 1 回だけ引く。並列の判定が同時にキャッシュを外して二重に問い合わせないように） */
   private applied?: Promise<ReadonlySet<string>>;
+
+  /**
+   * 発売前は買えない判定（0148）を効かせるか。発売日が未来の商品が無ければ問い合わせずに false（判定に関わらないので、
+   * 主要ページの DB の往復を増やさない）。あれば 0148 が当たっているか
+   */
+  async saleDatesFor(products: readonly { released_at?: string | null }[]): Promise<boolean> {
+    if (!products.some((p) => comingSoon(p))) return false;
+    return this.migratedTo(SALE_DATES_MIGRATION);
+  }
 
   /** その版のマイグレーションが当たっていれば true（isolate ごとに 60 秒覚える。docs/upgrade.md「適用するまでのあいだ」） */
   async migratedTo(version: string): Promise<boolean> {
@@ -311,7 +324,8 @@ export class StorefrontData {
     if (hit) return hit;
     type ListResult = { items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean };
     const r = reader ? ((await reader.list(args)) as ListResult) : await this.db.rpc<ListResult>("product_public_list", args);
-    const items = r.items.map(summaryOf);
+    const saleDates = await this.saleDatesFor(r.items);
+    const items = r.items.map((x) => ({ ...summaryOf(x), ...(saleDates ? { saleDates } : {}) }));
     const out: ProductListPage = {
       items,
       total: r.total ?? null,
@@ -337,7 +351,9 @@ export class StorefrontData {
     const hit = reader ? null : await this.cache.get<ProductSummary[]>(key);
     if (hit) return hit;
     const r = (reader ? await reader.pick(list) : await this.db.rpc<unknown>("product_public_pick", { p_shop_id: shop.id, p_slugs: list })) as { items?: ListItem[] } | null;
-    const out = (Array.isArray(r?.items) ? r.items : []).map(summaryOf);
+    const rows = Array.isArray(r?.items) ? r.items : [];
+    const saleDates = await this.saleDatesFor(rows);
+    const out = rows.map((x) => ({ ...summaryOf(x), ...(saleDates ? { saleDates } : {}) }));
     if (!reader) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
   }
@@ -680,7 +696,7 @@ export class StorefrontData {
     if (this.reader) {
       const r = (await this.reader.get(slug)) as { product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[]; purchasable?: boolean } | null;
       if (!r || !r.product) return null;
-      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(shop, r.product, r.purchasable !== false) };
+      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(shop, r.product, r.purchasable !== false, await this.saleDatesFor([r.product])) };
     }
     // product_public_get（0055。attributes は公開の項目だけ）
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
@@ -699,7 +715,7 @@ export class StorefrontData {
       product,
       images,
       skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0, ...(member.has(s.id) ? { member_price_jpy: member.get(s.id)! } : {}) })),
-      ...saleOf(shop, product, guestAudienceOk(product)),
+      ...saleOf(shop, product, guestAudienceOk(product), await this.saleDatesFor([product])),
     };
   }
 
@@ -751,12 +767,14 @@ export class StorefrontData {
     // 会員: SKU・商品・在庫・買えるかを 1 回で（0098）
     if (this.reader) {
       const rows = (await this.reader.skus(ids)) as { sku: SkuWithStock; product: ProductRow; purchasable: boolean }[] | null;
-      for (const r of Array.isArray(rows) ? rows : []) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, ...saleOf(shop, r.product, r.purchasable !== false) });
+      const list = Array.isArray(rows) ? rows : [];
+      const saleDates = await this.saleDatesFor(list.map((r) => r.product));
+      for (const r of list) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, ...saleOf(shop, r.product, r.purchasable !== false, saleDates) });
       return out;
     }
     const [skus, released, storeOnly] = await Promise.all([
       this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } }),
-      // 発売日（0146）・店頭のみ（0149）は当たっていれば読む（買えない理由の判定、src/products/sale.ts）
+      // 発売日（0146）・店頭のみ（0149）は当たっていれば読む（発売前は買えない判定は 0148 から。saleDatesFor）
       this.migratedTo("0146_product_released_at"),
       this.migratedTo("0149_product_store_only"),
     ]);
@@ -766,9 +784,10 @@ export class StorefrontData {
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));
+    const saleDates = await this.saleDatesFor(products);
     for (const s of skus) {
       const product = byProduct.get(s.product_id);
-      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, ...saleOf(shop, product, guestAudienceOk(product)) });
+      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, ...saleOf(shop, product, guestAudienceOk(product), saleDates) });
     }
     return out;
   }

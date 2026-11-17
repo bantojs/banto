@@ -125,7 +125,7 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const catById = new Map(categories.map((x) => [x.id, x]));
   const cardFields = productFields(shop.settings).filter((f) => f.card);
   return c.json({
-    products: page.items.map(({ product, image, minPrice, compareAt, attributes }) => ({
+    products: page.items.map(({ product, image, minPrice, compareAt, attributes, saleDates }) => ({
       id: product.id,
       slug: product.slug,
       name: product.name,
@@ -143,7 +143,7 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
       updated_at: product.updated_at,
       /** 発売日（0146、無ければ null）。新着順（sort=new）はこの日、無ければ created_at */
       released_at: product.released_at ?? null,
-      coming_soon: comingSoon(product),
+      coming_soon: saleDates === true && comingSoon(product),
     })),
     total: page.total,
     total_capped: page.totalCapped,

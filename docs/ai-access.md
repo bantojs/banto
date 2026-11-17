@@ -402,9 +402,9 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   | `public` | 真偽（商品だけ、既定 true） | お店の画面と公開 API に出すか |
   | `card` | 真偽（商品の公開の項目だけ） | 一覧のカードにも出すか |
 
-- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。
-- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白は取ります。
-- 会員の項目はお客様の画面に出さないので、`public: true`・`card: true` は断ります。
+- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。読んでから書くまでのあいだに管理画面で定義やほかの設定を保存すると、後から書いた方が残ります（同じ時刻に両方から書かないでください）。
+- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白（全角スペース・タブ・改行を含む）は取り、文字数は 1 文字ずつ（絵文字も 1 文字）数えます。
+- 会員の項目はお客様の画面に出さないので、種類の `image`・`public: true`・`card: true` は断ります。
 - GET は、保存されている定義を管理画面と同じ読み方で返します（管理画面で入れた古い形の行も同じに見えます）。
 - データベースの更新 `0145_api_field_definitions` が要ります。当たるまでは 409（`migration_required`）です。
 
@@ -414,11 +414,11 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 
   | 欄 | 形 | 意味 |
   | --- | --- | --- |
-  | `released_at` | ISO 8601 の日時の文字列（時差を付けてください。例 `2024-05-01T10:00:00+09:00`。日付だけなら UTC の 0 時）か `null`。1990 年から今の 10 年後まで | 発売日 = 販売開始日。新着順と「新しい商品」の印はこの日（無ければ作成日）。**未来なら発売日まで買えません**（Coming Soon、0148） |
+  | `released_at` | ISO 8601 の日時の文字列（時差を付けてください。例 `2024-05-01T10:00:00+09:00`。日付だけなら UTC の 0 時、時差の無い日時も UTC）か `null`。1990 年から今の 10 年後まで（管理画面・復元から書いても同じ範囲をデータベースが確かめます） | 発売日 = 販売開始日。新着順と「新しい商品」の印はこの日（無ければ作成日）。**未来なら発売日まで買えません**（Coming Soon、0148） |
   | `publish_at` | 同じ形か `null`（取り消す）。今の 10 年後まで | 公開日。非公開の商品をこの日時に公開する予約（次の Cron で公開）。公開している商品には残りません |
   | `store_only` | 真偽 | 店頭のみ（0149）。ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める（docs/storefront.md「店頭のみの商品」） |
 
 - 違えば 400 `invalid_released_at` / `invalid_publish_at` / `invalid_store_only`。
-- ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）を `released_at` に入れてください。作成日（`created_at`）は移した日のまま変えません。
+- ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）をこの API の `released_at` で入れてください（管理画面の商品の CSV・WooCommerce の取り込みでは、今は入れられません）。作成日（`created_at`）は移した日のまま変えません。
 - 商品の読み取り（AI 用 API・公開 API の一覧と詳細）に `released_at`（AI 用 API は `publish_at` も）、公開 API に `coming_soon` が載ります。
 - データベースの更新が要ります（`released_at` は `0146_product_released_at`、`publish_at` と「発売前は買えない」は `0148_product_sale_dates`、`store_only` は `0149_product_store_only`）。当たるまでは、その欄を送ると 409（`migration_required`）です（ほかの欄はそのまま）。

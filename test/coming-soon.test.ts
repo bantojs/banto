@@ -5,6 +5,7 @@ import { registerJobs } from "../src/jobs";
 import { SALE_DATES_MIGRATION } from "../src/products/fields";
 import { comingSoon, purchaseBlockOf } from "../src/products/sale";
 import { productFromSummary } from "../src/themes/liquid/objects";
+import { productJsonLd } from "../src/storefront/structured-data";
 
 /** 発売日の前は買えない（Coming Soon、0148、メンテナの決定 2026-11-17）。DB の判定は test/db/product-sale-dates.test.ts */
 
@@ -69,9 +70,10 @@ describe("ヘッドレス", () => {
 });
 
 describe("テーマ（Liquid）", () => {
-  it("一覧のカードの coming_soon", () => {
+  it("一覧のカードの coming_soon（0148 が当たっているときだけ）", () => {
     const base = { id: "p", slug: "tee", name: "T", tags: [], category_id: null, extra_category_ids: [], brand: null, created_at: past(), updated_at: past() };
-    expect(productFromSummary({ shopPath: "", mediaBaseUrl: "" }, { product: { ...base, released_at: future() }, image: null, minPrice: 1, compareAt: null }).coming_soon).toBe(true);
+    expect(productFromSummary({ shopPath: "", mediaBaseUrl: "" }, { product: { ...base, released_at: future() }, image: null, minPrice: 1, compareAt: null, saleDates: true }).coming_soon).toBe(true);
+    expect(productFromSummary({ shopPath: "", mediaBaseUrl: "" }, { product: { ...base, released_at: future() }, image: null, minPrice: 1, compareAt: null }).coming_soon).toBe(false);
     expect(productFromSummary({ shopPath: "", mediaBaseUrl: "" }, { product: { ...base, released_at: null }, image: null, minPrice: 1, compareAt: null }).coming_soon).toBe(false);
   });
 });
@@ -94,5 +96,25 @@ describe("Cron（公開日）", () => {
     expect(q["published"]).toBe(false);
     await runPublishJob(s.sb);
     expect(p["published"]).toBe(true);
+  });
+});
+
+describe("0148 を当てる前（版のずれ）", () => {
+  it("発売日は並びだけ: 未来の発売日でも発売予定と出さず、カートに入る", async () => {
+    const s = setup(future());
+    s.sb.appliedMigrations = s.sb.appliedMigrations.filter((m) => m !== SALE_DATES_MIGRATION);
+    const b = new Browser(s.app, BASE);
+    expect(await (await b.get("/my-shop/products/tee")).text()).not.toContain("data-coming-soon");
+    const js = await b.post("/my-shop/cart/add.js", { id: s.sku.id, quantity: "1" });
+    expect(js.status).toBe(200);
+    const list = (await (await s.app.request(`${BASE}/api/shops/my-shop/products`)).json()) as { products: Record<string, unknown>[] };
+    expect(list.products[0]!["coming_soon"]).toBe(false);
+  });
+});
+
+describe("構造化データ", () => {
+  it("発売前は在庫があっても OutOfStock と availabilityStarts", () => {
+    const ld = productJsonLd({ url: "https://x/p", product: { name: "T", description: null, brand: null }, images: [], skus: [{ code: "A", name: null, price_jpy: 1000, gtin: null, available: 3 }], block: "coming_soon", releasedAt: "2030-01-01T00:00:00Z" }) as { offers: Record<string, unknown> };
+    expect(ld.offers).toMatchObject({ availability: "https://schema.org/OutOfStock", availabilityStarts: "2030-01-01T00:00:00Z" });
   });
 });

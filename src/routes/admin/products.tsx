@@ -57,6 +57,7 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     infer_failed: "axes.infer_failed",
     matrix_empty: "axes.matrix_empty",
     audience_display_only: "product.audience_display_only",
+    released_at_invalid: "product.released_at_invalid",
     image_order_update: "image.order_needs_update",
   };
   if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
@@ -539,7 +540,9 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
             <>
               <input type="hidden" name="released_present" value="1" />
               <label for="released_at">{t("product.released_at")}</label>
-              <input id="released_at" type="datetime-local" name="released_at" value={isoToZonedInput(p?.released_at ?? null)} />
+              <input id="released_at" type="datetime-local" name="released_at" value={isoToZonedInput(p?.released_at ?? null)} min="1990-01-01T00:00" />
+              {/* 開いたときの値（分まで）。変えていなければ書かない（API で入れた秒を、ほかの欄の保存で消さない） */}
+              <input type="hidden" name="released_orig" value={isoToZonedInput(p?.released_at ?? null)} />
               <p class="muted">{t(props.catalog.publishAt ? "product.released_at_hint_sale" : "product.released_at_hint")}</p>
             </>
           ) : null}
@@ -601,6 +604,7 @@ function ProductForm(props: { action: string; product?: ProductRow; catalog: Cat
           <label>
             <input type="hidden" name="publish_present" value="1" />
             {t("product.publish_at")} <input type="datetime-local" name="publish_at" value={isoToZonedInput(p?.publish_at ?? null)} aria-describedby="publish-at-hint" />
+            <input type="hidden" name="publish_orig" value={isoToZonedInput(p?.publish_at ?? null)} />
             <span class="muted" id="publish-at-hint">{t("product.publish_at_hint")}</span>
           </label>
         ) : null}
@@ -641,11 +645,11 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     attributes: cleanAttributes(fields, attrInput, mediaBase),
     ...(isTaxClass(f.tax_class) ? { tax_class: f.tax_class } : {}),
     // 発売日（0146）: 欄があったときだけ書く。空なら外す（新着順は作成日に戻る）
-    ...(f.released_present === "1" ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
+    ...(f.released_present === "1" && (f.released_at ?? "") !== (f.released_orig ?? "") ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
     // 店頭のみ（0149）: 欄があったときだけ書く
     ...(f.store_only_present === "1" ? { store_only: f.store_only === "on" } : {}),
     // 公開日（0148）: 非公開の商品の予約公開。公開に印を付けたら DB のトリガーが外す
-    ...(f.publish_present === "1" ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
+    ...(f.publish_present === "1" && (f.publish_at ?? "") !== (f.publish_orig ?? "") ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。
     // 「存在も隠す」に印を付けたら、扱いを選び忘れていても「見せない」として扱う（入れたものを捨てない）
     ...(f.audience_present === "1"
@@ -673,6 +677,7 @@ products.post("/:shopId/products/new", requireOwner, async (c: AdminContext) => 
   } catch (e) {
     if (e instanceof DbError && e.status === 409) return c.redirect(`/admin/shops/${shopId}/products/new?flash=slug_taken`);
     if (e instanceof DbError && planLimitOf(e)) return c.redirect(`/admin/shops/${shopId}/products/new?flash=plan_limit`);
+    if (e instanceof DbError && /invalid_released_at/.test(e.message)) return c.redirect(`/admin/shops/${shopId}/products/new?flash=released_at_invalid`);
     if (e instanceof DbError) return c.redirect(`/admin/shops/${shopId}/products/new?flash=generic`);
     throw e;
   }
@@ -933,6 +938,7 @@ products.post("/:shopId/products/:productId", requireOwner, async (c: AdminConte
   } catch (e) {
     if (e instanceof DbError && e.status === 409) return c.redirect(`${base}?flash=slug_taken`);
     if (e instanceof DbError && /audience_display_only/.test(e.message)) return c.redirect(`${base}?flash=audience_display_only`);
+    if (e instanceof DbError && /invalid_released_at/.test(e.message)) return c.redirect(`${base}?flash=released_at_invalid`);
     if (e instanceof DbError) return c.redirect(`${base}?flash=generic`);
     throw e;
   }

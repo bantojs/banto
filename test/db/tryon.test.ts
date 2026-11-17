@@ -127,6 +127,7 @@ describe.skipIf(!dbAvailable)("お店で試着（0025_store_tryon）", () => {
     // 0147: 品目に品番と SKU の選択肢、ショップに選択肢の表示名
     const code = (await getPool().query<{ code: string }>("select code from skus where id = $1", [f.skuId])).rows[0]!.code;
     expect((ct["items"] as Record<string, unknown>[])[0]).toMatchObject({ code, options: expect.any(Object) });
+    expect((ct["items"] as Record<string, unknown>[])[0]).toHaveProperty("axes");
     expect(ct["shop"]).toHaveProperty("option_names");
     expect(await expectDbError(() => asAnon((c) => c.query("select tryon_contact($1, $2)", [r.id, f.shopId])))).toMatch(/permission denied/);
     await getPool().query("update tryon_requests set closed_at = now() - interval '200 days' where id = $1", [r.id]);
@@ -155,5 +156,4 @@ describe.skipIf(!dbAvailable)("お店で試着（0025_store_tryon）", () => {
     expect(await expectDbError(() => request([{ sku_id: f.skuId, qty: 1 }]))).toMatch(/not_available|invalid_items|sku/);
     await pool.query("update products set released_at = null where id = $1", [f.productId]);
   });
-
 });

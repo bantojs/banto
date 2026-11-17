@@ -1884,6 +1884,8 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
           skus,
           category: (categoryPath ?? []).map((cat) => cat.name),
           reviews,
+          block: detail.purchase_block ?? null,
+          releasedAt: product.released_at ?? null,
         })
       : undefined,
   };

@@ -486,6 +486,8 @@ export interface PrivilegedDb {
   restoreOptionAxes(shopId: string, data: { shop?: unknown; categories?: unknown[]; products?: unknown[]; option_names?: unknown }): Promise<Record<string, number>>;
   /** 0146: 商品の発売日を URL の名前で戻す（restore_catalog の後） */
   restoreProductReleasedAt(shopId: string, items: { slug: unknown; released_at: unknown }[]): Promise<Record<string, number>>;
+  /** 0148: 非公開の商品の公開日（予約公開）を URL の名前で戻す */
+  restoreProductPublishAt(shopId: string, items: { slug: unknown; publish_at: unknown }[]): Promise<Record<string, number>>;
   /**
    * AI 用トークン経由の操作（docs/ai-access.md）。呼べるのは api_* だけで、各 RPC が SQL 側で
    * トークン・スコープ・ショップ所有を検証する。p_token_hash は Worker で SHA-256 にした値。
@@ -766,6 +768,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     restoreProductImageOptions: (shopId, items) => rpc("restore_product_image_options", { p_shop_id: shopId, p_items: items }),
     restoreOptionAxes: (shopId, data) => rpc("restore_option_axes", { p_shop_id: shopId, p_data: data }),
     restoreProductReleasedAt: (shopId, items) => rpc("restore_product_released_at", { p_shop_id: shopId, p_items: items }),
+    restoreProductPublishAt: (shopId, items) => rpc("restore_product_publish_at", { p_shop_id: shopId, p_items: items }),
     async shopStripeAccount(shopId) {
       // お客様の画面（anon）には渡さない列（0028）。決済ページを作るときだけ service_role で読む
       const res = await doFetch(`${base}/rest/v1/shops?select=stripe_account_id&id=eq.${encodeURIComponent(shopId)}`, { headers });

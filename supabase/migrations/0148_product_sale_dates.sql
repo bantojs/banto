@@ -37,7 +37,9 @@ begin
     raise exception 'invalid_publish_at' using errcode = '22023';
   end if;
   begin
-    v := (p #>> '{}')::timestamptz;
+    -- 時差の無い値は UTC として読む（0146 の発売日と同じ）
+    v := case when (p #>> '{}') ~ '[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}(:?\d{2})?)$' then (p #>> '{}')::timestamptz
+              else ((p #>> '{}')::timestamp at time zone 'UTC') end;
   exception when others then
     raise exception 'invalid_publish_at' using errcode = '22023';
   end;
@@ -70,6 +72,32 @@ end;
 $$;
 revoke execute on function publish_scheduled_products() from public, anon, authenticated;
 grant execute on function publish_scheduled_products() to service_role;
+
+-- バックアップの復元: 公開日（予約公開）を URL の名前で戻す（非公開の商品だけ。restore_catalog の後に呼ぶ）。p_items は [{ slug, publish_at }]
+create or replace function restore_product_publish_at(p_shop_id uuid, p_items jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_row jsonb; v_n integer := 0; v_at timestamptz;
+begin
+  if jsonb_typeof(p_items) <> 'array' then raise exception 'invalid_export'; end if;
+  for v_row in select * from jsonb_array_elements(p_items) loop
+    begin
+      v_at := banto_api_publish_at(v_row->'publish_at');
+    exception when others then
+      continue;
+    end;
+    if v_at is null then continue; end if;
+    update products set publish_at = v_at where shop_id = p_shop_id and slug = v_row->>'slug' and not published;
+    if found then v_n := v_n + 1; end if;
+  end loop;
+  return jsonb_build_object('products_publish_at', v_n);
+end;
+$$;
+revoke execute on function restore_product_publish_at(uuid, jsonb) from public, anon, authenticated;
+grant execute on function restore_product_publish_at(uuid, jsonb) to service_role;
 
 -- ---------- 在庫の予約（0129 と同じ。発売日の前の商品を断る 1 行だけ） ----------
 create or replace function reserve_stock(p_shop_id uuid, p_items jsonb, p_ttl_seconds integer default 900,

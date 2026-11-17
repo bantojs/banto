@@ -13,6 +13,9 @@ export interface ProductLdInput {
   category?: string[];
   /** 外部プラグインのレビュー（0084）。ページに見えている分と同じもの */
   reviews?: ProductReviews | null;
+  /** 買えない理由（src/products/sale.ts）。発売前は OutOfStock と発売日（availabilityStarts） */
+  block?: string | null;
+  releasedAt?: string | null;
 }
 
 /** GTIN の桁で schema.org の項目名を選ぶ（8 / 12 / 13 / 14 桁） */
@@ -31,7 +34,10 @@ export function productJsonLd(i: ProductLdInput): Record<string, unknown> {
     ...(s.name ? { name: s.name } : {}),
     price: s.price_jpy,
     priceCurrency: "JPY",
-    availability: s.available > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+    // 発売前（0148）はネットで買えないので在庫があっても OutOfStock と、買えるようになる日
+    ...(i.block === "coming_soon"
+      ? { availability: "https://schema.org/OutOfStock", ...(i.releasedAt ? { availabilityStarts: i.releasedAt } : {}) }
+      : { availability: s.available > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" }),
     itemCondition: "https://schema.org/NewCondition",
   });
   const single = i.skus.length === 1 ? i.skus[0]! : null;

@@ -361,13 +361,17 @@ describe("お店で試着（お知らせの文）", () => {
       ...contact,
       shop: { ...contact.shop, option_names: { color: "カラー", size: "サイズ" } },
       items: [
-        { name: "Tシャツ", sku: "ネイビー / M", code: "TEE-NV-M", options: { color: "ネイビー", size: "M" }, qty: 1, unit_price_jpy: 3000 },
+        // DB の jsonb は鍵を短い順に返す（size が先）。商品の軸の順（color → size）に並べ直す
+        { name: "Tシャツ", sku: "ネイビー / M", code: "TEE-NV-M", options: { size: "M", color: "ネイビー" }, axes: [{ key: "color" }, { key: "size" }], qty: 1, unit_price_jpy: 3000 },
+        // 名前に選択肢に無い情報があれば添える。null・オブジェクトの値は出さない
+        { name: "パーカー", sku: "限定カラー", code: "HD-1", options: { color: "赤", size: null, x: { a: 1 } }, axes: null, qty: 1, unit_price_jpy: 5000 },
         { name: "トート", sku: "TOTE-1", code: "TOTE-1", options: {}, qty: 2, unit_price_jpy: 2000 },
       ],
     };
     const text = buildTryonMails("tryon.updated", withOpts, BASE)[0]!.text;
     expect(text).toContain("・Tシャツ / カラー: ネイビー・サイズ: M（品番 TEE-NV-M） × 1");
     expect(text).toContain("・トート / TOTE-1 × 2");
+    expect(text).toContain("・パーカー / 限定カラー カラー: 赤（品番 HD-1） × 1");
     expect(buildTryonMails("tryon.updated", contact, BASE)[0]!.text).toContain("・Tシャツ / M × 1");
   });
   it("LINE: 受付・取り置き開始・取り消しだけ", () => {

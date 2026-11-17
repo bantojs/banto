@@ -26,9 +26,13 @@ describe("管理画面", () => {
     const admin = await Browser.loggedIn(s.app, "owner@example.com", "password-123");
     const url = `/admin/shops/${s.shop.id}/products/${s.product.id}`;
     expect(await (await admin.get(url)).text()).toContain('name="released_at"');
-    await admin.post(url, { name: "T", slug: "tee", released_present: "1", released_at: "2019-04-01T10:00", published: "on" });
+    await admin.post(url, { name: "T", slug: "tee", released_present: "1", released_at: "2019-04-01T10:00", released_orig: "", published: "on" });
     expect(s.product["released_at"]).toBe("2019-04-01T01:00:00.000Z");
-    await admin.post(url, { name: "T", slug: "tee", released_present: "1", released_at: "", published: "on" });
+    // 欄を変えずにほかの欄だけ保存したら書かない（API で入れた秒を消さない）
+    s.product["released_at"] = "2019-04-01T01:00:30.000Z";
+    await admin.post(url, { name: "T2", slug: "tee", released_present: "1", released_at: "2019-04-01T10:00", released_orig: "2019-04-01T10:00", published: "on" });
+    expect(s.product["released_at"]).toBe("2019-04-01T01:00:30.000Z");
+    await admin.post(url, { name: "T", slug: "tee", released_present: "1", released_at: "", released_orig: "2019-04-01T10:00", published: "on" });
     expect(s.product["released_at"]).toBeNull();
   });
 

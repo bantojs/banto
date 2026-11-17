@@ -94,6 +94,16 @@ describe.skipIf(!dbAvailable)("項目の定義の AI 用 API（0145）", () => {
     expect((await settings(f.shopId))["product_fields"]).toEqual([{ key: "keep", label: "keep", type: "text", public: true }]);
   });
 
+  it("全角スペース付きの選択肢も、管理画面と同じ値で保存し、会員の値の検査（banto_customer_attributes）と食い違わない", async () => {
+    const r = await set(tokens["cw"]!, "customer", [{ key: "rank", type: "select", options: ["ゴールド\u3000", "\tシルバー"] }]);
+    expect(r.fields[0]!["options"]).toEqual(["ゴールド", "シルバー"]);
+    const attrs = await asService(async (c) => (await c.query<{ r: J }>("select banto_customer_attributes($1, $2) as r", [f.shopId, JSON.stringify({ rank: "ゴールド" })])).rows[0]!.r);
+    expect(attrs).toEqual({ rank: "ゴールド" });
+    // 61 文字（コードポイント）は断る。絵文字 60 個はちょうど通る
+    expect(await expectDbError(() => set(tokens["pw"]!, "product", [{ key: "x", type: "text", label: "🍣".repeat(61) }]))).toMatch(/invalid_fields:1:label/);
+    expect((await set(tokens["pw"]!, "product", [{ key: "x", type: "text", label: "🍣".repeat(60) }])).fields[0]!["label"]).toBe("🍣".repeat(60));
+  });
+
   it("スコープ: 読み取りだけのトークン・逆の種類のトークンでは書けない。匿名・運営者の JWT からは呼べない", async () => {
     expect(await expectDbError(() => set(tokens["pr"]!, "product", []))).toMatch(/insufficient_scope|unauthorized|forbidden/);
     expect(await expectDbError(() => set(tokens["cr"]!, "customer", []))).toMatch(/insufficient_scope|unauthorized|forbidden/);
@@ -110,6 +120,9 @@ describe.skipIf(!dbAvailable)("項目の定義の AI 用 API（0145）", () => {
       [{ key: "s", type: "select", options: [" x ", "y"], card: false }, { key: "n", type: "number", label: null, options: null }],
       [{ key: "img", type: "image", public: true }],
       [{ key: "e", type: "select", options: [] }],
+      // 全角スペース・タブ・改行・NBSP・BOM（JS の trim と同じに落とす）と、サロゲートの組（コードポイントで数える）
+      [{ key: "w", label: "\u3000ランク\t", type: "select", options: ["ゴールド\u3000", "\u00a0シルバー\n", "\ufeffブロンズ"] }],
+      [{ key: "u", label: "a" + "🍣".repeat(59), type: "select", options: ["b" + "🍣".repeat(59)] }],
     ];
     for (const p of inputs) {
       const out = await norm(p, "product");
