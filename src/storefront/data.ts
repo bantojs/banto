@@ -324,7 +324,8 @@ export class StorefrontData {
     // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
     // 会員は会員限定の商品を含むのでキャッシュしない（会員の読み取りの経路は 0098 から）
     const reader = this.reader;
-    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since && !filters;
+    // 絞り込み（タグ 2 つ以上・価格）を求めた一覧はキャッシュしない（0150 の前は最初のタグだけの一覧と同じ引数になり、filtersIgnored の有無が混ざるため）
+    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since && !wants;
     const key = `plist:${JSON.stringify(args)}`;
     const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
     if (hit) return hit;

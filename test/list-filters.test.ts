@@ -70,6 +70,12 @@ describe("お店の画面", () => {
     expect(html).toContain('href="/my-shop/products?tag=blue&amp;filter.v.price.lte=5000"');
   });
 
+  it("検索の結果の価格の欄は検索の語を保つ", async () => {
+    const s = setup();
+    const html = await (await new Browser(s.app, BASE).get("/my-shop/products?q=red")).text();
+    expect(html).toContain('<input type="hidden" name="q" value="red"/>');
+  });
+
   it("0150 を当てる前は最初のタグだけで絞り、価格の欄を出さない（お店の画面は止めない）", async () => {
     const s = setup();
     s.sb.appliedMigrations = s.sb.appliedMigrations.filter((m) => m !== LIST_FILTERS_MIGRATION);
@@ -102,13 +108,24 @@ describe("公開 API", () => {
     expect(slugs(one.body)).toEqual(["blue-s", "red-s"]);
     expect(one.body.price_max).toBeUndefined();
   });
+
+  it("0150 の前: 絞り込みを求めた一覧と最初のタグだけの一覧でキャッシュを分ける（どちらの順でも）", async () => {
+    const a = setup();
+    a.sb.appliedMigrations = a.sb.appliedMigrations.filter((m) => m !== LIST_FILTERS_MIGRATION);
+    expect((await api(a.app, "?tag=red&tag=sale")).status).toBe(409);
+    expect((await api(a.app, "?tag=red")).status).toBe(200);
+    const b = setup();
+    b.sb.appliedMigrations = b.sb.appliedMigrations.filter((m) => m !== LIST_FILTERS_MIGRATION);
+    expect((await api(b.app, "?tag=red")).status).toBe(200);
+    expect((await api(b.app, "?tag=red&filter.v.price.lte=1500")).status).toBe(409);
+  });
 });
 
 describe("テーマ（Liquid）", () => {
-  it("collection.filters の price_range は Shopify と同じ名前（値は円）", () => {
+  it("collection.filters の price_range は Shopify と同じ名前（値はほかの金額と同じく 100 倍、URL は円）", () => {
     const f = priceRangeFilter({ min: 1000, max: undefined, rangeMax: 8000, urlToRemove: "/s/products?tag=a" });
-    expect(f).toMatchObject({ type: "price_range", param_name: "filter.v.price", range_max: 8000, active: true, url_to_remove: "/s/products?tag=a" });
-    expect(f.min_value).toMatchObject({ param_name: "filter.v.price.gte", value: 1000, active: true });
+    expect(f).toMatchObject({ type: "price_range", param_name: "filter.v.price", range_max: 800000, active: true, url_to_remove: "/s/products?tag=a" });
+    expect(f.min_value).toMatchObject({ param_name: "filter.v.price.gte", value: 100000, active: true });
     expect(f.max_value).toMatchObject({ param_name: "filter.v.price.lte", value: null, active: false });
   });
 });

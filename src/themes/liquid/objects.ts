@@ -274,7 +274,8 @@ export function reviewsLiquid(r: ProductReviews | null) {
 }
 
 /**
- * 価格の絞り込み（0150）の Liquid の形。Shopify の collection.filters の price_range と同じ名前（値は円）。
+ * 価格の絞り込み（0150）の Liquid の形。Shopify の collection.filters の price_range と同じ名前。
+ * 値（min_value.value・max_value.value・range_max）はほかの金額と同じく最小の単位の 100 倍（`| money_without_currency` で円に）、URL の値は円。
  * url_to_remove は価格だけを外した今の一覧の URL
  */
 export function priceRangeFilter(p: { min?: number | undefined; max?: number | undefined; rangeMax: number | null; urlToRemove: string }) {
@@ -289,9 +290,9 @@ export function priceRangeFilter(p: { min?: number | undefined; max?: number | u
     values: [],
     false_value: null,
     true_value: null,
-    min_value: { param_name: "filter.v.price.gte", value: p.min ?? null, active: p.min !== undefined, label: t("store.price_min") },
-    max_value: { param_name: "filter.v.price.lte", value: p.max ?? null, active: p.max !== undefined, label: t("store.price_max") },
-    range_max: p.rangeMax ?? 0,
+    min_value: { param_name: "filter.v.price.gte", value: money(p.min), active: p.min !== undefined, label: t("store.price_min") },
+    max_value: { param_name: "filter.v.price.lte", value: money(p.max), active: p.max !== undefined, label: t("store.price_max") },
+    range_max: money(p.rangeMax) ?? 0,
     active,
     url_to_remove: p.urlToRemove,
   };

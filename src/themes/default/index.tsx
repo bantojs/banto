@@ -593,7 +593,7 @@ export const defaultTheme: Theme = {
         ) : null}
         {!top && heading ? <h1>{heading}</h1> : null}
         {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
-        <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} category={category} sort={sort} />
+        <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} category={category} q={q} sort={sort} />
         {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={q} sort={sort} /> : null}
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />

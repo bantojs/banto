@@ -180,7 +180,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | ページ | テンプレート | 渡すもの |
 | --- | --- | --- |
 | トップ（`/`。トップのひな形があればそのページ） | `index`（無ければ `collection`） | `collection`（すべての商品の 1 ページ目）・`products` |
-| すべての商品（`/products`）・カテゴリーの一覧（`/categories/<カテゴリー>`）。`?tag=` で絞ったものも | `collection` | `collection`・`products`・`current_tags`（選んだタグすべて。`?tag=` をくり返すとすべてを持つ商品、0150）。`collection.filters` は 0150 から価格の絞り込み 1 つ（Shopify の `price_range` と同じ形: `param_name`（`filter.v.price`）・`min_value` / `max_value`（`param_name` が `filter.v.price.gte` / `lte`・`value` は円か null）・`range_max`（公開の一覧のいちばん高い一覧の価格）・`url_to_remove`）。カテゴリーの `collection.description`（改行を `<br>` にした HTML）と `collection.image`（`featured_image` も同じ。無ければ空）は 0113 のカテゴリーの説明と画像（docs/storefront.md） |
+| すべての商品（`/products`）・カテゴリーの一覧（`/categories/<カテゴリー>`）。`?tag=` で絞ったものも | `collection` | `collection`・`products`・`current_tags`（選んだタグすべて。`?tag=` をくり返すとすべてを持つ商品、0150）。`collection.filters` は 0150 から価格の絞り込み 1 つ（Shopify の `price_range` と同じ形: `param_name`（`filter.v.price`）・`min_value` / `max_value`（`param_name` が `filter.v.price.gte` / `lte`・`value` はほかの金額と同じく最小の単位の 100 倍か null、`| money_without_currency` で円に。URL の値は円）・`range_max`（公開の一覧のいちばん高い一覧の価格、同じ単位）・`url_to_remove`）。カテゴリーの `collection.description`（改行を `<br>` にした HTML）と `collection.image`（`featured_image` も同じ。無ければ空）は 0113 のカテゴリーの説明と画像（docs/storefront.md） |
 | 商品 | `product` | `product`・`current_variant` |
 | 見つからない | `404` | — |
 | カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
