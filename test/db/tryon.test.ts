@@ -124,6 +124,10 @@ describe.skipIf(!dbAvailable)("お店で試着（0025_store_tryon）", () => {
     expect(await asService(async (c) => (await c.query<{ n: number }>("select tryon_expire('2026-10-21') as n")).rows[0]!.n)).toBe(1);
     const ct = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select tryon_contact($1, $2) as r", [r.id, f.shopId])).rows[0]!.r);
     expect(ct).toMatchObject({ number: 2, status: "expired", customer_email: "buyer@example.com", store: { name: "渋谷店", email: "shibuya@example.com", notify_email: true }, items: [{ qty: 1 }] });
+    // 0147: 品目に品番と SKU の選択肢、ショップに選択肢の表示名
+    const code = (await getPool().query<{ code: string }>("select code from skus where id = $1", [f.skuId])).rows[0]!.code;
+    expect((ct["items"] as Record<string, unknown>[])[0]).toMatchObject({ code, options: expect.any(Object) });
+    expect(ct["shop"]).toHaveProperty("option_names");
     expect(await expectDbError(() => asAnon((c) => c.query("select tryon_contact($1, $2)", [r.id, f.shopId])))).toMatch(/permission denied/);
     await getPool().query("update tryon_requests set closed_at = now() - interval '200 days' where id = $1", [r.id]);
     expect(await asService(async (c) => (await c.query<{ n: number }>("select mask_tryon_requests(180) as n")).rows[0]!.n)).toBe(1);

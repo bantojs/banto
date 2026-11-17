@@ -6,6 +6,7 @@
  * 店舗の住所・営業時間・臨時休業も載せる（何時ごろ行けばよいか分かるように）。
  */
 import { shopHome } from "../../storefront/urls";
+import { namedOptionEntries, optionNamesOf } from "../../products/option-names";
 import { dateLabel, upcomingSpecialDays, todayHere, weeklyLines, formatRanges, type StoreRow } from "./index";
 
 export interface TryonContact {
@@ -20,8 +21,9 @@ export interface TryonContact {
   note: string | null;
   store: Pick<StoreRow, "name" | "postal_code" | "address" | "phone" | "hours" | "special_days"> & { email: string | null; notify_email: boolean };
   /** storefront は 0069 から（お店の画面を使わないショップは、メールの「お店」のリンクを外のサイトへ） */
-  shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; settings?: Record<string, unknown> | null; storefront?: { mode?: string | null; site_url?: string | null } | null };
-  items: { name: string | null; sku: string | null; qty: number; unit_price_jpy: number }[];
+  shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; settings?: Record<string, unknown> | null; storefront?: { mode?: string | null; site_url?: string | null } | null; /** 0147。SKU の options の key → 表示名 */ option_names?: unknown };
+  /** code・options は 0147 から（それより前の DB では無い） */
+  items: { name: string | null; sku: string | null; code?: string | null; options?: Record<string, unknown> | null; qty: number; unit_price_jpy: number }[];
 }
 
 export interface TryonMail {
@@ -48,7 +50,20 @@ function storeBlock(c: TryonContact): string {
   return lines.join("\n");
 }
 
-const itemLines = (c: TryonContact) => c.items.map((i) => `・${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}`).join("\n");
+/**
+ * 品目の行。SKU の選択肢があれば「品名 / カラー: ネイビー・サイズ: M（品番 TEE-NV-M）× 1」（0147。表示名は 0094 の option_names）、
+ * 無ければ「品名 / SKU の名前 × 1」
+ */
+function itemLines(c: TryonContact): string {
+  const names = optionNamesOf(c.shop.option_names);
+  return c.items
+    .map((i) => {
+      const opts = namedOptionEntries(i.options && typeof i.options === "object" ? i.options : null, names).filter(([, v]) => v !== "");
+      if (opts.length === 0) return `・${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}`;
+      return `・${i.name ?? ""} / ${opts.map(([k, v]) => `${k}: ${v}`).join("・")}${i.code ? `（品番 ${i.code}）` : ""} × ${i.qty}`;
+    })
+    .join("\n");
+}
 
 export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: string | undefined): TryonMail[] {
   const out: TryonMail[] = [];

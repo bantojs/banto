@@ -356,6 +356,20 @@ describe("お店で試着（お知らせの文）", () => {
     const full = buildTryonMails("tryon.updated", { ...contact, shop: { ...contact.shop, storefront: { mode: "full", site_url: "https://wp.example.com/" } } }, BASE)[0]!;
     expect(full.text).toContain(`${BASE}/my-shop`);
   });
+  it("品目: SKU の選択肢を表示名で（0147、品番つき）。選択肢の無い SKU と古い DB の形は今までどおり", () => {
+    const withOpts = {
+      ...contact,
+      shop: { ...contact.shop, option_names: { color: "カラー", size: "サイズ" } },
+      items: [
+        { name: "Tシャツ", sku: "ネイビー / M", code: "TEE-NV-M", options: { color: "ネイビー", size: "M" }, qty: 1, unit_price_jpy: 3000 },
+        { name: "トート", sku: "TOTE-1", code: "TOTE-1", options: {}, qty: 2, unit_price_jpy: 2000 },
+      ],
+    };
+    const text = buildTryonMails("tryon.updated", withOpts, BASE)[0]!.text;
+    expect(text).toContain("・Tシャツ / カラー: ネイビー・サイズ: M（品番 TEE-NV-M） × 1");
+    expect(text).toContain("・トート / TOTE-1 × 2");
+    expect(buildTryonMails("tryon.updated", contact, BASE)[0]!.text).toContain("・Tシャツ / M × 1");
+  });
   it("LINE: 受付・取り置き開始・取り消しだけ", () => {
     const r = { number: 7, status: "ready", hold_until: "2026-10-24", store_name: "渋谷店", shop_name: "マイショップ" };
     expect(tryonLineMessage("tryon.updated", r)).toContain("10月24日まで");
