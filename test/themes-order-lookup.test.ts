@@ -14,7 +14,7 @@ const LOOKUP = `<section class="lookup" data-member="{{ lookup.member }}">
 {% if lookup.error %}<p class="err">{{ lookup.error }}</p>{% endif %}
 {% unless lookup.member %}{% form 'order_lookup' %}<input name="number" value="{{ lookup.values.number }}"><input name="email" value="{{ lookup.values.email }}"><button>照会</button>{% endform %}{% endunless %}
 {% if lookup.order %}{% assign o = lookup.order %}<h2 class="no">{{ o.name }} {{ o.status_label }}</h2>
-{% for li in o.line_items %}<p class="li">{{ li.title }} / {{ li.variant_title }} x{{ li.quantity }} {{ li.line_price | money }}</p>{% endfor %}
+{% for d in o.discounts %}<p class="dc">{{ d.title }} -{{ d.amount | money }}</p>{% endfor %}{% for li in o.line_items %}<p class="li">{{ li.title }} / {{ li.variant_title }} x{{ li.quantity }} {{ li.line_price | money }}</p>{% endfor %}
 <p class="ship">{{ o.shipping_price | money }}</p><p class="total">{{ o.total_price | money }}</p>
 {% if o.tracking %}<a class="tr" href="{{ o.tracking.url }}">{{ o.tracking.carrier_label }} {{ o.tracking.number }}</a>{% endif %}
 {% if lookup.receipt %}{% form 'order_receipt' %}<input name="name"><button>領収書</button>{% endform %}{% endif %}
@@ -31,12 +31,12 @@ const files: Record<string, string> = {
 let dispose = () => {};
 afterEach(() => dispose());
 
-function setup(themeFiles: Record<string, string> = files) {
+function setup(themeFiles: Record<string, string> = files, modules: Record<string, boolean> = { receipt: true, inquiries: true }) {
   forgetThemes();
   const sb = new FakeSupabase();
   sb.sitePlan = "paid";
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
-  const shop = sb.addShop(owner.id, { slug: "s", name: "照会のお店", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { members_enabled: true, modules: { receipt: true, inquiries: true }, contact_email: "shop@example.com" } });
+  const shop = sb.addShop(owner.id, { slug: "s", name: "照会のお店", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { members_enabled: true, modules, contact_email: "shop@example.com" } });
   const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
   row["domain"] = "shop.example.jp";
   row["theme_public"] = { id: VERSION, storage_key: `themes/${shop.id}/${VERSION}/bundle.json`, settings: {} };
@@ -87,6 +87,23 @@ describe("テーマで描く注文照会（templates/order_lookup）", () => {
     expect(nf.status).toBe(404);
     expect(await nf.text()).toContain('<p class="err">');
     expect((await b.post("/orders/lookup", { number: "abc", email: "x@example.com" })).status).toBe(400);
+  });
+
+  it("領収書のフォームは支払い済み・発送済みで領収書のモジュールが ON のときだけ。値引きの行。照会の外れでも CSP と覚えさせない", async () => {
+    const { sb, b } = setup();
+    Object.assign(sb.tables.orders[0]!, { discounts: [{ code: "OFF10", name: "秋のセール", amount_jpy: 300 }] });
+    const shipped = await (await b.post("/orders/lookup", { number: "1001", email: "buyer@example.com" })).text();
+    expect(shipped).toContain('action="/orders/receipt"');
+    expect(shipped).toContain('<p class="dc">秋のセール -¥300</p>');
+    Object.assign(sb.tables.orders[0]!, { status: "cancelled" });
+    expect(await (await b.post("/orders/lookup", { number: "1001", email: "buyer@example.com" })).text()).not.toContain('action="/orders/receipt"');
+    const other = setup(files, { inquiries: false, receipt: false });
+    const off = await (await other.b.post("/orders/lookup", { number: "1001", email: "buyer@example.com" })).text();
+    expect(off).not.toContain('action="/orders/receipt"');
+    expect(off).not.toContain('action="/inquiries/new"');
+    const nf = await b.post("/orders/lookup", { number: "1001", email: "other@example.com" });
+    expect(nf.headers.get("content-security-policy")).toBe(CHECKOUT_CSP);
+    expect(nf.headers.get("cache-control")).toContain("no-store");
   });
 
   it("テーマに templates/order_lookup が無ければ既定のテーマ", async () => {
