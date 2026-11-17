@@ -97,9 +97,10 @@ function mapRpcError(e: unknown): never {
     // 商品の会員限定（0144）
     if (e.is("audience_not_found")) throw new ApiError("invalid", "audience_not_found: no audience with this id or name in this shop (GET /audiences lists them)", 400);
     if (e.is("audience_display_only")) throw new ApiError("invalid", "audience_display_only: this audience uses URL parameters and cannot be put on products (product_usable is false in GET /audiences)", 400);
-    if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
+    // is() は前方一致なので、長い名前（invalid_audience_mode / _hide）を invalid_audience より先に見る
     if (e.is("invalid_audience_mode")) throw new ApiError("invalid", "invalid_audience_mode: hide or buy", 400);
     if (e.is("invalid_audience_hide")) throw new ApiError("invalid", "invalid_audience_hide: true or false", 400);
+    if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
     if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);

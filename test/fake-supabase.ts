@@ -3234,8 +3234,14 @@ export class FakeSupabase {
           if (a === undefined) return json({ code: "22023", message: "audience_not_found" }, 400);
           p["audience_id"] = a ? a["id"] : null;
         }
-        if (v["audience_mode"] !== undefined) p["audience_mode"] = v["audience_mode"];
-        if (v["audience_hide"] !== undefined) p["audience_hide"] = v["audience_hide"];
+        if (v["audience_mode"] !== undefined) {
+          if (v["audience_mode"] !== "hide" && v["audience_mode"] !== "buy") return json({ code: "22023", message: "invalid_audience_mode" }, 400);
+          p["audience_mode"] = v["audience_mode"];
+        }
+        if (v["audience_hide"] !== undefined) {
+          if (typeof v["audience_hide"] !== "boolean") return json({ code: "22023", message: "invalid_audience_hide" }, 400);
+          p["audience_hide"] = v["audience_hide"];
+        }
         this.enqueue(shopId, "product.updated", { product_id: p["id"] });
         return json(product(p));
       }
