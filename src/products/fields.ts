@@ -9,6 +9,8 @@ export type FieldType = "text" | "textarea" | "number" | "url" | "select" | "ima
 export const FIELD_TYPES: readonly FieldType[] = ["text", "textarea", "number", "url", "select", "image"];
 /** WooCommerce のメタ（洗濯表示のフラグ・サイズ寸法など）を受け止められる数。管理画面の商品フォームが長くなるので、まとめ方は今後の課題 */
 export const MAX_FIELDS = 150;
+/** 項目の定義を AI 用 API で読み書きする（0145、docs/ai-access.md §19）。当たるまで口を出さない */
+export const FIELD_DEFS_MIGRATION = "0145_api_field_definitions";
 
 export interface ProductField {
   /** 値の保存キー（英小文字・数字・アンダースコア、1〜40 文字） */

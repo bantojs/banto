@@ -94,6 +94,10 @@ v1.get("/products", async (c) =>
 );
 v1.get("/categories", async (c) => api(c).categoriesList().then((r) => c.json({ categories: r })).catch((e) => errorJson(c, e)));
 v1.post("/categories", async (c) => body(c).then((b) => api(c).categorySave(b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/product-fields", async (c) => api(c).fieldDefsGet("product").then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.put("/product-fields", async (c) => body(c).then((b) => api(c).fieldDefsSet("product", b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/customer-fields", async (c) => api(c).fieldDefsGet("customer").then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.put("/customer-fields", async (c) => body(c).then((b) => api(c).fieldDefsSet("customer", b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/audiences", async (c) => api(c).audiencesList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.post("/products", async (c) => body(c).then((b) => api(c).productCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
 v1.get("/products/:id", async (c) => api(c).productGet({ id: c.req.param("id") }).then((r) => c.json(r)).catch((e) => errorJson(c, e)));

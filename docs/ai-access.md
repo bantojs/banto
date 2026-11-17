@@ -379,3 +379,32 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - `GET /api/v1/audiences`（MCP の `audiences_list`、`products:read`）: `{ "items": [{ "id", "name", "product_usable" }] }`。`product_usable` が false の条件は商品に付けられません。条件の中身は返しません。モジュールが OFF なら 409 `module_disabled`。
 - 公開中の商品に hide を付けると、その場でお店の一覧・検索・件数・サイトマップ・商品フィードから消えます。まとめて付ける前に、数件で見え方を確かめてください。
 - データベースの更新 `0144_api_product_audience` が要ります。当たるまでは、会員の条件の欄と `GET /audiences` を 409（`migration_required`）で断ります（欄を黙って捨てないため）。
+
+## 19. 商品の項目・会員の項目の定義（0145）
+
+管理画面の「カスタム項目」（商品）と「会員の項目」の定義を、API で読み書きします。ほかのカートから移すスクリプトで、値（`attributes`）と一緒に定義も入れられます（定義が無い項目は、お店の画面と会員の一覧に出ません）。
+
+| 口 | スコープ（項目） | MCP |
+| --- | --- | --- |
+| `GET /api/v1/product-fields` | `products:read`（catalog） | `product_fields_get` |
+| `PUT /api/v1/product-fields` | `products:write`（catalog） | `product_fields_set` |
+| `GET /api/v1/customer-fields` | `customers:read`（customers） | `customer_fields_get` |
+| `PUT /api/v1/customer-fields` | `customers:write`（customers） | `customer_fields_set` |
+
+- 本文と応答は `{ "fields": [...] }`。1 つの項目は次の形です（管理画面と同じ）。
+
+  | 欄 | 形 | 意味 |
+  | --- | --- | --- |
+  | `key` | 必須。英小文字で始まる英小文字・数字・`_`、40 文字まで。重ならない | 値の保存キー（`attributes` の鍵） |
+  | `label` | 1〜60 文字（無ければ `key`） | 表示名 |
+  | `type` | 必須。`text` / `textarea` / `number` / `url` / `select` / `image` | 種類（会員の項目は `image` を使えない） |
+  | `options` | `select` だけ。1〜60 文字を 50 個まで | 選択肢 |
+  | `public` | 真偽（商品だけ、既定 true） | お店の画面と公開 API に出すか |
+  | `card` | 真偽（商品の公開の項目だけ） | 一覧のカードにも出すか |
+
+- **PUT は丸ごと置き換え**です。送らなかった項目は定義から消えます（値は商品・会員に残ります）。先に GET で今の定義を読み、足したり直したりしたものを送ってください。150 個まで。
+- 形の検査はデータベースが行い、違えば 400 `invalid_fields:<何番目>:<理由>`（理由は `key`・`duplicate_key`・`type`・`label`・`options`・`options_not_select`・`public`・`card`・`unknown_property`・`not_object`、配列でなければ `invalid_fields:not_array`、多すぎれば `invalid_fields:too_many`）で断ります。管理画面と違い、合わない行を黙って捨てません。前後の空白は取ります。
+- 会員の項目はお客様の画面に出さないので、`public: true`・`card: true` は断ります。
+- GET は、保存されている定義を管理画面と同じ読み方で返します（管理画面で入れた古い形の行も同じに見えます）。
+- データベースの更新 `0145_api_field_definitions` が要ります。当たるまでは 409（`migration_required`）です。
+
