@@ -62,6 +62,11 @@ export function memberAccountUrl(baseUrl: string, shop: ShopUrlParts & { setting
 /** 一覧の条件（タグ・検索の語・ページ送りの位置） */
 export interface ListQuery {
   tag?: string | null | undefined;
+  /** 選んだタグ（?tag= をくり返す。すべてを持つ商品。0150）。あれば tag より先 */
+  tags?: readonly string[] | null | undefined;
+  /** 価格の上下限（?filter.v.price.gte= / lte=、円。0150、src/storefront/list-filter.ts） */
+  priceMin?: number | null | undefined;
+  priceMax?: number | null | undefined;
   q?: string | null | undefined;
   after?: string | null | undefined;
   /** 並べ方（src/storefront/list-sort.ts。既定の new は渡さない） */
@@ -81,14 +86,25 @@ export function productUrl(shopPath: string, slug: string, extra: Record<string,
   return withQuery(`${shopPath}/products/${enc(slug)}`, extra);
 }
 
+/** 一覧のクエリ（タグ・価格・検索の語・並べ方・ページの位置の順） */
+const withListQuery = (path: string, q: ListQuery) => {
+  const p = new URLSearchParams();
+  for (const t of q.tags && q.tags.length > 0 ? q.tags : q.tag ? [q.tag] : []) p.append("tag", t);
+  if (q.priceMin !== null && q.priceMin !== undefined) p.set("filter.v.price.gte", String(q.priceMin));
+  if (q.priceMax !== null && q.priceMax !== undefined) p.set("filter.v.price.lte", String(q.priceMax));
+  for (const [k, v] of [["q", q.q], ["sort", q.sort], ["after", q.after]] as const) if (v) p.set(k, v);
+  const qs = p.toString();
+  return qs ? `${path}?${qs}` : path;
+};
+
 /** すべての商品の一覧 */
 export function productsUrl(shopPath: string, q: ListQuery = {}): string {
-  return withQuery(`${shopPath}/products`, { tag: q.tag, q: q.q, sort: q.sort, after: q.after });
+  return withListQuery(`${shopPath}/products`, q);
 }
 
 /** カテゴリーの一覧（子のカテゴリーの商品も含む） */
 export function categoryUrl(shopPath: string, slug: string, q: ListQuery = {}): string {
-  return withQuery(`${shopPath}/categories/${enc(slug)}`, { tag: q.tag, q: q.q, sort: q.sort, after: q.after });
+  return withListQuery(`${shopPath}/categories/${enc(slug)}`, q);
 }
 
 /** 一覧（カテゴリーがあればカテゴリーの一覧、無ければすべての商品） */

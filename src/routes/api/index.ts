@@ -11,6 +11,7 @@ import { sizeChartJson, sizeChartOf } from "../../size-charts/chart";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, listTagsOf, priceParamOf } from "../../storefront/list-filter";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
 import { cardAttributes, productFields, publicAttributes } from "../../products/fields";
@@ -98,10 +99,12 @@ api.get("/shops/:shop", async (c: Ctx) => {
 /**
  * 商品一覧。?tag=&category=&brand=&q=&updated_since=&sort=new|updated|price_asc|price_desc|name&limit=&offset=&cursor=
  * （limit は既定・上限 100）。category は子孫のカテゴリーを含む。
+ * tag はくり返すとすべてを持つ商品（5 つまで）、価格は ?filter.v.price.gte= / lte=（円、一覧の価格 = いちばん安い SKU。0150、
+ * 当たる前の DB では 409 migration_required。src/storefront/list-filter.ts）。
  * ページ送りは cursor（前の応答の next_cursor）。offset は 10,000 まで（docs/headless.md）。
  * q は 3 文字から（2 文字以下はタグ・カテゴリー・ブランドの絞り込みと一緒のときだけ）。
  * total は最初のページ（cursor も offset も無いとき）だけ、10,000 まで数える（超えたら total_capped: true、2 ページ目からは null）。検索の語があるときの offset は 1,000 まで。
- * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）で、連携側の絞り込み UI に使う。
+ * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）、price_max はいちばん高い一覧の価格（0150 から）で、連携側の絞り込み UI に使う。
  */
 api.get("/shops/:shop/products", async (c: Ctx) => {
   const d = data(c);
@@ -113,7 +116,7 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const cursor = c.req.query("cursor") || undefined;
   if ((query.offset ?? 0) > (query.q ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return c.json({ error: "invalid_request", field: "offset" }, 400);
   // 2 文字以下の語はタグ・カテゴリー・ブランドで絞っているときだけ（product_public_list と同じ。全件を見る検索をさせない）
-  if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tag && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
+  if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tags?.length && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
   const categories = await d.sf.listCategories(shop);
   // 会員トークンの会員には会員限定の商品も（0098）
   const sf = await apiViewerData(c, d.sf, shop);
@@ -122,6 +125,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const first = !cursor && !query.offset;
   const [page, facets] = await Promise.all([sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
   if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
+  // タグ 2 つ以上・価格は 0150 から（黙って絞らずに返さない）
+  if (page.filtersIgnored) return c.json({ error: "migration_required" }, 409);
   const catById = new Map(categories.map((x) => [x.id, x]));
   const cardFields = productFields(shop.settings).filter((f) => f.card);
   return c.json({
@@ -152,14 +157,25 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
     next_offset: page.nextOffset,
     next_cursor: page.nextCursor,
     tags: facets.tags,
+    // 公開の一覧のいちばん高い一覧の価格（価格の絞り込みの欄の上限。0150 から）
+    ...(facets.price_max !== undefined ? { price_max: facets.price_max } : {}),
   });
 });
 
 /** クエリ文字列 → ProductQuery。形が違う項目があればその名前を返す */
 function productQuery(c: Ctx): ProductQuery | string {
   const out: ProductQuery = {};
-  const tag = c.req.query("tag");
-  if (tag) out.tag = tag;
+  const rawTags = (c.req.queries("tag") ?? []).filter((x) => x.trim() !== "");
+  const tags = listTagsOf(rawTags);
+  if (new Set(rawTags.map((x) => x.trim())).size > LIST_TAGS_MAX) return "tag";
+  if (tags.length > 0) out.tags = tags;
+  for (const [k, name] of [["priceMin", PRICE_GTE_PARAM], ["priceMax", PRICE_LTE_PARAM]] as const) {
+    const v = c.req.query(name);
+    if (v === undefined || v === "") continue;
+    const n = priceParamOf(v);
+    if (n === undefined) return name;
+    out[k] = n;
+  }
   const category = c.req.query("category");
   if (category) out.category = category;
   const brand = c.req.query("brand");

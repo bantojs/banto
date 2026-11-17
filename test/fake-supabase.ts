@@ -1297,10 +1297,17 @@ export class FakeSupabase {
     const limit = Math.min(Math.max(Number(args["p_limit"] ?? 24) || 24, 1), 100);
     const offset = Math.max(Number(args["p_offset"] ?? 0) || 0, 0);
     if (offset > (typeof args["p_q"] === "string" && args["p_q"].trim() ? 1000 : 10000)) return json({ code: "22023", message: "offset_too_large" }, 400);
+    // 0150: 複数のタグ（すべてを持つ）と価格の上下限。当たる前の DB には引数が無い（PostgREST は関数なしの 404）
+    const filterArgs = ["p_tags", "p_price_min", "p_price_max"].filter((k) => k in args);
+    if (filterArgs.length > 0 && !this.appliedMigrations.includes("0150_product_list_filters")) return json({ code: "PGRST202", message: "Could not find the function public.product_public_list" }, 404);
+    const wantTags = [...new Set([...((args["p_tags"] as string[] | null) ?? []), ...(typeof args["p_tag"] === "string" ? [args["p_tag"]] : [])].map((t) => [...t.trim()].slice(0, 50).join("")).filter(Boolean))];
+    if (wantTags.length > 5) return json({ code: "22023", message: "too_many_tags" }, 400);
+    const priceMin = args["p_price_min"] == null ? null : Number(args["p_price_min"]);
+    const priceMax = args["p_price_max"] == null ? null : Number(args["p_price_max"]);
+    if ((priceMin !== null && priceMin < 0) || (priceMax !== null && priceMax < 0)) return json({ code: "22023", message: "invalid_price_filter" }, 400);
     const rawQ = typeof args["p_q"] === "string" ? args["p_q"].trim() : "";
-    if (rawQ && [...rawQ].length < 3 && !args["p_tag"] && !args["p_category_ids"] && !args["p_brand"]) return json({ code: "22023", message: "q_too_short" }, 400);
+    if (rawQ && [...rawQ].length < 3 && wantTags.length === 0 && !args["p_category_ids"] && !args["p_brand"]) return json({ code: "22023", message: "q_too_short" }, 400);
     const sort = String(args["p_sort"] ?? "new");
-    const tag = args["p_tag"] as string | null;
     const cats = args["p_category_ids"] as string[] | null;
     const brand = args["p_brand"] as string | null;
     const q = typeof args["p_q"] === "string" && args["p_q"].trim() ? args["p_q"].trim().slice(0, 100).toLowerCase() : null;
@@ -1322,7 +1329,7 @@ export class FakeSupabase {
     const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300)].join(" ").toLowerCase();
     let rows: Entry[] = this.tables.products
       .filter((p) => p["shop_id"] === shopId && p["published"] === true && this.productOpen(p, aud))
-      .filter((p) => !tag || tagsOf(p).includes(tag))
+      .filter((p) => wantTags.every((t) => tagsOf(p).includes(t)))
       .filter((p) => !cats || cats.includes(String(p["category_id"])) || ((p["extra_category_ids"] ?? []) as string[]).some((c) => cats.includes(c)))
       .filter((p) => !brand || p["brand"] === brand)
       .filter((p) => !q || text(p).includes(q))
@@ -1331,6 +1338,7 @@ export class FakeSupabase {
         const lp = this.listPrice(p["id"]);
         return { p, key: keyOf[sort]!({ p, price: lp.price }), price: lp.price, compareAt: lp.compareAt };
       })
+      .filter((e) => (priceMin === null || (e.price !== null && e.price >= priceMin)) && (priceMax === null || (e.price !== null && e.price <= priceMax)))
       .sort(order);
     const total = rows.length;
     const after = args["p_after"] as { k: string | number; id: string } | null;
@@ -1387,8 +1395,10 @@ export class FakeSupabase {
     return json({ items });
   }
 
-  private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number> } {
-    if (!this.shopPublished(shopId)) return { tags: [], categories: {} };
+  private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number>; price_max?: number | null } {
+    // 0150 から price_max（公開の一覧に出る商品のいちばん高い一覧の価格）
+    const withMax = this.appliedMigrations.includes("0150_product_list_filters");
+    if (!this.shopPublished(shopId)) return { tags: [], categories: {}, ...(withMax ? { price_max: null } : {}) };
     const products = this.tables.products.filter((p) => p["shop_id"] === shopId && p["published"] === true);
     const tags = new Map<string, number>();
     for (const p of products) for (const t of new Set(Array.isArray(p["tags"]) ? (p["tags"] as string[]) : [])) tags.set(t, (tags.get(t) ?? 0) + 1);
@@ -1405,6 +1415,7 @@ export class FakeSupabase {
     return {
       tags: [...tags].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0)).slice(0, tagLimit),
       categories: counts,
+      ...(withMax ? { price_max: products.filter((p) => this.productOpen(p, [])).reduce<number | null>((m, p) => { const v = this.listPrice(p["id"]).price; return v !== null && (m === null || v > m) ? v : m; }, null) } : {}),
     };
   }
 

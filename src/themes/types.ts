@@ -86,6 +86,10 @@ export interface Theme {
     products: ProductSummary[];
     tag?: string;
     tags?: { tag: string; count: number }[];
+    /** 選んでいる絞り込み（0150。タグはすべてを持つ商品、価格は一覧の価格の円）。tag は tags[0] */
+    filter?: { tags: string[]; priceMin?: number; priceMax?: number };
+    /** 価格の欄の上限（公開の一覧のいちばん高い一覧の価格）。無ければ価格の欄を出さない（0150 の前） */
+    priceRange?: { max: number | null };
     /** カテゴリーの木（ナビゲーション用）と、カテゴリーの一覧（/categories/<カテゴリー>）のときのカテゴリー */
     categories?: CategoryNode[];
     /** description・image は 0113（カテゴリーの説明と画像）。無ければ出さない */
