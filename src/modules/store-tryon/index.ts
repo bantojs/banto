@@ -99,7 +99,12 @@ export interface TryonSettings {
   max_open_per_ip: number;
   /** 店舗に送る前の申し込みを期限切れにする日数（0090。Cron の tryon_expire） */
   request_days: number;
+  /** 来店期限の前日のお知らせを送る時刻（0〜23、ショップの時間帯）。null なら送らない（0152。Cron の tryon_remind） */
+  reminder_hour: number | null;
 }
+
+/** 前日のお知らせ（0152）が当たっていれば DB が送る */
+export const TRYON_REMINDER_MIGRATION = "0152_tryon_reminder";
 
 /** 取り置きの延長（0151）が当たっていれば DB が延長を受ける */
 export const TRYON_EXTEND_MIGRATION = "0151_tryon_extend";
@@ -143,6 +148,7 @@ export function tryonSettings(settings: Record<string, unknown> | null | undefin
     max_open_per_customer: int(o["max_open_per_customer"], 1, 9999, TRYON_LIMIT_DEFAULTS.max_open_per_customer),
     max_open_per_ip: int(o["max_open_per_ip"], 1, 9999, TRYON_LIMIT_DEFAULTS.max_open_per_ip),
     request_days: int(o["request_days"], 1, 9999, TRYON_LIMIT_DEFAULTS.request_days),
+    reminder_hour: typeof o["reminder_hour"] === "number" && Number.isInteger(o["reminder_hour"]) && o["reminder_hour"] >= 0 && o["reminder_hour"] <= 23 ? o["reminder_hour"] : null,
   };
 }
 
@@ -296,6 +302,12 @@ export function weeklyLines(store: Pick<StoreRow, "hours">): { day: string; text
 
 export function todayHere(now: number = Date.now()): string {
   return todayIn(getTimeZone(), now);
+}
+
+/** ショップの時間帯の今の時刻（0〜23。前日のお知らせを送る時刻と比べる、0152） */
+export function hourHere(now: number = Date.now()): number {
+  const h = Number(new Intl.DateTimeFormat("en-US", { timeZone: getTimeZone(), hour: "numeric", hourCycle: "h23" }).format(new Date(now)));
+  return Number.isInteger(h) && h >= 0 && h <= 23 ? h : 0;
 }
 
 /** テーマに渡す店舗の表示（今日の営業・曜日ごとの営業時間・近い臨時休業 / 臨時営業） */

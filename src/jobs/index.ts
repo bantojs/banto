@@ -17,7 +17,7 @@ import { setLocale } from "../i18n";
 import { setTimeZone } from "../i18n/time";
 import { registerFeedJob } from "../modules/product-feed/job";
 import { registerImageImportJob } from "../modules/woo-import/job";
-import { todayHere } from "../modules/store-tryon";
+import { TRYON_REMINDER_MIGRATION, hourHere, todayHere } from "../modules/store-tryon";
 import { SALE_DATES_MIGRATION } from "../products/fields";
 import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
@@ -91,6 +91,8 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const raw = cfg.get("MASK_ORDERS_AFTER_DAYS");
     const days = raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS;
     await db.tryonExpire(todayHere());
+    // 来店期限の前日のお知らせ（0152。当てる前の DB では何もしない）
+    if ((await db.appliedMigrations()).includes(TRYON_REMINDER_MIGRATION)) await db.tryonRemind(todayHere(), hourHere());
     await db.maskTryonRequests(days);
   });
 
