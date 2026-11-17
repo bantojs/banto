@@ -31,16 +31,15 @@ const reminders = (sb: FakeSupabase) => sb.tables.hook_deliveries.filter((d) => 
 
 describe("Cron（tryon）", () => {
   it("時刻の設定を過ぎていれば、期限が明日の取り置きに 1 回だけ積む。0152 を当てる前は呼ばない", async () => {
-    const on = setup({ reminder_hour: 0 });
+    const on = setup({ reminder_hour: hourHere() });
     await runTryonJob(on.sb);
     await runTryonJob(on.sb);
     expect(reminders(on.sb)).toHaveLength(1);
-    const later = setup({ reminder_hour: 23 });
-    if (hourHere() < 23) {
-      await runTryonJob(later.sb);
-      expect(reminders(later.sb)).toHaveLength(0);
-    }
-    const old = setup({ reminder_hour: 0 });
+    // 設定の時刻から 3 時間のあいだの外（12 時間ずらした時刻）なら積まない
+    const away = setup({ reminder_hour: (hourHere() + 12) % 24 });
+    await runTryonJob(away.sb);
+    expect(reminders(away.sb)).toHaveLength(0);
+    const old = setup({ reminder_hour: hourHere() });
     old.sb.appliedMigrations = old.sb.appliedMigrations.filter((m) => m !== TRYON_REMINDER_MIGRATION);
     await runTryonJob(old.sb);
     expect(reminders(old.sb)).toHaveLength(0);
@@ -95,5 +94,9 @@ describe("お知らせの文", () => {
     expect(mails[0]!.subject).not.toContain("ご試着いただけます");
     const r = { number: 7, status: "ready", hold_until: "2026-10-27", store_name: "渋谷店", shop_name: "マイショップ" };
     expect(tryonLineMessage("tryon.updated", r, { reminder: true })).toContain("10月27日までです");
+    // 届く前に取り消し・期限切れになっていたら、前日・延長の知らせは送らない（取り消しの知らせを重ねない）
+    expect(buildTryonMails("tryon.updated", { ...contact, status: "cancelled" }, BASE, { reminder: true })).toEqual([]);
+    expect(buildTryonMails("tryon.updated", { ...contact, status: "expired" }, BASE, { extended: true })).toEqual([]);
+    expect(tryonLineMessage("tryon.updated", { ...r, status: "cancelled" }, { reminder: true })).toBeNull();
   });
 });

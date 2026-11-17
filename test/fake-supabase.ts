@@ -4644,9 +4644,13 @@ export class FakeSupabase {
       const tomorrow = new Date(Date.parse(`${String(args["p_today"])}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
       let n = 0;
       for (const r of this.tables.tryon_requests) {
-        const st = ((this.tables.shops.find((x) => x["id"] === r["shop_id"])?.["settings"] ?? {}) as Row)["store_tryon"] as Row | undefined;
+        const settings = (this.tables.shops.find((x) => x["id"] === r["shop_id"])?.["settings"] ?? {}) as Row;
+        const st = settings["store_tryon"] as Row | undefined;
         const hour = st?.["reminder_hour"];
-        if (typeof hour !== "number" || hour > Number(args["p_hour"]) || r["status"] !== "ready" || r["hold_until"] !== tomorrow || r["reminded_at"]) continue;
+        const on = (settings["modules"] as Row | undefined)?.["store_tryon"] === true;
+        const old = !r["ready_at"] || Date.parse(String(r["ready_at"])) <= Date.now() - 86_400_000;
+        const h = Number(args["p_hour"]);
+        if (!on || typeof hour !== "number" || h < hour || h > hour + 2 || !old || r["status"] !== "ready" || r["hold_until"] !== tomorrow || r["reminded_at"]) continue;
         r["reminded_at"] = this.now();
         this.enqueue(String(r["shop_id"]), "tryon.updated", { request_id: r["id"], number: r["number"], shop_id: r["shop_id"], store_id: r["store_id"], status: "ready", hold_until: r["hold_until"], customer_id: r["customer_id"] ?? null, reminder: true });
         n++;

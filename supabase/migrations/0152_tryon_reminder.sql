@@ -1,12 +1,13 @@
 -- 0152_tryon_reminder: お店で試着の来店期限の前日のお知らせ（同梱モジュール store_tryon、docs/store-tryon.md「前日のお知らせ」）
 --   - ショップの設定 store_tryon.reminder_hour（0〜23、ショップの時間帯の時刻。無ければ送らない = 既定 OFF）
---   - 取り置き中（ready）で、取り置きの期限が明日の申し込みに 1 回だけ。取り置きを始めてから 24 時間たっていないもの
+--   - 取り置き中（ready）で、取り置きの期限が明日の申し込みに 1 回だけ。送るのは設定の時刻から 3 時間のあいだだけ（遅れて夜中に届かないように）。取り置きを始めてから 24 時間たっていないもの
 --     （ご用意のお知らせが届いたばかり）には送らない
 --   - 送るのは同梱のメール・LINE（hooks の tryon.updated に reminder: true、状態は ready のまま）。Banto は送った印（reminded_at）だけを残す
 --   - 取り置きを始めた時刻は ready_at（状態が ready になったときにトリガーが入れる。0152 より前の取り置きは空 = 十分に前とみなす）
 
 alter table tryon_requests add column if not exists ready_at timestamptz;
 alter table tryon_requests add column if not exists reminded_at timestamptz;
+create index if not exists tryon_requests_remind_due on tryon_requests (hold_until) where status = 'ready' and reminded_at is null;
 
 create or replace function banto_tryon_ready_at()
 returns trigger language plpgsql as $$
@@ -39,8 +40,9 @@ begin
       from shops s
      where s.id = r.shop_id
        and s.settings->'modules'->'store_tryon' = 'true'::jsonb
+       and jsonb_typeof(s.settings->'store_tryon'->'reminder_hour') = 'number'
        and (s.settings->'store_tryon'->>'reminder_hour') ~ '^([0-9]|1[0-9]|2[0-3])$'
-       and (s.settings->'store_tryon'->>'reminder_hour')::integer <= p_hour
+       and p_hour between (s.settings->'store_tryon'->>'reminder_hour')::integer and (s.settings->'store_tryon'->>'reminder_hour')::integer + 2
        and r.status = 'ready'
        and r.hold_until = p_today + 1
        and r.reminded_at is null

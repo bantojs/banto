@@ -18,6 +18,8 @@ export function buyerMessage(event: string, r: { number: number; total_jpy: numb
 
 /** お店で試着（0025）: 受付・取り置き開始・取り置きの延長（0151）・前日のお知らせ（0152）・取り消しだけ知らせる */
 export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }, opts: { extended?: boolean; reminder?: boolean } = {}): string | null {
+  // 前日のお知らせ・延長の知らせが届く前に状態が変わっていたら送らない
+  if ((opts.reminder || opts.extended) && r.status !== "ready") return null;
   if (event === "tryon.updated" && r.status === "ready" && opts.reminder) {
     const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日` : "明日";
     return `【${r.shop_name}】${r.store_name}でのお取り置きは${until}までです。\n受付番号 ${r.number}\nお待ちしております。`;

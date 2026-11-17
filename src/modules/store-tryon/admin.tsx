@@ -191,12 +191,15 @@ tryonAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
     if (v !== undefined) sent[k] = v;
   }
   // 前日のお知らせの時刻（欄があるときだけ。空 = 送らない）
-  if (f.reminder_hour !== undefined) sent["reminder_hour"] = f.reminder_hour === "" ? null : int(f.reminder_hour);
+  if (f.reminder_hour === "") sent["reminder_hour"] = null;
+  else if (f.reminder_hour !== undefined && int(f.reminder_hour) !== undefined) sent["reminder_hour"] = int(f.reminder_hour);
   const next: Record<string, unknown> = { ...tryonSettings({ store_tryon: { ...tryonSettings(shop.settings), ...sent } }) };
   // 上限が既定のままで、前から入っていなければ書かない（公開のショップ行に上限の値を載せない）
   const raw = (shop.settings ?? {})["store_tryon"];
   const had = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   for (const [k, d] of Object.entries(TRYON_LIMIT_DEFAULTS)) if (!(k in had) && next[k] === d) delete next[k];
+  // 送らない（null）は前から入っていなければ書かない
+  if (next["reminder_hour"] === null && !("reminder_hour" in had)) delete next["reminder_hour"];
   const store_tryon = next;
   try {
     await owner(c)

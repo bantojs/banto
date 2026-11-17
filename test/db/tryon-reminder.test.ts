@@ -54,6 +54,17 @@ describe.skipIf(!dbAvailable)("お店で試着の前日のお知らせ（0152）
     void later;
   });
 
+  it("設定の時刻から 3 時間のあいだだけ（遅れて夜中に送らない）。数でない時刻の設定は送らない", async () => {
+    await setTryon({ reminder_hour: 9 });
+    const r = await request("2030-03-11");
+    expect(await remind("2030-03-10", 12)).toBe(0);
+    expect(await remind("2030-03-10", 11)).toBe(1);
+    await setTryon({ reminder_hour: "9" });
+    await request("2030-03-11");
+    expect(await remind("2030-03-10", 10)).toBe(0);
+    void r;
+  });
+
   it("モジュールが OFF なら送らない。service_role だけが呼べる", async () => {
     await getPool().query("update shops set settings = jsonb_set(settings, '{modules,store_tryon}', 'false') where id = $1", [f.shopId]);
     await request("2030-02-11");

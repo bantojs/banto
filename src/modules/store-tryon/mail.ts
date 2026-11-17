@@ -87,6 +87,8 @@ function itemLines(c: TryonContact): string {
 
 export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: string | undefined, opts: { extended?: boolean; previousHoldUntil?: string | null; reminder?: boolean } = {}): TryonMail[] {
   const out: TryonMail[] = [];
+  // 前日のお知らせ・延長の知らせが届く前に取り消し・期限切れになっていたら送らない（取り消しの知らせを重ねない）
+  if ((opts.reminder || opts.extended) && c.status !== "ready") return out;
   const shopName = c.shop.name;
   const head = `${c.customer_name ?? "お客"} 様\n\n`;
   // お店のリンク: お店の画面を使わない（off / checkout）ショップは外のサイト、それ以外は Banto のお店のトップ
