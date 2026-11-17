@@ -423,7 +423,7 @@ POST /api/shops/<shop>/tryon   { "cart": "<カートのトークン>", "store": 
   - `tryon: false` の店舗は案内だけ（試着は受けません）。
   - 来店日を選ぶ形（`mode: "visit"`）のときは、試着を受ける店舗ごとに選べる日（`visit_dates`。定休日・臨時休業を除く）が付きます。
 - `/tryon` はカート API のトークンの中身を申し込みます。在庫はこの時点で減ります。応答は `201 { "number": 受付番号, "store": {…}, "visit_date", "cart": "<商品を外したトークン>", "member" }`。クーポンはカートに残します。
-- `Authorization: Bearer <会員トークン>` を付けると会員の申し込みになり、`GET /api/shops/<shop>/members/tryon` で一覧（`cancellable` つき）、`POST /api/shops/<shop>/members/tryon/<受付番号>/cancel` で取り消せます（取り置きが終わる前だけ。取り消しても在庫はショップの担当者が戻すまで戻りません）。取り置きの延長（0151、docs/store-tryon.md「取り置きの延長」）は一覧の `extendable`・`extend_left`・`extend_count` を見て `POST /api/shops/<shop>/members/tryon/<受付番号>/extend`（返り値は `{ ok, hold_until, extend_count }`。回数を使い切った・延ばせる設定でない `limit`、取り置き中でない・期限を過ぎた `not_extendable` は 409、0151 を当てる前は 409 `migration_required`）。
+- `Authorization: Bearer <会員トークン>` を付けると会員の申し込みになり、`GET /api/shops/<shop>/members/tryon` で一覧（`cancellable` つき）、`POST /api/shops/<shop>/members/tryon/<受付番号>/cancel` で取り消せます（取り置きが終わる前だけ。取り消しても在庫はショップの担当者が戻すまで戻りません）。取り置きの延長（0151、docs/store-tryon.md「取り置きの延長」）は一覧の `extendable`・`extend_left`・`extend_count` を見て `POST /api/shops/<shop>/members/tryon/<受付番号>/extend`（本文に一覧の今の期限 `{"hold_until": "2026-11-20"}` を添えると、すでに延びていたときは 409 `changed` で何もしません。送り直しで 2 回延ばさないために添えてください。返り値は `{ ok, hold_until, extend_count }`。回数を使い切った・延ばせる設定でない `limit`、取り置き中でない・期限を過ぎた `not_extendable` は 409、0151 を当てる前は 409 `migration_required`）。
 - 申し込みのお知らせ（お客様・店舗へのメール、LINE、hooks の `tryon.requested`）は、同梱テーマから申し込んだときと同じです。
 
 | status | `error` | 意味 |

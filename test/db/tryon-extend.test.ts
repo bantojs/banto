@@ -65,6 +65,28 @@ describe.skipIf(!dbAvailable)("お店で試着の取り置きの延長（0151）
     expect(await extend(9999)).toEqual({ ok: false, reason: "not_found" });
   });
 
+  it("画面に出していた期限（p_expected）と違えば changed で延ばさない（二度押しで 2 回延ばさない）", async () => {
+    await setLimits({ extend_max: 5, extend_days: 1 });
+    const n = await request("2030-01-15");
+    const ext = (expected: string) => rpc<J>("member_tryon_extend", [f.shopId, customer, 0, n, "2030-01-10", expected]);
+    expect(await ext("2030-01-15")).toEqual({ ok: true, hold_until: "2030-01-16", extend_count: 1 });
+    expect(await ext("2030-01-15")).toEqual({ ok: false, reason: "changed", hold_until: "2030-01-16", extend_count: 1 });
+    expect((await row(n)).extend_count).toBe(1);
+  });
+
+  it("休みの曜日でも臨時営業の日は営業日。60 日先まで営業日が無ければ日数どおり", async () => {
+    await setLimits({ extend_max: 5, extend_days: 2 });
+    // 2030-01-20 は日曜（定休）だが臨時営業
+    await getPool().query("update stores set special_days = $2::jsonb where id = $1", [store, JSON.stringify([{ date: "2030-01-20", hours: [["11:00", "17:00"]] }])]);
+    const n = await request("2030-01-18");
+    expect((await extend(n))["hold_until"]).toBe("2030-01-20");
+    // 毎日休み → 日数どおり
+    await getPool().query("update stores set hours = '{}'::jsonb, special_days = '[]'::jsonb where id = $1", [store]);
+    const m = await request("2030-01-18");
+    expect((await extend(m))["hold_until"]).toBe("2030-01-20");
+    expect((await extend(m))["hold_until"]).toBe("2030-01-22");
+  });
+
   it("会員の一覧に extend_count。service_role だけが呼べる", async () => {
     const list = await rpc<{ number: number; extend_count: number }[]>("member_tryon_requests", [f.shopId, customer, 0]);
     expect(list.every((r) => typeof r.extend_count === "number")).toBe(true);

@@ -4571,6 +4571,7 @@ export class FakeSupabase {
       const r = this.tables.tryon_requests.find((x) => x["shop_id"] === args["p_shop_id"] && x["customer_id"] === args["p_customer_id"] && x["number"] === Number(args["p_number"]));
       if (!r) return json({ ok: false, reason: "not_found" });
       if (r["status"] !== "ready" || !r["hold_until"] || String(r["hold_until"]) < String(args["p_today"])) return json({ ok: false, reason: "not_extendable" });
+      if (args["p_expected"] && args["p_expected"] !== r["hold_until"]) return json({ ok: false, reason: "changed", hold_until: r["hold_until"], extend_count: r["extend_count"] ?? 0 });
       const st = ((this.tables.shops.find((x) => x["id"] === args["p_shop_id"])?.["settings"] ?? {}) as Row)["store_tryon"] as Row | undefined;
       const max = Math.min(Number(st?.["extend_max"] ?? 0), 5);
       const days = Math.min(Math.max(Number(st?.["extend_days"] ?? 3), 1), 30);

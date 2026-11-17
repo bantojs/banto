@@ -26,7 +26,7 @@ begin
     v_d := p_from + i;
     select e into v_sp from jsonb_array_elements(coalesce(v_special, '[]'::jsonb)) e where e->>'date' = to_char(v_d, 'YYYY-MM-DD') limit 1;
     if v_sp is not null then
-      if not coalesce((v_sp->>'closed')::boolean, false)
+      if (v_sp->'closed') is distinct from 'true'::jsonb
          and jsonb_typeof(v_sp->'hours') = 'array' and jsonb_array_length(v_sp->'hours') > 0 then
         return v_d;
       end if;
@@ -42,8 +42,9 @@ $$;
 revoke execute on function banto_store_next_open_day(uuid, date) from public, anon, authenticated, service_role;
 
 -- 会員が取り置きを延ばす。p_today はショップの時間帯の今日（tryon_expire と同じく Worker が渡す）。
--- 返り値: { ok: true, hold_until, extend_count } か { ok: false, reason: session | not_found | not_extendable | limit }
-create or replace function member_tryon_extend(p_shop_id uuid, p_customer_id uuid, p_epoch integer, p_number integer, p_today date)
+-- p_expected は画面に出していた今の期限（あれば。違えば changed で何もしない。ボタンの二度押し・送り直しで 2 回延ばさないため）。
+-- 返り値: { ok: true, hold_until, extend_count } か { ok: false, reason: session | not_found | not_extendable | limit | changed }
+create or replace function member_tryon_extend(p_shop_id uuid, p_customer_id uuid, p_epoch integer, p_number integer, p_today date, p_expected date default null)
 returns jsonb
 language plpgsql
 security definer
@@ -67,6 +68,9 @@ begin
   if v_r.status <> 'ready' or v_r.hold_until is null or p_today is null or v_r.hold_until < p_today then
     return jsonb_build_object('ok', false, 'reason', 'not_extendable');
   end if;
+  if p_expected is not null and v_r.hold_until is distinct from p_expected then
+    return jsonb_build_object('ok', false, 'reason', 'changed', 'hold_until', v_r.hold_until, 'extend_count', v_r.extend_count);
+  end if;
   v_max := least(banto_shop_limit(p_shop_id, 'store_tryon', 'extend_max', 0), 5);
   v_days := least(greatest(banto_shop_limit(p_shop_id, 'store_tryon', 'extend_days', 3), 1), 30);
   if v_r.extend_count >= v_max then return jsonb_build_object('ok', false, 'reason', 'limit'); end if;
@@ -81,8 +85,8 @@ begin
   return jsonb_build_object('ok', true, 'hold_until', v_r.hold_until, 'extend_count', v_r.extend_count);
 end;
 $$;
-revoke execute on function member_tryon_extend(uuid, uuid, integer, integer, date) from public, anon, authenticated;
-grant execute on function member_tryon_extend(uuid, uuid, integer, integer, date) to service_role;
+revoke execute on function member_tryon_extend(uuid, uuid, integer, integer, date, date) from public, anon, authenticated;
+grant execute on function member_tryon_extend(uuid, uuid, integer, integer, date, date) to service_role;
 
 -- 会員の申し込みの一覧（0026 と同じ。extend_count を足す）
 create or replace function member_tryon_requests(p_shop_id uuid, p_customer_id uuid, p_epoch integer)

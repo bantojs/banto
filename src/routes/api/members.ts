@@ -14,7 +14,7 @@ import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
-import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, memberExtendable, todayHere, tryonSettings } from "../../modules/store-tryon";
+import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, memberExtendLeft, memberExtendable, todayHere, tryonSettings, ymdOrNull } from "../../modules/store-tryon";
 import { storefrontData } from "../storefront/domain";
 import { PrivilegedRpcError, type PrivilegedDb } from "../../db/privileged";
 import { PASSKEY_MODULE } from "../../modules/passkey";
@@ -423,7 +423,7 @@ membersApi.get("/shops/:shop/members/tryon", async (c: Ctx) => {
   if (!rows) return c.json({ error: "invalid_member_token" }, 401);
   const conf = tryonSettings(s.shop.settings);
   const today = todayHere();
-  return c.json({ requests: rows.map((r) => ({ ...r, cancellable: MEMBER_CANCELLABLE.includes(r.status), extendable: memberExtendable(r, conf, today), extend_left: Math.max(0, conf.extend_max - (r.extend_count ?? 0)) })) });
+  return c.json({ requests: rows.map((r) => ({ ...r, cancellable: MEMBER_CANCELLABLE.includes(r.status), extendable: memberExtendable(r, conf, today), extend_left: memberExtendLeft(r, conf) })) });
 });
 
 membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/cancel", async (c: Ctx) => {
@@ -447,7 +447,9 @@ membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/extend", async (c: C
   const sf = storefrontData(c);
   if (!sf || !(await sf.migratedTo(TRYON_EXTEND_MIGRATION))) return c.json({ error: "migration_required" }, 409);
   if (tryonSettings(s.shop.settings).extend_max < 1) return c.json({ error: "limit" }, 409);
-  const r = await db.memberTryonExtend(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")), todayHere());
+  // 本文の hold_until（一覧で受け取った今の期限、任意）があれば、違うときは 409 changed（送り直しで 2 回延ばさない）
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const r = await db.memberTryonExtend(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")), todayHere(), ymdOrNull(body?.["hold_until"]));
   if (r.ok) return c.json({ ok: true, hold_until: r.hold_until, extend_count: r.extend_count });
   if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
   return c.json({ error: r.reason }, r.reason === "not_found" ? 404 : 409);

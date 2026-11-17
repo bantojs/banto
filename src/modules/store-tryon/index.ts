@@ -113,6 +113,17 @@ export function memberExtendable(r: { status: string; hold_until: string | null;
   return r.status === "ready" && typeof r.extend_count === "number" && r.hold_until !== null && r.hold_until >= today && r.extend_count < s.extend_max;
 }
 
+/** 残りの延長の回数（取り置き中でない・0151 の前は 0） */
+export function memberExtendLeft(r: { status: string; extend_count?: number }, s: Pick<TryonSettings, "extend_max">): number {
+  return r.status === "ready" && typeof r.extend_count === "number" ? Math.max(0, s.extend_max - r.extend_count) : 0;
+}
+
+/** 日付の形（YYYY-MM-DD）だけを通す（画面から送り返す今の期限） */
+export const ymdOrNull = (v: unknown): string | null => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/** 上限の既定（DB の banto_shop_limit の既定と同じ）。既定のままなら設定に書かない（公開のショップ行に載せない） */
+export const TRYON_LIMIT_DEFAULTS = { max_open_per_customer: 3, max_open_per_ip: 10, request_days: 14 } as const;
+
 const int = (v: unknown, min: number, max: number, fallback: number) => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : fallback);
 
 export function tryonSettings(settings: Record<string, unknown> | null | undefined): TryonSettings {
@@ -128,10 +139,10 @@ export function tryonSettings(settings: Record<string, unknown> | null | undefin
     notice: typeof o["notice"] === "string" ? o["notice"].slice(0, 500) : "",
     extend_max: int(o["extend_max"], 0, TRYON_EXTEND_MAX, 0),
     extend_days: int(o["extend_days"], 1, 30, 3),
-    // 既定は DB の banto_shop_limit と同じ（保存し直しても今の上限を変えない）
-    max_open_per_customer: int(o["max_open_per_customer"], 1, 99, 3),
-    max_open_per_ip: int(o["max_open_per_ip"], 1, 999, 10),
-    request_days: int(o["request_days"], 1, 90, 14),
+    // 既定は DB の banto_shop_limit と同じ。範囲も DB が読める 1〜9999（保存し直しても今の上限を変えない）
+    max_open_per_customer: int(o["max_open_per_customer"], 1, 9999, TRYON_LIMIT_DEFAULTS.max_open_per_customer),
+    max_open_per_ip: int(o["max_open_per_ip"], 1, 9999, TRYON_LIMIT_DEFAULTS.max_open_per_ip),
+    request_days: int(o["request_days"], 1, 9999, TRYON_LIMIT_DEFAULTS.request_days),
   };
 }
 

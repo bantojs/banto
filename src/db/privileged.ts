@@ -290,8 +290,8 @@ export interface PrivilegedDb {
   memberTryonRequests(shopId: string, customerId: string, epoch: number): Promise<MemberTryonRequest[] | null>;
   /** 会員が自分の申し込みを取り消す（0026。取り置きが終わる前だけ） */
   memberTryonCancel(shopId: string, customerId: string, epoch: number, number: number): Promise<{ ok: true } | { ok: false; reason: "session" | "not_found" | "not_cancellable" }>;
-  /** 会員が取り置きの期限を延ばす（0151。today はショップの時間帯の今日） */
-  memberTryonExtend(shopId: string, customerId: string, epoch: number, number: number, today: string): Promise<{ ok: true; hold_until: string; extend_count: number } | { ok: false; reason: "session" | "not_found" | "not_extendable" | "limit" }>;
+  /** 会員が取り置きの期限を延ばす（0151。today はショップの時間帯の今日、expected は画面に出していた今の期限。違えば changed） */
+  memberTryonExtend(shopId: string, customerId: string, epoch: number, number: number, today: string, expected: string | null): Promise<{ ok: true; hold_until: string; extend_count: number } | { ok: false; reason: "session" | "not_found" | "not_extendable" | "limit" | "changed" }>;
   /** 取り置きの期限切れ（Cron。today はショップの時間帯の日付） */
   tryonExpire(today: string): Promise<number>;
   /** 当たっているマイグレーションの版（banto_setup_state。Cron が新しい関数を呼ぶ前に確かめる） */
@@ -581,7 +581,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     orgInvitationPeek: (tokenHash) => rpc("org_invitation_peek", { p_token_hash: tokenHash }),
     memberTryonRequests: (shopId, customerId, epoch) => rpc("member_tryon_requests", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
     memberTryonCancel: (shopId, customerId, epoch, number) => rpc("member_tryon_cancel", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),
-    memberTryonExtend: (shopId, customerId, epoch, number, today) => rpc("member_tryon_extend", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number, p_today: today }),
+    memberTryonExtend: (shopId, customerId, epoch, number, today, expected) => rpc("member_tryon_extend", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number, p_today: today, p_expected: expected }),
     tryonContact: (requestId, shopId) => rpc("tryon_contact", { p_request_id: requestId, p_shop_id: shopId }),
     tryonLineRecipient: (requestId, shopId) => rpc("tryon_line_recipient", { p_request_id: requestId, p_shop_id: shopId }),
     tryonExpire: (today) => rpc("tryon_expire", { p_today: today }),

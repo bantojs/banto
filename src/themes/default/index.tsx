@@ -375,6 +375,7 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
                   <td>
                     {r.extendable ? (
                       <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/extend`}>
+                        {r.hold_until ? <input type="hidden" name="hold_until" value={r.hold_until} /> : null}
                         <button type="submit">{t("member.tryon_extend")}</button> <span class="muted">{tf("member.tryon_extend_left", { n: String(r.extend_left ?? 0) })}</span>
                       </form>
                     ) : null}

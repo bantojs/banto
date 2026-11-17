@@ -614,6 +614,8 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         extendable: r.extendable === true,
         extend_left: r.extend_left ?? 0,
         extend_url: r.extendable ? `${s.ctx.shopPath}/account/tryon/${r.number}/extend` : null,
+        // 延長のフォームに hold_until として添える今の期限（二度押しで 2 回延ばさない）
+        hold_until: r.hold_until ?? null,
       }))
     : null;
   const customer = props.customer

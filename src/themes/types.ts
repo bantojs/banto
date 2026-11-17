@@ -207,6 +207,8 @@ export interface Theme {
       /** 取り置きを延ばせる（0151）なら「延長する」は POST `${shopPath}/account/tryon/<番号>/extend`。extend_left は残りの回数 */
       extendable?: boolean;
       extend_left?: number;
+      /** 今の取り置きの期限（YYYY-MM-DD）。延長のフォームに hold_until として添えると、二度押しで 2 回延ばさない */
+      hold_until?: string | null;
     }[] | null;
     /**
      * お気に入り（同梱モジュール favorites、0123）。null なら欄を出さない。新しい順。
