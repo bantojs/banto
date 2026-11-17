@@ -290,6 +290,10 @@ export interface PrivilegedDb {
   memberTryonCancel(shopId: string, customerId: string, epoch: number, number: number): Promise<{ ok: true } | { ok: false; reason: "session" | "not_found" | "not_cancellable" }>;
   /** 取り置きの期限切れ（Cron。today はショップの時間帯の日付） */
   tryonExpire(today: string): Promise<number>;
+  /** 当たっているマイグレーションの版（banto_setup_state。Cron が新しい関数を呼ぶ前に確かめる） */
+  appliedMigrations(): Promise<string[]>;
+  /** 公開日を過ぎた非公開の商品を公開する（0148）。公開した数 */
+  publishScheduledProducts(): Promise<number>;
   /** 終わった試着の申し込みの個人情報を消す（Cron） */
   maskTryonRequests(days: number): Promise<number>;
   /** お問い合わせ（同梱モジュール inquiries、0061）。お客様の経路だけ（運営側は RLS と authenticated の関数） */
@@ -574,6 +578,11 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     tryonContact: (requestId, shopId) => rpc("tryon_contact", { p_request_id: requestId, p_shop_id: shopId }),
     tryonLineRecipient: (requestId, shopId) => rpc("tryon_line_recipient", { p_request_id: requestId, p_shop_id: shopId }),
     tryonExpire: (today) => rpc("tryon_expire", { p_today: today }),
+    appliedMigrations: async () => {
+      const r = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
+      return Array.isArray(r?.migrations) ? r.migrations.filter((x): x is string => typeof x === "string") : [];
+    },
+    publishScheduledProducts: () => rpc<number>("publish_scheduled_products", {}),
     maskTryonRequests: (days) => rpc("mask_tryon_requests", { p_days: days }),
     inquiryOrderCheck: (shopId, number, email, ipHash, emailHash) => rpc("inquiry_order_check", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, p_email_hash: emailHash }),
     inquiryOrderRef: (shopId, ref) => rpc("inquiry_order_ref", { p_shop_id: shopId, p_ref: ref }),

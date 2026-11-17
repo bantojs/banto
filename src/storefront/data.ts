@@ -16,6 +16,7 @@ import { PAGE_PARTS_MIGRATION, PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageR
 import type { IncludePart } from "../content/include";
 import { fieldSortQuery, type FieldSort } from "../blog/fields";
 import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
+import { purchaseBlockOf, type PurchaseBlock } from "../products/sale";
 
 
 export const STOREFRONT_CACHE_TTL = 30;
@@ -148,8 +149,18 @@ export interface ProductDetail {
   skus: SkuWithStock[];
   /** 見る人が買えるか（会員限定の商品、0098。会員は DB が判定、ゲストは会員の条件の付いた商品は買えない）。省略は買える */
   purchasable?: boolean;
+  /** 買えない理由（0148。src/products/sale.ts、買えれば省く） */
+  purchase_block?: PurchaseBlock | null;
   /** 洗濯表示（同梱モジュール care_labels、0127）。商品ページのルートがカテゴリーまでたどって決めたもの。無ければ出さない */
   care?: CareView | null;
+}
+
+/** カートの SKU の行（買えるか・買えない理由つき） */
+export interface CartSkuHit {
+  sku: SkuWithStock;
+  product: ProductRow;
+  purchasable: boolean;
+  purchase_block?: PurchaseBlock;
 }
 
 /** 会員の読み取りの経路（service_role の product_member_* / page_member_get など。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の行を足す） */
@@ -167,8 +178,13 @@ export interface MemberReader {
   articlesMulti(blogIds: string[], limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
 }
 
-/** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
-const guestPurchasable = (p: ProductRow) => !p.audience_id;
+/** ゲストが会員の条件で弾かれないか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
+const guestAudienceOk = (p: ProductRow) => !p.audience_id;
+/** 買えるか・買えない理由（会員の条件と発売日。src/products/sale.ts） */
+const saleOf = (p: ProductRow, audienceOk: boolean) => {
+  const block = purchaseBlockOf(p, audienceOk);
+  return { purchasable: block === null, ...(block ? { purchase_block: block } : {}) };
+};
 
 export class StorefrontData {
   constructor(
@@ -658,7 +674,7 @@ export class StorefrontData {
     if (this.reader) {
       const r = (await this.reader.get(slug)) as { product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[]; purchasable?: boolean } | null;
       if (!r || !r.product) return null;
-      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], purchasable: r.purchasable !== false };
+      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(r.product, r.purchasable !== false) };
     }
     // product_public_get（0055。attributes は公開の項目だけ）
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
@@ -677,7 +693,7 @@ export class StorefrontData {
       product,
       images,
       skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0, ...(member.has(s.id) ? { member_price_jpy: member.get(s.id)! } : {}) })),
-      purchasable: guestPurchasable(product),
+      ...saleOf(product, guestAudienceOk(product)),
     };
   }
 
@@ -719,8 +735,8 @@ export class StorefrontData {
   }
 
   /** カート表示用: SKU 行 + 商品 + 在庫（公開中のものだけ返る） */
-  async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow; purchasable: boolean }>> {
-    const out = new Map<string, { sku: SkuWithStock; product: ProductRow; purchasable: boolean }>();
+  async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, CartSkuHit>> {
+    const out = new Map<string, CartSkuHit>();
     if (skuIds.length === 0) return out;
     // カートの分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた商品がカートから消える）
     const ids = [...new Set(skuIds)].filter((id) => UUID_RE.test(id)).slice(0, 100);
@@ -729,19 +745,23 @@ export class StorefrontData {
     // 会員: SKU・商品・在庫・買えるかを 1 回で（0098）
     if (this.reader) {
       const rows = (await this.reader.skus(ids)) as { sku: SkuWithStock; product: ProductRow; purchasable: boolean }[] | null;
-      for (const r of Array.isArray(rows) ? rows : []) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, purchasable: r.purchasable !== false });
+      for (const r of Array.isArray(rows) ? rows : []) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, ...saleOf(r.product, r.purchasable !== false) });
       return out;
     }
-    const skus = await this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } });
+    const [skus, released] = await Promise.all([
+      this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } }),
+      // 発売日（0146）は当たっていれば読む（Coming Soon の判定、0148）
+      this.migratedTo("0146_product_released_at"),
+    ]);
     const [inventory, products] = await Promise.all([
       this.inventoryOf(shop, skus.map((s) => s.id)),
-      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(`${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode`, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
+      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(`${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode${released ? ",released_at" : ""}`, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));
     for (const s of skus) {
       const product = byProduct.get(s.product_id);
-      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, purchasable: guestPurchasable(product) });
+      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, ...saleOf(product, guestAudienceOk(product)) });
     }
     return out;
   }

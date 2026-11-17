@@ -29,6 +29,7 @@ import { contentApi } from "./content";
 import { imageOptionsOf } from "../../products/images";
 import { displayOptionAxes } from "../../products/option-axes";
 import { publicOpenapiDocument } from "./openapi-public";
+import { comingSoon } from "../../products/sale";
 import { embedScript } from "../../modules/embed/script";
 
 /**
@@ -142,6 +143,7 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
       updated_at: product.updated_at,
       /** 発売日（0146、無ければ null）。新着順（sort=new）はこの日、無ければ created_at */
       released_at: product.released_at ?? null,
+      coming_soon: comingSoon(product),
     })),
     total: page.total,
     total_capped: page.totalCapped,
@@ -215,6 +217,8 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       /** 会員限定の商品か（0098）と、この見る人（会員トークンの会員かゲスト）が買えるか。買えなければカートに入れると 403 members_only */
       members_only: Boolean(p.audience_id),
       purchasable: detail.purchasable !== false,
+      /** 発売日の前（0148）。見えるが買えない（カートに入れると 403 coming_soon） */
+      coming_soon: detail.purchase_block === "coming_soon",
       /** カスタム項目のうち公開するもの（表示名つき） */
       attributes: publicAttributes(productFields(shop.settings), p.attributes),
       updated_at: p.updated_at,

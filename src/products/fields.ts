@@ -13,6 +13,8 @@ export const MAX_FIELDS = 150;
 export const FIELD_DEFS_MIGRATION = "0145_api_field_definitions";
 /** 商品の発売日（0146、products.released_at）。当たるまで欄を出さない・受け付けない */
 export const RELEASED_AT_MIGRATION = "0146_product_released_at";
+/** 発売日の前は買えない（Coming Soon）と商品の公開日（0148、publish_at・publish_scheduled_products） */
+export const SALE_DATES_MIGRATION = "0148_product_sale_dates";
 
 export interface ProductField {
   /** 値の保存キー（英小文字・数字・アンダースコア、1〜40 文字） */

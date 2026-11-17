@@ -152,8 +152,10 @@ commerceApi.post("/shops/:shop/cart", async (c: Ctx) => {
       // 公開中の SKU だけ受け付ける
       const found = await s.sf.skusForCart(s.shop, [skuId]);
       if (!found.has(skuId) && !(op === "set" && qty === 0)) return c.json({ error: "sku_not_available", sku_id: skuId }, 404);
-      // 会員限定で買えない商品（0098。会員トークンの会員なら DB が判定、ゲストは条件のある商品は買えない）
-      if (found.get(skuId)?.purchasable === false && !(op === "set" && qty === 0)) return c.json({ error: "members_only", sku_id: skuId }, 403);
+      // 買えない商品: 会員限定（0098。会員トークンの会員なら DB が判定、ゲストは条件のある商品は買えない）は members_only、
+      // 発売日の前（0148）は coming_soon
+      const hit = found.get(skuId);
+      if (hit?.purchasable === false && !(op === "set" && qty === 0)) return c.json({ error: hit.purchase_block === "coming_soon" ? "coming_soon" : "members_only", sku_id: skuId }, 403);
     }
     cart = op === "add" ? addItem(cart, skuId, qty) : setQty(cart, skuId, op === "remove" ? 0 : qty);
   } else {

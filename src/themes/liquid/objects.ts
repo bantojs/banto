@@ -24,6 +24,7 @@ import { Drop } from "liquidjs/dist/liquid.browser.mjs";
 import { swatchView, type OptionSwatches } from "../../products/option-swatches";
 import { displayOptionAxes } from "../../products/option-axes";
 import { categoryDescriptionHtml } from "../../products/category-media";
+import { comingSoon } from "../../products/sale";
 import { categoryUrl, productUrl, productsUrl } from "../../storefront/urls";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
@@ -127,6 +128,7 @@ export function productFromSummary(u: UrlBase, p: ProductSummary) {
     // 発売日（0146、無ければ null）と、Shopify の名前の published_at（発売日、無ければ作成日。「NEW」の札はこれで）
     released_at: p.product.released_at ?? null,
     published_at: p.product.released_at ?? p.product.created_at,
+    coming_soon: comingSoon(p.product),
     // 一覧のカードの独自項目（0121。定義で card を付けた公開の項目だけが一覧に来る）
     ...productFieldsLiquid(u, p.attributes),
   };
@@ -185,6 +187,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     available: available.length > 0 && d.purchasable !== false,
     members_only: Boolean(p.audience_id),
     purchasable: d.purchasable !== false,
+    // 発売日の前（0148）。お店には見えるが買えない。「11月20日 発売」の文言はテーマが released_at で
+    coming_soon: d.purchase_block === "coming_soon",
     vendor: p.brand ?? "",
     type: "",
     tags: p.tags ?? [],
