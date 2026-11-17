@@ -503,12 +503,12 @@ export async function openQuote(secret: string, token: string | undefined, shopI
 export async function recheckQuote(
   ctx: QuoteContext,
   quote: Quote,
-): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" }> {
+): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" | "store_only" }> {
   const all = await priceCart(ctx.sf, ctx.shop, quote.cart);
   const again = (cart: Cart) => createQuote(ctx, { ...cart, coupons: quote.coupons }, quote.provider, quote.address);
   // 確認のあとで店頭のみになった商品（0149）は、外して確認画面を出し直す
   const { priced, excluded } = checkoutPart(all);
-  if (excluded.length > 0) return priced.lines.length === 0 ? { ok: false, error: "stock" } : { ok: false, error: "changed", fresh: await again(priced.cart) };
+  if (excluded.length > 0) return priced.lines.length === 0 ? { ok: false, error: "store_only" } : { ok: false, error: "changed", fresh: await again(priced.cart) };
   if (priced.dropped.length > 0 || priced.lines.some((l) => l.short)) {
     if (priced.lines.length === 0 || priced.lines.some((l) => l.short)) return { ok: false, error: "stock" };
     return { ok: false, error: "changed", fresh: await again(priced.cart) };

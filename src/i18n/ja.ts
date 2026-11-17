@@ -3426,6 +3426,7 @@ export const ja = {
   "embed.js.unavailable": "この商品は表示できません。",
   "embed.js.coming_soon": "発売前です",
   "embed.js.not_buyable": "ここでは購入できません",
+  "embed.js.store_only": "店頭のみ（お会計には含まれません）",
   "embed.js.error": "うまくいきませんでした。時間をおいてもう一度お試しください。",
   "embed.js.loading": "読み込み中…",
   "embed.js.choose": "種類を選ぶ",

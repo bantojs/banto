@@ -93,7 +93,7 @@ GET /api/shops/<shop>/categories
 
 ### 店頭のみの商品（0149）
 
-商品の詳細に `store_only`（店頭のみか）と `cartable`（カートに入れられるか。お店で試着が ON のショップの店頭のみの商品は true）が入ります。`purchasable` は false です。カートの行（`items`）には `store_only` が付き、`subtotal_jpy` には入りません。quote（`POST /api/shops/<ショップ>/checkout/quote`）は店頭のみの行を外し、外した SKU を `excluded` で返します（カートのトークンには残っています）。店頭のみの行だけなら 409 `store_only`。お店で試着が OFF のショップでカートに入れると 403 `store_only`。docs/storefront.md「店頭のみの商品」。
+商品の詳細に `store_only`（店頭のみか）と `cartable`（カートに入れられるか。お店で試着が ON のショップの店頭のみの商品は true）が入ります。`purchasable` は false です。カートの行（`items`）には `store_only` が付き、`subtotal_jpy` には入りません。`can_checkout` と在庫不足の判定も、購入手続きに進める行だけで決めます（店頭のみの行だけなら `can_checkout` は false）。quote（`POST /api/shops/<ショップ>/checkout/quote`）は店頭のみの行を外し、外した SKU を `excluded` で返します（カートのトークンには残っています）。店頭のみの行だけなら 409 `store_only`。お店で試着が OFF のショップでカートに入れると 403 `store_only`。docs/storefront.md「店頭のみの商品」。
 
 ## A. 購入リンク
 

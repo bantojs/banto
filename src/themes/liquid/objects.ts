@@ -158,7 +158,7 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       member_price: s.regular_price_jpy !== undefined && s.regular_price_jpy > s.price_jpy ? money(s.price_jpy) : s.member_price_jpy !== undefined && s.member_price_jpy < s.price_jpy ? money(s.member_price_jpy) : null,
       regular_price: money(s.regular_price_jpy ?? s.price_jpy),
       // カートに入れられない商品（会員限定・発売前など、src/products/sale.ts）は、在庫があっても false（テーマの「カートに入れる」を出さない）
-      available: s.available > 0 && d.purchasable !== false,
+      available: s.available > 0 && (d.cartable ?? d.purchasable !== false),
       options: opts.filter((x): x is string => x !== null),
       option1: opts[0] ?? null,
       option2: opts[1] ?? null,

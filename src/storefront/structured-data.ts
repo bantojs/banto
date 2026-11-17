@@ -13,7 +13,7 @@ export interface ProductLdInput {
   category?: string[];
   /** 外部プラグインのレビュー（0084）。ページに見えている分と同じもの */
   reviews?: ProductReviews | null;
-  /** 買えない理由（src/products/sale.ts）。発売前は OutOfStock と発売日（availabilityStarts） */
+  /** 買えない理由（src/products/sale.ts）。発売前は OutOfStock と発売日（availabilityStarts）、店頭のみは InStoreOnly */
   block?: string | null;
   releasedAt?: string | null;
 }
@@ -35,7 +35,9 @@ export function productJsonLd(i: ProductLdInput): Record<string, unknown> {
     price: s.price_jpy,
     priceCurrency: "JPY",
     // 発売前（0148）はネットで買えないので在庫があっても OutOfStock と、買えるようになる日
-    ...(i.block === "coming_soon"
+    ...(i.block === "store_only"
+      ? { availability: "https://schema.org/InStoreOnly" }
+      : i.block === "coming_soon"
       ? { availability: "https://schema.org/OutOfStock", ...(i.releasedAt ? { availabilityStarts: i.releasedAt } : {}) }
       : { availability: s.available > 0 ? "https://schema.org/InStock" : "https://schema.org/OutOfStock" }),
     itemCondition: "https://schema.org/NewCondition",

@@ -137,9 +137,9 @@ var want=attr(host,"sku"),cur=null;for(var i=0;i<skus.length;i++){if(skus[i].id=
 if(!cur){for(var j=0;j<skus.length;j++){if(skus[j].in_stock){cur=skus[j];break}}}if(!cur)cur=skus[0]||null;
 var sel=null;if(skus.length>1){sel=el("select");sel.setAttribute("aria-label",I.choose);skus.forEach(function(k){var o=el("option",null,skuLabel(k)+(k.in_stock?"":" ("+I.soldOut+")"));o.value=k.id;if(cur&&k.id===cur.id)o.selected=true;sel.appendChild(o)});card.appendChild(sel)}
 var btn=el("button",null,I.addToCart);btn.type="button";card.appendChild(btn);var msg=el("p","msg");msg.setAttribute("aria-live","polite");card.appendChild(msg);
-function show(){price.textContent="";if(!cur){btn.disabled=true;return}price.appendChild(document.createTextNode(yen(cur.price_jpy)));if(cur.compare_at_price_jpy&&cur.compare_at_price_jpy>cur.price_jpy)price.appendChild(el("span","was",yen(cur.compare_at_price_jpy)));price.appendChild(el("span","muted"," "+I.taxIncluded));var ok=cur.in_stock&&p.purchasable!==false;btn.disabled=!ok;btn.textContent=p.purchasable===false?(p.coming_soon?I.comingSoon:I.notBuyable):cur.in_stock?I.addToCart:I.soldOut}
+function show(){price.textContent="";if(!cur){btn.disabled=true;return}price.appendChild(document.createTextNode(yen(cur.price_jpy)));if(cur.compare_at_price_jpy&&cur.compare_at_price_jpy>cur.price_jpy)price.appendChild(el("span","was",yen(cur.compare_at_price_jpy)));price.appendChild(el("span","muted"," "+I.taxIncluded));var can=p.cartable!==undefined?p.cartable:p.purchasable!==false;var ok=cur.in_stock&&can;btn.disabled=!ok;btn.textContent=!can?(p.coming_soon?I.comingSoon:I.notBuyable):cur.in_stock?I.addToCart:I.soldOut}
 if(sel)sel.addEventListener("change",function(){for(var i=0;i<skus.length;i++)if(skus[i].id===sel.value)cur=skus[i];msg.textContent="";show()});
-btn.addEventListener("click",function(){if(!cur)return;btn.disabled=true;msg.textContent="";var added=cur.id;cartOp(shop,{op:"add",sku_id:cur.id,qty:1}).then(function(v){trackAdd(shop,v,added,1);addedMsg(msg,shop,v)},function(e){msg.textContent=errText(e)}).then(function(){btn.disabled=!(cur.in_stock&&p.purchasable!==false)})});
+btn.addEventListener("click",function(){if(!cur)return;btn.disabled=true;msg.textContent="";var added=cur.id;cartOp(shop,{op:"add",sku_id:cur.id,qty:1}).then(function(v){trackAdd(shop,v,added,1);addedMsg(msg,shop,v)},function(e){msg.textContent=errText(e)}).then(function(){btn.disabled=!(cur.in_stock&&(p.cartable!==undefined?p.cartable:p.purchasable!==false))})});
 show();onSeen(host,function(){var d={product_id:p.id};if(p.tags&&p.tags.length)d.tags=p.tags;track("product_view",d,shop)})})}});
 
 define("banto-products",{connectedCallback:function(){if(this._done)return;this._done=1;var host=this,shop=attr(this,"shop");var root=shadow(this);var grid=el("div","grid");root.appendChild(grid);
@@ -171,7 +171,7 @@ v.items.forEach(function(it){var line=el("div","line");var nm=el("div","n");nm.a
 var qb=el("div","qty");var minus=el("button","sub","−");minus.type="button";minus.setAttribute("aria-label",I.decrease);var plus=el("button","sub","+");plus.type="button";plus.setAttribute("aria-label",I.increase);
 var rm=el("button","sub",I.remove);rm.type="button";
 minus.addEventListener("click",function(){op({op:"set",sku_id:it.sku_id,qty:it.qty-1})});plus.addEventListener("click",function(){op({op:"set",sku_id:it.sku_id,qty:it.qty+1})});rm.addEventListener("click",function(){op({op:"remove",sku_id:it.sku_id})});
-qb.appendChild(minus);qb.appendChild(el("span",null,String(it.qty)));qb.appendChild(plus);qb.appendChild(rm);line.appendChild(qb);line.appendChild(el("div",null,yen(it.line_total_jpy)));panel.appendChild(line)});
+qb.appendChild(minus);qb.appendChild(el("span",null,String(it.qty)));qb.appendChild(plus);qb.appendChild(rm);if(it.store_only)nm.appendChild(el("div","muted",I.storeOnly));line.appendChild(qb);line.appendChild(el("div",null,it.store_only?"—":yen(it.line_total_jpy)));panel.appendChild(line)});
 var tot=el("div","total");tot.appendChild(el("span",null,I.subtotal));tot.appendChild(el("span",null,yen(v.subtotal_jpy)));panel.appendChild(tot);
 if(v.shipping&&v.shipping.remaining_for_free_jpy)panel.appendChild(el("p","muted",I.freeShipping.replace("{price}",yen(v.shipping.remaining_for_free_jpy))));
 var go=el("a","btn",I.checkout);go.href=safeUrl(v.checkout_url)||"#";if(!v.can_checkout)go.setAttribute("aria-disabled","true");
@@ -209,6 +209,7 @@ const KEYS = {
   unavailable: "embed.js.unavailable",
   comingSoon: "embed.js.coming_soon",
   notBuyable: "embed.js.not_buyable",
+  storeOnly: "embed.js.store_only",
   error: "embed.js.error",
   loading: "embed.js.loading",
   choose: "embed.js.choose",

@@ -3419,6 +3419,7 @@ export const en: Record<MessageKey, string> = {
   "embed.js.unavailable": "This product can't be shown.",
   "embed.js.coming_soon": "Coming soon",
   "embed.js.not_buyable": "Not available here",
+  "embed.js.store_only": "In store only (not included in checkout)",
   "embed.js.error": "Something went wrong. Please try again later.",
   "embed.js.loading": "Loading…",
   "embed.js.choose": "Choose a variant",

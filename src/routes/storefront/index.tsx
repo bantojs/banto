@@ -1009,7 +1009,8 @@ storefront.get("/:shop/cart", async (c: Ctx) => {
   const coupons = await cartCoupons(c, s, lines, total);
   const errorKey = CART_ERRORS[c.req.query("error") ?? ""];
   const tryon = moduleEnabled(s.shop.settings, TRYON_MODULE) && !!s.theme.TryonPage;
-  if (lines.length > 0) track(c, "cart_view", total, cartItems(lines));
+  // 金額（小計）に入れない店頭のみの行（0149）は、品目からも外す
+  if (lines.length > 0) track(c, "cart_view", total, cartItems(lines.filter((l) => !l.storeOnly)));
   // Liquid のテーマの templates/cart（無ければ既定のテーマ）
   const lt = await liquidThemeFor(c, s, { cartLines: lines });
   if (lt) {
@@ -1220,7 +1221,8 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
   const next = addItem(s.cart, skuId, qty);
   await writeCart(c, s, next);
   // 本文の「今すぐ買う」（src/pages/shop-blocks.ts）: カートに入れて、そのまま購入手続き（配送先 → 最終確認）へ
-  if (f.buy === "1") return startCheckout(c, { ...s, cart: next }, {});
+  // 店頭のみの商品（0149）は購入手続きに進めないので、「今すぐ買う」でもカートに入れるだけ
+  if (f.buy === "1" && hit.purchasable) return startCheckout(c, { ...s, cart: next }, {});
   // sku と qty は「カートに入れた」の出来事用（どの SKU を何点入れたか。src/storefront/events.ts）
   return c.redirect(productUrl(s.ctx.shopPath, hit.product.slug, { added: "1", sku: hit.sku.code, qty: String(qty) }));
 });
@@ -1512,7 +1514,9 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
   if (f.quote === undefined) {
     const r = await createQuote(qctx, s.cart, provider, f);
     if (!r.ok && r.error === "invalid_address") {
-      const { total: subtotal, lines } = await cartLines(s);
+      const { total: subtotal, lines: all } = await cartLines(s);
+      // 最初の配送先の画面と同じく、店頭のみの行（0149）は出さない
+      const lines = all.filter((l) => !l.storeOnly);
       const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
       return addressPage(c, s, { provider, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
     }
@@ -1530,7 +1534,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
   const check = await recheckQuote(qctx, quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, lines: check.fresh.lines, error: t("confirm.changed"), status: 409 });
-    return c.redirect(`${cartUrl}?error=stock`);
+    return c.redirect(`${cartUrl}?error=${check.error === "store_only" ? "store_only" : "stock"}`);
   }
   const deps = placeOrderDeps(c, setup);
   if (!deps) return c.redirect(`${cartUrl}?error=config`);
@@ -1673,7 +1677,8 @@ const DONE_REFRESH_WINDOW_SECONDS = 10 * 60;
 storefront.get("/:shop/checkout/done", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  await writeCart(c, s, { items: await storeOnlyItems(s) });
+  // 自動の再読み込み（r=1）では、最初に開いたときに整えたカートのまま（店頭のみの行を引き直さない）
+  if (c.req.query("r") !== "1") await writeCart(c, s, { items: await storeOnlyItems(s) });
   const free = c.req.query("free") === "1";
   const secret = c.get("sessionSecret");
   const token = secret ? await openStatusToken(secret, c.req.query("s"), s.shop.id) : null;
@@ -1689,7 +1694,7 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     c.header("cache-control", "no-store");
     // 読み込み直す先は # の無い URL で明示する。決済事業者が戻り先に # を付けると（KOMOJU の #credit_card など）、
     // URL を書かない refresh は「同じ文書の中の移動」になり、ブラウザが読み込み直さない
-    const refreshUrl = refresh ? withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? "") : null;
+    const refreshUrl = refresh ? withQueryParam(withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? ""), "r", "1") : null;
     return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, refreshUrl, inquiryUrl });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);

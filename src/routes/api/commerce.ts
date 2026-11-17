@@ -68,11 +68,13 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
   const [priced, setup] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
   const token = await sealCart(s.secret, { ...priced.cart, ...(cart.coupons ? { coupons: cart.coupons } : {}) });
   const shipping = shippingSummary(s.shop);
-  const short = priced.lines.some((l) => l.short);
+  // 購入手続きに進める行（店頭のみの行を外す、0149）で、在庫不足と「進めるか」を決める（同梱テーマのカート・startCheckout と同じ）
+  const buyable = checkoutPart(priced).priced;
+  const short = buyable.lines.some((l) => l.short);
   // 送料は配送先が決まるまで分からないので 0 で判定する（送料無料のクーポンは quote で額が決まる）。
   // 会員（Bearer トークン）なら会員限定のクーポンと、会員 ID での 1 人あたりの回数も判定する
   // 店頭のみの行（0149）は購入手続きに進まないので、値引きの判定に入れない
-  const discount = s.coupons ? await discountCart({ sf: s.sf, shop: s.shop, coupons: s.coupons, member: s.member }, checkoutPart(priced).priced, cart.coupons, 0, null) : null;
+  const discount = s.coupons ? await discountCart({ sf: s.sf, shop: s.shop, coupons: s.coupons, member: s.member }, buyable, cart.coupons, 0, null) : null;
   return {
     cart: token,
     items: priced.lines.map((l) => ({
@@ -114,7 +116,7 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
     payments: setup.options,
     /** 配送日時の選択肢（同梱モジュール delivery_time が OFF なら null）。チェックアウトの配送先の delivery_date / delivery_slot に value を渡す */
     delivery: deliveryOptions(s.shop.settings),
-    can_checkout: priced.lines.length > 0 && !short && anyProvider(setup.options),
+    can_checkout: buyable.lines.length > 0 && !short && anyProvider(setup.options),
     /** 会員として判定したか（Authorization: Bearer が有効なら会員 ID） */
     member: s.member ? { id: s.member.id } : null,
     /** 同梱テーマのレジ（配送先 → 最終確認 → 決済）で続けるときの URL */
@@ -203,7 +205,7 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   const check = await recheckQuote(quoteContext(s), quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return c.json({ error: "changed", quote: check.fresh.token, expires_at: new Date(check.fresh.quote.expiresAt * 1000).toISOString(), confirmation: check.fresh.confirmation }, 409);
-    return c.json({ error: "stock" }, 409);
+    return c.json({ error: check.error === "store_only" ? "store_only" : "stock" }, 409);
   }
   const deps = placeOrderDeps(c, setup);
   if (!deps) return c.json({ error: "not_configured" }, 503);
