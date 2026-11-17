@@ -411,7 +411,7 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 ## 20. 商品の発売日（0146）
 
 - `POST /api/v1/products`・`PATCH /api/v1/products/{id}`（MCP の `product_create`・`product_update`）の `released_at`: 日時の文字列（ISO 8601。時差を付けてください、例 `2024-05-01T10:00:00+09:00`。日付だけなら UTC の 0 時）か `null`（外す）。1990 年から今の 10 年後まで。違えば 400 `invalid_released_at`。スコープは今の `products:write` のままです。
-- ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）を入れてください。作成日（`created_at`）は移した日のまま変えません。
+- ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）をこの API で入れてください（管理画面の商品の CSV・WooCommerce の取り込みでは、今は入れられません）。作成日（`created_at`）は移した日のまま変えません。範囲は管理画面・API・バックアップの復元のどれから書いても同じです（データベースが確かめます）。時差の無い値は UTC として読みます。
 - 新着順（お店の画面の `?sort=new`・公開 API の `sort=new`）と、テーマの `product.published_at`（「NEW」の札）は、発売日があればその日、無ければ作成日です。商品の読み取り（AI 用 API・公開 API の一覧と詳細）に `released_at` が載ります。
 - 予約公開ではありません。未来の日付でも、公開中なら見えます（並びだけが変わります）。
 - データベースの更新 `0146_product_released_at` が要ります。当たるまでは、`released_at` を送ると 409（`migration_required`）です（ほかの欄はそのまま）。

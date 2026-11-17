@@ -24,7 +24,9 @@ begin
     raise exception 'invalid_released_at' using errcode = '22023';
   end if;
   begin
-    v := (p #>> '{}')::timestamptz;
+    -- 時差の無い値は UTC として読む（DB のセッションの時間帯に左右されないように。日付だけなら UTC の 0 時）
+    v := case when (p #>> '{}') ~ '[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}(:?\d{2})?)$' then (p #>> '{}')::timestamptz
+              else ((p #>> '{}')::timestamp at time zone 'UTC') end;
   exception when others then
     raise exception 'invalid_released_at' using errcode = '22023';
   end;
@@ -33,6 +35,22 @@ begin
 end;
 $$;
 revoke execute on function banto_api_released_at(jsonb) from public, anon, authenticated;
+
+-- 範囲は書き込みの経路（管理画面・AI 用 API・復元）を問わず DB で 1 つに（1990 年から、書いた時の 10 年後まで）。
+-- 管理画面で入れた値が API の往復や復元で通らなくなることを防ぐ
+create or replace function banto_products_released_at_guard()
+returns trigger language plpgsql as $$
+begin
+  if new.released_at is not null and (tg_op = 'INSERT' or new.released_at is distinct from old.released_at)
+     and (new.released_at < '1990-01-01T00:00:00Z'::timestamptz or new.released_at > now() + interval '10 years') then
+    raise exception 'invalid_released_at' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function banto_products_released_at_guard() from public, anon, authenticated;
+drop trigger if exists products_released_at_guard on products;
+create trigger products_released_at_guard before insert or update of released_at on products for each row execute function banto_products_released_at_guard();
 
 -- ---------- 一覧（0121 と同じ。sort=new の鍵と、行の released_at だけが違う） ----------
 create or replace function banto_product_list(
