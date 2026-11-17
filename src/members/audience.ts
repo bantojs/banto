@@ -6,6 +6,8 @@
  */
 /** 同梱モジュールの id（既定 OFF） */
 export const AUDIENCES_MODULE = "audiences";
+/** 商品の会員限定を AI 用 API で読み書きする（0144）。当たるまで欄を受け付けない */
+export const AUDIENCE_API_MIGRATION = "0144_api_product_audience";
 
 export type AudienceCondition =
   | { all: AudienceCondition[] }
