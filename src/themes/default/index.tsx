@@ -1,5 +1,6 @@
 import type { CategoryNode } from "../../products/categories";
 import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
+import { filterNoindex, priceFiltered } from "../../storefront/list-filter";
 import type { ProductSort } from "../../storefront/data";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
@@ -84,7 +85,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .swatches{display:flex;flex-wrap:wrap;gap:.5rem;margin:.25rem 0 .75rem}.swatch{padding:2px;border:2px solid transparent;border-radius:999px;background:none;cursor:pointer;line-height:0}.swatch[aria-checked=true]{border-color:currentColor}.swatch:disabled{opacity:.35;cursor:not-allowed}.swatch__dot{display:inline-block;width:2rem;height:2rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 20%,transparent)}.swatch__dot img{width:100%;height:100%;object-fit:cover}.swatch--text .swatch__dot{width:auto;height:auto;padding:.35rem .75rem;line-height:1.2;font-size:.9rem}
 .category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
-.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
+.price-filter{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .5rem;align-items:center;margin:.5rem 0}.price-filter input[type=number]{width:7rem}.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
 .card{position:relative}.banto-fav{background:none;border:0;padding:.25rem;cursor:pointer;font-size:1.25rem;line-height:1;color:color-mix(in srgb,currentColor 35%,transparent)}.banto-fav[aria-pressed="true"]{color:#d33}.card .banto-fav{position:absolute;top:.35rem;right:.35rem;z-index:1}
 .card-fields{list-style:none;margin:.25rem 0;padding:0;font-size:.85rem}.card-fields img{max-height:1.5rem;width:auto;vertical-align:middle}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
@@ -539,21 +540,22 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout, q, top, path, sort }) {
+  ShopHome({ ctx, products, tag, tags, filter, priceRange, categories, category, pagination, notice, layout, q, top, path, sort }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
-    const heading = category ? category.name : tag ? tag : q ? tf("store.search_heading", { q }) : top ? undefined : t("store.all_products");
+    const chosen = filter?.tags.length ? filter.tags : tag ? [tag] : [];
+    const heading = category ? category.name : chosen.length > 0 ? chosen.join(" + ") : q ? tf("store.search_heading", { q }) : top ? undefined : t("store.all_products");
     const firstImage = products.find((p) => p.image)?.image;
     const seo = {
       path: path ?? home,
       description: categoryMetaDescription(category?.description) ?? intro,
       image: category?.image ? imageUrl(ctx.mediaBaseUrl, category.image.key) : firstImage ? imageUrl(ctx.mediaBaseUrl, firstImage.storage_key) : undefined,
-      ...(pagination?.first || q ? { noindex: true } : {}),
+      ...(pagination?.first || q || filterNoindex(filter) ? { noindex: true } : {}),
     };
     const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
     // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
     if (layout) {
-      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
+      const parts = listParts({ ctx, products, tag, tags, ...(filter ? { filter } : {}), ...(priceRange ? { priceRange } : {}), categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
       const html: Record<string, string> = {};
       for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
       return (
@@ -591,19 +593,8 @@ export const defaultTheme: Theme = {
         ) : null}
         {!top && heading ? <h1>{heading}</h1> : null}
         {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
-        {tags && tags.length > 0 ? (
-          <p class="tags">
-            <a href={listUrl(ctx.shopPath, { category: category?.slug, sort })} class={tag ? "" : "active"}>
-              {t("store.all_products")}
-            </a>
-            {tags.map((x) => (
-              <a href={listUrl(ctx.shopPath, { category: category?.slug, tag: x.tag, sort })} class={x.tag === tag ? "active" : ""}>
-                {x.tag} <span class="muted">({x.count})</span>
-              </a>
-            ))}
-          </p>
-        ) : null}
-        {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} tag={tag} q={q} sort={sort} /> : null}
+        <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} category={category} q={q} sort={sort} />
+        {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={q} sort={sort} /> : null}
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </Layout>
@@ -2187,14 +2178,16 @@ function CategoryIntro({ ctx, category }: { ctx: ShopHomeProps["ctx"]; category:
   );
 }
 
-/** 一覧の並べ替え（?sort=、src/storefront/list-sort.ts）。今のカテゴリー・タグ・検索の語はそのまま、ページ送りは最初に戻す */
-function SortLinks({ ctx, category, tag, q, sort }: { ctx: ThemeContext; category?: { slug: string } | undefined; tag?: string | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
+type ListFilterProp = ShopHomeProps["filter"];
+
+/** 一覧の並べ替え（?sort=、src/storefront/list-sort.ts）。今のカテゴリー・絞り込み・検索の語はそのまま、ページ送りは最初に戻す */
+function SortLinks({ ctx, category, chosen, filter, q, sort }: { ctx: ThemeContext; category?: { slug: string } | undefined; chosen: string[]; filter?: ListFilterProp; q?: string | undefined; sort?: ProductSort | undefined }) {
   const now = sort ?? "new";
   return (
     <p class="sort" aria-label={t("store.sort_label")}>
       <span class="muted">{t("store.sort_label")}:</span>{" "}
       {LIST_SORT_OPTIONS.map((o) => (
-        <a href={listUrl(ctx.shopPath, { category: category?.slug, tag, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
+        <a href={listUrl(ctx.shopPath, { category: category?.slug, tags: chosen, priceMin: filter?.priceMin, priceMax: filter?.priceMax, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
           {t(o.label)}
         </a>
       ))}
@@ -2202,10 +2195,65 @@ function SortLinks({ ctx, category, tag, q, sort }: { ctx: ThemeContext; categor
   );
 }
 
-export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
+/**
+ * 一覧の絞り込み（タグの札と価格の欄、0150）。タグの札は押すとそのタグだけ、選んでいる札を押すと外す（ほかに選んだタグ・価格・検索の語・並べ方はそのまま）。
+ * 価格の欄は GET のフォーム（?filter.v.price.gte= / lte=、src/storefront/list-filter.ts）で、価格の上限が分かるとき（0150 の後）だけ
+ */
+function ListFilters({ ctx, tags, chosen, filter, priceRange, category, q, sort }: { ctx: ThemeContext; tags?: { tag: string; count: number }[] | undefined; chosen: string[]; filter?: ListFilterProp; priceRange?: ShopHomeProps["priceRange"]; category?: { slug: string } | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
+  const url = (o: { tags: string[]; price: boolean }) =>
+    listUrl(ctx.shopPath, { category: category?.slug, tags: o.tags, ...(o.price ? { priceMin: filter?.priceMin, priceMax: filter?.priceMax } : {}), q, sort });
+  const price = priceRange && priceRange.max !== null && priceRange.max > 0;
+  const priced = priceFiltered(filter);
+  return (
+    <>
+      {tags && tags.length > 0 ? (
+        <p class="tags">
+          <a href={url({ tags: [], price: true })} class={chosen.length > 0 ? "" : "active"}>
+            {t("store.all_products")}
+          </a>
+          {tags.map((x) => {
+            const on = chosen.includes(x.tag);
+            return (
+              <a href={url({ tags: on ? chosen.filter((y) => y !== x.tag) : [x.tag], price: true })} class={on ? "active" : ""} aria-pressed={on ? "true" : "false"}>
+                {x.tag} <span class="muted">({x.count})</span>
+              </a>
+            );
+          })}
+        </p>
+      ) : null}
+      {price ? (
+        <form class="price-filter" method="get" action={listUrl(ctx.shopPath, { category: category?.slug })}>
+          {chosen.map((x) => (
+            <input type="hidden" name="tag" value={x} />
+          ))}
+          {q ? <input type="hidden" name="q" value={q} /> : null}
+          {sort ? <input type="hidden" name="sort" value={sort} /> : null}
+          <span class="muted">{t("store.price_filter_label")}:</span>{" "}
+          <label>
+            <span class="visually-hidden">{t("store.price_min")}</span>
+            <input type="number" name="filter.v.price.gte" min="0" step="1" inputmode="numeric" value={filter?.priceMin !== undefined ? String(filter.priceMin) : ""} placeholder="0" />
+          </label>
+          {" 〜 "}
+          <label>
+            <span class="visually-hidden">{t("store.price_max")}</span>
+            <input type="number" name="filter.v.price.lte" min="0" step="1" inputmode="numeric" value={filter?.priceMax !== undefined ? String(filter.priceMax) : ""} placeholder={String(priceRange.max)} />
+          </label>{" "}
+          <button type="submit">{t("store.price_apply")}</button>
+          {priced ? (
+            <>
+              {" "}
+              <a href={url({ tags: chosen, price: false })}>{t("store.price_clear")}</a>
+            </>
+          ) : null}
+        </form>
+      ) : null}
+    </>
+  );
+}
+
+export function listParts({ ctx, products, tag, tags, filter, priceRange, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
   const home = ctx.shopPath || "/";
-  // タグで絞る・外すときも、今のカテゴリーと検索の語はそのまま
-  const q = (extra: { tag?: string }) => listUrl(ctx.shopPath, { category: category?.slug, q: query, sort, ...extra });
+  const chosen = filter?.tags.length ? filter.tags : tag ? [tag] : [];
   const find = (nodes: CategoryNode[], slug: string): CategoryNode | null => {
     for (const n of nodes) {
       if (n.slug === slug) return n;
@@ -2234,20 +2282,8 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </>
     ),
-    filters:
-      tags && tags.length > 0 ? (
-        <p class="tags">
-          <a href={q({})} class={tag ? "" : "active"}>
-            {t("store.all_products")}
-          </a>
-          {tags.map((x) => (
-            <a href={q({ tag: x.tag })} class={x.tag === tag ? "active" : ""}>
-              {x.tag} <span class="muted">({x.count})</span>
-            </a>
-          ))}
-        </p>
-      ) : null,
-    sort: products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} tag={tag} q={query} sort={sort} /> : null,
+    filters: (tags && tags.length > 0) || (priceRange && priceRange.max) ? <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} category={category} q={query} sort={sort} /> : null,
+    sort: products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={query} sort={sort} /> : null,
     subcategories:
       children.length > 0 ? (
         <nav class="categories" aria-label={t("store.categories")}>

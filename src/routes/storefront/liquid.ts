@@ -9,6 +9,7 @@
  */
 import { productFields } from "../../products/fields";
 import { shopifySortName } from "../../storefront/list-sort";
+import { filterNoindex, type ListFilter } from "../../storefront/list-filter";
 import { articleFieldDefs, fieldValues } from "../../blog/fields";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
@@ -23,7 +24,7 @@ import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSort, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
-import { productUrl, shopHome, shopOrigin } from "../../storefront/urls";
+import { listUrl, productUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
 import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
@@ -41,7 +42,7 @@ import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ProductBlock 
 import { articleBlogOf, type AppBlockData, type ArticleBlockData } from "../../content/body-blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
-import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
+import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, priceRangeFilter, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { clearScopedCookie, getScopedCookie, mediaBaseUrl, publicBaseUrl, setScopedCookie, type Ctx } from "../common";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
@@ -383,7 +384,7 @@ export function productPartValues(c: Ctx, s: LiquidScope, detail: ProductDetail,
 export function collectionPartValues(
   c: Ctx,
   s: LiquidScope,
-  p: { page: ProductListPage; category?: CategoryRow; tag?: string; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string },
+  p: { page: ProductListPage; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; q?: string; sort?: ProductSort },
 ): Record<string, unknown> {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
@@ -395,9 +396,17 @@ export function collectionPartValues(
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
-    ...(p.tag ? { currentTags: [p.tag] } : {}),
+    currentTags: p.filter.tags,
+    filters: listFilters(u.shopPath, p),
   });
-  return { collection, products, current_tags: p.tag ? [p.tag] : [], paginate: paginateOf(p.page, p.after, p.link) };
+  return { collection, products, current_tags: p.filter.tags, paginate: paginateOf(p.page, p.after, p.link) };
+}
+
+/** collection.filters（0150 が当たっていれば価格の price_range。当たる前は空） */
+function listFilters(shopPath: string, p: { category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; q?: string; sort?: ProductSort }) {
+  if (!p.priceRange) return [];
+  const urlToRemove = listUrl(shopPath, { category: p.category?.slug, tags: p.filter.tags, q: p.q, sort: p.sort });
+  return [priceRangeFilter({ min: p.filter.priceMin, max: p.filter.priceMax, rangeMax: p.priceRange.max, urlToRemove })];
 }
 
 /**
@@ -409,34 +418,36 @@ export function renderListing(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
+  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
 ): Response | null {
+  const tag = p.filter.tags[0];
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
   const collection = collectionObject(u, {
     handle: p.category?.slug ?? "all",
-    title: p.category?.name ?? (p.tag ? `#${p.tag}` : p.top ? s.shop.name : t("store.all_products")),
+    title: p.category?.name ?? (tag ? p.filter.tags.map((x) => `#${x}`).join(" ") : p.top ? s.shop.name : t("store.all_products")),
     description: p.category?.description ?? null,
     image: p.category ? categoryImageOf(p.category) : null,
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
-    ...(p.tag ? { currentTags: [p.tag] } : {}),
+    currentTags: p.filter.tags,
     sortBy: shopifySortName(p.sort),
+    filters: listFilters(s.ctx.shopPath, { ...p, ...(p.search ? { q: p.search.q } : {}) }),
   });
   const paginate = paginateOf(p.page, p.after, p.link);
   // 短すぎる語（3 文字未満で、カテゴリー・タグでも絞っていない）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
   const search = p.search
     ? { performed: p.search.performed, terms: p.search.q, too_short: !p.search.performed, results: products.map((x) => ({ ...x, object_type: "product" })), results_count: p.page.total ?? products.length, types: ["product"], filters: [], sort_by: null, sort_options: [] }
     : null;
-  const template: ThemeTemplate = search && themeHasTemplate(choice.lt, "search") ? "search" : p.top && !p.tag && !search && themeHasTemplate(choice.lt, "index") ? "index" : "collection";
+  const template: ThemeTemplate = search && themeHasTemplate(choice.lt, "search") ? "search" : p.top && !tag && !search && themeHasTemplate(choice.lt, "index") ? "index" : "collection";
   return render(c, s, choice, {
     template,
-    values: { collection, products, current_tags: p.tag ? [p.tag] : [], ...(search ? { search } : {}) },
+    values: { collection, products, current_tags: p.filter.tags, ...(search ? { search } : {}) },
     title: search ? (search.terms ? `${t("store.search")}: ${search.terms}` : t("store.search")) : p.top ? s.shop.name : collection.title,
     ...(p.category && categoryMetaDescription(p.category.description) ? { description: categoryMetaDescription(p.category.description)! } : {}),
     path: p.path,
-    noindex: Boolean(p.after || search),
+    noindex: Boolean(p.after || search || filterNoindex(p.filter)),
     categories: p.categories,
     ...(p.category ? { currentCategory: p.category.slug } : {}),
     paginate,

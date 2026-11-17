@@ -32,7 +32,7 @@ A と B では、特定商取引法の最終確認画面は Banto の画面が�
 ## 商品を読む（公開読み取り API）
 
 ```
-GET /api/shops/<shop>/products?category=<カテゴリーの slug>&brand=<ブランド>&tag=<タグ>&q=<語>&updated_since=<ISO 8601>&sort=<並び>&limit=<件数>&cursor=<次の位置>
+GET /api/shops/<shop>/products?category=<カテゴリーの slug>&brand=<ブランド>&tag=<タグ>&filter.v.price.gte=<円>&filter.v.price.lte=<円>&q=<語>&updated_since=<ISO 8601>&sort=<並び>&limit=<件数>&cursor=<次の位置>
 GET /api/shops/<shop>/products/<product_slug>
 GET /api/shops/<shop>/categories
 ```
@@ -41,7 +41,8 @@ GET /api/shops/<shop>/categories
 | --- | --- |
 | `category` | このカテゴリーと、その子孫のカテゴリーの商品だけ（主カテゴリーか追加カテゴリーのどれかが合えば出る）。存在しない slug なら 0 件 |
 | `brand` | このブランドの商品だけ（完全一致） |
-| `tag` | このタグを持つ商品だけ（完全一致）。タグは管理画面の商品編集、または AI 用 API で付ける |
+| `tag` | このタグを持つ商品だけ（完全一致）。くり返すと **すべてのタグを持つ商品**（`?tag=夏物&tag=セール`、5 つまで。6 つ以上は 400 `field: "tag"`）。タグは管理画面の商品編集、または AI 用 API で付ける |
+| `filter.v.price.gte` / `filter.v.price.lte` | 一覧の価格（いちばん安い SKU の価格、税込の円。`min_price_jpy` と同じ）がこの値以上 / 以下の商品だけ。価格の無い商品は出ません。数でなければ 400（`field` はその名前）。名前は Shopify のテーマの絞り込みと同じです |
 | `q` | 名前・ブランド・タグ・説明（先頭 300 文字）の部分一致（大文字小文字を区別しない、3〜100 文字）。2 文字以下の語（「帽子」など）は `tag`・`category`・`brand` のどれかと一緒のときだけ受け付けます（それ以外は 400、`field: "q"`, `reason: "too_short"`） |
 | `updated_since` | この時刻より後に更新された商品だけ。連携側でキャッシュを差分更新するときに使う |
 | `sort` | `new`（既定、登録の新しい順）/ `updated` / `price_asc` / `price_desc` / `name` |
@@ -67,6 +68,8 @@ GET /api/shops/<shop>/categories
 - `next_cursor` が `null` なら最後のページです。商品が多いショップでも速さが変わらないので、ページ送りは `cursor` を使ってください。`next_offset` は `offset` で辿っているときだけ（10,000 件まで）返ります。
 - `total` は絞り込み後の件数で、最初のページ（`cursor` も `offset` も無いとき）だけ 10,000 件まで数えます。超えたら `10000` と `total_capped: true` を返します。2 ページ目からは `null` です。
 - `tags` はショップ全体（絞り込み前、公開中の商品だけ）のタグと件数です（多い順に 200 件まで）。絞り込みボタンを並べるのに使えます。
+- `price_max` は公開の一覧のいちばん高い一覧の価格です（価格の絞り込みの欄の上限に使えます。0150 から。商品が無ければ `null`）。
+- タグ 2 つ以上と価格の絞り込みは 0150 から使えます。当てる前の DB では 409（`{"error": "migration_required"}`）を返し、絞らずに返すことはしません（タグ 1 つは今までどおり）。
 - `compare_at_price_jpy` は最安 SKU の通常価格です。`min_price_jpy` より高ければセール中として表示できます。
 - 詳細（`/products/<slug>`）は説明・画像（幅と高さつき）に加え、次を返します。
   - `brand`、`category`、`category_path`（最上位から主カテゴリーまで。パンくず用）、`extra_categories`（追加カテゴリー。主カテゴリーのほかに並ぶ棚）、`tags`、`updated_at`

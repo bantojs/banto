@@ -273,7 +273,32 @@ export function reviewsLiquid(r: ProductReviews | null) {
   };
 }
 
-export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[]; sortBy?: string }) {
+/**
+ * 価格の絞り込み（0150）の Liquid の形。Shopify の collection.filters の price_range と同じ名前。
+ * 値（min_value.value・max_value.value・range_max）はほかの金額と同じく最小の単位の 100 倍（`| money_without_currency` で円に）、URL の値は円。
+ * url_to_remove は価格だけを外した今の一覧の URL
+ */
+export function priceRangeFilter(p: { min?: number | undefined; max?: number | undefined; rangeMax: number | null; urlToRemove: string }) {
+  const active = p.min !== undefined || p.max !== undefined;
+  return {
+    label: t("store.price_filter_label"),
+    param_name: "filter.v.price",
+    type: "price_range",
+    presentation: null,
+    active_values: [],
+    inactive_values: [],
+    values: [],
+    false_value: null,
+    true_value: null,
+    min_value: { param_name: "filter.v.price.gte", value: money(p.min), active: p.min !== undefined, label: t("store.price_min") },
+    max_value: { param_name: "filter.v.price.lte", value: money(p.max), active: p.max !== undefined, label: t("store.price_max") },
+    range_max: money(p.rangeMax) ?? 0,
+    active,
+    url_to_remove: p.urlToRemove,
+  };
+}
+
+export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[]; sortBy?: string; filters?: unknown[] }) {
   const url = c.handle === "all" ? productsUrl(u.shopPath) : categoryUrl(u.shopPath, c.handle);
   return {
     id: c.handle,
@@ -294,7 +319,8 @@ export function collectionObject(u: UrlBase, c: { handle: string; title: string;
     sort_by: c.sortBy ?? "created-descending",
     default_sort_by: "created-descending",
     sort_options: LIST_SORT_OPTIONS.map((o) => ({ name: t(o.label), value: o.shopify })),
-    filters: [],
+    // 絞り込み（0150 から価格の price_range。タグは current_tags と ?tag= のくり返し）
+    filters: c.filters ?? [],
   };
 }
 

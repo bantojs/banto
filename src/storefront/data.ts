@@ -2,6 +2,7 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
+import { LIST_FILTERS_MIGRATION } from "./list-filter";
 import type { CareView } from "../care-labels/care";
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "../db/client";
@@ -301,13 +302,18 @@ export class StorefrontData {
     // 検索の語があるときの offset は 1,000 まで（深い位置まで読ませて DB を重くさせない。先は cursor で）
     if (offset > (query.q?.trim() ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return null;
     const cat = query.category ? categories.find((c) => c.slug === query.category) : undefined;
+    // タグ 2 つ以上・価格は 0150 から。当たる前は最初のタグだけで絞る（filtersIgnored。お店の画面は絞らないまま描き、公開 API は 409）
+    const tags = [...new Set([...(query.tag ? [query.tag] : []), ...(query.tags ?? [])])];
+    const wants = tags.length > 1 || query.priceMin !== undefined || query.priceMax !== undefined;
+    const filters = wants && (await this.migratedTo(LIST_FILTERS_MIGRATION));
     const args = {
       p_shop_id: shop.id,
       p_sort: sort,
       p_limit: limit,
       p_after: cursor ? { k: cursor.k, id: cursor.id } : null,
       p_offset: offset,
-      p_tag: query.tag ?? null,
+      p_tag: filters ? null : (tags[0] ?? null),
+      ...(filters ? { p_tags: tags, p_price_min: query.priceMin ?? null, p_price_max: query.priceMax ?? null } : {}),
       // 無いカテゴリーなら 0 件（全件を返さない）
       p_category_ids: query.category ? (cat ? [...descendantIds(categories, cat.id)] : []) : null,
       p_brand: query.brand ?? null,
@@ -318,7 +324,8 @@ export class StorefrontData {
     // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
     // 会員は会員限定の商品を含むのでキャッシュしない（会員の読み取りの経路は 0098 から）
     const reader = this.reader;
-    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
+    // 絞り込み（タグ 2 つ以上・価格）を求めた一覧はキャッシュしない（0150 の前は最初のタグだけの一覧と同じ引数になり、filtersIgnored の有無が混ざるため）
+    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since && !wants;
     const key = `plist:${JSON.stringify(args)}`;
     const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
     if (hit) return hit;
@@ -334,6 +341,7 @@ export class StorefrontData {
       offset,
       nextOffset: !cursor && r.next && offset + limit <= PRODUCT_OFFSET_MAX ? offset + limit : null,
       nextCursor: r.next ? encodeCursor({ s: sort, k: r.next.k, id: r.next.id }) : null,
+      ...(wants && !filters ? { filtersIgnored: true } : {}),
     };
     if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
@@ -802,6 +810,11 @@ export const PRODUCT_PAGE_MAX = 100;
 export interface ProductQuery {
   /** このタグを持つ商品だけ（完全一致） */
   tag?: string;
+  /** これらのタグをすべて持つ商品だけ（tag と合わせる、5 つまで。0150、src/storefront/list-filter.ts） */
+  tags?: readonly string[];
+  /** 一覧の価格（いちばん安い SKU の価格、円）の下限・上限（0150） */
+  priceMin?: number;
+  priceMax?: number;
   /** このカテゴリー（slug）と、その子孫のカテゴリーの商品だけ。categories を渡すこと */
   category?: string;
   /** このブランドの商品だけ（完全一致） */
@@ -844,12 +857,16 @@ export interface ProductListPage {
   nextOffset: number | null;
   /** 次のページの cursor。最後のページなら null */
   nextCursor: string | null;
+  /** 0150 が当たる前で、タグ 2 つ以上・価格の絞り込みを使えなかった（最初のタグだけで絞った） */
+  filtersIgnored?: boolean;
 }
 
 export interface ProductFacets {
   tags: { tag: string; count: number }[];
   /** カテゴリーの id → 公開中の商品の数（子孫を含む） */
   categories: Record<string, number>;
+  /** 公開の一覧に出る商品のいちばん高い一覧の価格（価格の欄の上限）。0150 から。無い（undefined）なら 0150 の前 */
+  price_max?: number | null;
 }
 
 /** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */
