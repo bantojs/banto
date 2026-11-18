@@ -441,6 +441,19 @@ function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeCo
           {t("settings.payments_others_hint")} <a href={`/admin/shops/${shop.id}/plugins`}>{t("plugins.title")}</a>
         </p>
       </section>
+      <section class="card" id="cod">
+        <h2>{t("mod.cod.name")}</h2>
+        <p class="muted">{t("mod.cod.description")}</p>
+        {moduleEnabled(shop.settings, "cod") ? (
+          <p>
+            <a href={`/admin/shops/${shop.id}/modules/cod`}>{t("settings.open_settings")}</a>
+          </p>
+        ) : (
+          <p class="muted">
+            {t("settings.module_off")} <a href={`/admin/shops/${shop.id}/modules`}>{t("modules.title")}</a>
+          </p>
+        )}
+      </section>
     </>
   );
 }

@@ -9,7 +9,7 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 
 | イベント | 発生タイミング | data の主な項目 |
 | --- | --- | --- |
-| `order.created` | 決済 Webhook で注文が作られたとき（`order.paid` と同時） | `order_id` `shop_id` `subtotal_jpy` `shipping_jpy` `discount_jpy` `total_jpy` `status` `payment_provider` `items[]`（`total_jpy` は値引き後。`items[].discount_jpy` は商品ごとの値引き） |
+| `order.created` | 決済 Webhook で注文が作られたとき（`order.paid` と同時）。**代金引換（0157）はレジで確定したとき（`order.paid` は出ない）** | `order_id` `shop_id` `subtotal_jpy` `shipping_jpy` `discount_jpy` `fee_jpy`（代引き手数料、0157）`total_jpy` `status` `payment_status`（0157）`payment_provider` `items[]`（`total_jpy` は値引き後・手数料込み。`items[].discount_jpy` は商品ごとの値引き） |
 | `order.paid` | お支払いが済んだとき。決済の注文は `order.created` と同時。**未入金の注文（代金引換など、0156）は、運営者が入金を記録したとき**（発送の後のこともある） | 同上。入金の記録のときは、それに `order_number` `payment_status`（`paid`）`paid_at` `recorded_payment: true` `customer_id` が付く |
 | `order.shipped` | 管理画面で「発送済み」にしたとき | `order_id` `shop_id` `total_jpy` `status` `shipped_at` `payment_status`（0156。`unpaid` なら代金はまだ） |
 | `order.cancelled` | 管理画面で「キャンセル」にしたとき | `order_id` `shop_id` `total_jpy` `status` `refunded` `restocked`（在庫を戻したか。取り込んだ注文は false、0031）`payment_status` `reason`（`refused` = 受け取り拒否、0156） |

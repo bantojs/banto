@@ -323,6 +323,7 @@ export type ShopTab = "products" | "orders" | "customers" | "inquiries" | "pages
 export type ShopHere =
   | ShopTab
   | "shipping-labels"
+  | "cod"
   | "home"
   | "inventory"
   | "categories"
@@ -426,6 +427,7 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
           page("settings", "", "settings.tab_general", "any"),
           page("settings-shipping", "/settings/shipping", "settings.tab_shipping", "settings"),
           page("settings-payments", "/settings/payments", "settings.tab_payments", "settings"),
+          mod("cod", "cod", "mod.cod.name"),
           page("settings-members", "/settings/members", "settings.tab_members", "admin|integrations"),
           page("notices", "/notices", "notices.title", "settings"),
           mod("receipt", "receipt", "mod.receipt.name"),

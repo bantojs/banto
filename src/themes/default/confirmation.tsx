@@ -12,7 +12,7 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
   const secondary = "background:transparent;color:inherit;border:1px solid color-mix(in srgb,CanvasText 30%,transparent)";
   return (
     <div class="banto-confirmation">
-      <p>{cf.payment.free ? t("confirm.intro_free") : t("confirm.intro")}</p>
+      <p>{cf.payment.free ? t("confirm.intro_free") : cf.payment.cod ? t("confirm.intro_cod") : t("confirm.intro")}</p>
       {error ? <p class="error">{error}</p> : null}
 
       <h2>{t("confirm.items")}</h2>
@@ -48,6 +48,12 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
             <td colspan={3}>{t("confirm.shipping")}</td>
             <td>{yen(cf.shipping_jpy)}</td>
           </tr>
+          {cf.fee_jpy > 0 ? (
+            <tr>
+              <td colspan={3}>{t("confirm.cod_fee")}</td>
+              <td>{yen(cf.fee_jpy)}</td>
+            </tr>
+          ) : null}
           {cf.discounts.map((d) => (
             <tr>
               <td colspan={3}>

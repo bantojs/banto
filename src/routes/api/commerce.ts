@@ -186,6 +186,8 @@ commerceApi.post("/shops/:shop/checkout/quote", async (c: Ctx) => {
   if (!r.ok) {
     if (r.error === "invalid_address") return c.json({ error: "invalid_address", fields: r.invalid }, 400);
     // minimum_amount: 値引き後の支払い額が決済の最低額（50 円）未満
+    // cod_unavailable: 代金引換を選べない（reason: fee = 手数料の段に当たらない / max_total = 上限を超える / members_only = 会員だけ。0157）
+    if (r.error === "cod_unavailable") return c.json({ error: r.error, reason: r.cod ?? "module" }, 409);
     return c.json({ error: r.error }, 409);
   }
   // excluded: 購入手続きから外した店頭のみの商品の SKU（0149。カートのトークンには残っている）
@@ -244,6 +246,8 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   const status = statusToken ? { status_token: statusToken, status_url: `${s.base}/api/shops/${s.shop.slug}/checkout/status?token=${encodeURIComponent(statusToken)}` } : {};
   // 0 円の注文は決済なしでこの時点で確定している。payment_url は完了画面（success_url）
   if (placed.free) return c.json({ payment_url: withQueryParam(placed.url, "free", "1"), free: true, order_id: placed.free.orderId, ...status });
+  // 代金引換（0157）は受付（未入金）としてこの時点で確定している。payment_url は完了画面（success_url）
+  if (placed.cod) return c.json({ payment_url: placed.url, cod: true, order_id: placed.cod.orderId, ...status });
   return c.json({ payment_url: placed.url, ...status });
 });
 

@@ -12,6 +12,7 @@ import { productFields } from "../src/products/fields";
 import { publicShopSettings } from "../src/storefront/data";
 import { audienceDisplayOnly, audienceOk } from "../src/members/audience";
 import { legalLinksOf } from "../src/storefront/legal-links";
+import { codFee, readCodSettings } from "../src/modules/cod";
 
 /** PostgREST の db-max-rows（Supabase の既定）。本物と同じく 1 回の応答をここまでで切る */
 const FAKE_MAX_ROWS = 1000;
@@ -3746,6 +3747,7 @@ export class FakeSupabase {
       discount_jpy: o["discount_jpy"] ?? 0, discounts: o["discounts"] ?? [], shipping_tax_rate: o["shipping_tax_rate"] ?? Number(settings["tax_rate"] ?? 10),
       tax_rounding: o["tax_rounding"] ?? settings["tax_rounding"] ?? "floor", payment_provider: o["payment_provider"] ?? null, items: this.orderItemsJson(o["id"]),
       ...(o["payment_status"] ? { payment_status: o["payment_status"], paid_at: o["paid_at"] ?? null } : {}),
+      ...(o["fee_jpy"] ? { fee_jpy: o["fee_jpy"] } : {}),
       tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"], number: o["tracking_number"] } : null,
     };
   }
@@ -4425,12 +4427,14 @@ export class FakeSupabase {
     if (fn === "attach_reservation_customer") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"] && r["status"] === "pending");
       if (!res) return json({ code: "P0001", message: "reservation_not_found" }, 400);
-      const { shipping_jpy, customer_id, customer_epoch, ...customer } = (args["p_customer"] ?? {}) as Row;
+      const { shipping_jpy, fee_jpy, customer_id, customer_epoch, ...customer } = (args["p_customer"] ?? {}) as Row;
       if (customer_id && !this.tables.customers.some((c) => c["shop_id"] === args["p_shop_id"] && c["id"] === customer_id && Number(c["session_epoch"] ?? 0) === Number(customer_epoch ?? -1))) {
         return json({ code: "P0001", message: "member_session_invalid" }, 400);
       }
       res["customer"] = customer;
       res["shipping_jpy"] = Number(shipping_jpy ?? 0);
+      // 0157: 代引き手数料
+      res["fee_jpy"] = Number(fee_jpy ?? 0);
       res["customer_id"] = customer_id ?? null;
       return new Response(null, { status: 204 });
     }
@@ -4517,7 +4521,7 @@ export class FakeSupabase {
       const o = this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["shop_id"] === args["p_shop_id"]);
       if (!o) return json({ code: "P0001", message: "not_found" }, 400);
       const sh = this.tables.shops.find((x) => x["id"] === o["shop_id"])!;
-      return json({ order_id: o["id"], number: o["number"], status: o["status"], created_at: o["created_at"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0, discount_jpy: o["discount_jpy"] ?? 0, discounts: o["discounts"] ?? [], payment_provider: o["payment_provider"] ?? null,
+      return json({ order_id: o["id"], number: o["number"], status: o["status"], created_at: o["created_at"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0, fee_jpy: o["fee_jpy"] ?? 0, payment_status: o["payment_status"] ?? "paid", discount_jpy: o["discount_jpy"] ?? 0, discounts: o["discounts"] ?? [], payment_provider: o["payment_provider"] ?? null,
         customer_email: o["customer_email"] ?? null, customer_name: o["customer_name"] ?? null, shipping_address: o["shipping_address"] ?? null,
         tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"], number: o["tracking_number"] } : null,
         member: o["customer_id"] != null,
@@ -4620,8 +4624,22 @@ export class FakeSupabase {
       const shipping = Number(res["shipping_jpy"] ?? 0);
       const discount = Number(res["discount_jpy"] ?? 0);
       // 0029 / 0090: 支払額は整数で必須、通貨は jpy で必須。Banto の計算と違えば確定しない（在庫も動かさない）。free は 0 円だけ
-      const expected = Math.max(0, items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0) + shipping - discount);
-      if (!/^-?[0-9]{1,9}$/.test(String(order["amount_paid_jpy"] ?? "")) || Number(order["amount_paid_jpy"]) !== expected) return fail("amount_mismatch");
+      const base = Math.max(0, items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0) + shipping - discount);
+      // 0157: 代金引換は手数料をショップの決まりで引き直し、受付（未入金）で確定する。受け取る額は 0
+      const fee = Number(res["fee_jpy"] ?? 0);
+      const cod = order["payment_provider"] === "cod";
+      if (fee !== 0 && !cod) return fail("amount_mismatch");
+      const expected = base + fee;
+      if (cod) {
+        const settings = (this.tables.shops.find((x) => x["id"] === res["shop_id"])?.["settings"] ?? {}) as Row;
+        if ((settings["modules"] as Row | undefined)?.["cod"] !== true) return fail("cod_unavailable");
+        const want = codFee(settings, base);
+        if (want === null) return fail("cod_unavailable");
+        if (want !== fee) return fail("amount_mismatch");
+        if (expected <= 0 || expected > readCodSettings(settings).max_total_jpy) return fail("cod_unavailable");
+        if (readCodSettings(settings).members_only && !res["customer_id"]) return fail("cod_unavailable");
+        if (String(order["amount_paid_jpy"] ?? "") !== "0") return fail("amount_mismatch");
+      } else if (!/^-?[0-9]{1,9}$/.test(String(order["amount_paid_jpy"] ?? "")) || Number(order["amount_paid_jpy"]) !== expected) return fail("amount_mismatch");
       if (!/^jpy$/i.test(String(order["currency"] ?? "").trim())) return fail("amount_mismatch");
       if (order["payment_provider"] === "free" && expected !== 0) return fail("amount_mismatch");
       if (res["status"] === "released") {
@@ -4649,9 +4667,9 @@ export class FakeSupabase {
         if (member && member["marketing_consent"] !== consentAtCheckout) { member["marketing_consent"] = consentAtCheckout; member["marketing_consent_at"] = this.now(); member["marketing_consent_source"] = "checkout"; }
       }
       this.tables.orders.push({
-        id, shop_id: res["shop_id"], reservation_id: res["id"], status: "paid", number: shopRow["order_seq"], shipping_jpy: shipping, customer_id: res["customer_id"] ?? null, marketing_consent: consentAtCheckout,
-        discount_jpy: discount, discounts: res["discounts"] ?? null, amount_paid_jpy: order["amount_paid_jpy"] ?? null,
-        total_jpy: Math.max(0, items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0) + shipping - discount),
+        id, shop_id: res["shop_id"], reservation_id: res["id"], status: cod ? "pending" : "paid", payment_status: cod ? "unpaid" : "paid", paid_at: cod ? null : this.now(), fee_jpy: fee, number: shopRow["order_seq"], shipping_jpy: shipping, customer_id: res["customer_id"] ?? null, marketing_consent: consentAtCheckout,
+        discount_jpy: discount, discounts: res["discounts"] ?? null, amount_paid_jpy: cod ? null : (order["amount_paid_jpy"] ?? null),
+        total_jpy: expected,
         customer_email: cust["customer_email"] ?? order["customer_email"] ?? null, customer_name: cust["customer_name"] ?? order["customer_name"] ?? null,
         shipping_address: cust["shipping_address"] ?? order["shipping_address"] ?? null, payment_provider: order["payment_provider"] ?? null,
         // 0018 のトリガー: 予約の customer.delivery を写す
@@ -4667,9 +4685,9 @@ export class FakeSupabase {
       }
       res["status"] = "confirmed";
       res["customer"] = null;
-      const payload = { order_id: id, order_number: shopRow["order_seq"], shop_id: res["shop_id"], subtotal_jpy: items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0), shipping_jpy: shipping, total_jpy: items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0) + shipping, status: "paid", payment_provider: order["payment_provider"] ?? null, customer_id: res["customer_id"] ?? null, items };
+      const payload = { order_id: id, order_number: shopRow["order_seq"], shop_id: res["shop_id"], subtotal_jpy: items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0), shipping_jpy: shipping, fee_jpy: fee, total_jpy: expected, status: cod ? "pending" : "paid", payment_status: cod ? "unpaid" : "paid", payment_provider: order["payment_provider"] ?? null, customer_id: res["customer_id"] ?? null, items };
       this.enqueue(res["shop_id"] as string, "order.created", payload);
-      this.enqueue(res["shop_id"] as string, "order.paid", payload);
+      if (!cod) this.enqueue(res["shop_id"] as string, "order.paid", payload);
       for (const it of items) {
         const available = inv(it.sku_id)!["available"] as number;
         if (available <= 3) this.enqueue(res["shop_id"] as string, "inventory.low", { shop_id: res["shop_id"], sku_id: it.sku_id, available, threshold: 3 });

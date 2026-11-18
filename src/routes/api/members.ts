@@ -280,7 +280,7 @@ membersApi.get("/shops/:shop/members/me", async (c: Ctx) => {
   const rec = await db.memberGet(s.shop.id, s.member.id, s.member.epoch, true);
   if (!rec) return c.json({ error: "invalid_member_token" }, 401);
   // 注文の住所は返さない（連携側の画面に要るのは注文の状態と金額）。会員本人の既定の住所と案内メールの同意は、マイページのために返す
-  const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
+  const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], fee_jpy: o["fee_jpy"] ?? 0, discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
   const consent = consentCollected(s.shop) ? { marketing_consent: rec.customer.marketing_consent ?? null } : {};
   return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, orders }, 200, { "cache-control": "no-store" });
 });

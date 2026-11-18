@@ -36,6 +36,8 @@ export interface PaymentOptions {
   komoju: boolean;
   /** 同梱プラグイン Amazon Pay（0130） */
   amazon_pay: boolean;
+  /** 同梱モジュール 代金引換（0157） */
+  cod?: boolean;
 }
 
 export interface ShippingInfo {

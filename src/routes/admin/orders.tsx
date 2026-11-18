@@ -59,6 +59,8 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
 interface OrderListRow extends OrderRow {
   number: number;
   shipping_jpy: number;
+  /** 代引き手数料（0157） */
+  fee_jpy?: number | null;
   /** 0017_tax */
   shipping_tax_rate?: number | string | null;
   tax_rounding?: string | null;
@@ -471,6 +473,12 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
               <dd>{yen(items.reduce((s, it) => s + it.unit_price_jpy * it.qty, 0))}</dd>
               <dt>{t("store.shipping")}</dt>
               <dd>{yen(order.shipping_jpy)}</dd>
+              {order.fee_jpy ? (
+                <>
+                  <dt>{t("confirm.cod_fee")}</dt>
+                  <dd>{yen(order.fee_jpy)}</dd>
+                </>
+              ) : null}
               {order.discount_jpy ? (
                 <>
                   <dt>

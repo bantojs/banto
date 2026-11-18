@@ -28,6 +28,7 @@ import { careLabelsAdmin } from "../../modules/care-labels/admin";
 import { audiencesAdmin } from "../../modules/audiences/admin";
 import { dialogsAdmin } from "../../modules/dialogs/admin";
 import { memberNewsAdmin } from "../../modules/member-news/admin";
+import { codAdmin } from "../../modules/cod/admin";
 import { priceRulesAdmin } from "../../modules/audiences/prices";
 import { NotSavedNotice, failCode, updateShop } from "./shop-save";
 
@@ -145,6 +146,7 @@ modules.route("/:shopId/modules/google-login", socialLoginAdmin("google"));
 modules.route("/:shopId/modules/product-feed", productFeedAdmin);
 modules.route("/:shopId/modules/receipt", receiptAdmin);
 modules.route("/:shopId/modules/delivery-time", deliveryAdmin);
+modules.route("/:shopId/modules/cod", codAdmin);
 modules.route("/:shopId/modules/shipping-labels", labelsAdmin);
 modules.route("/:shopId/modules/store-tryon", tryonAdmin);
 modules.route("/:shopId/modules/ga4", ga4Admin);
