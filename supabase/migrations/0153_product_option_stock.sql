@@ -20,44 +20,52 @@ create policy product_option_stock_catalog on product_option_stock for select us
 revoke all on product_option_stock from anon;
 revoke insert, update, delete on product_option_stock from authenticated;
 
--- その商品の行を作り直す（在庫のある SKU の選択肢の値。文字と数だけ、100 文字まで）
-create or replace function banto_product_option_stock_refresh(p_product_id uuid)
+-- 商品の行をまとめて作り直す（在庫のある SKU の選択肢の値。文字と数だけ、100 文字まで）。
+-- 作り直しはショップごとに並べる（別の SKU の在庫が同時に 0 をまたいでも、後から作る方が先の確定を見てから作る）。
+-- 錠はショップに 1 つ（取り込みで多くの商品をまとめて作り直しても、錠の数が増えない）
+create or replace function banto_product_option_stock_refresh_many(p_product_ids uuid[])
 returns void language plpgsql security definer set search_path = public as $$
+declare v_shop uuid;
 begin
-  if p_product_id is null then return; end if;
-  -- 同じ商品の作り直しを並べる（別の SKU の在庫が同時に 0 をまたいでも、後から作る方が先の確定を見てから作る）
-  perform pg_advisory_xact_lock(hashtextextended('banto_option_stock:' || p_product_id::text, 0));
-  delete from product_option_stock where product_id = p_product_id;
+  if p_product_ids is null or cardinality(p_product_ids) = 0 then return; end if;
+  for v_shop in select distinct shop_id from products where id = any(p_product_ids) order by shop_id loop
+    perform pg_advisory_xact_lock(hashtextextended('banto_option_stock:' || v_shop::text, 0));
+  end loop;
+  delete from product_option_stock where product_id = any(p_product_ids);
   insert into product_option_stock (shop_id, product_id, key, value)
   select distinct k.shop_id, k.product_id, e.key, left(btrim(e.value #>> '{}'), 100)
     from skus k
     join inventory i on i.sku_id = k.id and i.available > 0
     cross join lateral jsonb_each(case when jsonb_typeof(k.options) = 'object' then k.options else '{}'::jsonb end) e
-   where k.product_id = p_product_id
+   where k.product_id = any(p_product_ids)
      and jsonb_typeof(e.value) in ('string', 'number')
      and btrim(e.value #>> '{}') <> ''
   on conflict do nothing;
 end;
+$$;
+revoke execute on function banto_product_option_stock_refresh_many(uuid[]) from public, anon, authenticated;
+
+create or replace function banto_product_option_stock_refresh(p_product_id uuid)
+returns void language sql security definer set search_path = public as $$
+  select banto_product_option_stock_refresh_many(array[p_product_id]) where p_product_id is not null;
 $$;
 revoke execute on function banto_product_option_stock_refresh(uuid) from public, anon, authenticated;
 
 -- SKU の追加・選択肢や商品の付け替え・削除: 文ごとに、変わった商品を 1 回ずつ作り直す（取り込みで SKU をまとめて足しても商品ごとに 1 回）
 create or replace function banto_skus_option_stock_stmt()
 returns trigger language plpgsql security definer set search_path = public as $$
-declare v_id uuid;
 begin
   if tg_op = 'INSERT' then
-    for v_id in select distinct product_id from new_rows loop perform banto_product_option_stock_refresh(v_id); end loop;
+    perform banto_product_option_stock_refresh_many(array(select distinct product_id from new_rows));
   elsif tg_op = 'DELETE' then
-    for v_id in select distinct product_id from old_rows loop perform banto_product_option_stock_refresh(v_id); end loop;
+    perform banto_product_option_stock_refresh_many(array(select distinct product_id from old_rows));
   else
-    for v_id in
+    perform banto_product_option_stock_refresh_many(array(
       select distinct x.pid from (
         select o.product_id as pid from old_rows o join new_rows n on n.id = o.id where n.options is distinct from o.options or n.product_id is distinct from o.product_id
         union
         select n.product_id from old_rows o join new_rows n on n.id = o.id where n.options is distinct from o.options or n.product_id is distinct from o.product_id
-      ) x
-    loop perform banto_product_option_stock_refresh(v_id); end loop;
+      ) x));
   end if;
   return null;
 end;
@@ -309,6 +317,6 @@ revoke execute on function product_public_facets(uuid, integer) from public;
 grant execute on function product_public_facets(uuid, integer) to anon, authenticated, service_role;
 
 -- 今の商品の表を作る
-select banto_product_option_stock_refresh(id) from products;
+select banto_product_option_stock_refresh_many(array(select id from products));
 
 insert into banto_migrations (version) values ('0153_product_option_stock');
