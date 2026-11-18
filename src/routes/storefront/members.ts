@@ -62,7 +62,8 @@ import { liquidThemeFor, renderAccount, renderCustomerLogin, type CustomerLoginI
 import { type PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
 import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, dateLabel, memberExtendLeft, memberExtendable, todayHere, tryonSettings, ymdOrNull } from "../../modules/store-tryon";
-import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { RECEIPT_MODULE, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { PASSKEY_CLIENT_JS, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
 import { COSE_ALGS, WebAuthnError, b64urlEncode, newChallenge, readAssertion, sameUserHandle, userHandleOf, verifyAssertion, verifyRegistration, type Expected } from "../../members/webauthn";
 import { returnOrigins, safeReturnUrl, consentCollected, withQueryParam } from "../../commerce/checkout";
@@ -447,7 +448,7 @@ members.get("/:shop/account/orders/:number{[0-9]+}/receipt", async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   const number = Number(c.req.param("number"));
   const order = (await db.memberOrder(s.shop.id, s.session.cid, s.session.ep, number).catch(() => null)) as ReceiptOrder | null;
-  if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
+  if (!order || !receiptAvailable(order)) return c.text(t("receipt.not_available"), 404);
   privatePage(c);
   const name = (c.req.query("name") ?? "").trim().slice(0, 100);
   return c.html(renderReceipt({ shopName: s.shop.name, settings: receiptSettings(s.shop), shopSettings: s.shop.settings, order, addressee: name, issuedAt: new Date(), nameForm: { action: `${s.shopPath}/account/orders/${number}/receipt`, method: "get", hidden: {} } }));

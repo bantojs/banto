@@ -140,7 +140,13 @@ export interface OrderRow {
   id: string;
   shop_id: string;
   reservation_id: string | null;
-  status: "paid" | "shipped" | "cancelled" | "refunded";
+  /** pending（受付・未入金、0156）→ shipped。paid は「お支払い済みで受付」 */
+  status: "pending" | "paid" | "shipped" | "cancelled" | "refunded";
+  /** お支払いの状態（0156。それより前の DB の行には無い = 入金済み） */
+  payment_status?: "paid" | "unpaid";
+  paid_at?: string | null;
+  /** 取り消しの理由（refused = 受け取り拒否、0156） */
+  cancel_reason?: string | null;
   total_jpy: number;
   customer_email: string | null;
   customer_name: string | null;

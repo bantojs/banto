@@ -8,7 +8,8 @@ import { formFields, owner, param, type AdminContext } from "../../routes/admin/
 import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
-import { INVOICE_NUMBER_RE, RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "./render";
+import { INVOICE_NUMBER_RE, RECEIPT_MODULE, receiptSettings, renderReceipt, type ReceiptOrder } from "./render";
+import { receiptAvailable } from "./data";
 import { selectIn } from "../../db/select-in";
 import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
@@ -94,7 +95,7 @@ export async function adminReceipt(c: AdminContext): Promise<Response> {
   const shop = await loadShop(c, shopId, "orders");
   if (!shop || !moduleEnabled(shop.settings, RECEIPT_MODULE)) return c.notFound();
   const order = await db.from<AdminOrderRow>("orders").selectOne("*", { eq: { id: param(c, "orderId"), shop_id: shopId } });
-  if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
+  if (!order || !receiptAvailable(order)) return c.text(t("receipt.not_available"), 404);
   // SKU と商品は明細の分だけ（ショップ全体を読むと 1,000 行で欠ける）
   const items = await db.from<OrderItemRow & { tax_rate?: number | string | null }>("order_items").select("*", { eq: { order_id: order.id } });
   const skus = await selectIn<SkuRow>(db, "skus", "id,code,name,product_id", shopId, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));

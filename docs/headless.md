@@ -509,6 +509,10 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 ---
 
+## 注文のお支払いの状態（0156）
+
+注文照会（ゲストの `/orders/lookup`・会員の `/members/orders/:number`）の注文には `payment_status`（`paid` / `unpaid`）と `paid_at` が付きます。未入金（代金引換など）の注文は `status` が `pending`（受付）か `shipped` で、領収書は入金の後に出ます（docs/hooks.md「注文の状態とお支払いの状態」）。
+
 ## 会員へのお知らせ（同梱モジュール member_news）
 
 会員トークンで、本人に見えるお知らせと未読の数を読み（`GET /api/shops/:shop/members/news`）、既読にできます（`POST …/members/news/read`、`{ ids?: [...] }`）。詳しくは docs/member-news.md「ヘッドレス」。

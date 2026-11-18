@@ -72,6 +72,8 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
+  // 未入金の注文の入金の記録（0156）で出た order.paid には、受付の知らせを重ねて送らない
+  if (event === "order.paid" && data["recorded_payment"] === true) return null;
   const r = await ctx.privileged.orderLineRecipient(orderId, shop_id);
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
   const kind = event === "order.paid" ? "order_paid" : "order_shipped";

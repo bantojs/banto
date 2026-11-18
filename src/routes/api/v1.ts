@@ -238,6 +238,8 @@ v1.get("/orders", async (c) =>
 v1.get("/orders/:id", async (c) => api(c).orderGet(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 // 印とメモ（0106。orders:write、メモは orders:pii も）
 v1.patch("/orders/:id", async (c) => body(c).then((b) => api(c).orderAnnotate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+// 入金を記録する（未入金の注文、0156。orders:write）
+v1.post("/orders/:id/payment", async (c) => api(c).orderPaymentRecord(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.post("/orders/:id/status", async (c) =>
   body(c)
     .then((b) => {

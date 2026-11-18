@@ -2,6 +2,7 @@
  * AI 用トークンでの操作をまとめる層（docs/ai-access.md）。REST（/api/v1）と MCP（/mcp）の両方がここを使う。
  * 権限の判定は SQL（api_*）側。ここはトークンのハッシュ化、エラーの分類、画像の取り込みだけを担う。
  */
+import { PAYMENT_STATUS_MIGRATION, cancellable } from "../orders/payment";
 import { VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } from "../media/variants";
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
@@ -92,6 +93,8 @@ function mapRpcError(e: unknown): never {
   if (e instanceof PrivilegedRpcError) {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
+    // お支払いの状態（0156）
+    if (e.is("not_payable")) throw new ApiError("invalid", "not_payable: only unpaid orders that are pending or shipped can be marked as paid", 400);
     // 公開の切り替えと回数の上限は、発行者が owner / admin のときだけ（0129）
     if (e.is("admin_required")) throw new ApiError("forbidden", "admin_required: only an organization owner or admin can change this", 403);
     // クーポンと会員（0036）
@@ -390,10 +393,21 @@ export class ApiService {
     return r.shop_id;
   }
 
+  /** 入金を記録する（未入金の注文、0156。orders:write）。order.paid を出すのは DB */
+  async orderPaymentRecord(id: string): Promise<Record<string, unknown>> {
+    await this.requireMigration(PAYMENT_STATUS_MIGRATION);
+    return this.call<Record<string, unknown>>("api_order_payment_record", { p_order_id: id });
+  }
+
   /** キャンセル: 決済事業者で返金してから cancel_order。返金に失敗したら注文は変えない */
   async orderCancel(id: string): Promise<Record<string, unknown>> {
-    const info = await this.call<{ status: string; payment_provider: string | null; payment_ref: string | null }>("api_order_payment_info", { p_order_id: id });
+    const info = await this.call<{ status: string; payment_provider: string | null; payment_ref: string | null; payment_status?: string }>("api_order_payment_info", { p_order_id: id });
     if (info.status === "cancelled" || info.status === "refunded") return this.orderGet(id);
+    // 未入金の注文（0156）は返金せずに取り消す（受付のあいだと、発送の後の受け取り拒否）
+    if (info.payment_status === "unpaid") {
+      if (!cancellable({ status: info.status, payment_status: "unpaid" })) throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
+      return this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: false });
+    }
     if (info.status !== "paid") throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
     const shop = await this.call<{ shop_id: string; stripe_account_id?: string | null }>("api_token_shop", {});
     // 0090: 決済した口座で返金する（列は 0090 から）
