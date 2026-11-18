@@ -24,7 +24,7 @@ describe.skipIf(!dbAvailable)("クーポンの条件: ブランドと支払い�
     expect(r.conditions["brands"]).toEqual(["HANARE"]);
     expect(r.conditions["exclude_brands"]).toEqual(["Other"]);
     expect([...(r.conditions["payment_methods"] as string[])].sort()).toEqual(["komoju:paypay", "stripe"]);
-    expect(await expectDbError(() => rpc("api_coupon_create", [token, { name: "x", kind: "percent", value: 10, conditions: { payment_methods: ["cod"] } }]))).toMatch(/invalid_conditions_payment_methods/);
+    expect(await expectDbError(() => rpc("api_coupon_create", [token, { name: "x", kind: "percent", value: 10, conditions: { payment_methods: ["bank_transfer"] } }]))).toMatch(/invalid_conditions_payment_methods/);
     expect(await expectDbError(() => rpc("api_coupon_create", [token, { name: "x", kind: "percent", value: 10, conditions: { brands: ["x".repeat(101)] } }]))).toMatch(/invalid_conditions_brands/);
   });
 

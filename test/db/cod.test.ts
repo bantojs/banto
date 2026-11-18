@@ -135,6 +135,16 @@ describe.skipIf(!dbAvailable)("代金引換（0157）", () => {
     await setSettings({ checkout: {} });
   });
 
+  it("クーポンの条件の支払い方法に cod を受け付ける（0158。AI 用 API と同じ検査）", async () => {
+    const run = (cond: J) =>
+      asUser(f.ownerId, async (c) => (await c.query<{ r: { conditions: J } }>("select to_jsonb(banto_api_coupon_apply($1, null::coupon_campaigns, $2::jsonb)) as r", [f.shopId, JSON.stringify({ name: "x", kind: "percent", value: 10, conditions: cond })])).rows[0]!.r);
+    const got = await asService(async (c) => (await c.query<{ r: { conditions: J } }>("select to_jsonb(banto_api_coupon_apply($1, null::coupon_campaigns, $2::jsonb)) as r", [f.shopId, JSON.stringify({ name: "x", kind: "percent", value: 10, conditions: { payment_methods: ["cod", "stripe"] } })])).rows[0]!.r);
+    expect([...(got.conditions["payment_methods"] as string[])].sort()).toEqual(["cod", "stripe"]);
+    expect(await expectDbError(() => asService((c) => c.query("select banto_api_coupon_apply($1, null::coupon_campaigns, $2::jsonb)", [f.shopId, JSON.stringify({ conditions: { payment_methods: ["cod:x"] } })])))).toMatch(/invalid_conditions_payment_methods/);
+    // 直接は呼べない（AI 用 API・CSV の取り込みの中から使う）
+    expect(await expectDbError(() => run({ payment_methods: ["cod"] }))).toMatch(/permission denied/);
+  });
+
   it("同梱のメール・LINE の送信先は order.created を購読する（今ある送信先にも足した）。設定の鍵 cod とモジュールは項目 settings", async () => {
     const perm = (await getPool().query<{ m: string; k: string }>("select banto_shop_settings_perm('modules', 'cod') as m, banto_shop_settings_perm('cod', null) as k")).rows[0]!;
     // 表に無い鍵は null（settings の項目だけでよい）

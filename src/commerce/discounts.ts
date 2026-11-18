@@ -31,7 +31,7 @@ export interface CouponConditions {
   /** 除くブランド */
   exclude_brands?: string[];
   /**
-   * 使える支払い方法（0044）。"stripe" / "komoju"（KOMOJU のどれでも）/ "komoju:<種類>"（credit_card・konbini・paypay など）/ "amazon_pay"（0130）。
+   * 使える支払い方法（0044）。"stripe" / "komoju"（KOMOJU のどれでも）/ "komoju:<種類>"（credit_card・konbini・paypay など）/ "amazon_pay"（0130）/ "cod"（代金引換、0158）。
    * 支払い方法は確認画面の前に選ぶので、確認画面と確定で判定する（カートでは仮に通す）。
    * KOMOJU で種類を絞ったクーポンを使うと、決済ページに出す支払い方法もその種類だけにする（DiscountResult.paymentTypes）
    */
@@ -174,7 +174,10 @@ export interface DiscountResult {
 }
 
 /** 支払い方法の条件の値の形 */
-export const PAYMENT_METHOD_RE = /^(stripe|komoju|komoju:[a-z_]{1,40}|amazon_pay)$/;
+/** 0158 から代金引換 `cod` も（DB の banto_api_coupon_apply が当てる前は受けない） */
+export const PAYMENT_METHOD_RE = /^(stripe|komoju|komoju:[a-z_]{1,40}|amazon_pay|cod)$/;
+/** クーポンの支払い方法の条件に cod を入れられる版 */
+export const COUPON_COD_MIGRATION = "0158_coupon_cod";
 
 export const MAX_COUPONS = 5;
 export const COUPON_CODE_RE = /^[A-Z0-9][A-Z0-9_-]{0,31}$/;
@@ -413,8 +416,8 @@ function paymentAllowed(methods: string[] | undefined, ctx: EvaluateContext): bo
   if (list.length === 0 || !ctx.payment) return true;
   if (ctx.payment.provider === "stripe") return list.includes("stripe");
   if (ctx.payment.provider === "amazon_pay") return list.includes("amazon_pay");
-  // 代金引換（0157）は支払い方法の条件の値に無い: 支払い方法を絞ったクーポンは代引きでは使えない
-  if (ctx.payment.provider === "cod") return false;
+  // 代金引換（0157。条件の値 cod は 0158）
+  if (ctx.payment.provider === "cod") return list.includes("cod");
   const allowed = komojuAllowed(list);
   return allowed === null || allowed.length > 0;
 }

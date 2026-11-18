@@ -2227,6 +2227,7 @@ export const en: Record<MessageKey, string> = {
   "coupons.pm_komoju_all": "KOMOJU (any method)",
   "coupons.pm_komoju_types": "Only these KOMOJU methods (comma-separated, e.g. credit_card, paypay, konbini, bank_transfer, pay_easy)",
   "coupons.pm_amazon_pay": "Amazon Pay",
+  "coupons.pm_cod": "Cash on delivery",
   "coupons.tags": "Eligible tags (when set, only items with at least one of these tags)",
   "coupons.exclude_tags": "Excluded tags (items with any of these tags are excluded)",
   "coupons.import.title": "Import from CSV",

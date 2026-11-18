@@ -12,7 +12,8 @@ import { requireOwner } from "../../routes/admin/auth";
 import { loadShop } from "../../routes/admin/shops";
 import { categoryOptions, loadCategories } from "../../routes/admin/categories";
 import { normalizeTags } from "../../products/tags";
-import { normalizeCode, type CouponConditions } from "../../commerce/discounts";
+import { COUPON_COD_MIGRATION, normalizeCode, type CouponConditions } from "../../commerce/discounts";
+import { migrated } from "../../db/migration-state";
 import { moduleEnabled } from "../registry";
 import { customerFields, type CustomerField } from "../../customers/fields";
 import { membersEnabled } from "../../routes/storefront/members";
@@ -165,6 +166,8 @@ couponsAdmin.get("/", requireOwner, async (c: AdminContext) => {
 
 interface FormContext {
   shop: ShopRow;
+  /** 支払い方法の条件に代金引換を出す（モジュール cod が ON で 0158 を当てた後） */
+  codChoice: boolean;
   categories: CategoryRow[];
   products: Pick<ProductRow, "id" | "slug" | "name">[];
   base: string;
@@ -193,7 +196,8 @@ async function formContext(c: AdminContext, shop: ShopRow, need: { ids?: string[
     values.length === 0 ? Promise.resolve([]) : db.from<ProductRow>("products").select("id,slug,name", { eq: { shop_id: shop.id }, in: { [col]: [...new Set(values)].slice(0, 400) } });
   const [categories, byId, bySlug] = await Promise.all([loadCategories(db, shop.id), pick("id", need.ids ?? []), pick("slug", need.slugs ?? [])]);
   const products = [...new Map([...byId, ...bySlug].map((p) => [p.id, p])).values()];
-  return { shop, categories, products, base: `/admin/shops/${shop.id}/modules/coupons` };
+  const codChoice = moduleEnabled(shop.settings, "cod") && (await migrated({ db, cache: c.get("adapters").cache }, COUPON_COD_MIGRATION));
+  return { shop, codChoice, categories, products, base: `/admin/shops/${shop.id}/modules/coupons` };
 }
 
 /** 保存のとき: フォームの商品の欄に書かれた slug */
@@ -355,6 +359,12 @@ function CampaignForm({ fc, row, action, stats, link, claimUrl }: { fc: FormCont
         <label>
           <input type="checkbox" name="pm_amazon_pay" checked={(cond.payment_methods ?? []).includes("amazon_pay")} /> {t("coupons.pm_amazon_pay")}
         </label>
+        {/* 代金引換（0158）。モジュールを OFF にした後も、付いている条件は外せるように出す */}
+        {fc.codChoice || (cond.payment_methods ?? []).includes("cod") ? (
+          <label>
+            <input type="checkbox" name="pm_cod" checked={(cond.payment_methods ?? []).includes("cod")} /> {t("coupons.pm_cod")}
+          </label>
+        ) : null}
       </fieldset>
       <fieldset>
         <legend>{t("coupons.attributes")}</legend>
@@ -468,7 +478,7 @@ function campaignValues(f: Record<string, string>, fc: FormContext): Partial<Cou
   // 支払い方法: どれにも印が無ければ条件なし（どの支払い方法でも使える）
   const komojuTypes = (f.pm_komoju_types ?? "").split(/[\s,、]+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
   if (komojuTypes.some((x) => !/^[a-z_]{1,40}$/.test(x))) return "invalid";
-  const methods = [...(f.pm_stripe === "on" ? ["stripe"] : []), ...(f.pm_komoju === "on" ? ["komoju"] : komojuTypes.map((x) => `komoju:${x}`)), ...(f.pm_amazon_pay === "on" ? ["amazon_pay"] : [])];
+  const methods = [...(f.pm_stripe === "on" ? ["stripe"] : []), ...(f.pm_komoju === "on" ? ["komoju"] : komojuTypes.map((x) => `komoju:${x}`)), ...(f.pm_amazon_pay === "on" ? ["amazon_pay"] : []), ...(f.pm_cod === "on" ? ["cod"] : [])];
   if (methods.length > 0) conditions.payment_methods = [...new Set(methods)].slice(0, 20);
   // 会員の項目の条件（0049）: select は選択肢の印、それ以外はカンマ区切りの値。空なら条件なし
   const attributes: Record<string, (string | number)[]> = {};

@@ -2234,6 +2234,7 @@ export const ja = {
   "coupons.pm_komoju_all": "KOMOJU（すべての支払い方法）",
   "coupons.pm_komoju_types": "KOMOJU のうち、この支払い方法だけ（カンマ区切り。例: credit_card, paypay, konbini, bank_transfer, pay_easy）",
   "coupons.pm_amazon_pay": "Amazon Pay",
+  "coupons.pm_cod": "代金引換",
   "coupons.tags": "対象のタグ（指定すると、どれか 1 つを持つ商品だけが対象）",
   "coupons.exclude_tags": "除くタグ（どれか 1 つを持つ商品を除く）",
   "coupons.import.title": "CSV から取り込む",

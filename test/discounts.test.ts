@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { couponSubject, customerAttributesOf, evaluateDiscounts, normalizeCode, parseCampaigns, type Campaign, type DiscountLine } from "../src/commerce/discounts";
+import { COUPON_COD_MIGRATION, PAYMENT_METHOD_RE, couponSubject, customerAttributesOf, evaluateDiscounts, normalizeCode, parseCampaigns, type Campaign, type DiscountLine } from "../src/commerce/discounts";
 
 const NOW = Date.parse("2026-10-16T12:00:00Z");
 const tree: Record<string, string | null> = { tops: null, tees: "tops", food: null };
@@ -126,6 +126,21 @@ describe("値引きの判定と計算（discounts.ts）", () => {
     expect(r.paymentTypes).toEqual(["credit_card"]);
     // 条件の無いクーポンは絞らない
     expect(evaluateDiscounts(["KA"], [anyKomoju], LINES, 0, { ...ctx(), payment: { provider: "komoju" } }).paymentTypes).toBeUndefined();
+  });
+
+  it("支払い方法の代金引換（0158）: cod を含むクーポンだけ代引きで使え、cod だけのクーポンはほかの方法では使えない", () => {
+    const codOnly = camp({ code: "COD", conditions: { payment_methods: ["cod"] } });
+    const stripeOnly = camp({ code: "S", conditions: { payment_methods: ["stripe"] } });
+    const free = camp({ code: "F" });
+    const cod = { ...ctx(), payment: { provider: "cod" as const } };
+    expect(evaluateDiscounts(["COD"], [codOnly], LINES, 0, cod).applied).toHaveLength(1);
+    expect(evaluateDiscounts(["S"], [stripeOnly], LINES, 0, cod).rejected).toEqual([{ code: "S", reason: "payment_method" }]);
+    expect(evaluateDiscounts(["F"], [free], LINES, 0, cod).applied).toHaveLength(1);
+    for (const provider of ["stripe", "komoju", "amazon_pay"] as const) {
+      expect(evaluateDiscounts(["COD"], [codOnly], LINES, 0, { ...ctx(), payment: { provider } }).rejected).toEqual([{ code: "COD", reason: "payment_method" }]);
+    }
+    expect(PAYMENT_METHOD_RE.test("cod")).toBe(true);
+    expect(COUPON_COD_MIGRATION).toBe("0158_coupon_cod");
   });
 
   it("会員の独自項目（0049）: 条件の鍵ごとにどれかの値に合う会員だけ。ゲストと項目の無い会員は attributes で断る。前後の空白と大文字小文字は区別しない", () => {

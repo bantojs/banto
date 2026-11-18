@@ -31,7 +31,7 @@
 - 手数料・使えるかの計算は `src/modules/cod/`（`codFee`・`codQuote`）。確認画面（`createQuote`）と確定の直前（`recheckQuote`）で使います。
 - 確定のとき DB の `confirm_reservation` が同じ決まり（`banto_cod_fee`・`banto_cod_max_total`）で引き直し、モジュールが OFF・手数料が違う・上限を超える・会員だけなのにゲスト、のどれかなら確定しません（予約は戻ります）。TS と SQL の決まりは `test/fixtures/cod-fee-cases.ts` の答え合わせの表で縛っています。
 - いたずらの注文を止める上限: 代金引換はその場で確定するので、未確定の予約の上限（`settings.checkout.max_pending_per_customer` / `max_pending_per_ip`）が効きません。代わりに `confirm_reservation` が、同じ人・同じ IP の未入金の代金引換の注文（直近 30 日、取り消しを除く）を数え、`settings.checkout.max_cod_unpaid_per_customer`（既定 3）/ `max_cod_unpaid_per_ip`（既定 10）に達していれば確定しません（お店の画面は「注文が多すぎます」、ヘッドレスは 429 `too_many_reservations`）。受け取り拒否が心配なお店は「会員だけ」をおすすめします。
-- 支払い方法を絞ったクーポン（条件の「使える支払い方法」）は、代金引換では使えません（条件の値に代金引換はまだありません）。絞っていないクーポンは使えます。
+- 支払い方法を絞っていないクーポンは代金引換でも使えます。絞ったクーポン（条件の「使える支払い方法」）は、その中に「代金引換」（`cod`、0158）があるときだけ使えます。値引きは手数料にはかかりません。
 
 ## お知らせ
 

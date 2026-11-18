@@ -59,7 +59,7 @@ describe("クーポン CSV の読み書き", () => {
   });
 
   it("ブランドは ; で区切り（スペースを含む名前のため）、支払い方法は形を確かめる（0044）", () => {
-    const csv = ["code,name,kind,value,brands,exclude_brands,payment_methods", 'A,a,fixed,100,Blue Bottle;HANARE,Other Brand,"stripe; komoju:PayPay"', "B,b,fixed,100,,,cod"].join("\n");
+    const csv = ["code,name,kind,value,brands,exclude_brands,payment_methods", 'A,a,fixed,100,Blue Bottle;HANARE,Other Brand,"stripe; komoju:PayPay"', "B,b,fixed,100,,,bank_transfer"].join("\n");
     const r = parseCouponCsv(csv);
     expect(r.rows[0]!.conditions).toEqual({ brands: ["Blue Bottle", "HANARE"], exclude_brands: ["Other Brand"], payment_methods: ["stripe", "komoju:paypay"] });
     expect(r.errors).toEqual([{ line: 3, code: "B", error: "invalid_conditions_payment_methods" }]);
