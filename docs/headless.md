@@ -513,6 +513,10 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 注文照会（ゲストの `/orders/lookup`・会員の `/members/orders/:number`）の注文には `payment_status`（`paid` / `unpaid`）と `paid_at` が付きます。未入金（代金引換など）の注文は `status` が `pending`（受付）か `shipped` で、領収書は入金の後に出ます（docs/hooks.md「注文の状態とお支払いの状態」）。
 
+## 代金引換（同梱モジュール cod）
+
+`provider: "cod"` で quote を作ると、`confirmation.fee_jpy`（代引き手数料）と `confirmation.payment.cod: true` が付きます。確定（`POST /checkout`）は決済ページへ行かず、受付（未入金）の注文をその場で作って `{ payment_url（完了画面）, cod: true, order_id, … }` を返します。選べないときは quote が 409 `cod_unavailable`（`reason`: `fee` / `max_total` / `members_only`）。詳しくは docs/cod.md「ヘッドレス」。
+
 ## 会員へのお知らせ（同梱モジュール member_news）
 
 会員トークンで、本人に見えるお知らせと未読の数を読み（`GET /api/shops/:shop/members/news`）、既読にできます（`POST …/members/news/read`、`{ ids?: [...] }`）。詳しくは docs/member-news.md「ヘッドレス」。

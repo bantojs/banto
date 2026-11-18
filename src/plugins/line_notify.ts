@@ -13,10 +13,13 @@ export function lineMessageFor(ctx: PluginContext): string | null {
   const yen = (n: unknown) => `¥${Number(n ?? 0).toLocaleString("ja-JP")}`;
   // 未入金の注文の入金の記録（0156）は新しい注文ではない
   if (event === "order.paid" && data["recorded_payment"] === true) return `【Banto】入金を記録しました\n合計 ${yen(data["total_jpy"])}\n注文 ID: ${String(data["order_id"] ?? "").slice(0, 8)}…`;
-  if (event === "order.paid") {
+  // 未入金の注文（代金引換、0157）は order.paid が入金の記録まで出ないので、order.created で新しい注文として知らせる
+  if (event === "order.created" && data["payment_status"] !== "unpaid") return null;
+  if (event === "order.paid" || event === "order.created") {
+    const unpaid = event === "order.created";
     const items = Array.isArray(data["items"]) ? (data["items"] as { qty?: number }[]) : [];
     const qty = items.reduce((n, i) => n + Number(i.qty ?? 0), 0);
-    return `【Banto】新しい注文が入りました\n合計 ${yen(data["total_jpy"])}（${qty} 点）\n注文 ID: ${String(data["order_id"] ?? "").slice(0, 8)}…`;
+    return `【Banto】新しい注文が入りました${unpaid ? "（未入金）" : ""}\n合計 ${yen(data["total_jpy"])}（${qty} 点）\n注文 ID: ${String(data["order_id"] ?? "").slice(0, 8)}…`;
   }
   if (event === "order.cancelled") return `【Banto】注文がキャンセルされました\n合計 ${yen(data["total_jpy"])}\n注文 ID: ${String(data["order_id"] ?? "").slice(0, 8)}…`;
   if (event === "inventory.low") return `【Banto】在庫が残りわずかです\nSKU: ${String(data["sku_id"] ?? "").slice(0, 8)}…\n残り ${String(data["available"])} 点（閾値 ${String(data["threshold"])}）`;
@@ -67,9 +70,10 @@ export const lineNotify: BundledPlugin = {
   id: "line_notify",
   manifest: {
     name: "LINE 通知",
-    version: "1.0.0",
+    version: "1.1.0",
     description: "注文が入ったとき・在庫が少なくなったときに、LINE で運営者に通知します。購入者の個人情報は送りません。",
-    events: ["order.paid", "order.cancelled", "inventory.low"],
+    // order.created は代金引換などの未入金の注文だけ（0157）
+    events: ["order.created", "order.paid", "order.cancelled", "inventory.low"],
     settings: [{ key: "to", label: "送信先のユーザー ID（U で始まる）", type: "text", required: true, description: "LINE Developers コンソールのチャネル基本設定「あなたのユーザー ID」" }],
   },
   // トークンはショップごとの設定でもよいので、Secret は必須にしない（lineToken）

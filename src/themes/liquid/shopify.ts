@@ -687,7 +687,7 @@ export function registerShopifyTags(liquid: Liquid): void {
         const h = (yield this.hash.render(ctx)) as Record<string, unknown>;
         // 配送先のフォーム: 送り先は選んだ決済手段の確認（Banto が渡す checkout.provider）
         const provider = this.formType === "checkout_address" && isObject(e.globals["checkout"]) ? String((e.globals["checkout"] as Record<string, unknown>)["provider"] ?? "") : "";
-        const action = /^(stripe|komoju|amazon_pay)$/.test(provider) ? `${e.shopPath}/checkout/${provider}` : FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
+        const action = /^(stripe|komoju|amazon_pay|cod)$/.test(provider) ? `${e.shopPath}/checkout/${provider}` : FORM_ACTIONS[this.formType] !== undefined ? `${e.shopPath}${FORM_ACTIONS[this.formType]}` : null;
         if (!action) e.errors.push(`form '${this.formType}' is not supported yet`);
         // お問い合わせの返事はファイルを添付できるので、いつも multipart（Banto が決める。テーマの enctype は使わない）
         const multipart = this.formType === "inquiry_reply";

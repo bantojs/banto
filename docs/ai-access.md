@@ -438,3 +438,4 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - `POST /api/v1/orders/{id}/payment`（orders:write）: 未入金の注文（受付・発送の後）の入金を記録します。`order.paid` はこのとき出ます。入金済みなら何もしません。0156 を当てる前は 409 `migration_required`。
 - `POST /api/v1/orders/{id}/status` の `cancelled`: 未入金の注文は返金せずに取り消します（受付のあいだと、発送の後）。発送した未入金の注文の受け取り拒否は `reason: "refused"` を付けます（`cancel_reason` に残ります）。
 - 会員の購入額（`orders.count` / `total_jpy`）と売上の集計（`stats:read`）は入金済みだけです。
+- 代金引換（同梱モジュール `cod`、0157、docs/cod.md）の注文は `payment_provider: "cod"`・`status: "pending"`・`payment_status: "unpaid"` で作られます。注文の JSON の `fee_jpy` は代引き手数料（ほかの支払い方法では 0）で、`total_jpy` に含まれます。

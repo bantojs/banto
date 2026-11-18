@@ -17,6 +17,8 @@ export interface ReceiptData {
   order_date: string;
   items: { name: string; sku: string | null; qty: number; unit_price_jpy: number; line_total_jpy: number; reduced: boolean }[];
   shipping_jpy: number;
+  /** 代引き手数料（0157）。代金引換でなければ 0 */
+  fee_jpy: number;
   discounts: { code: string; name: string; amount_jpy: number }[];
   total_jpy: number;
   tax: TaxGroup[];
@@ -40,6 +42,7 @@ export function receiptData(shop: { name: string; settings?: Record<string, unkn
     order_date: order.created_at,
     items: order.items.map((i) => ({ name: i.name, sku: i.sku ?? null, qty: i.qty, unit_price_jpy: i.unit_price_jpy, line_total_jpy: i.unit_price_jpy * i.qty, reduced: reduced(i.tax_rate) })),
     shipping_jpy: order.shipping_jpy ?? 0,
+    fee_jpy: order.fee_jpy ?? 0,
     discounts: order.discounts ?? [],
     total_jpy: order.total_jpy,
     tax: orderTaxBreakdown(order, shop.settings),

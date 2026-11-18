@@ -197,7 +197,7 @@ export interface EvaluateContext {
   /** 商品のカテゴリーから最上位までの id（自分を含む）。カテゴリーの条件で子孫を含めるために使う */
   ancestors: (categoryId: string) => string[];
   /** 選んだ支払い方法（確認画面と確定）。カートではまだ決まっていないので無し（支払い方法の条件は仮に通す） */
-  payment?: { provider: "stripe" | "komoju" | "amazon_pay" };
+  payment?: { provider: "stripe" | "komoju" | "amazon_pay" | "cod" };
   /** ログイン中の会員の独自項目（0049。coupon_lookup が載せる）。会員でなければ無し */
   attributes?: Record<string, unknown> | null;
 }
@@ -413,6 +413,8 @@ function paymentAllowed(methods: string[] | undefined, ctx: EvaluateContext): bo
   if (list.length === 0 || !ctx.payment) return true;
   if (ctx.payment.provider === "stripe") return list.includes("stripe");
   if (ctx.payment.provider === "amazon_pay") return list.includes("amazon_pay");
+  // 代金引換（0157）は支払い方法の条件の値に無い: 支払い方法を絞ったクーポンは代引きでは使えない
+  if (ctx.payment.provider === "cod") return false;
   const allowed = komojuAllowed(list);
   return allowed === null || allowed.length > 0;
 }

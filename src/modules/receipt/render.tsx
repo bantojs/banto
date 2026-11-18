@@ -16,6 +16,8 @@ export interface ReceiptOrder {
   created_at: string;
   total_jpy: number;
   shipping_jpy?: number | null;
+  /** 代引き手数料（0157） */
+  fee_jpy?: number | null;
   discount_jpy?: number | null;
   shipping_tax_rate?: number | string | null;
   tax_rounding?: string | null;
@@ -123,6 +125,12 @@ export function renderReceipt(p: { shopName: string; settings: ReceiptSettings; 
                 <tr>
                   <td colspan={3}>{t("receipt.shipping")}</td>
                   <td class="n">{yen(order.shipping_jpy)}</td>
+                </tr>
+              ) : null}
+              {order.fee_jpy ? (
+                <tr>
+                  <td colspan={3}>{t("confirm.cod_fee")}</td>
+                  <td class="n">{yen(order.fee_jpy)}</td>
                 </tr>
               ) : null}
               {(order.discounts ?? []).map((d) => (

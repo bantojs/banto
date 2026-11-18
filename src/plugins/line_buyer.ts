@@ -13,7 +13,8 @@ import { tryonNoticeKind } from "../modules/store-tryon/mail";
 
 /** 注文の知らせ。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
 export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }, texts?: readonly NoticeTextRow[] | null): string | null {
-  const kind = event === "order.paid" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
+  // order.created は未入金の注文（代金引換、0157）の受付。呼び出し側が payment_status で選ぶ
+  const kind = event === "order.paid" || event === "order.created" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
   if (!kind) return null;
   return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}` });
 }
@@ -36,9 +37,10 @@ export const lineBuyerNotify: BundledPlugin = {
   id: "line_buyer_notify",
   manifest: {
     name: "LINE で購入者に知らせる",
-    version: "1.0.0",
+    version: "1.1.0",
     description: "LINE でログインした会員に、ショップの LINE 公式アカウントから注文の受付・発送（お店で試着の受付・取り置き）を知らせます。チャネルアクセストークンは管理画面の「LINE 公式アカウント」で入れます。",
-    events: ["order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
+    // order.created は代金引換などの未入金の注文の受付だけ（0157）
+    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
     settings: [],
   },
   requiredSecrets: [],
@@ -74,9 +76,12 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   if (!orderId) return null;
   // 未入金の注文の入金の記録（0156）で出た order.paid には、受付の知らせを重ねて送らない
   if (event === "order.paid" && data["recorded_payment"] === true) return null;
+  // 注文の受付: 入金済みの注文は order.paid、未入金の注文（代金引換、0157）は order.created で知らせる
+  if (event === "order.created" && data["payment_status"] !== "unpaid") return null;
+  if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped") return null;
   const r = await ctx.privileged.orderLineRecipient(orderId, shop_id);
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
-  const kind = event === "order.paid" ? "order_paid" : "order_shipped";
+  const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
   const text = r ? buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
   return r && text ? { to: r.line_user_id, text } : null;
 }

@@ -81,6 +81,7 @@ interface AdminOrderRow {
   created_at: string;
   total_jpy: number;
   shipping_jpy: number;
+  fee_jpy?: number | null;
   discount_jpy?: number | null;
   discounts?: { code?: string; name?: string; amount_jpy?: number }[] | null;
   shipping_tax_rate?: number | string | null;

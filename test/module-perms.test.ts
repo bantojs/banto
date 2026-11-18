@@ -48,7 +48,7 @@ describe("同梱モジュールの管理画面の権限（近道と画面の入�
   });
 
   // 用途の近い設定の画面から入るモジュール（メンテナの決定 2026-11-08）。ほかはショップの画面（左の目次か近道）から
-  const entry: Record<string, string> = { delivery_time: "/settings/shipping", line_login: "/settings/members", google_login: "/settings/members" };
+  const entry: Record<string, string> = { delivery_time: "/settings/shipping", cod: "/settings/payments", line_login: "/settings/members", google_login: "/settings/members" };
   for (const m of withPage) {
     it(`${m.id}: 「${m.perm}」の項目だけの人に入口が出て、画面も開ける`, async () => {
       const { sb, shop, app } = setup();

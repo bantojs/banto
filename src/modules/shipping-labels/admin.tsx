@@ -18,6 +18,7 @@ import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier } from "../../orders
 import { selectIn } from "../../db/select-in";
 import { migrated } from "../../db/migration-state";
 import { PAYMENT_STATUS_MIGRATION } from "../../orders/payment";
+import { orderTaxBreakdown } from "../../commerce/tax";
 import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
 export const LABELS_MODULE = "shipping_labels";
@@ -37,7 +38,7 @@ async function scope(c: AdminContext): Promise<ShopRow | null> {
 }
 
 const CLIENT_KEYS = [
-  "ship_date", "download_yamato", "download_sagawa", "loading", "done", "unmappable", "warn", "failed", "f_phone", "f_postal_code", "f_address_long", "f_address2_long", "f_name_long",
+  "ship_date", "download_yamato", "download_sagawa", "loading", "done", "unmappable", "warn", "failed", "f_phone", "f_postal_code", "f_address_long", "f_address2_long", "f_name_long", "f_cod_unsupported",
   "import_file", "import_carrier", "import_col_number", "import_col_tracking", "import_column", "import_preview", "import_start", "import_done", "import_missing", "import_no_rows",
 ] as const;
 /** 送り状番号の取り込みの 1 回あたりの上限（ship_orders と同じ） */
@@ -116,6 +117,14 @@ interface OrderForLabel {
   customer_name: string | null;
   shipping_address: Record<string, unknown> | null;
   delivery?: { date?: string | null; slot?: string | null } | null;
+  total_jpy: number;
+  shipping_jpy?: number | null;
+  discount_jpy?: number | null;
+  fee_jpy?: number | null;
+  shipping_tax_rate?: number | string | null;
+  tax_rounding?: string | null;
+  payment_provider?: string | null;
+  payment_status?: string | null;
 }
 
 labelsAdmin.get("/rows.json", requireOwner, async (c: AdminContext) => {
@@ -129,7 +138,7 @@ labelsAdmin.get("/rows.json", requireOwner, async (c: AdminContext) => {
   const pendingToo = await migrated({ db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION);
   const orders = await db.from<OrderForLabel>("orders").select("*", { eq: { shop_id: shop.id }, in: { status: pendingToo ? ["paid", "pending"] : ["paid"] }, order: "created_at.asc", limit: 500 });
   // 明細・SKU・商品は送り状に載せる注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
-  const items = await selectIn<OrderItemRow>(db, "order_items", "order_id,sku_id,qty,item_name", shop.id, "order_id", orders.map((o) => o.id));
+  const items = await selectIn<OrderItemRow & { tax_rate?: number | string | null }>(db, "order_items", "order_id,sku_id,qty,item_name,unit_price_jpy,tax_rate,discount_jpy", shop.id, "order_id", orders.map((o) => o.id));
   const skus = await selectIn<SkuRow>(db, "skus", "id,product_id", shop.id, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));
   const products = await selectIn<ProductRow>(db, "products", "id,name", shop.id, "id", skus.map((k) => k.product_id));
   const productOfSku = new Map(skus.map((k) => [k.id, k.product_id]));
@@ -139,7 +148,10 @@ labelsAdmin.get("/rows.json", requireOwner, async (c: AdminContext) => {
   const rows: LabelOrder[] = orders.map((o) => {
     const its = itemsBy.get(o.id) ?? [];
     const first = its[0] ? (its[0].item_name ?? nameOf.get(productOfSku.get(its[0].sku_id ?? "") ?? "")) : undefined;
-    return { number: o.number, customer_name: o.customer_name, shipping_address: o.shipping_address, delivery: o.delivery ?? null, first_item: first ?? null, item_count: its.length };
+    // 代金引換で未入金（0157）なら、配達で受け取る額（合計）と内消費税（計算は src/commerce/tax.ts だけ）
+    const cod = o.payment_provider === "cod" && o.payment_status === "unpaid";
+    const collect = cod ? { amount_jpy: o.total_jpy, tax_jpy: orderTaxBreakdown({ ...o, items: its }, shop.settings).reduce((n, g) => n + g.tax_jpy, 0) } : null;
+    return { number: o.number, customer_name: o.customer_name, shipping_address: o.shipping_address, delivery: o.delivery ?? null, first_item: first ?? null, item_count: its.length, collect };
   });
   const { csv, warnings } = buildLabelsCsv(carrier, rows, labelSettings(shop.settings), date);
   c.header("Cache-Control", "no-store");

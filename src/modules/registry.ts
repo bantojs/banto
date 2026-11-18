@@ -9,6 +9,8 @@ import { CARE_MIGRATION } from "../care-labels/care";
 
 /** お気に入り（0123_mod_favorites）のマイグレーション。モジュールの一覧と API が「当たるまで出さない」判定に使う */
 export const FAVORITES_MIGRATION = "0123_mod_favorites";
+/** 代金引換（0157_mod_cod）。src/modules/cod の COD_MIGRATION と同じ */
+export const COD_MIGRATION = "0157_mod_cod";
 /** 会員へのお知らせ（0155_mod_member_news） */
 export const MEMBER_NEWS_MIGRATION = "0155_mod_member_news";
 
@@ -46,6 +48,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "receipt", category: "orders", name: "mod.receipt.name", description: "mod.receipt.description", perm: "settings", adminPath: "receipt" },
   // 配送日時の指定（時間帯はヤマト・佐川で共通の区分）。注文の orders.delivery（0018）に入る（docs/delivery-time.md）
   { id: "delivery_time", category: "orders", name: "mod.delivery_time.name", description: "mod.delivery_time.description", perm: "settings", adminPath: "delivery-time" },
+  // 代金引換（支払いを待たずに受付（未入金）で確定し、入金は運営者が記録する。手数料・上限・会員だけ。0157_mod_cod、docs/cod.md）
+  { id: "cod", category: "orders", name: "mod.cod.name", description: "mod.cod.description", perm: "settings", adminPath: "cod", migration: COD_MIGRATION },
   // 送り状 CSV（ヤマト B2 クラウド・佐川 e飛伝Ⅲ）。Shift_JIS への変換はブラウザ（docs/shipping-labels.md）
   { id: "shipping_labels", category: "orders", name: "mod.shipping_labels.name", description: "mod.shipping_labels.description", perm: "orders", adminPath: "shipping-labels" },
   // お店で試着（決済なし。店舗と営業日・申し込み・在庫の取り置き。0025_store_tryon、docs/store-tryon.md）

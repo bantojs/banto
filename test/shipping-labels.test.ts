@@ -62,6 +62,18 @@ describe("送り状 CSV（src/modules/shipping-labels/csv.ts）", () => {
     expect(buildLabelsCsv("yamato", [long], settings, "2026-10-18").warnings.map((w) => w.field)).toEqual(["phone", "address_long"]);
     expect(sjisWidth("ｱa漢")).toBe(4);
   });
+
+  it("代金引換: B2 はコレクト（種類 2・代引き額・内消費税）、e飛伝は載せずに知らせる", () => {
+    const cod = { ...order, number: 1003, collect: { amount_jpy: 6830, tax_jpy: 621 } };
+    const y = buildLabelsCsv("yamato", [order, cod], settings, "2026-10-18");
+    expect([B2_HEADER[33], B2_HEADER[34]]).toEqual(["コレクト代金引換額（税込）", "コレクト内消費税額等"]);
+    const [, plain, collect] = y.csv.split("\r\n").map(parse);
+    expect([plain![1], plain![33], plain![34]]).toEqual(["0", "", ""]);
+    expect([collect![0], collect![1], collect![33], collect![34]]).toEqual(["1003", "2", "6830", "621"]);
+    const s = buildLabelsCsv("sagawa", [order, cod], settings, "2026-10-18");
+    expect(s.csv.split("\r\n").filter(Boolean)).toHaveLength(2);
+    expect(s.warnings).toEqual([{ number: 1003, field: "cod_unsupported" }]);
+  });
 });
 
 describe("Shift_JIS への変換（ブラウザ側、client.ts）", () => {

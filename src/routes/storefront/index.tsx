@@ -40,6 +40,7 @@ import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
+import type { CodBlock } from "../../modules/cod";
 import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
 import { bindScope, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
@@ -1025,6 +1026,11 @@ async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: nu
   };
 }
 
+/** 代金引換で買えない理由 → カートの知らせ */
+function codCartError(reason: CodBlock | undefined): string {
+  return reason === "max_total" ? "cod_max_total" : reason === "members_only" ? "cod_members_only" : "cod_unavailable";
+}
+
 function paymentOptions(c: Ctx, s: ShopScope): Promise<PaymentSetup> {
   return paymentSetup(s.sf, s.shop, c.get("adapters").config);
 }
@@ -1041,6 +1047,10 @@ const CART_ERRORS: Record<string, MessageKey> = {
   store_only: "store.checkout_error_store_only",
   coupon: "store.checkout_error_coupon",
   minimum: "store.checkout_error_minimum",
+  // 代金引換（0157）で買えない理由
+  cod_max_total: "cod.error_max_total",
+  cod_members_only: "cod.error_members_only",
+  cod_unavailable: "cod.error_unavailable",
   coupon_invalid: "store.coupon_invalid",
 };
 
@@ -1544,7 +1554,7 @@ async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation
  *   配送先（住所の項目）を受け取ったら → 最終確認画面（署名付きの quote を埋め込む）
  *   quote を受け取ったら → 内容を引き直して一致すれば在庫を予約し、決済ページへ転送する
  */
-storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c: Ctx) => {
+storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const cartUrl = `${s.ctx.shopPath}/cart`;
@@ -1568,7 +1578,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
       const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
       return addressPage(c, s, { provider, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
     }
-    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : r.error === "store_only" ? "store_only" : "stock"}`);
+    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : r.error === "store_only" ? "store_only" : r.error === "cod_unavailable" ? codCartError(r.cod) : "stock"}`);
     const conf = r.confirmation;
     track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
     // 店頭のみの商品（0149）を外したときは、確認画面で知らせる（カートには残っている）
@@ -1603,7 +1613,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
   // 全端末からログアウトした後の古いセッション: ログインし直してもらう
   if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);
   if (!placed.ok) return c.redirect(`${cartUrl}?error=${placed.error}`);
-  // 0 円の注文はこの時点で確定している
+  // 0 円の注文・代金引換の注文はこの時点で確定している（完了画面は照会トークンで注文番号を出す）
   return c.redirect(placed.free ? withQueryParam(placed.url, "free", "1") : placed.url, 303);
 });
 

@@ -46,7 +46,7 @@ describe("同梱プラグイン（管理画面）", () => {
     let res = await b.post(`/admin/shops/${shop.id}/plugins/line_notify/enable`, {});
     const ep = sb.tables.hook_endpoints[0]!;
     expect(res.headers.get("location")).toBe(`/admin/shops/${shop.id}/hooks/${ep["id"]}?flash=saved`);
-    expect(ep).toMatchObject({ url: bundledPluginUrl("line_notify"), events: ["order.paid", "order.cancelled", "inventory.low"], enabled: true, name: "LINE 通知" });
+    expect(ep).toMatchObject({ url: bundledPluginUrl("line_notify"), events: ["order.created", "order.paid", "order.cancelled", "inventory.low"], enabled: true, name: "LINE 通知" });
 
     html = await (await b.get(`/admin/shops/${shop.id}/hooks/${ep["id"]}`)).text();
     expect(html).toContain("同梱プラグイン");

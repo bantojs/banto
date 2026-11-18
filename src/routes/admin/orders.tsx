@@ -59,6 +59,8 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
 interface OrderListRow extends OrderRow {
   number: number;
   shipping_jpy: number;
+  /** 代引き手数料（0157） */
+  fee_jpy?: number | null;
   /** 0017_tax */
   shipping_tax_rate?: number | string | null;
   tax_rounding?: string | null;
@@ -98,6 +100,9 @@ const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
   { key: "total", label: "合計", group: "csvx.g_amounts", value: (r) => r.o.total_jpy },
   { key: "shipping", label: "送料", group: "csvx.g_amounts", value: (r) => r.o.shipping_jpy },
   { key: "discount", label: "値引き", group: "csvx.g_amounts", value: (r) => r.o.discount_jpy ?? 0 },
+  // 代引き手数料（0157）と入金の状態（0156。列が無い古い行は入金済み）
+  { key: "fee", label: "代引き手数料", group: "csvx.g_amounts", value: (r) => r.o.fee_jpy ?? 0 },
+  { key: "payment_status", label: "入金", group: "csvx.g_amounts", value: (r) => (unpaid(r.o) ? "unpaid" : "paid") },
   { key: "coupon", label: "クーポン", group: "csvx.g_amounts", value: (r) => (r.o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" ") },
   { key: "name", label: "氏名", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_name },
   { key: "email", label: "メール", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_email },
@@ -119,7 +124,7 @@ const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
   { key: "note", label: "メモ", group: "csvx.g_notes", pii: true, value: (r) => r.o.note ?? "" },
 ];
 const ORDER_CSV_PRESETS: Record<string, CsvPreset> = {
-  accounting: { label: "csvx.p_accounting", cols: ["number", "date", "status", "payment", "payment_ref", "total", "shipping", "discount", "coupon"], unit: "order" },
+  accounting: { label: "csvx.p_accounting", cols: ["number", "date", "status", "payment", "payment_ref", "total", "shipping", "discount", "fee", "payment_status", "coupon"], unit: "order" },
   shipping: { label: "csvx.p_shipping", cols: ["number", "name", "phone", "postal_code", "state", "city", "line1", "line2", "sku", "qty", "tracking_number"], unit: "order" },
   sold: { label: "csvx.p_sold", cols: ["number", "date", "sku", "product", "qty", "unit_price", "subtotal"], unit: "item" },
 };
@@ -384,13 +389,13 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
         : rows.map((o) => ({ o, items: itemsByOrder.get(o.id) ?? [], item: null, ctx }));
     return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(csvName(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`, truncated)));
   }
-  const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
+  const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ", "代引き手数料", "入金"];
   const lines = rows.map((o) => {
     const a = (o.shipping_address ?? {}) as Record<string, unknown>;
     const detail = (itemsByOrder.get(o.id) ?? [])
       .map((i) => `${(i.sku_id ? skuById.get(i.sku_id)?.code : undefined) ?? i.item_name ?? i.sku_id ?? ""} x${i.qty}`)
       .join(" / ");
-    return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? ""].map(csvCell).join(",");
+    return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? "", o.fee_jpy ?? 0, unpaid(o) ? "unpaid" : "paid"].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${csvName(`orders-${shop.slug}`, truncated)}.csv"`, "Cache-Control": "no-store" });
@@ -471,6 +476,12 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
               <dd>{yen(items.reduce((s, it) => s + it.unit_price_jpy * it.qty, 0))}</dd>
               <dt>{t("store.shipping")}</dt>
               <dd>{yen(order.shipping_jpy)}</dd>
+              {order.fee_jpy ? (
+                <>
+                  <dt>{t("confirm.cod_fee")}</dt>
+                  <dd>{yen(order.fee_jpy)}</dd>
+                </>
+              ) : null}
               {order.discount_jpy ? (
                 <>
                   <dt>
@@ -648,7 +659,7 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
                         </button>
                       </form>
                     ) : null}
-                    <p class="muted">{unpaid(order) ? t("order.cancel_note_unpaid") : t("order.cancel_note")}</p>
+                    <p class="muted">{unpaid(order) ? t("order.cancel_note_unpaid") : order.payment_provider === "cod" ? t("order.cancel_note_cod_paid") : t("order.cancel_note")}</p>
                   </>
                 ) : (
                   <Locked perm="orders_cancel" />

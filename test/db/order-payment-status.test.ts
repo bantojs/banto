@@ -19,11 +19,11 @@ describe.skipIf(!dbAvailable)("お支払いの状態（0156）", () => {
   const row = async (id: string) => (await getPool().query<J>("select status::text as status, payment_status, paid_at, cancel_reason from orders where id = $1", [id])).rows[0]!;
   const hooks = async (event: string, id: string) => (await getPool().query<{ payload: J }>("select payload from hook_deliveries where event = $1 and payload->>'order_id' = $2", [event, id])).rows.map((r) => r.payload);
 
-  /** Banto で予約して確定した注文を作り、未入金の受付にする（作る口は次の版の同梱モジュール。ここでは superuser で状態だけ変える） */
+  /** Banto で予約して確定した注文を作り、未入金の受付にする（作る口は同梱モジュール cod（0157、test/db/cod.test.ts）。ここでは superuser で状態だけ変える） */
   async function unpaidOrder(opts: { customer?: string; total?: number } = {}): Promise<{ id: string; number: number }> {
     const resId = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty: 1 }])])).rows[0]!.id);
     await asService((c) => c.query("select attach_reservation_customer($1, $2, $3::jsonb)", [resId, f.shopId, JSON.stringify({ customer_email: "buyer@example.com", customer_name: "買い手", shipping_address: {}, shipping_jpy: 0 })]));
-    const id = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify({ payment_provider: "cod" })])).rows[0]!.id);
+    const id = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [resId, f.shopId, JSON.stringify({ payment_provider: "manual" })])).rows[0]!.id);
     await getPool().query("update orders set status = 'pending', payment_status = 'unpaid', paid_at = null, customer_id = $2 where id = $1", [id, opts.customer ?? null]);
     const number = (await getPool().query<{ number: number }>("select number from orders where id = $1", [id])).rows[0]!.number;
     return { id, number };

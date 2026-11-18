@@ -680,7 +680,7 @@ export const defaultTheme: Theme = {
   CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon }) {
     // 店頭のみの行（0149）だけのカートは購入手続きに進めない（お店で試着で申し込む）。在庫不足は購入手続きに進む行だけで見る
     const buyable = lines.filter((l) => !l.storeOnly);
-    const checkoutEnabled = (payments.stripe || payments.komoju || payments.amazon_pay) && buyable.length > 0;
+    const checkoutEnabled = (payments.stripe || payments.komoju || payments.amazon_pay || payments.cod === true) && buyable.length > 0;
     const short = buyable.some((l) => l.short);
     return (
       <Layout title={t("store.cart")} ctx={ctx} seo={{ noindex: true }}>
@@ -793,7 +793,7 @@ export const defaultTheme: Theme = {
                     <input type="hidden" name="provider" value="stripe" />
                     <p>
                       <button type="submit" disabled={short}>
-                        {payments.komoju || payments.amazon_pay ? t("store.pay_with_stripe") : t("store.checkout")}
+                        {payments.komoju || payments.amazon_pay || payments.cod ? t("store.pay_with_stripe") : t("store.checkout")}
                       </button>
                     </p>
                   </form>
@@ -804,6 +804,16 @@ export const defaultTheme: Theme = {
                     <p>
                       <button type="submit" disabled={short}>
                         {t("store.pay_with_komoju")}
+                      </button>
+                    </p>
+                  </form>
+                ) : null}
+                {payments.cod ? (
+                  <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
+                    <input type="hidden" name="provider" value="cod" />
+                    <p>
+                      <button type="submit" disabled={short}>
+                        {t("store.pay_with_cod")}
                       </button>
                     </p>
                   </form>
@@ -1054,7 +1064,8 @@ export const defaultTheme: Theme = {
           {payments.stripe ? <li>{t("store.pay_with_stripe")}</li> : null}
           {payments.komoju ? <li>{t("store.pay_with_komoju")}</li> : null}
           {payments.amazon_pay ? <li>{t("store.pay_with_amazon_pay")}</li> : null}
-          {!payments.stripe && !payments.komoju && !payments.amazon_pay ? <li>{t("store.checkout_unavailable")}</li> : null}
+          {payments.cod ? <li>{t("store.pay_with_cod")}</li> : null}
+          {!payments.stripe && !payments.komoju && !payments.amazon_pay && !payments.cod ? <li>{t("store.checkout_unavailable")}</li> : null}
         </ul>
       </Layout>
     );
@@ -1771,6 +1782,13 @@ export const defaultTheme: Theme = {
                   <td></td>
                   <td>{yen(Number(r["shipping_jpy"] ?? 0))}</td>
                 </tr>
+                {Number(r["fee_jpy"] ?? 0) > 0 ? (
+                  <tr>
+                    <td>{t("confirm.cod_fee")}</td>
+                    <td></td>
+                    <td>{yen(Number(r["fee_jpy"]))}</td>
+                  </tr>
+                ) : null}
                 {((r["discounts"] as { code: string; name: string; amount_jpy: number }[] | undefined) ?? []).map((d) => (
                   <tr>
                     <td>
