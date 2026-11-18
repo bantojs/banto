@@ -28,6 +28,7 @@ async function ctxWith(opts: { box?: string | null; recipient?: Record<string, u
     privileged: {
       shopSecret: async () => opts.box ?? null,
       orderLineRecipient: async () => opts.recipient ?? null,
+      shopNoticeTexts: async () => [],
     } as unknown as PrivilegedDb,
     sessionSecret: SITE,
   };
