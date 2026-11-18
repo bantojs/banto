@@ -11,7 +11,7 @@ import { sizeChartJson, sizeChartOf } from "../../size-charts/chart";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
-import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, listTagsOf, priceParamOf } from "../../storefront/list-filter";
+import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, listOptionsOf, listTagsOf, optionsTooMany, priceParamOf } from "../../storefront/list-filter";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
 import { cardAttributes, productFields, publicAttributes } from "../../products/fields";
@@ -126,7 +126,7 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const [page, facets] = await Promise.all([sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
   if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
   // タグ 2 つ以上・価格は 0150 から（黙って絞らずに返さない）
-  if (page.filtersIgnored) return c.json({ error: "migration_required" }, 409);
+  if (page.filtersIgnored || page.optionsIgnored) return c.json({ error: "migration_required" }, 409);
   const catById = new Map(categories.map((x) => [x.id, x]));
   const cardFields = productFields(shop.settings).filter((f) => f.card);
   return c.json({
@@ -159,6 +159,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
     tags: facets.tags,
     // 公開の一覧のいちばん高い一覧の価格（価格の絞り込みの欄の上限。0150 から）
     ...(facets.price_max !== undefined ? { price_max: facets.price_max } : {}),
+    // 選択肢の鍵 × 値ごとの在庫のある商品の数（0153 から。key は英字の鍵、表示名はショップの option_names）
+    ...(facets.options !== undefined ? { options: facets.options } : {}),
   });
 });
 
@@ -176,6 +178,11 @@ function productQuery(c: Ctx): ProductQuery | string {
     if (n === undefined) return name;
     out[k] = n;
   }
+  // 選択肢（filter.v.option.<key>、0153）。鍵は 3 つまで・値は 10 まで、読めない鍵は 400
+  const all = c.req.queries();
+  if (optionsTooMany(all)) return "filter.v.option";
+  const options = listOptionsOf(all);
+  if (options) out.options = options;
   const category = c.req.query("category");
   if (category) out.category = category;
   const brand = c.req.query("brand");

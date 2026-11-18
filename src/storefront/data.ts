@@ -2,7 +2,7 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
-import { LIST_FILTERS_MIGRATION } from "./list-filter";
+import { LIST_FILTERS_MIGRATION, LIST_OPTIONS_MIGRATION } from "./list-filter";
 import type { CareView } from "../care-labels/care";
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "../db/client";
@@ -304,8 +304,11 @@ export class StorefrontData {
     const cat = query.category ? categories.find((c) => c.slug === query.category) : undefined;
     // タグ 2 つ以上・価格は 0150 から。当たる前は最初のタグだけで絞る（filtersIgnored。お店の画面は絞らないまま描き、公開 API は 409）
     const tags = [...new Set([...(query.tag ? [query.tag] : []), ...(query.tags ?? [])])];
-    const wants = tags.length > 1 || query.priceMin !== undefined || query.priceMax !== undefined;
-    const filters = wants && (await this.migratedTo(LIST_FILTERS_MIGRATION));
+    const wantsOptions = Boolean(query.options && Object.keys(query.options).length > 0);
+    const wants = tags.length > 1 || query.priceMin !== undefined || query.priceMax !== undefined || wantsOptions;
+    // 選択肢は 0153 から（0150 の上に足した引数）。0153 があれば 0150 もある
+    const optionsOk = wantsOptions && (await this.migratedTo(LIST_OPTIONS_MIGRATION));
+    const filters = wants && (optionsOk || (await this.migratedTo(LIST_FILTERS_MIGRATION)));
     const args = {
       p_shop_id: shop.id,
       p_sort: sort,
@@ -314,6 +317,7 @@ export class StorefrontData {
       p_offset: offset,
       p_tag: filters ? null : (tags[0] ?? null),
       ...(filters ? { p_tags: tags, p_price_min: query.priceMin ?? null, p_price_max: query.priceMax ?? null } : {}),
+      ...(optionsOk ? { p_options: query.options } : {}),
       // 無いカテゴリーなら 0 件（全件を返さない）
       p_category_ids: query.category ? (cat ? [...descendantIds(categories, cat.id)] : []) : null,
       p_brand: query.brand ?? null,
@@ -342,6 +346,7 @@ export class StorefrontData {
       nextOffset: !cursor && r.next && offset + limit <= PRODUCT_OFFSET_MAX ? offset + limit : null,
       nextCursor: r.next ? encodeCursor({ s: sort, k: r.next.k, id: r.next.id }) : null,
       ...(wants && !filters ? { filtersIgnored: true } : {}),
+      ...(wantsOptions && !optionsOk ? { optionsIgnored: true } : {}),
     };
     if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
     return out;
@@ -815,6 +820,8 @@ export interface ProductQuery {
   /** 一覧の価格（いちばん安い SKU の価格、円）の下限・上限（0150） */
   priceMin?: number;
   priceMax?: number;
+  /** 在庫のある SKU の選択肢（鍵 → 値。同じ鍵はどれか、鍵どうしはすべて。0153） */
+  options?: Readonly<Record<string, readonly string[]>>;
   /** このカテゴリー（slug）と、その子孫のカテゴリーの商品だけ。categories を渡すこと */
   category?: string;
   /** このブランドの商品だけ（完全一致） */
@@ -859,6 +866,8 @@ export interface ProductListPage {
   nextCursor: string | null;
   /** 0150 が当たる前で、タグ 2 つ以上・価格の絞り込みを使えなかった（最初のタグだけで絞った） */
   filtersIgnored?: boolean;
+  /** 0153 が当たる前で、選択肢の絞り込みを使えなかった */
+  optionsIgnored?: boolean;
 }
 
 export interface ProductFacets {
@@ -867,6 +876,8 @@ export interface ProductFacets {
   categories: Record<string, number>;
   /** 公開の一覧に出る商品のいちばん高い一覧の価格（価格の欄の上限）。0150 から。無い（undefined）なら 0150 の前 */
   price_max?: number | null;
+  /** 選択肢の鍵 × 値ごとの在庫のある公開の商品の数（0153 から。無ければ 0153 の前） */
+  options?: { key: string; value: string; count: number }[];
 }
 
 /** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */

@@ -386,7 +386,7 @@ export function productPartValues(c: Ctx, s: LiquidScope, detail: ProductDetail,
 export function collectionPartValues(
   c: Ctx,
   s: LiquidScope,
-  p: { page: ProductListPage; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; q?: string; sort?: ProductSort },
+  p: { page: ProductListPage; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; q?: string; sort?: ProductSort },
 ): Record<string, unknown> {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
@@ -404,11 +404,39 @@ export function collectionPartValues(
   return { collection, products, current_tags: p.filter.tags, paginate: paginateOf(p.page, p.after, p.link) };
 }
 
-/** collection.filters（0150 が当たっていれば価格の price_range。当たる前は空） */
-function listFilters(shopPath: string, p: { category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; q?: string; sort?: ProductSort }) {
-  if (!p.priceRange) return [];
-  const urlToRemove = listUrl(shopPath, { category: p.category?.slug, tags: p.filter.tags, q: p.q, sort: p.sort });
-  return [priceRangeFilter({ min: p.filter.priceMin, max: p.filter.priceMax, rangeMax: p.priceRange.max, urlToRemove })];
+type OptionFacet = { key: string; label: string; values: { value: string; count: number }[] };
+
+/**
+ * collection.filters: 0153 が当たっていれば選択肢ごとの list（Shopify の形。値ごとに url_to_add / url_to_remove）、
+ * 0150 が当たっていれば価格の price_range。当たる前は空
+ */
+function listFilters(shopPath: string, p: { category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; q?: string; sort?: ProductSort }) {
+  const cur = p.filter;
+  const urlWith = (o: { options?: Record<string, string[]>; price?: boolean }) =>
+    listUrl(shopPath, { category: p.category?.slug, tags: cur.tags, ...(o.price === false ? {} : { priceMin: cur.priceMin, priceMax: cur.priceMax }), options: o.options ?? cur.options, q: p.q, sort: p.sort });
+  const out: unknown[] = [];
+  for (const g of p.optionFacets ?? []) {
+    const chosen = cur.options?.[g.key] ?? [];
+    const withValues = (vals: string[]) => {
+      const next = { ...(cur.options ?? {}) };
+      if (vals.length > 0) next[g.key] = vals;
+      else delete next[g.key];
+      return urlWith({ options: next });
+    };
+    const param = `filter.v.option.${g.key}`;
+    const values = g.values.map((v) => ({
+      label: v.value,
+      value: v.value,
+      count: v.count,
+      active: chosen.includes(v.value),
+      param_name: param,
+      url_to_add: withValues([...chosen.filter((x) => x !== v.value), v.value]),
+      url_to_remove: withValues(chosen.filter((x) => x !== v.value)),
+    }));
+    out.push({ label: g.label, param_name: param, type: "list", presentation: "text", values, active_values: values.filter((v) => v.active), inactive_values: values.filter((v) => !v.active), url_to_remove: withValues([]) });
+  }
+  if (p.priceRange) out.push(priceRangeFilter({ min: cur.priceMin, max: cur.priceMax, rangeMax: p.priceRange.max, urlToRemove: urlWith({ price: false }) }));
+  return out;
 }
 
 /**
@@ -420,7 +448,7 @@ export function renderListing(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
+  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
 ): Response | null {
   const tag = p.filter.tags[0];
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };

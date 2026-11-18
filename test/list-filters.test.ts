@@ -33,7 +33,9 @@ describe("読み取りと URL（src/storefront/list-filter.ts・urls.ts）", () 
     expect(priceParamOf("999.9")).toBe(999);
     expect(priceParamOf("-1")).toBeUndefined();
     expect(priceParamOf("abc")).toBeUndefined();
-    expect(listFilterOf((n) => ({ tag: ["x", "y"], "filter.v.price.gte": ["100"] })[n])).toEqual({ tags: ["x", "y"], priceMin: 100 });
+    expect(listFilterOf({ tag: ["x", "y"], "filter.v.price.gte": ["100"] })).toEqual({ tags: ["x", "y"], priceMin: 100 });
+    // 選択肢（0153）: 読めない鍵は捨て、値の重なりを除く
+    expect(listFilterOf({ "filter.v.option.color": ["red", " red ", "blue"], "filter.v.option.Bad!": ["x"] })).toEqual({ tags: [], options: { color: ["red", "blue"] } });
   });
   it("URL はタグをくり返し、価格は Shopify の名前。tags があれば tag より先", () => {
     expect(productsUrl("/s", { tags: ["a", "b"], priceMin: 100, priceMax: 2000, sort: "price_asc" })).toBe("/s/products?tag=a&tag=b&filter.v.price.gte=100&filter.v.price.lte=2000&sort=price_asc");
