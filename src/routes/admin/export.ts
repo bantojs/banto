@@ -12,6 +12,7 @@ import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { migrated } from "../../db/migration-state";
+import { NOTICE_TEXTS_MIGRATION } from "../../notices/templates";
 import { RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION } from "../../products/fields";
 
 /**
@@ -74,7 +75,9 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const tables: Record<string, Row[]> = {};
   // お気に入り（0123）はモジュールが ON のショップだけ（ON にできるのは表がある DB だけ）。書き出すだけで、復元では戻さない（会員と商品の id を振り直すため）
   const favorites: typeof TABLES = moduleEnabled(shop.settings, FAVORITES_MODULE) ? [{ name: "customer_favorites", order: "created_at.asc" }] : [];
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...SIZE_CHART_TABLES, ...favorites]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  // お知らせの文面（0154）は当たっている DB だけ。書き出すだけで、復元では戻さない（管理画面で入れ直せる短い文）
+  const noticeTexts: typeof TABLES = (await migrated({ db, cache: c.get("adapters").cache }, NOTICE_TEXTS_MIGRATION)) ? [{ name: "shop_notice_texts", order: "kind.asc" }] : [];
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...SIZE_CHART_TABLES, ...favorites, ...noticeTexts]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,

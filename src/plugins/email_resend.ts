@@ -11,6 +11,7 @@ import { orderTaxBreakdown } from "../commerce/tax";
 import { trackingOf, trackingUrl } from "../orders/tracking";
 import { orderLink } from "../orders/lookup";
 import { buildTryonMails, type TryonContact } from "../modules/store-tryon/mail";
+import { noticeMail, type NoticeTextRow } from "../notices/templates";
 
 interface Contact {
   order_id: string;
@@ -63,26 +64,36 @@ function orderPageLink(c: Contact, publicBaseUrl: string | undefined): string | 
   return URL.canParse(banto) ? orderLink(banto, c.number, c.member === true) : banto;
 }
 
-export function buildOrderEmail(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined): { subject: string; text: string } {
+/** 注文のメールの差し込みの値（src/notices/templates.ts。かたまりは前後の改行なし） */
+export function orderMailValues(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined): Record<string, string> {
   const lines = c.items.map((i) => `・${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}  ${yen(i.unit_price_jpy * i.qty)}`).join("\n");
   const discount = c.discount_jpy ?? 0;
   const subtotal = c.total_jpy - c.shipping_jpy + discount;
   const discountLines = discount > 0 ? `${(c.discounts ?? []).map((d) => `値引き（${d.code}）: -${yen(d.amount_jpy)}`).join("\n") || `値引き: -${yen(discount)}`}\n` : "";
   const lookup = orderPageLink(c, publicBaseUrl);
-  const head = `${c.customer_name ?? "お客"} 様\n\n`;
   // 税率ごとの対象額と消費税額（計算は src/commerce/tax.ts だけ）
   const tax = orderTaxBreakdown(c, c.shop.tax ?? {})
     .map((g) => (g.rate > 0 ? `（${g.rate}%対象 ${yen(g.amount_jpy)}　内消費税 ${yen(g.tax_jpy)}）` : `（非課税・不課税 ${yen(g.amount_jpy)}）`))
     .join("\n");
-  const tr = trackingOf(c.tracking);
+  const tr = kind === "shipped" ? trackingOf(c.tracking) : null;
   const trUrl = tr ? trackingUrl(tr.carrier, tr.number) : null;
-  const tracking = tr ? `\nお問い合わせ番号: ${CARRIER_NAMES[tr.carrier] ?? ""}${CARRIER_NAMES[tr.carrier] ? " " : ""}${tr.number}\n${trUrl ? `配送状況: ${trUrl}\n` : ""}` : "";
-  const detail = `注文番号: ${c.number}\n\n${lines}\n\n商品合計: ${yen(subtotal)}\n送料: ${yen(c.shipping_jpy)}\n${discountLines}合計（税込）: ${yen(c.total_jpy)}\n${tax ? `${tax}\n` : ""}\nお届け先:\n${addressLines(c.shipping_address)}\n`;
-  const foot = `${lookup ? `\nご注文の状況はこちらで確認できます: ${lookup}\n` : ""}${c.shop.contact_email ? `\nお問い合わせ: ${c.shop.contact_email}\n` : ""}\n${c.shop.name}`;
-  if (kind === "shipped") {
-    return { subject: `【${c.shop.name}】商品を発送しました（注文番号 ${c.number}）`, text: `${head}ご注文の商品を発送しました。到着までしばらくお待ちください。\n${tracking}\n${detail}${foot}` };
-  }
-  return { subject: `【${c.shop.name}】ご注文ありがとうございます（注文番号 ${c.number}）`, text: `${head}ご注文を承りました。内容をご確認ください。\n\n${detail}${c.shop.return_policy ? `\n返品について:\n${c.shop.return_policy}\n` : ""}${foot}` };
+  const carrier = tr ? (CARRIER_NAMES[tr.carrier] ?? "") : "";
+  return {
+    shop_name: c.shop.name,
+    customer_name: c.customer_name ?? "お客",
+    number: String(c.number),
+    total: yen(c.total_jpy),
+    order_details: `注文番号: ${c.number}\n\n${lines}\n\n商品合計: ${yen(subtotal)}\n送料: ${yen(c.shipping_jpy)}\n${discountLines}合計（税込）: ${yen(c.total_jpy)}\n${tax ? `${tax}\n` : ""}\nお届け先:\n${addressLines(c.shipping_address)}`.replace(/\s+$/, ""),
+    tracking: tr ? `お問い合わせ番号: ${carrier}${carrier ? " " : ""}${tr.number}${trUrl ? `\n配送状況: ${trUrl}` : ""}` : "",
+    return_policy: c.shop.return_policy ? `返品について:\n${c.shop.return_policy}` : "",
+    order_link: lookup ? `ご注文の状況はこちらで確認できます: ${lookup}` : "",
+    contact: c.shop.contact_email ? `お問い合わせ: ${c.shop.contact_email}` : "",
+  };
+}
+
+/** 注文のメール。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
+export function buildOrderEmail(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined, texts?: readonly NoticeTextRow[] | null): { subject: string; text: string } {
+  return noticeMail(kind === "paid" ? "order_paid" : "order_shipped", texts, orderMailValues(kind, c, publicBaseUrl));
 }
 
 export const emailResend: BundledPlugin = {
@@ -110,7 +121,8 @@ export const emailResend: BundledPlugin = {
     const orderId = String(data["order_id"] ?? "");
     const contact = (await ctx.privileged.orderContact(orderId, ctx.envelope.shop_id)) as unknown as Contact;
     if (!contact.customer_email) return; // 連絡先が無い（マスク済み等）注文には送らない
-    const mail = buildOrderEmail(event === "order.paid" ? "paid" : "shipped", contact, ctx.config.get("PUBLIC_BASE_URL"));
+    const kind = event === "order.paid" ? "order_paid" : "order_shipped";
+    const mail = buildOrderEmail(event === "order.paid" ? "paid" : "shipped", contact, ctx.config.get("PUBLIC_BASE_URL"), await ctx.privileged.shopNoticeTexts(ctx.envelope.shop_id, kind));
     const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
     await sendMail(mailer, {
       from,

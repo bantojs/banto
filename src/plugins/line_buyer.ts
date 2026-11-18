@@ -8,12 +8,13 @@
 import type { BundledPlugin, PluginContext } from "./types";
 import { LINE_PUSH_URL } from "./line_notify";
 import { lineToken } from "./line_token";
+import { noticeLine, type NoticeTextRow } from "../notices/templates";
 
-export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }): string | null {
-  const yen = `¥${Number(r.total_jpy).toLocaleString("ja-JP")}`;
-  if (event === "order.paid") return `【${r.shop_name}】ご注文ありがとうございます。\n注文番号 ${r.number}\n合計 ${yen}\n発送の準備ができしだい、お知らせします。`;
-  if (event === "order.shipped") return `【${r.shop_name}】ご注文の商品を発送しました。\n注文番号 ${r.number}\n到着までしばらくお待ちください。`;
-  return null;
+/** 注文の知らせ。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
+export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }, texts?: readonly NoticeTextRow[] | null): string | null {
+  const kind = event === "order.paid" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
+  if (!kind) return null;
+  return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}` });
 }
 
 /** お店で試着（0025）: 受付・取り置き開始・取り置きの延長（0151）・前日のお知らせ（0152）・取り消しだけ知らせる */
@@ -76,6 +77,8 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
   const r = await ctx.privileged.orderLineRecipient(orderId, shop_id);
-  const text = r ? buyerMessage(event, r) : null;
+  // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
+  const kind = event === "order.paid" ? "order_paid" : "order_shipped";
+  const text = r ? buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
   return r && text ? { to: r.line_user_id, text } : null;
 }

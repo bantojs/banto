@@ -7,6 +7,7 @@
 import { AuthError } from "../auth/supabase";
 import { supabaseHeaders } from "./api-keys";
 import { ACTOR_HEADER } from "../audit";
+import { NOTICE_TEXTS_MIGRATION, type NoticeTextRow } from "../notices/templates";
 
 export interface PrivilegedDbOptions {
   url: string;
@@ -298,6 +299,8 @@ export interface PrivilegedDb {
   tryonRemind(today: string, hour: number): Promise<number>;
   /** 当たっているマイグレーションの版（banto_setup_state。Cron が新しい関数を呼ぶ前に確かめる） */
   appliedMigrations(): Promise<string[]>;
+  /** ショップが直したお知らせの文面（0154。当てる前の DB・行が無ければ []）。その知らせのメールと LINE の行 */
+  shopNoticeTexts(shopId: string, kind: string): Promise<NoticeTextRow[]>;
   /** 公開日を過ぎた非公開の商品を公開する（0148）。公開した数 */
   publishScheduledProducts(): Promise<number>;
   /** 終わった試着の申し込みの個人情報を消す（Cron） */
@@ -591,6 +594,18 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     appliedMigrations: async () => {
       const r = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
       return Array.isArray(r?.migrations) ? r.migrations.filter((x): x is string => typeof x === "string") : [];
+    },
+    async shopNoticeTexts(shopId, kind) {
+      // 文面が読めない（DB の一時的な誤りなど）ときは既定の文面で送る。注文の知らせそのものを止めない（docs/notices.md「送るとき」）
+      try {
+        const state = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
+        if (!(Array.isArray(state?.migrations) && state.migrations.includes(NOTICE_TEXTS_MIGRATION))) return [];
+        const res = await doFetch(`${base}/rest/v1/shop_notice_texts?select=kind,channel,subject,body&shop_id=eq.${encodeURIComponent(shopId)}&kind=eq.${encodeURIComponent(kind)}`, { headers });
+        if (!res.ok) return [];
+        return (await res.json()) as NoticeTextRow[];
+      } catch {
+        return [];
+      }
     },
     publishScheduledProducts: () => rpc<number>("publish_scheduled_products", {}),
     maskTryonRequests: (days) => rpc("mask_tryon_requests", { p_days: days }),

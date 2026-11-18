@@ -345,7 +345,8 @@ export type ShopHere =
   | "settings-shipping"
   | "settings-payments"
   | "settings-members"
-  | "settings-advanced";
+  | "settings-advanced"
+  | "notices";
 
 /** 目次の 1 項目の中の画面（画面の中のタブ）。同梱モジュールの項目に要る権限はモジュールの一覧（registry の perm）から引く */
 interface NavSub {
@@ -425,6 +426,7 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
           page("settings-shipping", "/settings/shipping", "settings.tab_shipping", "settings"),
           page("settings-payments", "/settings/payments", "settings.tab_payments", "settings"),
           page("settings-members", "/settings/members", "settings.tab_members", "admin|integrations"),
+          page("notices", "/notices", "notices.title", "settings"),
           mod("receipt", "receipt", "mod.receipt.name"),
           page("settings-advanced", "/settings/advanced", "settings.tab_advanced", "settings"),
         ],

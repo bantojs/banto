@@ -4,6 +4,7 @@
  * 本物との差異が疑わしい箇所は test/db/ の実 PostgreSQL テストで裏取りする。
  */
 
+import { checkNoticeText, normalizeNoticeBody, type NoticeChannel, type NoticeKind } from "../src/notices/templates";
 import { pageHandleOk } from "../src/pages";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { normalizeTags } from "../src/products/tags";
@@ -41,7 +42,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs" | "customer_favorites";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs" | "customer_favorites" | "shop_notice_texts";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -75,6 +76,7 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   hook_deliveries: "integrations",
   api_tokens: "integrations",
   shop_secret_boxes: "integrations",
+  shop_notice_texts: "settings",
   shop_stores: "stores",
   tryon_requests: "stores",
   tryon_items: "stores",
@@ -149,6 +151,7 @@ export class FakeSupabase {
     audiences: [],
     dialogs: [],
     customer_favorites: [],
+    shop_notice_texts: [],
     price_rules: [],
     shops: [],
     categories: [],
@@ -1930,6 +1933,27 @@ export class FakeSupabase {
       const keyOf = (r: Row | undefined) => ((r?.["image"] as Row | undefined)?.["key"] as string | undefined) ?? null;
       const kept = new Set(Object.values(all[axis] ?? {}).map(keyOf));
       return json({ swatches: all[axis] ?? {}, removed_image_keys: Object.values(old).map(keyOf).filter((k): k is string => Boolean(k) && !kept.has(k)) });
+    }
+    if (fn === "notice_text_set") {
+      // 0154: 決まりは Worker と同じ checkNoticeText（本物の SQL は test/db/notice-texts.test.ts）
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("settings"))) return json({ code: "42501", message: "settings_required" }, 403);
+      const kind = args["p_kind"] as NoticeKind;
+      const channel = args["p_channel"] as NoticeChannel;
+      const rows = this.tables.shop_notice_texts;
+      const at = rows.findIndex((r) => r["shop_id"] === shopId && r["kind"] === kind && r["channel"] === channel);
+      if (args["p_body"] === null) {
+        if (at >= 0) rows.splice(at, 1);
+        return json(null);
+      }
+      const subject = channel === "mail" ? String(args["p_subject"] ?? "").trim() : null;
+      const body = normalizeNoticeBody(String(args["p_body"]));
+      const err = checkNoticeText(kind, channel, subject, body);
+      if (err) return json({ code: "22023", message: `invalid_notice_text:${err.code}${err.tag ? `:${err.tag}` : ""}` }, 400);
+      const row = { shop_id: shopId, kind, channel, subject, body, updated_at: this.now() };
+      if (at >= 0) rows[at] = row;
+      else rows.push(row);
+      return json(null);
     }
     if (fn === "option_names_set") {
       // 0094: 本物の SQL（名前の重なり・知らない key）は test/db/option-keys.test.ts
