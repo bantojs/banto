@@ -88,6 +88,25 @@ describe("お店の画面", () => {
     expect(sb.tables.orders[0]).toMatchObject({ status: "pending", payment_status: "unpaid", payment_provider: "cod", fee_jpy: 330, total_jpy: 6830, amount_paid_jpy: null });
   });
 
+  it("クーポン（0158）: 代金引換だけのクーポンは代引きで値引き（手数料は値引きしない）、カードでは使えない", async () => {
+    const { sb, app, sku, shop } = setup();
+    shop["settings"] = { ...(shop["settings"] as Record<string, unknown>), modules: { cod: true, coupons: true } };
+    sb.tables.coupon_campaigns.push({ id: "camp-cod", shop_id: shop.id, name: "代引き割", code: "CODOFF", kind: "fixed", value: 500, starts_at: null, ends_at: null, usage_limit: null, per_customer_limit: null, combinable: false, audience: "public", conditions: { payment_methods: ["cod"] }, active: true, created_at: "" });
+    const b = new Browser(app);
+    await b.post("/my-shop/cart/add", { sku_id: sku.id, qty: "2" });
+    await b.post("/my-shop/cart/coupon", { code: "CODOFF" });
+    await b.post("/my-shop/checkout", { provider: "cod" });
+    const html = await (await b.post("/my-shop/checkout/cod", ADDRESS)).text();
+    // 6,000 + 送料 500 - 500 + 手数料 330
+    expect(html).toContain("¥6,330");
+    expect((await b.post("/my-shop/checkout/cod", { quote: quoteFrom(html) })).status).toBe(303);
+    expect(sb.tables.orders[0]).toMatchObject({ payment_provider: "cod", discount_jpy: 500, fee_jpy: 330, total_jpy: 6330 });
+    const card = new Browser(app);
+    await card.post("/my-shop/cart/add", { sku_id: sku.id, qty: "1" });
+    await card.post("/my-shop/cart/coupon", { code: "CODOFF" });
+    expect(await (await card.post("/my-shop/checkout/stripe", ADDRESS)).text()).toContain("選んだお支払い方法ではご利用いただけません");
+  });
+
   it("モジュールが OFF なら出さない・進めない", async () => {
     const { app, sku, sb } = setup(undefined, false);
     const b = new Browser(app);
@@ -166,6 +185,20 @@ describe("管理画面", () => {
     expect((shop["settings"] as Record<string, unknown>)["cod"]).toEqual({ fee_type: "tiers", fee_jpy: 0, fee_tiers: [{ upto: 10000, fee: 330 }, { upto: 30000, fee: 440 }], max_total_jpy: 200000, members_only: true, note: "現金のみ" });
     res = await admin.post(base, { fee_type: "tiers", fee_tiers: "" });
     expect(res.headers.get("location")).toBe(`${base}?flash=invalid_tiers`);
+  });
+
+  it("クーポンの画面: 支払い方法の条件に代金引換（モジュール cod が ON で 0158 の後）", async () => {
+    const { app, shop, sb } = setup();
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const page = () => admin.get(`/admin/shops/${shop.id}/modules/coupons/new`).then((r) => r.text());
+    shop["settings"] = { ...(shop["settings"] as Record<string, unknown>), modules: { cod: true, coupons: true } };
+    expect(await page()).toContain('name="pm_cod"');
+    shop["settings"] = { ...(shop["settings"] as Record<string, unknown>), modules: { cod: false, coupons: true } };
+    expect(await page()).not.toContain('name="pm_cod"');
+    shop["settings"] = { ...(shop["settings"] as Record<string, unknown>), modules: { cod: true, coupons: true } };
+    sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== "0158_coupon_cod");
+    const fresh = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
+    expect(await (await fresh.get(`/admin/shops/${shop.id}/modules/coupons/new`)).text()).not.toContain('name="pm_cod"');
   });
 
   it("注文の画面に手数料", async () => {
