@@ -17,7 +17,7 @@ import { setLocale } from "../i18n";
 import { setTimeZone } from "../i18n/time";
 import { registerFeedJob } from "../modules/product-feed/job";
 import { registerImageImportJob } from "../modules/woo-import/job";
-import { todayHere } from "../modules/store-tryon";
+import { TRYON_REMINDER_MIGRATION, hourHere, todayHere } from "../modules/store-tryon";
 import { SALE_DATES_MIGRATION } from "../products/fields";
 import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
@@ -92,6 +92,8 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const days = raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS;
     await db.tryonExpire(todayHere());
     await db.maskTryonRequests(days);
+    // 来店期限の前日のお知らせ（0152。当てる前の DB では何もしない）。個人情報のマスキングの後に（失敗してもマスキングを止めない）
+    if ((await db.appliedMigrations()).includes(TRYON_REMINDER_MIGRATION)) await db.tryonRemind(todayHere(), hourHere());
   });
 
   // お問い合わせ（0061）: 完了から MASK_ORDERS_AFTER_DAYS 日の連絡先と本文を消す・未確認のまま 30 日のものを消す

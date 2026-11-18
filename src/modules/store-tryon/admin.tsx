@@ -2,14 +2,14 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
 import type { ShopRow } from "../../db/types";
-import { t } from "../../i18n";
+import { t, tf } from "../../i18n";
 import { AdminLayout, type Crumb, type ShopTabs, PageHead } from "../../routes/admin/layout";
 import { formFields, owner, param, type AdminContext } from "../../routes/admin/context";
 import { requireOwner } from "../../routes/admin/auth";
 import { can } from "../../routes/admin/access";
 import { loadShop } from "../../routes/admin/shops";
 import { moduleEnabled } from "../registry";
-import { TRYON_EXTEND_MAX, TRYON_EXTEND_MIGRATION, TRYON_LIMIT_DEFAULTS, TRYON_MODULE, tryonSettings, type OrgStore, type ShopStoreLink } from "./index";
+import { TRYON_EXTEND_MAX, TRYON_EXTEND_MIGRATION, TRYON_LIMIT_DEFAULTS, TRYON_MODULE, TRYON_REMINDER_MIGRATION, tryonSettings, type OrgStore, type ShopStoreLink } from "./index";
 import { migrated } from "../../db/migration-state";
 import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, type RequestRow } from "./requests";
 
@@ -53,6 +53,8 @@ tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
   if (storeFilter) eq["store_id"] = storeFilter;
   // 取り置きの延長の欄は 0151 を当ててから
   const extendReady = await migrated({ db, cache: c.get("adapters").cache }, TRYON_EXTEND_MIGRATION);
+  // 前日のお知らせの欄は 0152 を当ててから
+  const reminderReady = await migrated({ db, cache: c.get("adapters").cache }, TRYON_REMINDER_MIGRATION);
   const [stores, links, requests] = await Promise.all([
     shop.org_id ? db.from<OrgStore>("stores").select("id,name,active,sort_order", { eq: { org_id: shop.org_id }, order: "sort_order.asc" }) : Promise.resolve([] as OrgStore[]),
     db.from<ShopStoreLink>("shop_stores").select("store_id,tryon,sort_order", { eq: { shop_id: shop.id } }),
@@ -147,6 +149,21 @@ tryonAdmin.get("/", requireOwner, async (c: AdminContext) => {
             {intOpt("extend_days", s.extend_days, 1, 30)}
           </>
         ) : null}
+        {reminderReady ? (
+          <>
+            <label for="reminder_hour">{t("tryon.reminder_hour")}</label>
+            <select id="reminder_hour" name="reminder_hour">
+              <option value="" selected={s.reminder_hour === null}>
+                {t("tryon.reminder_off")}
+              </option>
+              {Array.from({ length: 24 }, (_, h) => (
+                <option value={String(h)} selected={s.reminder_hour === h}>
+                  {tf("tryon.reminder_at", { hour: String(h) })}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
         <label for="notice">{t("tryon.notice")}</label>
         <textarea id="notice" name="notice" rows={3} maxlength={500}>
           {s.notice}
@@ -173,11 +190,16 @@ tryonAdmin.post("/settings", requireOwner, async (c: AdminContext) => {
     const v = int(f[k]);
     if (v !== undefined) sent[k] = v;
   }
+  // 前日のお知らせの時刻（欄があるときだけ。空 = 送らない）
+  if (f.reminder_hour === "") sent["reminder_hour"] = null;
+  else if (f.reminder_hour !== undefined && int(f.reminder_hour) !== undefined) sent["reminder_hour"] = int(f.reminder_hour);
   const next: Record<string, unknown> = { ...tryonSettings({ store_tryon: { ...tryonSettings(shop.settings), ...sent } }) };
   // 上限が既定のままで、前から入っていなければ書かない（公開のショップ行に上限の値を載せない）
   const raw = (shop.settings ?? {})["store_tryon"];
   const had = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   for (const [k, d] of Object.entries(TRYON_LIMIT_DEFAULTS)) if (!(k in had) && next[k] === d) delete next[k];
+  // 送らない（null）は前から入っていなければ書かない
+  if (next["reminder_hour"] === null && !("reminder_hour" in had)) delete next["reminder_hour"];
   const store_tryon = next;
   try {
     await owner(c)

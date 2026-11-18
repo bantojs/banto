@@ -4639,6 +4639,24 @@ export class FakeSupabase {
       return json({ customer_master: n });
     }
     if (fn === "shop_secret") return json(this.tables.shop_secret_boxes.find((r) => r["shop_id"] === args["p_shop_id"] && r["purpose"] === args["p_purpose"])?.["secret_box"] ?? null); // 受け口だけ（中身は test/db/tax.test.ts・woo-history.test.ts）
+    if (fn === "tryon_remind") {
+      // 0152 の再現（本物は test/db/tryon-reminder.test.ts）: 時刻を過ぎたショップの、期限が明日の取り置きに 1 回だけ
+      const tomorrow = new Date(Date.parse(`${String(args["p_today"])}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      let n = 0;
+      for (const r of this.tables.tryon_requests) {
+        const settings = (this.tables.shops.find((x) => x["id"] === r["shop_id"])?.["settings"] ?? {}) as Row;
+        const st = settings["store_tryon"] as Row | undefined;
+        const hour = st?.["reminder_hour"];
+        const on = (settings["modules"] as Row | undefined)?.["store_tryon"] === true;
+        const old = !r["ready_at"] || Date.parse(String(r["ready_at"])) <= Date.now() - 86_400_000;
+        const h = Number(args["p_hour"]);
+        if (!on || typeof hour !== "number" || h < hour || h > hour + 2 || !old || r["status"] !== "ready" || r["hold_until"] !== tomorrow || r["reminded_at"]) continue;
+        r["reminded_at"] = this.now();
+        this.enqueue(String(r["shop_id"]), "tryon.updated", { request_id: r["id"], number: r["number"], shop_id: r["shop_id"], store_id: r["store_id"], status: "ready", hold_until: r["hold_until"], customer_id: r["customer_id"] ?? null, reminder: true });
+        n++;
+      }
+      return json(n);
+    }
     if (fn === "tryon_expire") {
       // 0025 の再現: 取り置きの期限を過ぎたら期限切れ
       let n = 0;

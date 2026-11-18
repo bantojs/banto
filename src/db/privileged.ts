@@ -294,6 +294,8 @@ export interface PrivilegedDb {
   memberTryonExtend(shopId: string, customerId: string, epoch: number, number: number, today: string, expected: string | null): Promise<{ ok: true; hold_until: string; extend_count: number } | { ok: false; reason: "session" | "not_found" | "not_extendable" | "limit" | "changed" }>;
   /** 取り置きの期限切れ（Cron。today はショップの時間帯の日付） */
   tryonExpire(today: string): Promise<number>;
+  /** 来店期限の前日のお知らせを積む（0152。today・hour はショップの時間帯） */
+  tryonRemind(today: string, hour: number): Promise<number>;
   /** 当たっているマイグレーションの版（banto_setup_state。Cron が新しい関数を呼ぶ前に確かめる） */
   appliedMigrations(): Promise<string[]>;
   /** 公開日を過ぎた非公開の商品を公開する（0148）。公開した数 */
@@ -585,6 +587,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     tryonContact: (requestId, shopId) => rpc("tryon_contact", { p_request_id: requestId, p_shop_id: shopId }),
     tryonLineRecipient: (requestId, shopId) => rpc("tryon_line_recipient", { p_request_id: requestId, p_shop_id: shopId }),
     tryonExpire: (today) => rpc("tryon_expire", { p_today: today }),
+    tryonRemind: (today, hour) => rpc("tryon_remind", { p_today: today, p_hour: hour }),
     appliedMigrations: async () => {
       const r = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
       return Array.isArray(r?.migrations) ? r.migrations.filter((x): x is string => typeof x === "string") : [];
