@@ -139,6 +139,11 @@ describe("値引きの判定と計算（discounts.ts）", () => {
     for (const provider of ["stripe", "komoju", "amazon_pay"] as const) {
       expect(evaluateDiscounts(["COD"], [codOnly], LINES, 0, { ...ctx(), payment: { provider } }).rejected).toEqual([{ code: "COD", reason: "payment_method" }]);
     }
+    // cod と KOMOJU の種類を一緒に: KOMOJU ではその種類に絞る
+    const mixed = camp({ code: "M", conditions: { payment_methods: ["cod", "komoju:paypay"] } });
+    const k = evaluateDiscounts(["M"], [mixed], LINES, 0, { ...ctx(), payment: { provider: "komoju" } });
+    expect([k.applied.length, k.paymentTypes]).toEqual([1, ["paypay"]]);
+    expect(evaluateDiscounts(["M"], [mixed], LINES, 0, cod).applied).toHaveLength(1);
     expect(PAYMENT_METHOD_RE.test("cod")).toBe(true);
     expect(COUPON_COD_MIGRATION).toBe("0158_coupon_cod");
   });
