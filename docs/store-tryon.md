@@ -90,3 +90,7 @@
 - ヘッドレス API（`/api/shops/<shop>/stores`・`/tryon`・会員の `/members/tryon`、docs/headless.md「お店で試着」）と AI 用の操作（docs/ai-access.md、0026）。会員ページには自分の申し込みが出て、取り置きが終わる前なら取り消せます（在庫はショップの担当者が「EC の在庫に戻す」を押したときに戻ります）。
 - `0027_tryon_shop_names.sql`: `tryon_store_shops`（スタッフの申し込みの一覧に出すショップ名。その店舗の tryon の項目を持つ人に、名前と id だけ）。
 - `0026_tryon_api.sql`: `api_tryon_*`・`api_stores_list`・`api_tryon_request_restock`（AI）、`member_tryon_requests`・`member_tryon_cancel`（会員）。状態の遷移は `banto_tryon_transition`、在庫を戻すのは `banto_tryon_restock` の 1 か所ずつ（管理画面と AI が同じものを通る）。在庫を EC に戻せるのは、ショップの「実店舗・お店で試着」の項目を持つ人と、orders:write の AI 用トークン（実店舗のスタッフは不可）。
+
+## お知らせの文面
+
+お客様あてのメール・LINE（受付・ご用意・前日・延長・取り消し）の文面は、管理画面の「ショップの設定 → お知らせの文面」で直せます（0154、docs/notices.md）。品目（`{{items}}`）と店舗の案内（`{{store_info}}`）は必ず入れます。店舗あての知らせは直せません。

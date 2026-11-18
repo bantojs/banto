@@ -3478,7 +3478,7 @@ export const ja = {
   "axes.names_saved": "選択肢の名前を保存しました。",
   "axes.names_invalid": "選択肢の名前を保存できませんでした。名前は 1〜40 文字で、ほかの選択肢と同じ名前にはできません。",
   "notices.title": "お知らせの文面",
-  "notices.intro": "お客様に送る注文のメール・LINE の文面を直せます。{{名前}} のところに注文の内容などが入ります。知らせごとに必ず入れる差し込み（明細など）があり、無いと保存できません。何も直していない知らせは既定の文面で送ります。",
+  "notices.intro": "お客様に送る注文・お店で試着のメール・LINE の文面を直せます。{{名前}} のところに注文の内容などが入ります。知らせごとに必ず入れる差し込み（明細など）があり、無いと保存できません。何も直していない知らせは既定の文面で送ります。",
   "notices.needs_update": "お知らせの文面を直すには、データベースのアップデート（0154）を当ててください。それまでは既定の文面で送ります。",
   "notices.kind.order_paid": "注文の受付",
   "notices.kind.order_shipped": "発送のお知らせ",
@@ -3513,7 +3513,7 @@ export const ja = {
   "notices.tag.order_link": "ご注文の状況を確かめるリンク",
   "notices.tag.contact": "お問い合わせ先のメールアドレス",
   "notices.tag.store_name": "店舗名",
-  "notices.tag.hold_until": "お取り置きの期限（◯月◯日）",
+  "notices.tag.hold_until": "お取り置きの期限（メールは「11月27日（金）」、LINE は「11月27日」）",
   "notices.tag.visit": "ご来店予定日の案内",
   "notices.tag.items": "お申し込みの品目",
   "notices.tag.store_info": "店舗の住所・電話・営業時間・臨時休業",
@@ -3539,6 +3539,11 @@ export const ja = {
   "notices.sample_return_policy": "返品について:\n（ショップの返品ポリシー）",
   "notices.sample_order_link": "ご注文の状況はこちらで確認できます: https://…",
   "notices.sample_contact": "お問い合わせ: shop@example.com",
+  "notices.sample_store_name": "渋谷店",
+  "notices.sample_hold_until": "11月27日（金）",
+  "notices.sample_visit": "ご来店予定日: 11月20日（木）\n店舗でご用意ができしだい、あらためてお知らせします。",
+  "notices.sample_items": "・Tシャツ / カラー: ネイビー・サイズ: M（品番 TEE-NV-M）× 1",
+  "notices.sample_store_info": "■ 渋谷店\n〒150-0001 東京都渋谷区…\n電話 03-0000-0000\n営業時間:\n  月〜金 11:00〜20:00",
 } as const;
 
 export type MessageKey = keyof typeof ja;
