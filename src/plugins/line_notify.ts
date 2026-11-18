@@ -11,6 +11,8 @@ export const LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push";
 export function lineMessageFor(ctx: PluginContext): string | null {
   const { event, data } = ctx.envelope;
   const yen = (n: unknown) => `¥${Number(n ?? 0).toLocaleString("ja-JP")}`;
+  // 未入金の注文の入金の記録（0156）は新しい注文ではない
+  if (event === "order.paid" && data["recorded_payment"] === true) return `【Banto】入金を記録しました\n合計 ${yen(data["total_jpy"])}\n注文 ID: ${String(data["order_id"] ?? "").slice(0, 8)}…`;
   if (event === "order.paid") {
     const items = Array.isArray(data["items"]) ? (data["items"] as { qty?: number }[]) : [];
     const qty = items.reduce((n, i) => n + Number(i.qty ?? 0), 0);

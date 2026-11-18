@@ -12,6 +12,7 @@ export const AUDIT_ACTIONS = [
   "customer.email_changed",
   "customer.deleted",
   "order.status_changed",
+  "order.payment_recorded",
   "org_member.added",
   "org_member.role_changed",
   "org_member.removed",

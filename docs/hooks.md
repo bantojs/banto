@@ -10,9 +10,9 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 | イベント | 発生タイミング | data の主な項目 |
 | --- | --- | --- |
 | `order.created` | 決済 Webhook で注文が作られたとき（`order.paid` と同時） | `order_id` `shop_id` `subtotal_jpy` `shipping_jpy` `discount_jpy` `total_jpy` `status` `payment_provider` `items[]`（`total_jpy` は値引き後。`items[].discount_jpy` は商品ごとの値引き） |
-| `order.paid` | 同上 | 同上 |
-| `order.shipped` | 管理画面で「発送済み」にしたとき | `order_id` `shop_id` `total_jpy` `status` `shipped_at` |
-| `order.cancelled` | 管理画面で「キャンセル」にしたとき | `order_id` `shop_id` `total_jpy` `status` `refunded` `restocked`（在庫を戻したか。取り込んだ注文は false、0031） |
+| `order.paid` | お支払いが済んだとき。決済の注文は `order.created` と同時。**未入金の注文（代金引換など、0156）は、運営者が入金を記録したとき**（発送の後のこともある） | 同上。入金の記録のときは、それに `order_number` `payment_status`（`paid`）`paid_at` `recorded_payment: true` `customer_id` が付く |
+| `order.shipped` | 管理画面で「発送済み」にしたとき | `order_id` `shop_id` `total_jpy` `status` `shipped_at` `payment_status`（0156。`unpaid` なら代金はまだ） |
+| `order.cancelled` | 管理画面で「キャンセル」にしたとき | `order_id` `shop_id` `total_jpy` `status` `refunded` `restocked`（在庫を戻したか。取り込んだ注文は false、0031）`payment_status` `reason`（`refused` = 受け取り拒否、0156） |
 | `checkout.abandoned` | 会員の予約が決済されないまま期限切れで解放されたとき（カゴ落ち、0105）。Cron の期限切れと、決済ページの期限切れ（Stripe の `checkout.session.expired`・KOMOJU の `payment.expired`）。**ゲストの予約・支払いの失敗・決済ページを作れなかったときは送らない**。期限切れのあとで決済が済むこともあるので、アプローチの前に注文を確かめ直すこと | `reservation_id` `shop_id` `customer_id` `reason`（`expired`）`items[]`（`sku_id` `product_id` `qty` `unit_price_jpy`）`subtotal_jpy` `started_at` |
 | `product.updated` | 商品を保存したとき。SKU（価格・名前・品番など）・商品の画像を足す・変える・消したときと、在庫を人が変えたとき（管理画面・AI 用トークン）と、在庫が「ゼロ ⇄ あり」に切り替わったとき（購入で売り切れた・期限切れの予約が戻って再入荷した）も（0075）。購入で数が減っただけでは送らない（少なくなったことは `inventory.low`）。まだ送っていない同じ商品の知らせがあれば重ねない（まとめて変えても 1 商品 1 通） | `product_id` `shop_id` `slug` `name` `published` |
 | `inventory.low` | 注文確定後に在庫が閾値以下になったとき（閾値は `shops.settings.low_stock_threshold`、既定 3。ゼロ = 売り切れも含む。`available` が 0 かで見分ける）。同じ SKU のまだ送っていない知らせがあるあいだは重ねて積まず、その知らせの `available` を最後の数に書き換える（0142。届くのはいつも最後の数）。人が在庫を減らして閾値より多かった数が閾値以下になったとき（商品の画面・在庫の画面の出荷と棚卸し・AI 用トークン・取り込み、0141）も。人の操作では閾値をまたいだときだけで、閾値以下のまま数を直しただけでは送らない（そのときも `product.updated` は届く） | `shop_id` `sku_id` `product_id`（0075 から） `available` `threshold` |
@@ -24,6 +24,15 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 | `customer.created` | 会員の行ができたとき（初回のログイン、取り込み、API での作成。0047） | `customer_id` `shop_id` `external_ref`（外部の顧客マスタでの ID `{provider, id}`、無ければ null）`marketing_consent`（案内メールの同意 true / false / null = 未回答。0050） |
 | `customer.updated` | 会員のプロフィール（メールアドレス・氏名・住所・独自項目・外部の ID・案内メールの同意）が変わったとき。ログインの時刻やパスワードの変更では送らない | 同上 |
 | `customer.deleted` | 会員が退会した・運営者が削除したとき | 同上 |
+
+### 注文の状態とお支払いの状態（0156）
+
+注文は 2 つの状態を持ちます。**`order.paid` を「お金を受け取った」の合図として使い、`status` だけで支払いを判断しないでください。**
+
+- `status`（届けの状態）: `pending`（受付・未入金。代金引換など）/ `paid`（お支払い済みで受付）→ `shipped`（発送）。ほかに `cancelled` / `refunded`。
+- `payment_status`（お支払いの状態）: `paid` / `unpaid`。今までの決済（Stripe・KOMOJU・Amazon Pay・0 円）の注文はいつも `paid` です。
+- 未入金の注文は `pending → shipped` と進み、発送の後に入金されることがあります（`shipped` かつ `unpaid`）。入金が記録されると `payment_status` が `paid` になり、`order.paid` が届きます。受付のまま入金されたときは `status` も `paid` になります。
+- 未入金の注文の取り消し（受付のあいだ・受け取り拒否）には返金がありません。
 
 **個人情報（氏名・住所・メール・電話）は送りません。** 必要なプラグインは注文 ID・会員 ID を使って AI 用トークンの API（`orders:pii` / `customers:read`、[docs/ai-access.md](ai-access.md)）から取得します。
 会員のイベントは、HubSpot などの CRM や自社の顧客マスタに Banto の会員を写すためのものです（向きは Banto → 外部。外部 → Banto は API の `POST /api/v1/customers/upsert`。[docs/knowledge/13-external-customer-master.md](knowledge/13-external-customer-master.md)、実例 [examples/plugin-hubspot](../examples/plugin-hubspot/)）。

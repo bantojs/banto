@@ -2125,6 +2125,16 @@ export class FakeSupabase {
       this.lastImport = { fn, args };
       return json(fn === "import_orders" ? { created: (args["p_orders"] as unknown[]).length, existing: 0, invalid: 0, items: 0, items_without_sku: 0, conflicts: [] } : { found: true, uses: (args["p_emails"] as unknown[]).length });
     }
+    if (fn === "order_payment_record") {
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("orders"))) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const o = this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["shop_id"] === shopId);
+      if (!o) return json({ code: "P0001", message: "not_found" }, 400);
+      const already = o["payment_status"] !== "unpaid";
+      const r = this.recordPayment(o);
+      if (r) return r;
+      return json({ order_id: o["id"], paid_at: o["paid_at"], already });
+    }
     if (fn === "ship_orders") {
       // 0022 の再現（番号の検査は簡略）
       const shopId = args["p_shop_id"] as string;
@@ -2136,13 +2146,13 @@ export class FakeSupabase {
           r.invalid++;
           continue;
         }
-        const o = this.tables.orders.find((x) => x["shop_id"] === shopId && x["number"] === Number(it["number"]) && ["paid", "shipped"].includes(String(x["status"])));
+        const o = this.tables.orders.find((x) => x["shop_id"] === shopId && x["number"] === Number(it["number"]) && ["pending", "paid", "shipped"].includes(String(x["status"])));
         if (!o) {
           r.missing.push(Number(it["number"]));
           continue;
         }
         Object.assign(o, { tracking_carrier: it["carrier"], tracking_number: tracking });
-        if (o["status"] === "paid") {
+        if (o["status"] === "paid" || o["status"] === "pending") {
           Object.assign(o, { status: "shipped", shipped_at: new Date().toISOString() });
           this.enqueue(shopId, "order.shipped", { order_id: o["id"], order_number: o["number"], shop_id: shopId, status: "shipped" });
           r.shipped++;
@@ -3534,12 +3544,12 @@ export class FakeSupabase {
       case "api_order_payment_info": {
         if (!need("orders:write")) return unauthorized();
         const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]));
-        return o ? json({ order_id: o["id"], status: o["status"], payment_provider: o["payment_provider"] ?? null, payment_ref: o["payment_ref"] ?? null, total_jpy: o["total_jpy"] }) : notFound();
+        return o ? json({ order_id: o["id"], status: o["status"], payment_provider: o["payment_provider"] ?? null, payment_ref: o["payment_ref"] ?? null, total_jpy: o["total_jpy"], payment_status: o["payment_status"] ?? "paid" }) : notFound();
       }
       case "api_order_cancel": {
         if (!need("orders:write")) return unauthorized();
         if (!mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]))) return notFound();
-        const r = this.cancelOrder(args["p_order_id"], shopId, args["p_refunded"] === true);
+        const r = this.cancelOrder(args["p_order_id"], shopId, args["p_refunded"] === true, args["p_reason"] ?? null);
         if (r.status !== 200) return r;
         return json(order(this.tables.orders.find((x) => x["id"] === args["p_order_id"])!, need("orders:pii")));
       }
@@ -3653,10 +3663,19 @@ export class FakeSupabase {
         const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]));
         return o ? json(order(o, need("orders:pii"))) : notFound();
       }
+      case "api_order_payment_record": {
+        // 0156（本物は test/db/order-payment-status.test.ts）
+        if (!need("orders:write")) return unauthorized();
+        const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]));
+        if (!o) return notFound();
+        const r = this.recordPayment(o);
+        if (r) return r;
+        return json(order(o, need("orders:pii")));
+      }
       case "api_order_update_status": {
         if (!need("orders:write")) return unauthorized();
         if (args["p_status"] !== "shipped") return json({ code: "P0001", message: "invalid_status" }, 400);
-        const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["status"] === "paid"));
+        const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"] && (x["status"] === "paid" || x["status"] === "pending")));
         if (!o) return notFound();
         o["status"] = args["p_status"];
         if (args["p_status"] === "shipped") o["shipped_at"] = this.now();
@@ -3726,15 +3745,30 @@ export class FakeSupabase {
       number: o["number"], status: o["status"], created_at: o["created_at"], shipped_at: o["shipped_at"] ?? null, total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0,
       discount_jpy: o["discount_jpy"] ?? 0, discounts: o["discounts"] ?? [], shipping_tax_rate: o["shipping_tax_rate"] ?? Number(settings["tax_rate"] ?? 10),
       tax_rounding: o["tax_rounding"] ?? settings["tax_rounding"] ?? "floor", payment_provider: o["payment_provider"] ?? null, items: this.orderItemsJson(o["id"]),
+      ...(o["payment_status"] ? { payment_status: o["payment_status"], paid_at: o["paid_at"] ?? null } : {}),
       tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"], number: o["tracking_number"] } : null,
     };
   }
 
-  cancelOrder(orderId: unknown, shopId: unknown, refunded: boolean): Response {
+  /** 0156 の banto_order_payment_record の再現。入金済みなら何もしない。断るときは応答を返す */
+  recordPayment(o: Row): Response | null {
+    if (o["payment_status"] !== "unpaid") return null;
+    if (!["pending", "shipped"].includes(String(o["status"]))) return json({ code: "P0001", message: "not_payable" }, 400);
+    Object.assign(o, { payment_status: "paid", paid_at: this.now(), ...(o["status"] === "pending" ? { status: "paid" } : {}) });
+    this.enqueue(String(o["shop_id"]), "order.paid", { order_id: o["id"], order_number: o["number"], shop_id: o["shop_id"], total_jpy: o["total_jpy"], status: o["status"], payment_status: "paid", recorded_payment: true });
+    return null;
+  }
+
+  cancelOrder(orderId: unknown, shopId: unknown, refunded: boolean, reason: unknown = null): Response {
     const o = this.tables.orders.find((x) => x["id"] === orderId && x["shop_id"] === shopId);
     if (!o) return json({ code: "P0001", message: "not_found" }, 400);
     if (o["status"] === "cancelled" || o["status"] === "refunded") return json({ order_id: o["id"], status: o["status"], already: true });
-    if (o["status"] !== "paid") return json({ code: "P0001", message: "not_cancellable" }, 400);
+    // 0156: 未入金の注文は受付（pending）と発送の後（受け取り拒否）も取り消せる。返金は無い
+    const unpaid = o["payment_status"] === "unpaid";
+    if (!(o["status"] === "paid" || o["status"] === "pending" || (o["status"] === "shipped" && unpaid))) return json({ code: "P0001", message: "not_cancellable" }, 400);
+    if (reason != null && (reason !== "refused" || !unpaid || o["status"] !== "shipped")) return json({ code: "P0001", message: "invalid_cancel_reason" }, 400);
+    if (unpaid) refunded = false;
+    o["cancel_reason"] = reason ?? null;
     for (const it of this.tables.order_items.filter((i) => i["order_id"] === o["id"])) {
       const inv = this.tables.inventory.find((i) => i["sku_id"] === it["sku_id"]);
       if (inv) inv["available"] = Number(inv["available"]) + Number(it["qty"]);
@@ -4476,9 +4510,9 @@ export class FakeSupabase {
     }
     if (fn === "order_payment_info") {
       const o = this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["shop_id"] === args["p_shop_id"]);
-      return json(o ? { order_id: o["id"], status: o["status"], payment_provider: o["payment_provider"] ?? null, payment_ref: o["payment_ref"] ?? null, total_jpy: o["total_jpy"] } : null);
+      return json(o ? { order_id: o["id"], status: o["status"], payment_provider: o["payment_provider"] ?? null, payment_ref: o["payment_ref"] ?? null, total_jpy: o["total_jpy"], payment_status: o["payment_status"] ?? "paid" } : null);
     }
-    if (fn === "cancel_order") return this.cancelOrder(args["p_order_id"], args["p_shop_id"], args["p_refunded"] === true);
+    if (fn === "cancel_order") return this.cancelOrder(args["p_order_id"], args["p_shop_id"], args["p_refunded"] === true, args["p_reason"] ?? null);
     if (fn === "order_contact") {
       const o = this.tables.orders.find((x) => x["id"] === args["p_order_id"] && x["shop_id"] === args["p_shop_id"]);
       if (!o) return json({ code: "P0001", message: "not_found" }, 400);

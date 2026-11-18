@@ -118,6 +118,8 @@ export const emailResend: BundledPlugin = {
     const mailer = createMailer({ config: ctx.config, socket: ctx.socket }, ctx.fetch);
     if (!mailer) throw new Error(`email_resend: メールの送り手の設定が足りません（${mailTransportMissing(ctx.config).join(", ") || "SMTP はこのランタイムで使えません"}）`);
     if (event.startsWith("tryon.")) return sendTryon(ctx, mailer, from);
+    // 未入金の注文の入金の記録（0156）で出た order.paid には、受付のメールを重ねて送らない（受付のメールは注文のときに送る）
+    if (event === "order.paid" && data["recorded_payment"] === true) return;
     const orderId = String(data["order_id"] ?? "");
     const contact = (await ctx.privileged.orderContact(orderId, ctx.envelope.shop_id)) as unknown as Contact;
     if (!contact.customer_email) return; // 連絡先が無い（マスク済み等）注文には送らない

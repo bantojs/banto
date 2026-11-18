@@ -37,7 +37,7 @@ describe.skipIf(!dbAvailable)("ショップのホーム（0139）", () => {
 
   it("owner / admin には全部（発送待ち・30 日の売上・在庫切れ・下書き・開店の準備）", async () => {
     const r = await home(a.ownerId, a.shopId);
-    expect(r["orders"]).toEqual({ to_ship: 2 });
+    expect(r["orders"]).toEqual({ to_ship: 2, unpaid: 0 });
     expect(r["sales"]).toEqual({ orders: 3, revenue_jpy: 6000 });
     expect(r["catalog"]).toEqual({ out_of_stock: 1, drafts: 1, products: 2 });
     expect(r["support"]).toEqual({ waiting: 0 });

@@ -10,6 +10,7 @@ import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types"
 import { cardAttributes, productFields } from "../../products/fields";
 import { favoritesEnabled } from "../../modules/favorites";
 import { memberNewsHref } from "../../modules/member-news";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { shopImageSrc } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime, isoToZonedDate } from "../../i18n/time";
@@ -451,7 +452,7 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
                 <td>{t(`order.status.${String(o["status"])}` as MessageKey)}</td>
                 {receipt ? (
                   <td>
-                    {o["status"] === "paid" || o["status"] === "shipped" ? (
+                    {receiptAvailable(o) ? (
                       <a href={`${ctx.shopPath}/account/orders/${String(o["number"])}/receipt`} target="_blank" rel="noopener">
                         {t("receipt.link")}
                       </a>
@@ -1785,7 +1786,7 @@ export const defaultTheme: Theme = {
                 </tr>
               </tbody>
             </table>
-            {receipt && (r["status"] === "paid" || r["status"] === "shipped") ? (
+            {receipt && receiptAvailable(r) ? (
               <form method="post" action={`${ctx.shopPath}/orders/receipt`} target="_blank">
                 <input type="hidden" name="number" value={String(r["number"])} />
                 <input type="hidden" name="email" value={values.email ?? ""} />

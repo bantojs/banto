@@ -427,11 +427,13 @@ export interface PrivilegedDb {
   /** 期限切れの challenge を消す（Cron） */
   memberPasskeyCleanup(): Promise<number>;
   /** 返金に必要な情報（キャンセル処理の前段） */
-  orderPaymentInfo(orderId: string, shopId: string): Promise<{ order_id: string; status: string; payment_provider: string | null; payment_ref: string | null; total_jpy: number } | null>;
+  /** payment_status は 0156 から（それより前の DB では無い = 入金済み） */
+  orderPaymentInfo(orderId: string, shopId: string): Promise<{ order_id: string; status: string; payment_provider: string | null; payment_ref: string | null; total_jpy: number; payment_status?: string } | null>;
   /** 注文の決済の口座（0090 の orders.payment_account。0090 が当たっている DB でだけ呼ぶ）。無ければ null */
   orderPaymentAccount(orderId: string, shopId: string): Promise<string | null>;
   /** キャンセル: 在庫を戻し cancelled / refunded にする（返金は呼び出し側が先に行う） */
-  cancelOrder(orderId: string, shopId: string, refunded: boolean): Promise<{ order_id: string; status: string; already: boolean }>;
+  /** reason は 0156 から（refused = 受け取り拒否。未入金の注文だけ） */
+  cancelOrder(orderId: string, shopId: string, refunded: boolean, reason?: "refused"): Promise<{ order_id: string; status: string; already: boolean }>;
   /** 取引メール用の連絡先と明細（同梱メールプラグイン専用） */
   orderContact(orderId: string, shopId: string): Promise<Record<string, unknown>>;
   /** 予約を解放（pending のときだけ）。戻り値: 解放したか */
@@ -752,7 +754,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       const v = rows[0]?.payment_account;
       return typeof v === "string" && v.trim() ? v.trim() : null;
     },
-    cancelOrder: (orderId, shopId, refunded) => rpc("cancel_order", { p_order_id: orderId, p_shop_id: shopId, p_refunded: refunded }),
+    cancelOrder: (orderId, shopId, refunded, reason) => rpc("cancel_order", { p_order_id: orderId, p_shop_id: shopId, p_refunded: refunded, ...(reason ? { p_reason: reason } : {}) }),
     orderContact: (orderId, shopId) => rpc("order_contact", { p_order_id: orderId, p_shop_id: shopId }),
     releaseReservation: (reservationId, shopId) => rpc<boolean>("release_reservation", { p_reservation_id: reservationId, p_shop_id: shopId }),
     releaseReservationAbandoned: (reservationId, shopId) => rpc<boolean>("release_reservation_abandoned", { p_reservation_id: reservationId, p_shop_id: shopId }),

@@ -7,6 +7,7 @@ import { createStripeClient } from "../payments/stripe";
 import { createKomojuClient } from "../plugins/komoju";
 import { amazonPayFromConfig, parseJpy } from "../plugins/amazon_pay";
 import type { ConfigAdapter } from "../adapters/types";
+import { cancellable } from "./payment";
 
 /** orders.payment_account（0090）の API キー方式の印（Connect の接続先ではなく運営者自身のアカウントで決済した） */
 export const PLATFORM_PAYMENT_ACCOUNT = "platform";
@@ -69,11 +70,18 @@ export async function cancelOrderWithRefund(
   db: PrivilegedDb,
   orderId: string,
   shopId: string,
-  opts: { config: ConfigAdapter; fetch: typeof fetch; stripeAccountId: string | null },
+  opts: { config: ConfigAdapter; fetch: typeof fetch; stripeAccountId: string | null; reason?: "refused" },
 ): Promise<CancelResult> {
   const info = await db.orderPaymentInfo(orderId, shopId);
   if (!info) throw new CancelError("not_found", "order not found");
   if (info.status === "cancelled" || info.status === "refunded") return { status: info.status, already: true, refunded: info.status === "refunded" };
+  // 未入金の注文（0156）は返金せずに取り消す（受付のあいだと、発送の後の受け取り拒否）
+  if (info.payment_status === "unpaid") {
+    if (!cancellable({ status: info.status, payment_status: "unpaid" })) throw new CancelError("not_cancellable", `order is ${info.status}`);
+    const r = await db.cancelOrder(orderId, shopId, false, opts.reason);
+    return { status: r.status as "cancelled" | "refunded", already: r.already, refunded: false };
+  }
+  if (opts.reason) throw new CancelError("not_cancellable", "a refusal is only for unpaid orders");
   if (info.status !== "paid") throw new CancelError("not_cancellable", `order is ${info.status}`);
   // 決済した口座を注文から読む（0090。それより前の注文は null）
   const payment_account = await db.orderPaymentAccount(orderId, shopId);

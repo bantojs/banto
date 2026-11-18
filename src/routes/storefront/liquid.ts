@@ -19,7 +19,7 @@ import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
 import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
-import { RECEIPT_STATUSES } from "../../modules/receipt/render";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { isoToZonedDate } from "../../i18n/time";
 import { promoteLeadImage } from "../../pages/lead-image";
 import { categoryTree, type CategoryNode } from "../../products/categories";
@@ -815,7 +815,8 @@ export async function renderOrderLookup(c: Ctx, s: LiquidScope, choice: LiquidCh
         total_price: money(Number(r["total_jpy"] ?? 0)),
       }
     : null;
-  const receiptForm = Boolean(r && p.receipt && RECEIPT_STATUSES.includes(status) && !p.member);
+  // 領収書は入金の後だけ（未入金の注文、0156）
+  const receiptForm = Boolean(r && p.receipt && receiptAvailable(r) && !p.member);
   const lookup = {
     member: Boolean(p.member),
     error: p.error ?? null,

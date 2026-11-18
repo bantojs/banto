@@ -81,6 +81,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "notice_text_set", // 0154: お知らせの文面を保存する（中で settings の項目と差し込みの決まりを確かめる）
   "member_news_save", // 0155: 全員向けの会員へのお知らせを書く（中で marketing の項目を確かめる）
   "member_news_delete", // 0155: 会員へのお知らせを消す（中で marketing の項目を確かめる）
+  "order_payment_record", // 0156: 未入金の注文の入金を記録する（中で orders の項目を確かめる）
   "banto_care_codes", // 0127: 洗濯表示の記号番号の表（定数を返すだけ）
   "banto_care_ok", // 0127: products.care / categories.care の CHECK（値の形を見るだけ）
   "banto_care_symbols_ok", // 0127: shops.care_symbols の CHECK（値の形を見るだけ）

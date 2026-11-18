@@ -22,8 +22,8 @@ export interface ReceiptData {
   tax: TaxGroup[];
 }
 
-/** 領収書を出せる注文か（支払い済み・発送済みだけ） */
-export const receiptAvailable = (order: { status?: unknown }) => typeof order.status === "string" && RECEIPT_STATUSES.includes(order.status);
+/** 領収書を出せる注文か（支払い済み・発送済みで、入金済みだけ。未入金の注文（0156）は入金を記録するまで出さない） */
+export const receiptAvailable = (order: { status?: unknown; payment_status?: unknown }) => typeof order.status === "string" && RECEIPT_STATUSES.includes(order.status) && order.payment_status !== "unpaid";
 
 export function receiptData(shop: { name: string; settings?: Record<string, unknown> | null }, order: ReceiptOrder, issuedAt: Date): ReceiptData {
   const settings = receiptSettings(shop);

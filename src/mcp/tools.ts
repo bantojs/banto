@@ -347,7 +347,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "orders_list",
     description: "注文の一覧。購入者の個人情報はトークンに orders:pii が無ければマスクされる。スコープ orders:read。" + DATA_NOTE,
-    inputSchema: obj({ query: s("string", "注文番号、または（orders:pii があれば）メール・氏名の部分一致"), status: s("string", "paid | shipped | cancelled | refunded", { enum: ["paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
+    inputSchema: obj({ query: s("string", "注文番号、または（orders:pii があれば）メール・氏名の部分一致"), status: s("string", "pending（受付・未入金、0156）| paid | shipped | cancelled | refunded", { enum: ["pending", "paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,
     run: (api, a) => api.ordersList({ query: str(a, "query"), status: str(a, "status"), from: str(a, "from"), to: str(a, "to"), limit: num(a, "limit"), offset: num(a, "offset") }),
   },

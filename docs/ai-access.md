@@ -430,3 +430,11 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - `customer_id` があれば 1 人あて、無ければ全員向けです。
 - 触れるのはこのトークンで置いたものだけです（連携に結んだトークンは自分の連携のもの、運営者のトークンは連携に結ばないもの）。
 - Banto は置かれたものを出して既読を覚えるだけで、だれに・いつはプラグインが決めます（`line:send` と同じ線）。詳しくは docs/member-news.md。
+
+## 22. 注文のお支払いの状態（0156、メンテナの決定 2026-11-18）
+
+注文に `payment_status`（`paid` / `unpaid`）・`paid_at`・`cancel_reason` が増えました。`status` は届けの状態で、未入金の受付は `pending` です（docs/hooks.md「注文の状態とお支払いの状態」）。
+
+- `POST /api/v1/orders/{id}/payment`（orders:write）: 未入金の注文（受付・発送の後）の入金を記録します。`order.paid` はこのとき出ます。入金済みなら何もしません。0156 を当てる前は 409 `migration_required`。
+- `POST /api/v1/orders/{id}/status` の `cancelled`: 未入金の注文は返金せずに取り消します（受付のあいだと、発送の後）。発送した未入金の注文の受け取り拒否は `reason: "refused"` を付けます（`cancel_reason` に残ります）。
+- 会員の購入額（`orders.count` / `total_jpy`）と売上の集計（`stats:read`）は入金済みだけです。
