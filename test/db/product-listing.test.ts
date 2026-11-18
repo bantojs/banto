@@ -102,7 +102,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
   it("ショップを消しても件数の表で止まらない。他人と非公開のショップの件数・一覧は見えない", async () => {
     const c = await category(b, "b-cat");
     await addProduct(b, "b-1", { tags: ["x"], category_id: c });
-    expect(await facets(b.shopId)).toEqual({ tags: [], categories: {}, price_max: null });
+    expect(await facets(b.shopId)).toEqual({ tags: [], categories: {}, price_max: null, options: [] });
     expect((await list(b.shopId)).items).toEqual([]);
     const own = await asUser(b.ownerId, async (cl) => (await cl.query("select count(*)::int as n from product_facets where shop_id = $1", [b.shopId])).rows[0]!.n);
     expect(own).toBeGreaterThan(0);

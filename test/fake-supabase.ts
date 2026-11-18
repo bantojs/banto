@@ -1300,6 +1300,9 @@ export class FakeSupabase {
     // 0150: 複数のタグ（すべてを持つ）と価格の上下限。当たる前の DB には引数が無い（PostgREST は関数なしの 404）
     const filterArgs = ["p_tags", "p_price_min", "p_price_max"].filter((k) => k in args);
     if (filterArgs.length > 0 && !this.appliedMigrations.includes("0150_product_list_filters")) return json({ code: "PGRST202", message: "Could not find the function public.product_public_list" }, 404);
+    // 0153: 選択肢（在庫のある SKU の選択肢、同じ鍵はどれか・鍵どうしはすべて）
+    if ("p_options" in args && !this.appliedMigrations.includes("0153_product_option_stock")) return json({ code: "PGRST202", message: "Could not find the function public.product_public_list" }, 404);
+    const wantOptions = (args["p_options"] ?? null) as Record<string, string[]> | null;
     const wantTags = [...new Set([...((args["p_tags"] as string[] | null) ?? []), ...(typeof args["p_tag"] === "string" ? [args["p_tag"]] : [])].map((t) => [...t.trim()].slice(0, 50).join("")).filter(Boolean))];
     if (wantTags.length > 5) return json({ code: "22023", message: "too_many_tags" }, 400);
     const priceMin = args["p_price_min"] == null ? null : Number(args["p_price_min"]);
@@ -1330,6 +1333,7 @@ export class FakeSupabase {
     let rows: Entry[] = this.tables.products
       .filter((p) => p["shop_id"] === shopId && p["published"] === true && this.productOpen(p, aud))
       .filter((p) => wantTags.every((t) => tagsOf(p).includes(t)))
+      .filter((p) => !wantOptions || Object.entries(wantOptions).every(([k, vals]) => vals.length === 0 || this.optionStock(p["id"]).some((o) => o.key === k && vals.includes(o.value))))
       .filter((p) => !cats || cats.includes(String(p["category_id"])) || ((p["extra_category_ids"] ?? []) as string[]).some((c) => cats.includes(c)))
       .filter((p) => !brand || p["brand"] === brand)
       .filter((p) => !q || text(p).includes(q))
@@ -1395,6 +1399,30 @@ export class FakeSupabase {
     return json({ items });
   }
 
+  /** 0153 の product_option_stock の真似: 在庫のある SKU の選択肢 */
+  private optionStock(productId: unknown): { key: string; value: string }[] {
+    const out: { key: string; value: string }[] = [];
+    for (const k of this.tables.skus.filter((x) => x["product_id"] === productId)) {
+      const inv = this.tables.inventory.find((i) => i["sku_id"] === k["id"]);
+      if (!inv || Number(inv["available"]) <= 0) continue;
+      for (const [key, v] of Object.entries((k["options"] ?? {}) as Record<string, unknown>)) {
+        if ((typeof v === "string" || typeof v === "number") && String(v).trim() && !out.some((o) => o.key === key && o.value === String(v).trim())) out.push({ key, value: String(v).trim() });
+      }
+    }
+    return out;
+  }
+
+  private optionFacets(products: Row[]): { key: string; value: string; count: number }[] {
+    const m = new Map<string, { key: string; value: string; count: number }>();
+    for (const p of products) for (const o of this.optionStock(p["id"])) {
+      const id = `${o.key}\u0000${o.value}`;
+      const e = m.get(id) ?? { ...o, count: 0 };
+      e.count++;
+      m.set(id, e);
+    }
+    return [...m.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : b.count - a.count));
+  }
+
   private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number>; price_max?: number | null } {
     // 0150 から price_max（公開の一覧に出る商品のいちばん高い一覧の価格）
     const withMax = this.appliedMigrations.includes("0150_product_list_filters");
@@ -1416,6 +1444,7 @@ export class FakeSupabase {
       tags: [...tags].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0)).slice(0, tagLimit),
       categories: counts,
       ...(withMax ? { price_max: products.filter((p) => this.productOpen(p, [])).reduce<number | null>((m, p) => { const v = this.listPrice(p["id"]).price; return v !== null && (m === null || v > m) ? v : m; }, null) } : {}),
+      ...(this.appliedMigrations.includes("0153_product_option_stock") ? { options: this.optionFacets(products.filter((p) => this.productOpen(p, []))) } : {}),
     };
   }
 
