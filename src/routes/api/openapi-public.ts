@@ -162,7 +162,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
             { name: "tag", in: "query", schema: { type: "array", items: str, maxItems: 5 }, style: "form", explode: true, description: "くり返すとすべてのタグを持つ商品（5 つまで。0150 から 2 つ以上）" },
             { name: "filter.v.price.gte", in: "query", schema: { type: "integer", minimum: 0 }, description: "一覧の価格（いちばん安い SKU、円）の下限。0150 から" },
             { name: "filter.v.price.lte", in: "query", schema: { type: "integer", minimum: 0 }, description: "一覧の価格の上限。0150 から" },
-            { name: "filter.v.option.{key}", in: "query", schema: { type: "array", items: str, maxItems: 10 }, style: "form", explode: true, description: "在庫のある SKU の選択肢（key は英字の鍵。くり返すと同じ鍵はどれか、鍵どうしはすべて、鍵は 3 つまで）。0153 から" },
+            { name: "filter.v.option.color", in: "query", schema: { type: "array", items: str, maxItems: 10 }, style: "form", explode: true, description: "在庫のある SKU の選択肢（例は鍵 color。名前は filter.v.option.<英字の鍵> で、どの鍵でも同じ形。くり返すと同じ鍵はどれか、鍵どうしはすべて、鍵は 3 つまで）。0153 から" },
             { name: "category", in: "query", schema: str, description: "カテゴリーのスラッグ。子孫のカテゴリーと追加カテゴリーも含む" },
             { name: "brand", in: "query", schema: str },
             { name: "q", in: "query", schema: str, description: "3 文字から（2 文字以下は tag・category・brand と一緒のときだけ）" },

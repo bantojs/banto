@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { asAnon, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
+import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 
 type J = Record<string, unknown>;
 type Page = { items: { slug: string }[]; total?: number };
@@ -59,6 +59,19 @@ describe.skipIf(!dbAvailable)("選択肢の絞り込み（0153）", () => {
     await asUser(f.ownerId, (c) => c.query("update skus set options = '{\"color\": \"green\", \"size\": \"M\"}' where id = $1", [skus["TEE-RED-M"]]));
     expect(await slugs({ color: ["green"] })).toEqual(["shirt"]);
     expect(await slugs({ color: ["red"] })).toEqual([]);
+  });
+
+  it("予約（reserve_stock）で最後の 1 点が出ると表から外れ、解放で戻る", async () => {
+    await setStock("BAG-BLUE", 1);
+    expect(await slugs({ color: ["blue"] })).toEqual(["bag", "shirt"]);
+    const res = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb, 900) as id", [f.shopId, JSON.stringify([{ sku_id: skus["BAG-BLUE"], qty: 1 }])])).rows[0]!.id);
+    expect(await slugs({ color: ["blue"] })).toEqual(["shirt"]);
+    await asService((c) => c.query("select release_reservation($1, $2)", [res, f.shopId]));
+    expect(await slugs({ color: ["blue"] })).toEqual(["bag", "shirt"]);
+  });
+
+  it("短い検索の語は選択肢だけでは探せない（索引の効かない探し方で全件を見ないように）", async () => {
+    expect(await expectDbError(() => list({ p_q: "a", p_options: { size: ["S"] } }))).toMatch(/q_too_short/);
   });
 
   it("形の違う条件は invalid_options。鍵は 3 つまで・値は 10 まで", async () => {

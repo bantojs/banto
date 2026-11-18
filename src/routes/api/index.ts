@@ -116,7 +116,7 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const cursor = c.req.query("cursor") || undefined;
   if ((query.offset ?? 0) > (query.q ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return c.json({ error: "invalid_request", field: "offset" }, 400);
   // 2 文字以下の語はタグ・カテゴリー・ブランドで絞っているときだけ（product_public_list と同じ。全件を見る検索をさせない）
-  if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tags?.length && !query.options && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
+  if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tags?.length && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
   const categories = await d.sf.listCategories(shop);
   // 会員トークンの会員には会員限定の商品も（0098）
   const sf = await apiViewerData(c, d.sf, shop);

@@ -553,7 +553,7 @@ interface ListingData {
 async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; q?: string; after?: string; sort?: ProductSort; top: boolean; count: boolean }): Promise<ListingData | null> {
   const f = q.filter;
   // 2 文字以下の語は、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0058 の q_too_short）
-  const searchable = !q.q || [...q.q].length >= PRODUCT_SEARCH_MIN_CHARS || Boolean(f.tags.length > 0 || q.category || f.options);
+  const searchable = !q.q || [...q.q].length >= PRODUCT_SEARCH_MIN_CHARS || Boolean(f.tags.length > 0 || q.category);
   const query = { tags: f.tags, ...(f.priceMin !== undefined ? { priceMin: f.priceMin } : {}), ...(f.priceMax !== undefined ? { priceMax: f.priceMax } : {}), ...(f.options ? { options: f.options } : {}), category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), ...(q.sort ? { sort: q.sort } : {}), limit: STORE_PAGE_SIZE };
   const empty: ProductListPage = { items: [], total: 0, totalCapped: false, limit: STORE_PAGE_SIZE, offset: 0, nextOffset: null, nextCursor: null };
   const [page, facets] = await Promise.all([searchable ? s.sf.productPage(s.shop, query, q.categories, { cursor: q.after, ...(q.count ? { count: true } : {}) }) : Promise.resolve(empty), s.sf.productFacets(s.shop, q.categories)]);

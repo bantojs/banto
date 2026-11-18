@@ -3,10 +3,14 @@ import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith } from "./helpers";
 import { LIST_OPTIONS_MIGRATION } from "../src/storefront/list-filter";
 import { productsUrl } from "../src/storefront/urls";
+import { forgetThemes } from "../src/themes/liquid/cache";
 
 /** 一覧の絞り込みの段 2（SKU の選択肢で、在庫のあるものに絞る、0153）。DB の判定は test/db/product-option-stock.test.ts */
 
-function setup() {
+const VERSION = "11111111-2222-4333-8444-555555555555";
+
+function setup(theme?: Record<string, string>) {
+  if (theme) forgetThemes();
   const sb = new FakeSupabase();
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
@@ -18,7 +22,15 @@ function setup() {
   add("shirt", [{ code: "S-R-S", options: { color: "red", size: "S" }, available: 0 }, { code: "S-R-M", options: { color: "red", size: "M" }, available: 2 }, { code: "S-B-S", options: { color: "blue", size: "S" }, available: 1 }]);
   add("cap", [{ code: "C-R", options: { color: "red" }, available: 0 }]);
   add("bag", [{ code: "B-B", options: { color: "blue" }, available: 3 }]);
-  return { sb, shop, app: appWith(sb, {}, new MemoryStorage(`${BASE}/media`)) };
+  const storage = new MemoryStorage(`${BASE}/media`);
+  if (theme) {
+    sb.sitePlan = "paid";
+    const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    row["domain"] = "shop.example.jp";
+    row["theme_public"] = { id: VERSION, storage_key: `themes/${shop.id}/${VERSION}/bundle.json`, settings: {} };
+    void storage.put(`themes/${shop.id}/${VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files: theme, assets: [] })).buffer as ArrayBuffer, "application/json");
+  }
+  return { sb, shop, app: appWith(sb, {}, storage) };
 }
 const api = async (app: ReturnType<typeof setup>["app"], qs: string) => {
   const r = await app.request(`${BASE}/api/shops/my-shop/products${qs}`);
@@ -70,5 +82,22 @@ describe("公開 API", () => {
     const old = setup();
     old.sb.appliedMigrations = old.sb.appliedMigrations.filter((m) => m !== LIST_OPTIONS_MIGRATION);
     expect(await api(old.app, "?filter.v.option.color=red")).toMatchObject({ status: 409, body: { error: "migration_required" } });
+  });
+});
+
+describe("テーマ（Liquid）", () => {
+  it("collection.filters に選択肢ごとの list（表示名・件数・足す / 外す URL。ほかの鍵と価格は保つ）", async () => {
+    const s = setup({
+      "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+      "templates/index.liquid": "top",
+      "templates/collection.liquid": `{% for f in collection.filters %}{% if f.type == 'list' %}<div class="f" data-p="{{ f.param_name }}">{{ f.label }}{% for v in f.values %}<a class="v{% if v.active %} on{% endif %}" data-add="{{ v.url_to_add }}" data-remove="{{ v.url_to_remove }}">{{ v.label }}({{ v.count }})</a>{% endfor %}</div>{% endif %}{% endfor %}`,
+    });
+    const html = await (await new Browser(s.app, "https://shop.example.jp").get("/products?filter.v.option.color=blue&filter.v.option.size=S&filter.v.price.lte=5000")).text();
+    expect(html).toContain('<div class="f" data-p="filter.v.option.color">カラー');
+    expect(html).toContain('<div class="f" data-p="filter.v.option.size">サイズ');
+    // blue は選んでいる: 外すと size と価格は残る
+    expect(html).toMatch(/<a class="v on" data-add="[^"]*" data-remove="\/products\?filter\.v\.price\.lte=5000&amp;filter\.v\.option\.size=S">blue\(2\)<\/a>/);
+    // red を足すと color は blue と red
+    expect(html).toContain('data-add="/products?filter.v.price.lte=5000&amp;filter.v.option.color=blue&amp;filter.v.option.color=red&amp;filter.v.option.size=S"');
   });
 });

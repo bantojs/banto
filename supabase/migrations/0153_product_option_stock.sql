@@ -3,7 +3,7 @@
 --   - 表 product_option_stock（商品 × 鍵 × 値。在庫のある SKU の選択肢だけ）。在庫が 0 をまたいだとき・SKU の選択肢が変わったときだけトリガーで
 --     その商品の行を作り直す（在庫は頻繁に変わるので、それ以外では書かない）
 --   - 鍵ごとに見る（「赤の S は品切れ・赤の M はある・青の S はある」商品は 赤 と S の両方に当てはまる。Shopify のテーマの絞り込みと同じ考え）
---   - 件数（product_public_facets の options）は絞る前の範囲（ショップ全体の公開の一覧で在庫のある商品の数）。今のタグ・カテゴリーの件数と同じ考え
+--   - 件数（product_public_facets の options、鍵ごとに 50 まで）は絞る前の範囲（ショップ全体の公開の一覧で在庫のある商品の数）。今のタグ・カテゴリーの件数と同じ考え
 --   - banto_product_list・product_public_list・product_member_list に p_options を足す（0150 の形を消して作り直す。名前で渡す今までの呼び方はそのまま）
 
 create table if not exists product_option_stock (
@@ -25,6 +25,8 @@ create or replace function banto_product_option_stock_refresh(p_product_id uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if p_product_id is null then return; end if;
+  -- 同じ商品の作り直しを並べる（別の SKU の在庫が同時に 0 をまたいでも、後から作る方が先の確定を見てから作る）
+  perform pg_advisory_xact_lock(hashtextextended('banto_option_stock:' || p_product_id::text, 0));
   delete from product_option_stock where product_id = p_product_id;
   insert into product_option_stock (shop_id, product_id, key, value)
   select distinct k.shop_id, k.product_id, e.key, left(btrim(e.value #>> '{}'), 100)
@@ -39,19 +41,34 @@ end;
 $$;
 revoke execute on function banto_product_option_stock_refresh(uuid) from public, anon, authenticated;
 
-create or replace function banto_skus_option_stock()
+-- SKU の追加・選択肢や商品の付け替え・削除: 文ごとに、変わった商品を 1 回ずつ作り直す（取り込みで SKU をまとめて足しても商品ごとに 1 回）
+create or replace function banto_skus_option_stock_stmt()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare v_id uuid;
 begin
-  if tg_op in ('UPDATE', 'DELETE') then perform banto_product_option_stock_refresh(old.product_id); end if;
-  if tg_op in ('INSERT', 'UPDATE') and (tg_op = 'INSERT' or new.product_id is distinct from old.product_id) then
-    perform banto_product_option_stock_refresh(new.product_id);
+  if tg_op = 'INSERT' then
+    for v_id in select distinct product_id from new_rows loop perform banto_product_option_stock_refresh(v_id); end loop;
+  elsif tg_op = 'DELETE' then
+    for v_id in select distinct product_id from old_rows loop perform banto_product_option_stock_refresh(v_id); end loop;
+  else
+    for v_id in
+      select distinct x.pid from (
+        select o.product_id as pid from old_rows o join new_rows n on n.id = o.id where n.options is distinct from o.options or n.product_id is distinct from o.product_id
+        union
+        select n.product_id from old_rows o join new_rows n on n.id = o.id where n.options is distinct from o.options or n.product_id is distinct from o.product_id
+      ) x
+    loop perform banto_product_option_stock_refresh(v_id); end loop;
   end if;
   return null;
 end;
 $$;
-revoke execute on function banto_skus_option_stock() from public, anon, authenticated;
-drop trigger if exists skus_option_stock on skus;
-create trigger skus_option_stock after insert or update of options, product_id or delete on skus for each row execute function banto_skus_option_stock();
+revoke execute on function banto_skus_option_stock_stmt() from public, anon, authenticated;
+drop trigger if exists skus_option_stock_ins on skus;
+drop trigger if exists skus_option_stock_upd on skus;
+drop trigger if exists skus_option_stock_del on skus;
+create trigger skus_option_stock_ins after insert on skus referencing new table as new_rows for each statement execute function banto_skus_option_stock_stmt();
+create trigger skus_option_stock_upd after update on skus referencing old table as old_rows new table as new_rows for each statement execute function banto_skus_option_stock_stmt();
+create trigger skus_option_stock_del after delete on skus referencing old table as old_rows for each statement execute function banto_skus_option_stock_stmt();
 
 -- 在庫は 0 をまたいだときだけ
 create or replace function banto_inventory_option_stock()
@@ -161,7 +178,7 @@ begin
   -- 2 文字以下の語は pg_trgm のインデックスが効かず全件を見るので、タグ・カテゴリー・ブランドで絞っているときだけ
   -- （ログイン無しで何度も送られて DB を重くされないように。人間の決定 2026-10-26）
   if p_q is not null and btrim(p_q) <> '' and char_length(btrim(p_q)) < 3
-     and cardinality(v_tags) = 0 and v_options is null and p_category_ids is null and p_brand is null then
+     and cardinality(v_tags) = 0 and p_category_ids is null and p_brand is null then
     raise exception 'q_too_short' using errcode = '22023';
   end if;
   if p_q is not null and btrim(p_q) <> '' then
@@ -177,7 +194,7 @@ begin
     || case when p_updated_since is not null then ' and p.updated_at > $6' else '' end
     || case when p_price_min is not null then ' and p.list_price_jpy >= $11' else '' end
     || case when p_price_max is not null then ' and p.list_price_jpy <= $12' else '' end
-    || case when v_options is not null then ' and not exists (select 1 from jsonb_each($13) f where not exists (select 1 from product_option_stock o where o.product_id = p.id and o.key = f.key and o.value in (select jsonb_array_elements_text(f.value))))' else '' end;
+    || case when v_options is not null then ' and p.id in (select o.product_id from product_option_stock o join jsonb_each($13) f on o.key = f.key and o.value in (select jsonb_array_elements_text(f.value)) where o.shop_id = $1 group by o.product_id having count(distinct o.key) = (select count(*) from jsonb_object_keys($13)))' else '' end;
 
   if p_count then
     execute format('select count(*) from (select 1 from products p where %s limit 10001) x', v_where)
@@ -260,7 +277,7 @@ $$;
 revoke execute on function product_member_list(uuid, uuid, integer, uuid, text, integer, jsonb, integer, text, uuid[], text, text, timestamptz, boolean, text[], integer, integer, jsonb) from public, anon, authenticated;
 grant execute on function product_member_list(uuid, uuid, integer, uuid, text, integer, jsonb, integer, text, uuid[], text, text, timestamptz, boolean, text[], integer, integer, jsonb) to service_role;
 
--- ---------- 件数（0150 と同じ。options を足す: 鍵 × 値ごとの在庫のある公開の商品の数、多い順に 200 まで） ----------
+-- ---------- 件数（0150 と同じ。options を足す: 鍵 × 値ごとの在庫のある公開の商品の数、鍵ごとに多い順に 50 まで） ----------
 create or replace function product_public_facets(p_shop_id uuid, p_tag_limit integer default 200)
 returns jsonb
 language sql
@@ -279,11 +296,13 @@ as $$
                           where p.shop_id = p_shop_id and p.published and (p.audience_id is null or p.audience_mode = 'buy')
                           order by coalesce(p.list_price_jpy, -1) desc, p.id desc limit 1),
            'options', coalesce((select jsonb_agg(jsonb_build_object('key', key, 'value', value, 'count', n) order by key, n desc, value collate "C")
-                                  from (select o.key, o.value, count(*)::integer as n
-                                          from product_option_stock o join products p on p.id = o.product_id
-                                         where o.shop_id = p_shop_id and p.published and (p.audience_id is null or p.audience_mode = 'buy')
-                                         group by o.key, o.value
-                                         order by n desc, o.key, o.value collate "C" limit 200) x), '[]'::jsonb))
+                                  from (select key, value, n from (
+                                          select o.key, o.value, count(*)::integer as n,
+                                                 row_number() over (partition by o.key order by count(*) desc, o.value collate "C") as rn
+                                            from product_option_stock o join products p on p.id = o.product_id
+                                           where o.shop_id = p_shop_id and p.published and (p.audience_id is null or p.audience_mode = 'buy')
+                                           group by o.key, o.value) y
+                                         where rn <= 50) x), '[]'::jsonb))
          end;
 $$;
 revoke execute on function product_public_facets(uuid, integer) from public;
