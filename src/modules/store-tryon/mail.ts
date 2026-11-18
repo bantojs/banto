@@ -125,7 +125,10 @@ export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: s
   if ((opts.reminder || opts.extended) && c.status !== "ready") return out;
   const kind = tryonNoticeKind(event, c.status, opts);
   if (kind && c.customer_email) {
-    const m = noticeMail(kind, texts, tryonMailValues(c, publicBaseUrl));
+    const values = tryonMailValues(c, publicBaseUrl);
+    // 前日のお知らせで期限が無いとき（今の DB では起きない）は今までどおり「明日」
+    if (kind === "tryon_reminder" && !values["hold_until"]) values["hold_until"] = "明日";
+    const m = noticeMail(kind, texts, values);
     out.push({ to: c.customer_email, key: "customer", subject: m.subject, text: m.text });
   }
   const shopName = c.shop.name;

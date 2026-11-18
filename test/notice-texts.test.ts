@@ -3,7 +3,11 @@ import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
 import { createPrivilegedDb } from "../src/db/privileged";
 import { buildOrderEmail } from "../src/plugins/email_resend";
-import { buyerMessage, tryonLineMessage } from "../src/plugins/line_buyer";
+import { buyerMessage, lineBuyerNotify, tryonLineMessage } from "../src/plugins/line_buyer";
+import { emailResend } from "../src/plugins/email_resend";
+import type { PluginContext } from "../src/plugins/types";
+import type { PrivilegedDb } from "../src/db/privileged";
+import type { ConfigAdapter } from "../src/adapters/types";
 import { buildTryonMails, tryonNoticeKind } from "../src/modules/store-tryon/mail";
 import { DEFAULT_NOTICE_TEXTS, NOTICE_KINDS, NOTICE_TEXTS_MIGRATION, checkNoticeText, fillNotice, noticeMail, noticeTextErrorOf, staleNoticeTexts } from "../src/notices/templates";
 
@@ -203,5 +207,102 @@ describe("お店で試着の知らせ", () => {
     expect(await (await admin.get(base)).text()).toContain('value="tryon_ready"');
     expect((await admin.post(base, { kind: "tryon_ready", channel: "line", body: "{{number}} {{hold_until}}", action: "save" })).status).toBe(302);
     expect(sb.tables.shop_notice_texts).toEqual([expect.objectContaining({ kind: "tryon_ready", channel: "line" })]);
+  });
+});
+
+describe("お店で試着の知らせ: 既定の文面・送るときの読み取り", () => {
+  const contact = {
+    request_id: "r1",
+    number: 7,
+    status: "requested",
+    visit_date: null,
+    hold_until: null,
+    customer_email: "a@example.com",
+    customer_name: "山田",
+    customer_phone: "0312345678",
+    note: null,
+    store: { name: "渋谷店", postal_code: null, address: null, phone: null, hours: {}, special_days: [], email: "st@example.com", notify_email: false },
+    shop: { name: "マイショップ", slug: "my-shop", contact_email: "shop@example.com" },
+    items: [{ name: "Tシャツ", sku: "M", qty: 1, unit_price_jpy: 3000 }],
+  };
+
+  it("既定の文面（今までと同じ文）。前日のお知らせで期限が無ければ「明日」", () => {
+    const [m] = buildTryonMails("tryon.requested", contact, undefined);
+    expect(m!.subject).toBe("【マイショップ】お店で試着のお申し込みを承りました（受付番号 7）");
+    expect(m!.text.split("\n■")[0]).toBe("山田 様\n\nお店で試着のお申し込みを承りました。お支払いはご来店時に店舗でお願いします（ご試着だけでも大丈夫です）。\n\n受付番号: 7\n店舗に商品が届きしだい、あらためてお知らせします。\n\n・Tシャツ / M × 1\n");
+    expect(m!.text.endsWith("\n\nお問い合わせ: shop@example.com\n\nマイショップ")).toBe(true);
+    const [c] = buildTryonMails("tryon.updated", { ...contact, status: "cancelled" }, undefined);
+    expect(c!.text).toBe("山田 様\n\nお店で試着のお申し込み（受付番号 7）を取り消しました。\n\nお問い合わせ: shop@example.com\n\nマイショップ");
+    expect(buildTryonMails("tryon.updated", { ...contact, status: "ready" }, undefined, { reminder: true })[0]!.subject).toBe("【マイショップ】お取り置きは明日までです（受付番号 7）");
+    const r = { number: 7, status: "ready", hold_until: null, store_name: "渋谷店", shop_name: "マイショップ" };
+    expect(tryonLineMessage("tryon.updated", r, { reminder: true })).toBe("【マイショップ】渋谷店でのお取り置きは明日までです。\n受付番号 7\nお待ちしております。");
+    expect(tryonLineMessage("tryon.requested", { ...r, status: "requested" })).toBe("【マイショップ】お店で試着のお申し込みを承りました。\n受付番号 7\n店舗 渋谷店\n店舗でご用意ができしだい、お知らせします。");
+    expect(tryonLineMessage("tryon.updated", { ...r, status: "cancelled" })).toBe("【マイショップ】お店で試着のお申し込み（受付番号 7）を取り消しました。");
+  });
+
+  it("受付・取り消しの直した文面。必須（店舗の案内）が欠けた古い文面は既定で送る", () => {
+    const rows = [
+      { kind: "tryon_requested", channel: "mail", subject: "受付 {{number}}", body: "{{customer_name}}さま\n{{visit}}\n{{items}}\n{{store_info}}" },
+      { kind: "tryon_cancelled", channel: "mail", subject: "取消 {{number}}", body: "{{number}} を取り消しました\n{{shop_link}}" },
+    ];
+    expect(buildTryonMails("tryon.requested", contact, undefined, {}, rows)[0]!.text.startsWith("山田さま\n店舗に商品が届きしだい")).toBe(true);
+    expect(buildTryonMails("tryon.updated", { ...contact, status: "cancelled" }, undefined, {}, rows)[0]).toMatchObject({ subject: "取消 7", text: "7 を取り消しました" });
+    const stale = [{ kind: "tryon_requested", channel: "mail", subject: "受付 {{number}}", body: "{{items}}" }];
+    expect(buildTryonMails("tryon.requested", contact, undefined, {}, stale)[0]!.subject).toBe("【マイショップ】お店で試着のお申し込みを承りました（受付番号 7）");
+  });
+
+  function ctxFor(event: string, data: Record<string, unknown>, privileged: Record<string, unknown>) {
+    const reads: string[] = [];
+    const sent: { url: string; body: string }[] = [];
+    const ctx: PluginContext = {
+      envelope: { id: "evt-1", event, created_at: "2026-11-18T00:00:00Z", shop_id: "shop-1", attempt: 1, data },
+      settings: { from: "shop@example.com" },
+      config: { get: (n: string) => (n === "RESEND_API_KEY" ? "re_test" : undefined), secret: (n: string) => (n === "RESEND_API_KEY" ? "re_test" : n === "LINE_CHANNEL_ACCESS_TOKEN" ? "line-token" : (() => { throw new Error("missing"); })()) } as unknown as ConfigAdapter,
+      fetch: (async (url: string, init: RequestInit) => {
+        sent.push({ url, body: String(init.body) });
+        return new Response('{"id":"x"}', { status: 200 });
+      }) as unknown as typeof fetch,
+      privileged: { ...privileged, shopSecret: async () => null, shopNoticeTexts: async (_s: string, kind: string) => (reads.push(kind), [{ kind, channel: "line", subject: null, body: "LINE {{number}} {{hold_until}}" }, { kind, channel: "mail", subject: "件名 {{number}}", body: "{{hold_until}}\n{{items}}\n{{store_info}}" }]) } as unknown as PrivilegedDb,
+    };
+    return { ctx, reads, sent };
+  }
+
+  it("メールのプラグイン: 知らせの種類の文面を読んで送る。お客様のアドレスが無い・送らない状態なら読まない", async () => {
+    const ready = { ...contact, status: "ready", hold_until: "2026-11-27" };
+    const a = ctxFor("tryon.updated", { request_id: "r1", status: "ready", reminder: true }, { tryonContact: async () => ready });
+    await emailResend.handle!(a.ctx);
+    expect(a.reads).toEqual(["tryon_reminder"]);
+    expect(JSON.parse(a.sent[0]!.body)).toMatchObject({ subject: "件名 7" });
+    const b = ctxFor("tryon.updated", { request_id: "r1", status: "ready" }, { tryonContact: async () => ({ ...ready, customer_email: null }) });
+    await emailResend.handle!(b.ctx);
+    expect(b.reads).toEqual([]);
+    const c = ctxFor("tryon.updated", { request_id: "r1", status: "ready", reminder: true }, { tryonContact: async () => ({ ...ready, status: "cancelled" }) });
+    await emailResend.handle!(c.ctx);
+    expect(c.reads).toEqual([]);
+    expect(c.sent).toEqual([]);
+  });
+
+  it("LINE のプラグイン: 送り先があるときだけ、その種類の文面を読む", async () => {
+    const recipient = { line_user_id: "U1", number: 7, status: "ready", hold_until: "2026-11-27", store_name: "渋谷店", shop_name: "マイショップ" };
+    const a = ctxFor("tryon.updated", { request_id: "r1", status: "ready", extended: true }, { tryonLineRecipient: async () => recipient });
+    await lineBuyerNotify.handle!(a.ctx);
+    expect(a.reads).toEqual(["tryon_extended"]);
+    expect(JSON.parse(a.sent[0]!.body).messages[0].text).toBe("LINE 7 11月27日");
+    const b = ctxFor("tryon.updated", { request_id: "r1", status: "ready" }, { tryonLineRecipient: async () => null });
+    await lineBuyerNotify.handle!(b.ctx);
+    expect(b.reads).toEqual([]);
+  });
+
+  it("管理画面: モジュールを OFF にしても、残った試着の文面は見えて既定に戻せる", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ" });
+    sb.tables.shop_notice_texts.push({ shop_id: shop.id, kind: "tryon_ready", channel: "line", subject: null, body: "{{number}} {{hold_until}}" });
+    const admin = await Browser.loggedIn(appWith(sb), "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/notices`;
+    expect(await (await admin.get(base)).text()).toContain('value="tryon_ready"');
+    expect((await admin.post(base, { kind: "tryon_ready", channel: "line", action: "reset" })).status).toBe(302);
+    expect(sb.tables.shop_notice_texts).toHaveLength(0);
+    expect(await (await admin.get(base)).text()).not.toContain('value="tryon_ready"');
   });
 });

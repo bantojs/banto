@@ -5,6 +5,7 @@ import { migrated } from "../../db/migration-state";
 import { t, type MessageKey } from "../../i18n";
 import {
   DEFAULT_NOTICE_TEXTS,
+  NOTICE_KINDS,
   NOTICE_SUBJECT_MAX,
   NOTICE_TEXTS_MIGRATION,
   checkNoticeText,
@@ -34,8 +35,9 @@ export const notices = new Hono<AppEnv>();
 
 const ORDER_KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
 const TRYON_KINDS: readonly NoticeKind[] = ["tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"];
-/** この画面で扱う知らせ（お店で試着はモジュールが ON のショップだけ） */
-const kindsFor = (settings: Record<string, unknown> | null | undefined): readonly NoticeKind[] => (moduleEnabled(settings, "store_tryon") ? [...ORDER_KINDS, ...TRYON_KINDS] : ORDER_KINDS);
+/** この画面で扱う知らせ。お店で試着はモジュールが ON のショップと、OFF でも直した文面が残っているとき（見て・既定に戻せるように） */
+const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = []): readonly NoticeKind[] =>
+  moduleEnabled(settings, "store_tryon") || rows.some((r) => (TRYON_KINDS as readonly string[]).includes(r.kind)) ? [...ORDER_KINDS, ...TRYON_KINDS] : ORDER_KINDS;
 
 /** 見本の値（プレビュー） */
 function sampleValues(kind: NoticeKind, shopName: string): Record<string, string> {
@@ -159,7 +161,7 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
           {t("notices.needs_update")} <a href="/admin/update">{t("inventory.open_update")}</a>
         </p>
       ) : (
-        kindsFor(shop.settings).map((kind) => (
+        kindsFor(shop.settings, rows).map((kind) => (
           <section>
             <h2>{t(`notices.kind.${kind}` as MessageKey)}</h2>
             {section(kind, "mail")}
@@ -183,7 +185,8 @@ notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const base = `/admin/shops/${shop.id}/notices`;
   const f = await formFields(c);
-  const kind = kindsFor(shop.settings).find((k) => k === f.kind);
+  // 既定に戻すのはどの知らせでも（モジュールを OFF にしたあとに残った文面も消せる）。保存は画面に出す知らせだけ
+  const kind = (f.action === "reset" ? NOTICE_KINDS : kindsFor(shop.settings)).find((k) => k === f.kind);
   const channel = f.channel === "mail" || f.channel === "line" ? f.channel : null;
   if (!kind || !channel) return c.text(t("error.generic"), 400);
   const db = owner(c).db;

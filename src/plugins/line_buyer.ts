@@ -27,7 +27,8 @@ export function tryonLineMessage(event: string, r: { number: number; status: str
   if ((opts.reminder || opts.extended) && r.status !== "ready") return null;
   const kind = tryonNoticeKind(event, r.status, opts);
   if (!kind) return null;
-  const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日` : "";
+  // 期限が無いとき（今の DB では起きない）、前日のお知らせは今までどおり「明日」
+  const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日` : kind === "tryon_reminder" ? "明日" : "";
   return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), store_name: r.store_name, hold_until: until });
 }
 
