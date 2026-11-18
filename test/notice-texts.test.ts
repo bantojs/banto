@@ -28,6 +28,8 @@ describe("差し込み（src/notices/templates.ts）", () => {
   it("値が空の差し込みだけの行は行ごと消え、空行は重ならない。値の中の {{…}} はもう一度は置き換えない", () => {
     expect(fillNotice("a\n\n{{x}}\n\n{{y}}\n\nb {{x}}!", { x: "", y: "{{x}}" })).toBe("a\n\n{{x}}\n\nb !");
     expect(fillNotice("{{ x }} と {{x}}", { x: "1" })).toBe("1 と 1");
+    // 差し込んだ値の中の空行はショップが書いたとおり（返品ポリシーの段落など）
+    expect(fillNotice("a\n\n{{p}}\n\nb", { p: "段落1\n\n\n段落2" })).toBe("a\n\n段落1\n\n\n段落2\n\nb");
   });
 
   it("決まり: 使えない名前・組になっていない括弧・必須の欠け・かたまりの重なり・件名の改行と番号", () => {
@@ -42,6 +44,9 @@ describe("差し込み（src/notices/templates.ts）", () => {
     expect(checkNoticeText("order_paid", "mail", "{{order_details}} {{number}}", ok.body)).toEqual({ code: "subject_unknown_tag", tag: "order_details" });
     // LINE には氏名・住所の差し込みを使わせない
     expect(checkNoticeText("order_paid", "line", null, "{{customer_name}} {{number}}")).toEqual({ code: "body_unknown_tag", tag: "customer_name" });
+    // 改行をまたぐ {{ … }} も組とみなす（DB の正規表現と同じ）。NUL は DB に入らないので画面で断る
+    expect(checkNoticeText("order_paid", "mail", ok.subject, "{{order_details\n}}")).toEqual({ code: "body_unknown_tag", tag: "order_details\n".slice(0, 40) });
+    expect(checkNoticeText("order_paid", "mail", ok.subject, "{{order_details}}\u0000")).toEqual({ code: "nul" });
     expect(noticeTextErrorOf('invalid_notice_text:body_missing_tag:order_details')).toEqual({ code: "body_missing_tag", tag: "order_details" });
   });
 
@@ -94,6 +99,9 @@ describe("注文のメールと LINE", () => {
     expect(await db.shopNoticeTexts(shop.id, "order_shipped")).toHaveLength(0);
     sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== NOTICE_TEXTS_MIGRATION);
     expect(await db.shopNoticeTexts(shop.id, "order_paid")).toEqual([]);
+    // 読めない（DB の一時的な誤り）ときも既定の文面で送るので [] を返す（知らせを止めない）
+    const down = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: async () => new Response("down", { status: 503 }) });
+    expect(await down.shopNoticeTexts(shop.id, "order_paid")).toEqual([]);
   });
 });
 

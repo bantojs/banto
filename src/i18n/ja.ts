@@ -3532,6 +3532,7 @@ export const ja = {
   "notices.error.subject_missing_tag": "件名に {tag} を入れてください（問い合わせのときに番号で探せるように）。",
   "notices.error.subject_repeated_tag": "件名の {tag} は 1 回だけ入れられます。",
   "notices.error.kind": "知らせの種類が違います。",
+  "notices.error.nul": "使えない文字（NUL）が入っています。",
   "notices.sample_customer": "山田 太郎",
   "notices.sample_order_details": "注文番号: 1001\n\n・Tシャツ / M × 1  ¥3,000\n\n商品合計: ¥3,000\n送料: ¥300\n合計（税込）: ¥3,300\n（10%対象 ¥3,300　内消費税 ¥300）\n\nお届け先:\n150-0001\n東京都渋谷区…\n山田 太郎",
   "notices.sample_tracking": "お問い合わせ番号: ヤマト運輸 1234-5678-9012\n配送状況: https://…",

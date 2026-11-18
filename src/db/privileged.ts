@@ -596,11 +596,16 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       return Array.isArray(r?.migrations) ? r.migrations.filter((x): x is string => typeof x === "string") : [];
     },
     async shopNoticeTexts(shopId, kind) {
-      const state = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
-      if (!(Array.isArray(state?.migrations) && state.migrations.includes(NOTICE_TEXTS_MIGRATION))) return [];
-      const res = await doFetch(`${base}/rest/v1/shop_notice_texts?select=kind,channel,subject,body&shop_id=eq.${encodeURIComponent(shopId)}&kind=eq.${encodeURIComponent(kind)}`, { headers });
-      if (!res.ok) throw new PrivilegedRpcError("shop_notice_texts", res.status, await res.text());
-      return (await res.json()) as NoticeTextRow[];
+      // 文面が読めない（DB の一時的な誤りなど）ときは既定の文面で送る。注文の知らせそのものを止めない（docs/notices.md「送るとき」）
+      try {
+        const state = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
+        if (!(Array.isArray(state?.migrations) && state.migrations.includes(NOTICE_TEXTS_MIGRATION))) return [];
+        const res = await doFetch(`${base}/rest/v1/shop_notice_texts?select=kind,channel,subject,body&shop_id=eq.${encodeURIComponent(shopId)}&kind=eq.${encodeURIComponent(kind)}`, { headers });
+        if (!res.ok) return [];
+        return (await res.json()) as NoticeTextRow[];
+      } catch {
+        return [];
+      }
     },
     publishScheduledProducts: () => rpc<number>("publish_scheduled_products", {}),
     maskTryonRequests: (days) => rpc("mask_tryon_requests", { p_days: days }),

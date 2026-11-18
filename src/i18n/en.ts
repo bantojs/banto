@@ -3525,6 +3525,7 @@ export const en: Record<MessageKey, string> = {
   "notices.error.subject_missing_tag": "Add {tag} to the subject (so the number can be searched).",
   "notices.error.subject_repeated_tag": "{tag} can appear only once in the subject.",
   "notices.error.kind": "Unknown notification type.",
+  "notices.error.nul": "The text contains an invalid character (NUL).",
   "notices.sample_customer": "Taro Yamada",
   "notices.sample_order_details": "注文番号: 1001\n\n・T-shirt / M × 1  ¥3,000\n\n商品合計: ¥3,000\n送料: ¥300\n合計（税込）: ¥3,300\n（10%対象 ¥3,300　内消費税 ¥300）\n\nお届け先:\n150-0001\nShibuya, Tokyo…\nTaro Yamada",
   "notices.sample_tracking": "お問い合わせ番号: ヤマト運輸 1234-5678-9012\n配送状況: https://…",

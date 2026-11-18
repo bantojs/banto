@@ -5,7 +5,7 @@
  *   - 決まりは DB の banto_notice_spec と同じ（保存は notice_text_set が断る。test/db/notice-texts.test.ts で縛る）
  *   - 送るときもここで確かめ直し、合わなければその知らせだけ既定の文面で送る（止めない。管理画面に警告を出す）
  *   - 既定の文面（行が無いとき）は今までの文面と同じ
- * 値はすべてプレーンテキスト（メールも LINE も HTML ではない）。値の中の {{…}} はもう一度は置き換えない
+ * 値はすべてプレーンテキスト（メールも LINE も HTML ではない）。値の中の {{…}} はもう一度は置き換えず、値の中の改行・空行もそのまま
  */
 
 export const NOTICE_TEXTS_MIGRATION = "0154_notice_texts";
@@ -63,7 +63,8 @@ export interface NoticeTextError {
   tag?: string;
 }
 
-const TAG_RE = /\{\{(.*?)\}\}/g;
+/** {{ と }} の組（DB の正規表現と同じく、あいだに改行があっても組とみなす） */
+const TAG_RE = /\{\{([\s\S]*?)\}\}/g;
 
 function tagsCheck(text: string, allowed: readonly string[], required: readonly string[], once: readonly string[], where: "body" | "subject"): NoticeTextError | null {
   const names: string[] = [];
@@ -86,6 +87,8 @@ export function checkNoticeText(kind: NoticeKind, channel: NoticeChannel, subjec
   const spec = noticeSpec(kind, channel);
   const b = normalizeNoticeBody(body);
   if (b === "") return { code: "body_empty" };
+  // NUL は PostgreSQL の text に入らない（保存で落ちる前に理由を出す）
+  if (b.includes("\u0000") || (subject ?? "").includes("\u0000")) return { code: "nul" };
   if ([...b].length > noticeBodyMax(channel)) return { code: "body_too_long" };
   const bodyErr = tagsCheck(b, spec.bodyAllowed, spec.bodyRequired, spec.once, "body");
   if (bodyErr) return bodyErr;
@@ -110,13 +113,16 @@ export function noticeTextErrorOf(message: string): NoticeTextError | null {
  * 値の中の {{…}} はそのまま（1 回だけ置き換える）
  */
 export function fillNotice(text: string, values: Readonly<Record<string, string>>): string {
+  // 消す行と空行の重なりは文面（ひな形）の側だけで決め、差し込んだ値の中の空行はショップが書いたとおりに残す
   const lines: string[] = [];
   for (const line of text.split("\n")) {
     const only = /^[ \t]*\{\{[ \t]*([a-z_]+)[ \t]*\}\}[ \t]*$/.exec(line);
     if (only && (values[only[1]!] ?? "") === "") continue;
-    lines.push(line.replace(TAG_RE, (_, n: string) => values[n.replace(/^[ \t]+|[ \t]+$/g, "")] ?? ""));
+    if (line.trim() === "" && (lines.length === 0 || lines[lines.length - 1]!.trim() === "")) continue;
+    lines.push(line);
   }
-  return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\s+$/g, "");
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop();
+  return lines.map((line) => line.replace(TAG_RE, (_, n: string) => values[n.replace(/^[ \t]+|[ \t]+$/g, "")] ?? "")).join("\n").replace(/\s+$/, "");
 }
 
 /** ショップが直した文面（行）。無ければ既定 */

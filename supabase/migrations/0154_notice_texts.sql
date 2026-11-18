@@ -1,10 +1,11 @@
 -- 0154_notice_texts: お知らせの文面をショップが直す（差し込み付きの文面、メンテナの決定 2026-11-18、docs/notices.md）
 --   - 注文のメール・LINE（同梱プラグイン）とお店で試着のお知らせ（お客様あて）の件名・本文を、知らせの種類 × 送り方（mail / line）ごとに 1 行
+--     （お店で試着の知らせの文面は、Worker が読むようになるまで保存しても使わない）
 --   - 本文は丸ごと直せる。差し込みは {{名前}}（知らせごとに使える名前が決まっている）。知らせごとに必ず入れる差し込みがあり、無ければ保存できない
 --     （明細・合計・お届け先・店舗の案内などを消した知らせを送らないため）。明細のような「かたまり」は 1 回だけ
 --   - 送るときは同じ決まりを Worker が確かめ直し、合わなければ（版が上がって必須が増えたなど）その知らせだけ既定の文面で送る（止めない）
 --   - 行が無い = 既定の文面（今までと同じ）。shops.settings に置かない（ショップ行と一緒にキャッシュされ、お店の画面に毎回載るため）
---   - 読み書きは項目 settings。書くのは notice_text_set だけ。決まりは banto_notice_spec（Worker の src/notices/spec.ts と同じ。test/db/notice-texts.test.ts で縛る）
+--   - 読み書きは項目 settings。書くのは notice_text_set だけ。決まりは banto_notice_spec（Worker の src/notices/templates.ts と同じ。test/db/notice-texts.test.ts で縛る）
 
 create table if not exists shop_notice_texts (
   shop_id uuid not null references shops (id) on delete cascade,
