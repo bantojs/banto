@@ -1110,6 +1110,7 @@ export const ja = {
   "order.payment_recorded": "入金を記録しました。",
   "order.mark_refused": "受け取り拒否で取り消す",
   "order.cancel_note_unpaid": "未入金の注文なので返金はありません。在庫は戻ります。",
+  "order.cancel_note_cod_paid": "代金引換で入金を記録した注文です。Banto からは返金できないので、受け取った代金はお店からお客様へ直接（振込など）お返しください。在庫は戻ります。",
 
 
   "hooks.title": "連携（プラグイン）",
@@ -1724,7 +1725,7 @@ export const ja = {
   "tryon.reminder_at": "{hour} 時ごろ",
   "tryon.notice": "申し込みの画面に出す案内（任意）",
   "labels.title": "送り状 CSV",
-  "labels.intro": "支払い済みで未発送の注文（古い順に最大 500 件）から、送り状ソフトに取り込む CSV を作ります。CSV はこのブラウザの中で Shift_JIS に変換してから保存します。",
+  "labels.intro": "未発送の注文（古い順に最大 500 件）から、送り状ソフトに取り込む CSV を作ります。代金引換の注文はヤマト運輸ではコレクト（代引き額つき）で出します。CSV はこのブラウザの中で Shift_JIS に変換してから保存します。",
   "labels.ship_date": "出荷予定日",
   "labels.download_yamato": "ヤマト運輸（B2 クラウド）の CSV",
   "labels.download_sagawa": "佐川急便（e飛伝Ⅲ）の CSV",
@@ -1738,6 +1739,7 @@ export const ja = {
   "labels.f_address_long": "住所が長すぎます（B2 は全角 32 文字まで）",
   "labels.f_address2_long": "建物名が長すぎます（B2 は全角 16 文字まで）",
   "labels.f_name_long": "お届け先名が長すぎます（B2 は全角 16 文字まで）",
+  "labels.f_cod_unsupported": "代金引換の注文です。佐川急便の CSV には載せていません（e飛伝で代引きとして作ってください）",
   "labels.settings": "ご依頼主と品名",
   "labels.shipper_name": "ご依頼主名",
   "labels.shipper_phone": "ご依頼主の電話番号",

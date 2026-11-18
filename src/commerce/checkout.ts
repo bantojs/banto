@@ -402,7 +402,8 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
   const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, address.state);
   const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider);
   const base = priced.subtotal + shipping - discount.total;
-  if (base > 0 && base < MIN_PAYMENT_JPY) return { ok: false, error: "minimum_amount" };
+  // 決済事業者の下限（50 円）。代金引換は決済事業者を通らないので当てない
+  if (provider !== "cod" && base > 0 && base < MIN_PAYMENT_JPY) return { ok: false, error: "minimum_amount" };
   // 代金引換（0157）: 手数料の決まり・上限金額・会員だけを確かめる（確定のとき DB も同じ決まりで引き直す）
   let fee = 0;
   if (provider === "cod") {
@@ -765,6 +766,8 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     } catch (e) {
       await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
       if (e instanceof PrivilegedRpcError && (e.is("cod_unavailable") || e.is("amount_mismatch"))) return { ok: false, error: "price" };
+      // 未入金の代金引換の注文が多すぎる（同じ人・同じ IP、0157）
+      if (e instanceof PrivilegedRpcError && e.is("too_many_reservations")) return { ok: false, error: "limit" };
       throw e;
     }
   }

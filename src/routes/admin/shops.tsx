@@ -26,7 +26,8 @@ import { PREFECTURES, parseShippingSettings, taxRate } from "../../commerce/ship
 import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, returnOrigins, shopLimit } from "../../commerce/checkout";
 import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, optionsHaveSeparator, optionsText, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
 import { customerFields } from "../../customers/fields";
-import { enabledModules, moduleEnabled } from "../../modules/registry";
+import { COD_MIGRATION, enabledModules, moduleEnabled } from "../../modules/registry";
+import { migrated } from "../../db/migration-state";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
 import { TAX_ROUNDINGS, shopTaxRates, taxRoundingOf } from "../../commerce/tax";
 import { AutocheckHint, AutocheckScript, autocheckAttrs } from "./autocheck";
@@ -396,7 +397,7 @@ function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined 
 }
 
 /** 決済: Stripe の状態と、ほかの決済（プラグイン）への案内。保存する欄は無い（Stripe Connect のつなぐ・外すだけ） */
-function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean }) {
+function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; codReady: boolean }) {
   const { shop } = props;
   return (
     <>
@@ -441,19 +442,22 @@ function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeCo
           {t("settings.payments_others_hint")} <a href={`/admin/shops/${shop.id}/plugins`}>{t("plugins.title")}</a>
         </p>
       </section>
-      <section class="card" id="cod">
-        <h2>{t("mod.cod.name")}</h2>
-        <p class="muted">{t("mod.cod.description")}</p>
-        {moduleEnabled(shop.settings, "cod") ? (
-          <p>
-            <a href={`/admin/shops/${shop.id}/modules/cod`}>{t("settings.open_settings")}</a>
-          </p>
-        ) : (
-          <p class="muted">
-            {t("settings.module_off")} <a href={`/admin/shops/${shop.id}/modules`}>{t("modules.title")}</a>
-          </p>
-        )}
-      </section>
+      {/* 0157 を当てる前は出さない（モジュールの画面も出ない） */}
+      {props.codReady ? (
+        <section class="card" id="cod">
+          <h2>{t("mod.cod.name")}</h2>
+          <p class="muted">{t("mod.cod.description")}</p>
+          {moduleEnabled(shop.settings, "cod") ? (
+            <p>
+              <a href={`/admin/shops/${shop.id}/modules/cod`}>{t("settings.open_settings")}</a>
+            </p>
+          ) : (
+            <p class="muted">
+              {t("settings.module_off")} <a href={`/admin/shops/${shop.id}/modules`}>{t("modules.title")}</a>
+            </p>
+          )}
+        </section>
+      ) : null}
     </>
   );
 }
@@ -880,7 +884,7 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
       const cfg = c.get("adapters").config;
       const stripeKeySet = Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_WEBHOOK_SECRET"));
       const direct = await owner(c).db.from<{ id: string; enabled: boolean }>("hook_endpoints").selectOne("id,enabled", { eq: { shop_id: shop.id, url: bundledPluginUrl("stripe") } });
-      body = <PaymentsSection shop={shop} publicBaseUrl={base} stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))} stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet} />;
+      body = <PaymentsSection shop={shop} publicBaseUrl={base} stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))} stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet} codReady={await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COD_MIGRATION)} />;
       break;
     }
     case "members":

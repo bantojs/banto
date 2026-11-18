@@ -178,6 +178,27 @@ describe("管理画面", () => {
     expect(html).toContain("代引き手数料");
     expect(html).toContain("受付（未入金）");
   });
+
+  it("送り状 CSV: ヤマトはコレクト（合計と内消費税）、佐川は載せずに知らせる", async () => {
+    const { app, sku, shop, sb } = setup();
+    shop["settings"] = { ...(shop["settings"] as Record<string, unknown>), modules: { cod: true, shipping_labels: true } };
+    const b = new Browser(app);
+    await b.post("/my-shop/cart/add", { sku_id: sku.id, qty: "1" });
+    await checkout(b, "/my-shop", "cod");
+    const order = sb.tables.orders[0]!;
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/modules/shipping-labels/rows.json`;
+    const y = (await (await admin.get(`${base}?carrier=yamato`)).json()) as { csv: string };
+    const row = y.csv.split("\r\n")[1]!.split(",");
+    expect([row[1], row[33]]).toEqual(["2", "3830"]);
+    expect(Number(row[34])).toBeGreaterThan(0);
+    const s = (await (await admin.get(`${base}?carrier=sagawa`)).json()) as { count: number; warnings: { number: number; field: string }[] };
+    expect(s.warnings).toEqual([{ number: order["number"], field: "cod_unsupported" }]);
+    // 入金を記録した後は発払い（もう代引きで受け取らない）
+    Object.assign(order, { payment_status: "paid", status: "paid" });
+    const after = (await (await admin.get(`${base}?carrier=yamato`)).json()) as { csv: string };
+    expect(after.csv.split("\r\n")[1]!.split(",")[1]).toBe("0");
+  });
 });
 
 describe("同梱のメール・LINE", () => {

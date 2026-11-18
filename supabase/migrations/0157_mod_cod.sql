@@ -13,6 +13,9 @@ alter table orders add column if not exists fee_jpy integer not null default 0 c
 -- 使えないとき（段のどれにも当たらない・段が無い）は null。上限金額は呼び出し側が合計で比べる
 --   settings.cod.fee_type: 'tiers' なら段（fee_tiers: [{ upto, fee }] の有効なものを upto の小さい順に、最初に amount <= upto の段）、それ以外は一律（fee_jpy）
 --   値の形: upto は 1〜10,000,000 の整数、fee・fee_jpy は 0〜100,000 の整数（形の違う値は捨てる。一律の値が無ければ 0）。段は 10 個まで
+-- 未入金の代金引換の注文を数えるための索引（confirm_reservation の上限）
+create index if not exists orders_cod_unpaid on orders (shop_id, reservation_id) where payment_provider = 'cod' and payment_status = 'unpaid';
+
 create or replace function banto_cod_fee(p_settings jsonb, p_amount integer)
 returns integer
 language plpgsql
@@ -184,6 +187,27 @@ begin
     if v_total > banto_cod_max_total(v_settings) then raise exception 'cod_unavailable' using detail = 'max_total'; end if;
     if v_settings->'cod'->'members_only' = 'true'::jsonb and v_res.customer_id is null then raise exception 'cod_unavailable' using detail = 'members_only'; end if;
     if coalesce(p_order->>'amount_paid_jpy', '') <> '0' then raise exception 'amount_mismatch' using detail = 'cod_paid_must_be_0'; end if;
+    -- 同じ人・同じ IP の未入金の代金引換の注文の数（直近 30 日、取り消しを除く）。代金引換はその場で確定して予約が pending で残らず、
+    -- reserve_stock の上限（未確定の予約の数）が効かないので、ここで数える（数えてから入れるまでを直列にする）。
+    -- 上限は settings.checkout.max_cod_unpaid_per_customer（既定 3）/ max_cod_unpaid_per_ip（既定 10）
+    if v_res.subject_hash is not null then
+      perform pg_advisory_xact_lock(hashtextextended('cod|' || p_shop_id::text || '|' || v_res.subject_hash, 0));
+      if (select count(*) from orders o join reservations r on r.id = o.reservation_id
+           where o.shop_id = p_shop_id and r.subject_hash = v_res.subject_hash and o.payment_provider = 'cod'
+             and o.payment_status = 'unpaid' and o.status::text <> 'cancelled' and o.created_at > now() - interval '30 days')
+         >= banto_shop_limit(p_shop_id, 'checkout', 'max_cod_unpaid_per_customer', 3) then
+        raise exception 'too_many_reservations' using detail = 'cod_customer';
+      end if;
+    end if;
+    if v_res.ip_hash is not null then
+      perform pg_advisory_xact_lock(hashtextextended('cod-ip|' || p_shop_id::text || '|' || v_res.ip_hash, 0));
+      if (select count(*) from orders o join reservations r on r.id = o.reservation_id
+           where o.shop_id = p_shop_id and r.ip_hash = v_res.ip_hash and o.payment_provider = 'cod'
+             and o.payment_status = 'unpaid' and o.status::text <> 'cancelled' and o.created_at > now() - interval '30 days')
+         >= banto_shop_limit(p_shop_id, 'checkout', 'max_cod_unpaid_per_ip', 10) then
+        raise exception 'too_many_reservations' using detail = 'cod_ip';
+      end if;
+    end if;
   end if;
   if coalesce(p_order->>'amount_paid_jpy', '') !~ '^-?[0-9]{1,9}$' then
     raise exception 'amount_mismatch' using detail = format('paid=%s expected=%s', coalesce(p_order->>'amount_paid_jpy', 'null'), v_total);
@@ -558,5 +582,34 @@ $$;
 update hook_endpoints set events = array_append(events, 'order.created')
  where url in ('https://banto.invalid/plugins/email_resend', 'https://banto.invalid/plugins/line_buyer_notify', 'https://banto.invalid/plugins/line_notify')
    and not ('order.created' = any(events));
+
+-- 会員の注文の一覧に代引き手数料と支払い方法（会員ページ・ヘッドレスの /members/orders。0156 を差し替え）
+create or replace function member_get(p_shop_id uuid, p_customer_id uuid, p_epoch integer, p_with_orders boolean default false)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare v_c customers%rowtype;
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'member_get: service_role only' using errcode = '42501';
+  end if;
+  select * into v_c from customers where shop_id = p_shop_id and id = p_customer_id and session_epoch = p_epoch;
+  if not found then return null; end if;
+  return jsonb_build_object(
+    'customer', jsonb_build_object('id', v_c.id, 'shop_id', v_c.shop_id, 'email', v_c.email, 'name', v_c.name, 'default_address', v_c.default_address,
+                                   'marketing_consent', v_c.marketing_consent,
+                                   'has_password', v_c.password_hash is not null or v_c.legacy_password_hash is not null,
+                                   'providers', coalesce((select jsonb_agg(provider order by provider) from member_identities
+                                                           where shop_id = p_shop_id and customer_id = v_c.id), '[]'::jsonb)),
+    'orders', case when p_with_orders then coalesce((
+      select jsonb_agg(o order by o.created_at desc) from (
+        select id, number, status, total_jpy, shipping_jpy, coalesce(discount_jpy, 0) as discount_jpy, created_at, shipped_at, payment_status, fee_jpy, payment_provider
+          from orders where shop_id = p_shop_id and customer_id = p_customer_id
+         order by created_at desc limit 50) o), '[]'::jsonb) else '[]'::jsonb end);
+end;
+$$;
 
 insert into banto_migrations (version) values ('0157_mod_cod');

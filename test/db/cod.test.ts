@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { asAnon, asService, asUser, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 import { COD_FEE_CASES } from "../fixtures/cod-fee-cases";
@@ -100,6 +102,37 @@ describe.skipIf(!dbAvailable)("代金引換（0157）", () => {
     expect(await expectDbError(() => cod(guest))).toMatch(/cod_unavailable/);
     const member = await reserve({ fee: 330, customer: cid });
     expect(await cod(member)).toBeTruthy();
+    // 会員の注文の一覧（会員ページ・ヘッドレス）に手数料と支払い方法
+    const epoch = (await getPool().query<{ e: number }>("select session_epoch as e from customers where id = $1", [cid])).rows[0]!.e;
+    const got = await asService(async (c) => (await c.query<{ r: { orders: J[] } }>("select member_get($1, $2, $3, true) as r", [f.shopId, cid, epoch])).rows[0]!.r);
+    expect(got.orders[0]).toMatchObject({ fee_jpy: 330, payment_provider: "cod", payment_status: "unpaid" });
+  });
+
+  it("同じ人・同じ IP の未入金の代金引換の注文は上限まで（入金済み・取り消しは数えない）", async () => {
+    await setSettings({ modules: { cod: true }, cod: { fee_type: "flat", fee_jpy: 330 }, checkout: { max_cod_unpaid_per_customer: 2, max_cod_unpaid_per_ip: 3 } });
+    const subj = "a".repeat(64);
+    const ip = "b".repeat(64);
+    const mark = (r: string, s: string | null, i: string | null) => getPool().query("update reservations set subject_hash = $2, ip_hash = $3 where id = $1", [r, s, i]);
+    const one = await reserve({ fee: 330 });
+    await mark(one, subj, ip);
+    const first = await cod(one);
+    const two = await reserve({ fee: 330 });
+    await mark(two, subj, ip);
+    await cod(two);
+    const three = await reserve({ fee: 330 });
+    await mark(three, subj, ip);
+    expect(await expectDbError(() => cod(three))).toMatch(/too_many_reservations/);
+    // 入金を記録した注文は数えない
+    await asUser(f.ownerId, (c) => c.query("select order_payment_record($1, $2)", [f.shopId, first]));
+    expect(await cod(three)).toBeTruthy();
+    // 同じ IP のほかの人: IP の上限（3。未入金はこの IP で 2 件）
+    const other = await reserve({ fee: 330 });
+    await mark(other, "c".repeat(64), ip);
+    await cod(other);
+    const fourth = await reserve({ fee: 330 });
+    await mark(fourth, "d".repeat(64), ip);
+    expect(await expectDbError(() => cod(fourth))).toMatch(/too_many_reservations/);
+    await setSettings({ checkout: {} });
   });
 
   it("同梱のメール・LINE の送信先は order.created を購読する（今ある送信先にも足した）。設定の鍵 cod とモジュールは項目 settings", async () => {
@@ -108,5 +141,18 @@ describe.skipIf(!dbAvailable)("代金引換（0157）", () => {
     expect(perm).toEqual({ m: null, k: null });
     const fn = (await getPool().query<{ src: string }>("select prosrc as src from pg_proc where proname = 'confirm_reservation'")).rows[0]!.src;
     expect(fn).toContain("cod_unavailable");
+    // 0157 の前に作られた同梱の送信先（order.created を購読していない）に足す。ほかの送信先・足し済みは変えない
+    const sql = readFileSync(join(import.meta.dirname, "..", "..", "supabase", "migrations", "0157_mod_cod.sql"), "utf8");
+    const update = sql.slice(sql.indexOf("update hook_endpoints set events"), sql.indexOf("insert into banto_migrations"));
+    const add = (url: string, events: string[]) => getPool().query<{ id: string }>("insert into hook_endpoints (shop_id, name, url, events) values ($1, 'x', $2, $3) returning id", [f.shopId, url, events]).then((r) => r.rows[0]!.id);
+    const mail = await add("https://banto.invalid/plugins/email_resend", ["order.paid", "order.shipped"]);
+    const line = await add("https://banto.invalid/plugins/line_notify", ["order.created", "order.paid"]);
+    const other = await add("https://plugin.example.com/other", ["order.paid"]);
+    await getPool().query(update);
+    await getPool().query(update);
+    const ev = async (id: string) => (await getPool().query<{ events: string[] }>("select events from hook_endpoints where id = $1", [id])).rows[0]!.events;
+    expect(await ev(mail)).toEqual(["order.paid", "order.shipped", "order.created"]);
+    expect(await ev(line)).toEqual(["order.created", "order.paid"]);
+    expect(await ev(other)).toEqual(["order.paid"]);
   });
 });
