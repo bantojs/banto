@@ -48,6 +48,7 @@ import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
 import { afterResponse, clearScopedCookie, clientIpFor, csrfGuard, formFields, getScopedCookie, navigateOnly, publicBaseUrl, readBodyLimited, setScopedCookie, yen, type Ctx } from "../common";
 import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
+import { memberNewsEnabled } from "../../modules/member-news";
 import { memberReader } from "../audience-render";
 import { AUDIENCES_MODULE } from "../../members/audience";
 import type { ProductSummary } from "../../storefront/data";
@@ -291,14 +292,17 @@ members.get("/:shop/account", async (c: Ctx) => {
   const withTryon = Boolean(db) && moduleEnabled(s.shop.settings, TRYON_MODULE);
   // お気に入り（同梱モジュール favorites、0123）。モジュールが OFF なら DB に問い合わせない
   const withFavorites = Boolean(db) && favoritesEnabled(s.shop);
-  const [rec, coupons, tryon, favorites] = db
+  // 会員へのお知らせ（同梱モジュール member_news、0155）。モジュールが OFF なら DB に問い合わせない
+  const withNews = Boolean(db) && memberNewsEnabled(s.shop) && Boolean(s.session.sid);
+  const [rec, coupons, tryon, favorites, news] = db
     ? await Promise.all([
         db.memberGet(s.shop.id, s.session.cid, s.session.ep, true),
         withCoupons ? db.memberCoupons(s.shop.id, s.session.cid, s.session.ep).catch(() => null) : Promise.resolve(null),
         withTryon ? db.memberTryonRequests(s.shop.id, s.session.cid, s.session.ep).catch(() => null) : Promise.resolve(null),
         withFavorites ? favoriteProducts(c, s, s.session).catch(() => null) : Promise.resolve(null),
+        withNews ? db.memberNewsList(s.shop.id, s.session.cid, s.session.ep, s.session.sid!).catch(() => null) : Promise.resolve(null),
       ])
-    : [null, null, null, null];
+    : [null, null, null, null, null];
   if (!rec) {
     // 退会済み・全端末からログアウトした後の古いセッション
     await writeSession(c, s, null);
@@ -322,6 +326,7 @@ members.get("/:shop/account", async (c: Ctx) => {
       security,
       error: errorKey ? t(errorKey) : undefined,
       favorites: withFavorites ? (favorites ?? []) : null,
+      news: withNews ? (news ?? { items: [], unread: 0 }) : null,
       sessions: Boolean(s.session.sid && s.theme.MemberSessionsPage),
       passkeys: opts.passkey && Boolean(s.theme.MemberPasskeysPage),
       receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE),
@@ -353,6 +358,22 @@ members.get("/:shop/account", async (c: Ctx) => {
     if (res) return res;
   }
   return c.html(s.theme.AccountPage(props));
+});
+
+/** 会員へのお知らせをすべて既読にする（0155）。今見えているものだけ */
+members.post("/:shop/account/news/read", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !memberNewsEnabled(s.shop)) return notFound(c);
+  if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
+  const db = privilegedFor(c);
+  if (db && s.session.sid) {
+    const n = await db.memberNewsRead(s.shop.id, s.session.cid, s.session.ep, s.session.sid, null);
+    if (n === null) {
+      await writeSession(c, s, null);
+      return c.redirect(`${s.shopPath}/account/login`);
+    }
+  }
+  return c.redirect(`${s.shopPath}/account#news`);
 });
 
 /** お店で試着の申し込みを取り消す（会員本人。取り置きが終わる前だけ、0026） */

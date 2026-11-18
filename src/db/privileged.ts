@@ -8,6 +8,7 @@ import { AuthError } from "../auth/supabase";
 import { supabaseHeaders } from "./api-keys";
 import { ACTOR_HEADER } from "../audit";
 import { NOTICE_TEXTS_MIGRATION, type NoticeTextRow } from "../notices/templates";
+import type { MemberNewsList } from "../modules/member-news";
 
 export interface PrivilegedDbOptions {
   url: string;
@@ -344,6 +345,10 @@ export interface PrivilegedDb {
   /** 「お得な情報やセールの案内を受け取る」を本人が変える（0050。世代を確かめる） */
   memberSetMarketingConsent(shopId: string, customerId: string, epoch: number, consent: boolean): Promise<boolean>;
   /** 本人のお気に入り（0123、新しい順・見える商品だけ）。セッションが生きていなければ null */
+  /** 会員へのお知らせ（0155）。本人に見えるもの（新しい順、50 件）と未読の数。セッションが生きていなければ null */
+  memberNewsList(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<MemberNewsList | null>;
+  /** 既読にする（ids が null なら見えるものすべて）。既読にした数。セッションが生きていなければ null */
+  memberNewsRead(shopId: string, customerId: string, epoch: number, sessionId: string, ids: string[] | null): Promise<number | null>;
   memberFavorites(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ product_id: string; slug: string; created_at: string }[] | null>;
   /** お気に入りに足す・外す（0123）。セッションが生きていなければ null。見えない商品は product_not_found、上限は favorites_full */
   memberFavoriteSet(shopId: string, customerId: string, epoch: number, sessionId: string, productId: string, on: boolean): Promise<boolean | null>;
@@ -632,6 +637,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       rpc("order_lookup", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, ...(emailHash !== undefined ? { p_email_hash: emailHash } : {}) }),
     memberOrder: (shopId, customerId, epoch, number) => rpc("member_order", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),
     memberSetMarketingConsent: (shopId, customerId, epoch, consent) => rpc<boolean>("member_set_marketing_consent", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_consent: consent }),
+    memberNewsList: (shopId, customerId, epoch, sessionId) => rpc("member_news_list", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
+    memberNewsRead: (shopId, customerId, epoch, sessionId, ids) => rpc("member_news_read", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_ids: ids }),
     memberFavorites: (shopId, customerId, epoch, sessionId) => rpc("member_favorites", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
     memberFavoriteSet: (shopId, customerId, epoch, sessionId, productId, on) => rpc("member_favorite_set", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_product_id: productId, p_on: on }),
     memberFavoritesMerge: (shopId, customerId, epoch, sessionId, productIds) => rpc("member_favorites_merge", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_product_ids: [...productIds] }),

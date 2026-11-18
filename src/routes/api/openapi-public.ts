@@ -331,6 +331,10 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
         post: { summary: "お気に入りに足す（on: true）・外す（on: false）。商品の id。200 個まで", security: member, parameters: [shopPath], requestBody: body(obj({ product_id: str, on: bool }, ["product_id", "on"])), responses: { 200: ok(obj({ ok: bool, product_id: str, favorite: bool })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), 409: err("favorites_full"), ...common, 404: err("not_found・module_disabled") } },
       },
       "/shops/{shop}/members/favorites/merge": { post: { summary: "連携サイトのブラウザに覚えたゲストのお気に入りを、ログインした会員へ移す（50 まで。見えない・重なる商品は捨てる）", security: member, parameters: [shopPath], requestBody: body(obj({ product_ids: { type: "array", items: str, maxItems: 50 } }, ["product_ids"])), responses: { 200: ok(obj({ ok: bool, merged: int })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } } },
+      "/shops/{shop}/members/news": {
+        get: { summary: "本人に見える会員へのお知らせ（同梱モジュール member_news、0155。新しい順・50 件まで）と未読の数。url は https か、/ で始まるお店の中のパス", security: member, parameters: [shopPath], responses: { 200: ok(obj({ items: { type: "array", items: obj({ id: str, title: str, body: str, url: { type: "string", nullable: true }, starts_at: str, read: bool }) }, unread: int })), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } },
+      },
+      "/shops/{shop}/members/news/read": { post: { summary: "お知らせを既読にする（ids は 50 件まで。無ければ今見えるものすべて）", security: member, parameters: [shopPath], requestBody: body(obj({ ids: { type: "array", items: str, maxItems: 50 } })), responses: { 200: ok(obj({ ok: bool, read: int })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } } },
       "/shops/{shop}/members/withdraw": { post: { summary: "退会する（会員の行を消す。注文は残る。取り消せない）", security: member, parameters: [shopPath], requestBody: body(obj({ confirm: { type: "boolean", enum: [true] } }, ["confirm"])), responses: { 200: ok(obj({ ok: bool })), 400: err("confirm_required"), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/password-login": {
         post: { summary: "パスワードでログイン（ショップがパスワードを使うときだけ）", parameters: [shopPath], requestBody: body(obj({ email: str, password: str }, ["email", "password"])), responses: { 200: ok(loggedIn), 401: err("invalid_password"), 409: err("password_disabled"), 429: err("locked"), ...common } },
@@ -472,6 +476,8 @@ const OPERATION_IDS: Record<string, string> = {
   "get /shops/{shop}/members/favorites": "listMemberFavorites",
   "post /shops/{shop}/members/favorites": "setMemberFavorite",
   "post /shops/{shop}/members/favorites/merge": "mergeMemberFavorites",
+  "get /shops/{shop}/members/news": "listMemberNews",
+  "post /shops/{shop}/members/news/read": "readMemberNews",
   "post /shops/{shop}/members/withdraw": "withdrawMember",
   "post /shops/{shop}/members/password-login": "loginMemberWithPassword",
   "post /shops/{shop}/members/password": "setMemberPassword",

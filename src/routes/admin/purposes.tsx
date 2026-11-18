@@ -31,6 +31,7 @@ export const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "line:send": "tokens.scope.line_send",
   "dialogs:write": "tokens.scope.dialogs_write",
   "stores:write": "tokens.scope.stores_write",
+  "member_news:write": "tokens.scope.member_news_write",
 };
 
 /** 目的ごとのまとまり（どのスコープもちょうど 1 つに入る。test/admin-purposes.test.ts） */
@@ -38,7 +39,7 @@ export const SCOPE_GROUPS: { label: MessageKey; scopes: ApiScope[] }[] = [
   { label: "purpose.products", scopes: ["products:read", "products:write", "app_data:write"] },
   { label: "purpose.orders", scopes: ["orders:read", "orders:write", "orders:pii"] },
   { label: "purpose.customers", scopes: ["customers:read", "customers:write"] },
-  { label: "purpose.marketing", scopes: ["coupons:read", "coupons:write", "line:send", "dialogs:write"] },
+  { label: "purpose.marketing", scopes: ["coupons:read", "coupons:write", "line:send", "dialogs:write", "member_news:write"] },
   { label: "purpose.support", scopes: ["inquiries:read", "inquiries:write"] },
   { label: "purpose.content", scopes: ["content:read", "content:write", "theme:write", "theme:publish"] },
   { label: "purpose.shop", scopes: ["shop:read", "shop:write", "stats:read", "stores:write"] },

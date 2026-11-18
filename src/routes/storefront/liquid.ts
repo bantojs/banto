@@ -7,6 +7,7 @@
  *   - CPU の上限を気にしなくてよい（Workers の有料プラン = サイトの設定 workers_plan が paid、か Node）
  * テーマが壊れている・上限を超えた・その種類のテンプレートが無いときも既定のテーマで描く（お店を止めない）。
  */
+import { memberNewsHref } from "../../modules/member-news";
 import { productFields } from "../../products/fields";
 import { shopifySortName } from "../../storefront/list-sort";
 import { filterNoindex, type ListFilter } from "../../storefront/list-filter";
@@ -648,8 +649,28 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         hold_until: r.hold_until ?? null,
       }))
     : null;
+  // 会員へのお知らせ（0155）: 新しい順・50 件まで。url はそのままリンクにできる形（お店の中のパスは shopPath を足す）。
+  // すべて既読にするのは POST news_read_url。モジュールが OFF なら news は null
+  const news = props.news
+    ? props.news.items.map((n) => ({ id: n.id, title: n.title, body: n.body, url: memberNewsHref(s.ctx.shopPath, n.url), date: n.starts_at, date_on: isoToZonedDate(n.starts_at), read: n.read }))
+    : null;
   const customer = props.customer
-    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`, tryon_requests: tryonRequests }
+    ? {
+        email: props.customer.email,
+        name: props.customer.name,
+        first_name: props.customer.name,
+        default_address: props.customer.default_address,
+        accepts_marketing: props.customer.marketing_consent === true,
+        orders,
+        orders_count: orders.length,
+        has_account: true,
+        favorites,
+        favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`,
+        tryon_requests: tryonRequests,
+        news,
+        news_unread_count: props.news?.unread ?? 0,
+        news_read_url: props.news ? `${s.ctx.shopPath}/account/news/read` : null,
+      }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
 }

@@ -42,7 +42,7 @@ export type Row = Record<string, unknown>;
 /** 0063 の banto_image_options_ok の大まかな再現（本物は test/db/sku-images.test.ts） */
 const badImageOptions = (o: unknown): boolean => !o || typeof o !== "object" || Array.isArray(o) || Object.values(o as Record<string, unknown>).some((v) => typeof v !== "string" || v === "");
 
-type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs" | "customer_favorites" | "shop_notice_texts";
+type TableName = "shops" | "categories" | "products" | "skus" | "inventory" | "product_images" | "orders" | "order_items" | "reservations" | "hook_endpoints" | "hook_deliveries" | "api_tokens" | "customers" | "coupon_campaigns" | "coupon_redemptions" | "coupon_slots" | "coupon_grants" | "shop_secret_boxes" | "stores" | "shop_stores" | "tryon_requests" | "tryon_items" | "audit_log" | "inquiries" | "inquiry_messages" | "theme_versions" | "pages" | "page_revisions" | "page_media" | "blogs" | "articles" | "article_revisions" | "app_data" | "app_connections" | "size_charts" | "audiences" | "price_rules" | "dialogs" | "customer_favorites" | "shop_notice_texts" | "member_news" | "member_news_reads";
 
 const UNIQUE: Partial<Record<TableName, string[][]>> = {
   customers: [["shop_id", "id"]],
@@ -77,6 +77,8 @@ const TABLE_PERM: Partial<Record<TableName, string>> = {
   api_tokens: "integrations",
   shop_secret_boxes: "integrations",
   shop_notice_texts: "settings",
+  member_news: "marketing",
+  member_news_reads: "marketing",
   shop_stores: "stores",
   tryon_requests: "stores",
   tryon_items: "stores",
@@ -152,6 +154,8 @@ export class FakeSupabase {
     dialogs: [],
     customer_favorites: [],
     shop_notice_texts: [],
+    member_news: [],
+    member_news_reads: [],
     price_rules: [],
     shops: [],
     categories: [],
@@ -1934,6 +1938,32 @@ export class FakeSupabase {
       const kept = new Set(Object.values(all[axis] ?? {}).map(keyOf));
       return json({ swatches: all[axis] ?? {}, removed_image_keys: Object.values(old).map(keyOf).filter((k): k is string => Boolean(k) && !kept.has(k)) });
     }
+    if (fn === "member_news_save" || fn === "member_news_delete") {
+      // 0155: 形の確かめの本物は test/db/member-news.test.ts（ここは見出しとリンクだけ）
+      const shopId = args["p_shop_id"] as string;
+      if (!uid || !(this.ownedShopIds(uid).has(shopId) || this.memberPerms(uid, shopId).includes("marketing"))) return json({ code: "42501", message: "marketing_required" }, 403);
+      const rows = this.tables.member_news;
+      if (fn === "member_news_delete") {
+        const at = rows.findIndex((r) => r["id"] === args["p_id"] && r["shop_id"] === shopId);
+        if (at >= 0) rows.splice(at, 1);
+        return json(at >= 0);
+      }
+      const v = (args["p_values"] ?? {}) as Row;
+      const title = typeof v["title"] === "string" ? v["title"].trim() : "";
+      if (!title || title.length > 100) return json({ code: "22023", message: "invalid_member_news:title" }, 400);
+      const url = typeof v["url"] === "string" && v["url"] ? v["url"] : null;
+      if (url && !/^https:\/\/\S+$|^\/(?!\/)\S*$/.test(url)) return json({ code: "22023", message: "invalid_member_news:url" }, 400);
+      const vals = { title, body: String(v["body"] ?? "").trim(), url, ends_at: v["ends_at"] ?? null, audience_id: v["audience_id"] ?? null };
+      if (args["p_id"]) {
+        const r = rows.find((x) => x["id"] === args["p_id"] && x["shop_id"] === shopId && x["customer_id"] == null && x["endpoint_id"] == null);
+        if (!r) return json({ code: "P0001", message: "not_found" }, 400);
+        Object.assign(r, vals, v["starts_at"] ? { starts_at: v["starts_at"] } : {});
+        return json(r["id"]);
+      }
+      const row: Row = { id: crypto.randomUUID(), shop_id: shopId, customer_id: null, endpoint_id: null, starts_at: v["starts_at"] ?? this.now(), created_at: this.now(), ...vals };
+      rows.push(row);
+      return json(row["id"]);
+    }
     if (fn === "notice_text_set") {
       // 0154: 決まりは Worker と同じ checkNoticeText（本物の SQL は test/db/notice-texts.test.ts）
       const shopId = args["p_shop_id"] as string;
@@ -3521,6 +3551,29 @@ export class FakeSupabase {
         const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
         return json({ items: all.map((o) => order(o, need("orders:pii"))), total: all.length, limit: 50, offset: 0, pii: need("orders:pii") });
       }
+      // 0155: 会員へのお知らせ（本物の形の確かめ・連携の分け方は test/db/member-news.test.ts）
+      case "api_member_news_list":
+      case "api_member_news_create":
+      case "api_member_news_delete": {
+        if (!need("member_news:write")) return unauthorized();
+        const shopRow = this.tables.shops.find((x) => x["id"] === shopId);
+        if (((shopRow?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["member_news"] !== true) return json({ code: "P0001", message: "module_disabled" }, 400);
+        const epId = (tok["endpoint_id"] as string | null | undefined) ?? null;
+        const own = (d: Row) => d["shop_id"] === shopId && ((d["endpoint_id"] as string | null | undefined) ?? null) === epId;
+        if (fn === "api_member_news_list") return json({ items: this.tables.member_news.filter((n) => own(n) && (args["p_customer_id"] == null || n["customer_id"] === args["p_customer_id"])) });
+        if (fn === "api_member_news_delete") {
+          const at = this.tables.member_news.findIndex((n) => n["id"] === args["p_id"] && own(n));
+          if (at < 0) return json({ code: "P0001", message: "not_found" }, 400);
+          this.tables.member_news.splice(at, 1);
+          return json({ deleted: true });
+        }
+        const v = (args["p_values"] ?? {}) as Row;
+        if (typeof v["title"] !== "string" || !v["title"].trim()) return json({ code: "22023", message: "invalid_member_news:title" }, 400);
+        if (v["customer_id"] != null && !this.tables.customers.some((c) => c["id"] === v["customer_id"] && c["shop_id"] === shopId)) return json({ code: "22023", message: "invalid_member_news:customer" }, 400);
+        const row: Row = { id: crypto.randomUUID(), shop_id: shopId, customer_id: v["customer_id"] ?? null, title: v["title"].trim(), body: v["body"] ?? "", url: v["url"] ?? null, starts_at: v["starts_at"] ?? this.now(), ends_at: v["ends_at"] ?? null, audience_id: v["audience_id"] ?? null, endpoint_id: epId, created_at: this.now() };
+        this.tables.member_news.push(row);
+        return json(row);
+      }
       // 0111: お店の画面のダイアログ（本物の形の確かめ・連携の分け方は test/db/dialogs-api.test.ts）
       case "api_dialogs_list":
       case "api_dialog_create":
@@ -3820,6 +3873,30 @@ export class FakeSupabase {
           : [];
         const providers = this.memberIdentities.filter((i) => i["shop_id"] === shopId && i["customer_id"] === c["id"]).map((i) => String(i["provider"]));
         return json({ customer: { id: c["id"], shop_id: shopId, email: c["email"] ?? null, name: c["name"] ?? null, default_address: c["default_address"] ?? null, marketing_consent: c["marketing_consent"] ?? null, has_password: Boolean(c["password_hash"] || c["legacy_password_hash"]), providers }, orders });
+      }
+      // 0155: 会員へのお知らせ（本物は test/db/member-news.test.ts。会員の条件は見ない）
+      case "member_news_list":
+      case "member_news_read": {
+        if (!this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return json(null);
+        const cid = args["p_customer_id"];
+        const now = Date.now();
+        const vis = this.tables.member_news
+          .filter((n) => n["shop_id"] === shopId && Date.parse(String(n["starts_at"])) <= now && (!n["ends_at"] || Date.parse(String(n["ends_at"])) > now) && (n["customer_id"] === cid || n["customer_id"] == null))
+          .sort((a, b) => String(b["starts_at"]).localeCompare(String(a["starts_at"])))
+          .slice(0, 50);
+        const isRead = (id: unknown) => this.tables.member_news_reads.some((r) => r["customer_id"] === cid && r["news_id"] === id);
+        if (fn === "member_news_read") {
+          const ids = args["p_ids"] as string[] | null;
+          let n = 0;
+          for (const x of vis) {
+            if ((ids && !ids.includes(String(x["id"]))) || isRead(x["id"])) continue;
+            this.tables.member_news_reads.push({ shop_id: shopId, customer_id: cid, news_id: x["id"], read_at: this.now() });
+            n++;
+          }
+          return json(n);
+        }
+        const items = vis.map((x) => ({ id: x["id"], title: x["title"], body: x["body"] ?? "", url: x["url"] ?? null, starts_at: x["starts_at"], read: isRead(x["id"]) }));
+        return json({ items, unread: items.filter((x) => !x.read).length });
       }
       // 0123: お気に入り（本物は test/db/favorites.test.ts。会員の条件は見ない・上限は 200）
       case "member_favorites":

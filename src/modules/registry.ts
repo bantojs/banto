@@ -9,6 +9,8 @@ import { CARE_MIGRATION } from "../care-labels/care";
 
 /** お気に入り（0123_mod_favorites）のマイグレーション。モジュールの一覧と API が「当たるまで出さない」判定に使う */
 export const FAVORITES_MIGRATION = "0123_mod_favorites";
+/** 会員へのお知らせ（0155_mod_member_news） */
+export const MEMBER_NEWS_MIGRATION = "0155_mod_member_news";
 
 /** 「機能を追加」の画面のまとまり（並びもこの順） */
 export const MODULE_CATEGORIES = ["orders", "catalog", "members", "marketing", "support", "content", "integrations"] as const;
@@ -71,6 +73,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "dialogs", category: "marketing", name: "mod.dialogs.name", description: "mod.dialogs.description", perm: "marketing", adminPath: "dialogs" },
   // 会員のお気に入り（本人・運営者・AI 用 API と連携。ゲストはブラウザに覚えてログインで移す。0123_mod_favorites、docs/favorites.md）
   { id: "favorites", category: "members", name: "mod.favorites.name", description: "mod.favorites.description", perm: "customers", migration: FAVORITES_MIGRATION },
+  // 会員へのお知らせと既読（置かれたものを出して既読を覚えるだけ。だれに・いつは管理画面と外部プラグイン。0155_mod_member_news、docs/member-news.md）
+  { id: "member_news", category: "members", name: "mod.member_news.name", description: "mod.member_news.description", perm: "marketing", adminPath: "member-news", migration: MEMBER_NEWS_MIGRATION },
   // 洗濯表示（JIS L 0001 の記号番号。カテゴリーで決めて商品で上書き。記号の絵は運営者が持ち込む。0127_mod_care_labels、docs/care-labels.md）
   { id: "care_labels", category: "catalog", name: "mod.care_labels.name", description: "mod.care_labels.description", perm: "catalog", adminPath: "care-labels", migration: CARE_MIGRATION },
 ];

@@ -217,6 +217,11 @@ export interface Theme {
      * 「外す」は POST `${shopPath}/account/favorites/remove`（product_id）
      */
     favorites?: ProductSummary[] | null;
+    /**
+     * 会員へのお知らせ（同梱モジュール member_news、0155）。null なら欄を出さない。新しい順・50 件まで。
+     * 「すべて既読にする」は POST `${shopPath}/account/news/read`。url は https か、お店の中のパス（memberNewsHref で組む）
+     */
+    news?: { items: { id: string; title: string; body: string; url: string | null; starts_at: string; read: boolean }[]; unread: number } | null;
     /** ログイン中の端末の画面がある（0045）。true なら GET `${shopPath}/account/sessions` へのリンクを出す */
     sessions?: boolean;
     /** パスキーの画面がある（同梱モジュール passkey、0046）。true なら GET `${shopPath}/account/passkeys` へのリンクを出す */
