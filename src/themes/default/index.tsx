@@ -9,6 +9,7 @@ import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { cardAttributes, productFields } from "../../products/fields";
 import { favoritesEnabled } from "../../modules/favorites";
+import { memberNewsHref } from "../../modules/member-news";
 import { shopImageSrc } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
 import { formatDateTime, isoToZonedDate } from "../../i18n/time";
@@ -276,7 +277,7 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
  */
 const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
-export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
+export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
   const field = (name: string, label: string, value: string, type = "text", required = true) => (
@@ -298,6 +299,35 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
       {flash === "tryon_cancelled" ? <p class="notice">{t("member.tryon_cancelled")}</p> : null}
       {flash === "tryon_extended" ? <p class="notice">{t("member.tryon_extended")}</p> : null}
       {error ? <p class="error">{error}</p> : null}
+      {news ? (
+        <section id="news">
+          <h2>
+            {t("member.news")}
+            {news.unread > 0 ? <span class="badge"> {tf("member.news_unread", { n: String(news.unread) })}</span> : null}
+          </h2>
+          {news.items.length === 0 ? <p>{t("member.news_none")}</p> : null}
+          {news.items.map((n) => {
+            const href = memberNewsHref(ctx.shopPath, n.url);
+            return (
+              <article style="margin:.75rem 0" data-read={n.read ? "true" : "false"}>
+                <div class="muted">
+                  {formatDateTime(n.starts_at, { dateOnly: true })}
+                  {n.read ? null : <strong> {t("member.news_new")}</strong>}
+                </div>
+                <strong>{href ? <a href={href}>{n.title}</a> : n.title}</strong>
+                {n.body ? <p style="white-space:pre-wrap;margin:.25rem 0">{n.body}</p> : null}
+              </article>
+            );
+          })}
+          {news.unread > 0 ? (
+            <form method="post" action={`${ctx.shopPath}/account/news/read`}>
+              <button type="submit" class="secondary">
+                {t("member.news_mark_read")}
+              </button>
+            </form>
+          ) : null}
+        </section>
+      ) : null}
       {coupons ? (
         <section>
           <h2>{t("member.coupons")}</h2>

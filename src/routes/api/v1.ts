@@ -396,6 +396,11 @@ v1.post("/dialogs", async (c) => body(c).then((b) => api(c).dialogCreate(b)).the
 v1.patch("/dialogs/:id", async (c) => body(c).then((b) => api(c).dialogUpdate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/dialogs/:id", async (c) => api(c).dialogDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 
+// 会員へのお知らせ（0155。member_news:write）。連携に結んだトークンは自分の連携のものだけ。customer_id があれば 1 人あて、無ければ全員向け
+v1.get("/member-news", async (c) => api(c).memberNewsList(c.req.query("customer_id") || undefined).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/member-news", async (c) => body(c).then((b) => api(c).memberNewsCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
+v1.delete("/member-news/:id", async (c) => api(c).memberNewsDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+
 // クーポン（0036。coupons:read / coupons:write）。:ref は id（UUID）かコード
 v1.get("/coupons", async (c) =>
   api(c)

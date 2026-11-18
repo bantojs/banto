@@ -97,7 +97,7 @@ function mapRpcError(e: unknown): never {
     // クーポンと会員（0036）
     // 会員の条件（0144）: OFF でも外す（audience: null）ことはできると伝える
     if (e.is("module_disabled:audiences")) throw new ApiError("conflict", "module_disabled: turn on the module audiences in the admin screen to set an audience; removing it (audience: null) works even while it is off", 409);
-    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences) in the admin screen", 409);
+    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences / dialogs / member_news) in the admin screen", 409);
     // 商品の会員限定（0144）
     if (e.is("audience_not_found")) throw new ApiError("invalid", "audience_not_found: no audience with this id or name in this shop (GET /audiences lists them)", 400);
     if (e.is("audience_display_only")) throw new ApiError("invalid", "audience_display_only: this audience uses URL parameters and cannot be put on products (product_usable is false in GET /audiences)", 400);
@@ -111,6 +111,9 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_released_at")) throw new ApiError("invalid", "invalid_released_at: a date-time string with an offset (e.g. 2024-05-01T10:00:00+09:00; a date alone is 00:00 UTC) between 1990 and 10 years from now, or null to remove it", 400);
     // 項目の定義（0145）: invalid_fields:<番号>:<理由>
     if (/invalid_fields:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_fields:[a-z_0-9:]+).*$/s, "$1") + ": send an array of up to 150 { key: ^[a-z][a-z0-9_]{0,39}$ (unique), label (1-60 chars), type: text | textarea | number | url | select | image, options (select only, up to 50 of 1-60 chars), public, card (public only) }; customer fields cannot use image, and public / card cannot be true (see docs/ai-access.md §19)", 400);
+    // 会員へのお知らせ（0155）
+    if (e.is("member_news_full")) throw new ApiError("conflict", "member_news_full: a shop can have up to 100 news for all members (news for one member have no limit; the oldest beyond 200 per member are removed)", 409);
+    if (/invalid_member_news:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_member_news:[a-z_:]+).*$/s, "$1") + " (see docs/member-news.md for the fields)", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -566,6 +569,17 @@ export class ApiService {
   dialogDelete = async (id: string) => {
     await this.call<boolean>("api_dialog_delete", { p_id: uuidOr404(id) });
     return { deleted: true };
+  };
+
+  // ---- 会員へのお知らせ（0155。member_news:write、モジュール member_news が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
+  memberNewsList = async (customerId?: string) => {
+    return this.call<Record<string, unknown>>("api_member_news_list", { p_customer_id: customerId ? uuidOr404(customerId) : null });
+  };
+  memberNewsCreate = async (values: Record<string, unknown>) => {
+    return this.call<Record<string, unknown>>("api_member_news_create", { p_values: values });
+  };
+  memberNewsDelete = async (id: string) => {
+    return this.call<Record<string, unknown>>("api_member_news_delete", { p_id: uuidOr404(id) });
   };
 
   // ---- 注文の印とメモ（0106。orders:write、メモは orders:pii も）----

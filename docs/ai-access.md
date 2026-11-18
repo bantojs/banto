@@ -422,3 +422,11 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - ほかのカートから移すときは、元の発売日（WooCommerce なら公開日）をこの API の `released_at` で入れてください（管理画面の商品の CSV・WooCommerce の取り込みでは、今は入れられません）。作成日（`created_at`）は移した日のまま変えません。
 - 商品の読み取り（AI 用 API・公開 API の一覧と詳細）に `released_at`（AI 用 API は `publish_at` も）、公開 API に `coming_soon` が載ります。
 - データベースの更新が要ります（`released_at` は `0146_product_released_at`、`publish_at` と「発売前は買えない」は `0148_product_sale_dates`、`store_only` は `0149_product_store_only`）。当たるまでは、その欄を送ると 409（`migration_required`）です（ほかの欄はそのまま）。
+
+## 21. 会員へのお知らせ（0155、メンテナの決定 2026-11-18）
+
+スコープ `member_news:write`（項目 marketing）で、会員へのお知らせを置く・一覧・消すことができます（REST だけ。`POST /api/v1/member-news`・`GET /api/v1/member-news`・`DELETE /api/v1/member-news/{id}`）。モジュール「会員へのお知らせ」が ON のショップだけです。
+
+- `customer_id` があれば 1 人あて、無ければ全員向けです。
+- 触れるのはこのトークンで置いたものだけです（連携に結んだトークンは自分の連携のもの、運営者のトークンは連携に結ばないもの）。
+- Banto は置かれたものを出して既読を覚えるだけで、だれに・いつはプラグインが決めます（`line:send` と同じ線）。詳しくは docs/member-news.md。

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { memberNewsEnabled, parseNewsReadBody } from "../../modules/member-news";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
@@ -365,6 +366,34 @@ membersApi.post("/shops/:shop/members/favorites/merge", async (c: Ctx) => {
   } catch (e) {
     return favoriteError(c, e);
   }
+});
+
+// ---------- 会員へのお知らせ（同梱モジュール member_news、0155、docs/member-news.md） ----------
+
+/** 本人に見えるお知らせ（新しい順・50 件まで）と未読の数。url は https か、お店の中のパス（/ で始まる） */
+membersApi.get("/shops/:shop/members/news", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!memberNewsEnabled(s.shop)) return c.json({ error: "module_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  if (!s.member.sid) return c.json({ error: "invalid_member_token" }, 401);
+  const list = await db.memberNewsList(s.shop.id, s.member.id, s.member.epoch, s.member.sid);
+  return list ? c.json(list) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+/** 既読にする（{ ids?: string[] }、50 件まで。ids が無ければ見えるものすべて） */
+membersApi.post("/shops/:shop/members/news/read", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!memberNewsEnabled(s.shop)) return c.json({ error: "module_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  if (!s.member.sid) return c.json({ error: "invalid_member_token" }, 401);
+  const parsed = parseNewsReadBody(await body(c));
+  if (!parsed) return c.json({ error: "invalid_request", field: "ids" }, 400);
+  const n = await db.memberNewsRead(s.shop.id, s.member.id, s.member.epoch, s.member.sid, parsed.ids);
+  return n === null ? c.json({ error: "invalid_member_token" }, 401) : c.json({ ok: true, read: n });
 });
 
 /** 退会（会員ページの「退会する」と同じ: 会員の行を消す。注文は残る）。取り消せないので { confirm: true } が要る */

@@ -509,6 +509,10 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 ---
 
+## 会員へのお知らせ（同梱モジュール member_news）
+
+会員トークンで、本人に見えるお知らせと未読の数を読み（`GET /api/shops/:shop/members/news`）、既読にできます（`POST …/members/news/read`、`{ ids?: [...] }`）。詳しくは docs/member-news.md「ヘッドレス」。
+
 ## お気に入り（同梱モジュール favorites）
 
 会員トークンで、本人のお気に入りを読み書きできます（`GET /api/shops/:shop/members/favorites`・`POST …/members/favorites`（`{ product_id, on }`）・`POST …/members/favorites/merge`（ゲストのときブラウザに覚えた分を、ログインしたら移す。50 まで））。詳しくは docs/favorites.md「ヘッドレス」。

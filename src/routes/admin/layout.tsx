@@ -346,7 +346,8 @@ export type ShopHere =
   | "settings-payments"
   | "settings-members"
   | "settings-advanced"
-  | "notices";
+  | "notices"
+  | "member-news";
 
 /** 目次の 1 項目の中の画面（画面の中のタブ）。同梱モジュールの項目に要る権限はモジュールの一覧（registry の perm）から引く */
 interface NavSub {
@@ -386,7 +387,7 @@ const NAV: { label: MessageKey; items: NavItem[] }[] = [
           mod("woo-import", "woo_import", "mod.woo_import.name"),
         ],
       },
-      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), page("customer-fields", "/customer-fields", "customer_fields.title", "customers+settings"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices")] },
+      { label: "customers.title", subs: [page("customers", "/customers", "customers.title", "customers"), page("customer-fields", "/customer-fields", "customer_fields.title", "customers+settings"), mod("audiences", "audiences", "aud.title"), mod("member-prices", "audiences", "mprice.title", "/prices"), mod("member-news", "member_news", "mnews.title")] },
       { label: "mod.inquiries.name", subs: [mod("inquiries", "inquiries", "mod.inquiries.name")] },
       { label: "mod.store_tryon.name", subs: [mod("store-tryon", "store_tryon", "mod.store_tryon.name")] },
     ],

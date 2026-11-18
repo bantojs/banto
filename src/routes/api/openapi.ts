@@ -62,6 +62,8 @@ export function openapiDocument(origin: string, version: string): Record<string,
     snooze_days: int, starts_at: str, ends_at: str,
   };
   const dialog = obj({ id: str, ...dialogFields, created_at: str, updated_at: str });
+  const memberNewsFields = { customer_id: { type: "string", nullable: true, description: "会員 id（1 人あて）。無ければ全員向け" }, title: str, body: str, url: { type: "string", nullable: true, description: "https:// で始まる URL か、/ で始まるお店の中のパス" }, starts_at: { type: "string", nullable: true }, ends_at: { type: "string", nullable: true }, audience_id: { type: "string", nullable: true, description: "全員向けだけ。会員の条件（audiences）の id" } };
+  const memberNews = obj({ id: str, ...memberNewsFields, created_at: str });
   const coupon = obj({ id: str, ...couponFields, usage: obj({ used: int, held: int }), grants: obj({ available: int, held: int, used: int, revoked: int }), created_at: str, updated_at: str });
   const address = { type: ["object", "null"], properties: { name: str, phone: str, postal_code: str, country: str, state: str, city: str, line1: str, line2: str }, additionalProperties: false };
   const externalRef = { type: ["object", "null"], properties: { provider: { ...str, description: "^[a-z][a-z0-9_]{0,31}$（例: hubspot）" }, id: str }, required: ["provider", "id"], additionalProperties: false, description: "外部の顧客マスタでの ID（0047）。ショップ × provider × id で一意。null で外す" };
@@ -356,6 +358,13 @@ export function openapiDocument(origin: string, version: string): Record<string,
       "/dialogs": {
         get: { summary: "お店の画面のダイアログの一覧（dialogs:write、0111。連携に結んだトークンは自分の連携のものだけ。モジュール dialogs が OFF なら 409 module_disabled）", security: bearer, responses: { 200: resp("ok", obj({ items: { type: "array", items: dialog } })), ...errors } },
         post: { summary: "ダイアログを作る（dialogs:write）。判定は今の訪問・今のページで分かることだけ。形が合わなければ 400 invalid_dialog:<欄>（docs/dialogs.md）", security: bearer, requestBody: { content: { "application/json": { schema: obj(dialogFields, ["name", "title"]) } } }, responses: { 201: resp("created", dialog), ...errors } },
+      },
+      "/member-news": {
+        get: { summary: "このトークンが置いた会員へのお知らせ（member_news:write、0155。連携に結んだトークンは自分の連携のものだけ。新しい順・200 件。モジュール member_news が OFF なら 409 module_disabled）", security: bearer, parameters: [{ name: "customer_id", in: "query", schema: str, description: "会員で絞る" }], responses: { 200: resp("ok", obj({ items: { type: "array", items: memberNews } })), ...errors } },
+        post: { summary: "会員へのお知らせを置く（member_news:write）。customer_id があれば 1 人あて（1 人 200 件を超えたら古いものから消える）、無ければ全員向け（100 件まで）。本文は文字だけ。形が合わなければ 400 invalid_member_news:<欄>（docs/member-news.md）", security: bearer, requestBody: { content: { "application/json": { schema: obj(memberNewsFields, ["title"]) } } }, responses: { 201: resp("created", memberNews), ...errors } },
+      },
+      "/member-news/{id}": {
+        delete: { summary: "会員へのお知らせを消す（member_news:write。このトークンで置いたものだけ）", security: bearer, parameters: idPath, responses: { 200: resp("ok", obj({ deleted: bool })), ...errors } },
       },
       "/dialogs/{id}": {
         patch: { summary: "ダイアログを更新（dialogs:write）。渡した項目だけ変わる", security: bearer, parameters: idPath, requestBody: { content: { "application/json": { schema: obj(dialogFields) } } }, responses: { 200: resp("ok", dialog), ...errors } },
