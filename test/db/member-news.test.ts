@@ -140,6 +140,45 @@ describe.skipIf(!dbAvailable)("会員へのお知らせ（0155）", () => {
     expect(await expectDbError(() => api("api_member_news_list", [op, null]))).toMatch(/module_disabled/);
   });
 
+  it("会員の条件: 使っている条件は消せない。表示用の条件・よそのショップの条件・モジュールが OFF なら付けられない", async () => {
+    const id = await save(f.ownerId, null, { title: "ゴールド限定", audience_id: gold });
+    expect(await expectDbError(() => getPool().query("delete from audiences where id = $1", [gold]))).toMatch(/foreign key|violates/);
+    await getPool().query("delete from member_news where id = $1", [id]);
+    const display = (await getPool().query<{ id: string }>(`insert into audiences (shop_id, name, condition) values ($1, 'url', '{"param": "utm_source", "in": ["x"]}') returning id`, [f.shopId])).rows[0]?.id;
+    if (display) expect(await expectDbError(() => save(f.ownerId, null, { title: "x", audience_id: display }))).toMatch(/invalid_member_news:audience/);
+    await getPool().query(`update shops set settings = jsonb_set(settings, '{modules,audiences}', 'false') where id = $1`, [f.shopId]);
+    expect(await expectDbError(() => save(f.ownerId, null, { title: "x", audience_id: gold }))).toMatch(/module_disabled:audiences/);
+    await getPool().query(`update shops set settings = jsonb_set(settings, '{modules,audiences}', 'true') where id = $1`, [f.shopId]);
+  });
+
+  it("リンク: \\ と制御文字を含むパスは断る", async () => {
+    expect(await expectDbError(() => save(f.ownerId, null, { title: "x", url: "/\\evil.example/" }))).toMatch(/invalid_member_news:url/);
+    expect(await expectDbError(() => save(f.ownerId, null, { title: "x", url: "/a\tb" }))).toMatch(/invalid_member_news:url/);
+  });
+
+  it("1 人あての上限は書き手ごと・置いた順。開始日の古い行を足しても消えず、ほかの書き手の行は消さない", async () => {
+    const ep2 = (await getPool().query<{ id: string }>("insert into hook_endpoints (shop_id, name, url, events) values ($1, 'B', 'https://b.example.com/hook', '{}') returning id", [f.shopId])).rows[0]!.id;
+    await getPool().query(`update shops set settings = jsonb_set(settings, '{modules,member_news}', 'true') where id = $1`, [f.shopId]);
+    const a = await issue(["member_news:write"], ep2);
+    const op = await issue(["member_news:write"]);
+    const opRow = await api<{ id: string }>("api_member_news_create", [op, JSON.stringify({ customer_id: cid2, title: "運営者から" })]);
+    for (let i = 0; i < 200; i++) await api("api_member_news_create", [a, JSON.stringify({ customer_id: cid2, title: `a${i}`, starts_at: "2099-01-01T00:00:00Z" })]);
+    const old = await api<{ id: string }>("api_member_news_create", [a, JSON.stringify({ customer_id: cid2, title: "古い開始日", starts_at: "2000-01-01T00:00:00Z" })]);
+    const rows = (await getPool().query<{ id: string; title: string }>("select id, title from member_news where customer_id = $1", [cid2])).rows;
+    expect(rows.some((r) => r.id === old.id)).toBe(true);
+    expect(rows.some((r) => r.id === opRow.id)).toBe(true);
+    expect(rows.some((r) => r.title === "a0")).toBe(false);
+    expect(rows.filter((r) => r.title !== "運営者から")).toHaveLength(200);
+  });
+
+  it("運営者が読めるのは、全員向けは marketing、1 人あてと既読は customers", async () => {
+    const custOnly = await member("mn-cust@example.com", ["customers"]);
+    const perMember = async (uid: string) => (await asUser(uid, (c) => c.query("select 1 from member_news where shop_id = $1 and customer_id is not null", [f.shopId]))).rowCount;
+    expect(await perMember(marketer)).toBe(0);
+    expect(await perMember(custOnly)).toBeGreaterThan(0);
+    expect((await asUser(custOnly, (c) => c.query("select 1 from member_news where shop_id = $1 and customer_id is null", [f.shopId]))).rowCount).toBe(0);
+  });
+
   it("全員向けは 100 件まで。会員を消すと本人あてと既読も消える", async () => {
     await getPool().query("delete from member_news where shop_id = $1", [f.shopId]);
     await getPool().query("insert into member_news (shop_id, title) select $1, 'n' || g from generate_series(1, 100) g", [f.shopId]);

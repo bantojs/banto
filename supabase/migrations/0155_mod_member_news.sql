@@ -5,7 +5,10 @@
 --     その連携 endpoint_id に結び、連携を外すと消える。プラグインが触れるのは自分の連携のものだけ）
 --   - 読み手: 本人（service_role の member_news_list / member_news_read。セッションの行と世代を確かめる）。運営者は項目 marketing で読める
 --   - 本文は文字だけ（HTML を置かない）。リンクは https か、お店の中のパス（/ で始まり // ではない）
---   - 1 人あては 1 人 200 件まで（超えたら古いものから消す）。全員向けは 1 ショップ 100 件まで
+--   - 1 人あては 1 人・書き手（連携か運営者）ごとに 200 件まで（超えたら、その書き手が置いた古いもの（置いた順）から消す。ほかの書き手のものは消さない）。
+--     全員向けは 1 ショップ 100 件まで
+--   - 会員の条件は同じショップの、表示用でない（URL のパラメータを使わない）ものだけ。使っている条件は消せない（商品・ページと同じ restrict）
+--   - 運営者が読めるのは、全員向けは項目 marketing、1 人あてと既読は項目 customers（会員ごとの中身なので。お気に入りと同じ）
 
 create table if not exists member_news (
   id uuid primary key default gen_random_uuid(),
@@ -13,21 +16,26 @@ create table if not exists member_news (
   customer_id uuid,
   title text not null check (char_length(title) between 1 and 100),
   body text not null default '' check (char_length(body) <= 1000),
-  url text check (url is null or (char_length(url) <= 500 and (url ~ '^https://[^\s]+$' or url ~ '^/[^/\s][^\s]*$' or url = '/'))),
+  url text check (url is null or (char_length(url) <= 500 and url !~ '[\\[:cntrl:]]' and (url ~ '^https://[^\s]+$' or url ~ '^/[^/\s][^\s]*$' or url = '/'))),
   starts_at timestamptz not null default now(),
   ends_at timestamptz check (ends_at is null or ends_at > starts_at),
-  audience_id uuid references audiences (id) on delete set null,
+  audience_id uuid,
   endpoint_id uuid,
-  created_at timestamptz not null default now(),
+  -- 置いた順（同じトランザクションの中でも順になるよう clock_timestamp）。1 人あての上限で古いものから消すのに使う
+  created_at timestamptz not null default clock_timestamp(),
   check (customer_id is null or audience_id is null),
+  -- 条件を消すと全員に見えてしまうので、使っている条件は消せない（0098・0100 と同じ）
+  foreign key (audience_id, shop_id) references audiences (id, shop_id) on delete restrict,
   foreign key (shop_id, customer_id) references customers (shop_id, id) on delete cascade,
   foreign key (endpoint_id, shop_id) references hook_endpoints (id, shop_id) on delete cascade
 );
 create index if not exists member_news_customer_idx on member_news (customer_id, starts_at desc) where customer_id is not null;
+create index if not exists member_news_writer_idx on member_news (customer_id, endpoint_id, created_at desc) where customer_id is not null;
 create index if not exists member_news_shop_idx on member_news (shop_id, starts_at desc) where customer_id is null;
 alter table member_news enable row level security;
 drop policy if exists member_news_marketing on member_news;
-create policy member_news_marketing on member_news for select using (banto_shop_perm(shop_id, 'marketing'));
+create policy member_news_marketing on member_news for select
+  using (case when customer_id is null then banto_shop_perm(shop_id, 'marketing') else banto_shop_perm(shop_id, 'customers') end);
 revoke all on member_news from anon, authenticated;
 grant select on member_news to authenticated;
 
@@ -41,7 +49,7 @@ create table if not exists member_news_reads (
 );
 alter table member_news_reads enable row level security;
 drop policy if exists member_news_reads_marketing on member_news_reads;
-create policy member_news_reads_marketing on member_news_reads for select using (banto_shop_perm(shop_id, 'marketing'));
+create policy member_news_reads_marketing on member_news_reads for select using (banto_shop_perm(shop_id, 'customers'));
 revoke all on member_news_reads from anon, authenticated;
 grant select on member_news_reads to authenticated;
 
@@ -49,12 +57,21 @@ grant select on member_news_reads to authenticated;
 create or replace function banto_member_news_guard()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  if new.audience_id is not null and not exists (select 1 from audiences a where a.id = new.audience_id and a.shop_id = new.shop_id) then
-    raise exception 'invalid_member_news:audience' using errcode = '22023';
+  -- 会員の条件: 同じショップ・表示用でない・モジュール audiences が ON（会員の判定 banto_member_audience_ids は表示用の条件を使わない）
+  if new.audience_id is not null and (tg_op = 'INSERT' or new.audience_id is distinct from old.audience_id) then
+    if not exists (select 1 from audiences a where a.id = new.audience_id and a.shop_id = new.shop_id and not banto_audience_display_only(a.condition)) then
+      raise exception 'invalid_member_news:audience' using errcode = '22023';
+    end if;
+    if not exists (select 1 from shops where id = new.shop_id and settings->'modules'->'audiences' = 'true'::jsonb) then
+      raise exception 'module_disabled:audiences' using errcode = 'P0001';
+    end if;
   end if;
-  if tg_op = 'INSERT' and new.customer_id is null
-     and (select count(*) from member_news where shop_id = new.shop_id and customer_id is null) >= 100 then
-    raise exception 'member_news_full' using errcode = 'P0001';
+  if tg_op = 'INSERT' and new.customer_id is null then
+    -- 同時に足しても 100 を超えないように、ショップの行を押さえてから数える
+    perform 1 from shops where id = new.shop_id for update;
+    if (select count(*) from member_news where shop_id = new.shop_id and customer_id is null) >= 100 then
+      raise exception 'member_news_full' using errcode = 'P0001';
+    end if;
   end if;
   return new;
 end;
@@ -67,8 +84,11 @@ create or replace function banto_member_news_prune()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if new.customer_id is not null then
+    -- 同じ書き手（連携か運営者）が置いたものだけを、置いた順の古いものから消す（足したばかりの行は最新なので残る）
     delete from member_news where id in (
-      select id from member_news where customer_id = new.customer_id order by starts_at desc, created_at desc, id offset 200);
+      select id from member_news
+       where customer_id = new.customer_id and endpoint_id is not distinct from new.endpoint_id
+       order by created_at desc, id desc offset 200);
   end if;
   return null;
 end;
@@ -95,7 +115,7 @@ begin
   if char_length(v_body) > 1000 then raise exception 'invalid_member_news:body' using errcode = '22023'; end if;
   if p ? 'url' and jsonb_typeof(p->'url') not in ('string', 'null') then raise exception 'invalid_member_news:url' using errcode = '22023'; end if;
   v_url := nullif(btrim(coalesce(p->>'url', '')), '');
-  if v_url is not null and not (char_length(v_url) <= 500 and (v_url ~ '^https://[^\s]+$' or v_url ~ '^/[^/\s][^\s]*$' or v_url = '/')) then
+  if v_url is not null and not (char_length(v_url) <= 500 and v_url !~ '[\\[:cntrl:]]' and (v_url ~ '^https://[^\s]+$' or v_url ~ '^/[^/\s][^\s]*$' or v_url = '/')) then
     raise exception 'invalid_member_news:url' using errcode = '22023';
   end if;
   begin
@@ -207,17 +227,17 @@ begin
   end if;
   if not banto_member_session_live(p_shop_id, p_customer_id, p_epoch, p_session_id) then return null; end if;
   v_aud := banto_member_audience_ids(p_shop_id, p_customer_id);
+  -- 未読の数は見えるものすべてで数え、並べるのは新しい 50 件
   with vis as (
     select n.*, (r.news_id is not null) as is_read
       from member_news n left join member_news_reads r on r.news_id = n.id and r.customer_id = p_customer_id
      where n.shop_id = p_shop_id and n.starts_at <= now() and (n.ends_at is null or n.ends_at > now())
-       and (n.customer_id = p_customer_id or (n.customer_id is null and (n.audience_id is null or n.audience_id = any(v_aud))))
-     order by n.starts_at desc, n.created_at desc, n.id
-     limit 50)
-  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'body', body, 'url', url, 'starts_at', starts_at, 'read', is_read)
-                            order by starts_at desc, created_at desc, id), '[]'::jsonb),
-         count(*) filter (where not is_read)
-    into v_items, v_unread from vis;
+       and (n.customer_id = p_customer_id or (n.customer_id is null and (n.audience_id is null or n.audience_id = any(v_aud))))),
+  page as (select * from vis order by starts_at desc, created_at desc, id limit 50)
+  select (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'body', body, 'url', url, 'starts_at', starts_at, 'read', is_read)
+                                    order by starts_at desc, created_at desc, id), '[]'::jsonb) from page),
+         (select count(*) from vis where not is_read)
+    into v_items, v_unread;
   return jsonb_build_object('items', v_items, 'unread', v_unread);
 end;
 $$;

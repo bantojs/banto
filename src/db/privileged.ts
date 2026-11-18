@@ -344,11 +344,11 @@ export interface PrivilegedDb {
   memberSaveAddress(shopId: string, customerId: string, epoch: number, name: string | null, address: Record<string, unknown>): Promise<boolean>;
   /** 「お得な情報やセールの案内を受け取る」を本人が変える（0050。世代を確かめる） */
   memberSetMarketingConsent(shopId: string, customerId: string, epoch: number, consent: boolean): Promise<boolean>;
-  /** 本人のお気に入り（0123、新しい順・見える商品だけ）。セッションが生きていなければ null */
   /** 会員へのお知らせ（0155）。本人に見えるもの（新しい順、50 件）と未読の数。セッションが生きていなければ null */
   memberNewsList(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<MemberNewsList | null>;
   /** 既読にする（ids が null なら見えるものすべて）。既読にした数。セッションが生きていなければ null */
   memberNewsRead(shopId: string, customerId: string, epoch: number, sessionId: string, ids: string[] | null): Promise<number | null>;
+  /** 本人のお気に入り（0123、新しい順・見える商品だけ）。セッションが生きていなければ null */
   memberFavorites(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ product_id: string; slug: string; created_at: string }[] | null>;
   /** お気に入りに足す・外す（0123）。セッションが生きていなければ null。見えない商品は product_not_found、上限は favorites_full */
   memberFavoriteSet(shopId: string, customerId: string, epoch: number, sessionId: string, productId: string, on: boolean): Promise<boolean | null>;

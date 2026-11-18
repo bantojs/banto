@@ -28,7 +28,8 @@ export function memberNewsEnabled(shop: { settings?: Record<string, unknown> | n
 
 /** リンクの行き先: https はそのまま、/ で始まるパスはお店の中（shopPath の下） */
 export function memberNewsHref(shopPath: string, url: string | null): string | null {
-  if (!url) return null;
+  // \ と制御文字はどちらも受けない（ブラウザは /\host を //host と読む。DB の banto_member_news_norm も断る）
+  if (!url || /[\\\u0000-\u001f\u007f]/.test(url)) return null;
   if (url.startsWith("https://")) return url;
   if (url.startsWith("/") && !url.startsWith("//")) return `${shopPath}${url === "/" ? "" : url}` || "/";
   return null;

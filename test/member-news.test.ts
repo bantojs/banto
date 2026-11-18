@@ -161,3 +161,40 @@ describe("AI 用 API（member_news:write）", () => {
     expect((await call(on.app, await issue(on.sb, on.shop.id, ["dialogs:write"]), "GET", "/member-news")).status).toBe(401);
   });
 });
+
+describe("Liquid のテーマ（templates/customers/account）", () => {
+  it("customer.news・news_unread_count・news_read_url。リンクはお店の中のパスに。\\ を含むリンクは出さない", async () => {
+    const { forgetThemes } = await import("../src/themes/liquid/cache");
+    forgetThemes();
+    const VERSION = "11111111-2222-4333-8444-555555555556";
+    const sb = new FakeSupabase();
+    sb.sitePlan = "paid";
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "s", name: "お知らせのお店", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { members_enabled: true, contact_email: "shop@example.com", modules: { member_news: true } } });
+    const row = sb.tables.shops.find((x) => x["id"] === shop.id)!;
+    row["domain"] = "shop.example.jp";
+    row["theme_public"] = { id: VERSION, storage_key: `themes/${shop.id}/${VERSION}/bundle.json`, settings: {} };
+    const files = {
+      "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ content_for_layout }}</body></html>",
+      "templates/index.liquid": "<h1>top</h1>",
+      "templates/customers/account.liquid": `<p class="unread">{{ customer.news_unread_count }}</p><p class="read-url">{{ customer.news_read_url }}</p>{% for n in customer.news %}<a class="n" data-read="{{ n.read }}" href="{{ n.url }}">{{ n.title }}</a><span class="d">{{ n.date_on }}</span>{% endfor %}`,
+    };
+    const storage = new MemoryStorage(`${BASE}/media`);
+    await storage.put(`themes/${shop.id}/${VERSION}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
+    const mail = memberMail(sb, shop.id);
+    dispose = mail.dispose;
+    const b = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }, storage, new FakeStripe()), "https://shop.example.jp");
+    await b.post("/account/login", { email: "hanako@example.com" });
+    await b.post("/account/code", { code: mail.code("hanako@example.com") });
+    sb.tables.member_news.push(
+      { id: "n1", shop_id: shop.id, customer_id: null, title: "<b>セール</b>", body: "", url: "/products", starts_at: "2026-01-01T00:00:00Z", ends_at: null },
+      { id: "n2", shop_id: shop.id, customer_id: null, title: "あやしい", body: "", url: "/\\evil.example/", starts_at: "2025-12-01T00:00:00Z", ends_at: null },
+    );
+    const html = await (await b.get("/account")).text();
+    expect(html).toContain('<p class="unread">2</p>');
+    expect(html).toContain('<p class="read-url">/account/news/read</p>');
+    expect(html).toContain('<a class="n" data-read="false" href="/products">&lt;b&gt;セール&lt;/b&gt;</a><span class="d">2026-01-01</span>');
+    expect(html).toContain('<a class="n" data-read="false" href="">あやしい</a>');
+    expect(memberNewsHref("", "/\\evil.example/")).toBeNull();
+  });
+});

@@ -68,6 +68,7 @@ const ERRORS: Record<string, string> = {
 
 function errorOf(e: DbError): string {
   if (/member_news_full/.test(e.message)) return t("mnews.error_full");
+  if (/module_disabled:audiences/.test(e.message)) return t("mnews.error_audience");
   const m = /invalid_member_news:([a-z_]+)/.exec(e.message);
   const key = m ? ERRORS[m[1]!] : undefined;
   return key ? t(key as Parameters<typeof t>[0]) : t("error.generic");
@@ -77,7 +78,9 @@ async function render(c: AdminContext, shop: ShopRow, draft: Draft | null, statu
   const db = owner(c).db;
   const [rows, perMember, audiences] = await Promise.all([
     db.from<NewsRow>("member_news").select("id,customer_id,title,body,url,starts_at,ends_at,audience_id,endpoint_id", { eq: { shop_id: shop.id }, where: [{ col: "customer_id", op: "is", value: null }], order: "starts_at.desc", limit: 100 }),
-    // 1 人あて（customer_id のある行。neq は空の行を含まない）の数だけ。1,000 を超えたら「1,000+」
+    // 1 人あて（customer_id のある行。neq は空の行を含まない）の数だけ。1,000 を超えたら「1,000+」。
+    // 1 人あての行は項目 customers の人にだけ見える（RLS）ので、marketing だけの人には 0
+
     db.from<{ id: string }>("member_news").select("id", { eq: { shop_id: shop.id }, where: [{ col: "customer_id", op: "neq", value: "00000000-0000-0000-0000-000000000000" }], limit: 1000 }),
     audiencesOf(c, shop),
   ]);
@@ -205,6 +208,8 @@ memberNewsAdmin.post("/", requireOwner, async (c: AdminContext) => {
 memberNewsAdmin.post("/:id/delete", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  await owner(c).db.rpc("member_news_delete", { p_shop_id: shop.id, p_id: param(c, "id") });
+  const id = param(c, "id");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return c.notFound();
+  await owner(c).db.rpc("member_news_delete", { p_shop_id: shop.id, p_id: id });
   return c.redirect(`${base(shop)}?flash=deleted`);
 });
