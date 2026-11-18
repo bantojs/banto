@@ -3471,7 +3471,7 @@ export const en: Record<MessageKey, string> = {
   "axes.names_saved": "Option names saved.",
   "axes.names_invalid": "Could not save option names. Names must be 1–40 characters and different from other options.",
   "notices.title": "Notification texts",
-  "notices.intro": "Edit the order emails and LINE messages sent to customers. Order details are filled in where you write {{name}}. Each notification has placeholders you must keep (such as the order details); it cannot be saved without them. Notifications you have not edited use the default text.",
+  "notices.intro": "Edit the order and try-on emails and LINE messages sent to customers. Order details are filled in where you write {{name}}. Each notification has placeholders you must keep (such as the order details); it cannot be saved without them. Notifications you have not edited use the default text.",
   "notices.needs_update": "Apply the database update (0154) to edit notification texts. Until then the default texts are sent.",
   "notices.kind.order_paid": "Order received",
   "notices.kind.order_shipped": "Order shipped",
@@ -3532,4 +3532,9 @@ export const en: Record<MessageKey, string> = {
   "notices.sample_return_policy": "返品について:\n(the shop's return policy)",
   "notices.sample_order_link": "ご注文の状況はこちらで確認できます: https://…",
   "notices.sample_contact": "お問い合わせ: shop@example.com",
+  "notices.sample_store_name": "Shibuya store",
+  "notices.sample_hold_until": "11月27日",
+  "notices.sample_visit": "ご来店予定日: 11月20日（木）\n店舗でご用意ができしだい、あらためてお知らせします。",
+  "notices.sample_items": "・T-shirt / Color: Navy・Size: M (TEE-NV-M) × 1",
+  "notices.sample_store_info": "■ Shibuya store\n〒150-0001 Shibuya, Tokyo…\nTel 03-0000-0000\nHours:\n  Mon–Fri 11:00–20:00",
 };

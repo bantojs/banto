@@ -22,17 +22,20 @@ import { AdminLayout, PageHead } from "./layout";
 import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { moduleEnabled } from "../../modules/registry";
 
 /**
- * お知らせの文面（0154、docs/notices.md）。項目 settings。
+ * お知らせの文面（0154、docs/notices.md）。項目 settings。注文の知らせと、お店で試着のお客様あての知らせ（モジュールが ON のとき）
  *   GET  /admin/shops/:shopId/notices   知らせごとのメールと LINE の文面・使える差し込み・見本
  *   POST /admin/shops/:shopId/notices   1 つ保存（kind・channel・subject・body）か、既定に戻す（reset）
  * 決まりに合わない文面は保存させない（DB の notice_text_set も断る）。保存済みで今の決まりに合わない文面は警告を出す（送るときは既定で送っている）
  */
 export const notices = new Hono<AppEnv>();
 
-/** この画面で扱う知らせ（お店で試着の知らせは別の PR で足す） */
-const KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
+const ORDER_KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
+const TRYON_KINDS: readonly NoticeKind[] = ["tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"];
+/** この画面で扱う知らせ（お店で試着はモジュールが ON のショップだけ） */
+const kindsFor = (settings: Record<string, unknown> | null | undefined): readonly NoticeKind[] => (moduleEnabled(settings, "store_tryon") ? [...ORDER_KINDS, ...TRYON_KINDS] : ORDER_KINDS);
 
 /** 見本の値（プレビュー） */
 function sampleValues(kind: NoticeKind, shopName: string): Record<string, string> {
@@ -46,6 +49,13 @@ function sampleValues(kind: NoticeKind, shopName: string): Record<string, string
     return_policy: t("notices.sample_return_policy"),
     order_link: t("notices.sample_order_link"),
     contact: t("notices.sample_contact"),
+    store_name: t("notices.sample_store_name"),
+    hold_until: t("notices.sample_hold_until"),
+    visit: t("notices.sample_visit"),
+    items: t("notices.sample_items"),
+    store_info: t("notices.sample_store_info"),
+    shop_link: "https://…",
+    ...(kind.startsWith("tryon_") ? { number: "7" } : {}),
   };
 }
 
@@ -149,7 +159,7 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
           {t("notices.needs_update")} <a href="/admin/update">{t("inventory.open_update")}</a>
         </p>
       ) : (
-        KINDS.map((kind) => (
+        kindsFor(shop.settings).map((kind) => (
           <section>
             <h2>{t(`notices.kind.${kind}` as MessageKey)}</h2>
             {section(kind, "mail")}
@@ -173,7 +183,7 @@ notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const base = `/admin/shops/${shop.id}/notices`;
   const f = await formFields(c);
-  const kind = KINDS.find((k) => k === f.kind);
+  const kind = kindsFor(shop.settings).find((k) => k === f.kind);
   const channel = f.channel === "mail" || f.channel === "line" ? f.channel : null;
   if (!kind || !channel) return c.text(t("error.generic"), 400);
   const db = owner(c).db;

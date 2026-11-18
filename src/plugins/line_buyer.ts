@@ -9,6 +9,7 @@ import type { BundledPlugin, PluginContext } from "./types";
 import { LINE_PUSH_URL } from "./line_notify";
 import { lineToken } from "./line_token";
 import { noticeLine, type NoticeTextRow } from "../notices/templates";
+import { tryonNoticeKind } from "../modules/store-tryon/mail";
 
 /** 注文の知らせ。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
 export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }, texts?: readonly NoticeTextRow[] | null): string | null {
@@ -17,25 +18,17 @@ export function buyerMessage(event: string, r: { number: number; total_jpy: numb
   return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}` });
 }
 
-/** お店で試着（0025）: 受付・取り置き開始・取り置きの延長（0151）・前日のお知らせ（0152）・取り消しだけ知らせる */
-export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }, opts: { extended?: boolean; reminder?: boolean } = {}): string | null {
+/**
+ * お店で試着（0025）: 受付・取り置き開始・取り置きの延長（0151）・前日のお知らせ（0152）・取り消しだけ知らせる。
+ * ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面
+ */
+export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }, opts: { extended?: boolean; reminder?: boolean } = {}, texts?: readonly NoticeTextRow[] | null): string | null {
   // 前日のお知らせ・延長の知らせが届く前に状態が変わっていたら送らない
   if ((opts.reminder || opts.extended) && r.status !== "ready") return null;
-  if (event === "tryon.updated" && r.status === "ready" && opts.reminder) {
-    const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日` : "明日";
-    return `【${r.shop_name}】${r.store_name}でのお取り置きは${until}までです。\n受付番号 ${r.number}\nお待ちしております。`;
-  }
-  if (event === "tryon.updated" && r.status === "ready" && opts.extended) {
-    const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日まで` : "";
-    return `【${r.shop_name}】${r.store_name}でのお取り置きを${until}延長しました。\n受付番号 ${r.number}`;
-  }
-  if (event === "tryon.requested") return `【${r.shop_name}】お店で試着のお申し込みを承りました。\n受付番号 ${r.number}\n店舗 ${r.store_name}\n店舗でご用意ができしだい、お知らせします。`;
-  if (event === "tryon.updated" && r.status === "ready") {
-    const until = r.hold_until ? `\n${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日までお取り置きします。` : "";
-    return `【${r.shop_name}】${r.store_name}でご試着いただけます。\n受付番号 ${r.number}${until}`;
-  }
-  if (event === "tryon.updated" && r.status === "cancelled") return `【${r.shop_name}】お店で試着のお申し込み（受付番号 ${r.number}）を取り消しました。`;
-  return null;
+  const kind = tryonNoticeKind(event, r.status, opts);
+  if (!kind) return null;
+  const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日` : "";
+  return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), store_name: r.store_name, hold_until: until });
 }
 
 export const lineBuyerNotify: BundledPlugin = {
@@ -71,7 +64,9 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
     const id = typeof data["request_id"] === "string" ? data["request_id"] : "";
     if (!id || (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"])))) return null;
     const r = await ctx.privileged.tryonLineRecipient(id, shop_id);
-    const text = r ? tryonLineMessage(event, r, { extended: data["extended"] === true, reminder: data["reminder"] === true }) : null;
+    const opts = { extended: data["extended"] === true, reminder: data["reminder"] === true };
+    const kind = r ? tryonNoticeKind(event, r.status, opts) : null;
+    const text = r && kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
     return r && text ? { to: r.line_user_id, text } : null;
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";

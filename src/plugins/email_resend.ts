@@ -10,7 +10,7 @@ import { shopHome } from "../storefront/urls";
 import { orderTaxBreakdown } from "../commerce/tax";
 import { trackingOf, trackingUrl } from "../orders/tracking";
 import { orderLink } from "../orders/lookup";
-import { buildTryonMails, type TryonContact } from "../modules/store-tryon/mail";
+import { buildTryonMails, tryonNoticeKind, type TryonContact } from "../modules/store-tryon/mail";
 import { noticeMail, type NoticeTextRow } from "../notices/templates";
 
 interface Contact {
@@ -145,7 +145,10 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
   const contact = (await ctx.privileged.tryonContact(requestId, shop_id)) as unknown as TryonContact;
   const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
   const opts = data["reminder"] === true ? { reminder: true } : data["extended"] === true ? { extended: true, previousHoldUntil: typeof data["previous_hold_until"] === "string" ? data["previous_hold_until"] : null } : {};
-  for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"), opts)) {
+  // お客様あての知らせがあるときだけ文面（0154）を読む
+  const kind = contact.customer_email ? tryonNoticeKind(event, contact.status, opts) : null;
+  const texts = kind ? await ctx.privileged.shopNoticeTexts(shop_id, kind) : [];
+  for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"), opts, texts)) {
     await sendMail(mailer, {
       from,
       to: m.to,

@@ -10,6 +10,7 @@
 import { shopHome } from "../../storefront/urls";
 import { optionLabel, optionNamesOf } from "../../products/option-names";
 import { dateLabel, upcomingSpecialDays, todayHere, weeklyLines, formatRanges, type StoreRow } from "./index";
+import { noticeMail, type NoticeKind, type NoticeTextRow } from "../../notices/templates";
 
 export interface TryonContact {
   request_id: string;
@@ -85,80 +86,65 @@ function itemLines(c: TryonContact): string {
     .join("\n");
 }
 
-export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: string | undefined, opts: { extended?: boolean; previousHoldUntil?: string | null; reminder?: boolean } = {}): TryonMail[] {
-  const out: TryonMail[] = [];
-  // 前日のお知らせ・延長の知らせが届く前に取り消し・期限切れになっていたら送らない（取り消しの知らせを重ねない）
-  if ((opts.reminder || opts.extended) && c.status !== "ready") return out;
-  const shopName = c.shop.name;
-  const head = `${c.customer_name ?? "お客"} 様\n\n`;
+/** お客様あての知らせの種類（0154 の文面）。知らせない組み合わせは null */
+export function tryonNoticeKind(event: string, status: string, opts: { extended?: boolean; reminder?: boolean } = {}): NoticeKind | null {
+  if (event === "tryon.requested") return "tryon_requested";
+  if (event !== "tryon.updated") return null;
+  if (status === "ready") return opts.reminder ? "tryon_reminder" : opts.extended ? "tryon_extended" : "tryon_ready";
+  if (status === "cancelled" && !opts.reminder && !opts.extended) return "tryon_cancelled";
+  return null;
+}
+
+/** お客様あてのメールの差し込みの値（src/notices/templates.ts。かたまりは前後の改行なし） */
+export function tryonMailValues(c: TryonContact, publicBaseUrl: string | undefined): Record<string, string> {
   // お店のリンク: お店の画面を使わない（off / checkout）ショップは外のサイト、それ以外は Banto のお店のトップ
   const sf = c.shop.storefront;
   const site = sf && sf.mode && sf.mode !== "full" && typeof sf.site_url === "string" && sf.site_url.startsWith("https://") ? sf.site_url : null;
   const home = site ?? (publicBaseUrl || c.shop.domain ? shopHome(publicBaseUrl ?? "", c.shop) : null);
-  const foot = `${c.shop.contact_email ? `\nお問い合わせ: ${c.shop.contact_email}\n` : ""}${home ? `\n${home}\n` : ""}\n${shopName}`;
-  if (event === "tryon.requested") {
-    if (c.customer_email) {
-      const when = c.visit_date ? `ご来店予定日: ${dateLabel(c.visit_date)}\n店舗でご用意ができしだい、あらためてお知らせします。` : "店舗に商品が届きしだい、あらためてお知らせします。";
-      out.push({
-        to: c.customer_email,
-        key: "customer",
-        subject: `【${shopName}】お店で試着のお申し込みを承りました（受付番号 ${c.number}）`,
-        text: `${head}お店で試着のお申し込みを承りました。お支払いはご来店時に店舗でお願いします（ご試着だけでも大丈夫です）。\n\n受付番号: ${c.number}\n${when}\n\n${itemLines(c)}\n\n${storeBlock(c)}\n${foot}`,
-      });
-    }
-    if (c.store.notify_email && c.store.email) {
-      out.push({
-        to: c.store.email,
-        key: "store",
-        subject: `【${shopName}】お店で試着の申し込み（${c.store.name}・受付番号 ${c.number}）`,
-        text: `${c.store.name} に、お店で試着の申し込みがありました。\n\n受付番号: ${c.number}\n${c.visit_date ? `来店予定日: ${dateLabel(c.visit_date)}\n` : ""}お名前: ${c.customer_name ?? ""}\n電話: ${c.customer_phone ?? ""}\nメール: ${c.customer_email ?? ""}\n${c.note ? `ご要望: ${c.note}\n` : ""}\n${itemLines(c)}\n\n管理画面の「お店で試着」で状態を進めてください。\n`,
-      });
-    }
-  } else if (event === "tryon.updated" && c.status === "ready" && opts.reminder) {
-    // 来店期限の前日のお知らせ（0152）。お客様にだけ
-    if (c.customer_email) {
-      out.push({
-        to: c.customer_email,
-        key: "customer",
-        subject: `【${shopName}】お取り置きは${c.hold_until ? dateLabel(c.hold_until) : "明日"}までです（受付番号 ${c.number}）`,
-        text: `${head}${c.store.name}でお取り置きしている商品は、${c.hold_until ? dateLabel(c.hold_until) : "明日"}までです。営業時間をご確認のうえ、お越しください。\n\n受付番号: ${c.number}\n\n${itemLines(c)}\n\n${storeBlock(c)}\n${foot}`,
-      });
-    }
-  } else if (event === "tryon.updated" && c.status === "ready" && opts.extended) {
+  return {
+    shop_name: c.shop.name,
+    customer_name: c.customer_name ?? "お客",
+    number: String(c.number),
+    store_name: c.store.name,
+    hold_until: c.hold_until ? dateLabel(c.hold_until) : "",
+    visit: c.visit_date ? `ご来店予定日: ${dateLabel(c.visit_date)}\n店舗でご用意ができしだい、あらためてお知らせします。` : "店舗に商品が届きしだい、あらためてお知らせします。",
+    items: itemLines(c),
+    store_info: storeBlock(c),
+    contact: c.shop.contact_email ? `お問い合わせ: ${c.shop.contact_email}` : "",
+    shop_link: home ?? "",
+  };
+}
+
+/**
+ * お店で試着のメール。お客様あては、ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面。
+ * 店舗あて（申し込み・延長）は決まった文面
+ */
+export function buildTryonMails(event: string, c: TryonContact, publicBaseUrl: string | undefined, opts: { extended?: boolean; previousHoldUntil?: string | null; reminder?: boolean } = {}, texts?: readonly NoticeTextRow[] | null): TryonMail[] {
+  const out: TryonMail[] = [];
+  // 前日のお知らせ・延長の知らせが届く前に取り消し・期限切れになっていたら送らない（取り消しの知らせを重ねない）
+  if ((opts.reminder || opts.extended) && c.status !== "ready") return out;
+  const kind = tryonNoticeKind(event, c.status, opts);
+  if (kind && c.customer_email) {
+    const m = noticeMail(kind, texts, tryonMailValues(c, publicBaseUrl));
+    out.push({ to: c.customer_email, key: "customer", subject: m.subject, text: m.text });
+  }
+  const shopName = c.shop.name;
+  if (event === "tryon.requested" && c.store.notify_email && c.store.email) {
+    out.push({
+      to: c.store.email,
+      key: "store",
+      subject: `【${shopName}】お店で試着の申し込み（${c.store.name}・受付番号 ${c.number}）`,
+      text: `${c.store.name} に、お店で試着の申し込みがありました。\n\n受付番号: ${c.number}\n${c.visit_date ? `来店予定日: ${dateLabel(c.visit_date)}\n` : ""}お名前: ${c.customer_name ?? ""}\n電話: ${c.customer_phone ?? ""}\nメール: ${c.customer_email ?? ""}\n${c.note ? `ご要望: ${c.note}\n` : ""}\n${itemLines(c)}\n\n管理画面の「お店で試着」で状態を進めてください。\n`,
+    });
+  }
+  if (kind === "tryon_extended" && c.store.notify_email && c.store.email) {
     // 会員が会員ページで取り置きを延ばした（0151）
-    const until = c.hold_until ? dateLabel(c.hold_until) : "";
-    if (c.customer_email) {
-      out.push({
-        to: c.customer_email,
-        key: "customer",
-        subject: `【${shopName}】お取り置きの期限を延長しました（受付番号 ${c.number}）`,
-        text: `${head}${c.store.name}でのお取り置きを${until}まで延長しました。営業時間をご確認のうえ、お越しください。\n\n受付番号: ${c.number}\n\n${itemLines(c)}\n\n${storeBlock(c)}\n${foot}`,
-      });
-    }
-    if (c.store.notify_email && c.store.email) {
-      out.push({
-        to: c.store.email,
-        key: "store",
-        subject: `【${shopName}】お店で試着の取り置きの延長（${c.store.name}・受付番号 ${c.number}）`,
-        text: `${c.store.name} でお取り置き中のお申し込みの期限が、お客様の操作で延長されました。\n\n受付番号: ${c.number}\n${opts.previousHoldUntil ? `延長前の期限: ${dateLabel(opts.previousHoldUntil)}\n` : ""}新しい期限: ${until}\nお名前: ${c.customer_name ?? ""}\n\n${itemLines(c)}\n`,
-      });
-    }
-  } else if (event === "tryon.updated" && c.customer_email) {
-    if (c.status === "ready") {
-      out.push({
-        to: c.customer_email,
-        key: "customer",
-        subject: `【${shopName}】${c.store.name}でご試着いただけます（受付番号 ${c.number}）`,
-        text: `${head}お申し込みの商品を ${c.store.name} にご用意しました。\n${c.hold_until ? `${dateLabel(c.hold_until)}までお取り置きします。` : ""}営業時間をご確認のうえ、お越しください。\n\n受付番号: ${c.number}\n\n${itemLines(c)}\n\n${storeBlock(c)}\n${foot}`,
-      });
-    } else if (c.status === "cancelled") {
-      out.push({
-        to: c.customer_email,
-        key: "customer",
-        subject: `【${shopName}】お店で試着のお申し込みを取り消しました（受付番号 ${c.number}）`,
-        text: `${head}お店で試着のお申し込み（受付番号 ${c.number}）を取り消しました。\n${foot}`,
-      });
-    }
+    out.push({
+      to: c.store.email,
+      key: "store",
+      subject: `【${shopName}】お店で試着の取り置きの延長（${c.store.name}・受付番号 ${c.number}）`,
+      text: `${c.store.name} でお取り置き中のお申し込みの期限が、お客様の操作で延長されました。\n\n受付番号: ${c.number}\n${opts.previousHoldUntil ? `延長前の期限: ${dateLabel(opts.previousHoldUntil)}\n` : ""}新しい期限: ${c.hold_until ? dateLabel(c.hold_until) : ""}\nお名前: ${c.customer_name ?? ""}\n\n${itemLines(c)}\n`,
+    });
   }
   return out;
 }
