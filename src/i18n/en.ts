@@ -2461,6 +2461,7 @@ export const en: Record<MessageKey, string> = {
   "audit.action.customer.email_changed": "Changed a member's email address",
   "audit.action.customer.deleted": "Deleted a member",
   "audit.action.order.status_changed": "Changed an order's status",
+  "audit.action.order.payment_recorded": "Recorded a payment",
   "audit.action.org_member.added": "Added a member",
   "audit.action.org_member.role_changed": "Changed a member's role",
   "audit.action.org_member.removed": "Removed a member",

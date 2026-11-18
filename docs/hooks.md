@@ -10,7 +10,7 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 | イベント | 発生タイミング | data の主な項目 |
 | --- | --- | --- |
 | `order.created` | 決済 Webhook で注文が作られたとき（`order.paid` と同時） | `order_id` `shop_id` `subtotal_jpy` `shipping_jpy` `discount_jpy` `total_jpy` `status` `payment_provider` `items[]`（`total_jpy` は値引き後。`items[].discount_jpy` は商品ごとの値引き） |
-| `order.paid` | お支払いが済んだとき。決済の注文は `order.created` と同時。**未入金の注文（代金引換など、0156）は、運営者が入金を記録したとき**（発送の後のこともある） | 同上。入金の記録のときは `order_number` `payment_status`（`paid`）`paid_at` `recorded_payment: true` `customer_id` `items[]` |
+| `order.paid` | お支払いが済んだとき。決済の注文は `order.created` と同時。**未入金の注文（代金引換など、0156）は、運営者が入金を記録したとき**（発送の後のこともある） | 同上。入金の記録のときは、それに `order_number` `payment_status`（`paid`）`paid_at` `recorded_payment: true` `customer_id` が付く |
 | `order.shipped` | 管理画面で「発送済み」にしたとき | `order_id` `shop_id` `total_jpy` `status` `shipped_at` `payment_status`（0156。`unpaid` なら代金はまだ） |
 | `order.cancelled` | 管理画面で「キャンセル」にしたとき | `order_id` `shop_id` `total_jpy` `status` `refunded` `restocked`（在庫を戻したか。取り込んだ注文は false、0031）`payment_status` `reason`（`refused` = 受け取り拒否、0156） |
 | `checkout.abandoned` | 会員の予約が決済されないまま期限切れで解放されたとき（カゴ落ち、0105）。Cron の期限切れと、決済ページの期限切れ（Stripe の `checkout.session.expired`・KOMOJU の `payment.expired`）。**ゲストの予約・支払いの失敗・決済ページを作れなかったときは送らない**。期限切れのあとで決済が済むこともあるので、アプローチの前に注文を確かめ直すこと | `reservation_id` `shop_id` `customer_id` `reason`（`expired`）`items[]`（`sku_id` `product_id` `qty` `unit_price_jpy`）`subtotal_jpy` `started_at` |

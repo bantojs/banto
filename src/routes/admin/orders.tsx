@@ -128,7 +128,9 @@ const ORDER_CONDITIONS = ["q", "status", "tag", "payment", "paid", "from", "to",
 
 /** 一覧の検索を広げる版（電話・送り状番号・支払い方法・日付・金額・並び。0132） */
 const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
+/** 状態の選択肢。受付（pending）は 0156 から（それより前の DB では知らない値なので出さない） */
 const ORDER_STATUSES = ["pending", "paid", "shipped", "cancelled", "refunded"] as const;
+const statusesFor = (paymentStatusOn: boolean) => ORDER_STATUSES.filter((s) => paymentStatusOn || s !== "pending");
 const ORDER_PAYMENTS = ["stripe", "komoju", "amazon_pay", "free"] as const;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const YEN_RE = /^\d{1,9}$/;
@@ -167,6 +169,8 @@ async function listOrders(c: AdminContext, shopId: string, opts: { limit: number
   const { db } = owner(c);
   const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
   const params = orderSearchParams(c, extended);
+  // 受付（pending）は 0156 から。当てる前の DB では知らない値なので絞らない
+  if (params["status"] === "pending" && !(await migrated({ db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION))) params["status"] = "";
   const { q, status, tag } = params as { q: string; status: string; tag: string };
   const filters = Object.fromEntries(Object.entries(params).filter(([k, v]) => k !== "q" && v !== ""));
   if (extended && (q || Object.keys(filters).length > 0)) {
@@ -242,7 +246,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           {t("order.status")}
           <select name="status">
             <option value="">{t("product.state_all")}</option>
-            {ORDER_STATUSES.map((st) => (
+            {statusesFor(paymentStatusOn).map((st) => (
               <option value={st} selected={params["status"] === st}>
                 {statusLabel(st)}
               </option>

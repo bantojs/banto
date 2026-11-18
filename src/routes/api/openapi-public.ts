@@ -63,7 +63,8 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
   const orderView = obj(
     {
       number: int,
-      status: { type: "string", enum: ["paid", "shipped", "cancelled", "refunded"] },
+      status: { type: "string", enum: ["pending", "paid", "shipped", "cancelled", "refunded"] },
+      payment_status: { type: "string", enum: ["paid", "unpaid"], description: "0156。未入金（代金引換など）なら unpaid" },
       created_at: str,
       shipped_at: nStr,
       total_jpy: int,

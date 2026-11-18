@@ -62,7 +62,8 @@ import { filterNoindex, listFilterOf, optionFacetsOf, type ListFilter } from "..
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
-import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { RECEIPT_MODULE, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { dateLabel, deliveryOptions } from "../../modules/delivery-time";
 import { TRYON_MODULE, checkTryon, storeView, todayHere, tryonSettings, visitDates } from "../../modules/store-tryon";
 import { PrivilegedRpcError } from "../../db/privileged";
@@ -1659,7 +1660,7 @@ storefront.get("/:shop/orders/lookup", async (c: Ctx) => {
     const result = db ? await db.memberOrder(s.shop.id, session.cid, session.ep, number).catch(() => null) : null;
     if (result) {
       c.header("Cache-Control", "no-store");
-      const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && RECEIPT_STATUSES.includes(String(result["status"]));
+      const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && receiptAvailable(result);
       const links = { receiptUrl: receipt ? `${s.ctx.shopPath}/account/orders/${number}/receipt` : null, inquiryUrl: s.ctx.inquiries ? `${s.ctx.shopPath}/inquiries/new?order=${number}` : null };
       return lookupRender(c, s, { values, result, member: links });
     }
@@ -1708,7 +1709,7 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.shop, number, email) : null;
   if (r && !r.ok) return c.text(t("store.lookup_too_many"), 429);
   const order = (r?.order ?? null) as ReceiptOrder | null;
-  if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
+  if (!order || !receiptAvailable(order)) return c.text(t("receipt.not_available"), 404);
   c.header("Cache-Control", "no-store");
   // no-referrer にすると、宛名のフォームの POST に Origin: null が付いて csrfGuard に拒まれる（src/routes/storefront/members.ts の privatePage）
   c.header("Referrer-Policy", "same-origin");

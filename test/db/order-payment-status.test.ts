@@ -132,6 +132,47 @@ describe.skipIf(!dbAvailable)("お支払いの状態（0156）", () => {
     expect(view).toMatchObject({ payment_status: "paid" });
   });
 
+  it("新しい注文の入金日時・発送の後の入金で会員の購入額・入金の記録の監査ログと order.paid の項目", async () => {
+    const res = await asService(async (c) => (await c.query<{ id: string }>("select reserve_stock($1, $2::jsonb) as id", [f.shopId, JSON.stringify([{ sku_id: f.skuId, qty: 1 }])])).rows[0]!.id);
+    const paidId = await asService(async (c) => (await c.query<{ id: string }>(CONFIRM_SQL, [res, f.shopId, JSON.stringify({ payment_provider: "stripe", payment_ref: "pi_new" })])).rows[0]!.id);
+    expect((await row(paidId))["paid_at"]).toBeTruthy();
+    const o = await unpaidOrder({ customer: cid });
+    await getPool().query("update orders set status = 'shipped', shipped_at = now() where id = $1", [o.id]);
+    const count = async () => (await getPool().query<{ orders_count: number }>("select orders_count from customers where id = $1", [cid])).rows[0]!.orders_count;
+    const before = await count();
+    await record(f.ownerId, o.id);
+    expect(await count()).toBe(before + 1);
+    const audit = (await getPool().query<{ action: string }>("select action from audit_log where target_id = $1", [o.id])).rows.map((r) => r.action);
+    expect(audit).toContain("order.payment_recorded");
+    const paid = (await hooks("order.paid", o.id)).find((p) => p["recorded_payment"] === true)!;
+    expect(paid).toMatchObject({ subtotal_jpy: expect.any(Number), shipping_jpy: 0, discount_jpy: 0 });
+    expect((paid["items"] as J[])[0]).toMatchObject({ sku_id: f.skuId, product_id: f.productId, discount_jpy: 0 });
+  });
+
+  it("受け取り拒否は発送した未入金の注文だけ（受付のあいだは理由なしで取り消す）", async () => {
+    const o = await unpaidOrder();
+    expect(await expectDbError(() => cancel(o.id, "refused"))).toMatch(/invalid_cancel_reason/);
+  });
+
+  it("復元: お支払いの状態・入金日時・取り消しの理由を戻す（受付の注文も入る）", async () => {
+    const empty = await createShopFixture({ email: "pay-restore@example.com", slug: "pay-restore" });
+    await getPool().query("delete from products where shop_id = $1", [empty.shopId]);
+    const data = {
+      orders: [
+        { id: "11111111-1111-4111-8111-111111111111", number: 1001, status: "pending", payment_status: "unpaid", total_jpy: 1000, created_at: "2026-01-01T00:00:00Z" },
+        { id: "11111111-1111-4111-8111-111111111112", number: 1002, status: "cancelled", payment_status: "unpaid", cancel_reason: "refused", total_jpy: 1000, created_at: "2026-01-02T00:00:00Z" },
+        { id: "11111111-1111-4111-8111-111111111113", number: 1003, status: "shipped", total_jpy: 1000, created_at: "2026-01-03T00:00:00Z" },
+      ],
+    };
+    await asService((c) => c.query("select restore_shop_data($1, $2::jsonb)", [empty.shopId, JSON.stringify(data)]));
+    const rows = (await getPool().query<J>("select number, status::text as status, payment_status, paid_at is not null as has_paid_at, cancel_reason from orders where shop_id = $1 order by number", [empty.shopId])).rows;
+    expect(rows).toEqual([
+      { number: 1001, status: "pending", payment_status: "unpaid", has_paid_at: false, cancel_reason: null },
+      { number: 1002, status: "cancelled", payment_status: "unpaid", has_paid_at: false, cancel_reason: "refused" },
+      { number: 1003, status: "shipped", payment_status: "paid", has_paid_at: true, cancel_reason: null },
+    ]);
+  });
+
   it("AI 用 API: 入金の記録（orders:write）・注文に payment_status と paid_at", async () => {
     const raw = `banto_${randomBytes(32).toString("base64url")}`;
     await asUser(f.ownerId, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, '{orders:read,orders:write}')", [f.shopId, f.ownerId, sha(raw), raw.slice(0, 12)]));

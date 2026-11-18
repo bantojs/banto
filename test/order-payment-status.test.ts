@@ -136,3 +136,29 @@ describe("同梱のメール・LINE", () => {
     expect(sent).toEqual([]);
   });
 });
+
+describe("お店の画面・運営者の LINE・送り状", () => {
+  it("ゲストの領収書は、発送しても未入金のあいだは出さない", async () => {
+    const { shop, order, app } = await setup();
+    Object.assign(order, { status: "shipped", customer_email: "buyer@example.com" });
+    const b = new Browser(app, BASE);
+    const res = await b.post("/my-shop/orders/receipt", { number: String(order["number"]), email: "buyer@example.com" });
+    expect(res.status).toBe(404);
+    expect(shop.id).toBeTruthy();
+  });
+
+  it("運営者の LINE: 入金の記録は「新しい注文」ではなく「入金を記録しました」", async () => {
+    const { lineMessageFor } = await import("../src/plugins/line_notify");
+    const ctx = (data: Record<string, unknown>) => ({ envelope: { id: "e", event: "order.paid", created_at: "", shop_id: "s", attempt: 1, data } }) as never;
+    expect(lineMessageFor(ctx({ order_id: "o1", total_jpy: 1000, recorded_payment: true }))).toContain("入金を記録しました");
+    expect(lineMessageFor(ctx({ order_id: "o1", total_jpy: 1000, items: [] }))).toContain("新しい注文");
+  });
+
+  it("送り状: 受付（未入金）の注文も未発送として載る", async () => {
+    const { shop, order, admin } = await setup();
+    shop["settings"] = { ...(shop["settings"] as Record<string, unknown>), modules: { shipping_labels: true } };
+    const res = await admin.get(`/admin/shops/${shop.id}/modules/shipping-labels/rows.json?carrier=yamato`);
+    const text = await res.text();
+    expect(res.status === 200 ? text : "").toContain(String(order["number"]));
+  });
+});

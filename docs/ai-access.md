@@ -436,5 +436,5 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 注文に `payment_status`（`paid` / `unpaid`）・`paid_at`・`cancel_reason` が増えました。`status` は届けの状態で、未入金の受付は `pending` です（docs/hooks.md「注文の状態とお支払いの状態」）。
 
 - `POST /api/v1/orders/{id}/payment`（orders:write）: 未入金の注文（受付・発送の後）の入金を記録します。`order.paid` はこのとき出ます。入金済みなら何もしません。0156 を当てる前は 409 `migration_required`。
-- `POST /api/v1/orders/{id}/status` の `cancelled`: 未入金の注文は返金せずに取り消します（受付のあいだと、発送の後）。
+- `POST /api/v1/orders/{id}/status` の `cancelled`: 未入金の注文は返金せずに取り消します（受付のあいだと、発送の後）。発送した未入金の注文の受け取り拒否は `reason: "refused"` を付けます（`cancel_reason` に残ります）。
 - 会員の購入額（`orders.count` / `total_jpy`）と売上の集計（`stats:read`）は入金済みだけです。

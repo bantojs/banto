@@ -16,6 +16,8 @@ import { CARRIERS, buildLabelsCsv, labelSettings, type Carrier, type LabelOrder 
 import { shippingLabelsClient } from "./client";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier } from "../../orders/tracking";
 import { selectIn } from "../../db/select-in";
+import { migrated } from "../../db/migration-state";
+import { PAYMENT_STATUS_MIGRATION } from "../../orders/payment";
 import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 
 export const LABELS_MODULE = "shipping_labels";
@@ -123,8 +125,9 @@ labelsAdmin.get("/rows.json", requireOwner, async (c: AdminContext) => {
   if (!(CARRIERS as readonly string[]).includes(carrier)) return c.json({ error: "carrier" }, 400);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query("date") ?? "") ? c.req.query("date")! : todayIn(getTimeZone(), Date.now());
   const { db } = owner(c);
-  // 未発送 = 支払い済み（status = paid）。古い順に最大 500 件
-  const orders = await db.from<OrderForLabel>("orders").select("*", { eq: { shop_id: shop.id, status: "paid" }, order: "created_at.asc", limit: 500 });
+  // 未発送 = 受付（支払い済みの paid と、0156 からは未入金の pending = 代金引換など）。古い順に最大 500 件
+  const pendingToo = await migrated({ db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION);
+  const orders = await db.from<OrderForLabel>("orders").select("*", { eq: { shop_id: shop.id }, in: { status: pendingToo ? ["paid", "pending"] : ["paid"] }, order: "created_at.asc", limit: 500 });
   // 明細・SKU・商品は送り状に載せる注文の分だけ（ショップ全体を読むと 1,000 行で欠ける）
   const items = await selectIn<OrderItemRow>(db, "order_items", "order_id,sku_id,qty,item_name", shop.id, "order_id", orders.map((o) => o.id));
   const skus = await selectIn<SkuRow>(db, "skus", "id,product_id", shop.id, "id", items.map((i) => i.sku_id).filter((id): id is string => Boolean(id)));

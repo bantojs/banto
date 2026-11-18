@@ -3549,7 +3549,7 @@ export class FakeSupabase {
       case "api_order_cancel": {
         if (!need("orders:write")) return unauthorized();
         if (!mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]))) return notFound();
-        const r = this.cancelOrder(args["p_order_id"], shopId, args["p_refunded"] === true);
+        const r = this.cancelOrder(args["p_order_id"], shopId, args["p_refunded"] === true, args["p_reason"] ?? null);
         if (r.status !== 200) return r;
         return json(order(this.tables.orders.find((x) => x["id"] === args["p_order_id"])!, need("orders:pii")));
       }
@@ -3745,6 +3745,7 @@ export class FakeSupabase {
       number: o["number"], status: o["status"], created_at: o["created_at"], shipped_at: o["shipped_at"] ?? null, total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0,
       discount_jpy: o["discount_jpy"] ?? 0, discounts: o["discounts"] ?? [], shipping_tax_rate: o["shipping_tax_rate"] ?? Number(settings["tax_rate"] ?? 10),
       tax_rounding: o["tax_rounding"] ?? settings["tax_rounding"] ?? "floor", payment_provider: o["payment_provider"] ?? null, items: this.orderItemsJson(o["id"]),
+      ...(o["payment_status"] ? { payment_status: o["payment_status"], paid_at: o["paid_at"] ?? null } : {}),
       tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"], number: o["tracking_number"] } : null,
     };
   }
@@ -3765,7 +3766,7 @@ export class FakeSupabase {
     // 0156: 未入金の注文は受付（pending）と発送の後（受け取り拒否）も取り消せる。返金は無い
     const unpaid = o["payment_status"] === "unpaid";
     if (!(o["status"] === "paid" || o["status"] === "pending" || (o["status"] === "shipped" && unpaid))) return json({ code: "P0001", message: "not_cancellable" }, 400);
-    if (reason != null && (reason !== "refused" || !unpaid)) return json({ code: "P0001", message: "invalid_cancel_reason" }, 400);
+    if (reason != null && (reason !== "refused" || !unpaid || o["status"] !== "shipped")) return json({ code: "P0001", message: "invalid_cancel_reason" }, 400);
     if (unpaid) refunded = false;
     o["cancel_reason"] = reason ?? null;
     for (const it of this.tables.order_items.filter((i) => i["order_id"] === o["id"])) {

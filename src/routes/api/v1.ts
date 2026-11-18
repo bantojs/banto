@@ -245,7 +245,10 @@ v1.post("/orders/:id/status", async (c) =>
     .then((b) => {
       const s = b["status"];
       if (s !== "shipped" && s !== "cancelled") throw new ApiError("invalid", "status must be shipped or cancelled", 400);
-      return api(c).orderUpdateStatus(c.req.param("id"), s);
+      // 受け取り拒否（0156。未入金で発送した注文の取り消しだけ）
+      const reason = b["reason"];
+      if (reason !== undefined && !(s === "cancelled" && reason === "refused")) throw new ApiError("invalid", "reason must be refused (with status cancelled)", 400);
+      return api(c).orderUpdateStatus(c.req.param("id"), s, reason === "refused" ? "refused" : undefined);
     })
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),

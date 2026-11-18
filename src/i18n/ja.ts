@@ -2468,6 +2468,7 @@ export const ja = {
   "audit.action.customer.email_changed": "会員のメールアドレスを変更",
   "audit.action.customer.deleted": "会員を削除",
   "audit.action.order.status_changed": "注文の状態を変更",
+  "audit.action.order.payment_recorded": "入金を記録",
   "audit.action.org_member.added": "メンバーを追加",
   "audit.action.org_member.role_changed": "メンバーの役割を変更",
   "audit.action.org_member.removed": "メンバーを外した",
