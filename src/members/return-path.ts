@@ -10,6 +10,13 @@
  * 合わなければ null（呼ぶ側は今までどおり会員ページへ）。返すのはパスとクエリを符号化した形
  */
 export function safeShopPath(raw: unknown, shopPath: string): string | null {
+  // 読み直した形（. や .. を畳み、文字を符号化したもの）にも同じ決まりを当て直し、もう一度通しても変わらないものだけを返す
+  // （"/.//evil" は畳むと "//evil" になる。独自ドメインの上ではショップのパスが "" なので、どのパスも「ショップの中」に見える）
+  const once = shopPathOnce(raw, shopPath);
+  return once !== null && shopPathOnce(once, shopPath) === once ? once : null;
+}
+
+function shopPathOnce(raw: unknown, shopPath: string): string | null {
   if (typeof raw !== "string" || raw.length === 0 || raw.length > 1000) return null;
   if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("#")) return null;
   if (/[\s\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(raw)) return null;
@@ -22,6 +29,7 @@ export function safeShopPath(raw: unknown, shopPath: string): string | null {
   }
   if (u.origin !== base) return null;
   const path = u.pathname;
+  if (path.startsWith("//")) return null;
   if (path.startsWith("/_oauth/") || path === "/_oauth") return null;
   const inShop = shopPath === "" ? true : path === shopPath || path.startsWith(`${shopPath}/`);
   if (!inShop) return null;

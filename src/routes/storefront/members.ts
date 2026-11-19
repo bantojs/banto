@@ -530,8 +530,9 @@ members.post("/:shop/account/login", async (c: Ctx) => {
   // Liquid のテーマの {% form 'customer_login' %} / 'create_customer' は customer[email] で送ってくる（パスワードの欄は使わない）
   const email = fields.email ?? fields["customer[email]"] ?? "";
   const base = `${shopHome(publicBaseUrl(c), s.shop)}/account/verify`;
-  // 戻る先（フォームの return_to、無ければログインの画面で覚えたもの）は、メールのリンクにも載せる（別の端末で開いても戻れるように）
-  const back = rememberReturnPath(c, s, fields.return_to) ?? safeShopPath(getScopedCookie(c, orderAfterLoginCookieName(s.shop.id), shopCookiePath(s)), s.shopPath);
+  // 戻る先（ログインの画面を開いたこのブラウザが覚えたもの）は、メールのリンクにも載せる（別の端末で開いても戻れるように）。
+  // フォームの return_to はここでは受けない: だれでも他人のアドレスにログインのメールを送れるので、送る人が選んだパスを本物のメールに載せない
+  const back = safeShopPath(getScopedCookie(c, orderAfterLoginCookieName(s.shop.id), shopCookiePath(s)), s.shopPath);
   const r = await startLogin(deps, s.shop, email, { ip: await clientIpFor(c, s.shop), returnTo: null, link: (id, token) => `${base}?c=${id}&t=${token}${back ? `&r=${encodeURIComponent(back)}` : ""}` });
   if (!r.ok) {
     if (r.error === "disabled") return notFound(c);

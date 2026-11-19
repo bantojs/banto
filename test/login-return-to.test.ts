@@ -50,6 +50,24 @@ describe("戻る先の検査（src/members/return-path.ts）", () => {
     expect(safeShopPath("/products/tee", "")).toBe("/products/tee");
     expect(safeShopPath("/account/login", "")).toBeNull();
     expect(safeShopPath("//evil.example", "")).toBeNull();
+    // 畳むと // になる形（独自ドメインの上ではどのパスも「ショップの中」に見えるので、読み直した形にも決まりを当て直す）
+    for (const raw of ["/.//evil.example", "/%2e//evil.example", "/x/..//evil.example", "/%2e%2e//evil.example", "/my-shop/..//evil"]) {
+      expect([raw, safeShopPath(raw, "")]).toEqual([raw, null]);
+      expect([raw, safeShopPath(raw, "/my-shop")]).toEqual([raw, null]);
+    }
+  });
+
+  it("返す形はもう一度通しても変わらず、// で始まらない（長い日本語のパスは符号化して長くなりすぎれば受けない）", () => {
+    const inputs = ["/my-shop/products/tee", "/my-shop/./products/tee", "/my-shop/a/../b", `/my-shop/${"テ".repeat(120)}`, "/my-shop/%E3%83%86?q=%E3%83%86", "/products/x", "/./products/x", "/./%2Fevil", "/%2F%2Fevil", "/.%2F/evil"];
+    for (const shopPath of ["/my-shop", ""]) {
+      for (const raw of inputs) {
+        const out = safeShopPath(raw, shopPath);
+        if (out === null) continue;
+        expect([raw, out.startsWith("//")]).toEqual([raw, false]);
+        expect([raw, safeShopPath(out, shopPath)]).toEqual([raw, out]);
+      }
+    }
+    expect(safeShopPath(`/my-shop/${"テ".repeat(120)}`, "/my-shop")).toBeNull();
   });
 
   it("ログインのリンクに今のページを付ける（戻せないページなら付けない）。Liquid の routes.account_login_url も同じ", () => {
@@ -96,10 +114,14 @@ describe("お店の画面のログイン", () => {
     expect((await b.get("/my-shop/account")).status).toBe(200);
   });
 
-  it("メールのログインのリンクにも戻る先を載せ、別の端末で開いても戻れる", async () => {
+  it("メールのログインのリンクにも戻る先を載せ、別の端末で開いても戻れる。送る人のフォームの return_to はメールに載せない", async () => {
     const { mail, fresh } = setup();
+    const attacker = fresh();
+    await attacker.post("/my-shop/account/login", { email: "member@example.com", return_to: "/my-shop/pages/call-us" });
+    expect(new URL(mail.link("member@example.com")).searchParams.get("r")).toBeNull();
     const b = fresh();
-    await b.post("/my-shop/account/login", { email: "member@example.com", return_to: "/my-shop/products/tee" });
+    await b.get("/my-shop/account/login?return_to=%2Fmy-shop%2Fproducts%2Ftee");
+    await b.post("/my-shop/account/login", { email: "member@example.com" });
     const link = mail.link("member@example.com");
     expect(new URL(link).searchParams.get("r")).toBe("/my-shop/products/tee");
     const other = fresh();
@@ -109,5 +131,21 @@ describe("お店の画面のログイン", () => {
     const t = /name="t" value="([^"]+)"/.exec(verify)![1]!;
     expect((await other.post("/my-shop/account/verify", { c, t })).headers.get("location")).toBe("/my-shop/account");
     expect((await other.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/products/tee");
+  });
+});
+
+describe("独自ドメインのショップ", () => {
+  it("ログイン中に畳むと // になる戻る先を渡されても外へ移さない。ヘッダのリンクはドメインの上のパス", async () => {
+    const { sb, mail } = setup();
+    sb.tables.shops[0]!["domain"] = "shop.example.jp";
+    const app = appWith(sb, { RESEND_API_KEY: "re_test" });
+    const b = new Browser(app, "https://shop.example.jp");
+    expect(await (await b.get("/products/tee")).text()).toContain('href="/account/login?return_to=%2Fproducts%2Ftee"');
+    await memberLogin(b, mail, "", "member@example.com");
+    for (const q of ["%2F.%2F%2Fevil.example%2Fx", "%2F%2e%2F%2Fevil.example", "%2Fx%2F..%2F%2Fevil.example"]) {
+      expect((await b.get(`/account/login?return_to=${q}`)).headers.get("location")).toBe("/account");
+      expect((await b.get(`/account/oauth/line?return_to=${q}`)).headers.get("location")).toBe("/account");
+    }
+    expect((await b.get("/account/login?return_to=%2Fcart")).headers.get("location")).toBe("/cart");
   });
 });
