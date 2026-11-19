@@ -228,6 +228,8 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     const csp = relay.headers.get("content-security-policy")!;
     expect(csp).toContain("script-src 'self' https://static-fe.payments-amazon.com");
     expect(csp).not.toContain("unsafe-inline");
+    // ボタンはフォームの送信で Amazon Pay の画面へ移る（form-action 'self' だけだと止まる）
+    expect(csp).toContain("form-action 'self' https://payments.amazon.co.jp https://*.amazon.co.jp");
     expect(relay.headers.get("referrer-policy")).toBe("no-referrer");
     const relayHtml = await relay.text();
     expect(relayHtml).toContain('<script src="https://static-fe.payments-amazon.com/checkout.js"></script>');

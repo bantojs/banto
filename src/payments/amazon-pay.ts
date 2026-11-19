@@ -177,5 +177,9 @@ export async function handleAmazonPayReturn(a: { db: PrivilegedDb; client: Amazo
  */
 export const AMAZON_PAY_RELAY_SCRIPT = `(function(){var el=document.getElementById("banto-amazon-pay");if(!el||!window.amazon||!amazon.Pay)return;var c=JSON.parse(el.textContent||"{}");var o={merchantId:c.merchantId,publicKeyId:c.publicKeyId,ledgerCurrency:"JPY",checkoutLanguage:"ja_JP",productType:"PayOnly",placement:"Checkout",buttonColor:"Gold",createCheckoutSessionConfig:{payloadJSON:c.payload,signature:c.signature,algorithm:"AMZN-PAY-RSASSA-PSS-V2"}};if(c.sandbox)o.sandbox=true;amazon.Pay.renderButton("#banto-amazon-pay-button",o);var w=document.getElementById("banto-amazon-pay-wait");if(w)w.hidden=true;})();`;
 
-/** 中継ページの CSP: スクリプトは Banto と Amazon Pay の部品だけ。ほかの読み込み（Amazon の画面の部品）は止めない。テーマは描かない */
-export const AMAZON_PAY_RELAY_CSP = "script-src 'self' https://static-fe.payments-amazon.com https://*.payments-amazon.com; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+/**
+ * 中継ページの CSP: スクリプトは Banto と Amazon Pay の部品だけ。ほかの読み込み（Amazon の画面の部品）は止めない。テーマは描かない。
+ * form-action: Amazon Pay のボタンはフォームの送信で Amazon Pay の画面（https://payments.amazon.co.jp/…、そこからの
+ * Amazon のログインへの転送を含む）へ移るので、Amazon の日本のドメインと Amazon Pay の部品のドメインを許す（'self' だけだと止まる）
+ */
+export const AMAZON_PAY_RELAY_CSP = "script-src 'self' https://static-fe.payments-amazon.com https://*.payments-amazon.com; object-src 'none'; base-uri 'none'; form-action 'self' https://payments.amazon.co.jp https://*.amazon.co.jp https://*.payments-amazon.com; frame-ancestors 'none'";
