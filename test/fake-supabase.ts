@@ -2583,6 +2583,10 @@ export class FakeSupabase {
           n++;
         }
       }
+      // 0159: 会員の既定の住所と氏名も消す
+      for (const m of this.tables.customers) {
+        if (m["shop_id"] === args["p_shop_id"] && String(m["email"] ?? "").toLowerCase() === String(args["p_email"]).toLowerCase()) Object.assign(m, { default_address: null, name: null });
+      }
       return json(n);
     }
     return json({ code: "PGRST202", message: `Could not find the function public.${fn}` }, 404);
@@ -4677,14 +4681,15 @@ export class FakeSupabase {
         payment_ref: order["payment_ref"] ?? null, payment_account: typeof order["payment_account"] === "string" && order["payment_account"].trim() ? order["payment_account"].trim().slice(0, 200) : null,
         shipped_at: null, created_at: this.now(), updated_at: this.now(),
       });
-      // 0159 のトリガー: 会員の注文のお届け先を既定の住所に写す（無ければいつも、あれば save_address のときだけ）
+      // 0159 のトリガー: 会員の注文のお届け先を既定の住所に写す（無ければいつも、あれば save_address のときだけ。予約したときの世代が今と同じ会員だけ）
       const shipTo = cust["shipping_address"];
-      if (res["customer_id"] && shipTo && typeof shipTo === "object" && this.appliedMigrations.includes("0159_member_address_from_order")) {
-        const member = this.tables.customers.find((x) => x["shop_id"] === res["shop_id"] && x["id"] === res["customer_id"]);
+      if (res["customer_id"] && shipTo && typeof shipTo === "object" && typeof cust["address_epoch"] === "number" && this.appliedMigrations.includes("0159_member_address_from_order")) {
+        const member = this.tables.customers.find((x) => x["shop_id"] === res["shop_id"] && x["id"] === res["customer_id"] && Number(x["session_epoch"] ?? 0) === cust["address_epoch"]);
         const saved = member?.["default_address"];
-        if (member && (!saved || typeof saved !== "object" || Object.keys(saved as Row).length === 0 || cust["save_address"] === true)) {
-          member["default_address"] = Object.fromEntries(Object.entries(shipTo as Row).filter(([k]) => ["name", "phone", "postal_code", "country", "state", "city", "line1", "line2"].includes(k)));
-          if (!member["name"]) member["name"] = cust["customer_name"] ?? null;
+        const addr = Object.fromEntries(Object.entries(shipTo as Row).filter(([k, v]) => ["name", "phone", "postal_code", "country", "state", "city", "line1", "line2"].includes(k) && (typeof v === "string" || v === null)));
+        if (member && Object.keys(addr).length > 0 && (!saved || typeof saved !== "object" || Object.keys(saved as Row).length === 0 || cust["save_address"] === true)) {
+          member["default_address"] = addr;
+          if (!String(member["name"] ?? "").trim()) member["name"] = String(cust["customer_name"] ?? "").trim().slice(0, 200) || null;
         }
       }
       for (const it of items) {

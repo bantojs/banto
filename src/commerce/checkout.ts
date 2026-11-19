@@ -506,7 +506,8 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     cancellation: terms.cancellation,
     ship_to: { name: a.customer_name, email: a.customer_email, phone: a.phone, postal_code: a.postal_code, state: a.state, city: a.city, line1: a.line1, line2: a.line2 },
     marketing_consent: consent ? a.marketing_consent === "1" : null,
-    ...(a.save_address === "1" ? { save_address: true as const } : {}),
+    // 会員だけ（ゲストの save_address は使わない）
+    ...(a.save_address === "1" && ctx.member?.id ? { save_address: true as const } : {}),
     links: { legal: `${base}/legal`, privacy: `${base}/privacy`, returns: `${base}/returns` },
     submit_label: quote.total === 0 ? t("confirm.submit_free") : quote.provider === "cod" ? t("confirm.submit_cod") : t("confirm.submit"),
   };
@@ -707,6 +708,8 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       ...(marketingConsentEnabled(shop.settings) ? { marketing_consent: a.marketing_consent === "1" } : {}),
       // 0159: 会員が「この住所を次回も使う」を選んだ（既定の住所を上書きする）。既定の住所が無い会員はこれが無くても保存される
       ...(input.customerId && a.save_address === "1" ? { save_address: true } : {}),
+      // 0159: 住所を写すのは、予約したときのログインの世代が確定のときも同じ会員だけ（すべての端末からログアウトした後の確定では写さない）
+      ...(input.customerId ? { address_epoch: input.customerEpoch ?? -1 } : {}),
     });
   } catch (e) {
     if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock") || e.is("sku_not_available"))) return { ok: false, error: "stock" };

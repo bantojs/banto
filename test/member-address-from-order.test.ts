@@ -73,6 +73,8 @@ describe("会員の住所の保存（0159）", () => {
     await guest.post("/my-shop/cart/add", { sku_id: sku.id, qty: "1" });
     const page = await (await guest.post("/my-shop/checkout", { provider: "cod" })).text();
     expect(page).not.toContain("会員情報に保存");
+    // ゲストが save_address を送っても、確認の画面に持ち回らない
+    expect(await (await guest.post("/my-shop/checkout/cod", { ...ADDRESS, save_address: "1" })).text()).not.toContain('name="save_address"');
     sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== MEMBER_ADDRESS_MIGRATION);
     const old = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }));
     await memberLogin(old, mail, "/my-shop", "member@example.com");
