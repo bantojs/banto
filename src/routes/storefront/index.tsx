@@ -150,6 +150,15 @@ interface ShopScope {
   query: Pick<AudienceContext, "params" | "remembered">;
 }
 
+/** 開いているページのお店の中のパス（ブラウザから見た形。GET だけ。ログインのリンクの戻る先、src/members/return-path.ts） */
+function currentPathOf(c: Ctx, slug: string, onDomain: boolean): string | undefined {
+  if (c.req.method !== "GET") return undefined;
+  const u = new URL(c.req.url);
+  const prefix = `/${slug}`;
+  const p = onDomain && (u.pathname === prefix || u.pathname.startsWith(`${prefix}/`)) ? u.pathname.slice(prefix.length) || "/" : u.pathname;
+  return `${p}${u.search}`;
+}
+
 async function scope(c: Ctx): Promise<ShopScope | null> {
   const sf = data(c);
   if (!sf) return null;
@@ -168,6 +177,7 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
     mediaBaseUrl: mediaBaseUrl(c),
     cartCount: cart.items.reduce((n, i) => n + i.qty, 0),
     membersEnabled: membersEnabled(shop),
+    currentPath: currentPathOf(c, shop.slug, onDomain),
     publicBaseUrl: onDomain ? shopOrigin(publicBaseUrl(c), shop) : publicBaseUrl(c),
     themeSettings: (shop.settings ?? {})["theme_settings"] && typeof (shop.settings ?? {})["theme_settings"] === "object" ? ((shop.settings ?? {})["theme_settings"] as Record<string, unknown>) : {},
   };

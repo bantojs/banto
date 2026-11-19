@@ -5,6 +5,7 @@
  * - 作るのはただのオブジェクト（テーマは自前のプロパティだけを読める）。テーマに渡すのは公開してよい値だけ
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
+import { loginUrlFor } from "../../members/return-path";
 import { moduleEnabled } from "../../modules/registry";
 import type { ProductField } from "../../products/fields";
 import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
@@ -359,7 +360,8 @@ export function shopObject(shop: PublicShop, home: string, intro: string | undef
 }
 
 /** coupons: 同梱モジュール coupons が ON か（ON のときだけ cart_coupon_url を渡す。Banto の名前で、Shopify には無い） */
-export function routesObject(shopPath: string, opts: { coupons?: boolean } = {}) {
+/** currentPath: 開いているページ（account_login_url はそこへ戻す ?return_to= を付ける。src/members/return-path.ts） */
+export function routesObject(shopPath: string, opts: { coupons?: boolean; currentPath?: string | undefined } = {}) {
   const root = shopPath || "/";
   return {
     ...(opts.coupons ? { cart_coupon_url: `${shopPath}/cart/coupon` } : {}),
@@ -374,9 +376,9 @@ export function routesObject(shopPath: string, opts: { coupons?: boolean } = {})
     search_url: productsUrl(shopPath),
     predictive_search_url: productsUrl(shopPath),
     account_url: `${shopPath}/account`,
-    account_login_url: `${shopPath}/account/login`,
+    account_login_url: loginUrlFor(shopPath, opts.currentPath),
     account_logout_url: `${shopPath}/account/logout`,
-    account_register_url: `${shopPath}/account/login`,
+    account_register_url: loginUrlFor(shopPath, opts.currentPath),
   };
 }
 

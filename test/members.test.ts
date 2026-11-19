@@ -37,7 +37,7 @@ describe("会員機能（店ごとのアカウント・パスワードなし）"
   it("メールのコードで入ると会員になる → 住所保存 → チェックアウトに自動入力 → 注文が履歴に出る → 退会", async () => {
     const { sb, stripe, shop, sku, app, mail, b } = setup();
     let html = await (await b.get("/my-shop")).text();
-    expect(html).toContain('href="/my-shop/account"');
+    expect(html).toContain('href="/my-shop/account/login?return_to=%2Fmy-shop"');
     expect((await b.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/account/login");
 
     html = await (await b.get("/my-shop/account/login")).text();

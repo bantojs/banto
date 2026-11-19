@@ -67,6 +67,7 @@ import { receiptAvailable } from "../../modules/receipt/data";
 import { PASSKEY_CLIENT_JS, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
 import { COSE_ALGS, WebAuthnError, b64urlEncode, newChallenge, readAssertion, sameUserHandle, userHandleOf, verifyAssertion, verifyRegistration, type Expected } from "../../members/webauthn";
 import { returnOrigins, safeReturnUrl, consentCollected, withQueryParam } from "../../commerce/checkout";
+import { safeShopPath } from "../../members/return-path";
 
 export type { MemberSession };
 
@@ -99,6 +100,16 @@ const shopCookiePath = (s: { shopPath: string }) => s.shopPath || "/";
  */
 export function rememberOrderAfterLogin(c: Ctx, s: { shop: { id: string }; shopPath: string }, number: number): void {
   setScopedCookie(c, orderAfterLoginCookieName(s.shop.id), String(number), { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
+}
+
+/**
+ * ログイン・LINE / Google を結んだ後に戻るお店の中のパス（テーマのリンクの ?return_to= やフォームの return_to）。
+ * 注文の番号と同じ Cookie に覚え、/account が 1 か所で戻す。受けるのは同じショップの中のパスだけ（src/members/return-path.ts）
+ */
+function rememberReturnPath(c: Ctx, s: { shop: { id: string }; shopPath: string }, raw: unknown): string | null {
+  const back = safeShopPath(raw, s.shopPath);
+  if (back) setScopedCookie(c, orderAfterLoginCookieName(s.shop.id), back, { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
+  return back;
 }
 
 /** Cookie はショップのパス（独自ドメインの上ではドメイン全体）に置く */
@@ -297,6 +308,9 @@ members.get("/:shop/account", async (c: Ctx) => {
   if (afterLogin) {
     clearScopedCookie(c, orderAfterLoginCookieName(s.shop.id), { path: shopCookiePath(s) });
     if (/^[0-9]{1,9}$/.test(afterLogin)) return c.redirect(`${s.shopPath}/orders/lookup?banto_order=${afterLogin}&banto_member=1`);
+    // ログインの前に開いていたお店のページ（Cookie の値も読み直して確かめる）
+    const back = safeShopPath(afterLogin, s.shopPath);
+    if (back) return c.redirect(back);
   }
   const db = privilegedFor(c);
   // マイクーポン（同梱モジュール coupons、0019）。モジュールが OFF なら DB に問い合わせない
@@ -493,7 +507,8 @@ async function authPage(c: Ctx, s: Scope, props: Parameters<Scope["theme"]["Memb
 members.get("/:shop/account/login", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  if (s.session) return c.redirect(`${s.shopPath}/account`);
+  if (s.session) return c.redirect(safeShopPath(c.req.query("return_to"), s.shopPath) ?? `${s.shopPath}/account`);
+  rememberReturnPath(c, s, c.req.query("return_to"));
   const key = LOGIN_ERRORS[c.req.query("error") ?? ""];
   privatePage(c);
   return authPage(c, s, {
@@ -515,7 +530,10 @@ members.post("/:shop/account/login", async (c: Ctx) => {
   // Liquid のテーマの {% form 'customer_login' %} / 'create_customer' は customer[email] で送ってくる（パスワードの欄は使わない）
   const email = fields.email ?? fields["customer[email]"] ?? "";
   const base = `${shopHome(publicBaseUrl(c), s.shop)}/account/verify`;
-  const r = await startLogin(deps, s.shop, email, { ip: await clientIpFor(c, s.shop), returnTo: null, link: (id, token) => `${base}?c=${id}&t=${token}` });
+  // 戻る先（ログインの画面を開いたこのブラウザが覚えたもの）は、メールのリンクにも載せる（別の端末で開いても戻れるように）。
+  // フォームの return_to はここでは受けない: だれでも他人のアドレスにログインのメールを送れるので、送る人が選んだパスを本物のメールに載せない
+  const back = safeShopPath(getScopedCookie(c, orderAfterLoginCookieName(s.shop.id), shopCookiePath(s)), s.shopPath);
+  const r = await startLogin(deps, s.shop, email, { ip: await clientIpFor(c, s.shop), returnTo: null, link: (id, token) => `${base}?c=${id}&t=${token}${back ? `&r=${encodeURIComponent(back)}` : ""}` });
   if (!r.ok) {
     if (r.error === "disabled") return notFound(c);
     return c.redirect(`${s.shopPath}/account/login?error=${r.error === "limit" ? "mail_limit" : r.error}`);
@@ -605,6 +623,7 @@ members.get("/:shop/account/verify", async (c: Ctx) => {
   const token = c.req.query("t") ?? "";
   const email = deps ? await peekLogin(deps, s.shop.id, challenge, token) : null;
   if (!email) return c.redirect(`${s.shopPath}/account/login?error=link`);
+  rememberReturnPath(c, s, c.req.query("r"));
   privatePage(c);
   return authPage(c, s, { ctx: ctxOf(s), mode: "verify", email: maskEmail(email), challenge, token });
 });
@@ -1081,6 +1100,7 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
   const deps = loginDeps(c);
   if (!deps) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
   const f = await formFields(c);
+  rememberReturnPath(c, s, f.return_to);
   const email = (f.email ?? "").trim().toLowerCase();
   const ip = await clientIpFor(c, s.shop);
   const r = await deps.db.memberPasswordLogin(s.shop.id, email, f.password ?? "", ip ? await ipHash(deps.secret, ip) : null);
@@ -1151,6 +1171,8 @@ interface OAuthState {
   /** 知らせのメールに出すショップ名（0057） */
   shop_name?: string;
   return_to?: string;
+  /** 結んだ（link）後に戻るお店の中のパス（safeShopPath を通したもの） */
+  next?: string;
   exp: number;
 }
 
@@ -1159,7 +1181,7 @@ const oauthSecret = (secret: string) => `${secret}|member-oauth`;
 const redirectUri = (origin: string, p: Provider) => `${origin}${callbackPath(p)}`;
 
 /** 提供元へ送り出す（state などを Cookie に持つ）。client_id はキャッシュ済みのショップ行から */
-export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OAuthState["mode"], extra: { cid?: string; ep?: number; sid?: string; return_to?: string } = {}): Promise<Response> {
+export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OAuthState["mode"], extra: { cid?: string; ep?: number; sid?: string; return_to?: string; next?: string } = {}): Promise<Response> {
   const clientId = providerClientId(shop.settings, p);
   const secret = c.get("sessionSecret");
   if (!clientId || !secret || !enabledProviders(shop).includes(p)) return c.text(t("store.not_found"), 404);
@@ -1196,7 +1218,8 @@ members.get("/:shop/account/oauth/:provider", async (c: Ctx) => {
   const s = await scope(c);
   const p = providerOf(c);
   if (!s || !p) return notFound(c);
-  if (s.session) return c.redirect(`${s.shopPath}/account`);
+  if (s.session) return c.redirect(safeShopPath(c.req.query("return_to"), s.shopPath) ?? `${s.shopPath}/account`);
+  rememberReturnPath(c, s, c.req.query("return_to"));
   return startOAuth(c, s.shop, p, "login");
 });
 
@@ -1205,7 +1228,9 @@ members.post("/:shop/account/oauth/:provider/link", navigateOnly, async (c: Ctx)
   const p = providerOf(c);
   if (!s || !p) return notFound(c);
   if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
-  return startOAuth(c, s.shop, p, "link", { cid: s.session.cid, ep: s.session.ep, ...(s.session.sid ? { sid: s.session.sid } : {}) });
+  // 結んだ後に戻るお店の中のパス（フォームの return_to。署名した state に入れる）
+  const next = safeShopPath((await formFields(c)).return_to, s.shopPath);
+  return startOAuth(c, s.shop, p, "link", { cid: s.session.cid, ep: s.session.ep, ...(s.session.sid ? { sid: s.session.sid } : {}), ...(next ? { next } : {}) });
 });
 
 members.post("/:shop/account/oauth/:provider/unlink", async (c: Ctx) => {
@@ -1272,7 +1297,9 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
     if (ld && r.linked && r.mail_from && r.email) {
       await afterResponse(c, sendAccountChangeNotice(ld, { name: st.shop_name ?? "" }, { kind: "oauth", provider: p, from: r.mail_from, to: r.email, accountUrl: `${st.origin}${shopPath}/account` }));
     }
-    return c.redirect(`${shopPath}/account?flash=oauth_linked`);
+    // 戻る先はもう一度確かめる（state は署名してあるが、ショップのパスが変わっていることもある）
+    const next = safeShopPath(st.next, shopPath);
+    return c.redirect(next ? withQueryParam(next, "banto_linked", p) : `${shopPath}/account?flash=oauth_linked`);
   }
   if (st.mode === "api" && st.return_to) {
     // ヘッドレス: 1 回限り・2 分の引き換え券を渡す（会員のトークンを URL に載せない）

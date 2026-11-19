@@ -228,6 +228,7 @@ Shopify では Plus のプランに限られる「チェックアウトの途中
 
 **クーポンと決済手段**（Banto の名前。Shopify には無いもの）:
 
+- `routes.account_login_url`（と `account_register_url`）には、今のページへ戻る `?return_to=` が付きます。ログインの後は会員ページを経てそのページへ戻ります。ログインのリンクを自分で組むときも、`?return_to=<お店の中のパス>` を付けられます。会員ページの「LINE を結ぶ」などのフォームでは、隠しの値 `return_to` を付けます。結んだ後はそのページへ戻り、`banto_linked=<line|google>` が付きます。受けるのは同じショップの中のパスだけです（外のサイト・ログインの途中の画面・`banto_` の鍵・`#` は受けず、会員ページへ戻します。レジの画面はカートへ）。
 - `routes.cart_coupon_url`: 同梱モジュール「クーポン」が ON のショップだけにあります（OFF なら空）。そこへ `code`（入れる）か `remove`（外すコード）を POST します（カートのページに戻ります）。入っているコードは `cart.discount_codes`（Shopify と同じ `code`・`applicable`）。使えないコードは `applicable` が false で、`banto_message` に理由（「このクーポンは見つかりません」など）が入ります。値引きの額は `cart.cart_level_discount_applications` です。
 - `cart.banto_payment_methods`: カートのページ（と `?sections=` で描くカート）で、使える決済手段の一覧（`id` は `stripe`・`komoju`・`amazon_pay` のどれか、`name` は表示名）。`{% form 'cart' %}` の中に `provider` の欄（ラジオボタンなど）で置けば、選んだ決済手段で購入手続きに進みます。置かなければ、使える最初の決済手段です。KOMOJU の中の支払い方法（コンビニ・銀行振込など）は、KOMOJU のページで選びます。
 
