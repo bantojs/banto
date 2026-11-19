@@ -126,7 +126,7 @@ npx wrangler secret put AMAZON_PAY_PRIVATE_KEY < AmazonPay_privateKey.pem
 - 確定と返金の冪等の鍵は Amazon Pay の Charge ID です（戻りと IPN のどちらが先に届いても、注文も返金も 1 回だけ）。
 - 在庫の予約は Stripe と同じ 40 分です。期限が切れた後に支払いが済んだときは、在庫があれば確定し、無ければ自動で返金します。
 - Amazon Pay の画面で「戻る」を押すと、予約を戻してカートに戻ります。断られたときも予約を戻し、カートに「お支払いが完了しませんでした」と出します。
-- Amazon Pay の画面へ移る中継ページだけが Amazon のスクリプト（`https://static-fe.payments-amazon.com/checkout.js`）を読みます。お店の画面・レジ（Liquid のテーマを含む）の CSP は変わりません。
+- Amazon Pay の画面へ移る中継ページだけが Amazon のスクリプト（`https://static-fe.payments-amazon.com/checkout.js`）を読みます。中継ページの CSP は、スクリプトを Banto と Amazon Pay の部品だけに絞り、フォームの送信先（`form-action`）に Amazon Pay の画面（`https://payments.amazon.co.jp` と Amazon の日本のドメイン）を許します。お店の画面・レジ（Liquid のテーマを含む）の CSP は変わりません。
 - 注文のキャンセル（管理画面・AI 用 API）は、Amazon Pay で返金してから在庫を戻します（売り上げた額から返金済みの額を引いた額）。
 - クーポンの条件「使える支払い方法」に **Amazon Pay** があります（マイグレーション `0130_amazon_pay` が要ります）。
 - ヘッドレス: `provider: "amazon_pay"` で quote を作り、`checkout` の `payment_url`（Banto の中継ページ）へ購入者を移します。戻り先は `success_url` / `cancel_url` のとおりです（docs/headless.md）。
