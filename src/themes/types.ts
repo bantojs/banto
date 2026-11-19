@@ -23,6 +23,8 @@ export interface ThemeContext {
   member?: { email: string; attrs?: Record<string, unknown> } | null;
   /** 会員機能が有効か（ヘッダにログイン導線を出す） */
   membersEnabled?: boolean;
+  /** 開いているページのお店の中のパス（GET のときだけ）。ログインのリンクに ?return_to= で付ける（loginUrlFor、src/members/return-path.ts） */
+  currentPath?: string;
   /** 外から見た URL（canonical / OG 用） */
   publicBaseUrl?: string;
   /** テーマ設定（shops.settings.theme_settings）。テーマが解釈する */

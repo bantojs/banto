@@ -326,6 +326,19 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     expect((await oauthCallback(b, start, "unverified", fake)).headers.get("location")).toBe("/my-shop/account?error=already_linked");
     start = await b.post("/my-shop/account/oauth/google/link", {});
     expect((await oauthCallback(b, start, "verified", fake)).headers.get("location")).toBe("/my-shop/account?flash=oauth_linked");
+
+    // 戻る先（お店の中のパスだけ）: 結んだ後はそのページへ（banto_linked に提供元）。外のサイトは受けず会員ページへ
+    await b.post("/my-shop/account/oauth/google/unlink", {});
+    start = await b.post("/my-shop/account/oauth/google/link", { return_to: "/my-shop/products/tee?color=red" });
+    expect((await oauthCallback(b, start, "verified", fake)).headers.get("location")).toBe("/my-shop/products/tee?color=red&banto_linked=google");
+    await b.post("/my-shop/account/oauth/google/unlink", {});
+    start = await b.post("/my-shop/account/oauth/google/link", { return_to: "https://evil.example/" });
+    expect((await oauthCallback(b, start, "verified", fake)).headers.get("location")).toBe("/my-shop/account?flash=oauth_linked");
+    // ログイン: 始めたときの ?return_to= を覚え、会員ページがそこへ戻す
+    const back = fresh();
+    start = await back.get("/my-shop/account/oauth/google?return_to=%2Fmy-shop%2Fcart");
+    expect((await oauthCallback(back, start, "verified", fake)).headers.get("location")).toBe("/my-shop/account");
+    expect((await back.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/cart");
   });
 
   it("シークレットが違う（サイトの秘密が変わった・別のショップの暗号文）ならログインしない", async () => {

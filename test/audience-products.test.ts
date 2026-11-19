@@ -70,7 +70,7 @@ describe("お店の画面", () => {
     expect((await b.get("/my-shop/products/secret")).status).toBe(404);
     const eh = await (await b.get("/my-shop/products/early")).text();
     expect(eh).toContain("data-members-only");
-    expect(eh).toContain('href="/my-shop/account/login"');
+    expect(eh).toContain('href="/my-shop/account/login?return_to=%2Fmy-shop%2Fproducts%2Fearly"');
     // カートに入れようとしても入らない
     const r = await b.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" });
     expect(r.headers.get("location")).toBe("/my-shop/products/early");

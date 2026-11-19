@@ -214,7 +214,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
   const globals: Record<string, unknown> = {
     shop: shopObject(s.shop, home, intro),
     settings: themeSettings(lt, choice.settings),
-    routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null }),
+    routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null, currentPath: s.ctx.currentPath }),
     request: { host: new URL(origin).host, path, page_type: page.template.split(".")[0]!, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
     cart: cartObject(u, choice.cartLines, null, choice.cartImages),
     // attributes は会員の条件で使っている独自項目の値だけ（Cookie に入れたもの、0097）。audiences は合う条件の名前

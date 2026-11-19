@@ -1,4 +1,5 @@
 import type { CategoryNode } from "../../products/categories";
+import { loginUrlFor } from "../../members/return-path";
 import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
 import { filterNoindex, priceFiltered } from "../../storefront/list-filter";
 import type { ProductSort } from "../../storefront/data";
@@ -174,7 +175,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
                 </a>
               ))}
               {ctx.membersEnabled ? (
-                <a href={`${ctx.shopPath}/account`} style="margin-right:1rem">
+                <a href={ctx.member ? `${ctx.shopPath}/account` : loginUrlFor(ctx.shopPath, ctx.currentPath)} style="margin-right:1rem">
                   {ctx.member ? t("member.account") : t("member.login")}
                 </a>
               ) : null}
@@ -1481,7 +1482,7 @@ export const defaultTheme: Theme = {
           </form>
         ) : (
           <p>
-            {t("claim.login_first")} <a href={`${ctx.shopPath}/account/login`}>{t("member.login")}</a>
+            {t("claim.login_first")} <a href={loginUrlFor(ctx.shopPath, ctx.currentPath)}>{t("member.login")}</a>
           </p>
         )}
       </Layout>
@@ -2062,7 +2063,7 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
                   t("store.members_only_buy")
                 ) : (
                   <>
-                    {t("store.members_only_login")} <a href={`${ctx.shopPath}/account/login`}>{t("store.members_login")}</a>
+                    {t("store.members_only_login")} <a href={loginUrlFor(ctx.shopPath, ctx.currentPath)}>{t("store.members_login")}</a>
                   </>
                 )}
               </p>
