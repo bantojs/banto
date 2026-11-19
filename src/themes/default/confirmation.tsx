@@ -157,6 +157,7 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
         {cf.delivery_request?.date ? <input type="hidden" name="delivery_date" value={cf.delivery_request.date} /> : null}
         {cf.delivery_request?.slot ? <input type="hidden" name="delivery_slot" value={cf.delivery_request.slot} /> : null}
         {cf.marketing_consent ? <input type="hidden" name="marketing_consent" value="1" /> : null}
+        {cf.save_address ? <input type="hidden" name="save_address" value="1" /> : null}
         <button type="submit" style={secondary}>
           {t("confirm.edit")}
         </button>

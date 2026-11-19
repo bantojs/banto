@@ -1204,6 +1204,8 @@ export const ja = {
   "store.address_line1": "番地",
   "store.address_line2": "建物名・部屋番号",
   "store.address_submit": "ご注文内容の確認へ",
+  "store.save_address": "この住所を会員情報に保存して、次回も使う",
+  "store.save_address_auto": "ご注文のお届け先を会員情報に保存し、次回のご注文で入力を省けます（会員ページでいつでも変えられます）。",
   "store.address_invalid": "入力内容を確認してください。",
   "confirm.title": "ご注文内容の確認",
   "confirm.intro": "以下の内容でよろしければ「注文を確定する」を押してください。決済ページへ移動し、お支払いが完了した時点でご注文が確定します。",

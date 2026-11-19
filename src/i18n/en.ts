@@ -1201,6 +1201,8 @@ export const en: Record<MessageKey, string> = {
   "store.address_line1": "Street address",
   "store.address_line2": "Building / room",
   "store.address_submit": "Review order",
+  "store.save_address": "Save this address to my account and use it next time",
+  "store.save_address_auto": "This shipping address will be saved to your account so you can skip it next time (you can change it on your account page).",
   "store.address_invalid": "Please check your input.",
   "confirm.title": "Review your order",
   "confirm.intro": "If everything below is correct, press \"Place order\". You will continue to the payment page, and your order is confirmed once payment is completed.",

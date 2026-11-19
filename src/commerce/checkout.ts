@@ -202,7 +202,7 @@ export function couponNotice(r: RejectedCoupon): { code: string; reason: string;
 
 // ---------- 配送先 ----------
 
-export const ADDRESS_FIELDS = ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1", "line2", "delivery_date", "delivery_slot", "marketing_consent"] as const;
+export const ADDRESS_FIELDS = ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1", "line2", "delivery_date", "delivery_slot", "marketing_consent", "save_address"] as const;
 export const REQUIRED_ADDRESS_FIELDS = ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1"] as const;
 export type Address = Required<AddressFormValues>;
 
@@ -216,6 +216,9 @@ export function validateAddress(input: Record<string, unknown>): { address: Addr
   // 「お得な情報やセールの案内を受け取る」（0050）。画面は "1"、ヘッドレスは true も受ける。それ以外は空（未チェック）
   const consent = input["marketing_consent"];
   v.marketing_consent = consent === true || consent === "1" || consent === "on" || consent === "true" ? "1" : "";
+  // 会員の「この住所を次回も使う」（0159）。既定の住所がある会員だけが上書きに使う（無い会員は確定のときにいつも保存される）
+  const save = input["save_address"];
+  v.save_address = save === true || save === "1" || save === "on" || save === "true" ? "1" : "";
   // お届け希望（同梱モジュール delivery_time）。ショップの設定での確認は createQuote（checkDelivery）
   if (v.delivery_date && !/^\d{4}-\d{2}-\d{2}$/.test(v.delivery_date)) v.delivery_date = "";
   if (v.delivery_slot && !isDeliverySlot(v.delivery_slot)) v.delivery_slot = "";
@@ -300,6 +303,8 @@ export interface Confirmation {
   ship_to: { name: string; email: string; phone: string; postal_code: string; state: string; city: string; line1: string; line2: string };
   /** 「お得な情報やセールの案内を受け取る」（0050）。欄を出さないショップでは null（未回答） */
   marketing_consent: boolean | null;
+  /** 会員が「この住所を次回も使う」を選んだ（0159）。選んでいなければ無い */
+  save_address?: true;
   /** 法務ページ（絶対 URL） */
   links: { legal: string; privacy: string; returns: string };
   /** 申込みボタンの文言（「注文を確定する」等、押すと申込みになることが分かるもの） */
@@ -501,6 +506,8 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     cancellation: terms.cancellation,
     ship_to: { name: a.customer_name, email: a.customer_email, phone: a.phone, postal_code: a.postal_code, state: a.state, city: a.city, line1: a.line1, line2: a.line2 },
     marketing_consent: consent ? a.marketing_consent === "1" : null,
+    // 会員だけ（ゲストの save_address は使わない）
+    ...(a.save_address === "1" && ctx.member?.id ? { save_address: true as const } : {}),
     links: { legal: `${base}/legal`, privacy: `${base}/privacy`, returns: `${base}/returns` },
     submit_label: quote.total === 0 ? t("confirm.submit_free") : quote.provider === "cod" ? t("confirm.submit_cod") : t("confirm.submit"),
   };
@@ -637,6 +644,8 @@ export interface PlaceOrderDeps {
 
 /** reserve_stock が会員 id を受け取り、会員限定の商品を確かめる版 */
 export const RESERVE_AUDIENCE_MIGRATION = "0129_security_hardening_5";
+/** 会員の注文のお届け先を既定の住所に写す（0159）。レジの「保存します」「次回も使う」は当ててから出す */
+export const MEMBER_ADDRESS_MIGRATION = "0159_member_address_from_order";
 
 export interface PlaceOrderInput {
   shop: PublicShop;
@@ -697,6 +706,10 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       ...(input.customerId ? { customer_id: input.customerId, customer_epoch: input.customerEpoch ?? -1 } : {}),
       // 0050: 「お得な情報やセールの案内を受け取る」。欄を出すショップだけ（出さないショップは未回答のまま）。注文の行と会員にトリガーで写る
       ...(marketingConsentEnabled(shop.settings) ? { marketing_consent: a.marketing_consent === "1" } : {}),
+      // 0159: 会員が「この住所を次回も使う」を選んだ（既定の住所を上書きする）。既定の住所が無い会員はこれが無くても保存される
+      ...(input.customerId && a.save_address === "1" ? { save_address: true } : {}),
+      // 0159: 住所を写すのは、予約したときのログインの世代が確定のときも同じ会員だけ（すべての端末からログアウトした後の確定では写さない）
+      ...(input.customerId ? { address_epoch: input.customerEpoch ?? -1 } : {}),
     });
   } catch (e) {
     if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock") || e.is("sku_not_available"))) return { ok: false, error: "stock" };

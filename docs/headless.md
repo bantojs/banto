@@ -403,6 +403,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 - quote を作ったときと確定のときで会員が違う・トークンを外した場合は、判定し直して 409 `changed` で出し直します（会員限定の値引きは付きません）。
 - `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレス・名前・既定の住所（`address`）・案内メールの同意（`marketing_consent`。ショップが欄を使うときだけ、`null` は未回答）と、このショップでの注文の一覧（番号・状態・金額・日時。注文の住所は返さない）を返します。
 - **会員本人の操作**（会員ページと同じ。お店の画面を使わないショップでも、会員が自分で直せるように）:
+  - 会員トークンを付けた注文は、確定したときにお届け先を既定の住所に保存します（既定の住所がまだ無いとき。0159）。連携サイトのレジに、そのことを会員に知らせる文を出してください。既定の住所がある会員は、quote の `address.save_address` に true か `"1"` を渡したときだけ上書きします（`confirmation.save_address` が true）。
   - `POST /api/shops/<shop>/members/address` `{ "customer_name", "phone", "postal_code", "state", "city", "line1", "line2" }` で既定の住所を保存します（チェックアウトの欄の初期値になります。都道府県でない `state` は `null`）。
   - `POST /api/shops/<shop>/members/marketing-consent` `{ "consent": true | false }` で案内メールを受け取る・受け取らないを選びます。会員がログインして自分で選ぶので、受け取る（`true`）も本人の行為として記録します。ショップがこの欄を使っていなければ 404 `consent_disabled`。
   - `POST /api/shops/<shop>/members/withdraw` `{ "confirm": true }` で退会します（会員の行を消し、注文は残ります。取り消せません）。そのトークンはすぐ使えなくなります。注文 1 件の中身と領収書は `/members/orders/<番号>`（下の「注文照会・領収書」）。

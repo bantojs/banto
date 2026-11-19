@@ -953,7 +953,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  AddressPage({ ctx, provider, values, prefectures, shipping, subtotal, error, delivery, consent }) {
+  AddressPage({ ctx, provider, values, prefectures, shipping, subtotal, error, delivery, consent, saveAddress }) {
     const field = (name: keyof typeof values, label: string, type = "text", required = true, autocomplete?: string) => (
       <div>
         <label for={name}>{label}</label>
@@ -1017,6 +1017,15 @@ export const defaultTheme: Theme = {
             </div>
           ) : null}
           <p>
+            {saveAddress === "ask" ? (
+              <p>
+                <label>
+                  <input type="checkbox" name="save_address" value="1" checked={values.save_address === "1"} /> {t("store.save_address")}
+                </label>
+              </p>
+            ) : saveAddress === "auto" ? (
+              <p class="muted">{t("store.save_address_auto")}</p>
+            ) : null}
             {consent ? (
               <p>
                 <label>
