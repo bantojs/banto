@@ -167,16 +167,28 @@ async function verifySession(c: Ctx, shop: { id: string; slug: string; domain?: 
 
 /** 会員の既定住所でチェックアウトのフォームを埋める */
 export async function customerPrefill(c: Ctx, s: { shop: { id: string; slug: string; settings?: Record<string, unknown> } }): Promise<AddressFormValues> {
+  return (await checkoutMember(c, s))?.values ?? {};
+}
+
+/**
+ * レジの会員（ゲストなら null）: フォームの初期値と、既定の住所があるか（0159。無ければ注文の確定で保存される、あれば「次回も使う」の欄を出す）
+ */
+export async function checkoutMember(c: Ctx, s: { shop: { id: string; slug: string; settings?: Record<string, unknown> } }): Promise<{ values: AddressFormValues; hasAddress: boolean | null } | null> {
   const session = await customerSession(c, s);
   const db = privilegedFor(c);
-  if (!session || !db) return {};
+  if (!session || !db) return null;
   const rec = await db.memberGet(s.shop.id, session.cid, session.ep, false).catch(() => null);
-  const row = rec?.customer ?? null;
+  // 読めなかった（セッションが古いなど）: メールアドレスだけ埋め、保存の欄は出さない
+  if (!rec) return { values: prefillFrom(null, session.email), hasAddress: null };
+  return { values: prefillFrom(rec.customer, session.email), hasAddress: Boolean(rec.customer.default_address && Object.keys(rec.customer.default_address).length > 0) };
+}
+
+function prefillFrom(row: { name?: string | null; email?: string | null; default_address?: Record<string, unknown> | null } | null, sessionEmail: string): AddressFormValues {
   const a = (row?.default_address ?? {}) as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" ? v : undefined);
   return {
     customer_name: str(row?.name) ?? str(a["name"]),
-    customer_email: str(row?.email) ?? (session.email || undefined),
+    customer_email: str(row?.email) ?? (sessionEmail || undefined),
     phone: str(a["phone"]),
     postal_code: str(a["postal_code"]),
     state: str(a["state"]),

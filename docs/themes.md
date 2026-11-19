@@ -184,7 +184,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 | 商品 | `product` | `product`・`current_variant` |
 | 見つからない | `404` | — |
 | カート（`/cart`） | `cart` | `cart`（下の「カート」）・`cart_error`（在庫が足りない・クーポンが使えないなどの知らせ） |
-| レジ: 配送先 | `checkout` | `checkout`（`values`（入れた値）・`error`・`prefectures`（`name`・`shipping_price`）・`delivery`（お届け日時を選べるショップ）・`marketing_consent`（案内メールの欄を出すか）・`subtotal_price`・`shipping_summary`）。フォームは `{% form 'checkout_address' %}`（下の「レジ」） |
+| レジ: 配送先 | `checkout` | `checkout`（`values`（入れた値）・`error`・`prefectures`（`name`・`shipping_price`）・`delivery`（お届け日時を選べるショップ）・`marketing_consent`（案内メールの欄を出すか）・`save_address`（会員の住所の保存、0159: `"auto"` = 注文の住所を保存するお知らせ、`"ask"` = 「次回も使う」の欄 `save_address` を出す、`null` = 出さない）・`subtotal_price`・`shipping_summary`）。フォームは `{% form 'checkout_address' %}`（下の「レジ」） |
 | レジ: 最終確認 | `checkout_confirm` | `checkout.confirmation`（要約に使う値）。中身は **`{% banto_confirmation %}` が必須**（下の「レジ」） |
 | 検索（`/products?q=`・`/categories/<カテゴリー>?q=`） | `search`（任意。無ければ `collection` に同じ `search` を渡す） | `search`（`terms`・`results`（商品）・`results_count`・`performed`）。語は 3 文字以上で、2 文字以下は探さず `performed` が false、`too_short`（Banto の名前）が true になります（「3 文字以上で」の案内に使えます） |
 | 法務（`/legal`・`/privacy`・`/returns`） | `page` | `page`（`title`・`handle`（`legal` / `privacy` / `returns`）・`url`・`content`）。`content` は Banto が文面から作ります（改行を `<br>` にしてエスケープ）。連携サイトのページに向けていればそちらへ転送します（テーマでは描きません） |
@@ -216,7 +216,7 @@ node cli/banto-theme.mjs prune --keep 5            # 公開していない古い
 
 Shopify では Plus のプランに限られる「チェックアウトの途中の画面」を、Banto ではテーマで作れます（メンテナの決定 2026-10-28）。カード番号を入れる画面はいつも Stripe・KOMOJU のページで、金額・在庫・送料は確定の直前に Banto が引き直す（確認画面と 1 円でも違えば確定しない）ので、画面をどう作っても値段は変わりません。
 
-- **配送先**（`templates/checkout`）: `{% form 'checkout_address' %}` の中に、Banto の欄の名前（`customer_name`・`customer_email`・`phone`・`postal_code`・`state`・`city`・`line1`・`line2`、お届け日時の `delivery_date`・`delivery_slot`、案内メールの `marketing_consent`）で置きます。送り先は選んだ決済手段の確認の画面です。誤りがあれば同じテンプレートを `checkout.error` つきで描き直します。
+- **配送先**（`templates/checkout`）: `{% form 'checkout_address' %}` の中に、Banto の欄の名前（`customer_name`・`customer_email`・`phone`・`postal_code`・`state`・`city`・`line1`・`line2`、お届け日時の `delivery_date`・`delivery_slot`、案内メールの `marketing_consent`、会員の「この住所を次回も使う」の `save_address`（`checkout.save_address` が `"ask"` のときだけ、値は `1`））で置きます。送り先は選んだ決済手段の確認の画面です。誤りがあれば同じテンプレートを `checkout.error` つきで描き直します。
 - **最終確認**（`templates/checkout_confirm`）: 特定商取引法の最終確認画面です。表示しなければならない項目（品目・数・金額・送料・値引き・支払いの方法と時期・引渡しの時期・申込みの撤回の条件・お届け先・法務のページへのリンク）と「注文を確定する」ボタンは、**`{% banto_confirmation %}` が Banto の部品として描きます**（同梱テーマと同じもの）。テーマはその外側（見出し・注文の要約・案内）を作ります。`{% banto_confirmation %}` は `templates/checkout_confirm.liquid` 自身（`.json` なら並べたセクションの `sections/*.liquid`）に書きます（snippet や別のテンプレートに書いただけのテーマは取り込めません）。タグが書くのはリクエストごとに変わる印だけで、Banto は描き終えた HTML のその印を表示に差し替えます。テーマは表示の中身（確定の quote など）を `capture` で読めず、印を真似することもできません。描いた結果に印が無ければ（条件の中に置いて描かなかった・`capture` に閉じ込めたなど）、その画面は既定のテーマで描きます。
 - レジの画面には **CSP** を付けます（`script-src 'self'; connect-src 'self'`）。動くスクリプトは、ショップのドメインから配るテーマの資産だけで、問い合わせ（fetch など）の宛先もショップのドメインだけです。インラインのスクリプトと外のスクリプト（分析のタグ・チャットなど）は、レジの画面では動きません。住所と連絡先が載る画面だからです。
 - これらは、テーマを作る人のうっかりを止める安全網です。テーマの JS は画面を書き換えられるので、悪意のあるテーマへの守りではありません。テーマを取り込み・公開できるのは「デザイン（テーマ）」の項目を持つ人と `theme:publish` のトークンだけにしてください。

@@ -534,12 +534,14 @@ export function renderCheckoutAddress(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; categories: CategoryRow[]; status?: 200 | 400 },
+  p: { provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; saveAddress?: "auto" | "ask" | null; categories: CategoryRow[]; status?: 200 | 400 },
 ): Response | null {
   const fee = (pref: string) => p.shipping.table?.find((x) => x.prefecture === pref)?.fee;
   const checkout = {
     provider: p.provider,
     values: Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, p.values[k] ?? ""]).concat([["marketing_consent", p.values.marketing_consent ?? ""]])),
+    // 会員の住所の保存（0159）: "auto" = 注文の住所を保存する（お知らせだけ）、"ask" = 欄 save_address（"1" で上書き）を出す、null = 出さない
+    save_address: p.saveAddress ?? null,
     error: p.error ?? null,
     subtotal_price: money(p.subtotal),
     shipping_summary: p.shipping.summary,

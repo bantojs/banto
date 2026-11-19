@@ -25,7 +25,8 @@ import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
-import { clientIpFor, csrfGuard, formFields, getScopedCookie, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, setScopedCookie, type Ctx } from "../common";
+import { clientIpFor, csrfGuard, formFields, getScopedCookie, mediaBaseUrl, migrationStateFor, param, publicBaseUrl, readBodyLimited, setScopedCookie, type Ctx } from "../common";
+import { migrated } from "../../db/migration-state";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
@@ -41,8 +42,8 @@ import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import type { CodBlock } from "../../modules/cod";
-import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
-import { bindScope, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
+import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
+import { bindScope, checkoutMember, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
@@ -1523,13 +1524,28 @@ async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): P
   if (lines.length === 0 && all.length > 0 && all.every((l) => l.storeOnly)) return c.redirect(`${cartUrl}?error=store_only`);
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
   const edited = addressValues(f);
-  const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
-  return addressPage(c, s, { provider, values, subtotal: total, lines });
+  const member = s.ctx.membersEnabled ? await checkoutMember(c, s) : null;
+  const values = Object.keys(edited).length > 0 ? edited : (member?.values ?? {});
+  return addressPage(c, s, { provider, values, subtotal: total, lines, member });
+}
+
+/**
+ * 会員の住所の保存（0159）: 既定の住所が無ければ「保存します」のお知らせ、あれば「次回も使う」の欄。ゲスト・当てる前の DB は出さない。
+ * member を渡さなければ（入力の誤りで描き直すとき）ここで引く
+ */
+async function saveAddressMode(c: Ctx, s: ShopScope, member?: { hasAddress: boolean | null } | null): Promise<"auto" | "ask" | null> {
+  if (!s.ctx.membersEnabled || !s.ctx.member) return null;
+  const m = member === undefined ? await checkoutMember(c, s) : member;
+  if (!m || m.hasAddress === null) return null;
+  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  if (!state || !(await migrated(state, MEMBER_ADDRESS_MIGRATION))) return null;
+  return m.hasAddress ? "ask" : "auto";
 }
 
 /** 配送先の画面（Liquid のテーマの templates/checkout、無ければ既定のテーマ） */
-async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400 }): Promise<Response> {
-  const props = { provider: p.provider, values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), ...(p.error ? { error: p.error } : {}) };
+async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400; member?: { hasAddress: boolean | null } | null }): Promise<Response> {
+  const saveAddress = await saveAddressMode(c, s, p.member);
+  const props = { provider: p.provider, values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), saveAddress, ...(p.error ? { error: p.error } : {}) };
   const lt = await liquidThemeFor(c, s, { cartLines: p.lines });
   if (lt) {
     const res = renderCheckoutAddress(c, s, lt, { ...props, categories: await s.sf.listCategories(s.shop), ...(p.status ? { status: p.status } : {}) });

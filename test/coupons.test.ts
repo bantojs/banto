@@ -428,7 +428,9 @@ describe("クーポン: ヘッドレスの会員（Authorization: Bearer）", ()
     await sb.fetch(`${sb.url}/rest/v1/rpc/confirm_reservation`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${sb.serviceRoleKey}`, apikey: sb.serviceRoleKey }, body: JSON.stringify({ p_reservation_id: res0["id"], p_shop_id: res0["shop_id"], p_order: { payment_provider: "stripe", payment_ref: "pi_x", amount_paid_jpy: 3200, currency: "jpy" } }) });
     const me = (await (await withToken(app, token, "/api/shops/my-shop/members/me")).json()) as Record<string, unknown>;
     expect(me).toMatchObject({ id: memberId, email: "member@example.com", orders: [expect.objectContaining({ total_jpy: 3200, discount_jpy: 300 })] });
-    expect(JSON.stringify(me)).not.toContain("千代田");
+    // 注文の一覧には住所を載せない。初めての注文のお届け先は本人の既定の住所になる（0159）
+    expect(JSON.stringify(me["orders"])).not.toContain("千代田");
+    expect(me["address"]).toMatchObject({ city: "千代田区" });
 
     // 2 回目は 1 人あたりの上限（メールアドレスを変えても同じ会員）
     v = await cartOp(app, { op: "add", sku_id: teeM.id });

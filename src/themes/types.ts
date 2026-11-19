@@ -61,6 +61,8 @@ export interface AddressFormValues {
   delivery_slot?: string;
   /** 「お得な情報やセールの案内を受け取る」（0050。チェックされていれば "1"、それ以外は ""。欄を出すショップだけ） */
   marketing_consent?: string;
+  /** 会員の「この住所を次回も使う」（0159）。"1" なら既定の住所を上書きする */
+  save_address?: string;
 }
 
 export interface CartLine {
@@ -129,7 +131,7 @@ export interface Theme {
   /**
    * delivery があれば（同梱モジュール delivery_time）、delivery_date・delivery_slot の選択欄を出す（value が "" なら指定なし）
    */
-  AddressPage(props: { ctx: ThemeContext; provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; /** 「お得な情報やセールの案内を受け取る」の欄を出す（ショップの設定、0050） */ consent?: boolean }): Rendered;
+  AddressPage(props: { ctx: ThemeContext; provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; /** 「お得な情報やセールの案内を受け取る」の欄を出す（ショップの設定、0050） */ consent?: boolean; /** ログイン中の会員（0159）: "auto" = 既定の住所が無いので注文の住所を保存する（お知らせだけ）、"ask" = 既定の住所があるので「この住所を次回も使う」の欄を出す。ゲストは null */ saveAddress?: "auto" | "ask" | null }): Rendered;
   /**
    * 最終確認画面（特商法の「申込みの最終確認画面」）。confirmation の全項目を表示し、
    * quote を hidden で `${ctx.shopPath}/checkout/${confirmation.payment.provider}` に POST するボタンを置く。
