@@ -1,3 +1,5 @@
+import type { StorageAdapter } from "../adapters/types";
+
 /**
  * Cron の 1 回の実行の、外への通信（サブリクエスト）の予算。
  *
@@ -8,10 +10,15 @@
  * Node（上限なし）では数えるだけで絞らない。
  */
 
-/** hooks の配信 1 件の見積もり（送信先への通信と finish_hook_delivery。同梱プラグインは連絡先の読み取りと送信もするので多めに） */
-export const DELIVERY_COST = 4;
-/** 配信の後に残しておく回数（ハートビート・配信を取り出す呼び出し・ゆとり） */
-export const DELIVERY_RESERVE = 4;
+/**
+ * hooks の配信 1 件の見積もり。外の送信先は 2（送信と finish_hook_delivery）。同梱プラグインは連絡先・文面（0154）・秘密の読み取りと
+ * 送信もするので 7（メールの試着の知らせは 2 通・LINE はトークンも読む。数えた最大は 6 に 1 のゆとり）。まとめて受けるもの（batchEvents）は件数 + 3
+ */
+export const DELIVERY_COST = { external: 2, bundled: 7, batchBase: 3 } as const;
+/** 取り出す数の上限を決めるときの 1 件の見積もり（いちばん安い外の送信先。取り出した後で種類ごとに確かめ直し、入らない分は返す） */
+export const DELIVERY_COST_MIN = DELIVERY_COST.external;
+/** 配信の後に残しておく回数（ハートビート・取り出し・返す呼び出し・ゆとり） */
+export const DELIVERY_RESERVE = 5;
 /** 「通信の上限に当たった」の印（ハートビートの表。ダッシュボードが経過秒数を読む） */
 export const CRON_LIMIT_HEARTBEAT = "cron_subrequest_limit";
 
@@ -32,6 +39,13 @@ export function resetLearnedSubrequestLimit(): void {
 export class SubrequestBudget {
   used = 0;
   private planLimit = Number.POSITIVE_INFINITY;
+  /** 覚える上限の下限（Free の上限。adapters.cronSubrequestLimits.free） */
+  private floor = 50;
+
+  /** 覚える上限の下限を決める（ランタイムの Free の上限） */
+  setFloor(n: number): void {
+    this.floor = n;
+  }
 
   /** この回の数え直し。上限はプランの上限と、この isolate で当たった上限の小さいほう */
   start(planLimit: number | null): void {
@@ -52,10 +66,30 @@ export class SubrequestBudget {
     return this.limit - this.used;
   }
 
-  /** 上限のある実行で、配信を何件取り出してよいか（無制限なら undefined = DB の既定） */
+  /** 上限のある実行で、配信を何件取り出してよいか（無制限なら undefined = DB の既定）。取り出した後で種類ごとに確かめ直す（deliverPendingHooks） */
   deliveryLimit(): number | undefined {
     if (!Number.isFinite(this.limit)) return undefined;
-    return Math.max(0, Math.floor((this.remaining() - DELIVERY_RESERVE) / DELIVERY_COST));
+    return Math.max(0, Math.floor((this.remaining() - DELIVERY_RESERVE) / DELIVERY_COST_MIN));
+  }
+
+  /** 1 件 perItem 回の処理を何件まで進めてよいか（reserve を残す）。無制限なら max */
+  allowance(perItem: number, reserve: number, max: number): number {
+    if (!Number.isFinite(this.limit)) return max;
+    return Math.max(0, Math.min(max, Math.floor((this.remaining() - reserve) / perItem)));
+  }
+
+  /** 置き場（R2）の呼び出しも通信の回数に入る（Cloudflare の数え方）ので、数えながら呼ぶ置き場を返す */
+  wrapStorage(storage: StorageAdapter): StorageAdapter {
+    const count = <R>(f: () => Promise<R>): Promise<R> => {
+      this.used += 1;
+      return f();
+    };
+    return {
+      put: (key, body, contentType) => count(() => storage.put(key, body, contentType)),
+      get: (key) => count(() => storage.get(key)),
+      delete: (key) => count(() => storage.delete(key)),
+      ...(storage.getRange ? { getRange: (key: string, start: number, end: number | null) => count(() => storage.getRange!(key, start, end)) } : {}),
+    };
   }
 
   /** 前の回に当たった印があれば、書いて消す（書くのに 1 回使う） */
@@ -73,7 +107,8 @@ export class SubrequestBudget {
         return await f(input, init);
       } catch (e) {
         if (isSubrequestLimitError(e)) {
-          const hit = Math.max(10, this.used - 1);
+          // 数えていない呼び出しで当たったときに、Free の上限より下まで絞って配信を止めないよう、Free の上限より下にはしない
+          const hit = Math.max(this.floor, this.used - 1);
           learned.limit = Math.min(learned.limit ?? Number.POSITIVE_INFINITY, hit);
           learned.pendingNotice = true;
         }

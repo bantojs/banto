@@ -5,6 +5,7 @@
  * 送る直前に行き先を確かめ（blockedHookTarget）、私設のアドレス・社内の名前には送らない。
  * 渡す fetch は Node では adapters.publicFetch（名前を引いた先も接続の直前に確かめる）。
  */
+import { DELIVERY_COST } from "../jobs/budget";
 import type { PrivilegedDb } from "../db/privileged";
 import type { ConfigAdapter, SocketAdapter } from "../adapters/types";
 import { connectionSecretPurpose, endpointSecret, signHookPayload } from "./signing";
@@ -32,6 +33,11 @@ export async function deliverPendingHooks(opts: {
   socket?: SocketAdapter;
   limit?: number;
   timeoutMs?: number;
+  /**
+   * その回の通信の残り（Cron の予算、src/jobs/budget.ts）。あれば、取り出した配信を種類ごとの見積もりで確かめ直し、
+   * 残りに入らない分は送らずに返す（release_hook_deliveries、回数を戻す。0160）
+   */
+  budget?: { remaining(): number; reserve: number };
 }): Promise<DeliverResult> {
   // プロパティ経由で呼ばない（Workers の "Illegal invocation" 対策）
   const rawFetch = opts.fetch;
@@ -58,6 +64,34 @@ export async function deliverPendingHooks(opts: {
       const key = `${row.endpoint_id} ${row.event}`;
       batches.set(key, [...(batches.get(key) ?? []), row]);
     } else rows.push(row);
+  }
+
+  // 通信の残りに入る分だけ送る（取り出した順。まとめて受けるものは群ごと）。入らない分は回数を戻して返す
+  if (opts.budget) {
+    let spare = opts.budget.remaining() - opts.budget.reserve;
+    const deferred: string[] = [];
+    for (const [key, group] of [...batches]) {
+      const cost = group.length + DELIVERY_COST.batchBase;
+      if (cost <= spare) spare -= cost;
+      else {
+        batches.delete(key);
+        deferred.push(...group.map((r) => r.id));
+      }
+    }
+    const admitted: Row[] = [];
+    for (const row of rows) {
+      const cost = bundledPluginIdFromUrl(row.url) !== null ? DELIVERY_COST.bundled : DELIVERY_COST.external;
+      if (cost <= spare) {
+        spare -= cost;
+        admitted.push(row);
+      } else deferred.push(row.id);
+    }
+    rows.length = 0;
+    rows.push(...admitted);
+    if (deferred.length > 0) {
+      await opts.db.releaseHookDeliveries(deferred);
+      result.claimed -= deferred.length;
+    }
   }
   await Promise.all(
     [...batches.values()].map(async (group) => {

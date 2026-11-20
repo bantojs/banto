@@ -27,6 +27,11 @@ import { CRON_LIMIT_HEARTBEAT, SubrequestBudget } from "./budget";
 
 /** Cron の通信の予算と、取り出したまま終わらなかった配信の打ち切り（0160）。当てる前の DB では予算で絞らない */
 export const CRON_RESILIENCE_MIGRATION = "0160_cron_resilience";
+/** お問い合わせの添付の後始末で残しておく回数（後のジョブと hooks の配信の分） */
+const INQUIRY_TRASH_RESERVE = 30;
+/** 画像の取り込み 1 件の見積もり（取りに行く 1 回 + リダイレクト 3 回 + 置き場に置く 1 回）と、残しておく回数（配信とハートビートの分） */
+const IMAGE_IMPORT_COST = 5;
+const IMAGE_IMPORT_RESERVE = 20;
 
 /** マニフェストの取り直し（0096）: 1 回に取り直す数と、1 件の待ち時間。5 分ごとなら 1 日に 576 件 */
 export const MANIFEST_REFRESH_PER_RUN = 2;
@@ -50,6 +55,8 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   const budget = new SubrequestBudget();
   const doFetch = budget.wrap(rawFetch);
   const outbound = adapters.publicFetch ? budget.wrap(adapters.publicFetch) : doFetch;
+  // 置き場（R2）の呼び出しも Workers の通信の回数に入るので、Cron のジョブには数えながら呼ぶ置き場を渡す
+  const counted: Adapters = { ...adapters, storage: budget.wrapStorage(adapters.storage), ...(adapters.privateStorage ? { privateStorage: budget.wrapStorage(adapters.privateStorage) } : {}) };
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: doFetch });
   setLocale(cfg.get("BANTO_LOCALE")); // メールプラグイン等の文言用（リクエスト外で動くため）
   setTimeZone(cfg.get("BANTO_TIMEZONE"));
@@ -59,6 +66,7 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const limits = adapters.cronSubrequestLimits;
     budget.start(null);
     if (!limits) return;
+    budget.setFloor(limits.free);
     const applied = await db.appliedMigrations();
     if (!applied.includes(CRON_RESILIENCE_MIGRATION)) return;
     const plan = (await db.cronSettings()).workers_plan;
@@ -113,9 +121,11 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     const raw = cfg.get("MASK_ORDERS_AFTER_DAYS");
     await db.maskInquiries(raw && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_MASK_AFTER_DAYS);
     // マスキング・削除で外れた添付の実体を、公開しない置き場から消す（消せたものだけ待ち行列から外す。残りは次の回）
-    const storage = adapters.privateStorage;
-    if (storage) {
-      const keys = await db.inquiryAttachmentTrashClaim(50);
+    const storage = counted.privateStorage;
+    // 1 件の削除が 1 回。後のジョブの分（INQUIRY_TRASH_RESERVE）を残して取り出す
+    const n = budget.allowance(1, INQUIRY_TRASH_RESERVE, 50);
+    if (storage && n > 0) {
+      const keys = await db.inquiryAttachmentTrashClaim(n);
       if (keys.length > 0) await db.inquiryAttachmentTrashDone(await removeAttachments(storage, keys));
     }
   });
@@ -137,10 +147,10 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   });
 
   // 商品フィード（同梱モジュール product_feed、既定 OFF）
-  registerFeedJob(adapters, doFetch);
+  registerFeedJob(counted, doFetch);
 
   // 画像を裏で取り込む（同梱モジュール woo_import、0039）。通信の回数を使うので、ほかのジョブの後に置く
-  registerImageImportJob(adapters, db, doFetch);
+  registerImageImportJob(counted, db, doFetch, () => budget.allowance(IMAGE_IMPORT_COST, IMAGE_IMPORT_RESERVE, Number.MAX_SAFE_INTEGER));
 
   // hooks の配信。決まった回数で済むジョブの後に置き、その回の残りの通信の回数から取り出す数を決める（1 件 DELIVERY_COST 回と見積もる。
   // DB も Workers のプランで上限を決める、claim_hook_deliveries、0056）。残りが足りなければこの回は取り出さない（次の回に回す）
@@ -149,8 +159,16 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     if (!sessionSecret) return;
     const limit = budget.deliveryLimit();
     if (limit === 0) return;
-    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信（メール・LINE）も同じ fetch を通る
-    await deliverPendingHooks({ db, sessionSecret, fetch: outbound, config: cfg, socket: adapters.socket, ...(limit !== undefined ? { limit } : {}) });
+    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信（メール・LINE）も同じ fetch を通る。
+    // 取り出した後は種類ごとの見積もりで確かめ直し、残りに入らない分は返す（ハートビートの分を残す）
+    await deliverPendingHooks({
+      db,
+      sessionSecret,
+      fetch: outbound,
+      config: cfg,
+      socket: adapters.socket,
+      ...(limit !== undefined ? { limit, budget: { remaining: () => budget.remaining(), reserve: 2 } } : {}),
+    });
   });
 
   // 上のジョブがその回ですべて成功したときだけ時刻が進む（1 つでも落ちれば /health が stale を報告する。残りのジョブは走る）

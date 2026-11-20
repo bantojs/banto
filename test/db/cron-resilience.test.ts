@@ -36,6 +36,16 @@ describe.skipIf(!dbAvailable)("Cron の配信の打ち切り（0160）", () => {
     expect(await row(fresh)).toMatchObject({ status: "failed" });
   });
 
+  it("release_hook_deliveries: 取り出したが送らなかった配信の回数を戻して、すぐ取り出せるようにする。service_role だけ", async () => {
+    const id = await add(1);
+    await asService((c) => c.query("select * from claim_hook_deliveries(10)"));
+    expect((await row(id)).attempts).toBe(2);
+    await asService((c) => c.query("select release_hook_deliveries($1::uuid[])", [[id]]));
+    expect(await row(id)).toMatchObject({ status: "pending", attempts: 1 });
+    expect((await getPool().query<{ due: boolean }>("select next_attempt_at <= now() as due from hook_deliveries where id = $1", [id])).rows[0]!.due).toBe(true);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select release_hook_deliveries($1::uuid[])", [[id]])))).toMatch(/permission denied/);
+  });
+
   it("cron_settings は service_role だけ。workers_plan を返す（既定は free）", async () => {
     expect(await asService(async (c) => (await c.query<{ s: Record<string, unknown> }>("select cron_settings() as s")).rows[0]!.s)).toEqual({ workers_plan: "free" });
     await getPool().query("update banto_site_settings set settings = settings || '{\"workers_plan\":\"paid\"}'::jsonb");

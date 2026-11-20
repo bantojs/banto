@@ -4710,6 +4710,11 @@ export class FakeSupabase {
       return json(id);
     }
     if (fn === "enqueue_hook") return json(this.enqueue(args["p_shop_id"] as string, args["p_event"] as string, (args["p_payload"] ?? {}) as Row));
+    if (fn === "release_hook_deliveries") {
+      const ids = new Set((args["p_ids"] as string[]) ?? []);
+      for (const d of this.tables.hook_deliveries) if (ids.has(d["id"] as string) && d["status"] === "pending") Object.assign(d, { attempts: Math.max(0, (d["attempts"] as number) - 1), next_attempt_at: this.now() });
+      return new Response(null, { status: 204 });
+    }
     if (fn === "cron_settings") {
       return json({ workers_plan: this.siteSettings["workers_plan"] === "paid" ? "paid" : "free" });
     }

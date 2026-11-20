@@ -1,6 +1,7 @@
 -- 0160_cron_resilience: Cron の配信を、途中で終わっても回り続けないようにする。前方専用。
 --   - claim_hook_deliveries（0088 を差し替え）: 取り出したまま終わらなかった配信（回数が 5 に達した pending）は取り出さずに failed にする
 --   - cron_settings: Cron が 1 回の実行の通信の予算を決めるための設定（workers_plan）。service_role だけ（src/jobs/budget.ts）
+--   - release_hook_deliveries: 取り出したが通信の残りに入らず送らなかった配信を、回数を戻して返す。service_role だけ
 
 create or replace function claim_hook_deliveries(p_limit integer default 50)
 returns table (
@@ -61,5 +62,24 @@ end;
 $$;
 revoke execute on function cron_settings() from public, anon, authenticated;
 grant execute on function cron_settings() to service_role;
+
+-- 取り出したが、その回の通信の残りに入らず送らなかった配信を返す（回数を戻し、すぐ取り出せるように）。service_role だけ
+create or replace function release_hook_deliveries(p_ids uuid[])
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'release_hook_deliveries: service_role only' using errcode = '42501';
+  end if;
+  update hook_deliveries
+     set attempts = greatest(0, attempts - 1), next_attempt_at = now()
+   where id = any(coalesce(p_ids, '{}')) and status = 'pending';
+end;
+$$;
+revoke execute on function release_hook_deliveries(uuid[]) from public, anon, authenticated;
+grant execute on function release_hook_deliveries(uuid[]) to service_role;
 
 insert into banto_migrations (version) values ('0160_cron_resilience');
