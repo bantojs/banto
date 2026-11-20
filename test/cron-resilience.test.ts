@@ -84,7 +84,7 @@ describe("通信の予算（src/jobs/budget.ts）", () => {
   });
 });
 
-function cronSetup(opts: { plan?: "free" | "paid"; limits?: boolean; config?: Record<string, string> } = {}) {
+function cronSetup(opts: { plan?: "free" | "paid"; limits?: boolean; config?: Record<string, string>; trash?: number } = {}) {
   const sb = new FakeSupabase();
   const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
   const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
@@ -97,6 +97,12 @@ function cronSetup(opts: { plan?: "free" | "paid"; limits?: boolean; config?: Re
   let posted = 0;
   // その回の通信の総数（DB・外への通信・置き場）。Workers の Free の上限（50）を超えないことを確かめる
   let total = 0;
+  // 公開しない置き場（お問い合わせの添付）。消したキーを覚える
+  const removed: string[] = [];
+  if (opts.trash) {
+    adapters.privateStorage = { put: async () => ({ url: "" }), get: async () => null, delete: async (k) => void ((total += 1), removed.push(k)) };
+    sb.inquiryTrash = Array.from({ length: opts.trash }, (_, i) => `inquiries/${i}.pdf`);
+  }
   const store = adapters.storage;
   adapters.storage = {
     put: (k, b, t) => ((total += 1), store.put(k, b, t)),
@@ -132,7 +138,7 @@ function cronSetup(opts: { plan?: "free" | "paid"; limits?: boolean; config?: Re
       sb.tables.hook_deliveries.push({ id: crypto.randomUUID(), shop_id: shop.id, endpoint_id: "ep-mail", event: "order.paid", payload: { order_id: orderId }, status: "pending", attempts: 0, next_attempt_at: new Date(Date.now() - 1000).toISOString(), created_at: new Date().toISOString() });
     }
   };
-  return { sb, adapters, reg, add, addMail, ctl, posted: () => posted, total: () => total, resetTotal: () => void (total = 0) };
+  return { sb, adapters, reg, add, addMail, ctl, removed, posted: () => posted, total: () => total, resetTotal: () => void (total = 0) };
 }
 
 describe("Cron のジョブ（src/jobs/index.ts）", () => {
@@ -164,6 +170,15 @@ describe("Cron のジョブ（src/jobs/index.ts）", () => {
     const waiting = sb.tables.hook_deliveries.filter((d) => d["status"] === "pending");
     expect(waiting.length).toBeGreaterThan(0);
     expect(waiting.every((d) => d["attempts"] === 0 || new Date(d["next_attempt_at"] as string).getTime() > Date.now())).toBe(true);
+  });
+
+  it("free: お問い合わせの添付の後始末（個人情報）も、1 回に数件は進む。通信の総数は 50 を超えない", async () => {
+    const { sb, adapters, removed, total } = cronSetup({ plan: "free", trash: 200 });
+    await adapters.scheduler.runAll();
+    expect(removed.length).toBeGreaterThan(0);
+    expect(sb.inquiryTrash.length).toBe(200 - removed.length);
+    expect(total()).toBeLessThanOrEqual(50);
+    expect(sb.heartbeats.has("cron")).toBe(true);
   });
 
   it("paid（1,000 回）: 残りが多いので 1 回にもっと取り出す。上限の無い実行（Node）では今までどおり DB の既定（50）", async () => {

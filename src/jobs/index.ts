@@ -36,8 +36,11 @@ const MANIFEST_COST = 3;
 /** 商品フィードを 1 ショップ作り直す見積もり（読み取りのページ・置き場の読み書き。計った値は約 12）と、残しておく回数 */
 const FEED_COST = 14;
 const FEED_RESERVE = 8;
-/** お問い合わせの添付の後始末で残しておく回数（後のジョブと hooks の配信の分） */
-const INQUIRY_TRASH_RESERVE = LEGAL_LINKS_COST + LATER_RESERVE + 6;
+/**
+ * お問い合わせの添付の後始末で残しておく回数（後のジョブと hooks の配信の分）。個人情報の後始末なので、法務のリンクの確かめより先に進める
+ * （Free でも 1 回に数件は消える。法務のリンクはそのあいだ次の回に回ることがある）
+ */
+const INQUIRY_TRASH_RESERVE = 25;
 /** 画像の取り込み 1 件の見積もり（取りに行く 1 回 + リダイレクト 3 回 + 置き場に置く 1 回）と、残しておく回数（配信とハートビートの分） */
 const IMAGE_IMPORT_COST = 5;
 const IMAGE_IMPORT_RESERVE = 20;

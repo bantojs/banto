@@ -1289,6 +1289,8 @@ export class FakeSupabase {
 
   /** Cron ハートビート（0006）。null = 一度も記録なし */
   heartbeats = new Map<string, number>();
+  /** お問い合わせの添付の後始末の待ち（置き場のキー。inquiry_attachment_trash_claim / _done） */
+  inquiryTrash: string[] = [];
 
   /** 0058 の list_price_jpy / list_compare_at_jpy（いちばん安い SKU。同額なら作成順・id 順） */
   private listPrice(productId: unknown): { price: number | null; compareAt: number | null } {
@@ -4885,7 +4887,15 @@ export class FakeSupabase {
     }
     if (fn === "mask_tryon_requests") return json(0);
     if (fn === "mask_inquiries") return json(0);
-    if (fn === "inquiry_attachment_trash_claim") return json([]);
+    if (fn === "inquiry_attachment_trash_claim") {
+      const keys = this.inquiryTrash.slice(0, Math.max(0, Number(args["p_limit"] ?? 50)));
+      return json(keys);
+    }
+    if (fn === "inquiry_attachment_trash_done") {
+      const done = new Set((args["p_keys"] as string[]) ?? []);
+      this.inquiryTrash = this.inquiryTrash.filter((k) => !done.has(k));
+      return json(done.size);
+    }
     if (fn === "restore_commerce") {
       // 0022 の受け口だけ再現（中身は DB テスト test/db/tracking.test.ts）
       this.lastRestoreCommerce = args["p_data"] as Record<string, Row[]>;
