@@ -221,6 +221,14 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
     const list = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();
     expect(list).toContain("東京都");
     expect(list).not.toContain("千代田1-1");
+    // 値はエスケープして出す。文字でない値・空白だけの値は「-」、全部そうなら「まだ保存されていません」
+    sb.tables.customers.find((x) => x["id"] === cid)!["default_address"] = { name: "<script>alert(1)</script>", phone: 123, city: { x: 1 }, line1: "  " };
+    const odd = await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text();
+    expect(odd).not.toContain("<script>alert(1)</script>");
+    expect(odd).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(odd).not.toContain("[object Object]");
+    sb.tables.customers.find((x) => x["id"] === cid)!["default_address"] = { name: " ", phone: 0, line1: ["x"] };
+    expect(await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text()).toContain("まだ保存されていません");
   });
 
   it("独自項目を手で直す（customer_set_attributes）、項目の値で絞る、CSV に書き出す", async () => {
