@@ -1,6 +1,7 @@
 import { MemoryCache } from "../memory-cache";
-import { clampRange, mediaCacheControl, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type StorageAdapter, type StorageRange } from "../types";
+import { clampRange, mediaCacheControl, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type ScheduledJobOptions, type StorageAdapter, type StorageRange } from "../types";
 import { normalizeConfigValue } from "../types";
+import { JobRegistry, runScheduledJobs } from "../scheduler";
 import { workersSockets } from "./socket";
 
 export interface WorkersEnv {
@@ -84,14 +85,19 @@ class WorkersCache extends MemoryCache {}
 const isolateCache = new WorkersCache();
 
 class CronScheduler implements SchedulerAdapter {
-  private jobs = new Map<string, ScheduledJob>();
-  register(name: string, job: ScheduledJob) {
-    this.jobs.set(name, job);
+  private readonly registry = new JobRegistry();
+  register(name: string, job: ScheduledJob, opts?: ScheduledJobOptions) {
+    this.registry.register(name, job, opts);
   }
+  /** 1 つが落ちても残りは走らせる。落ちたジョブがあれば最後に例外にする（Workers のログで、その回が失敗だったと分かるように） */
   async runAll() {
-    for (const [, job] of this.jobs) await job();
+    const failed = await runScheduledJobs(this.registry.list());
+    if (failed.length > 0) throw new Error(`[banto] cron jobs failed: ${failed.join(", ")}`);
   }
 }
+
+/** Workers のプランごとの、1 回の実行の外への通信（サブリクエスト）の上限（Free 50・Paid 1,000） */
+const CRON_SUBREQUEST_LIMITS = { free: 50, paid: 1000 };
 
 export function createWorkersAdapters(env: WorkersEnv): Adapters {
   return {
@@ -100,6 +106,7 @@ export function createWorkersAdapters(env: WorkersEnv): Adapters {
     config: new EnvConfig(env),
     cache: isolateCache,
     scheduler: new CronScheduler(),
+    cronSubrequestLimits: CRON_SUBREQUEST_LIMITS,
     socket: workersSockets,
   };
 }

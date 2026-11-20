@@ -23,6 +23,10 @@ import { auditKeepDays } from "../audit";
 import { checkLegalLinks } from "../storefront/legal-links";
 import { PAGES_TRASH_DAYS } from "../pages";
 import { fetchManifest } from "../hooks/manifest";
+import { CRON_LIMIT_HEARTBEAT, SubrequestBudget } from "./budget";
+
+/** Cron の通信の予算と、取り出したまま終わらなかった配信の打ち切り（0160）。当てる前の DB では予算で絞らない */
+export const CRON_RESILIENCE_MIGRATION = "0160_cron_resilience";
 
 /** マニフェストの取り直し（0096）: 1 回に取り直す数と、1 件の待ち時間。5 分ごとなら 1 日に 576 件 */
 export const MANIFEST_REFRESH_PER_RUN = 2;
@@ -41,10 +45,26 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
 
   // Workers では素の fetch をオブジェクトのプロパティ経由で呼ぶと "Illegal invocation"（this が違う）になる。
   // 常にラッパーにして渡す（app.ts も同じ扱い）。
-  const doFetch: typeof fetch = deps.fetch ?? ((input, init) => fetch(input, init));
+  const rawFetch: typeof fetch = deps.fetch ?? ((input, init) => fetch(input, init));
+  // 1 回の実行の通信の予算（Workers の上限。src/jobs/budget.ts）。DB の呼び出しも外への通信も、ここで数える
+  const budget = new SubrequestBudget();
+  const doFetch = budget.wrap(rawFetch);
+  const outbound = adapters.publicFetch ? budget.wrap(adapters.publicFetch) : doFetch;
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: doFetch });
   setLocale(cfg.get("BANTO_LOCALE")); // メールプラグイン等の文言用（リクエスト外で動くため）
   setTimeZone(cfg.get("BANTO_TIMEZONE"));
+
+  // 最初に: この回の数え直しと、上限（サイトの設定 workers_plan。0160 を当てる前の DB では絞らない）。前の回に通信の上限に当たっていたら印を書く
+  adapters.scheduler.register("cron_start", async () => {
+    const limits = adapters.cronSubrequestLimits;
+    budget.start(null);
+    if (!limits) return;
+    const applied = await db.appliedMigrations();
+    if (!applied.includes(CRON_RESILIENCE_MIGRATION)) return;
+    const plan = (await db.cronSettings()).workers_plan;
+    budget.setPlanLimit(plan === "paid" ? limits.paid : limits.free);
+    if (budget.takePendingNotice()) await db.recordHeartbeat(CRON_LIMIT_HEARTBEAT);
+  });
 
   adapters.scheduler.register("release_expired_reservations", async () => {
     await db.releaseExpiredReservations();
@@ -69,14 +89,6 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   adapters.scheduler.register("pages_trash", async () => {
     await db.purgePagesTrash(PAGES_TRASH_DAYS);
     await db.purgeArticlesTrash(PAGES_TRASH_DAYS);
-  });
-
-  // hooks の配信。1 回に取り出す数は DB が Workers のプランで決める（claim_hook_deliveries、0056）
-  adapters.scheduler.register("deliver_hooks", async () => {
-    const sessionSecret = await resolveSessionSecret(cfg);
-    if (!sessionSecret) return;
-    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信（メール・LINE）も同じ fetch を通る
-    await deliverPendingHooks({ db, sessionSecret, fetch: adapters.publicFetch ?? doFetch, config: cfg, socket: adapters.socket });
   });
 
   // 期限切れのログインのコードを消す（0012）。終わった会員のセッション（0045）とパスキーの challenge（0046）も消す
@@ -111,7 +123,6 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   // 法務のページの外の URL が生きているか（0062）。期限の来たショップを 1 回に 1 つだけ（外への通信は 3 種類 × リダイレクト 3 回で最大 12 回。
   // Workers の 1 回あたりの通信の上限をほかの処理と分け合う。5 分ごとなら 1 日に 288 ショップ）
   adapters.scheduler.register("legal_links", async () => {
-    const outbound = adapters.publicFetch ?? doFetch;
     for (const due of await db.legalLinksDue(1)) {
       await db.legalLinksRecord(due.shop_id, await checkLegalLinks(due.urls, outbound));
     }
@@ -120,7 +131,6 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   // 外部プラグインのマニフェストを取り直す（0096）。プラグインを上げたのに前のマニフェスト（capabilities・ブロック・設定の項目）のまま、を防ぐ。
   // 取れなければ前のまま時刻だけ進める
   adapters.scheduler.register("hook_manifests", async () => {
-    const outbound = adapters.publicFetch ?? doFetch;
     for (const due of await db.hookManifestsDue(MANIFEST_REFRESH_PER_RUN)) {
       await db.hookManifestRecord(due.id, due.url, await fetchManifest(due.url, outbound, MANIFEST_REFRESH_TIMEOUT_MS));
     }
@@ -132,8 +142,23 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   // 画像を裏で取り込む（同梱モジュール woo_import、0039）。通信の回数を使うので、ほかのジョブの後に置く
   registerImageImportJob(adapters, db, doFetch);
 
-  // 最後に登録する = 上のジョブがすべて成功したときだけ時刻が進む（途中で落ちれば /health が stale を報告する）
-  adapters.scheduler.register("heartbeat", async () => {
-    await db.recordHeartbeat(CRON_HEARTBEAT);
+  // hooks の配信。決まった回数で済むジョブの後に置き、その回の残りの通信の回数から取り出す数を決める（1 件 DELIVERY_COST 回と見積もる。
+  // DB も Workers のプランで上限を決める、claim_hook_deliveries、0056）。残りが足りなければこの回は取り出さない（次の回に回す）
+  adapters.scheduler.register("deliver_hooks", async () => {
+    const sessionSecret = await resolveSessionSecret(cfg);
+    if (!sessionSecret) return;
+    const limit = budget.deliveryLimit();
+    if (limit === 0) return;
+    // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信（メール・LINE）も同じ fetch を通る
+    await deliverPendingHooks({ db, sessionSecret, fetch: outbound, config: cfg, socket: adapters.socket, ...(limit !== undefined ? { limit } : {}) });
   });
+
+  // 上のジョブがその回ですべて成功したときだけ時刻が進む（1 つでも落ちれば /health が stale を報告する。残りのジョブは走る）
+  adapters.scheduler.register(
+    "heartbeat",
+    async () => {
+      await db.recordHeartbeat(CRON_HEARTBEAT);
+    },
+    { afterAllSucceeded: true },
+  );
 }

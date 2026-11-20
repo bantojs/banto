@@ -4710,7 +4710,18 @@ export class FakeSupabase {
       return json(id);
     }
     if (fn === "enqueue_hook") return json(this.enqueue(args["p_shop_id"] as string, args["p_event"] as string, (args["p_payload"] ?? {}) as Row));
+    if (fn === "cron_settings") {
+      return json({ workers_plan: this.siteSettings["workers_plan"] === "paid" ? "paid" : "free" });
+    }
     if (fn === "claim_hook_deliveries") {
+      // 0160: 取り出したまま終わらなかった配信（回数が 5 に達した pending）は取り出さずに failed
+      if (this.appliedMigrations.includes("0160_cron_resilience")) {
+        for (const d of this.tables.hook_deliveries) {
+          if (d["status"] === "pending" && (d["attempts"] as number) >= 5 && new Date(d["next_attempt_at"] as string).getTime() <= Date.now()) {
+            Object.assign(d, { status: "failed", last_error: `interrupted: the cron run ended before this delivery finished (${d["attempts"]} attempts)` });
+          }
+        }
+      }
       const out: Row[] = [];
       for (const d of this.tables.hook_deliveries) {
         if (d["status"] !== "pending" || new Date(d["next_attempt_at"] as string).getTime() > Date.now()) continue;

@@ -71,8 +71,16 @@ export interface CacheAdapter {
 
 /** 定期処理はこのハンドラを登録する。Workers では Cron Trigger が呼ぶ */
 export type ScheduledJob = () => Promise<void>;
+export interface ScheduledJobOptions {
+  /** 先に登録したジョブがその回ですべて成功したときだけ走る（Cron のハートビート。/health が「止まっている」を正しく報告するため） */
+  afterAllSucceeded?: boolean;
+}
+/**
+ * 登録した順に走らせる。1 つのジョブが落ちても残りは走らせ（在庫の解放・個人情報のマスキングを止めない）、落ちたジョブは名前を付けて
+ * ログに出す。共通の進め方は src/adapters/scheduler.ts の runScheduledJobs
+ */
 export interface SchedulerAdapter {
-  register(name: string, job: ScheduledJob): void;
+  register(name: string, job: ScheduledJob, opts?: ScheduledJobOptions): void;
   runAll(): Promise<void>;
 }
 
@@ -156,4 +164,9 @@ export interface Adapters {
    * （docs/themes.md。Workers はサイトの設定 workers_plan で判定する）
    */
   cpuUnlimited?: boolean;
+  /**
+   * Cron の 1 回の実行で使える外への通信（サブリクエスト）の上限。Workers のプランごと（サイトの設定 workers_plan で選ぶ）。
+   * 無ければ上限なし（Node）。Cron のジョブは数えながら使い、hooks の配信は残りから取り出す数を決める（src/jobs/budget.ts）
+   */
+  cronSubrequestLimits?: { free: number; paid: number };
 }

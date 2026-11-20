@@ -115,6 +115,7 @@ export const en: Record<MessageKey, string> = {
   "shop.slug_moves_domain": "Changing the slug also changes the shop address (subdomain). Members' passkeys and the LINE / Google sign-in callbacks need to be registered again.",
   "dashboard.release_notes": "Release notes",
   "dashboard.signup_warning": "Setup is complete. We recommend disabling \"Allow new users to sign up\" in Supabase under Authentication → Providers → Email.",
+  "dashboard.cron_subrequest_limit": "The scheduled jobs (Cron) hit the Cloudflare Workers subrequest limit (Too many subrequests). Check that the site setting Workers plan (workers_plan) matches the plan you actually use on Cloudflare (free for Free). Until then, hook deliveries proceed a few at a time (docs/monitoring.md).",
   "dashboard.session_secret_warning": "SESSION_SECRET is not set (it is derived from the service_role key). Rotating the service_role key or switching to a new secret key (sb_secret_) would then invalidate logins, member sessions, hook signatures and the encrypted LINE token and LINE / Google secrets at once. Add SESSION_SECRET (a random string of 32+ characters) under Variables and Secrets in Cloudflare. Adding it logs everyone out, and the encrypted LINE token, LINE / Google secrets and hook signing values must be entered again (docs/env.md).",
 
   "shop.settings": "Shop settings",

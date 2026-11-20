@@ -113,6 +113,7 @@ export const ja = {
   "shop.slug_moves_domain": "スラッグを変えると、ショップのアドレス（サブドメイン）も変わります。会員のパスキーと、LINE・Google のログインの戻り先は登録し直しになります。",
   "dashboard.release_notes": "リリースノート",
   "dashboard.signup_warning": "セットアップが完了したので、Supabase の Authentication → Providers → Email で「Allow new users to sign up」を無効にすることを推奨します。",
+  "dashboard.cron_subrequest_limit": "定期処理（Cron）が Cloudflare Workers の通信の回数の上限（Too many subrequests）に当たりました。サイトの設定の Workers のプラン（workers_plan）が、Cloudflare で実際に使っているプランと合っているか確かめてください（Free なら free）。合うまでのあいだ、hooks の配信は少しずつ進めます（docs/monitoring.md）。",
   "dashboard.session_secret_warning": "SESSION_SECRET が設定されていません（service_role キーから導出して動いています）。service_role キーを作り直す・新しい Secret key（sb_secret_）に切り替えると、ログイン・会員のセッション・hooks の署名・暗号化した LINE のトークンと LINE / Google のシークレットがすべて無効になります。Cloudflare の「変数とシークレット」に SESSION_SECRET（32 文字以上のランダムな文字列）を追加してください。追加すると全員がログアウトし、暗号化して保存した LINE のトークン・LINE / Google のシークレット・hooks の署名の値は入れ直しになります（docs/env.md）。",
 
 
