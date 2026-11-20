@@ -477,6 +477,10 @@ export interface PrivilegedDb {
   enqueueHook(shopId: string, event: string, payload: Record<string, unknown>): Promise<number>;
   /** Cron の生存記録（/health が読む） */
   recordHeartbeat(name: string): Promise<void>;
+  /** Cron の通信の予算を決める設定（0160。workers_plan） */
+  cronSettings(): Promise<{ workers_plan: string }>;
+  /** 取り出したが送らなかった配信を返す（回数を戻し、すぐ取り出せるように。0160） */
+  releaseHookDeliveries(ids: string[]): Promise<void>;
   /**
    * バックアップ JSON（export.json の tables）を空のショップに復元する。id は振り直す。
    * 呼び出し側（管理画面）が owner JWT で shop の所有を確認してから呼ぶこと。戻り値はテーブルごとの件数。
@@ -519,7 +523,8 @@ export interface PrivilegedDb {
   adminLoginRecord(emailHash: string, ipHash: string | null, success: boolean): Promise<void>;
   apiRpc<T>(fn: `api_${string}`, args: Record<string, unknown>): Promise<T>;
   /** 画像を裏で取り込む（同梱モジュール woo_import、0039）。Cron が期限の来た分を取り出し、結果を書く */
-  imageImportClaim(): Promise<ImageImportJob[]>;
+  /** limit: その回に進められる数（0160。渡さなければ今までどおりプランの数） */
+  imageImportClaim(limit?: number): Promise<ImageImportJob[]>;
   imageImportFinish(results: ({ id: number; storage_key: string } | { id: number; error: string })[]): Promise<{ done: number; retry: number; failed: number }>;
 }
 
@@ -656,7 +661,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberLogoutAll: (shopId, customerId, epoch, sessionId) =>
       rpc("member_logout_all", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     memberLoginCleanup: () => rpc<number>("member_login_cleanup", {}),
-    imageImportClaim: () => rpc<ImageImportJob[]>("image_import_claim", {}),
+    imageImportClaim: (limit) => rpc<ImageImportJob[]>("image_import_claim", limit !== undefined ? { p_limit: limit } : {}),
     imageImportFinish: (results) => rpc("image_import_finish", { p_results: results }),
     memberPasswordLogin: (shopId, email, password, ipHash) => rpc("member_password_login", { p_shop_id: shopId, p_email: email, p_password: password, p_ip_hash: ipHash }),
     memberSetPassword: async (shopId, customerId, epoch, password, sessionId) => {
@@ -789,6 +794,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       rpc<void>("finish_hook_delivery", { p_id: id, p_success: success, p_status: status, p_error: error }),
     enqueueHook: (shopId, event, payload) => rpc<number>("enqueue_hook", { p_shop_id: shopId, p_event: event, p_payload: payload }),
     recordHeartbeat: (name) => rpc<void>("record_heartbeat", { p_name: name }),
+    cronSettings: () => rpc<{ workers_plan: string }>("cron_settings", {}),
+    releaseHookDeliveries: (ids) => rpc<void>("release_hook_deliveries", { p_ids: ids }),
     restoreShopData: (shopId, tables) => rpc<Record<string, number>>("restore_shop_data", { p_shop_id: shopId, p_data: tables }),
     restoreProductTags: (shopId, products) => rpc<number>("restore_product_tags", { p_shop_id: shopId, p_products: products }),
     restoreCatalog: (shopId, data) => rpc<Record<string, number>>("restore_catalog", { p_shop_id: shopId, p_data: data }),

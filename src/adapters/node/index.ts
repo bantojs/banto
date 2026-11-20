@@ -10,8 +10,9 @@
  */
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
-import { clampRange, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type StorageAdapter, type StorageRange } from "../types";
+import { clampRange, type Adapters, type ConfigAdapter, type SchedulerAdapter, type ScheduledJob, type ScheduledJobOptions, type StorageAdapter, type StorageRange } from "../types";
 import { normalizeConfigValue } from "../types";
+import { JobRegistry, runScheduledJobs } from "../scheduler";
 import { S3Storage } from "./s3";
 import { createPublicFetch } from "./public-fetch";
 import { nodeSockets } from "./socket";
@@ -104,10 +105,10 @@ export class FsStorage implements StorageAdapter {
 }
 
 export class IntervalScheduler implements SchedulerAdapter {
-  private readonly jobs = new Map<string, ScheduledJob>();
+  private readonly registry = new JobRegistry();
   private timer: ReturnType<typeof setInterval> | undefined;
-  register(name: string, job: ScheduledJob) {
-    this.jobs.set(name, job);
+  register(name: string, job: ScheduledJob, opts?: ScheduledJobOptions) {
+    this.registry.register(name, job, opts);
   }
   private running = false;
   /** 前の回がまだ走っていれば飛ばす（間隔より長引いたときに重ならない） */
@@ -115,13 +116,8 @@ export class IntervalScheduler implements SchedulerAdapter {
     if (this.running) return;
     this.running = true;
     try {
-      for (const [name, job] of this.jobs) {
-        try {
-          await job();
-        } catch (e) {
-          console.error(`[banto] job ${name} failed:`, e);
-        }
-      }
+      // 1 つが落ちても残りは走らせ、ハートビートは全部が成功した回だけ（Workers と同じ。src/adapters/scheduler.ts）
+      await runScheduledJobs(this.registry.list());
     } finally {
       this.running = false;
     }

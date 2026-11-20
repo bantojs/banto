@@ -1289,6 +1289,8 @@ export class FakeSupabase {
 
   /** Cron ハートビート（0006）。null = 一度も記録なし */
   heartbeats = new Map<string, number>();
+  /** お問い合わせの添付の後始末の待ち（置き場のキー。inquiry_attachment_trash_claim / _done） */
+  inquiryTrash: string[] = [];
 
   /** 0058 の list_price_jpy / list_compare_at_jpy（いちばん安い SKU。同額なら作成順・id 順） */
   private listPrice(productId: unknown): { price: number | null; compareAt: number | null } {
@@ -4335,7 +4337,9 @@ export class FakeSupabase {
       return json(this.siteSettings);
     }
     if (fn === "image_import_claim") {
-      const batch = this.siteSettings["workers_plan"] === "paid" ? 150 : 12;
+      const plan = this.siteSettings["workers_plan"] === "paid" ? 150 : 12;
+      // 0160: その回に進められる数（p_limit）
+      const batch = typeof args["p_limit"] === "number" ? Math.min(plan, Math.max(0, args["p_limit"])) : plan;
       const on = (shopId: string) => ((this.tables.shops.find((x) => x["id"] === shopId)?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["woo_import"] === true;
       const picked = this.imageJobs.filter((j) => j.status === "pending" && on(j.shop_id)).slice(0, batch);
       for (const j of picked) Object.assign(j, { status: "running", attempts: j.attempts + 1 });
@@ -4710,7 +4714,23 @@ export class FakeSupabase {
       return json(id);
     }
     if (fn === "enqueue_hook") return json(this.enqueue(args["p_shop_id"] as string, args["p_event"] as string, (args["p_payload"] ?? {}) as Row));
+    if (fn === "release_hook_deliveries") {
+      const ids = new Set((args["p_ids"] as string[]) ?? []);
+      for (const d of this.tables.hook_deliveries) if (ids.has(d["id"] as string) && d["status"] === "pending") Object.assign(d, { attempts: Math.max(0, (d["attempts"] as number) - 1), next_attempt_at: this.now() });
+      return new Response(null, { status: 204 });
+    }
+    if (fn === "cron_settings") {
+      return json({ workers_plan: this.siteSettings["workers_plan"] === "paid" ? "paid" : "free" });
+    }
     if (fn === "claim_hook_deliveries") {
+      // 0160: 取り出したまま終わらなかった配信（回数が 5 に達した pending）は取り出さずに failed
+      if (this.appliedMigrations.includes("0160_cron_resilience")) {
+        for (const d of this.tables.hook_deliveries) {
+          if (d["status"] === "pending" && (d["attempts"] as number) >= 5 && new Date(d["next_attempt_at"] as string).getTime() <= Date.now()) {
+            Object.assign(d, { status: "failed", last_error: `interrupted: the cron run ended before this delivery finished (${d["attempts"]} attempts)` });
+          }
+        }
+      }
       const out: Row[] = [];
       for (const d of this.tables.hook_deliveries) {
         if (d["status"] !== "pending" || new Date(d["next_attempt_at"] as string).getTime() > Date.now()) continue;
@@ -4867,7 +4887,15 @@ export class FakeSupabase {
     }
     if (fn === "mask_tryon_requests") return json(0);
     if (fn === "mask_inquiries") return json(0);
-    if (fn === "inquiry_attachment_trash_claim") return json([]);
+    if (fn === "inquiry_attachment_trash_claim") {
+      const keys = this.inquiryTrash.slice(0, Math.max(0, Number(args["p_limit"] ?? 50)));
+      return json(keys);
+    }
+    if (fn === "inquiry_attachment_trash_done") {
+      const done = new Set((args["p_keys"] as string[]) ?? []);
+      this.inquiryTrash = this.inquiryTrash.filter((k) => !done.has(k));
+      return json(done.size);
+    }
     if (fn === "restore_commerce") {
       // 0022 の受け口だけ再現（中身は DB テスト test/db/tracking.test.ts）
       this.lastRestoreCommerce = args["p_data"] as Record<string, Row[]>;

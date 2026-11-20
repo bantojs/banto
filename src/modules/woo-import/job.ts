@@ -13,8 +13,15 @@ const CONCURRENCY = 4;
 
 type Result = { id: number; storage_key: string } | { id: number; error: string };
 
-export async function runImageImport(adapters: Adapters, db: PrivilegedDb, doFetch: typeof fetch): Promise<{ done: number; retry: number; failed: number } | null> {
-  const jobs = await db.imageImportClaim();
+/**
+ * maxJobs: その回に進めてよい数（Cron の通信の予算、src/jobs/budget.ts）。予算で絞る回（0160 を当てた Workers）だけ有限で、
+ * その数だけ取り出す（取り出すと貸し出しの回数が進むので、進められない分は取り出さない）
+ */
+export async function runImageImport(adapters: Adapters, db: PrivilegedDb, doFetch: typeof fetch, maxJobs?: () => number): Promise<{ done: number; retry: number; failed: number } | null> {
+  // 進められないなら取り出さない（取り出すと貸し出しの回数だけ進む）
+  const allowed = maxJobs ? Math.max(0, maxJobs()) : Number.MAX_SAFE_INTEGER;
+  if (allowed === 0) return null;
+  const jobs = await db.imageImportClaim(allowed < Number.MAX_SAFE_INTEGER ? allowed : undefined);
   if (jobs.length === 0) return null;
   const results: Result[] = [];
   const queue = [...jobs];
@@ -37,8 +44,8 @@ export async function runImageImport(adapters: Adapters, db: PrivilegedDb, doFet
   return db.imageImportFinish(results);
 }
 
-export function registerImageImportJob(adapters: Adapters, db: PrivilegedDb, doFetch: typeof fetch): void {
+export function registerImageImportJob(adapters: Adapters, db: PrivilegedDb, doFetch: typeof fetch, maxJobs?: () => number): void {
   adapters.scheduler.register("image_import", async () => {
-    await runImageImport(adapters, db, doFetch);
+    await runImageImport(adapters, db, doFetch, maxJobs);
   });
 }
