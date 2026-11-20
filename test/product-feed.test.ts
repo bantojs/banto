@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, memoryAdapters } from "./helpers";
 import { buildFeed, feedXml, type FeedCatalog } from "../src/modules/product-feed/feed";
+import { JobRegistry, runScheduledJobs } from "../src/adapters/scheduler";
 import { registerJobs } from "../src/jobs";
 import { jsonLdText, productJsonLd } from "../src/storefront/structured-data";
 import type { ProductRow, SkuRow } from "../src/db/types";
@@ -120,6 +121,18 @@ describe("商品フィードのモジュール（product_feed）", () => {
     expect(xml).toContain(`<g:image_link>${BASE}/media/products/a.webp</g:image_link>`);
     expect(xml).not.toContain("非公開");
     expect(await (await admin.get(`/admin/shops/${shop.id}/modules/product-feed`)).text()).toContain("載せた商品 1 件");
+  });
+
+  it("Cron（Workers の Free、通信の上限 50）でも作る（その回の通信の予算の見積もりで止まらない）", async () => {
+    const { sb, shop, storage } = setup({ product_feed: true });
+    const adapters = memoryAdapters({ SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, PUBLIC_BASE_URL: BASE, SESSION_SECRET: "test-session-secret" }, storage);
+    adapters.cronSubrequestLimits = { free: 50, paid: 1000 };
+    const reg = new JobRegistry();
+    adapters.scheduler = { register: (n, j, o) => reg.register(n, j, o), runAll: async () => void (await runScheduledJobs(reg.list(), () => undefined)) };
+    registerJobs(adapters, { fetch: sb.fetch });
+    await adapters.scheduler.runAll();
+    expect(storage.objects.has(`feeds/${shop.id}/meta.json`)).toBe(true);
+    expect(sb.heartbeats.has("cron")).toBe(true);
   });
 
   it("Cron: モジュールが ON のショップだけ作る。1 時間以内なら作り直さない", async () => {

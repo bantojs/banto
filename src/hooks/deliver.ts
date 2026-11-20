@@ -93,105 +93,109 @@ export async function deliverPendingHooks(opts: {
     result.claimed -= deferred.length;
     releaseLater = deferred;
   }
-  await Promise.all(
-    [...batches.values()].map(async (group) => {
-      const plugin = findBundledPlugin(bundledPluginIdFromUrl(group[0]!.url)!)!;
-      let ok = true;
-      let error: string | null = null;
-      try {
-        if (!opts.config) throw new Error("config adapter missing");
-        const config = opts.config;
-        await plugin.handleBatch!.call(
-          plugin,
-          group.map((row) => ({ envelope: envelopeOf(row), settings: row.settings ?? {}, config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret })),
-        );
-      } catch (e) {
-        ok = false;
-        error = e instanceof Error ? e.message : String(e);
-      }
-      for (const row of group) {
-        await opts.db.finishHookDelivery(row.id, ok, ok ? 200 : null, error);
-        if (ok) result.delivered++;
-        else result.failed++;
-      }
-    }),
-  );
-
-  await Promise.all(
-    rows.map(async (row) => {
-      const envelope = envelopeOf(row);
-      // 同梱プラグイン: HTTP ではなくプロセス内で呼ぶ
-      const pluginId = bundledPluginIdFromUrl(row.url);
-      if (pluginId !== null) {
-        const plugin = findBundledPlugin(pluginId);
+  try {
+    await Promise.all(
+      [...batches.values()].map(async (group) => {
+        const plugin = findBundledPlugin(bundledPluginIdFromUrl(group[0]!.url)!)!;
+        let ok = true;
+        let error: string | null = null;
         try {
-          if (!plugin) throw new Error(`unknown bundled plugin: ${pluginId}`);
-          const handle = plugin.handle;
-          if (!handle) {
-            // 受信処理を持たないプラグイン（Stripe / KOMOJU は決済事業者の Webhook を受ける側）。配信対象外として完了にする
-            await opts.db.finishHookDelivery(row.id, true, 204, null);
-            result.delivered++;
-            return;
-          }
           if (!opts.config) throw new Error("config adapter missing");
-          await handle.call(plugin, { envelope, settings: row.settings ?? {}, config: opts.config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret });
-          await opts.db.finishHookDelivery(row.id, true, 200, null);
-          result.delivered++;
+          const config = opts.config;
+          await plugin.handleBatch!.call(
+            plugin,
+            group.map((row) => ({ envelope: envelopeOf(row), settings: row.settings ?? {}, config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret })),
+          );
+        } catch (e) {
+          ok = false;
+          error = e instanceof Error ? e.message : String(e);
+        }
+        for (const row of group) {
+          await opts.db.finishHookDelivery(row.id, ok, ok ? 200 : null, error);
+          if (ok) result.delivered++;
+          else result.failed++;
+        }
+      }),
+    );
+
+    await Promise.all(
+      rows.map(async (row) => {
+        const envelope = envelopeOf(row);
+        // 同梱プラグイン: HTTP ではなくプロセス内で呼ぶ
+        const pluginId = bundledPluginIdFromUrl(row.url);
+        if (pluginId !== null) {
+          const plugin = findBundledPlugin(pluginId);
+          try {
+            if (!plugin) throw new Error(`unknown bundled plugin: ${pluginId}`);
+            const handle = plugin.handle;
+            if (!handle) {
+              // 受信処理を持たないプラグイン（Stripe / KOMOJU は決済事業者の Webhook を受ける側）。配信対象外として完了にする
+              await opts.db.finishHookDelivery(row.id, true, 204, null);
+              result.delivered++;
+              return;
+            }
+            if (!opts.config) throw new Error("config adapter missing");
+            await handle.call(plugin, { envelope, settings: row.settings ?? {}, config: opts.config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret });
+            await opts.db.finishHookDelivery(row.id, true, 200, null);
+            result.delivered++;
+          } catch (e) {
+            await opts.db.finishHookDelivery(row.id, false, null, e instanceof Error ? e.message : String(e));
+            result.failed++;
+          }
+          return;
+        }
+
+        // 行き先が私設のアドレス・社内の名前なら送らずに失敗にする（登録時の検査を通らずに入った行の最後の砦）
+        if (blockedHookTarget(row.url)) {
+          await opts.db.finishHookDelivery(row.id, false, null, BLOCKED_HOOK_TARGET);
+          result.failed++;
+          return;
+        }
+        const body = JSON.stringify(envelope);
+        // つないだ連携（0088）は接続ごとの署名シークレット。開けなければ（サイトの秘密が変わった）送らずに失敗にする（つなぎ直してもらう）
+        const secret = row.secret_box ? await openSecret(opts.sessionSecret, row.shop_id, connectionSecretPurpose(row.endpoint_id), row.secret_box) : await endpointSecret(opts.sessionSecret, row.endpoint_id);
+        if (!secret) {
+          await opts.db.finishHookDelivery(row.id, false, null, "connection signing secret could not be opened (the site secret changed?); reconnect the plugin");
+          result.failed++;
+          return;
+        }
+        const signature = await signHookPayload(secret, body);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? HOOK_TIMEOUT_MS);
+        try {
+          const res = await doFetch(row.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": "banto-hooks",
+              "X-Banto-Event": row.event,
+              "X-Banto-Delivery": row.id,
+              "X-Banto-Signature": signature,
+            },
+            body,
+            signal: controller.signal,
+            // リダイレクトは追わない（登録時に確かめた行き先以外へ出ない）。3xx は失敗として再送に回る
+            redirect: "manual",
+          });
+          const ok = res.status >= 200 && res.status < 300;
+          // 失敗の本文は 4KB まで読み、記録は 500 文字（上限なしに読まない）
+          const text = ok ? null : (await readTextCapped(res, 4096).catch(() => "")).slice(0, 500);
+          await opts.db.finishHookDelivery(row.id, ok, res.status, text);
+          if (ok) result.delivered++;
+          else result.failed++;
         } catch (e) {
           await opts.db.finishHookDelivery(row.id, false, null, e instanceof Error ? e.message : String(e));
           result.failed++;
+        } finally {
+          clearTimeout(timer);
         }
-        return;
-      }
-
-      // 行き先が私設のアドレス・社内の名前なら送らずに失敗にする（登録時の検査を通らずに入った行の最後の砦）
-      if (blockedHookTarget(row.url)) {
-        await opts.db.finishHookDelivery(row.id, false, null, BLOCKED_HOOK_TARGET);
-        result.failed++;
-        return;
-      }
-      const body = JSON.stringify(envelope);
-      // つないだ連携（0088）は接続ごとの署名シークレット。開けなければ（サイトの秘密が変わった）送らずに失敗にする（つなぎ直してもらう）
-      const secret = row.secret_box ? await openSecret(opts.sessionSecret, row.shop_id, connectionSecretPurpose(row.endpoint_id), row.secret_box) : await endpointSecret(opts.sessionSecret, row.endpoint_id);
-      if (!secret) {
-        await opts.db.finishHookDelivery(row.id, false, null, "connection signing secret could not be opened (the site secret changed?); reconnect the plugin");
-        result.failed++;
-        return;
-      }
-      const signature = await signHookPayload(secret, body);
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? HOOK_TIMEOUT_MS);
-      try {
-        const res = await doFetch(row.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "banto-hooks",
-            "X-Banto-Event": row.event,
-            "X-Banto-Delivery": row.id,
-            "X-Banto-Signature": signature,
-          },
-          body,
-          signal: controller.signal,
-          // リダイレクトは追わない（登録時に確かめた行き先以外へ出ない）。3xx は失敗として再送に回る
-          redirect: "manual",
-        });
-        const ok = res.status >= 200 && res.status < 300;
-        // 失敗の本文は 4KB まで読み、記録は 500 文字（上限なしに読まない）
-        const text = ok ? null : (await readTextCapped(res, 4096).catch(() => "")).slice(0, 500);
-        await opts.db.finishHookDelivery(row.id, ok, res.status, text);
-        if (ok) result.delivered++;
-        else result.failed++;
-      } catch (e) {
-        await opts.db.finishHookDelivery(row.id, false, null, e instanceof Error ? e.message : String(e));
-        result.failed++;
-      } finally {
-        clearTimeout(timer);
-      }
-    }),
-  );
-  if (releaseLater.length > 0) {
-    await opts.db.releaseHookDeliveries(releaseLater).catch((e: unknown) => console.error("[banto] hooks: release of deferred deliveries failed:", e));
+      }),
+    );
+  } finally {
+    // 入らずに返す分は、送る途中で落ちても返す（回数を進めたまま 10 分待たせない）。返すのに失敗しても送った結果は変えない
+    if (releaseLater.length > 0) {
+      await opts.db.releaseHookDeliveries(releaseLater).catch((e: unknown) => console.error("[banto] hooks: release of deferred deliveries failed:", e));
+    }
   }
   return result;
 }
