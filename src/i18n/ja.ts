@@ -2113,6 +2113,8 @@ export const ja = {
   "customers.total_spent": "累計の購入額",
   "customers.last_order_at": "最後に買った日",
   "customers.stats_hint": "支払い済み・発送済みの注文を数えています（キャンセル・返金は除く）。",
+  "customers.address": "既定の住所",
+  "customers.address_none": "まだ保存されていません（会員ページで保存したとき・初めての注文が確定したときに入ります）。",
   "customers.registered_at": "登録日",
   "customers.last_login_at": "最後のログイン",
   "customers.no_match": "条件に合う会員がいません。",

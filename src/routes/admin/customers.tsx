@@ -445,8 +445,6 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
               <dd>{formatDateTime(r.created_at, { dateOnly: true })}</dd>
               <dt>{t("customers.last_login_at")}</dt>
               <dd>{r.last_login_at ? formatDateTime(r.last_login_at) : "-"}</dd>
-              <dt>{t("store.address_state")}</dt>
-              <dd>{typeof r.default_address?.["state"] === "string" ? String(r.default_address["state"]) : "-"}</dd>
               {ref ? (
                 <>
                   <dt>{t("customers.external_ref")}</dt>
@@ -457,6 +455,7 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
               ) : null}
             </dl>
           </section>
+          <MemberAddress address={r.default_address} />
           <section class="card">
             <h2>{t("customers.consent")}</h2>
             <p>{consentLabel(r.marketing_consent)}</p>
@@ -695,3 +694,39 @@ customers.post("/:shopId/customers/:customerId/passkeys/reset", requireOwner, as
   await db.rpc("member_passkeys_reset", { p_shop_id: shopId, p_customer_id: param(c, "customerId") });
   return c.redirect(`${customerPath(shopId, param(c, "customerId"))}?flash=passkeys_reset`);
 });
+
+/**
+ * 会員の既定の住所（会員ページで保存したもの・初めての注文から写したもの、0159）。詳細の画面だけに全体を出す
+ * （一覧は都道府県だけ。読めるのは項目 customers の人で、行の読み取りの権限は今までと同じ）
+ */
+function MemberAddress(props: { address: Record<string, unknown> | null }) {
+  const a = props.address ?? {};
+  const str = (k: string) => (typeof a[k] === "string" && (a[k] as string).trim() ? (a[k] as string) : null);
+  const rows: [string, string | null][] = [
+    [t("store.address_name"), str("name")],
+    [t("store.address_phone"), str("phone")],
+    [t("store.address_postal"), str("postal_code")],
+    [t("store.address_state"), str("state")],
+    [t("store.address_city"), str("city")],
+    [t("store.address_line1"), str("line1")],
+    [t("store.address_line2"), str("line2")],
+  ];
+  const any = rows.some(([, v]) => v !== null);
+  return (
+    <section class="card">
+      <h2>{t("customers.address")}</h2>
+      {any ? (
+        <dl class="sum">
+          {rows.map(([label, v]) => (
+            <>
+              <dt>{label}</dt>
+              <dd>{v ?? "-"}</dd>
+            </>
+          ))}
+        </dl>
+      ) : (
+        <p class="muted">{t("customers.address_none")}</p>
+      )}
+    </section>
+  );
+}

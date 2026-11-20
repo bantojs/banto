@@ -2106,6 +2106,8 @@ export const en: Record<MessageKey, string> = {
   "customers.total_spent": "Total spent",
   "customers.last_order_at": "Last order",
   "customers.stats_hint": "Counts paid and shipped orders (cancelled and refunded orders are excluded).",
+  "customers.address": "Default address",
+  "customers.address_none": "Not saved yet (it is set when the customer saves it on their account page or when their first order is confirmed).",
   "customers.registered_at": "Registered",
   "customers.last_login_at": "Last login",
   "customers.no_match": "No members match these conditions.",
