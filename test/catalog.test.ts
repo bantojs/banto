@@ -211,7 +211,16 @@ describe("会員の項目（顧客マスタの外部連携、0047）: 管理画�
     expect(html).toContain("会員ランク: gold");
     expect(html).not.toContain("stale"); // 定義に無い鍵は出さない
     // 外部の ID は会員の詳細の画面
-    expect(await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text()).toContain("hubspot / 101");
+    const detail = await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text();
+    expect(detail).toContain("hubspot / 101");
+    // 既定の住所: 無ければ「まだ保存されていません」、あれば全体（一覧は都道府県だけのまま）
+    expect(detail).toContain("まだ保存されていません");
+    sb.tables.customers.find((x) => x["id"] === cid)!["default_address"] = { name: "会員 花子", phone: "0312345678", postal_code: "1000001", country: "JP", state: "東京都", city: "千代田区", line1: "千代田1-1", line2: null };
+    const withAddr = await (await admin.get(`/admin/shops/${shop.id}/customers/${cid}`)).text();
+    for (const v of ["会員 花子", "0312345678", "1000001", "東京都", "千代田区", "千代田1-1"]) expect(withAddr).toContain(v);
+    const list = await (await admin.get(`/admin/shops/${shop.id}/customers`)).text();
+    expect(list).toContain("東京都");
+    expect(list).not.toContain("千代田1-1");
   });
 
   it("独自項目を手で直す（customer_set_attributes）、項目の値で絞る、CSV に書き出す", async () => {
