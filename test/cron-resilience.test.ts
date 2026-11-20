@@ -185,6 +185,23 @@ describe("Cron のジョブ（src/jobs/index.ts）", () => {
     expect(posted()).toBe(50);
   });
 
+  it("0160 を当てる前の DB では、この isolate で上限を覚えていても絞らず、返す関数（release_hook_deliveries）も呼ばない", async () => {
+    const learn = new SubrequestBudget();
+    learn.start(50);
+    await learn.wrap(async () => {
+      throw new Error("Too many subrequests by single Worker invocation.");
+    })("https://x.invalid/").catch(() => undefined);
+    const { sb, adapters, add, ctl, posted } = cronSetup({ plan: "free" });
+    sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== CRON_RESILIENCE_MIGRATION);
+    ctl.intercept = (u) => {
+      if (u.includes("release_hook_deliveries")) throw new Error("function not found");
+    };
+    add(80);
+    await adapters.scheduler.runAll();
+    expect(posted()).toBe(50);
+    expect(sb.heartbeats.has("cron")).toBe(true);
+  });
+
   it("取り出したまま終わらなかった配信（回数が 5 に達した pending）は取り出さずに failed にする（0160）", async () => {
     const { sb, adapters, add } = cronSetup({ plan: "paid" });
     add(1, 5);

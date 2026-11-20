@@ -46,6 +46,20 @@ describe.skipIf(!dbAvailable)("Cron の配信の打ち切り（0160）", () => {
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select release_hook_deliveries($1::uuid[])", [[id]])))).toMatch(/permission denied/);
   });
 
+  it("image_import_claim: p_limit の数だけ取り出す（渡さなければ今までどおりプランの数）。service_role だけ", async () => {
+    await getPool().query("update shops set settings = settings || '{\"modules\":{\"woo_import\":true}}'::jsonb where id = $1", [f.shopId]);
+    const product = (await getPool().query<{ id: string }>("select id from products where shop_id = $1 limit 1", [f.shopId])).rows[0]!.id;
+    for (let i = 0; i < 5; i++) {
+      await getPool().query("insert into image_import_jobs (shop_id, product_id, url) values ($1, $2, $3)", [f.shopId, product, `https://img.example/${i}.jpg`]);
+    }
+    const got = await asService(async (c) => (await c.query("select * from image_import_claim(2)")).rows);
+    expect(got).toHaveLength(2);
+    expect((await getPool().query<{ n: number }>("select count(*)::int as n from image_import_jobs where status = 'pending' and attempts = 0")).rows[0]!.n).toBe(3);
+    const rest = await asService(async (c) => (await c.query("select * from image_import_claim()")).rows);
+    expect(rest).toHaveLength(3);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select * from image_import_claim(1)")))).toMatch(/permission denied/);
+  });
+
   it("cron_settings は service_role だけ。workers_plan を返す（既定は free）", async () => {
     expect(await asService(async (c) => (await c.query<{ s: Record<string, unknown> }>("select cron_settings() as s")).rows[0]!.s)).toEqual({ workers_plan: "free" });
     await getPool().query("update banto_site_settings set settings = settings || '{\"workers_plan\":\"paid\"}'::jsonb");

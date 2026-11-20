@@ -523,7 +523,8 @@ export interface PrivilegedDb {
   adminLoginRecord(emailHash: string, ipHash: string | null, success: boolean): Promise<void>;
   apiRpc<T>(fn: `api_${string}`, args: Record<string, unknown>): Promise<T>;
   /** 画像を裏で取り込む（同梱モジュール woo_import、0039）。Cron が期限の来た分を取り出し、結果を書く */
-  imageImportClaim(): Promise<ImageImportJob[]>;
+  /** limit: その回に進められる数（0160。渡さなければ今までどおりプランの数） */
+  imageImportClaim(limit?: number): Promise<ImageImportJob[]>;
   imageImportFinish(results: ({ id: number; storage_key: string } | { id: number; error: string })[]): Promise<{ done: number; retry: number; failed: number }>;
 }
 
@@ -660,7 +661,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberLogoutAll: (shopId, customerId, epoch, sessionId) =>
       rpc("member_logout_all", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     memberLoginCleanup: () => rpc<number>("member_login_cleanup", {}),
-    imageImportClaim: () => rpc<ImageImportJob[]>("image_import_claim", {}),
+    imageImportClaim: (limit) => rpc<ImageImportJob[]>("image_import_claim", limit !== undefined ? { p_limit: limit } : {}),
     imageImportFinish: (results) => rpc("image_import_finish", { p_results: results }),
     memberPasswordLogin: (shopId, email, password, ipHash) => rpc("member_password_login", { p_shop_id: shopId, p_email: email, p_password: password, p_ip_hash: ipHash }),
     memberSetPassword: async (shopId, customerId, epoch, password, sessionId) => {

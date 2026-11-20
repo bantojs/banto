@@ -27,6 +27,14 @@ import { CRON_LIMIT_HEARTBEAT, SubrequestBudget } from "./budget";
 
 /** Cron の通信の予算と、取り出したまま終わらなかった配信の打ち切り（0160）。当てる前の DB では予算で絞らない */
 export const CRON_RESILIENCE_MIGRATION = "0160_cron_resilience";
+/** 外へ取りに行くジョブ（法務のリンク・マニフェスト・商品フィード）が残しておく回数（後の画像の取り込み・hooks の配信・ハートビートの分） */
+const LATER_RESERVE = 15;
+/** 法務のリンクの確かめ 1 ショップの最大（3 種類 × リダイレクト 3 回 + 期限の読み取りと記録） */
+const LEGAL_LINKS_COST = 14;
+/** マニフェストの取り直し 1 件（取りに行く 1 回 + 記録 1 回 + ゆとり） */
+const MANIFEST_COST = 3;
+/** 商品フィードを 1 ショップ作り直す見積もり（読み取りのページ・置き場の読み書き） */
+const FEED_COST = 20;
 /** お問い合わせの添付の後始末で残しておく回数（後のジョブと hooks の配信の分） */
 const INQUIRY_TRASH_RESERVE = 30;
 /** 画像の取り込み 1 件の見積もり（取りに行く 1 回 + リダイレクト 3 回 + 置き場に置く 1 回）と、残しておく回数（配信とハートビートの分） */
@@ -133,6 +141,7 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   // 法務のページの外の URL が生きているか（0062）。期限の来たショップを 1 回に 1 つだけ（外への通信は 3 種類 × リダイレクト 3 回で最大 12 回。
   // Workers の 1 回あたりの通信の上限をほかの処理と分け合う。5 分ごとなら 1 日に 288 ショップ）
   adapters.scheduler.register("legal_links", async () => {
+    if (budget.allowance(LEGAL_LINKS_COST, LATER_RESERVE, 1) === 0) return;
     for (const due of await db.legalLinksDue(1)) {
       await db.legalLinksRecord(due.shop_id, await checkLegalLinks(due.urls, outbound));
     }
@@ -141,13 +150,15 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
   // 外部プラグインのマニフェストを取り直す（0096）。プラグインを上げたのに前のマニフェスト（capabilities・ブロック・設定の項目）のまま、を防ぐ。
   // 取れなければ前のまま時刻だけ進める
   adapters.scheduler.register("hook_manifests", async () => {
-    for (const due of await db.hookManifestsDue(MANIFEST_REFRESH_PER_RUN)) {
+    const n = budget.allowance(MANIFEST_COST, LATER_RESERVE, MANIFEST_REFRESH_PER_RUN);
+    if (n === 0) return;
+    for (const due of await db.hookManifestsDue(n)) {
       await db.hookManifestRecord(due.id, due.url, await fetchManifest(due.url, outbound, MANIFEST_REFRESH_TIMEOUT_MS));
     }
   });
 
   // 商品フィード（同梱モジュール product_feed、既定 OFF）
-  registerFeedJob(counted, doFetch);
+  registerFeedJob(counted, doFetch, () => budget.allowance(FEED_COST, LATER_RESERVE, 1) > 0);
 
   // 画像を裏で取り込む（同梱モジュール woo_import、0039）。通信の回数を使うので、ほかのジョブの後に置く
   registerImageImportJob(counted, db, doFetch, () => budget.allowance(IMAGE_IMPORT_COST, IMAGE_IMPORT_RESERVE, Number.MAX_SAFE_INTEGER));

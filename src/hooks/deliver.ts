@@ -66,7 +66,9 @@ export async function deliverPendingHooks(opts: {
     } else rows.push(row);
   }
 
-  // 通信の残りに入る分だけ送る（取り出した順。まとめて受けるものは群ごと）。入らない分は回数を戻して返す
+  // 通信の残りに入る分だけ送る（取り出した順。まとめて受けるものは群ごと）。入らない分は、送った後で回数を戻して返す
+  // （返すのに失敗しても、送れる分は送る。返せなかった分は 10 分の貸し出しが切れたら取り出し直される）
+  let releaseLater: string[] = [];
   if (opts.budget) {
     let spare = opts.budget.remaining() - opts.budget.reserve;
     const deferred: string[] = [];
@@ -88,10 +90,8 @@ export async function deliverPendingHooks(opts: {
     }
     rows.length = 0;
     rows.push(...admitted);
-    if (deferred.length > 0) {
-      await opts.db.releaseHookDeliveries(deferred);
-      result.claimed -= deferred.length;
-    }
+    result.claimed -= deferred.length;
+    releaseLater = deferred;
   }
   await Promise.all(
     [...batches.values()].map(async (group) => {
@@ -190,5 +190,8 @@ export async function deliverPendingHooks(opts: {
       }
     }),
   );
+  if (releaseLater.length > 0) {
+    await opts.db.releaseHookDeliveries(releaseLater).catch((e: unknown) => console.error("[banto] hooks: release of deferred deliveries failed:", e));
+  }
   return result;
 }

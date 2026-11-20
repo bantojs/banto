@@ -4335,7 +4335,9 @@ export class FakeSupabase {
       return json(this.siteSettings);
     }
     if (fn === "image_import_claim") {
-      const batch = this.siteSettings["workers_plan"] === "paid" ? 150 : 12;
+      const plan = this.siteSettings["workers_plan"] === "paid" ? 150 : 12;
+      // 0160: その回に進められる数（p_limit）
+      const batch = typeof args["p_limit"] === "number" ? Math.min(plan, Math.max(0, args["p_limit"])) : plan;
       const on = (shopId: string) => ((this.tables.shops.find((x) => x["id"] === shopId)?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["woo_import"] === true;
       const picked = this.imageJobs.filter((j) => j.status === "pending" && on(j.shop_id)).slice(0, batch);
       for (const j of picked) Object.assign(j, { status: "running", attempts: j.attempts + 1 });

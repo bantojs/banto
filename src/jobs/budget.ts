@@ -58,7 +58,13 @@ export class SubrequestBudget {
     this.planLimit = planLimit;
   }
 
+  /** 予算で絞る回か（プランの上限が決まった回 = 0160 を当てた Workers）。決まっていなければ、覚えた上限も使わない（今までどおり） */
+  get active(): boolean {
+    return Number.isFinite(this.planLimit);
+  }
+
   get limit(): number {
+    if (!this.active) return Number.POSITIVE_INFINITY;
     return Math.min(this.planLimit, learned.limit ?? Number.POSITIVE_INFINITY);
   }
 
@@ -80,9 +86,14 @@ export class SubrequestBudget {
 
   /** 置き場（R2）の呼び出しも通信の回数に入る（Cloudflare の数え方）ので、数えながら呼ぶ置き場を返す */
   wrapStorage(storage: StorageAdapter): StorageAdapter {
-    const count = <R>(f: () => Promise<R>): Promise<R> => {
+    const count = async <R>(f: () => Promise<R>): Promise<R> => {
       this.used += 1;
-      return f();
+      try {
+        return await f();
+      } catch (e) {
+        this.noteError(e);
+        throw e;
+      }
     };
     return {
       put: (key, body, contentType) => count(() => storage.put(key, body, contentType)),
@@ -106,14 +117,18 @@ export class SubrequestBudget {
       try {
         return await f(input, init);
       } catch (e) {
-        if (isSubrequestLimitError(e)) {
-          // 数えていない呼び出しで当たったときに、Free の上限より下まで絞って配信を止めないよう、Free の上限より下にはしない
-          const hit = Math.max(this.floor, this.used - 1);
-          learned.limit = Math.min(learned.limit ?? Number.POSITIVE_INFINITY, hit);
-          learned.pendingNotice = true;
-        }
+        this.noteError(e);
         throw e;
       }
     };
+  }
+
+  /** 通信の上限の例外なら、その回数をこの isolate の上限として覚える（握りつぶす呼び出し側でも覚えられるよう、公開する） */
+  noteError(e: unknown): void {
+    if (!isSubrequestLimitError(e)) return;
+    // 数えていない呼び出しで当たったときに、Free の上限より下まで絞って配信を止めないよう、Free の上限より下にはしない
+    const hit = Math.max(this.floor, this.used - 1);
+    learned.limit = Math.min(learned.limit ?? Number.POSITIVE_INFINITY, hit);
+    learned.pendingNotice = true;
   }
 }
