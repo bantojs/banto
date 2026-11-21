@@ -27,14 +27,16 @@ export const STOREFRONT_CACHE_TTL = 30;
 export const STOREFRONT_CACHE_TTL_MIN = 5;
 export const STOREFRONT_CACHE_TTL_MAX = 300;
 /**
- * ショップ行（shop: / domain: / hostslug:）の覚えは設定に関係なく 30 秒。ショップ行には連携サイトの戻り先の許可リスト・会員のログインの
- * 設定・ドメインと、レジが使う送料・税・特商法の表示の設定が乗るので、長く覚えると変更が効くまで待たせる（STOREFRONT_CACHE_TTL_SECONDS は表示の材料だけ）
+ * ショップ行（shop: / domain: / hostslug:）・カテゴリー・実店舗の覚えは設定に関係なく 30 秒。ショップ行には連携サイトの戻り先の許可リスト・会員の
+ * ログインの設定・ドメインと、レジが使う送料・税・特商法の表示の設定が乗り、カテゴリーの木はクーポンのカテゴリーの条件、実店舗の営業日は
+ * お店で試着の来店日の確かめに使うので、長く覚えると変更が効くまで待たせる（STOREFRONT_CACHE_TTL_SECONDS は表示の材料だけ）
  */
 export const SHOP_ROW_CACHE_TTL = STOREFRONT_CACHE_TTL;
 
 /**
  * お店の画面の覚えておく時間（秒）。デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS（5〜300 の整数）、無い・範囲の外なら 30。
- * 覚えるのはカテゴリー・一覧・ページ・記事など表示の材料（isolate ごと）。ショップ行は 30 秒のまま（SHOP_ROW_CACHE_TTL）、在庫・カートはいつも引き直す（docs/env.md）
+ * 覚えるのは商品の一覧・ページ・記事・ブログなど表示の材料（isolate ごと）。ショップ行・カテゴリー・実店舗は 30 秒のまま（SHOP_ROW_CACHE_TTL）、
+ * 在庫・カートはいつも引き直す（docs/env.md）
  */
 export function storefrontCacheTtl(config: { get(name: string): string | undefined }): number {
   const raw = config.get("STOREFRONT_CACHE_TTL_SECONDS")?.trim();
@@ -468,7 +470,7 @@ export class StorefrontData {
     const hit = await this.cache.get<CategoryRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" });
-    await this.cache.set(key, rows, this.ttl);
+    await this.cache.set(key, rows, SHOP_ROW_CACHE_TTL);
     return rows;
   }
 
@@ -480,7 +482,7 @@ export class StorefrontData {
     const hit = await this.cache.get<StoreRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.rpc<StoreRow[]>("shop_store_list", { p_shop_id: shop.id });
-    await this.cache.set(key, rows, this.ttl);
+    await this.cache.set(key, rows, SHOP_ROW_CACHE_TTL);
     return rows;
   }
 

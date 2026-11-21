@@ -30,13 +30,19 @@ describe("覚えておく時間", () => {
     expect(shop).not.toBeNull();
     expect(ttls).toEqual([STOREFRONT_CACHE_TTL]);
     ttls.length = 0;
-    // 表示の材料（カテゴリー）は設定の時間
+    // カテゴリー（クーポンの条件）・実店舗（お店で試着の来店日）も 30 秒
     await new StorefrontData(db, cache, null, 120).listCategories(shop!);
-    expect(ttls).toEqual([120]);
+    await new StorefrontData(db, cache, null, 120).listStores(shop!);
+    expect(ttls).toEqual([STOREFRONT_CACHE_TTL, STOREFRONT_CACHE_TTL]);
+    ttls.length = 0;
+    // 表示の材料（ページの一覧）は設定の時間
+    // （適用済みの版の確認は 60 秒で別に覚える）
+    await new StorefrontData(db, cache, null, 120).pagesList(shop!);
+    expect(ttls.filter((t) => t !== 60)).toEqual([120]);
     ttls.length = 0;
     store.clear();
-    await new StorefrontData(db, cache).listCategories(shop!);
-    expect(ttls).toEqual([STOREFRONT_CACHE_TTL]);
+    await new StorefrontData(db, cache).pagesList(shop!);
+    expect(ttls.filter((t) => t !== 60)).toEqual([STOREFRONT_CACHE_TTL]);
   });
 
   it("お店の画面・公開 API はデプロイの設定の時間で覚える（範囲の外の値は 30 秒）", async () => {
