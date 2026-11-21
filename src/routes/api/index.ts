@@ -12,7 +12,7 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { searchTooShort } from "../../storefront/search-words";
 import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, storefrontCacheTtl, type ProductQuery, type ProductSort } from "../../storefront/data";
-import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, listOptionsOf, listTagsOf, optionsTooMany, priceParamOf } from "../../storefront/list-filter";
+import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, VENDOR_PARAM, listOptionsOf, listTagsOf, optionsTooMany, priceParamOf, vendorParamOf } from "../../storefront/list-filter";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
 import { cardAttributes, productFields, publicAttributes } from "../../products/fields";
@@ -105,7 +105,8 @@ api.get("/shops/:shop", async (c: Ctx) => {
  * ページ送りは cursor（前の応答の next_cursor）。offset は 10,000 まで（docs/headless.md）。
  * q は空白で語に分けて、すべての語を含む商品（5 語まで、0161）。3 文字以上の語が 1 つも無ければタグ・カテゴリー・ブランドの絞り込みと一緒のときだけ。
  * total は最初のページ（cursor も offset も無いとき）だけ、10,000 まで数える（超えたら total_capped: true、2 ページ目からは null）。検索の語があるときの offset は 1,000 まで。
- * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）、price_max はいちばん高い一覧の価格（0150 から）で、連携側の絞り込み UI に使う。
+ * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）、price_max はいちばん高い一覧の価格（0150 から）、brands はブランドと件数（0162 から）で、連携側の絞り込み UI に使う。
+ * ブランドは brand か filter.p.vendor（お店の画面と同じ名前）。
  */
 api.get("/shops/:shop/products", async (c: Ctx) => {
   const d = data(c);
@@ -162,6 +163,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
     ...(facets.price_max !== undefined ? { price_max: facets.price_max } : {}),
     // 選択肢の鍵 × 値ごとの在庫のある商品の数（0153 から。key は英字の鍵、表示名はショップの option_names）
     ...(facets.options !== undefined ? { options: facets.options } : {}),
+    // ブランドごとの公開の商品の数（多い順に 100 まで。0162 から）
+    ...(facets.brands !== undefined ? { brands: facets.brands } : {}),
   });
 });
 
@@ -186,7 +189,10 @@ function productQuery(c: Ctx): ProductQuery | string {
   if (options) out.options = options;
   const category = c.req.query("category");
   if (category) out.category = category;
-  const brand = c.req.query("brand");
+  // ブランド（brand か、お店の画面と同じ filter.p.vendor。両方あれば brand）。長すぎる filter.p.vendor は黙って絞らずに返さず 400
+  const vendor = vendorParamOf(all[VENDOR_PARAM]);
+  if (!vendor && (all[VENDOR_PARAM] ?? []).some((v) => v.trim() !== "")) return VENDOR_PARAM;
+  const brand = c.req.query("brand") || vendor;
   if (brand) out.brand = brand;
   const q = c.req.query("q")?.trim();
   // 100 文字（コードポイント）で切る（絵文字を半分に割らない。お店の画面・src/storefront/search-words.ts と同じ数え方）

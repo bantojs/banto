@@ -10,7 +10,7 @@
 import { memberNewsHref } from "../../modules/member-news";
 import { productFields } from "../../products/fields";
 import { shopifySortName } from "../../storefront/list-sort";
-import { filterNoindex, type ListFilter } from "../../storefront/list-filter";
+import { VENDOR_PARAM, filterNoindex, type ListFilter } from "../../storefront/list-filter";
 import { articleFieldDefs, fieldValues } from "../../blog/fields";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
@@ -408,7 +408,7 @@ export function productPartValues(c: Ctx, s: LiquidScope, detail: ProductDetail,
 export function collectionPartValues(
   c: Ctx,
   s: LiquidScope,
-  p: { page: ProductListPage; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; q?: string; sort?: ProductSort },
+  p: { page: ProductListPage; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; vendors?: VendorFacet[]; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; q?: string; sort?: ProductSort },
 ): Record<string, unknown> {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
@@ -420,6 +420,7 @@ export function collectionPartValues(
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
+    allVendors: (p.vendors ?? []).map((x) => x.brand),
     currentTags: p.filter.tags,
     filters: listFilters(u.shopPath, p),
   });
@@ -427,15 +428,16 @@ export function collectionPartValues(
 }
 
 type OptionFacet = { key: string; label: string; values: { value: string; count: number }[] };
+type VendorFacet = { brand: string; count: number };
 
 /**
  * collection.filters: 0153 が当たっていれば選択肢ごとの list（Shopify の形。値ごとに url_to_add / url_to_remove）、
  * 0150 が当たっていれば価格の price_range。当たる前は空
  */
-function listFilters(shopPath: string, p: { category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; q?: string; sort?: ProductSort }) {
+function listFilters(shopPath: string, p: { category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; vendors?: VendorFacet[]; q?: string; sort?: ProductSort }) {
   const cur = p.filter;
-  const urlWith = (o: { options?: Record<string, string[]>; price?: boolean }) =>
-    listUrl(shopPath, { category: p.category?.slug, tags: cur.tags, ...(o.price === false ? {} : { priceMin: cur.priceMin, priceMax: cur.priceMax }), options: o.options ?? cur.options, q: p.q, sort: p.sort });
+  const urlWith = (o: { options?: Record<string, string[]>; price?: boolean; vendor?: string | null }) =>
+    listUrl(shopPath, { category: p.category?.slug, tags: cur.tags, ...(o.price === false ? {} : { priceMin: cur.priceMin, priceMax: cur.priceMax }), options: o.options ?? cur.options, vendor: o.vendor === undefined ? cur.vendor : o.vendor, q: p.q, sort: p.sort });
   const out: unknown[] = [];
   for (const g of p.optionFacets ?? []) {
     const chosen = cur.options?.[g.key] ?? [];
@@ -457,6 +459,21 @@ function listFilters(shopPath: string, p: { category?: CategoryRow; filter: List
     }));
     out.push({ label: g.label, param_name: param, type: "list", presentation: "text", values, active_values: values.filter((v) => v.active), inactive_values: values.filter((v) => !v.active), url_to_remove: withValues([]) });
   }
+  // ブランド（0162）: 1 つだけ選べる（選ぶと置き換え）。選んでいるブランドが件数に無くても（100 位より下など）、外せるように出す
+  const vendors = p.vendors ?? [];
+  if (vendors.length > 0 || cur.vendor) {
+    const list = cur.vendor && !vendors.some((v) => v.brand === cur.vendor) ? [...vendors, { brand: cur.vendor, count: 0 }] : vendors;
+    const values = list.map((v) => ({
+      label: v.brand,
+      value: v.brand,
+      count: v.count,
+      active: v.brand === cur.vendor,
+      param_name: VENDOR_PARAM,
+      url_to_add: urlWith({ vendor: v.brand }),
+      url_to_remove: urlWith({ vendor: null }),
+    }));
+    out.push({ label: t("store.vendor_filter_label"), param_name: VENDOR_PARAM, type: "list", presentation: "text", values, active_values: values.filter((v) => v.active), inactive_values: values.filter((v) => !v.active), url_to_remove: urlWith({ vendor: null }) });
+  }
   if (p.priceRange) out.push(priceRangeFilter({ min: cur.priceMin, max: cur.priceMax, rangeMax: p.priceRange.max, urlToRemove: urlWith({ price: false }) }));
   return out;
 }
@@ -470,7 +487,7 @@ export function renderListing(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
+  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; vendors?: VendorFacet[]; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
 ): Response | null {
   const tag = p.filter.tags[0];
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
@@ -483,6 +500,7 @@ export function renderListing(
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
+    allVendors: (p.vendors ?? []).map((x) => x.brand),
     currentTags: p.filter.tags,
     sortBy: shopifySortName(p.sort),
     filters: listFilters(s.ctx.shopPath, { ...p, ...(p.search ? { q: p.search.q } : {}) }),
