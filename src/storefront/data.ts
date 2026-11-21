@@ -26,10 +26,15 @@ export const STOREFRONT_CACHE_TTL = 30;
 /** デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS の範囲（短すぎると覚えが効かず、長すぎると管理画面の変更が見えるまで待つ） */
 export const STOREFRONT_CACHE_TTL_MIN = 5;
 export const STOREFRONT_CACHE_TTL_MAX = 300;
+/**
+ * ショップ行（shop: / domain: / hostslug:）の覚えは設定に関係なく 30 秒。ショップ行には連携サイトの戻り先の許可リスト・会員のログインの
+ * 設定・ドメインと、レジが使う送料・税・特商法の表示の設定が乗るので、長く覚えると変更が効くまで待たせる（STOREFRONT_CACHE_TTL_SECONDS は表示の材料だけ）
+ */
+export const SHOP_ROW_CACHE_TTL = STOREFRONT_CACHE_TTL;
 
 /**
  * お店の画面の覚えておく時間（秒）。デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS（5〜300 の整数）、無い・範囲の外なら 30。
- * 覚えるのはショップ行・カテゴリー・一覧・ページなど（isolate ごと）。在庫・価格・カートはいつも引き直す（docs/env.md）
+ * 覚えるのはカテゴリー・一覧・ページ・記事など表示の材料（isolate ごと）。ショップ行は 30 秒のまま（SHOP_ROW_CACHE_TTL）、在庫・カートはいつも引き直す（docs/env.md）
  */
 export function storefrontCacheTtl(config: { get(name: string): string | undefined }): number {
   const raw = config.get("STOREFRONT_CACHE_TTL_SECONDS")?.trim();
@@ -269,7 +274,7 @@ export class StorefrontData {
     const hit = await this.cache.get<PublicShop>(key);
     if (hit) return hit;
     const shop = await this.fetchShop({ slug });
-    if (shop) await this.cache.set(key, shop, this.ttl);
+    if (shop) await this.cache.set(key, shop, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -285,8 +290,8 @@ export class StorefrontData {
     const miss = await this.cache.get<{ shop: null }>(key);
     if (miss) return null;
     const shop = await this.fetchShop({ slug });
-    if (shop) await this.cache.set(`shop:${slug}`, shop, this.ttl);
-    else await this.cache.set(key, { shop: null }, this.ttl);
+    if (shop) await this.cache.set(`shop:${slug}`, shop, SHOP_ROW_CACHE_TTL);
+    else await this.cache.set(key, { shop: null }, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -299,8 +304,8 @@ export class StorefrontData {
     const hit = await this.cache.get<{ shop: PublicShop | null }>(key);
     if (hit) return hit.shop;
     const shop = await this.fetchShop({ domain: host });
-    await this.cache.set(key, { shop }, this.ttl);
-    if (shop) await this.cache.set(`shop:${shop.slug}`, shop, this.ttl);
+    await this.cache.set(key, { shop }, SHOP_ROW_CACHE_TTL);
+    if (shop) await this.cache.set(`shop:${shop.slug}`, shop, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
