@@ -10,7 +10,8 @@ import { appDataOf, productReviews } from "../../apps/app-data";
 import { sizeChartJson, sizeChartOf } from "../../size-charts/chart";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, storefrontCacheTtl, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { searchTooShort } from "../../storefront/search-words";
+import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, storefrontCacheTtl, type ProductQuery, type ProductSort } from "../../storefront/data";
 import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, listOptionsOf, listTagsOf, optionsTooMany, priceParamOf } from "../../storefront/list-filter";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
@@ -102,7 +103,7 @@ api.get("/shops/:shop", async (c: Ctx) => {
  * tag はくり返すとすべてを持つ商品（5 つまで）、価格は ?filter.v.price.gte= / lte=（円、一覧の価格 = いちばん安い SKU。0150、
  * 当たる前の DB では 409 migration_required。src/storefront/list-filter.ts）。
  * ページ送りは cursor（前の応答の next_cursor）。offset は 10,000 まで（docs/headless.md）。
- * q は 3 文字から（2 文字以下はタグ・カテゴリー・ブランドの絞り込みと一緒のときだけ）。
+ * q は空白で語に分けて、すべての語を含む商品（5 語まで、0161）。3 文字以上の語が 1 つも無ければタグ・カテゴリー・ブランドの絞り込みと一緒のときだけ。
  * total は最初のページ（cursor も offset も無いとき）だけ、10,000 まで数える（超えたら total_capped: true、2 ページ目からは null）。検索の語があるときの offset は 1,000 まで。
  * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）、price_max はいちばん高い一覧の価格（0150 から）で、連携側の絞り込み UI に使う。
  */
@@ -115,8 +116,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   if (typeof query === "string") return c.json({ error: "invalid_request", field: query }, 400);
   const cursor = c.req.query("cursor") || undefined;
   if ((query.offset ?? 0) > (query.q ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return c.json({ error: "invalid_request", field: "offset" }, 400);
-  // 2 文字以下の語はタグ・カテゴリー・ブランドで絞っているときだけ（product_public_list と同じ。全件を見る検索をさせない）
-  if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tags?.length && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
+  // 3 文字以上の語が無ければタグ・カテゴリー・ブランドで絞っているときだけ（banto_product_list と同じ。全件を見る検索をさせない）
+  if (searchTooShort(query.q) && !query.tags?.length && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
   const categories = await d.sf.listCategories(shop);
   // 会員トークンの会員には会員限定の商品も（0098）
   const sf = await apiViewerData(c, d.sf, shop);
@@ -188,7 +189,8 @@ function productQuery(c: Ctx): ProductQuery | string {
   const brand = c.req.query("brand");
   if (brand) out.brand = brand;
   const q = c.req.query("q")?.trim();
-  if (q) out.q = q.slice(0, 100);
+  // 100 文字（コードポイント）で切る（絵文字を半分に割らない。お店の画面・src/storefront/search-words.ts と同じ数え方）
+  if (q) out.q = [...q].slice(0, 100).join("");
   const sort = c.req.query("sort");
   if (sort) {
     if (!(PRODUCT_SORTS as readonly string[]).includes(sort)) return "sort";

@@ -2,6 +2,7 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
+import { searchQueryForDb } from "./search-words";
 import { LIST_FILTERS_MIGRATION, LIST_OPTIONS_MIGRATION } from "./list-filter";
 import type { CareView } from "../care-labels/care";
 import type { CacheAdapter } from "../adapters/types";
@@ -344,7 +345,8 @@ export class StorefrontData {
       // 無いカテゴリーなら 0 件（全件を返さない）
       p_category_ids: query.category ? (cat ? [...descendantIds(categories, cat.id)] : []) : null,
       p_brand: query.brand ?? null,
-      p_q: query.q?.trim() ? query.q.trim().slice(0, 100) : null,
+      // 分けた語をつないだ形で渡す（Worker の「短すぎる」の判定と DB の分け方をずらさない。0161）
+      p_q: searchQueryForDb(query.q),
       p_updated_since: query.updatedSince?.toISOString() ?? null,
       p_count: opts.count ?? false,
     };
@@ -874,8 +876,6 @@ export interface FeedCatalogRows {
 
 /** offset で辿れる上限（それより先は cursor）。product_public_list と同じ */
 export const PRODUCT_OFFSET_MAX = 10000;
-/** 絞り込み（タグ・カテゴリー・ブランド）無しで受け付ける検索の語の文字数の下限（pg_trgm のインデックスが効く長さ） */
-export const PRODUCT_SEARCH_MIN_CHARS = 3;
 /** 検索の語があるときの offset の上限 */
 export const PRODUCT_SEARCH_OFFSET_MAX = 1000;
 /** 一覧と一緒に返すタグの数（多い順） */

@@ -168,7 +168,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
             { name: "filter.v.option.color", in: "query", schema: { type: "array", items: str, maxItems: 10 }, style: "form", explode: true, description: "在庫のある SKU の選択肢（例は鍵 color。名前は filter.v.option.<英字の鍵> で、どの鍵でも同じ形。くり返すと同じ鍵はどれか、鍵どうしはすべて、鍵は 3 つまで）。0153 から" },
             { name: "category", in: "query", schema: str, description: "カテゴリーのスラッグ。子孫のカテゴリーと追加カテゴリーも含む" },
             { name: "brand", in: "query", schema: str },
-            { name: "q", in: "query", schema: str, description: "3 文字から（2 文字以下は tag・category・brand と一緒のときだけ）" },
+            { name: "q", in: "query", schema: str, description: "空白で区切った語をすべて含む商品（5 語まで）。3 文字以上の語が無ければ tag・category・brand と一緒のときだけ" },
             { name: "updated_since", in: "query", schema: { type: "string", format: "date-time" } },
             { name: "sort", in: "query", schema: { type: "string", enum: ["new", "updated", "price_asc", "price_desc", "name"] } },
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } },

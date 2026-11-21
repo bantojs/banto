@@ -168,9 +168,13 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect(await slugs({ q: "wool" })).toEqual(["d-2"]);
     expect(await slugs({ q: "セール" })).toEqual(["d-3"]);
     expect(await slugs({ q: "100%" })).toEqual(["d-1"]);
-    expect(await slugs({ q: "0% 綿" })).toEqual(["d-1"]);
+    // 空白で語に分けて、すべての語を含む商品（0161）。3 文字以上の語が 1 つあれば短い語も足せる
+    expect(await slugs({ q: "00% 綿" })).toEqual(["d-1"]);
+    expect(await slugs({ q: "綿 麦わら" })).toEqual(["d-1"]);
+    expect(await slugs({ q: "ニット 夏" })).toEqual([]);
     expect(await slugs({ q: "_x_" })).toEqual([]);
-    // 2 文字以下は、タグ・カテゴリー・ブランドで絞っているときだけ（インデックスが効かず全件を見るため）
+    // 3 文字以上の語が無ければ、タグ・カテゴリー・ブランドで絞っているときだけ（インデックスが効かず全件を見るため）
+    expect(await expectDbError(() => slugs({ q: "0% 綿" }))).toMatch(/q_too_short/);
     expect(await expectDbError(() => slugs({ q: "帽子" }))).toMatch(/q_too_short/);
     expect(await expectDbError(() => slugs({ q: "%" }))).toMatch(/q_too_short/);
     expect(await slugs({ q: "帽", categories: [c1, c2] })).toEqual(["d-1", "d-3"]);

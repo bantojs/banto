@@ -568,7 +568,7 @@ export const ja = {
   "store.regular_price": "通常",
   "store.search": "検索",
   "store.search_heading": "「{q}」の検索結果",
-  "store.search_too_short": "3 文字以上で探してください。",
+  "store.search_too_short": "3 文字以上の言葉を含めて探してください。",
   "store.search_none": "「{q}」に合う商品は見つかりませんでした。",
   "store.cart_add_short": "「{name}」は在庫が足りません。",
   "store.cart": "カート",

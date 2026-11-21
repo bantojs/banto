@@ -6,6 +6,7 @@
 
 import { checkNoticeText, normalizeNoticeBody, type NoticeChannel, type NoticeKind } from "../src/notices/templates";
 import { pageHandleOk } from "../src/pages";
+import { searchTooShort, searchWords } from "../src/storefront/search-words";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { normalizeTags } from "../src/products/tags";
 import { productFields } from "../src/products/fields";
@@ -1342,11 +1343,11 @@ export class FakeSupabase {
     const priceMax = args["p_price_max"] == null ? null : Number(args["p_price_max"]);
     if ((priceMin !== null && priceMin < 0) || (priceMax !== null && priceMax < 0)) return json({ code: "22023", message: "invalid_price_filter" }, 400);
     const rawQ = typeof args["p_q"] === "string" ? args["p_q"].trim() : "";
-    if (rawQ && [...rawQ].length < 3 && wantTags.length === 0 && !args["p_category_ids"] && !args["p_brand"]) return json({ code: "22023", message: "q_too_short" }, 400);
+    if (searchTooShort(rawQ) && wantTags.length === 0 && !args["p_category_ids"] && !args["p_brand"]) return json({ code: "22023", message: "q_too_short" }, 400);
     const sort = String(args["p_sort"] ?? "new");
     const cats = args["p_category_ids"] as string[] | null;
     const brand = args["p_brand"] as string | null;
-    const q = typeof args["p_q"] === "string" && args["p_q"].trim() ? args["p_q"].trim().slice(0, 100).toLowerCase() : null;
+    const qWords = searchWords(typeof args["p_q"] === "string" ? args["p_q"] : null);
     const since = args["p_updated_since"] ? Date.parse(String(args["p_updated_since"])) : null;
     type Entry = { p: Row; key: string | number; price: number | null; compareAt: number | null };
     const keyOf: Record<string, (e: { p: Row; price: number | null }) => string | number> = {
@@ -1369,7 +1370,7 @@ export class FakeSupabase {
       .filter((p) => !wantOptions || Object.entries(wantOptions).every(([k, vals]) => vals.length === 0 || this.optionStock(p["id"]).some((o) => o.key === k && vals.includes(o.value))))
       .filter((p) => !cats || cats.includes(String(p["category_id"])) || ((p["extra_category_ids"] ?? []) as string[]).some((c) => cats.includes(c)))
       .filter((p) => !brand || p["brand"] === brand)
-      .filter((p) => !q || text(p).includes(q))
+      .filter((p) => qWords.every((w) => text(p).includes(w)))
       .filter((p) => since === null || Date.parse(String(p["updated_at"])) > since)
       .map((p) => {
         const lp = this.listPrice(p["id"]);
