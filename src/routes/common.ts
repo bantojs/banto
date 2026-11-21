@@ -5,7 +5,7 @@ import { createDbClient } from "../db/client";
 import type { MigrationStateDeps } from "../db/migration-state";
 import { canonicalIp, relayIps } from "../commerce/checkout";
 import { HTTPException } from "hono/http-exception";
-import { STOREFRONT_CACHE_TTL, StorefrontData, type PublicShop } from "../storefront/data";
+import { STOREFRONT_CACHE_TTL, StorefrontData, storefrontCacheTtl, type PublicShop } from "../storefront/data";
 import { privilegedFor } from "./payment-deps";
 import { createMailer } from "../mail/send";
 import type { InquiryMailDeps } from "../api/service";
@@ -74,7 +74,7 @@ export async function publicShop(c: Ctx): Promise<{ sf: StorefrontData; shop: Pu
   const url = cfg.get("SUPABASE_URL");
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   if (!url || !anonKey) return c.json({ error: "not_configured" }, 503);
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
+  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache, null, storefrontCacheTtl(c.get("adapters").config));
   const shop = await sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
   return { sf, shop };

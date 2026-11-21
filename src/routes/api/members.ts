@@ -5,7 +5,7 @@ import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
 import { consentCollected, returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/checkout";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import { StorefrontData, storefrontCacheTtl, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
@@ -139,7 +139,7 @@ async function shopFor(c: Ctx, slug: string = param(c, "shop")): Promise<PublicS
   const url = cfg.get("SUPABASE_URL");
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   if (!url || !anonKey) return null;
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
+  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache, null, storefrontCacheTtl(c.get("adapters").config));
   return sf.shopBySlug(slug);
 }
 

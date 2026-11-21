@@ -1,7 +1,7 @@
 import type { Hono, MiddlewareHandler } from "hono";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import { StorefrontData, storefrontCacheTtl, type PublicShop } from "../../storefront/data";
 import { SLUG_RE, readBodyLimited, type Ctx } from "../common";
 import { bodyLimitFor } from "../body-limit";
 import { markShopDomainRequest } from "../shop-domain-request";
@@ -50,7 +50,7 @@ export function storefrontData(c: Ctx): StorefrontData | null {
   const url = cfg.get("SUPABASE_URL");
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   if (!url || !anonKey) return null;
-  return new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
+  return new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache, null, storefrontCacheTtl(c.get("adapters").config));
 }
 
 /** Banto 自身のホスト（ショップのドメインを探さない）。PUBLIC_BASE_URL・workers.dev・ローカル */
