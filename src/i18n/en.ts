@@ -555,6 +555,7 @@ export const en: Record<MessageKey, string> = {
   "store.first_page": "← First page",
   "store.all_products": "All products",
   "store.price_filter_label": "Price",
+  "store.vendor_filter_label": "Brand",
   "store.price_min": "From",
   "store.price_max": "To",
   "store.price_apply": "Apply",

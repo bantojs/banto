@@ -555,6 +555,7 @@ export const ja = {
   "store.first_page": "← 最初のページ",
   "store.all_products": "すべての商品",
   "store.price_filter_label": "価格",
+  "store.vendor_filter_label": "ブランド",
   "store.price_min": "下限",
   "store.price_max": "上限",
   "store.price_apply": "絞り込む",

@@ -69,6 +69,8 @@ export interface ListQuery {
   priceMax?: number | null | undefined;
   /** SKU の選択肢（?filter.v.option.<key>= をくり返す。0153） */
   options?: Readonly<Record<string, readonly string[]>> | null | undefined;
+  /** ブランド（?filter.p.vendor=、0162） */
+  vendor?: string | null | undefined;
   q?: string | null | undefined;
   after?: string | null | undefined;
   /** 並べ方（src/storefront/list-sort.ts。既定の new は渡さない） */
@@ -95,6 +97,7 @@ const withListQuery = (path: string, q: ListQuery) => {
   if (q.priceMin !== null && q.priceMin !== undefined) p.set("filter.v.price.gte", String(q.priceMin));
   if (q.priceMax !== null && q.priceMax !== undefined) p.set("filter.v.price.lte", String(q.priceMax));
   for (const [k, vals] of Object.entries(q.options ?? {})) for (const v of vals) p.append(`filter.v.option.${k}`, v);
+  if (q.vendor) p.set("filter.p.vendor", q.vendor);
   for (const [k, v] of [["q", q.q], ["sort", q.sort], ["after", q.after]] as const) if (v) p.set(k, v);
   const qs = p.toString();
   return qs ? `${path}?${qs}` : path;
