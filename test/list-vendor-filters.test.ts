@@ -93,6 +93,8 @@ describe("公開 API", () => {
     expect(slugs(r.body)).toEqual(["bag"]);
     expect(r.body.brands).toEqual([{ brand: "ACME", count: 2 }, { brand: "Beta & Co", count: 1 }]);
     expect(slugs((await api(s.app, "?brand=ACME&filter.p.vendor=Beta%20%26%20Co")).body)).toEqual(["cap", "shirt"]);
+    // 長すぎる filter.p.vendor は黙って全件を返さずに 400
+    expect((await api(s.app, `?filter.p.vendor=${"a".repeat(101)}`)).status).toBe(400);
   });
 });
 

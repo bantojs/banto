@@ -41,7 +41,7 @@ GET /api/shops/<shop>/categories
 | --- | --- |
 | `category` | このカテゴリーと、その子孫のカテゴリーの商品だけ（主カテゴリーか追加カテゴリーのどれかが合えば出る）。存在しない slug なら 0 件 |
 | `brand` | このブランドの商品だけ（完全一致） |
-| `filter.p.vendor` | `brand` と同じ（お店の画面・Shopify のテーマと同じ名前。両方あれば `brand`） |
+| `filter.p.vendor` | `brand` と同じ（お店の画面・Shopify のテーマと同じ名前。両方あれば `brand`。100 文字を超えたら 400、`field: "filter.p.vendor"`） |
 | `tag` | このタグを持つ商品だけ（完全一致）。くり返すと **すべてのタグを持つ商品**（`?tag=夏物&tag=セール`、5 つまで。6 つ以上は 400 `field: "tag"`）。タグは管理画面の商品編集、または AI 用 API で付ける |
 | `filter.v.option.<鍵>` | 在庫のある SKU の選択肢がこの値の商品だけ（0153。鍵は英字の鍵、くり返すと同じ鍵はどれか・鍵どうしはすべて、鍵は 3 つまで・値は 10 まで。超えたり読めない鍵は 400 `field: "filter.v.option"`）。名前は Shopify のテーマの絞り込みと同じです |
 | `filter.v.price.gte` / `filter.v.price.lte` | 一覧の価格（いちばん安い SKU の価格、税込の円。`min_price_jpy` と同じ）がこの値以上 / 以下の商品だけ。価格の無い商品は出ません。数でなければ 400（`field` はその名前）。名前は Shopify のテーマの絞り込みと同じです |

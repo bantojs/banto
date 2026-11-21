@@ -189,8 +189,10 @@ function productQuery(c: Ctx): ProductQuery | string {
   if (options) out.options = options;
   const category = c.req.query("category");
   if (category) out.category = category;
-  // ブランド（brand か、お店の画面と同じ filter.p.vendor。両方あれば brand）
-  const brand = c.req.query("brand") || vendorParamOf(all[VENDOR_PARAM]);
+  // ブランド（brand か、お店の画面と同じ filter.p.vendor。両方あれば brand）。長すぎる filter.p.vendor は黙って絞らずに返さず 400
+  const vendor = vendorParamOf(all[VENDOR_PARAM]);
+  if (!vendor && (all[VENDOR_PARAM] ?? []).some((v) => v.trim() !== "")) return VENDOR_PARAM;
+  const brand = c.req.query("brand") || vendor;
   if (brand) out.brand = brand;
   const q = c.req.query("q")?.trim();
   // 100 文字（コードポイント）で切る（絵文字を半分に割らない。お店の画面・src/storefront/search-words.ts と同じ数え方）

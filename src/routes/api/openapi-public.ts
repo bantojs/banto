@@ -192,7 +192,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
                 brands: arr(obj({ brand: str, count: int }), "ブランドごとの公開の商品の数（多い順に 100 まで、0162 から）"),
               }),
             ),
-            400: err("invalid_request（field: tag・filter.v.price.gte・filter.v.price.lte・filter.v.option・sort・updated_since・limit・offset・q・cursor）"),
+            400: err("invalid_request（field: tag・filter.v.price.gte・filter.v.price.lte・filter.v.option・filter.p.vendor・sort・updated_since・limit・offset・q・cursor）"),
             409: err("migration_required（タグ 2 つ以上・価格の絞り込みは 0150 から、選択肢は 0153 から）"),
             ...common,
           },
