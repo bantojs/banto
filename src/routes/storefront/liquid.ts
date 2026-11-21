@@ -94,13 +94,14 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<ThemePreview | nu
   return openThemePreview(secret, getScopedCookie(c, PREVIEW_COOKIE, "/"), s.shop.id);
 }
 
-/** 描くテーマ（公開中の版か、プレビューの版）。描けないなら null */
-/**
- * 1 回のリクエストの中で選んだテーマ（カートの値付け・画像・会員の条件を含む）を覚える。一覧の画面は一覧の組み立てとひな形の描画の
- * 両方から呼ぶので、2 回目は覚えたものを使う（カートの値付けを 2 回しない）。カートの行を渡す呼び出し（カート・レジ）は渡された行で作り直す
- */
+/** 1 回のリクエストの中で選んだテーマ（scope ごと。scope はリクエストごとに作る） */
 const choiceOfScope = new WeakMap<LiquidScope, Promise<LiquidChoice | null>>();
 
+/**
+ * 描くテーマ（公開中の版か、プレビューの版）。描けないなら null。
+ * 1 回のリクエストの中では覚えたものを使う（一覧の画面は一覧の組み立てとひな形の描画の両方から呼ぶので、カートの値付けを 2 回しない）。
+ * カートの行を渡す呼び出し（カート・レジ）は渡された行で作り直す
+ */
 export function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
   if (known) return loadLiquidChoice(c, s, known);
   let p = choiceOfScope.get(s);
