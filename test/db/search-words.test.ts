@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { asService, closePool, createShopFixture, dbAvailable, expectDbError, getPool, resetDatabase, type Fixture } from "./harness";
 import { SEARCH_WORDS_CASES } from "../fixtures/search-words-cases";
+import { searchQueryForDb, searchTooShort } from "../../src/storefront/search-words";
 
 /** 0161: 検索の語を空白で分けて、すべての語を含む商品を探す（AND）。分け方と短い語の決まりは src/storefront/search-words.ts と同じ表で縛る */
 describe.skipIf(!dbAvailable)("検索の語（0161）", () => {
@@ -34,6 +35,18 @@ describe.skipIf(!dbAvailable)("検索の語（0161）", () => {
         (e: unknown) => String(e),
       );
       expect([k.name, err !== null && /q_too_short/.test(err)]).toEqual([k.name, k.tooShort]);
+    }
+  });
+
+  it("Worker が渡す形（searchQueryForDb）なら、絵文字・ほかの空白・大文字小文字の違いでも DB の判定が Worker とずれない", async () => {
+    for (const q of [...SEARCH_WORDS_CASES.map((k) => k.q), "😀 ".repeat(45) + "abc", "İİ", "ab\u2003cd", "ab\u2028cd"]) {
+      const db = searchQueryForDb(q);
+      if (db === null) continue;
+      const err = await list(db).then(
+        () => null,
+        (e: unknown) => String(e),
+      );
+      expect([q, err !== null && /q_too_short/.test(err)]).toEqual([q, searchTooShort(q)]);
     }
   });
 

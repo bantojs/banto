@@ -189,7 +189,8 @@ function productQuery(c: Ctx): ProductQuery | string {
   const brand = c.req.query("brand");
   if (brand) out.brand = brand;
   const q = c.req.query("q")?.trim();
-  if (q) out.q = q.slice(0, 100);
+  // 100 文字（コードポイント）で切る（絵文字を半分に割らない。お店の画面・src/storefront/search-words.ts と同じ数え方）
+  if (q) out.q = [...q].slice(0, 100).join("");
   const sort = c.req.query("sort");
   if (sort) {
     if (!(PRODUCT_SORTS as readonly string[]).includes(sort)) return "sort";

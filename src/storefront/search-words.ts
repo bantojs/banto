@@ -23,6 +23,12 @@ export function searchWords(q: string | null | undefined): string[] {
   return out;
 }
 
+/** DB に渡す検索の語（分けた語を半角の空白でつなぐ。DB が分け直しても同じ語になり、「短すぎる」の判定が Worker とずれない）。語が無ければ null */
+export function searchQueryForDb(q: string | null | undefined): string | null {
+  const words = searchWords(q);
+  return words.length > 0 ? words.join(" ") : null;
+}
+
 /**
  * 語が短すぎて、ほかの絞り込み（タグ・カテゴリー・ブランド）が無ければ探さないか。3 文字以上の語が 1 つでもあれば探す
  * （その語でインデックスが効き、短い語はその結果の中で比べるだけ）

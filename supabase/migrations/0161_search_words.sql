@@ -1,7 +1,8 @@
 -- 0161_search_words: 商品の検索の語を空白で語に分け、すべてを含む商品を探す（AND）。前方専用。メンテナの決定 2026-11-21（docs/storefront.md「URL」）。
---   - banto_product_list（0153 を差し替え）: p_q を空白（半角・全角・タブ・改行）で語に分け、重なりを除いて 5 語まで、語ごとに AND で like
+--   - banto_product_list（0153 を差し替え）: p_q を空白（半角・全角・タブ・改行・垂直タブ・改ページだけ。[[:space:]] はロケールで広がるので列挙する）で語に分け、重なりを除いて 5 語まで、語ごとに AND で like
 --   - 短い語の決まり（2026-10-26）は語ごとに: 3 文字以上の語が 1 つも無く、タグ・カテゴリー・ブランドでも絞っていないときだけ q_too_short
---   - 1 語だけのときは今までと同じ結果。お店の画面・ヘッドレスの公開 API・AI 用 API・会員の一覧はどれもこの関数を通る
+--   - 1 語だけのときは今までと同じ結果。お店の画面・ヘッドレスの公開 API・会員の一覧はどれもこの関数を通る（AI 用 API の商品の一覧 api_products_list は名前とスラッグの ilike のまま）
+--   - Worker は src/storefront/search-words.ts で分けた語を半角の空白でつないで渡す（分け方・大文字小文字・長さの数え方の違いで判定がずれないように）
 
 create or replace function banto_product_list(
   p_shop_id uuid,
@@ -75,7 +76,7 @@ begin
   -- 分け方は src/storefront/search-words.ts と同じ（test/fixtures/search-words-cases.ts の答え合わせの表で縛る）
   select coalesce(array_agg(w order by ord), '{}') into v_words
     from (select w, min(ord) as ord
-            from regexp_split_to_table(lower(left(btrim(coalesce(p_q, '')), 100)), '[[:space:]　]+') with ordinality t(w, ord)
+            from regexp_split_to_table(lower(left(btrim(coalesce(p_q, '')), 100)), '[' || chr(32) || chr(9) || chr(10) || chr(11) || chr(12) || chr(13) || chr(12288) || ']+') with ordinality t(w, ord)
            where w <> '' group by w order by min(ord) limit 5) x;
   -- 2 文字以下の語だけでは pg_trgm のインデックスが効かず全件を見るので、3 文字以上の語が 1 つも無いときは、タグ・カテゴリー・ブランドで
   -- 絞っているときだけ探す（ログイン無しで何度も送られて DB を重くされないように。人間の決定 2026-10-26、0161 で語ごとに。メンテナの決定 2026-11-21）。

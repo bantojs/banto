@@ -2,6 +2,7 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
+import { searchQueryForDb } from "./search-words";
 import { LIST_FILTERS_MIGRATION, LIST_OPTIONS_MIGRATION } from "./list-filter";
 import type { CareView } from "../care-labels/care";
 import type { CacheAdapter } from "../adapters/types";
@@ -344,7 +345,8 @@ export class StorefrontData {
       // 無いカテゴリーなら 0 件（全件を返さない）
       p_category_ids: query.category ? (cat ? [...descendantIds(categories, cat.id)] : []) : null,
       p_brand: query.brand ?? null,
-      p_q: query.q?.trim() ? query.q.trim().slice(0, 100) : null,
+      // 分けた語をつないだ形で渡す（Worker の「短すぎる」の判定と DB の分け方をずらさない。0161）
+      p_q: searchQueryForDb(query.q),
       p_updated_since: query.updatedSince?.toISOString() ?? null,
       p_count: opts.count ?? false,
     };
