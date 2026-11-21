@@ -488,7 +488,7 @@ export function renderListing(
     filters: listFilters(s.ctx.shopPath, { ...p, ...(p.search ? { q: p.search.q } : {}) }),
   });
   const paginate = paginateOf(p.page, p.after, p.link);
-  // 短すぎる語（3 文字未満で、カテゴリー・タグでも絞っていない）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
+  // 短すぎる語（3 文字以上の語が無く、カテゴリー・タグでも絞っていない。0161）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
   const search = p.search
     ? { performed: p.search.performed, terms: p.search.q, too_short: !p.search.performed, results: products.map((x) => ({ ...x, object_type: "product" })), results_count: p.page.total ?? products.length, types: ["product"], filters: [], sort_by: null, sort_options: [] }
     : null;

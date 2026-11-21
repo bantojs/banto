@@ -12,7 +12,8 @@ import { DIALOGS_MODULE } from "../../modules/dialogs/dialogs";
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
-import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, type ProductSort } from "../../storefront/data";
+import { searchTooShort } from "../../storefront/search-words";
+import { type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, type ProductSort } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { categoryUrl, listUrl, productUrl, productsUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -564,8 +565,8 @@ interface ListingData {
 /** 商品の一覧の材料（お店のトップ・すべての商品・カテゴリーの一覧・商品一覧のひな形のプレビューで同じ） */
 async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; q?: string; after?: string; sort?: ProductSort; top: boolean; count: boolean }): Promise<ListingData | null> {
   const f = q.filter;
-  // 2 文字以下の語は、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0058 の q_too_short）
-  const searchable = !q.q || [...q.q].length >= PRODUCT_SEARCH_MIN_CHARS || Boolean(f.tags.length > 0 || q.category);
+  // 3 文字以上の語が無ければ、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0161 の q_too_short）
+  const searchable = !searchTooShort(q.q) || Boolean(f.tags.length > 0 || q.category);
   const query = { tags: f.tags, ...(f.priceMin !== undefined ? { priceMin: f.priceMin } : {}), ...(f.priceMax !== undefined ? { priceMax: f.priceMax } : {}), ...(f.options ? { options: f.options } : {}), category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), ...(q.sort ? { sort: q.sort } : {}), limit: STORE_PAGE_SIZE };
   const empty: ProductListPage = { items: [], total: 0, totalCapped: false, limit: STORE_PAGE_SIZE, offset: 0, nextOffset: null, nextCursor: null };
   const [page, facets] = await Promise.all([searchable ? s.sf.productPage(s.shop, query, q.categories, { cursor: q.after, ...(q.count ? { count: true } : {}) }) : Promise.resolve(empty), s.sf.productFacets(s.shop, q.categories)]);

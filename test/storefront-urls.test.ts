@@ -96,7 +96,7 @@ describe("既定のテーマ", () => {
     expect(html).toContain('<meta name="robots" content="noindex"');
     expect(html).toContain("トートバッグ");
     expect(html).not.toContain("ニット</div>");
-    expect(await (await b.get("/my-shop/products?q=%E3%83%88")).text()).toContain("3 文字以上で探してください。");
+    expect(await (await b.get("/my-shop/products?q=%E3%83%88")).text()).toContain("3 文字以上の言葉を含めて探してください。");
     // カテゴリーの中なら 1 文字でも探す
     const inCat = await (await b.get("/my-shop/categories/tops?q=%E3%83%8B")).text();
     expect(inCat).toContain("ニット");

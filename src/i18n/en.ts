@@ -568,7 +568,7 @@ export const en: Record<MessageKey, string> = {
   "store.regular_price": "Regular",
   "store.search": "Search",
   "store.search_heading": "Results for \"{q}\"",
-  "store.search_too_short": "Please enter at least 3 characters.",
+  "store.search_too_short": "Please include a word of at least 3 characters.",
   "store.search_none": "No products matched “{q}”.",
   "store.cart_add_short": "Not enough stock for “{name}”.",
   "store.cart": "Cart",
