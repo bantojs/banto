@@ -10,7 +10,7 @@ import { appDataOf, productReviews } from "../../apps/app-data";
 import { sizeChartJson, sizeChartOf } from "../../size-charts/chart";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, storefrontCacheTtl, type ProductQuery, type ProductSort } from "../../storefront/data";
 import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, listOptionsOf, listTagsOf, optionsTooMany, priceParamOf } from "../../storefront/list-filter";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
@@ -64,7 +64,7 @@ function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   if (!url || !anonKey) return null;
   return {
-    sf: new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache),
+    sf: new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache, null, storefrontCacheTtl(c.get("adapters").config)),
     mediaBaseUrl: mediaBaseUrl(c),
   };
 }

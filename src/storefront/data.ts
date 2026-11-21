@@ -23,6 +23,27 @@ const SALE_DATES_MIGRATION = "0148_product_sale_dates";
 
 
 export const STOREFRONT_CACHE_TTL = 30;
+/** デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS の範囲（短すぎると覚えが効かず、長すぎると管理画面の変更が見えるまで待つ） */
+export const STOREFRONT_CACHE_TTL_MIN = 5;
+export const STOREFRONT_CACHE_TTL_MAX = 300;
+/**
+ * ショップ行（shop: / domain: / hostslug:）・カテゴリー・実店舗の覚えは設定に関係なく 30 秒。ショップ行には連携サイトの戻り先の許可リスト・会員の
+ * ログインの設定・ドメインと、レジが使う送料・税・特商法の表示の設定が乗り、カテゴリーの木はクーポンのカテゴリーの条件、実店舗の営業日は
+ * お店で試着の来店日の確かめに使うので、長く覚えると変更が効くまで待たせる（STOREFRONT_CACHE_TTL_SECONDS は表示の材料だけ）
+ */
+export const SHOP_ROW_CACHE_TTL = STOREFRONT_CACHE_TTL;
+
+/**
+ * お店の画面の覚えておく時間（秒）。デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS（5〜300 の整数）、無い・範囲の外なら 30。
+ * 覚えるのは商品の一覧・ページ・記事・ブログなど表示の材料（isolate ごと）。ショップ行・カテゴリー・実店舗は 30 秒のまま（SHOP_ROW_CACHE_TTL）、
+ * 在庫・カートはいつも引き直す（docs/env.md）
+ */
+export function storefrontCacheTtl(config: { get(name: string): string | undefined }): number {
+  const raw = config.get("STOREFRONT_CACHE_TTL_SECONDS")?.trim();
+  if (!raw || !/^\d{1,4}$/.test(raw)) return STOREFRONT_CACHE_TTL;
+  const n = Number(raw);
+  return n >= STOREFRONT_CACHE_TTL_MIN && n <= STOREFRONT_CACHE_TTL_MAX ? n : STOREFRONT_CACHE_TTL;
+}
 
 /** product_public_stock に 1 回で渡せる SKU の数（超えると too_many_skus） */
 const PUBLIC_STOCK_MAX_SKUS = 200;
@@ -202,11 +223,13 @@ export class StorefrontData {
     private db: DbClient,
     private cache: CacheAdapter,
     private reader: MemberReader | null = null,
+    /** 覚えておく時間（秒、storefrontCacheTtl） */
+    private ttl: number = STOREFRONT_CACHE_TTL,
   ) {}
 
   /** ログイン中の会員として読む（一覧・詳細・カートが会員限定の商品を含む。キャッシュしない） */
   withMember(reader: MemberReader): StorefrontData {
-    return new StorefrontData(this.db, this.cache, reader);
+    return new StorefrontData(this.db, this.cache, reader, this.ttl);
   }
 
   /** ゲストが会員限定のページ・記事の URL で来たとき「会員の方だけ」と出してよいか（0100。存在も隠すもの・無いものは false） */
@@ -253,7 +276,7 @@ export class StorefrontData {
     const hit = await this.cache.get<PublicShop>(key);
     if (hit) return hit;
     const shop = await this.fetchShop({ slug });
-    if (shop) await this.cache.set(key, shop, STOREFRONT_CACHE_TTL);
+    if (shop) await this.cache.set(key, shop, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -269,8 +292,8 @@ export class StorefrontData {
     const miss = await this.cache.get<{ shop: null }>(key);
     if (miss) return null;
     const shop = await this.fetchShop({ slug });
-    if (shop) await this.cache.set(`shop:${slug}`, shop, STOREFRONT_CACHE_TTL);
-    else await this.cache.set(key, { shop: null }, STOREFRONT_CACHE_TTL);
+    if (shop) await this.cache.set(`shop:${slug}`, shop, SHOP_ROW_CACHE_TTL);
+    else await this.cache.set(key, { shop: null }, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -283,8 +306,8 @@ export class StorefrontData {
     const hit = await this.cache.get<{ shop: PublicShop | null }>(key);
     if (hit) return hit.shop;
     const shop = await this.fetchShop({ domain: host });
-    await this.cache.set(key, { shop }, STOREFRONT_CACHE_TTL);
-    if (shop) await this.cache.set(`shop:${shop.slug}`, shop, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { shop }, SHOP_ROW_CACHE_TTL);
+    if (shop) await this.cache.set(`shop:${shop.slug}`, shop, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -348,7 +371,7 @@ export class StorefrontData {
       ...(wants && !filters ? { filtersIgnored: true } : {}),
       ...(wantsOptions && !optionsOk ? { optionsIgnored: true } : {}),
     };
-    if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    if (cacheable) await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -367,7 +390,7 @@ export class StorefrontData {
     const rows = Array.isArray(r?.items) ? r.items : [];
     const saleDates = await this.saleDatesFor(rows);
     const out = rows.map((x) => ({ ...summaryOf(x), ...(saleDates ? { saleDates } : {}) }));
-    if (!reader) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    if (!reader) await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -380,7 +403,7 @@ export class StorefrontData {
     const hit = await this.cache.get<ProductFacets>(key);
     if (hit) return hit;
     const out = await this.db.rpc<ProductFacets>("product_public_facets", { p_shop_id: shop.id, p_tag_limit: PRODUCT_FACET_TAGS });
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -422,7 +445,7 @@ export class StorefrontData {
     const hit = await this.cache.get<ProductImageRow[]>(key);
     if (hit) return hit;
     const rows = (await selectIn<ProductImageRow>(this.db, "product_images", "*", shop.id, "product_id", ids)).sort((a, b) => a.sort_order - b.sort_order);
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -447,7 +470,7 @@ export class StorefrontData {
     const hit = await this.cache.get<CategoryRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, SHOP_ROW_CACHE_TTL);
     return rows;
   }
 
@@ -459,7 +482,7 @@ export class StorefrontData {
     const hit = await this.cache.get<StoreRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.rpc<StoreRow[]>("shop_store_list", { p_shop_id: shop.id });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, SHOP_ROW_CACHE_TTL);
     return rows;
   }
 
@@ -475,7 +498,7 @@ export class StorefrontData {
     if (hit) return hit.page;
     const rows = await this.db.from<PageRow>("pages").select(PUBLIC_PAGE_COLUMNS, { eq: { shop_id: shop.id, handle, published: true }, limit: 1 });
     const page = rows[0] ?? null;
-    await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { page }, this.ttl);
     return page;
   }
 
@@ -489,7 +512,7 @@ export class StorefrontData {
     if (hit) return hit.page;
     const rows = await this.db.from<PageRow>("pages").select(PUBLIC_PAGE_COLUMNS, { eq: { shop_id: shop.id, id, published: true }, limit: 1 });
     const page = rows[0] ?? null;
-    await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { page }, this.ttl);
     return page;
   }
 
@@ -504,7 +527,7 @@ export class StorefrontData {
     const hit = await this.cache.get<IncludePart[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<IncludePart>("pages").select("id,handle,body,updated_at", { eq: { shop_id: shop.id, published: true }, in: { handle: list }, limit: list.length });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -527,7 +550,7 @@ export class StorefrontData {
       this.db.from<ArticleRow>("articles").select("handle,title", { ...base, where: [{ col: "published_at", op: "gt", value: article.published_at }], order: "published_at.asc" }),
     ]);
     const out = { prev: older[0] ?? null, next: newer[0] ?? null };
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -542,7 +565,7 @@ export class StorefrontData {
     // 部品のページ（0122）は一覧に出さない
     const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
     const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc,id.asc", limit: 100 });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -552,7 +575,7 @@ export class StorefrontData {
     const hit = await this.cache.get<BlogRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc,id.asc", limit: 20 });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -570,7 +593,7 @@ export class StorefrontData {
     if (hit) return hit.blog;
     const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id, handle }, limit: 1 });
     const blog = rows[0] ?? null;
-    await this.cache.set(key, { blog }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { blog }, this.ttl);
     return blog;
   }
 
@@ -601,7 +624,7 @@ export class StorefrontData {
       offset,
     });
     const out = { items: rows.slice(0, opts.limit), hasNext: rows.length > opts.limit };
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -629,7 +652,7 @@ export class StorefrontData {
       order: fs ? fs.order : articleOrderParam(opts.sort),
       limit: opts.limit,
     });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -641,7 +664,7 @@ export class StorefrontData {
     const hit = await this.cache.get<ArticleRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<ArticleRow>("articles").select(ARTICLE_LIST_COLUMNS, { eq: { shop_id: shop.id, blog_id: blogId, published: true }, in: { handle: list }, limit: list.length });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -663,7 +686,7 @@ export class StorefrontData {
       order: fs ? fs.order : articleOrderParam(sort),
       limit: STORE_ARTICLES_MAX,
     });
-    await this.cache.set(cacheKey, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(cacheKey, rows, this.ttl);
     return rows;
   }
 
@@ -678,7 +701,7 @@ export class StorefrontData {
     if (hit) return hit.article;
     const rows = await this.db.from<ArticleRow>("articles").select("*", { eq: { shop_id: shop.id, blog_id: blogId, handle, published: true }, limit: 1 });
     const article = rows[0] ?? null;
-    await this.cache.set(key, { article }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { article }, this.ttl);
     return article;
   }
 
@@ -700,7 +723,7 @@ export class StorefrontData {
     if (hit) return hit.product;
     const raw = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
     const product = raw && typeof raw === "object" ? raw : null;
-    await this.cache.set(key, { product }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { product }, this.ttl);
     return product;
   }
 
