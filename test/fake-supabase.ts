@@ -256,8 +256,31 @@ export class FakeSupabase {
     return this.tables.shops as (Row & { id: string; owner_id: string; slug: string; name: string; published: boolean })[];
   }
 
+  /**
+   * 往復の段数（速度の予算の test/perf-budget.test.ts）。latencyMs だけ待たせ、呼び出しごとに「始めた時点で終わっていた呼び出しの段数 + 1」を数える。
+   * 並べて引けば同じ段、前の結果を待って引けば次の段。maxDepth は resetDepth() からの最大
+   */
+  latencyMs = 0;
+  maxDepth = 0;
+  private doneDepth = 0;
+  resetDepth(): void {
+    this.maxDepth = 0;
+    this.doneDepth = 0;
+  }
+
   /** app に渡す fetch */
   readonly fetch: typeof fetch = async (input, init) => {
+    const depth = this.doneDepth + 1;
+    this.maxDepth = Math.max(this.maxDepth, depth);
+    if (this.latencyMs > 0) await new Promise((r) => setTimeout(r, this.latencyMs));
+    try {
+      return await this.handle(input, init);
+    } finally {
+      this.doneDepth = Math.max(this.doneDepth, depth);
+    }
+  };
+
+  private readonly handle = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = new Request(input, init);
     const u = new URL(req.url);
     this.calls.push(`${req.method} ${u.pathname}${u.search}`);

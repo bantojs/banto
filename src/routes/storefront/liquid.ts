@@ -94,8 +94,25 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<ThemePreview | nu
   return openThemePreview(secret, getScopedCookie(c, PREVIEW_COOKIE, "/"), s.shop.id);
 }
 
-/** 描くテーマ（公開中の版か、プレビューの版）。描けないなら null */
-export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
+/** 1 回のリクエストの中で選んだテーマ（scope ごと。scope はリクエストごとに作る） */
+const choiceOfScope = new WeakMap<LiquidScope, Promise<LiquidChoice | null>>();
+
+/**
+ * 描くテーマ（公開中の版か、プレビューの版）。描けないなら null。
+ * 1 回のリクエストの中では覚えたものを使う（一覧の画面は一覧の組み立てとひな形の描画の両方から呼ぶので、カートの値付けを 2 回しない）。
+ * カートの行を渡す呼び出し（カート・レジ）は渡された行で作り直す
+ */
+export function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
+  if (known) return loadLiquidChoice(c, s, known);
+  let p = choiceOfScope.get(s);
+  if (!p) {
+    p = loadLiquidChoice(c, s);
+    choiceOfScope.set(s, p);
+  }
+  return p;
+}
+
+async function loadLiquidChoice(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
   if (!onShopDomain(c, s.shop)) return null;
   const preview = await previewVersion(c, s);
   if (!preview && !s.shop.theme) return null;
@@ -109,12 +126,16 @@ export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines
       : s.shop.theme!;
     const lt = await loadTheme(themeStorage(adapters), theme, { extend: extendShopify, timezone: adapters.config.get("BANTO_TIMEZONE") ?? "Asia/Tokyo" });
     if (!lt) return null;
-    // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
-    const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
-    const cartImages = await cartImagesFor(s.sf, s.shop, cartLines);
-    // 会員が合う条件の名前（モジュールが OFF・ゲストなら引かない）
+    // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）。会員が合う条件の名前（モジュールが OFF・
+    // ゲストなら引かない）はカートと関係ないので並べて引く
     const member = s.ctx.member;
-    const audiences = member ? matchedAudienceNames(await shopAudiences(c, s.shop), { member: true, attrs: member.attrs ?? {} }) : [];
+    const [[cartLines, cartImages], audiences] = await Promise.all([
+      (async () => {
+        const lines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
+        return [lines, await cartImagesFor(s.sf, s.shop, lines)] as const;
+      })(),
+      member ? shopAudiences(c, s.shop).then((list) => matchedAudienceNames(list, { member: true, attrs: member.attrs ?? {} })) : Promise.resolve([] as string[]),
+    ]);
     return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed), cartImages, audiences };
   } catch (e) {
     console.error("[banto] theme load:", e instanceof Error ? e.message : e);
