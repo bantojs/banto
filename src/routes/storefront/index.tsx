@@ -450,9 +450,9 @@ storefront.get("/:shop", async (c: Ctx) => {
   if (!s) return notFound(c);
   // お店のトップのひな形（0101）。見えないページ（非公開・会員限定）なら、すべての商品の一覧をトップとして出す
   const homeId = moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).home : null;
-  const home = homeId ? await s.sf.layoutPage(s.shop, homeId) : null;
-  if (home) {
-    const categories = await s.sf.listCategories(s.shop);
+  // ひな形のページとカテゴリー（ヘッダーのメニュー）は並べて引く（ひな形が見えないときも、一覧がカテゴリーを使う）
+  const [home, categories] = homeId ? await Promise.all([s.sf.layoutPage(s.shop, homeId), s.sf.listCategories(s.shop)]) : [null, null];
+  if (home && categories) {
     const view = await viewerBody(c, s.sf, s.shop, home.body, viewerOf(s));
     const raw = pageBodyHtml({ ...home, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     return contentPageResponse(c, s, { ...home, seo_title: home.seo_title || s.shop.name }, view.body, raw, categories, { layoutPath: "" });
@@ -507,9 +507,8 @@ async function listResponse(c: Ctx, s: ShopScope, o: ListOpts): Promise<Response
   const category = o.category ? categories.find((x) => x.slug === o.category) : undefined;
   if (o.category && !category) return notFoundPage(c, s);
   const colId = !o.q && moduleEnabled(s.shop.settings, PAGES_MODULE) ? collectionLayoutId(pageLayoutsOf(s.shop.settings), categories, category?.id) : null;
-  const colLayout = colId ? await s.sf.layoutPage(s.shop, colId) : null;
-  // Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
-  const lt = await liquidThemeFor(c, s);
+  // 一覧のひな形と Liquid のテーマ（カートの値付けを含む）は並べて引く。Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
+  const [colLayout, lt] = await Promise.all([colId ? s.sf.layoutPage(s.shop, colId) : null, liquidThemeFor(c, s)]);
   const list = await listingData(s, { categories, ...(category ? { category } : {}), filter: o.filter ?? { tags: [] }, ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), ...(o.sort ? { sort: o.sort } : {}), top: Boolean(o.top), count: Boolean(lt) });
   if (!list) return notFoundPage(c, s);
   if (colLayout) return collectionResponse(c, s, list, { layout: colLayout });

@@ -19,7 +19,8 @@ const BUDGET = {
     "/my-shop/products?tag=x": 0,
     "/api/shops/my-shop/products": 0,
     "/api/shops/my-shop/products?tag=x&sort=price_asc&limit=10": 0,
-    // 商品行 → 画像・SKU（並列）→ 在庫（その商品の SKU だけ）。在庫は常に最新を読む
+    // 商品行 → 画像・SKU（並列）→ 在庫（その商品の SKU だけ。ゲストに見せる会員価格もここで並べて引く）。在庫は常に最新を読む。
+    // 回数とは別に、順に待つ往復の段数も下の「往復の段数」で固定する（FakeSupabase の latencyMs / maxDepth）
     "/my-shop/products/tee": 4,
     "/api/shops/my-shop/products/tee": 4,
     // 空のカート: 決済手段だけ
@@ -192,5 +193,55 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     for (const path of ["/", "/products/tee"]) await b.get(path);
     expect(await calls(sb, () => b.get("/"))).toHaveLength(BUDGET.warm["/my-shop"]);
     expect(await calls(sb, () => b.get("/products/tee"))).toHaveLength(BUDGET.warm["/my-shop/products/tee"]);
+  });
+
+  it("Liquid のテーマ + 一覧のひな形 + カートに品物: カートの値付けは 1 リクエストに 1 回（一覧の組み立てとひな形の描画で同じものを使う）", async () => {
+    forgetThemes();
+    const sb = new FakeSupabase();
+    sb.sitePlan = "paid";
+    const owner = sb.addUser("o@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "S", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c", settings: { modules: { pages: true } } });
+    const p = sb.addProduct(shop.id, { slug: "tee", name: "T", published: true, tags: ["x"] });
+    const sku = sb.addSku(shop.id, p.id, { code: "A", price_jpy: 1000, available: 3 });
+    const tpl = sb.addPage(shop.id, { handle: "list-tpl", title: "一覧", body: "一覧の案内\n\n::: current part=products", updated_at: new Date(Date.UTC(2021, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString() });
+    const v = "11111111-2222-4333-8444-555555555556";
+    const row = sb.tables.shops[0]!;
+    row["domain"] = "shop.example.jp";
+    row["theme_public"] = { id: v, storage_key: `themes/${shop.id}/${v}/bundle.json`, settings: {} };
+    (row["settings"] as Record<string, unknown>)["page_layouts"] = { collection: tpl.id };
+    const storage = new MemoryStorage(`${BASE}/media`);
+    const files = { "layout/theme.liquid": "<html><head>{{ content_for_header }}</head><body>{{ cart.item_count }}{{ content_for_layout }}</body></html>", "templates/page.liquid": "{{ page.content }}", "templates/collection.liquid": "{% for p in collection.products %}{{ p.title }}{% endfor %}" };
+    await storage.put(`themes/${shop.id}/${v}/bundle.json`, new TextEncoder().encode(JSON.stringify({ format: 1, files, assets: [] })).buffer as ArrayBuffer, "application/json");
+    const b = new Browser(appWith(sb, {}, storage), "https://shop.example.jp");
+    await b.post("/cart/add", { sku_id: sku.id, qty: "1" });
+    await b.get("/products");
+    // 値付けは SKU を引く（skus の select）。一覧の組み立てとひな形の描画の両方から呼んでも 1 回
+    const run = await calls(sb, () => b.get("/products"));
+    expect(run.filter((x) => x.startsWith("GET /rest/v1/skus"))).toHaveLength(1);
+  });
+
+  it("往復の段数: トップのひな形（0101）は、ひな形のページとカテゴリーを並べて引く", async () => {
+    const { sb, b } = setup();
+    const row = sb.tables.shops[0]!;
+    const home = sb.addPage(String(row["id"]), { handle: "home", title: "ホーム", body: "ようこそ", updated_at: new Date(Date.UTC(2022, 0, 1) + Math.floor(Math.random() * 1e10)).toISOString() });
+    row["settings"] = { modules: { pages: true }, page_layouts: { home: home.id } };
+    sb.latencyMs = 2;
+    sb.resetDepth();
+    const html = await (await b.get("/my-shop")).text();
+    expect(html).toContain("ようこそ");
+    // ショップ行 → ひな形のページ・カテゴリー（並列）
+    expect(sb.maxDepth).toBe(2);
+  });
+
+  it("往復の段数（並べて引けるものは並べる）: ゲストの商品のページは 3 段（会員価格を出すショップでも）", async () => {
+    const { sb, b } = setup();
+    const row = sb.tables.shops[0]!;
+    row["settings"] = { modules: { audiences: true } };
+    await b.get("/my-shop/products/tee");
+    sb.latencyMs = 2;
+    sb.resetDepth();
+    await b.get("/my-shop/products/tee");
+    // 商品行 → 画像・SKU（並列）→ 在庫・会員価格（並列）
+    expect(sb.maxDepth).toBe(3);
   });
 });

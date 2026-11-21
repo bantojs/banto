@@ -714,21 +714,26 @@ export class StorefrontData {
     // product_public_get（0055。attributes は公開の項目だけ）
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
     if (!product || typeof product !== "object") return null;
-    // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）
-    const [images, [skus, inventory]] = await Promise.all([
+    // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）。
+    // 在庫とゲストに見せる会員価格は SKU がそろった時点で並べて、発売前の判定（版の確認）は商品行だけで決まるので最初から並べて引く
+    const [images, [skus, inventory, member], saleDates] = await Promise.all([
       this.db.from<ProductImageRow>("product_images").select("*", { eq: { product_id: product.id }, order: "sort_order.asc" }),
       this.db
         .from<SkuRow>("skus")
         .select("*", { eq: { product_id: product.id }, order: "created_at.asc" })
-        .then(async (skus) => [skus, await this.inventoryOf(shop, skus.map((s) => s.id))] as const),
+        .then(async (skus) => {
+          const ids = skus.map((s) => s.id);
+          const [inventory, member] = await Promise.all([this.inventoryOf(shop, ids), this.memberPricesFor(shop, ids)]);
+          return [skus, inventory, member] as const;
+        }),
+      this.saleDatesFor([product]),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
-    const member = await this.memberPricesFor(shop, skus.map((s) => s.id));
     return {
       product,
       images,
       skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0, ...(member.has(s.id) ? { member_price_jpy: member.get(s.id)! } : {}) })),
-      ...saleOf(shop, product, guestAudienceOk(product), await this.saleDatesFor([product])),
+      ...saleOf(shop, product, guestAudienceOk(product), saleDates),
     };
   }
 
