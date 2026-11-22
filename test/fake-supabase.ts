@@ -1492,6 +1492,32 @@ export class FakeSupabase {
     return [...m].map(([brand, count]) => ({ brand, count })).sort((a, b) => b.count - a.count || (a.brand < b.brand ? -1 : a.brand > b.brand ? 1 : 0)).slice(0, 100);
   }
 
+  /** 0055: 商品詳細（公開中のショップの公開中の商品だけ。attributes は公開の項目だけ） */
+  private productPublicGet(args: Record<string, unknown>): Row | null {
+    if (!this.shopPublished(args["p_shop_id"])) return null;
+    const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true && this.productOpen(x));
+    if (!p) return null;
+    const shop = this.tables.shops.find((s) => s["id"] === args["p_shop_id"]);
+    const fields = productFields((shop?.["settings"] ?? {}) as Record<string, unknown>);
+    const attrs = (p["attributes"] ?? {}) as Record<string, unknown>;
+    const pub: Record<string, unknown> = {};
+    for (const f of fields) if (f.public && f.key in attrs) pub[f.key] = attrs[f.key];
+    // 0084: 外部プラグインの拡張データ（公開・送信先が有効・名前あり）
+    const appData = this.tables.app_data
+      .filter((d) => d["product_id"] === p["id"] && d["public"] !== false)
+      .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => {
+        // 0087: マニフェストの more の、その種類の https の URL
+        const more = ((e["manifest"] as Row | null)?.["more"] as Row | undefined)?.[String(d["kind"])];
+        return { app: e["app_handle"], kind: d["kind"], key: d["key"] ?? "", data: d["data"], updated_at: d["updated_at"], ...(typeof more === "string" && /^https:\/\/[A-Za-z0-9.-]+(\/[^\s"'<>`]*)?$/.test(more) ? { more_url: more } : {}) };
+      }))
+      .sort((a, b) => `${String(a.app)}/${a.kind}/${a.key}`.localeCompare(`${String(b.app)}/${b.kind}/${b.key}`));
+    // 0095: 採寸表（モジュールが ON のときだけ）
+    const mods = ((shop?.["settings"] ?? {}) as Record<string, unknown>)["modules"] as Record<string, unknown> | undefined;
+    const sizeChart = mods?.["size_charts"] === true ? this.sizeChartResolve(String(p["shop_id"]), (p["category_id"] as string | null) ?? null, String(p["id"])) : null;
+    // 0163: 検索用のキーワードは返さない
+    return { ...p, attributes: pub, app_data: appData, size_chart: sizeChart, search_keywords: undefined };
+  }
+
   private rpc(fn: string, args: Record<string, unknown>, uid: string | null): Response {
     if (fn === "shop_store_list") {
       if (!this.shopPublished(args["p_shop_id"])) return json([]);
@@ -1754,30 +1780,25 @@ export class FakeSupabase {
       }
       return json(out);
     }
-    if (fn === "product_public_get") {
-      if (!this.shopPublished(args["p_shop_id"])) return json(null);
-      const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true && this.productOpen(x));
-      if (!p) return json(null);
-      const shop = this.tables.shops.find((s) => s["id"] === args["p_shop_id"]);
-      const fields = productFields((shop?.["settings"] ?? {}) as Record<string, unknown>);
-      const attrs = (p["attributes"] ?? {}) as Record<string, unknown>;
-      const pub: Record<string, unknown> = {};
-      for (const f of fields) if (f.public && f.key in attrs) pub[f.key] = attrs[f.key];
-      // 0084: 外部プラグインの拡張データ（公開・送信先が有効・名前あり）
-      const appData = this.tables.app_data
-        .filter((d) => d["product_id"] === p["id"] && d["public"] !== false)
-        .flatMap((d) => this.tables.hook_endpoints.filter((e) => e["id"] === d["endpoint_id"] && e["enabled"] !== false && e["app_handle"]).map((e) => {
-          // 0087: マニフェストの more の、その種類の https の URL
-          const more = ((e["manifest"] as Row | null)?.["more"] as Row | undefined)?.[String(d["kind"])];
-          return { app: e["app_handle"], kind: d["kind"], key: d["key"] ?? "", data: d["data"], updated_at: d["updated_at"], ...(typeof more === "string" && /^https:\/\/[A-Za-z0-9.-]+(\/[^\s"'<>`]*)?$/.test(more) ? { more_url: more } : {}) };
-        }))
-        .sort((a, b) => `${String(a.app)}/${a.kind}/${a.key}`.localeCompare(`${String(b.app)}/${b.kind}/${b.key}`));
-      // 0095: 採寸表（モジュールが ON のときだけ）
-      const mods = ((shop?.["settings"] ?? {}) as Record<string, unknown>)["modules"] as Record<string, unknown> | undefined;
-      const sizeChart = mods?.["size_charts"] === true ? this.sizeChartResolve(String(p["shop_id"]), (p["category_id"] as string | null) ?? null, String(p["id"])) : null;
-      // 0163: 検索用のキーワードは返さない
-      return json({ ...p, attributes: pub, app_data: appData, size_chart: sizeChart, search_keywords: undefined });
+    // 0164: ゲストの商品ページを 1 回で（product_public_get と同じ商品・画像・SKU と在庫（0〜99）・会員価格（audiences が ON のときだけ））
+    if (fn === "product_public_page") {
+      const product = this.productPublicGet(args);
+      if (!product) return json(null);
+      const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      const member = ((shop?.["settings"] as Row | undefined)?.["modules"] as Row | undefined)?.["audiences"] === true;
+      const stock = (skuId: unknown) => Math.min(Math.max(Number(this.tables.inventory.find((i) => i["sku_id"] === skuId)?.["available"] ?? 0), 0), 99);
+      return json({
+        product,
+        images: this.tables.product_images.filter((i) => i["product_id"] === product["id"]).sort((x, y) => Number(x["sort_order"] ?? 0) - Number(y["sort_order"] ?? 0)),
+        skus: this.tables.skus
+          .filter((k) => k["product_id"] === product["id"] && k["shop_id"] === args["p_shop_id"])
+          .map((k) => {
+            const floor = member ? this.memberUnitPrice(k["id"], null).floor : null;
+            return { ...k, available: stock(k["id"]), ...(floor !== null ? { member_price_jpy: floor } : {}) };
+          }),
+      });
     }
+    if (fn === "product_public_get") return json(this.productPublicGet(args));
     // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
     if (fn === "product_public_list") return this.productPublicList(args);
     // 0060: サイトマップの分割と商品フィードの 1 ページ

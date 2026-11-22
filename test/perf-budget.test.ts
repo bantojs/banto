@@ -1,3 +1,4 @@
+import { PRODUCT_PAGE_MIGRATION } from "../src/storefront/data";
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
@@ -19,10 +20,11 @@ const BUDGET = {
     "/my-shop/products?tag=x": 0,
     "/api/shops/my-shop/products": 0,
     "/api/shops/my-shop/products?tag=x&sort=price_asc&limit=10": 0,
-    // 商品行 → 画像・SKU（並列）→ 在庫（その商品の SKU だけ。ゲストに見せる会員価格もここで並べて引く）。在庫は常に最新を読む。
+    // 商品・画像・SKU と在庫（その商品の SKU だけ）・ゲストに見せる会員価格を 1 回で（0164 の product_public_page。会員の経路と同じ）。
+    // 在庫は常に最新を読む。0164 の前は 商品行 → 画像・SKU（並列）→ 在庫・会員価格（並列）の 4 回・3 段（下の「0164 の前」）。
     // 回数とは別に、順に待つ往復の段数も下の「往復の段数」で固定する（FakeSupabase の latencyMs / maxDepth）
-    "/my-shop/products/tee": 4,
-    "/api/shops/my-shop/products/tee": 4,
+    "/my-shop/products/tee": 1,
+    "/api/shops/my-shop/products/tee": 1,
     // 空のカート: 決済手段だけ
     "/my-shop/cart": 1,
   },
@@ -145,10 +147,18 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
       sb.addSku(shopId, other.id, { code: `O${i}`, price_jpy: 500, available: 1 });
     }
     await b.get("/my-shop/products/tee");
-    // 0089 からは product_public_stock（その商品の SKU の id だけを渡す。往復は select 1 回 → rpc 1 回で変わらない）
-    const inventory = (await calls(sb, () => b.get("/my-shop/products/tee"))).filter((x) => x.includes("/rest/v1/rpc/product_public_stock"));
-    expect(inventory).toHaveLength(1);
-    expect(sb.calls.some((x) => x.includes("/rest/v1/inventory"))).toBe(false);
+    // 0164 からは product_public_page の 1 回（その商品の SKU の在庫だけを関数の中で引く）
+    const got = await calls(sb, () => b.get("/my-shop/products/tee"));
+    expect(got.filter((x) => x.includes("/rest/v1/rpc/product_public_page"))).toHaveLength(1);
+    expect(got.some((x) => x.includes("/rest/v1/inventory") || x.includes("product_public_stock"))).toBe(false);
+    // 0164 の前: product_public_stock（その商品の SKU の id だけを渡す）。ショップ全体の在庫は読まない
+    const old = setup();
+    old.sb.appliedMigrations = old.sb.appliedMigrations.filter((m) => m !== PRODUCT_PAGE_MIGRATION);
+    await old.b.get("/my-shop/products/tee");
+    const before = await calls(old.sb, () => old.b.get("/my-shop/products/tee"));
+    expect(before.filter((x) => x.includes("/rest/v1/rpc/product_public_stock"))).toHaveLength(1);
+    expect(before).toHaveLength(4);
+    expect(old.sb.calls.some((x) => x.includes("/rest/v1/inventory"))).toBe(false);
   });
 
   it("会員: ログイン中でも商品のページの回数は変わらない。会員ページは 1 回", async () => {
@@ -233,15 +243,18 @@ describe("速度の予算: Supabase への問い合わせ回数", () => {
     expect(sb.maxDepth).toBe(2);
   });
 
-  it("往復の段数（並べて引けるものは並べる）: ゲストの商品のページは 3 段（会員価格を出すショップでも）", async () => {
-    const { sb, b } = setup();
-    const row = sb.tables.shops[0]!;
-    row["settings"] = { modules: { audiences: true } };
-    await b.get("/my-shop/products/tee");
-    sb.latencyMs = 2;
-    sb.resetDepth();
-    await b.get("/my-shop/products/tee");
-    // 商品行 → 画像・SKU（並列）→ 在庫・会員価格（並列）
-    expect(sb.maxDepth).toBe(3);
+  it("往復の段数（並べて引けるものは並べる）: ゲストの商品のページは 1 段（会員価格を出すショップでも）。0164 の前は 3 段", async () => {
+    for (const applied of [true, false]) {
+      const { sb, b } = setup();
+      if (!applied) sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== PRODUCT_PAGE_MIGRATION);
+      const row = sb.tables.shops[0]!;
+      row["settings"] = { modules: { audiences: true } };
+      await b.get("/my-shop/products/tee");
+      sb.latencyMs = 2;
+      sb.resetDepth();
+      await b.get("/my-shop/products/tee");
+      // 0164: product_public_page の 1 回。前は 商品行 → 画像・SKU（並列）→ 在庫・会員価格（並列）
+      expect([applied, sb.maxDepth]).toEqual([applied, applied ? 1 : 3]);
+    }
   });
 });

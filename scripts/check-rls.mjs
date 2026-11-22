@@ -38,7 +38,7 @@ const ANON_FUNCTIONS = new Set([
   // 0055: 商品詳細（公開中の商品だけ。attributes は公開の項目だけ）
   "product_public_get",
   // 0058: 商品の一覧（公開中のショップの公開中の商品だけ。attributes・説明は返さない）とタグ・カテゴリーの件数。検索の式インデックスの関数
-  "product_public_list", "product_public_facets", "banto_product_search_text",
+  "product_public_list", "product_public_facets", "product_public_page", "banto_product_search_text",
   // 0060: サイトマップ（公開中の商品の数と slug）・商品フィードの 1 ページ・Workers のプラン（free / paid、裏の処理の量）
   "product_public_count", "product_public_slugs", "product_feed_page", "banto_site_plan",
   // 0074: お店の画面が Liquid のテーマを描いてよいか（Workers のプランと plan_limits.theme_versions が 0 でないか。秘密ではない）
