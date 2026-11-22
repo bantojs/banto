@@ -299,7 +299,7 @@ export function priceRangeFilter(p: { min?: number | undefined; max?: number | u
   };
 }
 
-export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[]; sortBy?: string; filters?: unknown[] }) {
+export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; allVendors?: string[]; currentTags?: string[]; sortBy?: string; filters?: unknown[] }) {
   const url = c.handle === "all" ? productsUrl(u.shopPath) : categoryUrl(u.shopPath, c.handle);
   return {
     id: c.handle,
@@ -316,11 +316,13 @@ export function collectionObject(u: UrlBase, c: { handle: string; title: string;
     all_tags: c.allTags,
     tags: c.allTags,
     current_tags: c.currentTags ?? [],
+    // ブランドの一覧（0162 から。公開の商品の多い順に 100 まで）
+    all_vendors: c.allVendors ?? [],
     // 並べ方（?sort_by= の Shopify の名前。src/storefront/list-sort.ts）。sort_options は Dawn などの並べ替えの選択肢
     sort_by: c.sortBy ?? "created-descending",
     default_sort_by: "created-descending",
     sort_options: LIST_SORT_OPTIONS.map((o) => ({ name: t(o.label), value: o.shopify })),
-    // 絞り込み（0150 から価格の price_range。タグは current_tags と ?tag= のくり返し）
+    // 絞り込み（0150 から価格の price_range、0153 から選択肢、0162 からブランド。タグは current_tags と ?tag= のくり返し）
     filters: c.filters ?? [],
   };
 }

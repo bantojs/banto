@@ -93,9 +93,11 @@ export interface Theme {
     tag?: string;
     tags?: { tag: string; count: number }[];
     /** 選んでいる絞り込み（0150。タグはすべてを持つ商品、価格は一覧の価格の円）。tag は tags[0] */
-    filter?: { tags: string[]; priceMin?: number; priceMax?: number; options?: Record<string, string[]> };
+    filter?: { tags: string[]; priceMin?: number; priceMax?: number; options?: Record<string, string[]>; vendor?: string };
     /** 選択肢の絞り込みの候補（0153。鍵ごとに在庫のある値と商品の数、label は表示名）。無ければ欄を出さない */
     optionFacets?: { key: string; label: string; values: { value: string; count: number }[] }[];
+    /** ブランドの絞り込みの候補（0162。ブランドと公開の商品の数、多い順）。無ければ欄を出さない */
+    vendors?: { brand: string; count: number }[];
     /** 価格の欄の上限（公開の一覧のいちばん高い一覧の価格）。無ければ価格の欄を出さない（0150 の前） */
     priceRange?: { max: number | null };
     /** カテゴリーの木（ナビゲーション用）と、カテゴリーの一覧（/categories/<カテゴリー>）のときのカテゴリー */

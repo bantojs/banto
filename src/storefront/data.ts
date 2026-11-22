@@ -906,6 +906,8 @@ export interface ProductFacets {
   price_max?: number | null;
   /** 選択肢の鍵 × 値ごとの在庫のある公開の商品の数（0153 から。無ければ 0153 の前） */
   options?: { key: string; value: string; count: number }[];
+  /** ブランドごとの公開の商品の数（多い順に 100 まで。0162 から。無ければ 0162 の前） */
+  brands?: { brand: string; count: number }[];
 }
 
 /** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */

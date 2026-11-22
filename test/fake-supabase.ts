@@ -1457,7 +1457,7 @@ export class FakeSupabase {
     return [...m.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : b.count - a.count));
   }
 
-  private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number>; price_max?: number | null } {
+  private productPublicFacets(shopId: string, tagLimit: number): { tags: { tag: string; count: number }[]; categories: Record<string, number>; price_max?: number | null; brands?: { brand: string; count: number }[] } {
     // 0150 から price_max（公開の一覧に出る商品のいちばん高い一覧の価格）
     const withMax = this.appliedMigrations.includes("0150_product_list_filters");
     if (!this.shopPublished(shopId)) return { tags: [], categories: {}, ...(withMax ? { price_max: null } : {}) };
@@ -1479,7 +1479,15 @@ export class FakeSupabase {
       categories: counts,
       ...(withMax ? { price_max: products.filter((p) => this.productOpen(p, [])).reduce<number | null>((m, p) => { const v = this.listPrice(p["id"]).price; return v !== null && (m === null || v > m) ? v : m; }, null) } : {}),
       ...(this.appliedMigrations.includes("0153_product_option_stock") ? { options: this.optionFacets(products.filter((p) => this.productOpen(p, []))) } : {}),
+      // 0162 から brands（ブランドごとの公開の商品の数、多い順に 100 まで）
+      ...(this.appliedMigrations.includes("0162_vendor_facets") ? { brands: this.brandFacets(products.filter((p) => this.productOpen(p, []))) } : {}),
     };
+  }
+
+  private brandFacets(products: Row[]): { brand: string; count: number }[] {
+    const m = new Map<string, number>();
+    for (const p of products) if (typeof p["brand"] === "string" && p["brand"]) m.set(p["brand"], (m.get(p["brand"]) ?? 0) + 1);
+    return [...m].map(([brand, count]) => ({ brand, count })).sort((a, b) => b.count - a.count || (a.brand < b.brand ? -1 : a.brand > b.brand ? 1 : 0)).slice(0, 100);
   }
 
   private rpc(fn: string, args: Record<string, unknown>, uid: string | null): Response {

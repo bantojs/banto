@@ -579,7 +579,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, filter, priceRange, optionFacets, categories, category, pagination, notice, layout, q, top, path, sort }) {
+  ShopHome({ ctx, products, tag, tags, filter, priceRange, optionFacets, vendors, categories, category, pagination, notice, layout, q, top, path, sort }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
     const chosen = filter?.tags.length ? filter.tags : tag ? [tag] : [];
@@ -594,7 +594,7 @@ export const defaultTheme: Theme = {
     const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
     // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
     if (layout) {
-      const parts = listParts({ ctx, products, tag, tags, ...(filter ? { filter } : {}), ...(priceRange ? { priceRange } : {}), ...(optionFacets ? { optionFacets } : {}), categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
+      const parts = listParts({ ctx, products, tag, tags, ...(filter ? { filter } : {}), ...(priceRange ? { priceRange } : {}), ...(optionFacets ? { optionFacets } : {}), ...(vendors ? { vendors } : {}), categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
       const html: Record<string, string> = {};
       for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
       return (
@@ -632,7 +632,7 @@ export const defaultTheme: Theme = {
         ) : null}
         {!top && heading ? <h1>{heading}</h1> : null}
         {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
-        <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} optionFacets={optionFacets} category={category} q={q} sort={sort} />
+        <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} optionFacets={optionFacets} vendors={vendors} category={category} q={q} sort={sort} />
         {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={q} sort={sort} /> : null}
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
@@ -2253,7 +2253,7 @@ function SortLinks({ ctx, category, chosen, filter, q, sort }: { ctx: ThemeConte
     <p class="sort" aria-label={t("store.sort_label")}>
       <span class="muted">{t("store.sort_label")}:</span>{" "}
       {LIST_SORT_OPTIONS.map((o) => (
-        <a href={listUrl(ctx.shopPath, { category: category?.slug, tags: chosen, priceMin: filter?.priceMin, priceMax: filter?.priceMax, options: filter?.options, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
+        <a href={listUrl(ctx.shopPath, { category: category?.slug, tags: chosen, priceMin: filter?.priceMin, priceMax: filter?.priceMax, options: filter?.options, vendor: filter?.vendor, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
           {t(o.label)}
         </a>
       ))}
@@ -2265,9 +2265,11 @@ function SortLinks({ ctx, category, chosen, filter, q, sort }: { ctx: ThemeConte
  * 一覧の絞り込み（タグの札と価格の欄、0150）。タグの札は押すとそのタグだけ、選んでいる札を押すと外す（ほかに選んだタグ・価格・検索の語・並べ方はそのまま）。
  * 価格の欄は GET のフォーム（?filter.v.price.gte= / lte=、src/storefront/list-filter.ts）で、価格の上限が分かるとき（0150 の後）だけ
  */
-function ListFilters({ ctx, tags, chosen, filter, priceRange, optionFacets, category, q, sort }: { ctx: ThemeContext; tags?: { tag: string; count: number }[] | undefined; chosen: string[]; filter?: ListFilterProp; priceRange?: ShopHomeProps["priceRange"]; optionFacets?: ShopHomeProps["optionFacets"]; category?: { slug: string } | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
-  const url = (o: { tags: string[]; price: boolean; options?: Record<string, string[]> }) =>
-    listUrl(ctx.shopPath, { category: category?.slug, tags: o.tags, ...(o.price ? { priceMin: filter?.priceMin, priceMax: filter?.priceMax } : {}), options: o.options ?? filter?.options, q, sort });
+function ListFilters({ ctx, tags, chosen, filter, priceRange, optionFacets, vendors, category, q, sort }: { ctx: ThemeContext; tags?: { tag: string; count: number }[] | undefined; chosen: string[]; filter?: ListFilterProp; priceRange?: ShopHomeProps["priceRange"]; optionFacets?: ShopHomeProps["optionFacets"]; vendors?: ShopHomeProps["vendors"]; category?: { slug: string } | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
+  const url = (o: { tags: string[]; price: boolean; options?: Record<string, string[]>; vendor?: string | null }) =>
+    listUrl(ctx.shopPath, { category: category?.slug, tags: o.tags, ...(o.price ? { priceMin: filter?.priceMin, priceMax: filter?.priceMax } : {}), options: o.options ?? filter?.options, vendor: o.vendor === undefined ? filter?.vendor : o.vendor, q, sort });
+  // ブランドの札（0162）: 押すとそのブランドだけ（1 つ）、選んでいる札を押すと外す
+  const vendorList = filter?.vendor && !(vendors ?? []).some((v) => v.brand === filter.vendor) ? [...(vendors ?? []), { brand: filter.vendor, count: 0 }] : (vendors ?? []);
   // 選択肢の札: 押すと足す、選んでいる札を押すと外す（同じ鍵はどれか、0153）
   const optionUrl = (key: string, value: string, on: boolean) => {
     const cur = filter?.options?.[key] ?? [];
@@ -2309,12 +2311,26 @@ function ListFilters({ ctx, tags, chosen, filter, priceRange, optionFacets, cate
           })}
         </p>
       ))}
+      {vendorList.length > 0 ? (
+        <p class="tags vendor-filter">
+          <span class="muted">{t("store.vendor_filter_label")}:</span>
+          {vendorList.map((v) => {
+            const on = filter?.vendor === v.brand;
+            return (
+              <a href={url({ tags: chosen, price: true, vendor: on ? null : v.brand })} class={on ? "active" : ""} aria-pressed={on ? "true" : "false"}>
+                {v.brand} <span class="muted">({v.count})</span>
+              </a>
+            );
+          })}
+        </p>
+      ) : null}
       {price ? (
         <form class="price-filter" method="get" action={listUrl(ctx.shopPath, { category: category?.slug })}>
           {chosen.map((x) => (
             <input type="hidden" name="tag" value={x} />
           ))}
           {Object.entries(filter?.options ?? {}).flatMap(([k, vals]) => vals.map((v) => <input type="hidden" name={`filter.v.option.${k}`} value={v} />))}
+          {filter?.vendor ? <input type="hidden" name="filter.p.vendor" value={filter.vendor} /> : null}
           {q ? <input type="hidden" name="q" value={q} /> : null}
           {sort ? <input type="hidden" name="sort" value={sort} /> : null}
           <span class="muted">{t("store.price_filter_label")}:</span>{" "}
@@ -2340,7 +2356,7 @@ function ListFilters({ ctx, tags, chosen, filter, priceRange, optionFacets, cate
   );
 }
 
-export function listParts({ ctx, products, tag, tags, filter, priceRange, optionFacets, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
+export function listParts({ ctx, products, tag, tags, filter, priceRange, optionFacets, vendors, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
   const home = ctx.shopPath || "/";
   const chosen = filter?.tags.length ? filter.tags : tag ? [tag] : [];
   const find = (nodes: CategoryNode[], slug: string): CategoryNode | null => {
@@ -2371,7 +2387,7 @@ export function listParts({ ctx, products, tag, tags, filter, priceRange, option
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </>
     ),
-    filters: (tags && tags.length > 0) || (priceRange && priceRange.max) || (optionFacets && optionFacets.length > 0) ? <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} optionFacets={optionFacets} category={category} q={query} sort={sort} /> : null,
+    filters: (tags && tags.length > 0) || (priceRange && priceRange.max) || (optionFacets && optionFacets.length > 0) || (vendors && vendors.length > 0) || filter?.vendor ? <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} optionFacets={optionFacets} vendors={vendors} category={category} q={query} sort={sort} /> : null,
     sort: products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={query} sort={sort} /> : null,
     subcategories:
       children.length > 0 ? (
