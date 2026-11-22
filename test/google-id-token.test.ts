@@ -107,10 +107,33 @@ describe("Google の ID トークンの署名（src/modules/social-login/google-
     expect(await skew.run()).toEqual({ sub: "G1", email: "m@example.com", emailVerified: false });
   });
 
-  it("JWKS が取れない・空なら断る（ログインはできない、ほかは止めない）", async () => {
+  it("JWKS が取れない（空・HTTP の失敗・通信の失敗）なら OAuthError で断る（500 にしない）", async () => {
     const key = await fakeGoogleKey();
     const w = world([], () => key.sign(claims()));
     expect(await rejects(w.run())).toMatch(/jwks empty/);
+    const token = await key.sign(claims());
+    const failing = (r: () => Promise<Response>) =>
+      (async (input: RequestInfo | URL) => (String(input instanceof Request ? input.url : input) === ENDPOINTS.google.token ? Response.json({ id_token: token }) : r())) as typeof fetch;
+    const run = (f: typeof fetch) => providerIdentity("google", f, CLIENT, { code: "c", redirectUri: "https://x/cb", verifier: "v", nonce: NONCE }, NOW, new MemoryCache());
+    expect(await rejects(run(failing(async () => new Response("down", { status: 503 }))))).toMatch(/jwks HTTP 503/);
+    expect(await rejects(run(failing(async () => { throw new TypeError("network"); })))).toMatch(/jwks fetch/);
+  });
+
+  it("iss は https の無い形も受ける。aud が配列なら断る。同じ kid の鍵が 2 つでもどちらかで合えば受ける。LINE の経路は JWKS を取りに行かない", async () => {
+    const key = await fakeGoogleKey();
+    expect(await world([key], () => key.sign(claims({ iss: "accounts.google.com" }))).run()).toMatchObject({ sub: "G1" });
+    expect(await rejects(world([key], () => key.sign(claims({ aud: [CLIENT.clientId] }))).run())).toMatch(/claims mismatch/);
+    const twin = await fakeGoogleKey(key.kid);
+    expect(await world([twin, key], () => key.sign(claims())).run()).toMatchObject({ sub: "G1" });
+    let jwks = 0;
+    const line = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === GOOGLE_JWKS_URL) jwks += 1;
+      if (url === ENDPOINTS.line.token) return Response.json({ id_token: "idt" });
+      return Response.json({ iss: "https://access.line.me", sub: "U1", aud: "line-client", nonce: NONCE });
+    }) as typeof fetch;
+    expect(await providerIdentity("line", line, { clientId: "line-client", clientSecret: "s" }, { code: "c", redirectUri: "https://x/cb", verifier: "v", nonce: NONCE }, NOW, new MemoryCache())).toMatchObject({ sub: "U1" });
+    expect(jwks).toBe(0);
   });
 
   it("覚える時間は Cache-Control の max-age（60 秒〜1 日、無ければ 1 時間）。RS256・sig の RSA の鍵だけ使う", () => {

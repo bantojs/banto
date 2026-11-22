@@ -50,7 +50,13 @@ export function rsaKeysOf(body: unknown): RsaJwk[] {
 }
 
 async function fetchKeys(doFetch: typeof fetch, cache: CacheAdapter | undefined): Promise<RsaJwk[]> {
-  const res = await doFetch(GOOGLE_JWKS_URL, { headers: { accept: "application/json" } });
+  // 通信の失敗（名前の解決・TLS・切断）もログインの失敗として扱う（500 にしない）
+  let res: Response;
+  try {
+    res = await doFetch(GOOGLE_JWKS_URL, { headers: { accept: "application/json" } });
+  } catch {
+    throw new IdTokenError("jwks fetch");
+  }
   if (!res.ok) throw new IdTokenError(`jwks HTTP ${res.status}`);
   const keys = rsaKeysOf(await res.json().catch(() => null));
   if (keys.length === 0) throw new IdTokenError("jwks empty");
@@ -83,17 +89,21 @@ export async function verifyGoogleIdToken(idToken: string, doFetch: typeof fetch
   const kid = header["kid"];
 
   const cached = cache ? await cache.get<RsaJwk[]>(CACHE_KEY) : null;
-  let key = cached?.find((k) => k.kid === kid);
+  let keys = (cached ?? []).filter((k) => k.kid === kid);
   // 知らない kid: 覚えた鍵を使っていたなら 1 回だけ取り直す（Google が鍵を回した直後）
-  if (!key) key = (await fetchKeys(doFetch, cache)).find((k) => k.kid === kid);
-  if (!key) throw new IdTokenError("unknown kid");
+  if (keys.length === 0) keys = (await fetchKeys(doFetch, cache)).filter((k) => k.kid === kid);
+  if (keys.length === 0) throw new IdTokenError("unknown kid");
 
+  // 同じ kid の鍵が複数あってもどれかで合えばよい（ふつうは 1 つ）
   let ok = false;
-  try {
-    const pub = await crypto.subtle.importKey("jwk", { kty: "RSA", n: key.n, e: key.e, alg: "RS256", ext: true }, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
-    ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", pub, fromB64url(s), new TextEncoder().encode(`${h}.${p}`));
-  } catch {
-    ok = false;
+  for (const key of keys.slice(0, 3)) {
+    try {
+      const pub = await crypto.subtle.importKey("jwk", { kty: "RSA", n: key.n, e: key.e, alg: "RS256", ext: true }, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+      ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", pub, fromB64url(s), new TextEncoder().encode(`${h}.${p}`));
+    } catch {
+      ok = false;
+    }
+    if (ok) break;
   }
   if (!ok) throw new IdTokenError("signature");
   return decodeJson(p);
