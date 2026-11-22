@@ -309,6 +309,6 @@ export function clearScopedCookie(c: Ctx, base: string, opts: { path: string; le
 }
 
 /** この場面の Cookie の値（src/util/cookie.ts の readScopedCookie） */
-export function getScopedCookie(c: Ctx, base: string, path: string, opts: { legacy?: boolean } = {}): string | undefined {
-  return readScopedCookie(c.req.header("cookie"), base, cookieScope(c, path), opts);
+export function getScopedCookie(c: Ctx, base: string, path: string): string | undefined {
+  return readScopedCookie(c.req.header("cookie"), base, cookieScope(c, path));
 }

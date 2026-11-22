@@ -32,8 +32,7 @@ import { optionLabel, optionNamesOf, type OptionNames } from "../../products/opt
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
-import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
-import { BULK_MIGRATION } from "./bulk";
+import { ViewTabs, viewsOf } from "./views";
 import { CsvExportPanel, csvBody, csvHeaders, csvName, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 
 export const products = new Hono<AppEnv>();
@@ -58,7 +57,6 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
     matrix_empty: "axes.matrix_empty",
     audience_display_only: "product.audience_display_only",
     released_at_invalid: "product.released_at_invalid",
-    image_order_update: "image.order_needs_update",
   };
   if (code === "matrix_too_many") return { kind: "error", text: tf("axes.matrix_too_many", { max: MAX_COMBINATIONS }) };
   const key = map[code];
@@ -116,10 +114,6 @@ const IMAGE_RESIZE_SCRIPT = `
   });
 })();`;
 
-/** 一覧の検索を広げる版（品番・JAN・カテゴリー・在庫・並び。0132） */
-const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
-/** 画像の並びを 1 回で書く（0138） */
-const IMAGE_ORDER_MIGRATION = "0138_product_images_order";
 
 products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   const { db } = owner(c);
@@ -128,23 +122,24 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
-  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
-  // 条件（URL の値）。形の違う値は捨てる。0132 の前は名前・スラッグと公開の状態だけ
+  // 条件（URL の値）。形の違う値は捨てる
   const v = (name: string) => (c.req.query(name) ?? "").trim();
   const params: SearchParams = {
     q: v("q").slice(0, 100),
     state: v("state") === "published" || v("state") === "draft" ? v("state") : "",
-    ...(extended ? { category: UUID_RE.test(v("category")) ? v("category") : "", stock: v("stock") === "in" || v("stock") === "out" ? v("stock") : "", sort: readSort(v("sort")) === "old" ? "old" : "" } : {}),
+    category: UUID_RE.test(v("category")) ? v("category") : "",
+    stock: v("stock") === "in" || v("stock") === "out" ? v("stock") : "",
+    sort: readSort(v("sort")) === "old" ? "old" : "",
   };
   const { q, state } = params as { q: string; state: string };
   const filters = Object.fromEntries(Object.entries(params).filter(([k, x]) => k !== "q" && x !== ""));
   const columns = "id,slug,name,published,created_at";
-  const categories = extended ? await loadCategories(db, shopId) : [];
+  const categories = await loadCategories(db, shopId);
   // 条件があれば、RLS の外の検索の関数で（0059 / 0132。インデックスが効く）。無ければ新しい順に 1 ページ分だけ読む（何十万件でも同じ速さ）
   const where: Filter[] = [];
   if (state) where.push({ col: "published", op: "eq", value: state === "published" });
   if (after) where.push(olderThan(after));
-  const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
+  const useSearch = Boolean(q) || Object.keys(filters).length > 0;
   const page = splitPage(
     useSearch ? await searchRows<ProductRow>(c, { kind: "products", shopId, q, filters, ...(after ? { after } : {}), limit: ADMIN_PAGE_SIZE + 1, columns }) : await db.from<ProductRow>("products").select(columns, { eq: { shop_id: shopId }, where, order: "created_at.desc,id.desc", limit: ADMIN_PAGE_SIZE + 1 }),
     (p) => p.created_at,
@@ -161,8 +156,6 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
     return null;
   });
   const filtered = Boolean(q || chips.length > 0 || after);
-  // 保存したビュー（0135）
-  const [viewsOn, bulkOn] = await Promise.all([migrated({ db, cache: c.get("adapters").cache }, VIEWS_MIGRATION), migrated({ db, cache: c.get("adapters").cache }, BULK_MIGRATION)]);
   const bulkForm = `bulk-${shop.id}`;
   const savedViews = viewsOf(shop.settings, "products");
   const listBase = searchHref(base, params);
@@ -177,9 +170,9 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         </a>
       </PageHead>
       <Flash flash={flash(c.req.query("flash"))} />
-      {rows.length > 0 || filtered || savedViews.length > 0 ? <ViewTabs shopId={shop.id} screen="products" views={savedViews} current={params} enabled={viewsOn} error={c.req.query("view_error")} /> : null}
+      {rows.length > 0 || filtered || savedViews.length > 0 ? <ViewTabs shopId={shop.id} screen="products" views={savedViews} current={params} error={c.req.query("view_error")} /> : null}
       {rows.length > 0 || filtered ? (
-        <SearchBar action={base} q={q} placeholder={t(extended ? "search.products_placeholder" : "product.search")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+        <SearchBar action={base} q={q} placeholder={t("search.products_placeholder")} sortable sort={readSort(params["sort"])} chips={chips} clearHref={base}>
           <label>
             {t("product.state")}
             <select name="state">
@@ -192,7 +185,7 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
               </option>
             </select>
           </label>
-          {extended && categories.length > 0 ? (
+          {categories.length > 0 ? (
             <label>
               {t("search.category")}
               <select name="category">
@@ -205,20 +198,18 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
               </select>
             </label>
           ) : null}
-          {extended ? (
-            <label>
-              {t("search.stock")}
-              <select name="stock">
-                <option value="">{t("search.any")}</option>
-                <option value="in" selected={params["stock"] === "in"}>
-                  {t("search.stock_in")}
-                </option>
-                <option value="out" selected={params["stock"] === "out"}>
-                  {t("search.stock_out")}
-                </option>
-              </select>
-            </label>
-          ) : null}
+          <label>
+            {t("search.stock")}
+            <select name="stock">
+              <option value="">{t("search.any")}</option>
+              <option value="in" selected={params["stock"] === "in"}>
+                {t("search.stock_in")}
+              </option>
+              <option value="out" selected={params["stock"] === "out"}>
+                {t("search.stock_out")}
+              </option>
+            </select>
+          </label>
         </SearchBar>
       ) : null}
       {rows.length === 0 && !filtered ? (
@@ -230,18 +221,16 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
         <div class="empty">{t("product.no_match")}</div>
       ) : (
         <>
-          {bulkOn ? (
-            <form id={bulkForm} method="get" action={`${base}/bulk`} class="actions bulk-select">
-              <button type="submit" class="secondary small">
-                {t("bulk.edit_selected")}
-              </button>
-              <a href={`${base}/bulk?ids=${rows.map((p) => p.id).join(",")}`}>{t("bulk.edit_page")}</a>
-            </form>
-          ) : null}
+          <form id={bulkForm} method="get" action={`${base}/bulk`} class="actions bulk-select">
+            <button type="submit" class="secondary small">
+              {t("bulk.edit_selected")}
+            </button>
+            <a href={`${base}/bulk?ids=${rows.map((p) => p.id).join(",")}`}>{t("bulk.edit_page")}</a>
+          </form>
           <table>
           <thead>
             <tr>
-              {bulkOn ? <th class="select">{t("bulk.select")}</th> : null}
+              <th class="select">{t("bulk.select")}</th>
               <th>{t("product.name")}</th>
               <th>slug</th>
               {favorites ? <th>{t("products.favorites")}</th> : null}
@@ -251,11 +240,9 @@ products.get("/:shopId/products", requireOwner, async (c: AdminContext) => {
           <tbody>
             {rows.map((p) => (
               <tr>
-                {bulkOn ? (
-                  <td class="select">
-                    <input type="checkbox" name="id" value={p.id} form={bulkForm} aria-label={tf("bulk.select_product", { name: p.name })} />
-                  </td>
-                ) : null}
+                <td class="select">
+                  <input type="checkbox" name="id" value={p.id} form={bulkForm} aria-label={tf("bulk.select_product", { name: p.name })} />
+                </td>
                 <td>
                   <a href={`/admin/shops/${shop.id}/products/${p.id}`}>{p.name}</a>
                 </td>
@@ -358,18 +345,17 @@ products.get("/:shopId/products.csv", requireOwner, async (c: AdminContext) => {
   if (all) return c.redirect(all);
   // 列を選ばずに開いたら、商品の一覧（SKU ごと）の組み合わせ
   const choice = readCsvChoice(c, PRODUCT_CSV_COLUMNS, ["sku", "product"], PRODUCT_CSV_PRESETS) ?? { cols: PRODUCT_CSV_COLUMNS.filter((col) => PRODUCT_CSV_PRESETS["catalog"]!.cols.includes(col.key)), unit: "sku", format: "bom" as const, preset: null };
-  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
   const v = (name: string) => (c.req.query(name) ?? "").trim();
   const q = v("q").slice(0, 100);
   const state = v("state") === "published" || v("state") === "draft" ? v("state") : "";
   const filters: Record<string, string> = {
     ...(state ? { state } : {}),
-    ...(extended && UUID_RE.test(v("category")) ? { category: v("category") } : {}),
-    ...(extended && (v("stock") === "in" || v("stock") === "out") ? { stock: v("stock") } : {}),
-    ...(extended && readSort(v("sort")) === "old" ? { sort: "old" } : {}),
+    ...(UUID_RE.test(v("category")) ? { category: v("category") } : {}),
+    ...(v("stock") === "in" || v("stock") === "out" ? { stock: v("stock") } : {}),
+    ...(readSort(v("sort")) === "old" ? { sort: "old" } : {}),
   };
   const columns = "id,slug,name,published,created_at,category_id,tags,brand,tax_class";
-  const useSearch = Boolean(q) || (extended && Object.keys(filters).length > 0);
+  const useSearch = Boolean(q) || Object.keys(filters).length > 0;
   const where: Filter[] = state ? [{ col: "published", op: "eq", value: state === "published" }] : [];
   // 上限で切ったかを知る（黙って切らない）。PostgREST は 1 回に max_rows（Supabase の既定 1,000）までしか返さないので、
   // 条件の無い読み取りは上限ちょうどまで読み、続きがあるかは 1 行だけ読んで確かめる（searchRows は 1,000 行ずつ読む）
@@ -1369,21 +1355,12 @@ products.post("/:shopId/products/:productId/images/:imageId/move", requireOwner,
   if (a < 0 || b < 0 || a === b) return c.redirect(imageBackHref(base, f.back));
   const order = images.map((x) => x.id);
   [order[a], order[b]] = [order[b]!, order[a]!];
-  if (await migrated({ db, cache: c.get("adapters").cache }, IMAGE_ORDER_MIGRATION)) {
-    // 並び全体を 1 回で書く（画像の数だけ送らない。途中で止まっても半分だけ振り直されない）
-    try {
-      await db.rpc("product_images_order", { p_shop_id: shopId, p_product_id: productId, p_ids: order });
-    } catch (e) {
-      if (e instanceof DbError) return c.redirect(`${base}?flash=generic#images`);
-      throw e;
-    }
-  } else {
-    // 0138 の前: 2 つの番号が違えば入れ替えるだけ（更新 2 回）。同じ番号どうしは、アップデートを当ててから
-    const x = images[a]!;
-    const y = images[b]!;
-    if (x.sort_order === y.sort_order) return c.redirect(`${base}?flash=image_order_update#images`);
-    await db.from<ProductImageRow>("product_images").update({ sort_order: y.sort_order }, { id: x.id, product_id: productId, shop_id: shopId });
-    await db.from<ProductImageRow>("product_images").update({ sort_order: x.sort_order }, { id: y.id, product_id: productId, shop_id: shopId });
+  // 並び全体を 1 回で書く（画像の数だけ送らない。途中で止まっても半分だけ振り直されない）
+  try {
+    await db.rpc("product_images_order", { p_shop_id: shopId, p_product_id: productId, p_ids: order });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${base}?flash=generic#images`);
+    throw e;
   }
   return c.redirect(imageBackHref(base, f.back));
 });

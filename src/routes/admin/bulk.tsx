@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { migrated } from "../../db/migration-state";
 import { selectIn } from "../../db/select-in";
 import type { CategoryRow, ShopRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
@@ -22,7 +21,6 @@ import { loadShop } from "./shops";
  * 誤りがあれば、入れた値を残したまま誤りのマスに印を付けて描き直す。変えていないマスは今の値で描き直す（ほかの人の保存を戻さない）。
  * 在庫はここでは扱わない（在庫の画面。数を置き換えると、開いてから売れた分を上書きするため）。スクリプト無しで動く。
  */
-export const BULK_MIGRATION = "0137_catalog_bulk";
 
 type Kind = "product" | "sku";
 type Col = "name" | "published" | "category_id" | "tags" | "brand" | "tax_class" | "price_jpy" | "compare_at_price_jpy" | "gtin";
@@ -129,10 +127,9 @@ async function renderPage(
   },
 ) {
   const { db } = owner(c);
-  const enabled = await migrated({ db, cache: c.get("adapters").cache }, BULK_MIGRATION);
   const listHref = `/admin/shops/${shop.id}/products`;
   const [products, skus, categories] =
-    enabled && ids.length > 0
+    ids.length > 0
       ? await Promise.all([
           selectIn<BulkProduct & Record<string, unknown>>(db, "products", "id,name,published,category_id,tags,brand,tax_class,created_at", shop.id, "id", ids),
           selectIn<BulkSku & Record<string, unknown>>(db, "skus", "id,product_id,code,name,options,price_jpy,compare_at_price_jpy,gtin", shop.id, "product_id", ids),
@@ -221,11 +218,7 @@ async function renderPage(
       }}
     >
       <PageHead title={t("bulk.title")} sub={t("bulk.lead")} />
-      {!enabled ? (
-        <p class="notice">
-          {t("bulk.needs_update")} <a href="/admin/update">{t("inventory.open_update")}</a>
-        </p>
-      ) : products.length === 0 ? (
+      {products.length === 0 ? (
         <div class="empty">
           {t("bulk.none_selected")} <a href={listHref}>{t("product.list")}</a>
         </div>

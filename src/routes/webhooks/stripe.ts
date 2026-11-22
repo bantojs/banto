@@ -3,9 +3,8 @@ import type { AppEnv } from "../../app";
 import { webhookBody } from "./body";
 import { createPrivilegedDb, type OrderInput } from "../../db/privileged";
 import { confirmFromWebhook } from "../../payments/webhook-confirm";
-import { migrated } from "../../db/migration-state";
 import { createStripeClient, verifyStripeSignature, type CheckoutSession, type StripeEvent } from "../../payments/stripe";
-import { migrationStateFor, type Ctx } from "../common";
+import type { Ctx } from "../common";
 import { PLATFORM_PAYMENT_ACCOUNT } from "../../orders/cancel";
 
 /**
@@ -19,22 +18,6 @@ export const stripeWebhook = new Hono<AppEnv>();
 
 const CONFIRM_EVENTS = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded"]);
 const RELEASE_EVENTS = new Set(["checkout.session.expired", "checkout.session.async_payment_failed"]);
-/** 記録済みのイベントを処理の前に見る・返金すると決めた予約を確定しない（0128） */
-export const REPLAY_GUARD_MIGRATION = "0128_webhook_replay";
-
-/**
- * 再配信の守り（0128）が当たっているか。判定に要る anon キーが無いと確かめられない: 黙って「当たっていない」にすると、
- * 当たっている DB でも古い流れ（記録済みを見ない・返金の印を付けない）で動くので、ログに出す
- */
-export async function replayGuard(c: Ctx, url: string): Promise<boolean> {
-  const ms = migrationStateFor(c, url);
-  if (!ms) {
-    console.error("[banto] webhook: SUPABASE_ANON_KEY is not set; cannot tell whether the replay guard (0128) is applied, running without it");
-    return false;
-  }
-  return migrated(ms, REPLAY_GUARD_MIGRATION);
-}
-
 /**
  * paymentAccount: 決済した口座（0090 の orders.payment_account）。Connect のイベントなら event.account、API キー方式（自分のアカウント）なら
  * "platform" の印。返金はこの口座で行う（接続先を変えた後の旧注文も返金できる）
@@ -94,8 +77,7 @@ stripeWebhook.post("/", async (c: Ctx) => {
     return c.json({ received: true, ignored: event.type });
   }
   // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。返金して済みにした決済が、在庫が戻った後に注文にならないように）
-  const guard = await replayGuard(c, url);
-  if (guard && (await db.webhookEventSeen("stripe", event.id))) return c.json({ received: true, duplicate: true });
+  if ((await db.webhookEventSeen("stripe", event.id))) return c.json({ received: true, duplicate: true });
 
   const session = event.data.object as unknown as CheckoutSession;
   const reservationId = session.metadata?.["reservation_id"] ?? session.client_reference_id ?? null;
@@ -138,5 +120,5 @@ stripeWebhook.post("/", async (c: Ctx) => {
   };
 
   const order = orderInputFromSession(session, typeof event.account === "string" ? event.account : PLATFORM_PAYMENT_ACCOUNT);
-  return c.json(await confirmFromWebhook({ db, provider: "stripe", eventId: event.id, reservationId, shopId, order, refund, guard }));
+  return c.json(await confirmFromWebhook({ db, provider: "stripe", eventId: event.id, reservationId, shopId, order, refund }));
 });

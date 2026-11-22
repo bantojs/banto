@@ -12,7 +12,6 @@ import type { Ctx } from "../common";
 import type { PublicShop } from "../../storefront/data";
 import { t } from "../../i18n";
 import { escapeHtml } from "../../mail/html";
-import { replayGuard } from "../webhooks/stripe";
 import { amazonPayFor, privilegedFor } from "../payment-deps";
 import { CHECKOUT_SESSION_ID_RE } from "../../plugins/amazon_pay";
 import { AMAZON_PAY_RELAY_CSP, AMAZON_PAY_RELAY_SCRIPT, buttonPayload, handleAmazonPayReturn, openAmazonPayTicket } from "../../payments/amazon-pay";
@@ -101,9 +100,7 @@ export async function amazonPayReturn(c: Ctx, shop: PublicShop, shopUrl: string)
   if (!ticket) return expired(c, shopUrl);
   const sid = c.req.query("amazonCheckoutSessionId") ?? "";
   if (!CHECKOUT_SESSION_ID_RE.test(sid)) return c.redirect(ticket.cancelUrl, 303);
-  const url = c.get("adapters").config.get("SUPABASE_URL") ?? "";
-  const guard = await replayGuard(c, url);
-  const r = await handleAmazonPayReturn({ db, client, ticket, checkoutSessionId: sid, guard });
+  const r = await handleAmazonPayReturn({ db, client, ticket, checkoutSessionId: sid });
   if (r.kind === "success") return c.redirect(ticket.successUrl, 303);
   if (r.kind === "cancelled" || r.kind === "mismatch") return c.redirect(withNotice(ticket.cancelUrl, `${shopUrl}/cart`), 303);
   const again = new URL(c.req.url);

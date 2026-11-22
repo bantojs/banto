@@ -20,11 +20,10 @@ import { PASSKEY_MODULE } from "../../modules/passkey";
 import { FAVORITES_MODULE } from "../../modules/favorites";
 import { attributeRows, attributesFromForm, customerFields, externalRef, type CustomerField } from "../../customers/fields";
 import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
-import { migrated } from "../../db/migration-state";
 import { UUID_RE } from "../../util/cursor";
 import { yen } from "../common";
 import type { MessageKey } from "../../i18n";
-import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { ViewTabs, viewsOf } from "./views";
 import { CsvExportPanel, csvBody, csvHeaders, csvName, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 
 /**
@@ -56,8 +55,8 @@ interface CustomerRow {
   note?: string | null;
 }
 
-/** 書き出しの列（メンテナの決定 2026-11-09）。独自項目はショップの定義から、集計とメモは 0133 が当たっていれば */
-function customerCsvColumns(fields: CustomerField[], stats: boolean): CsvColumn<CustomerRow>[] {
+/** 書き出しの列（メンテナの決定 2026-11-09）。独自項目はショップの定義から */
+function customerCsvColumns(fields: CustomerField[]): CsvColumn<CustomerRow>[] {
   const addr = (r: CustomerRow, k: string) => (r.default_address ?? {})[k];
   const cols: CsvColumn<CustomerRow>[] = [
     { key: "id", label: "id", group: "csvx.g_member", value: (r) => r.id },
@@ -76,15 +75,11 @@ function customerCsvColumns(fields: CustomerField[], stats: boolean): CsvColumn<
     ...fields.map((f): CsvColumn<CustomerRow> => ({ key: `attr_${f.key}`, label: f.label, group: "csvx.g_attributes", value: (r) => (r.attributes && typeof r.attributes === "object" ? (r.attributes[f.key] ?? "") : "") })),
     { key: "external_provider", label: "外部の連携先", group: "csvx.g_external", value: (r) => externalRef(r.external_ref)?.provider ?? "" },
     { key: "external_id", label: "外部の ID", group: "csvx.g_external", value: (r) => externalRef(r.external_ref)?.id ?? "" },
+    { key: "orders_count", label: "購入回数", group: "csvx.g_stats", value: (r) => r.orders_count ?? 0 },
+    { key: "total_spent_jpy", label: "累計の購入額", group: "csvx.g_stats", value: (r) => r.total_spent_jpy ?? 0 },
+    { key: "last_order_at", label: "最後に買った日", group: "csvx.g_stats", value: (r) => (r.last_order_at ? formatDateTime(r.last_order_at) : "") },
+    { key: "note", label: "社内メモ", group: "csvx.g_notes", pii: true, value: (r) => r.note ?? "" },
   ];
-  if (stats) {
-    cols.push(
-      { key: "orders_count", label: "購入回数", group: "csvx.g_stats", value: (r) => r.orders_count ?? 0 },
-      { key: "total_spent_jpy", label: "累計の購入額", group: "csvx.g_stats", value: (r) => r.total_spent_jpy ?? 0 },
-      { key: "last_order_at", label: "最後に買った日", group: "csvx.g_stats", value: (r) => (r.last_order_at ? formatDateTime(r.last_order_at) : "") },
-      { key: "note", label: "社内メモ", group: "csvx.g_notes", pii: true, value: (r) => r.note ?? "" },
-    );
-  }
   return cols;
 }
 const customerCsvPresets = (fields: CustomerField[]): Record<string, CsvPreset> => ({
@@ -94,25 +89,24 @@ const customerCsvPresets = (fields: CustomerField[]): Record<string, CsvPreset> 
 });
 const CUSTOMER_CONDITIONS = ["q", "f", "v", "consent", "sort"] as const;
 
-/** 読む列（0133 の前の DB では集計とメモを選ばない） */
-const customerColumns = (stats: boolean) =>
-  `id,email,name,default_address,created_at,last_login_at,external_ref,attributes,marketing_consent,marketing_consent_at,marketing_consent_source${stats ? ",orders_count,total_spent_jpy,last_order_at,note" : ""}`;
+/** 読む列 */
+const CUSTOMER_COLUMNS = "id,email,name,default_address,created_at,last_login_at,external_ref,attributes,marketing_consent,marketing_consent_at,marketing_consent_source,orders_count,total_spent_jpy,last_order_at,note";
 
 /**
  * 一覧と CSV で共通: メール・氏名の部分一致（q）、独自項目 1 つの値の部分一致（f / v）、案内メールの同意で DB で絞り、
- * limit 件（after より後ろ）を読む。並びは新しい順、0132 からは古い順も
+ * limit 件（after より後ろ）を読む。並びは新しい順か古い順
  */
-async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>, opts: { limit: number; after?: PagePosition; stats: boolean; sortable: boolean }) {
+async function listCustomers(c: AdminContext, shopId: string, settings: Record<string, unknown>, opts: { limit: number; after?: PagePosition }) {
   const { db } = owner(c);
   const fields: CustomerField[] = customerFields(settings);
-  const columns = customerColumns(opts.stats);
+  const columns = CUSTOMER_COLUMNS;
   const q = (c.req.query("q") ?? "").trim().slice(0, 100);
   const f0 = (c.req.query("f") ?? "").trim();
   const v0 = (c.req.query("v") ?? "").trim().slice(0, 100);
   // 案内メールの同意で絞る（0050）: yes / no / none（未回答）
   const consent = ["yes", "no", "none"].includes(c.req.query("consent") ?? "") ? c.req.query("consent")! : "";
   const attr = Boolean(f0 && v0 && fields.some((x) => x.key === f0));
-  const sort = opts.sortable && readSort(c.req.query("sort")) === "old" ? "old" : "";
+  const sort = readSort(c.req.query("sort")) === "old" ? "old" : "";
   const params: SearchParams = { q, f: attr ? f0 : "", v: attr ? v0 : "", consent, sort };
   const filtered = Boolean(q || attr || consent || sort || opts.after);
   // 部分一致（氏名・メール・独自項目）と古い順は RLS の外の検索の関数で（0059 / 0132。インデックスが効く）
@@ -135,10 +129,6 @@ async function listCustomers(c: AdminContext, shopId: string, settings: Record<s
   return { fields, rows, params, filtered };
 }
 
-/** 会員の購入の集計の列と社内メモ（0133） */
-const STATS_MIGRATION = "0133_customer_stats_note";
-/** 一覧の並び（0132） */
-const SEARCH_MIGRATION = "0132_admin_search";
 const consentLabel = (v: boolean | null | undefined) => t(v === true ? "customers.consent_yes" : v === false ? "customers.consent_no" : "customers.consent_none");
 const customerPath = (shopId: string, id: string) => `/admin/shops/${shopId}/customers/${id}`;
 
@@ -161,9 +151,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
-  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [stats, sortable, viewsOn] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION), migrated(deps, VIEWS_MIGRATION)]);
-  const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, stats, sortable, ...(after ? { after } : {}) });
+  const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
   const { fields, params, filtered } = list;
   const page = splitPage(list.rows, (r) => r.created_at);
   const rows = page.rows;
@@ -200,8 +188,8 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </div>
       ) : (
         <>
-          <ViewTabs shopId={shop.id} screen="customers" views={viewsOf(shop.settings, "customers")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
-          <SearchBar action={base} q={params["q"] ?? ""} placeholder={t("customers.search_placeholder")} sortable={sortable} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+          <ViewTabs shopId={shop.id} screen="customers" views={viewsOf(shop.settings, "customers")} current={params} error={c.req.query("view_error")} />
+          <SearchBar action={base} q={params["q"] ?? ""} placeholder={t("customers.search_placeholder")} sortable sort={readSort(params["sort"])} chips={chips} clearHref={base}>
             {fields.length > 0 ? (
               <>
                 <label>
@@ -246,9 +234,9 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                   <th>{t("store.address_name")}</th>
                   <th>{t("login.email")}</th>
                   <th>{t("store.address_state")}</th>
-                  {stats ? <th class="num">{t("customers.orders_count")}</th> : null}
-                  {stats ? <th class="num">{t("customers.total_spent")}</th> : null}
-                  {stats ? <th>{t("customers.last_order_at")}</th> : null}
+                  <th class="num">{t("customers.orders_count")}</th>
+                  <th class="num">{t("customers.total_spent")}</th>
+                  <th>{t("customers.last_order_at")}</th>
                   {fields.length > 0 ? <th>{t("customers.attributes_short")}</th> : null}
                   <th>{t("customers.consent")}</th>
                   <th>{t("customers.registered_at")}</th>
@@ -262,9 +250,9 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
                     </td>
                     <td>{r.email ?? "-"}</td>
                     <td>{typeof r.default_address?.["state"] === "string" ? String(r.default_address["state"]) : "-"}</td>
-                    {stats ? <td class="num">{r.orders_count ?? 0}</td> : null}
-                    {stats ? <td class="num">{yen(Number(r.total_spent_jpy ?? 0))}</td> : null}
-                    {stats ? <td>{r.last_order_at ? formatDateTime(r.last_order_at, { dateOnly: true }) : "-"}</td> : null}
+                    <td class="num">{r.orders_count ?? 0}</td>
+                    <td class="num">{yen(Number(r.total_spent_jpy ?? 0))}</td>
+                    <td>{r.last_order_at ? formatDateTime(r.last_order_at, { dateOnly: true }) : "-"}</td>
                     {fields.length > 0 ? (
                       <td>
                         {attributeRows(fields, r.attributes).map((a) => (
@@ -285,7 +273,7 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
         </>
       )}
       <Pager base={listHref} next={page.next} paged={Boolean(after)} />
-      {rows.length > 0 || filtered ? <CsvExportPanel kind="customers" action={`/admin/shops/${shop.id}/customers.csv`} params={params} columns={customerCsvColumns(fields, stats)} presets={customerCsvPresets(fields)} note={t("csvx.mail_note")} limit={CSV_MAX_ROWS} /> : null}
+      {rows.length > 0 || filtered ? <CsvExportPanel kind="customers" action={`/admin/shops/${shop.id}/customers.csv`} params={params} columns={customerCsvColumns(fields)} presets={customerCsvPresets(fields)} note={t("csvx.mail_note")} limit={CSV_MAX_ROWS} /> : null}
     </AdminLayout>,
   );
 });
@@ -314,8 +302,7 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
   const shop = await loadShop(c, shopId, "customers");
   if (!shop || !UUID_RE.test(customerId)) return c.text(t("shop.not_found"), 404);
   const access = c.get("shopAccess");
-  const stats = await migrated({ db, cache: c.get("adapters").cache }, STATS_MIGRATION);
-  const r = await db.from<CustomerRow>("customers").selectOne(customerColumns(stats), { eq: { shop_id: shopId, id: customerId } });
+  const r = await db.from<CustomerRow>("customers").selectOne(CUSTOMER_COLUMNS, { eq: { shop_id: shopId, id: customerId } });
   if (!r) return c.text(t("customers.not_found"), 404);
   const inquiriesOn = moduleEnabled(shop.settings, "inquiries") && can(access, "support");
   const [orders, inquiries] = await Promise.all([
@@ -334,19 +321,17 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
       {msg ? <p class={msg[1]}>{t(msg[0])}</p> : null}
       <div class="split">
         <div>
-          {stats ? (
-            <section class="card">
-              <dl class="sum">
-                <dt>{t("customers.orders_count")}</dt>
-                <dd>{r.orders_count ?? 0}</dd>
-                <dt>{t("customers.total_spent")}</dt>
-                <dd>{yen(Number(r.total_spent_jpy ?? 0))}</dd>
-                <dt>{t("customers.last_order_at")}</dt>
-                <dd>{r.last_order_at ? formatDateTime(r.last_order_at) : "-"}</dd>
-              </dl>
-              <p class="muted">{t("customers.stats_hint")}</p>
-            </section>
-          ) : null}
+          <section class="card">
+            <dl class="sum">
+              <dt>{t("customers.orders_count")}</dt>
+              <dd>{r.orders_count ?? 0}</dd>
+              <dt>{t("customers.total_spent")}</dt>
+              <dd>{yen(Number(r.total_spent_jpy ?? 0))}</dd>
+              <dt>{t("customers.last_order_at")}</dt>
+              <dd>{r.last_order_at ? formatDateTime(r.last_order_at) : "-"}</dd>
+            </dl>
+            <p class="muted">{t("customers.stats_hint")}</p>
+          </section>
           {orders ? (
             <section class="card">
               <h2>{t("order.list")}</h2>
@@ -387,20 +372,18 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
               )}
             </section>
           ) : null}
-          {stats ? (
-            <form method="post" action={`${self}/note`} class="card">
-              <h2>{t("customers.note")}</h2>
-              <textarea name="note" rows={4} maxlength={2000} style="width:100%">
-                {r.note ?? ""}
-              </textarea>
-              <p class="muted">{t("customers.note_hint")}</p>
-              <p>
-                <button type="submit" class="secondary small">
-                  {t("shop.save")}
-                </button>
-              </p>
-            </form>
-          ) : null}
+          <form method="post" action={`${self}/note`} class="card">
+            <h2>{t("customers.note")}</h2>
+            <textarea name="note" rows={4} maxlength={2000} style="width:100%">
+              {r.note ?? ""}
+            </textarea>
+            <p class="muted">{t("customers.note_hint")}</p>
+            <p>
+              <button type="submit" class="secondary small">
+                {t("shop.save")}
+              </button>
+            </p>
+          </form>
           {fields.length > 0 ? (
             <form method="post" action={`${self}/attributes`} class="card">
               <h2>{t("customers.attributes")}</h2>
@@ -578,11 +561,9 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "customers");
   if (!shop) return c.text(t("shop.not_found"), 404);
-  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const [stats, sortable] = await Promise.all([migrated(deps, STATS_MIGRATION), migrated(deps, SEARCH_MIGRATION)]);
   const base = `/admin/shops/${shopId}/customers.csv`;
   const allFields = customerFields(shop.settings ?? {});
-  const choice = readCsvChoice(c, customerCsvColumns(allFields, stats), ["member"], customerCsvPresets(allFields));
+  const choice = readCsvChoice(c, customerCsvColumns(allFields), ["member"], customerCsvPresets(allFields));
   // 案内メールの宛先は、同意した会員だけ（範囲「すべて」でもこの条件は外さない）
   if (choice?.preset === "mail" && c.req.query("consent") !== "yes") {
     const url = new URL(c.req.url);
@@ -594,18 +575,18 @@ customers.get("/:shopId/customers.csv", requireOwner, async (c: AdminContext) =>
   const all = stripConditions(c, base, CUSTOMER_CONDITIONS);
   if (all) return c.redirect(all);
   // 1 件多く読んで、上限で切ったかを知る（案内メールの宛先が足りないことに気づけるよう、黙って切らない）
-  const listed = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS + 1, stats, sortable });
+  const listed = await listCustomers(c, shopId, shop.settings ?? {}, { limit: CSV_MAX_ROWS + 1 });
   const fields = listed.fields;
   const truncated = listed.rows.length > CSV_MAX_ROWS ? { n: CSV_MAX_ROWS, what: "csvx.what_members" as const } : null;
   const rows = listed.rows.slice(0, CSV_MAX_ROWS);
   if (choice) return c.body(csvBody(choice.cols, rows, choice.format, truncated), 200, csvHeaders(csvName(`customers-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`, truncated)));
-  const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key), ...(stats ? ["orders_count", "total_spent_jpy", "last_order_at", "note"] : [])];
+  const header = ["id", "email", "name", "phone", "postal_code", "state", "city", "line1", "line2", "created_at", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "external_provider", "external_id", ...fields.map((f) => f.key), "orders_count", "total_spent_jpy", "last_order_at", "note"];
   const lines = rows.map((r) => {
     const a = (r.default_address ?? {}) as Record<string, unknown>;
     const ref = externalRef(r.external_ref);
     const attrs = r.attributes && typeof r.attributes === "object" ? r.attributes : {};
     const consentCols = [r.marketing_consent === true ? "yes" : r.marketing_consent === false ? "no" : "", r.marketing_consent_at ? formatDateTime(r.marketing_consent_at) : "", r.marketing_consent_source ?? ""];
-    const statCols = stats ? [r.orders_count ?? 0, r.total_spent_jpy ?? 0, r.last_order_at ? formatDateTime(r.last_order_at) : "", r.note ?? ""] : [];
+    const statCols = [r.orders_count ?? 0, r.total_spent_jpy ?? 0, r.last_order_at ? formatDateTime(r.last_order_at) : "", r.note ?? ""];
     return [r.id, r.email, r.name, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], formatDateTime(r.created_at), r.last_login_at ? formatDateTime(r.last_login_at) : "", ...consentCols, ref?.provider ?? "", ref?.id ?? "", ...fields.map((f) => attrs[f.key] ?? ""), ...statCols].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));

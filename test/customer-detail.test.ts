@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * 会員の一覧と詳細（メンテナの決定 2026-11-08「会員の行に購入の集計の列」「会員の詳細の画面」、2026-11-09「会員の社内メモ」）。
@@ -35,15 +34,6 @@ describe("会員の一覧", () => {
     expect(filtered).toContain(`<a class="chip" href="/admin/shops/${shop.id}/customers" title="この条件を外す">案内メール: 受け取る`);
   });
 
-  it("0133 を当てる前の DB: 集計の列とメモを出さない（列を選ばない）", async () => {
-    const { shop, cid, app } = setup({ migrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0133_customer_stats_note") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await b.get(`/admin/shops/${shop.id}/customers`)).text();
-    expect(html).not.toContain("購入回数");
-    const detail = await (await b.get(`/admin/shops/${shop.id}/customers/${cid}`)).text();
-    expect(detail).not.toContain("社内メモ");
-    expect(detail).not.toContain("ギフト包装");
-  });
 });
 
 describe("会員の詳細", () => {

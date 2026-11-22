@@ -5,10 +5,7 @@
  */
 import type { MessageKey } from "../i18n";
 import type { ShopPerm } from "../routes/admin/access";
-import { CARE_MIGRATION } from "../care-labels/care";
 
-/** お気に入り（0123_mod_favorites）のマイグレーション。モジュールの一覧と API が「当たるまで出さない」判定に使う */
-export const FAVORITES_MIGRATION = "0123_mod_favorites";
 /** 代金引換（0157_mod_cod）。src/modules/cod の COD_MIGRATION と同じ */
 export const COD_MIGRATION = "0157_mod_cod";
 /** 会員へのお知らせ（0155_mod_member_news） */
@@ -76,11 +73,11 @@ export const MODULES: readonly ModuleDef[] = [
   // お店の画面のダイアログ（今の訪問・今のページで分かることだけで出す。0110_mod_dialogs、docs/dialogs.md）
   { id: "dialogs", category: "marketing", name: "mod.dialogs.name", description: "mod.dialogs.description", perm: "marketing", adminPath: "dialogs" },
   // 会員のお気に入り（本人・運営者・AI 用 API と連携。ゲストはブラウザに覚えてログインで移す。0123_mod_favorites、docs/favorites.md）
-  { id: "favorites", category: "members", name: "mod.favorites.name", description: "mod.favorites.description", perm: "customers", migration: FAVORITES_MIGRATION },
+  { id: "favorites", category: "members", name: "mod.favorites.name", description: "mod.favorites.description", perm: "customers" },
   // 会員へのお知らせと既読（置かれたものを出して既読を覚えるだけ。だれに・いつは管理画面と外部プラグイン。0155_mod_member_news、docs/member-news.md）
   { id: "member_news", category: "members", name: "mod.member_news.name", description: "mod.member_news.description", perm: "marketing", adminPath: "member-news", migration: MEMBER_NEWS_MIGRATION },
   // 洗濯表示（JIS L 0001 の記号番号。カテゴリーで決めて商品で上書き。記号の絵は運営者が持ち込む。0127_mod_care_labels、docs/care-labels.md）
-  { id: "care_labels", category: "catalog", name: "mod.care_labels.name", description: "mod.care_labels.description", perm: "catalog", adminPath: "care-labels", migration: CARE_MIGRATION },
+  { id: "care_labels", category: "catalog", name: "mod.care_labels.name", description: "mod.care_labels.description", perm: "catalog", adminPath: "care-labels" },
 ];
 
 export function moduleEnabled(settings: Record<string, unknown> | null | undefined, id: string): boolean {

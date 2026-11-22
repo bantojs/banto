@@ -291,15 +291,4 @@ describe("Webhook の再配信（0128）: 返金して済みにした決済は�
     expect(sb.tables.orders).toHaveLength(0);
     expect(stock(sb, teeM.id)).toBe(5);
   });
-
-  it("0128 が当たるまでは今までどおり（成功したら記録するだけ）", async () => {
-    const { sb, stripe, teeM, app, b } = setup();
-    sb.appliedMigrations = sb.appliedMigrations.filter((m) => m !== "0128_webhook_replay");
-    await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" });
-    await checkout(b, "/my-shop");
-    const [sid] = [...stripe.sessions.keys()];
-    const wh = await stripe.deliver(app, BASE, stripe.event(sid!, "checkout.session.completed"), WEBHOOK_SECRET);
-    expect(await wh.json()).toMatchObject({ order_id: expect.any(String) });
-    expect(sb.tables.orders).toHaveLength(1);
-  });
 });

@@ -15,7 +15,7 @@ import { ipHash, subjectHash } from "../members/auth";
 import { PREFECTURES, describeShipping, isPrefecture, parseShippingSettings, shippingFee, taxRate } from "./shipping";
 import type { AddressFormValues, CartLine } from "../themes/types";
 import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db/privileged";
-import { migrated, type MigrationStateDeps } from "../db/migration-state";
+import type { MigrationStateDeps } from "../db/migration-state";
 import { StripeError, type StripeClient } from "../payments/stripe";
 import { KomojuError, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
 import { amazonPayConfigured } from "../plugins/amazon_pay";
@@ -642,8 +642,6 @@ export interface PlaceOrderDeps {
   migrationState?: MigrationStateDeps | null;
 }
 
-/** reserve_stock が会員 id を受け取り、会員限定の商品を確かめる版 */
-export const RESERVE_AUDIENCE_MIGRATION = "0129_security_hardening_5";
 /** 会員の注文のお届け先を既定の住所に写す（0159）。レジの「保存します」「次回も使う」は当ててから出す */
 export const MEMBER_ADDRESS_MIGRATION = "0159_member_address_from_order";
 
@@ -685,14 +683,13 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
   const a = quote.address;
   let reservationId: string;
   try {
-    // 会員 id は 0129 が当たっている DB にだけ渡す（それまでの reserve_stock は受け取らない。買えるかは priceCart が確かめている）
-    const memberCheck = input.customerId && deps.migrationState ? await migrated(deps.migrationState, RESERVE_AUDIENCE_MIGRATION) : false;
+    // 会員 id を渡すと reserve_stock が会員限定の商品を確かめる（0129）
     reservationId = await deps.privileged.reserveStock(
       shop.id,
       lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })),
       quote.provider === "komoju" ? reservationSeconds(deps.setup.komoju?.settings ?? {}) : CHECKOUT_TTL_SECONDS,
       input.limits ?? null,
-      memberCheck ? input.customerId : null,
+      input.customerId ?? null,
     );
     await deps.privileged.attachReservationCustomer(reservationId, shop.id, {
       customer_email: a.customer_email,

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * ショップのホーム（src/routes/admin/home.tsx、0139）・注文の詳細・権限の無いページ（src/routes/admin/denied.tsx）。
@@ -54,11 +53,6 @@ describe("ショップのホーム", () => {
     expect(html).not.toContain("開店の準備");
   });
 
-  it("0139 の前はアップデートを案内する", async () => {
-    const { app, base } = setup({ migrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0139_shop_home") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await b.get(`${base}/home`)).text()).toContain("「今やること」は、データベースのアップデートを適用すると出ます");
-  });
 });
 
 describe("注文の詳細・権限の無いページ", () => {

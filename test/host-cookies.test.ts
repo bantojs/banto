@@ -8,7 +8,7 @@ import { HOST_PREFIX, readScopedCookie, scopedClearCookies, scopedCookieName, sc
 /**
  * Cookie の `__Host-` の接頭辞（src/util/cookie.ts、docs/knowledge/02-decisions.md 2026-11-13）。
  * HTTPS で Path=/ に置く Cookie（ショップのドメインの上のお店の Cookie・管理画面のセッション）は `__Host-` の名前にし、
- * 同じ登録ドメインの別のホストから `Domain=` で差し込まれた古い名前の Cookie は信じない（カートだけは移す間も読む）。
+ * 同じ登録ドメインの別のホストから `Domain=` で差し込まれた古い名前の Cookie は信じない（カートも v0.13.0 から読まない）。
  */
 
 const DOMAIN = "shop.example.jp";
@@ -22,12 +22,11 @@ describe("名前と見出し（src/util/cookie.ts）", () => {
     expect(scopedCookieName("banto_x", { path: "/my-shop", secure: true })).toBe("banto_x");
   });
 
-  it("__Host- の場面では __Host- の名前だけを読み、同じ名前が 2 つあれば無いものとして扱う。古い名前は頼まれたときだけ", () => {
+  it("__Host- の場面では __Host- の名前だけを読み、同じ名前が 2 つあれば無いものとして扱う。古い名前は読まない（カートも v0.13.0 から）", () => {
     expect(readScopedCookie("banto_x=old; __Host-banto_x=new", "banto_x", https)).toBe("new");
     expect(readScopedCookie("banto_x=old", "banto_x", https)).toBeUndefined();
-    expect(readScopedCookie("banto_x=old", "banto_x", https, { legacy: true })).toBe("old");
     expect(readScopedCookie("__Host-banto_x=a; __Host-banto_x=b", "banto_x", https)).toBeUndefined();
-    expect(readScopedCookie("__Host-banto_x=a; __Host-banto_x=b; banto_x=old", "banto_x", https, { legacy: true })).toBeUndefined();
+    expect(readScopedCookie("__Host-banto_x=a; __Host-banto_x=b; banto_x=old", "banto_x", https)).toBeUndefined();
     // http・スラッグのパスでは今までどおり
     expect(readScopedCookie("banto_x=old", "banto_x", { path: "/my-shop", secure: true })).toBe("old");
     expect(readScopedCookie(undefined, "banto_x", https)).toBeUndefined();
@@ -97,7 +96,7 @@ describe("ショップのドメイン（https）の Cookie", () => {
     }
   });
 
-  it("カートは移す間も古い名前を読み、次に書くときに __Host- へ移して古い名前を消す", async () => {
+  it("カートも古い名前は読まない（v0.13.0 から。空のカートになる）。次に書くときに古い名前を消して __Host- に置く", async () => {
     const { shop, sku, app } = shopSetup();
     const http = new Browser(app, SHOP_URL);
     await http.post("/cart/add", { sku_id: sku.id, qty: "1" });
@@ -107,7 +106,7 @@ describe("ショップのドメイン（https）の Cookie", () => {
 
     const old = new Browser(app, SHOP_URL);
     old.cookies.set(name, sealed);
-    expect(await (await old.get("/cart")).text()).toContain("Tシャツ");
+    expect(await (await old.get("/cart")).text()).not.toContain("Tシャツ");
     const res = await old.post("/cart/add", { sku_id: sku.id, qty: "1" });
     const set = res.headers.getSetCookie();
     expect(set[0]).toBe(`${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`);

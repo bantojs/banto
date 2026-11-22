@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { webhookBody } from "./body";
 import { PrivilegedRpcError, createPrivilegedDb } from "../../db/privileged";
-import { replayGuard } from "./stripe";
 import { AmazonPayError, CHARGE_ID_RE, amazonPayFromConfig, type AmazonPayCharge } from "../../plugins/amazon_pay";
 import { AMAZON_PAY_PROVIDER, confirmAmazonPayCharge } from "../../payments/amazon-pay";
 import { clientIp, type Ctx } from "../common";
@@ -53,8 +52,7 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
 
   // 済んだ Charge の通知（再送・戻りで確定済み）は、Amazon Pay の API を呼ぶ前に終える
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
-  const guard = await replayGuard(c, url);
-  if (guard && (await db.webhookEventSeen(AMAZON_PAY_PROVIDER, chargeId))) return c.json({ received: true, duplicate: true });
+  if ((await db.webhookEventSeen(AMAZON_PAY_PROVIDER, chargeId))) return c.json({ received: true, duplicate: true });
 
   // どの予約か: Charge → Charge Permission の merchantMetadata（ボタンの中身は Banto の署名つき）
   let reservationId: string | null = null;
@@ -78,7 +76,7 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
 
   let r: Awaited<ReturnType<typeof confirmAmazonPayCharge>>;
   try {
-    r = await confirmAmazonPayCharge({ db, client, chargeId, reservationId, shopId, guard, charge });
+    r = await confirmAmazonPayCharge({ db, client, chargeId, reservationId, shopId, charge });
   } catch (e) {
     // Banto が予約の欄に入れるのは UUID だけ。同じ加盟店をほかの仕組みでも使っていて、UUID でない値が入った Charge は DB が型の誤りで断る。
     // 500 にすると Amazon が再送し続けるので、Banto の予約ではないものとして終える。UUID の形の予約（Banto のもの）の中で起きた誤りは

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * 在庫の画面（src/routes/admin/inventory.tsx、0136）。入荷・出荷は差、棚卸しは開いたときの数と一緒に送る。
@@ -94,11 +93,4 @@ describe("在庫の画面", () => {
     expect((await b.post(`${base}/adjust`, { back: "?q=x&next=https://evil.example/", [`d_${teeM.id}`]: "1" })).headers.get("location")).toBe(`${base}?q=x&flash=adjusted&n=1`);
   });
 
-  it("0136 を当てる前の DB: 表を出さずにアップデートを案内する", async () => {
-    const { app, base } = setup({ migrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0136_inventory_ops") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await b.get(base)).text();
-    expect(html).toContain("データベースのアップデートを適用すると使えます");
-    expect(html).not.toContain("TEE-M");
-  });
 });

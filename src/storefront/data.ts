@@ -14,7 +14,7 @@ import { descendantIds } from "../products/categories";
 import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
-import { PAGE_PARTS_MIGRATION, PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
+import { PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
 import type { IncludePart } from "../content/include";
 import { fieldSortQuery, type FieldSort } from "../blog/fields";
 import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
@@ -565,8 +565,7 @@ export class StorefrontData {
     if (hit) return hit;
     const cols = "id,shop_id,handle,title,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at,published_at,image_url";
     // 部品のページ（0122）は一覧に出さない
-    const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
-    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc,id.asc", limit: 100 });
+    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true, is_part: false }, order: "sort_order.asc,id.asc", limit: 100 });
     await this.cache.set(key, rows, this.ttl);
     return rows;
   }
@@ -584,8 +583,7 @@ export class StorefrontData {
   /** サイトマップに載せるページ（公開中のものの handle と更新日時） */
   async pageHandles(shop: PublicShop): Promise<{ handle: string; updated_at: string }[]> {
     // 部品のページ（0122）は載せない
-    const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
-    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc", limit: 1000 });
+    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true, is_part: false }, order: "sort_order.asc", limit: 1000 });
   }
 
   /** ブログ（同梱モジュール blog、0081）。公開中のショップのものだけ（RLS）。短時間キャッシュ */
