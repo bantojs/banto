@@ -218,7 +218,7 @@ RLS は有効にして、ポリシーは「誰にも見せない」1 つ（`usin
   - 運営者は `shop_oauth_client_save` / `_delete`（owner の JWT）で書き、暗号文の列は列の権限で読めない。読むのは service_role の `shop_oauth_client` だけ（戻ってきたときに 1 回）。
   - サイトの秘密（`SESSION_SECRET`）を変えると開けなくなる。そのときはログインに失敗し（提供元には何も送らない）、運営者が入れ直す。
 - **流れ**: OpenID Connect の認可コード + PKCE（S256）+ state + nonce。途中の値は署名付き Cookie（`banto_oauth`、Path=/_oauth、10 分、SameSite=Lax）。戻り先は提供元ごとに 1 つ（`/_oauth/<provider>/callback`。`_` はショップのスラッグに使えないので衝突しない）。どのショップかは Cookie の中身で分かる。
-  - LINE は ID トークンを検証 API（`/oauth2/v2.1/verify`）で確かめる。Google はトークンのエンドポイントから HTTPS で直接受け取り、クライアントシークレットで認証しているので署名の検証を省く（OpenID Connect Core 3.1.3.7、Google の案内）。どちらも iss・aud・nonce（Google は期限も）を自分で見る。
+  - LINE は ID トークンを検証 API（`/oauth2/v2.1/verify`）で確かめる。Google はトークンのエンドポイントから HTTPS で直接受け取り、クライアントシークレットで認証している（OpenID Connect Core 3.1.3.7 では署名の検証を省いてもよい）が、2026-11-22 から多層防御として Google の公開鍵（JWKS、`https://www.googleapis.com/oauth2/v3/certs`）で RS256 の署名も確かめる（`src/modules/social-login/google-jwt.ts`、WebCrypto だけ）。`alg` は RS256 だけ、`kid` で鍵を選び、知らない `kid` なら 1 回だけ取り直す。鍵は Cache-Control の max-age（60 秒〜1 日）まで CacheAdapter に覚える。どちらも iss・aud・nonce（Google は期限と発行時刻 `iat` も）を自分で見る。
 - **結びつけ**: 鍵は提供元の利用者 ID（`member_identities`、ショップ × 提供元 × 利用者 ID、1 会員に提供元ごと 1 つ）。確認済みのアドレス（Google の `email_verified`、LINE は返れば確認済み）だけ同じアドレスの会員に結びつける。ログイン中の会員はマイページから連携できる（state に会員 ID と世代を入れ、戻ったときに世代を確かめる）。アドレスの無い会員は連携を外せない（`last_login_method`）。
 - **ヘッドレス**: Banto から提供元へ送り出し、戻ったら許可リストの `return_to` に **引き換え券**（`member_handoffs`、2 分・1 回限り、トークンは HMAC で保存）を付けて戻す。連携側は `/members/verify` `{ handoff }` で会員のトークンに替える。
 - **ログイン CSRF**: state は利用者のブラウザの Cookie と照合するので、他人の戻り URL を踏まされてもログインしない（テストあり）。

@@ -1284,7 +1284,7 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   if (!client || !clientSecret) return fail("oauth");
   let identity;
   try {
-    identity = await providerIdentity(p, c.get("deps").fetch, { clientId: client.client_id, clientSecret }, { code, redirectUri: redirectUri(st.origin, p), verifier: st.verifier, nonce: st.nonce });
+    identity = await providerIdentity(p, c.get("deps").fetch, { clientId: client.client_id, clientSecret }, { code, redirectUri: redirectUri(st.origin, p), verifier: st.verifier, nonce: st.nonce }, undefined, c.get("adapters").cache);
   } catch (e) {
     if (e instanceof OAuthError) return fail("oauth");
     throw e;
