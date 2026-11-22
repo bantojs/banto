@@ -338,7 +338,7 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - MCP は `favorites_list`（`customer_id` を渡すとその会員の分）。
 - 返すのは会員 ID・商品 ID・商品の URL の名前・足した日時だけです（個人情報が要るときは `customers:read` の会員の口で）。
 - **書き込みの口はありません**。お気に入りは本人の行為だけです。
-- データベースの更新 `0123_mod_favorites` が要ります。当たるまでは 409（`migration_required`）です。
+- データベースの更新 `0123_mod_favorites` が要ります（v0.13.0 からは土台に含まれます）。
 
 ## 16. 実店舗の独自項目と外部コード（0126、メンテナの決定 2026-11-07）
 
@@ -349,14 +349,14 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
   - 店舗名・住所・営業時間・ご案内などの決まった欄は書けません（400 `invalid_store_values`）。定義に無い鍵・形の違う値は 400 `store_field_invalid`、外部コードが組織の中で重なれば 409 `external_ref_taken`。
 - MCP は `store_update`（書き込み、`destructiveHint`）。
 - 発行できるのは、そのショップの「実店舗・お店で試着」（`stores`）の項目を持つ人だけです。
-- データベースの更新 `0126_store_fields` が要ります。当たるまでは 409（`migration_required`）で、トークンの発行の画面にもスコープを出しません。
+- データベースの更新 `0126_store_fields` が要ります（v0.13.0 からは土台に含まれます）。
 
 ## 17. 洗濯表示（0127、メンテナの決定 2026-11-08）
 
 - スコープ `products:write`（項目 `catalog`）。新しいスコープは作っていません。
 - `PUT /api/v1/products/{ref}/care`・`PUT /api/v1/categories/{ref}/care`: `ref` は ID か URL の名前。本文は `{ "symbols": [JIS L 0001:2024 の記号番号], "notes": [付記] }`、`{}` で外す。区分（番号の 1 桁目）ごとに 1 つ・7 つまで、付記は 8 つまで・40 文字まで（違えば 400 `invalid_care`）。
 - MCP は `care_set`。記号の絵は管理画面だけで変えます（docs/care-labels.md）。
-- データベースの更新 `0127_mod_care_labels` が要ります。当たるまでは 409（`migration_required`）です。
+- データベースの更新 `0127_mod_care_labels` が要ります（v0.13.0 からは土台に含まれます）。
 
 ## 18. 商品の会員限定（0144）
 
