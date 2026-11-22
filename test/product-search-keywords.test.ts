@@ -22,8 +22,11 @@ describe("管理画面", () => {
     const form = await (await admin.get(url)).text();
     expect(form).toContain('name="search_keywords"');
     expect(form).toContain('maxlength="200"');
-    await admin.post(url, { name: "Tシャツ", slug: "tee", published: "on", search_keywords_present: "1", search_keywords: "  カットソー 型番ABC-12  " });
+    await admin.post(url, { name: "Tシャツ", slug: "tee", published: "on", search_keywords_present: "1", search_keywords: "  カットソー\u3000\u3000 型番ABC-12  " });
     expect(s.product["search_keywords"]).toBe("カットソー 型番ABC-12");
+    // 続く空白を 1 つにしてから切る（空白が多くても 200 文字に入る言葉を落とさない）
+    await admin.post(url, { name: "Tシャツ", slug: "tee", published: "on", search_keywords_present: "1", search_keywords: `${"a".repeat(150)}${" ".repeat(100)}end` });
+    expect(s.product["search_keywords"]).toBe(`${"a".repeat(150)} end`);
     await admin.post(url, { name: "Tシャツ", slug: "tee", published: "on", search_keywords_present: "1", search_keywords: "あ".repeat(250) });
     expect([...String(s.product["search_keywords"])].length).toBe(200);
     await admin.post(url, { name: "Tシャツ", slug: "tee", published: "on", search_keywords_present: "1", search_keywords: "   " });

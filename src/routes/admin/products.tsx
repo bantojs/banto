@@ -660,8 +660,8 @@ function productValues(f: Record<string, string>, fields: ProductField[], mediaB
     ...(f.released_present === "1" && (f.released_at ?? "") !== (f.released_orig ?? "") ? { released_at: f.released_at ? zonedInputToIso(f.released_at) : null } : {}),
     // 店頭のみ（0149）: 欄があったときだけ書く
     ...(f.store_only_present === "1" ? { store_only: f.store_only === "on" } : {}),
-    // 検索用のキーワード（0163）: 欄があったときだけ書く。空白をそろえるのは DB のトリガー（長さは先に切る）
-    ...(f.search_keywords_present === "1" ? { search_keywords: [...(f.search_keywords ?? "").trim()].slice(0, SEARCH_KEYWORDS_MAX).join("") || null } : {}),
+    // 検索用のキーワード（0163）: 欄があったときだけ書く。続く空白を 1 つにしてから 200 文字で切る（DB のトリガーと同じそろえ方）
+    ...(f.search_keywords_present === "1" ? { search_keywords: [...(f.search_keywords ?? "").replace(/[ \t\n\r\f\v\u3000]+/g, " ").trim()].slice(0, SEARCH_KEYWORDS_MAX).join("") || null } : {}),
     // 公開日（0148）: 非公開の商品の予約公開。公開に印を付けたら DB のトリガーが外す
     ...(f.publish_present === "1" && (f.publish_at ?? "") !== (f.publish_orig ?? "") ? { publish_at: f.publish_at ? zonedInputToIso(f.publish_at) : null } : {}),
     // 会員限定（0098）: 欄があったときだけ書く（欄の無い画面からは列に触れない）。
