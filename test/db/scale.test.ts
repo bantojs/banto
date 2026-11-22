@@ -126,7 +126,7 @@ describe.skipIf(!dbAvailable)("10 万件の性能（0058〜0060）", () => {
       expect(keyset).toMatch(/Index (Only )?Scan.*products_list_new/);
       const price = await plan(c, "select id from products p where p.shop_id = $1 and p.published and (coalesce(p.list_price_jpy, 2147483647), p.id) > ($2::int, $3::uuid) order by coalesce(p.list_price_jpy, 2147483647), p.id limit 49", [shop.shopId, 25000, shop.productId]);
       expect(price).toMatch(/products_list_price_asc/);
-      const search = await plan(c, "select id from products p where p.shop_id = $1 and p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description) like $2 order by p.created_at desc limit 49", [shop.shopId, "%麦わら帽子 12%"]);
+      const search = await plan(c, "select id from products p where p.shop_id = $1 and p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description, p.search_keywords) like $2 order by p.created_at desc limit 49", [shop.shopId, "%麦わら帽子 12%"]);
       expect(search).toMatch(/products_search_trgm/);
       const tag = await plan(c, "select id from products p where p.shop_id = $1 and p.published and p.tags @> array[$2::text] order by p.created_at desc limit 49", [shop.shopId, "t7"]);
       expect(tag).not.toMatch(/Seq Scan on products/);

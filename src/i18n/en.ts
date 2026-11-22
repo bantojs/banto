@@ -159,6 +159,8 @@ export const en: Record<MessageKey, string> = {
   "product.store_only": "In store only (cannot be bought online)",
   "product.store_only_hint": "Shown in the shop but cannot go through checkout. With In-store try-on on, customers can add it to the cart and request a try-on.",
   "product.publish_at_hint": "Publishes an unpublished product at this date and time (a few minutes of delay).",
+  "product.search_keywords": "Search keywords",
+  "product.search_keywords_hint": "Extra words that make this product findable in the shop search (other names, model numbers, features not in the description; up to 200 characters). Not shown to customers.",
   "product.released_at_invalid": "Enter a release date between 1990 and ten years from now.",
   "product.released_at_hint": "Optional. Sorting by newest and the theme's \"new\" badge use this date (empty: the date the product was created). It does not schedule publishing: a future date is still visible while published.",
   "product.fields": "Custom fields",

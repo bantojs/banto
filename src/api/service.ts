@@ -30,7 +30,7 @@ import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
 import { FAVORITES_MIGRATION } from "../modules/registry";
 import { AUDIENCE_API_MIGRATION } from "../members/audience";
-import { FIELD_DEFS_MIGRATION, RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, STORE_ONLY_MIGRATION, productFields } from "../products/fields";
+import { FIELD_DEFS_MIGRATION, RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, SEARCH_KEYWORDS_MIGRATION, STORE_ONLY_MIGRATION, productFields } from "../products/fields";
 import { customerFields } from "../customers/fields";
 import { CARE_MIGRATION } from "../care-labels/care";
 import { STORE_FIELDS_MIGRATION } from "../stores/fields";
@@ -111,6 +111,8 @@ function mapRpcError(e: unknown): never {
     if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
     if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
     if (e.is("invalid_store_only")) throw new ApiError("invalid", "invalid_store_only: true or false", 400);
+    if (e.is("invalid_search_keywords")) throw new ApiError("invalid", "invalid_search_keywords: string or null", 400);
+    if (e.is("search_keywords_too_long")) throw new ApiError("invalid", "search_keywords_too_long: up to 200 characters", 400);
     if (e.is("invalid_publish_at")) throw new ApiError("invalid", "invalid_publish_at: a date-time string with an offset (e.g. 2024-12-01T10:00:00+09:00) up to 10 years from now, or null to cancel; the product is published by the next scheduled run after it", 400);
     if (e.is("invalid_released_at")) throw new ApiError("invalid", "invalid_released_at: a date-time string with an offset (e.g. 2024-05-01T10:00:00+09:00; a date alone is 00:00 UTC) between 1990 and 10 years from now, or null to remove it", 400);
     // 項目の定義（0145）: invalid_fields:<番号>:<理由>
@@ -340,6 +342,7 @@ export class ApiService {
     if ("released_at" in values) await this.requireMigration(RELEASED_AT_MIGRATION);
     if ("publish_at" in values) await this.requireMigration(SALE_DATES_MIGRATION);
     if ("store_only" in values) await this.requireMigration(STORE_ONLY_MIGRATION);
+    if ("search_keywords" in values) await this.requireMigration(SEARCH_KEYWORDS_MIGRATION);
   }
   skuCreate = (productId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_create", { p_product_id: productId, p_values: values });
   skuUpdate = (skuId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_update", { p_sku_id: skuId, p_values: values });

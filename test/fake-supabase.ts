@@ -1363,7 +1363,9 @@ export class FakeSupabase {
     const cmp = (a: string | number, b: string | number) => (a < b ? -1 : a > b ? 1 : 0);
     const order = (x: Entry, y: Entry) => (desc ? -1 : 1) * (cmp(x.key, y.key) || cmp(String(x.p["id"]), String(y.p["id"])));
     const tagsOf = (p: Row) => (Array.isArray(p["tags"]) ? (p["tags"] as string[]) : []);
-    const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300)].join(" ").toLowerCase();
+    // 0163 から検索用のキーワードも
+    const withKeywords = this.appliedMigrations.includes("0163_product_search_keywords");
+    const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300), withKeywords ? String(p["search_keywords"] ?? "") : ""].join(" ").toLowerCase();
     let rows: Entry[] = this.tables.products
       .filter((p) => p["shop_id"] === shopId && p["published"] === true && this.productOpen(p, aud))
       .filter((p) => wantTags.every((t) => tagsOf(p).includes(t)))

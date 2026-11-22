@@ -242,7 +242,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
       expect(text, sort).toMatch(/Index Scan|Index Only Scan/);
       expect(text, sort).not.toMatch(/Seq Scan/);
     }
-    const search = await plan("select p.id from products p where p.shop_id = $1 and p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description) like $2", [shop.shopId, "%麦わら帽子%"]);
+    const search = await plan("select p.id from products p where p.shop_id = $1 and p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description, p.search_keywords) like $2", [shop.shopId, "%麦わら帽子%"]);
     expect(search).toMatch(/products_search_trgm/);
     const hits = await list(shop.shopId, { q: "麦わら帽子", limit: 100, count: true });
     expect(hits.total).toBe(Math.floor(20000 / 97));

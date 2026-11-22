@@ -158,6 +158,8 @@ export const ja = {
   "product.store_only": "店頭のみ（ネットでは購入できない）",
   "product.store_only_hint": "お店に見せますが、購入手続きには進めません。「お店で試着」が ON なら、カートに入れて試着を申し込めます。",
   "product.publish_at_hint": "非公開の商品を、この日時に公開します（数分の遅れがあります）。",
+  "product.search_keywords": "検索用のキーワード",
+  "product.search_keywords_hint": "お店の検索で探せるようにする言葉（別の呼び方・型番・説明に書いていない特徴など、200 文字まで）。お客様の画面には出ません。",
   "product.released_at_invalid": "発売日は 1990 年から 10 年後までの日時で入れてください。",
   "product.released_at_hint": "任意。新着順と、テーマの「新しい商品」の印はこの日で決まります（空なら商品を作った日）。予約公開ではないので、未来の日でも公開中なら見えます。",
   "product.fields": "カスタム項目",
