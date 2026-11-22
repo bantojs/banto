@@ -75,7 +75,7 @@ describe.skipIf(!dbAvailable)("検索の語（0161）", () => {
       await client.query("set enable_seqscan = off; set enable_indexscan = off");
       const plan = (
         await client.query<{ "QUERY PLAN": string }>(
-          "explain select id from products p where p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description) like ($1::text[])[1] and banto_product_search_text(p.name, p.brand, p.tags, p.description) like ($1::text[])[2]",
+          "explain select id from products p where p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description, p.search_keywords) like ($1::text[])[1] and banto_product_search_text(p.name, p.brand, p.tags, p.description, p.search_keywords) like ($1::text[])[2]",
           [["%カーディガン%", "%ネイビー%"]],
         )
       ).rows.map((r) => r["QUERY PLAN"]).join("\n");

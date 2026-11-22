@@ -17,6 +17,10 @@ export const RELEASED_AT_MIGRATION = "0146_product_released_at";
 export const SALE_DATES_MIGRATION = "0148_product_sale_dates";
 /** 店頭のみ（ネットでは買えない）商品の印（0149、products.store_only） */
 export const STORE_ONLY_MIGRATION = "0149_product_store_only";
+/** 検索用のキーワード（products.search_keywords、0163） */
+export const SEARCH_KEYWORDS_MIGRATION = "0163_product_search_keywords";
+/** 検索用のキーワードの長さの上限（文字。DB の制約と同じ） */
+export const SEARCH_KEYWORDS_MAX = 200;
 
 export interface ProductField {
   /** 値の保存キー（英小文字・数字・アンダースコア、1〜40 文字） */

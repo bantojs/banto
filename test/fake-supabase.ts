@@ -1363,7 +1363,9 @@ export class FakeSupabase {
     const cmp = (a: string | number, b: string | number) => (a < b ? -1 : a > b ? 1 : 0);
     const order = (x: Entry, y: Entry) => (desc ? -1 : 1) * (cmp(x.key, y.key) || cmp(String(x.p["id"]), String(y.p["id"])));
     const tagsOf = (p: Row) => (Array.isArray(p["tags"]) ? (p["tags"] as string[]) : []);
-    const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300)].join(" ").toLowerCase();
+    // 0163 から検索用のキーワードも
+    const withKeywords = this.appliedMigrations.includes("0163_product_search_keywords");
+    const text = (p: Row) => [p["name"], p["brand"] ?? "", tagsOf(p).join(" "), String(p["description"] ?? "").slice(0, 300), withKeywords ? String(p["search_keywords"] ?? "") : ""].join(" ").toLowerCase();
     let rows: Entry[] = this.tables.products
       .filter((p) => p["shop_id"] === shopId && p["published"] === true && this.productOpen(p, aud))
       .filter((p) => wantTags.every((t) => tagsOf(p).includes(t)))
@@ -1736,7 +1738,8 @@ export class FakeSupabase {
         const p = this.tables.products.find((x) => x["shop_id"] === args["p_shop_id"] && x["slug"] === args["p_slug"] && x["published"] === true);
         if (!p || !this.shopPublished(args["p_shop_id"]) || !this.productOpen(p, aud)) return json(null);
         return json({
-          product: { ...p, attributes: {}, app_data: [], size_chart: null },
+          // 0163: 検索用のキーワードは返さない
+          product: { ...p, attributes: {}, app_data: [], size_chart: null, search_keywords: undefined },
           images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]),
           skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ ...k, available: stock(k["id"]), price_jpy: this.memberUnitPrice(k["id"], aud).price, regular_price_jpy: k["price_jpy"] })),
           purchasable: can(p),
@@ -1772,7 +1775,8 @@ export class FakeSupabase {
       // 0095: 採寸表（モジュールが ON のときだけ）
       const mods = ((shop?.["settings"] ?? {}) as Record<string, unknown>)["modules"] as Record<string, unknown> | undefined;
       const sizeChart = mods?.["size_charts"] === true ? this.sizeChartResolve(String(p["shop_id"]), (p["category_id"] as string | null) ?? null, String(p["id"])) : null;
-      return json({ ...p, attributes: pub, app_data: appData, size_chart: sizeChart });
+      // 0163: 検索用のキーワードは返さない
+      return json({ ...p, attributes: pub, app_data: appData, size_chart: sizeChart, search_keywords: undefined });
     }
     // 0058: 商品の一覧（キーセット）とタグ・カテゴリーの件数。本物の SQL と同じ並べ替え・絞り込みをメモリで
     if (fn === "product_public_list") return this.productPublicList(args);

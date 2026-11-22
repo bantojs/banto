@@ -64,6 +64,8 @@ export interface ProductRow {
   publish_at?: string | null;
   /** 0149。店頭のみ（ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める） */
   store_only?: boolean;
+  /** 検索用のキーワード（0163。お客様には見せない） */
+  search_keywords?: string | null;
   audience_hide?: boolean;
   published: boolean;
   created_at: string;
