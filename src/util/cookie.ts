@@ -47,14 +47,12 @@ export function readCookieAll(cookieHeader: string | undefined, name: string): s
 
 /**
  * この場面の Cookie の値。接頭辞の付く場面では `__Host-` の名前だけを読み、2 つ以上あれば undefined。
- * legacy が true なら、`__Host-` が無いときだけ古い名前も読む（移しても困らない値だけ。今はカート）
+ * 古い名前（`__Host-` の前）は読まない（カートだけ v0.12 系のあいだ読んでいたが、v0.13.0 でやめた）
  */
-export function readScopedCookie(cookieHeader: string | undefined, base: string, scope: CookieScope, opts: { legacy?: boolean } = {}): string | undefined {
+export function readScopedCookie(cookieHeader: string | undefined, base: string, scope: CookieScope): string | undefined {
   if (!hostPrefixed(scope)) return readCookieAll(cookieHeader, base)[0];
   const values = readCookieAll(cookieHeader, `${HOST_PREFIX}${base}`);
-  if (values.length > 1) return undefined;
-  if (values.length === 1) return values[0];
-  return opts.legacy ? readCookieAll(cookieHeader, base)[0] : undefined;
+  return values.length === 1 ? values[0] : undefined;
 }
 
 /**

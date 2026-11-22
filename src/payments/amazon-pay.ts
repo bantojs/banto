@@ -65,13 +65,13 @@ export type ChargeOutcome =
  * Charge を Amazon Pay から引き直し、売上が確定（Captured）していれば予約を確定する。確定できなければ返金する（webhook-confirm.ts）。
  * 金額は Amazon Pay が売り上げた額をそのまま渡す（予約の合計と違えば DB が amount_mismatch で断り、返金になる）
  */
-export async function confirmAmazonPayCharge(a: { db: PrivilegedDb; client: AmazonPayClient; chargeId: string; reservationId: string; shopId: string; guard: boolean; charge?: AmazonPayCharge }): Promise<ChargeOutcome> {
+export async function confirmAmazonPayCharge(a: { db: PrivilegedDb; client: AmazonPayClient; chargeId: string; reservationId: string; shopId: string; charge?: AmazonPayCharge }): Promise<ChargeOutcome> {
   // 引いたばかりの Charge があればそれを使う（IPN）。無ければ引く
   const charge = a.charge?.chargeId === a.chargeId ? a.charge : await a.client.getCharge(a.chargeId);
   const state = charge.statusDetails?.state ?? "";
   if (state === "Declined" || state === "Canceled") return { kind: "failed", state };
   if (state !== "Captured") return { kind: "pending" };
-  if (a.guard && (await a.db.webhookEventSeen(AMAZON_PAY_PROVIDER, a.chargeId))) return { kind: "duplicate" };
+  if (await a.db.webhookEventSeen(AMAZON_PAY_PROVIDER, a.chargeId)) return { kind: "duplicate" };
   const captured = parseJpy(charge.captureAmount) ?? parseJpy(charge.chargeAmount);
   const refund = async (): Promise<boolean> => {
     // 返金できなければ例外 → 呼び出し側が 500 / やり直しの画面にする（決済済み・注文なし・返金なしで静かに終わらせない）
@@ -94,7 +94,6 @@ export async function confirmAmazonPayCharge(a: { db: PrivilegedDb; client: Amaz
       payment_account: AMAZON_PAY_PROVIDER,
     },
     refund,
-    guard: a.guard,
     separatePaymentRef: a.chargeId,
   });
   return { kind: "confirmed", result };
@@ -111,7 +110,7 @@ export type ReturnOutcome =
   | { kind: "retry" };
 
 /** 戻り: Checkout Session を引き直して券と照らし、開いていれば Complete、Charge が売上確定なら予約を確定する */
-export async function handleAmazonPayReturn(a: { db: PrivilegedDb; client: AmazonPayClient; ticket: AmazonPayTicket; checkoutSessionId: string; guard: boolean }): Promise<ReturnOutcome> {
+export async function handleAmazonPayReturn(a: { db: PrivilegedDb; client: AmazonPayClient; ticket: AmazonPayTicket; checkoutSessionId: string }): Promise<ReturnOutcome> {
   const t = a.ticket;
   let session: AmazonPayCheckoutSession;
   try {
@@ -158,7 +157,7 @@ export async function handleAmazonPayReturn(a: { db: PrivilegedDb; client: Amazo
   if (state !== "Completed" || !chargeId) return { kind: "retry" };
 
   try {
-    const r = await confirmAmazonPayCharge({ db: a.db, client: a.client, chargeId, reservationId: t.reservationId, shopId: t.shopId, guard: a.guard });
+    const r = await confirmAmazonPayCharge({ db: a.db, client: a.client, chargeId, reservationId: t.reservationId, shopId: t.shopId });
     if (r.kind === "failed") {
       await a.db.releaseReservation(t.reservationId, t.shopId).catch(() => false);
       return { kind: "cancelled" };

@@ -6,7 +6,6 @@
  */
 import { cleanAttributes, fieldDefinitions, formatFieldDefinitions, parseFieldDefinitions, publicAttributes, type ProductField } from "../products/fields";
 
-export const STORE_FIELDS_MIGRATION = "0126_store_fields";
 export const STORE_FIELDS_MAX = 20;
 
 /** DB の定義（private の印）→ 画面の形（public） */

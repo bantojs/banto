@@ -101,13 +101,6 @@ describe("管理画面（組織の実店舗）", () => {
     expect(html).toContain("店舗の独自項目");
   });
 
-  it("0126 が当たるまで欄を出さない", async () => {
-    const s = setup();
-    s.sb.appliedMigrations = s.sb.appliedMigrations.filter((m) => m !== "0126_store_fields");
-    const admin = await Browser.loggedIn(s.app, "owner@example.com", "password-123");
-    expect(await (await admin.get(`/admin/stores?org=${s.org}`)).text()).not.toContain("/admin/stores/fields");
-    expect(await (await admin.get(`/admin/stores/${s.stores[0]}`)).text()).not.toContain('name="external_ref"');
-  });
 });
 
 describe("AI 用 API: stores:write", () => {

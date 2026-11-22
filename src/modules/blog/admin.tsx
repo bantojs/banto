@@ -18,8 +18,7 @@ import { PAGE_LIMITS, PAGE_NAVS, PAGES_TRASH_DAYS, handleFromTitle, type PageNav
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import { ContentForm, type EditorKind, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type ContentValues, type RevisionRow, contentAudienceValues } from "../../content/editor";
 import { ARTICLE_ORDERS, BLOG_MODULE, articleHandleOk, blogHandleOk, blogOrderReady as blogRowOrdered, isBlogOrder, parseTags, type ArticleRow, type BlogRow } from "../../blog";
-import { migrated } from "../../db/migration-state";
-import { ARTICLE_FIELD_DATES_MIGRATION, articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
+import { articleFieldDefs, articleFieldsReady, fieldsFromForm, formatArticleFieldRows, parseArticleFieldRows, type ArticleFieldDef } from "../../blog/fields";
 import { fieldImageUpload } from "../../routes/admin/field-image";
 
 /**
@@ -539,9 +538,7 @@ blogAdmin.post("/:blogId/fields", requireOwner, async (c: AdminContext) => {
   if (!articleFieldsReady(blog)) return c.redirect(`${base(shop.id)}/${blog.id}/settings`);
   const text = (await formFields(c))["rows"] ?? "";
   const blogs = await owner(c).db.from<{ id: string; handle: string }>("blogs").select("id,handle", { eq: { shop_id: shop.id }, limit: 100 });
-  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const dates = await migrated(deps, ARTICLE_FIELD_DATES_MIGRATION).catch(() => false);
-  const { defs, error } = parseArticleFieldRows(text, blogs, { dates });
+  const { defs, error } = parseArticleFieldRows(text, blogs);
   if (error !== null) return blogSettings(c, shop, blog, { fieldsText: text, fieldsError: error.slice(0, 100), status: 400 });
   try {
     await owner(c).db.from("blogs").update({ article_fields: defs }, { id: blog.id, shop_id: shop.id });

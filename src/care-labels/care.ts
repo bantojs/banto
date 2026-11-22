@@ -10,7 +10,6 @@ import { imageUrl } from "../media/images";
 import type { CategoryRow } from "../db/types";
 
 export const CARE_MODULE = "care_labels";
-export const CARE_MIGRATION = "0127_mod_care_labels";
 
 /** 区分（記号番号の 1 桁目）と、その区分の記号（表示の順。DB の banto_care_codes と同じもの） */
 export const CARE_GROUPS: readonly { group: string; codes: readonly string[] }[] = [

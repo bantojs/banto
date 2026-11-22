@@ -66,7 +66,7 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
 };
 
 /** 当てるまで出さないスコープ（そのマイグレーションが DB の api_tokens_scopes_valid に足す） */
-export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = { "stores:write": "0126_store_fields", "member_news:write": "0155_mod_member_news" };
+export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = { "member_news:write": "0155_mod_member_news" };
 
 /** 発行できるスコープ（DB がまだ受け付けないものを除く。発行の画面・つなぐ画面） */
 export async function issuableScopes(isMigrated: (version: string) => Promise<boolean>): Promise<ApiScope[]> {

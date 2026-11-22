@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import { DbError } from "../../db/client";
-import { migrated } from "../../db/migration-state";
 import { t, tf } from "../../i18n";
 import { namedOptionEntries, optionNamesOf } from "../../products/option-names";
 import type { ShopRow } from "../../db/types";
@@ -19,7 +18,6 @@ import { loadShop } from "./shops";
  * 入れた欄だけを送る。断られたときは、入れた値を残したまま今の数で表を描き直す（そのまま確かめて送り直せる）。
  * キーワードは品番・JAN の完全一致を含むので、バーコードの読み取りで 1 行に絞れる。
  */
-export const INVENTORY_MIGRATION = "0136_inventory_ops";
 const PAGE_SIZE = 100;
 
 type Mode = "adjust" | "count";
@@ -65,14 +63,10 @@ const normalizeNumber = (v: string): string => v.replace(/[０-９＋－−]/g, 
 export const inventory = new Hono<AppEnv>();
 
 async function renderPage(c: AdminContext, shop: ShopRow, get: (name: string) => string | undefined, problem?: Problem, status: 200 | 400 | 409 = 200) {
-  const deps = { db: owner(c).db, cache: c.get("adapters").cache };
-  const enabled = await migrated(deps, INVENTORY_MIGRATION);
   const { params, mode, after } = readParams(get);
   const base = `/admin/shops/${shop.id}/inventory`;
   const listHref = searchHref(base, params);
-  const rows = enabled
-    ? await owner(c).db.rpc<InventoryRow[]>("inventory_list", { p_shop_id: shop.id, p_q: params["q"] || null, p_stock: params["stock"] || null, p_after_code: after, p_limit: PAGE_SIZE + 1 })
-    : [];
+  const rows = await owner(c).db.rpc<InventoryRow[]>("inventory_list", { p_shop_id: shop.id, p_q: params["q"] || null, p_stock: params["stock"] || null, p_after_code: after, p_limit: PAGE_SIZE + 1 });
   const shown = rows.slice(0, PAGE_SIZE);
   const next = rows.length > PAGE_SIZE ? encodeURIComponent(shown[shown.length - 1]!.code) : null;
   const names = optionNamesOf(shop.option_names);
@@ -86,11 +80,6 @@ async function renderPage(c: AdminContext, shop: ShopRow, get: (name: string) =>
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("inventory.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("inventory.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "products", here: "inventory" }}>
       <PageHead title={t("inventory.title")} sub={t("inventory.lead")} />
-      {!enabled ? (
-        <p class="notice">
-          {t("inventory.needs_update")} <a href="/admin/update">{t("inventory.open_update")}</a>
-        </p>
-      ) : (
         <>
           {flash === "adjusted" ? <p class="notice">{tf("inventory.adjusted", { n })}</p> : null}
           {flash === "counted" ? <p class="notice">{tf("inventory.counted", { n })}</p> : null}
@@ -191,7 +180,6 @@ async function renderPage(c: AdminContext, shop: ShopRow, get: (name: string) =>
           )}
           <Pager base={listHref} next={next} paged={Boolean(after)} />
         </>
-      )}
     </AdminLayout>,
     status,
   );

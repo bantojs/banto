@@ -15,7 +15,6 @@ import type { ShopPerm } from "./access";
  * ビューは条件の URL の値をそのまま持つ。開くと、その条件の一覧の URL になる（スクリプト無しで動く）
  */
 export type ViewScreen = "orders" | "customers" | "products" | "inquiries";
-export const VIEWS_MIGRATION = "0135_admin_views";
 const SCREEN_PERM: Record<ViewScreen, ShopPerm> = { orders: "orders", customers: "customers", products: "catalog", inquiries: "support" };
 const MAX_VIEWS = 20;
 
@@ -48,10 +47,9 @@ const sameQuery = (a: SearchParams, b: SearchParams): boolean => {
 
 /**
  * 一覧の上のビューのタブ（「すべて」と保存したビュー）と、今の条件をビューに保存する欄・ビューを消す欄。
- * enabled = 0135 が当たっている。保存・削除の欄は、その画面の項目を持つ人（= 一覧を開けている人）に出す
+ * 保存・削除の欄は、その画面の項目を持つ人（= 一覧を開けている人）に出す
  */
-export function ViewTabs(props: { shopId: string; screen: ViewScreen; views: SavedView[]; current: SearchParams; enabled: boolean; error?: string | undefined }) {
-  if (!props.enabled) return null;
+export function ViewTabs(props: { shopId: string; screen: ViewScreen; views: SavedView[]; current: SearchParams; error?: string | undefined }) {
   const base = listPath(props.shopId, props.screen);
   const hasConditions = Object.values(props.current).some((v) => v !== "");
   const active = props.views.findIndex((v) => sameQuery(v.query, props.current));

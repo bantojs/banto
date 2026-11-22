@@ -25,7 +25,7 @@ import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier, normalizeTracking, 
 import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/tags";
 import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
 import { migrated } from "../../db/migration-state";
-import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { ViewTabs, viewsOf } from "./views";
 import { can } from "./access";
 import { CsvExportPanel, csvBody, csvHeaders, csvName, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 import { permLabel } from "./denied";
@@ -131,8 +131,6 @@ const ORDER_CSV_PRESETS: Record<string, CsvPreset> = {
 /** 一覧の条件の名前（「すべて」で外すもの） */
 const ORDER_CONDITIONS = ["q", "status", "tag", "payment", "paid", "from", "to", "min", "max", "sort"] as const;
 
-/** 一覧の検索を広げる版（電話・送り状番号・支払い方法・日付・金額・並び。0132） */
-const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
 /** 状態の選択肢。受付（pending）は 0156 から（それより前の DB では知らない値なので出さない） */
 const ORDER_STATUSES = ["pending", "paid", "shipped", "cancelled", "refunded"] as const;
 const statusesFor = (paymentStatusOn: boolean) => ORDER_STATUSES.filter((s) => paymentStatusOn || s !== "pending");
@@ -141,10 +139,9 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const YEN_RE = /^\d{1,9}$/;
 
 /**
- * 一覧と CSV で共通の条件（URL の値）。形の違う値は捨てる（DB も無視する）。
- * 0132 の前の DB では、今までどおりキーワード・状態・印だけ
+ * 一覧と CSV で共通の条件（URL の値）。形の違う値は捨てる（DB も無視する）
  */
-function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
+function orderSearchParams(c: AdminContext): SearchParams {
   const v = (name: string) => (c.req.query(name) ?? "").trim();
   const status = v("status");
   const out: SearchParams = {
@@ -152,7 +149,6 @@ function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
     status: (ORDER_STATUSES as readonly string[]).includes(status) ? status : "",
     tag: v("tag").slice(0, 40),
   };
-  if (!extended) return out;
   const payment = v("payment");
   out["payment"] = (ORDER_PAYMENTS as readonly string[]).includes(payment) ? payment : "";
   // 未入金（0156。それより前の DB では admin_search_ids が知らない条件として無視する）
@@ -167,40 +163,32 @@ function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
 
 /**
  * 一覧と CSV で共通: 条件で DB で絞り、limit 件（after より後ろ）を読む。
- * 0132 からは、キーワードか条件があれば検索の関数（admin_search_ids）がすべて絞る（キーワードは番号・メール・氏名・電話・送り状番号・決済の参照）。
+ * キーワードか条件があれば検索の関数（admin_search_ids）がすべて絞る（キーワードは番号・メール・氏名・電話・送り状番号・決済の参照）。
  * 条件が無ければ、新しい順に RLS 越しに読む
  */
-async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; params: SearchParams; extended: boolean }> {
+async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; params: SearchParams }> {
   const { db } = owner(c);
-  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
-  const params = orderSearchParams(c, extended);
+  const params = orderSearchParams(c);
   // 受付（pending）は 0156 から。当てる前の DB では知らない値なので絞らない
   if (params["status"] === "pending" && !(await migrated({ db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION))) params["status"] = "";
-  const { q, status, tag } = params as { q: string; status: string; tag: string };
+  const { q } = params as { q: string };
   const filters = Object.fromEntries(Object.entries(params).filter(([k, v]) => k !== "q" && v !== ""));
-  if (extended && (q || Object.keys(filters).length > 0)) {
+  if (q || Object.keys(filters).length > 0) {
     const rows = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
-    return { rows, params, extended };
+    return { rows, params };
   }
-  // 0132 の前: 印で絞る（0106）のは、検索と一緒のときは検索の結果をここで絞る
-  const contains = tag ? { arrayContains: { tags: [tag] } } : {};
   const eq: Record<string, string> = { shop_id: shopId };
-  if (status) eq["status"] = status;
-  if (q) {
-    const found = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: status ? { status } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
-    return { rows: tag ? found.filter((o) => orderTagsOf(o).includes(tag)) : found, params, extended };
-  }
   const rows: OrderListRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {
     const n = Math.min(1000, opts.limit - rows.length);
-    const page = await db.from<OrderListRow>("orders").select("*", { eq, ...contains, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: n });
+    const page = await db.from<OrderListRow>("orders").select("*", { eq, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: n });
     rows.push(...page);
     if (page.length < n) break;
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { rows, params, extended };
+  return { rows, params };
 }
 
 const PAYMENT_LABEL: Record<(typeof ORDER_PAYMENTS)[number], MessageKey> = { stripe: "search.payment_stripe", komoju: "search.payment_komoju", amazon_pay: "search.payment_amazon_pay", free: "search.payment_free" };
@@ -226,7 +214,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
-  const { params, extended } = list;
+  const { params } = list;
   const page = splitPage(list.rows, (o) => o.created_at);
   const rows = page.rows;
   const base = `/admin/shops/${shop.id}/orders`;
@@ -234,10 +222,8 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const query = listHref.slice(base.length);
   const tagHref = (v: string) => searchHref(base, { ...params, q: "", tag: v });
   const chips = searchChips(base, params, orderChipLabel);
-  // 保存したビュー（0135）
-  const viewsOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
   // 未入金で絞る（0156）
-  const paymentStatusOn = extended && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION));
+  const paymentStatusOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead title={t("order.list")}>
@@ -245,8 +231,8 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("order.csv")}
         </a>
       </PageHead>
-      <ViewTabs shopId={shop.id} screen="orders" views={viewsOf(shop.settings, "orders")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
-      <SearchBar action={base} q={params["q"] ?? ""} placeholder={t(extended ? "search.orders_placeholder" : "order.search_placeholder")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+      <ViewTabs shopId={shop.id} screen="orders" views={viewsOf(shop.settings, "orders")} current={params} error={c.req.query("view_error")} />
+      <SearchBar action={base} q={params["q"] ?? ""} placeholder={t("search.orders_placeholder")} sortable sort={readSort(params["sort"])} chips={chips} clearHref={base}>
         <label>
           {t("order.status")}
           <select name="status">
@@ -258,8 +244,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
             ))}
           </select>
         </label>
-        {extended ? (
-          <>
+        <>
             <label>
               {t("order.payment")}
               <select name="payment">
@@ -298,8 +283,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
               {t("search.max")}
               <input type="number" name="max" min={0} step={1} value={params["max"] ?? ""} inputmode="numeric" />
             </label>
-          </>
-        ) : null}
+        </>
         <label>
           {t("order.tag_filter")}
           <input type="text" name="tag" value={params["tag"] ?? ""} maxlength={40} />

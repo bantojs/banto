@@ -8,7 +8,6 @@
  *   返金すると決めたことを先に DB に残し（reservation_mark_refunded。その予約は二度と確定しない）、返金して記録する。
  *   返金の前に落ちて再送されたら、DB が reservation_refunded（detail = 決めたときのイベント）を返すので、同じイベントなら返金をやり直す
  *   （冪等キーはイベント ID）。別のイベントなら返金せず記録だけする
- * - 0128 が当たるまで（guard = false）は今までどおり「成功したら記録」だけ
  */
 import { PrivilegedRpcError, type OrderInput, type PrivilegedDb } from "../db/privileged";
 
@@ -21,8 +20,6 @@ export interface WebhookConfirmArgs {
   order: OrderInput;
   /** 返金（冪等キーはイベント ID）。返金できなければ例外 → 500 で再送させる（決済済み・注文なし・返金なしで静かに終わらせない） */
   refund: () => Promise<boolean>;
-  /** 0128_webhook_replay が当たっているか */
-  guard: boolean;
   /**
    * イベントごとに別の支払いになる決済（Amazon Pay: 冪等の鍵が Charge ID）で、このイベントの支払いの参照。
    * Stripe・KOMOJU の「別のイベント」は同じ支払いの別の通知なので何もしないが、こちらは別のお金が動いているので、
@@ -56,19 +53,15 @@ export async function confirmFromWebhook(a: WebhookConfirmArgs): Promise<Webhook
       // TTL 切れで在庫が他の人に渡った / 解放の後に同じ quote で出し直した予約が生きている / クーポンの先着枠が埋まった（0090）/
       // 支払額・通貨が Banto の計算と違う（0029）。どれも確定できないので返金して、イベントは済みにする
       if (mismatch) console.error(`[banto] ${a.provider} webhook ${a.eventId}: amount mismatch for reservation ${a.reservationId} (${e.details ?? ""})`);
-      if (a.guard) {
-        const marked = await a.db.reservationMarkRefunded(a.reservationId, a.shopId, a.provider, a.eventId);
-        if (marked === "other_event") {
-          // 別のイベントで返金すると決めた予約。同じ支払いの別の通知なら二重に返金しない。別の支払いならその支払いを返す
-          console.error(`[banto] ${a.provider} webhook ${a.eventId}: reservation ${a.reservationId} is already refunded by another event`);
-          const refunded = a.separatePaymentRef ? await a.refund() : undefined;
-          await record();
-          return { received: true, ...(refunded !== undefined ? { refunded } : {}), ignored: "reservation_refunded" };
-        }
+      const marked = await a.db.reservationMarkRefunded(a.reservationId, a.shopId, a.provider, a.eventId);
+      if (marked === "other_event") {
+        // 別のイベントで返金すると決めた予約。同じ支払いの別の通知なら二重に返金しない。別の支払いならその支払いを返す
+        console.error(`[banto] ${a.provider} webhook ${a.eventId}: reservation ${a.reservationId} is already refunded by another event`);
+        const refunded = a.separatePaymentRef ? await a.refund() : undefined;
+        await record();
+        return { received: true, ...(refunded !== undefined ? { refunded } : {}), ignored: "reservation_refunded" };
       }
       const refunded = await a.refund();
-      // 0128 の前の DB: 生きている予約の在庫を戻す（0128 からは reservation_mark_refunded が戻す）
-      if (!a.guard && mismatch) await a.db.releaseReservation(a.reservationId, a.shopId).catch(() => false);
       await record();
       return mismatch ? { received: true, refunded, ignored: "amount_mismatch" } : { received: true, refunded };
     }

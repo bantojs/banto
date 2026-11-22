@@ -1012,7 +1012,7 @@ export class FakeSupabase {
         if (table === "skus") this.tables.inventory.push({ sku_id: row["id"], shop_id: row["shop_id"], available: 0, updated_at: this.now() });
         if (table === "pages") {
           // 0079 の既定値と CHECK（本物は test/db/pages.test.ts）
-          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, ...(this.appliedMigrations.includes("0122_page_parts") ? { is_part: false } : {}), ...r });
+          Object.assign(row, { body: "", seo_title: null, seo_description: null, template_suffix: null, nav: "none", sort_order: 0, is_part: false, ...r });
           // 0122: 部品のページはメニューに出さない
           if (row["is_part"] === true) row["nav"] = "none";
           if (!pageHandleOk(String(row["handle"]))) return json({ code: "23514", message: 'new row for relation "pages" violates check constraint "pages_handle_check"' }, 400);
@@ -1393,7 +1393,7 @@ export class FakeSupabase {
         extra_category_ids: e.p["extra_category_ids"] ?? [], tags: tagsOf(e.p), created_at: e.p["created_at"], updated_at: e.p["updated_at"],
         ...(this.appliedMigrations.includes("0146_product_released_at") ? { released_at: e.p["released_at"] ?? null } : {}),
         min_price_jpy: e.price, compare_at_price_jpy: e.compareAt,
-        ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(e.p) } : {}),
+        attributes: this.cardAttributes(e.p),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
       };
     });
@@ -1428,7 +1428,7 @@ export class FakeSupabase {
         id: p["id"], slug: p["slug"], name: p["name"], brand: p["brand"] ?? null, category_id: p["category_id"] ?? null,
         extra_category_ids: p["extra_category_ids"] ?? [], tags: Array.isArray(p["tags"]) ? p["tags"] : [], created_at: p["created_at"], updated_at: p["updated_at"],
         min_price_jpy: lp.price, compare_at_price_jpy: lp.compareAt,
-        ...(this.appliedMigrations.includes("0121_list_card_fields") ? { attributes: this.cardAttributes(p) } : {}),
+        attributes: this.cardAttributes(p),
         image: img ? { storage_key: img["storage_key"], thumb_key: img["thumb_key"] ?? null, width: img["width"] ?? null, height: img["height"] ?? null } : null,
       }];
     });
@@ -1705,7 +1705,6 @@ export class FakeSupabase {
     if (fn === "page_member_get" || fn === "article_member_get" || fn === "articles_member_page" || fn === "articles_member_multi") {
       // 0140: ブログをまたぐ一覧（ブログの配列。並びは new / title / field:<key> だけ）
       if (fn === "articles_member_multi") {
-        if (!this.appliedMigrations.includes("0140_articles_multi_blog")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_multi" }, 404);
         const ids = args["p_blog_ids"];
         if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20) return json({ code: "22023", message: "invalid_blogs" }, 400);
         if (args["p_sort"] === "manual") return json({ code: "22023", message: "invalid_sort" }, 400);
@@ -1726,7 +1725,6 @@ export class FakeSupabase {
       if ("p_fields" in args && !this.appliedMigrations.includes("0117_article_fields")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
       const pf = args["p_fields"] as Record<string, unknown> | null | undefined;
       // 0124: p_sort = field:<key>（その値の早い順・値の無い記事は後ろ）と p_field_from（その値以降だけ）
-      if (("p_field_from" in args || sort.startsWith("field:")) && !this.appliedMigrations.includes("0124_article_field_dates")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
       const fkey = sort.startsWith("field:") ? sort.slice(6) : null;
       const fv = (a: Row): string | null => {
         const v = ((a["fields"] ?? {}) as Row)[fkey ?? ""];
@@ -1734,7 +1732,6 @@ export class FakeSupabase {
       };
       const from = args["p_field_from"] as string | undefined;
       // 0125: いつまで出すかの項目（値があればその値で、無ければ並び順の項目で今日以降を決める）
-      if ("p_until_key" in args && !this.appliedMigrations.includes("0125_blog_date_order")) return json({ code: "PGRST202", message: "Could not find the function public.articles_member_page" }, 404);
       const ukey = args["p_until_key"] as string | undefined;
       const ufrom = args["p_until_from"] as string | undefined;
       const live = (a: Row): boolean => {
@@ -2334,15 +2331,14 @@ export class FakeSupabase {
       const q = raw.toLowerCase();
       const f = (args["p_filters"] ?? {}) as Record<string, string>;
       // 0132: 並び・キーワードの読み取り・条件（本物は supabase/migrations/0132_admin_search.sql、test/db/admin-search.test.ts）
-      const ext = this.appliedMigrations.includes("0132_admin_search");
-      const desc = !ext || f["sort"] !== "old";
+      const desc = f["sort"] !== "old";
       const has = (v: unknown) => q !== "" && typeof v === "string" && v.toLowerCase().includes(q);
-      // 0132 は先頭の 81 だけ、0134 からは「+81 (0)90-…」の括弧の 0 も吸収する
-      const jpPhone = (v: string) => v.replace(/[^0-9]/g, "").replace(this.appliedMigrations.includes("0134_admin_search_phone") ? /^810?/ : /^81/, "0");
+      // 「+81 (0)90-…」の括弧の 0 も吸収する（0134）
+      const jpPhone = (v: string) => v.replace(/[^0-9]/g, "").replace(/^810?/, "0");
       const digits = raw.replace(/[^0-9]/g, "");
-      const phone = ext && /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? jpPhone(raw) : null;
-      const track = ext && /^[0-9A-Za-z-]{4,60}$/.test(raw) && raw.replace(/-/g, "").length <= 40 ? raw.replace(/-/g, "") : null;
-      const num = (ext ? /^#?\d{1,9}$/ : /^\d{1,9}$/).test(raw) ? Number(raw.replace(/^#/, "")) : null;
+      const phone = /^[0-9+() -]{10,20}$/.test(raw) && digits.length >= 10 && digits.length <= 13 ? jpPhone(raw) : null;
+      const track = /^[0-9A-Za-z-]{4,60}$/.test(raw) && raw.replace(/-/g, "").length <= 40 ? raw.replace(/-/g, "") : null;
+      const num = /^#?\d{1,9}$/.test(raw) ? Number(raw.replace(/^#/, "")) : null;
       const jst = (d: string, plus = 0) => new Date(Date.parse(`${d}T00:00:00+09:00`) + plus * 86400000).toISOString();
       const inStock = (productId: unknown) => this.tables.skus.some((k) => k["product_id"] === productId && this.tables.inventory.some((i) => i["sku_id"] === k["id"] && Number(i["available"]) > 0));
       const afterK = args["p_after_k"] as string | null;
@@ -2351,15 +2347,15 @@ export class FakeSupabase {
         .filter((r) => r["shop_id"] === shopId)
         .filter((r) => {
           if (kind === "products") {
-            const bySku = ext && q !== "" && this.tables.skus.some((k) => k["shop_id"] === shopId && k["product_id"] === r["id"] && (k["code"] === raw || k["gtin"] === raw));
+            const bySku = q !== "" && this.tables.skus.some((k) => k["shop_id"] === shopId && k["product_id"] === r["id"] && (k["code"] === raw || k["gtin"] === raw));
             const cats = [r["category_id"], ...((r["extra_category_ids"] as unknown[] | undefined) ?? [])];
             return (
               (!q || has(r["name"]) || has(r["slug"]) || bySku) &&
               (f["state"] !== "published" || r["published"] === true) &&
               (f["state"] !== "draft" || r["published"] !== true) &&
-              (!ext || !f["category"] || !/^[0-9a-f-]{36}$/.test(f["category"]) || cats.includes(f["category"])) &&
-              (!ext || f["stock"] !== "out" || !inStock(r["id"])) &&
-              (!ext || f["stock"] !== "in" || inStock(r["id"]))
+              (!f["category"] || !/^[0-9a-f-]{36}$/.test(f["category"]) || cats.includes(f["category"])) &&
+              (f["stock"] !== "out" || !inStock(r["id"])) &&
+              (f["stock"] !== "in" || inStock(r["id"]))
             );
           }
           if (kind === "orders") {
@@ -2370,12 +2366,12 @@ export class FakeSupabase {
             return (
               (!q || has(r["customer_email"]) || has(r["customer_name"]) || r["payment_ref"] === raw || (num !== null && Number(r["number"]) === num) || (phone !== null && jpPhone(String(addr["phone"] ?? "")) === phone) || (track !== null && r["tracking_number"] === track)) &&
               (!f["status"] || r["status"] === f["status"]) &&
-              (!ext || !f["payment"] || r["payment_provider"] === f["payment"]) &&
-              (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["from"] ?? "") || created >= jst(f["from"]!)) &&
-              (!ext || !/^\d{4}-\d{2}-\d{2}$/.test(f["to"] ?? "") || created < jst(f["to"]!, 1)) &&
-              (!ext || !/^\d{1,9}$/.test(f["min"] ?? "") || total >= Number(f["min"])) &&
-              (!ext || !/^\d{1,9}$/.test(f["max"] ?? "") || total <= Number(f["max"])) &&
-              (!ext || !f["tag"] || tags.includes(f["tag"].trim()))
+              (!f["payment"] || r["payment_provider"] === f["payment"]) &&
+              (!/^\d{4}-\d{2}-\d{2}$/.test(f["from"] ?? "") || created >= jst(f["from"]!)) &&
+              (!/^\d{4}-\d{2}-\d{2}$/.test(f["to"] ?? "") || created < jst(f["to"]!, 1)) &&
+              (!/^\d{1,9}$/.test(f["min"] ?? "") || total >= Number(f["min"])) &&
+              (!/^\d{1,9}$/.test(f["max"] ?? "") || total <= Number(f["max"])) &&
+              (!f["tag"] || tags.includes(f["tag"].trim()))
             );
           }
           const attrs = (r["attributes"] ?? {}) as Record<string, unknown>;
@@ -2435,7 +2431,7 @@ export class FakeSupabase {
         if (i >= 0) this.oauthClients[i] = row;
         else this.oauthClients.push(row);
         // 0131 からはほかの鍵（友だち追加の設定）を残す
-        const keep = this.appliedMigrations.includes("0131_oauth_client_keep_settings") && oauth[provider] && typeof oauth[provider] === "object" ? (oauth[provider] as Row) : {};
+        const keep = oauth[provider] && typeof oauth[provider] === "object" ? (oauth[provider] as Row) : {};
         oauth[provider] = { ...keep, client_id: clientId };
       }
       settings["oauth"] = oauth;
@@ -4606,10 +4602,6 @@ export class FakeSupabase {
       return json(r["items"]);
     }
     if (fn === "reserve_stock") {
-      // 0129 の前の DB の関数は p_customer_id を知らない（渡すと PostgREST は関数が無いと言う）
-      if ("p_customer_id" in args && !this.appliedMigrations.includes("0129_security_hardening_5")) {
-        return json({ code: "PGRST202", message: "Could not find the function public.reserve_stock(p_customer_id, ...) in the schema cache" }, 404);
-      }
       const items = args["p_items"] as { sku_id: string; qty: number }[];
       if (!Array.isArray(items) || items.length === 0) return fail("empty_items");
       const shopId = args["p_shop_id"];
@@ -4622,7 +4614,7 @@ export class FakeSupabase {
         // 0129: 会員限定の商品は条件に合う会員だけ
         const prod = this.tables.products.find((p) => p["id"] === sku["product_id"]);
         // 0129 から: 会員限定の商品は予約でも確かめる（それまでの DB は見ない。買えるかは Worker の priceCart だけ）
-        if (this.appliedMigrations.includes("0129_security_hardening_5") && prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
+        if (prod?.["audience_id"] && !aud.includes(String(prod["audience_id"]))) return fail("sku_not_available");
         if (!Number.isInteger(it.qty) || it.qty <= 0) return fail("invalid_item");
         if ((inv(it.sku_id)!["available"] as number) < it.qty) return fail("insufficient_stock");
       }

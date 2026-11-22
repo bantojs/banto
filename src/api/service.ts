@@ -28,12 +28,9 @@ import { getLocale } from "../i18n";
 import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
-import { FAVORITES_MIGRATION } from "../modules/registry";
 import { AUDIENCE_API_MIGRATION } from "../members/audience";
 import { FIELD_DEFS_MIGRATION, RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, SEARCH_KEYWORDS_MIGRATION, STORE_ONLY_MIGRATION, productFields } from "../products/fields";
 import { customerFields } from "../customers/fields";
-import { CARE_MIGRATION } from "../care-labels/care";
-import { STORE_FIELDS_MIGRATION } from "../stores/fields";
 
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
@@ -678,7 +675,6 @@ export class ApiService {
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
   /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
   careSet = async (target: "product" | "category", ref: string, care: unknown) => {
-    await this.requireMigration(CARE_MIGRATION);
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
     if (care !== null && (typeof care !== "object" || Array.isArray(care))) throw new ApiError("invalid", "invalid_care: send an object { symbols, notes } or null", 400);
     // 記号も付記も無いもの（{} や空の配列）は外すのと同じ（null = 上の段を使う）。「何も無い」を段に残さない
@@ -690,7 +686,6 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
   /** 実店舗の独自項目の値と外部コード（0126、stores:write）。店舗は id か ext:<外部コード> */
   storeUpdate = async (ref: string, values: Record<string, unknown>) => {
-    await this.requireMigration(STORE_FIELDS_MIGRATION);
     // id（uuid）か ext:<外部コード>。外部コードは大文字・小文字を区別する
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
     if (!uuid && !/^ext:[A-Za-z0-9._:-]{1,64}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
@@ -824,12 +819,10 @@ export class ApiService {
   customerGet = async (id: string) => this.call<Record<string, unknown>>("api_customer_get", { p_customer_id: uuidOr404(id) });
   /** 会員のお気に入り（0123、新しい順）。customers:read */
   customerFavorites = async (id: string) => {
-    await this.requireMigration(FAVORITES_MIGRATION);
     return this.call<{ items: Record<string, unknown>[] }>("api_customer_favorites", { p_customer_id: uuidOr404(id) });
   };
   /** お気に入りを足した順にたどる（0123）。商品で絞れる。続きは前の応答の cursor（since と after） */
   async favoritesList(q: { product?: string | undefined; since?: string | undefined; after?: string | undefined; limit?: number | undefined } = {}) {
-    await this.requireMigration(FAVORITES_MIGRATION);
     const [afterCustomer, afterProduct] = q.after ? q.after.split(":") : [undefined, undefined];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (q.after !== undefined && (!q.since || !afterCustomer || !afterProduct || !uuid.test(afterCustomer) || !uuid.test(afterProduct))) {

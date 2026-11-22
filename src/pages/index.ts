@@ -7,8 +7,6 @@ import { markdownToHtml } from "./markdown";
 export const PAGES_MODULE = "pages";
 /** ゴミ箱に置いておく日数（過ぎたら Cron が消す） */
 export const PAGES_TRASH_DAYS = 30;
-/** 部品のページ（0122）の列が当たっているか（src/db/migration-state.ts の migrated で確かめる） */
-export const PAGE_PARTS_MIGRATION = "0122_page_parts";
 
 export type PageNav = "none" | "header" | "footer";
 export const PAGE_NAVS: readonly PageNav[] = ["none", "header", "footer"];
