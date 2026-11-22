@@ -736,7 +736,13 @@ export class StorefrontData {
       if (!r || !r.product) return null;
       return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(shop, r.product, r.purchasable !== false, await this.saleDatesFor([r.product])) };
     }
-    // product_public_get（0055。attributes は公開の項目だけ）
+    // 0164 から: 商品・画像・SKU と在庫・ゲストに見せる会員価格を 1 回で（product_public_page。会員の経路と同じ形）
+    if (await this.migratedTo(PRODUCT_PAGE_MIGRATION)) {
+      const r = await this.db.rpc<{ product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[] } | null>("product_public_page", { p_shop_id: shop.id, p_slug: slug });
+      if (!r || typeof r !== "object" || !r.product) return null;
+      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(shop, r.product, guestAudienceOk(r.product), await this.saleDatesFor([r.product])) };
+    }
+    // 0164 の前: product_public_get（0055。attributes は公開の項目だけ）→ 画像・SKU → 在庫・会員価格
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
     if (!product || typeof product !== "object") return null;
     // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）。
@@ -909,6 +915,9 @@ export interface ProductFacets {
   /** ブランドごとの公開の商品の数（多い順に 100 まで。0162 から。無ければ 0162 の前） */
   brands?: { brand: string; count: number }[];
 }
+
+/** ゲストの商品ページを 1 回で読む関数（product_public_page） */
+export const PRODUCT_PAGE_MIGRATION = "0164_product_public_page";
 
 /** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */
 export const PRODUCT_PICK_MAX = 100;
