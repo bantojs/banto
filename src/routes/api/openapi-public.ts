@@ -347,6 +347,12 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       "/shops/{shop}/members/password": {
         post: { summary: "パスワードを決める・変える（ログインしてから 15 分以内。ほかの端末はログアウト）", security: member, parameters: [shopPath], requestBody: body(obj({ password: { type: "string", minLength: 8, maxLength: 200 } }, ["password"])), responses: { 200: ok(tokens, "この端末の新しいトークン"), 400: err("weak_password"), 401: err("invalid_member_token"), 403: err("reauth（ログインし直してから）"), 409: err("password_disabled"), ...common } },
       },
+      "/shops/{shop}/members/email": {
+        post: { summary: "メールアドレスの変更を始める（ログインしてから 15 分以内。新しいアドレスに 6 桁のコード。使われているアドレス・回数の上限でも同じ応答。0166）", security: member, parameters: [shopPath], requestBody: body(obj({ email: str }, ["email"])), responses: { 202: ok(obj({ ok: bool })), 400: err("invalid_email・same_email"), 401: err("invalid_member_token・member_token_required"), 403: err("reauth_required（ログインし直してから）"), 409: err("members_disabled・migration_required"), 429: err("plan_limit_exceeded"), ...common } },
+      },
+      "/shops/{shop}/members/email/verify": {
+        post: { summary: "届いたコードでメールアドレスを変える（ほかの端末はログアウト。前後のアドレスに知らせる。0166）", security: member, parameters: [shopPath], requestBody: body(obj({ code: str }, ["code"])), responses: { 200: ok(obj({ ...tokens.properties, member: obj({ id: str, email: str }) }), "この端末の新しいトークン"), 400: err("invalid_code・expired"), 401: err("invalid_member_token・member_token_required"), 403: err("reauth_required（ログインし直してから）"), 409: err("unavailable（ほかの会員が使っている）・members_disabled・migration_required"), ...common } },
+      },
       "/shops/{shop}/members/oauth/{provider}": {
         get: { summary: "LINE / Google のログインを始める（リダイレクト。戻ると return_to に引き換え券）", parameters: [shopPath, { name: "provider", in: "path", required: true, schema: { type: "string", enum: ["line", "google"] } }, { name: "return_to", in: "query", required: true, schema: str }], responses: { 302: { description: "提供元の同意画面へ" }, 400: err("invalid_return_to"), 409: err("provider_disabled"), 404: common[404] } },
       },
@@ -486,6 +492,8 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/members/withdraw": "withdrawMember",
   "post /shops/{shop}/members/password-login": "loginMemberWithPassword",
   "post /shops/{shop}/members/password": "setMemberPassword",
+  "post /shops/{shop}/members/email": "startMemberEmailChange",
+  "post /shops/{shop}/members/email/verify": "verifyMemberEmailChange",
   "get /shops/{shop}/members/oauth/{provider}": "startMemberOAuth",
   "get /shops/{shop}/members/passkey": "startMemberPasskey",
   "post /shops/{shop}/members/passkey/add": "startMemberPasskeyAdd",

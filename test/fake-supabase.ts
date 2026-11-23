@@ -128,6 +128,8 @@ export class FakeSupabase {
   readonly memberHandoffs: Row[] = [];
   /** 会員のセッション（0045。member_sessions の代わり）。expires_at・rotated_at・revoked_at は ms */
   readonly memberSessions: Row[] = [];
+  /** メールアドレスの変更のコード（0166。member_email_changes の代わり）。created_at・expires_at・consumed_at は ms */
+  readonly memberEmailChanges: Row[] = [];
   /** パスキー（0046。member_passkeys / member_passkey_challenges の代わり）。expires_at・consumed_at は ms */
   readonly memberPasskeys: Row[] = [];
   readonly passkeyChallenges: Row[] = [];
@@ -234,7 +236,7 @@ export class FakeSupabase {
     const limits = (this.siteSettings["plan_limits"] ?? {}) as Record<string, number | undefined>;
     const limit = limits[kind];
     if (limit == null) return null;
-    const n = kind === "members" ? this.orgMembers.length : kind === "mail_per_day" ? this.memberChallenges.length + this.orgInvitations.length : this.tables[kind].length;
+    const n = kind === "members" ? this.orgMembers.length : kind === "mail_per_day" ? this.memberChallenges.length + this.orgInvitations.length + this.memberEmailChanges.length : this.tables[kind].length;
     return n + 1 > limit ? json({ code: "P0001", message: `plan_limit_exceeded:${kind}:${limit}` }, 400) : null;
   }
   /** 0039: 画像を裏で取り込む予約（image_import_jobs）。本物の SQL は test/db/image-import-queue.test.ts */
@@ -4097,6 +4099,61 @@ export class FakeSupabase {
         ms["session_epoch"] = c["session_epoch"];
         // 0090: ログインを確かめた時刻は変えない（Worker がセッションを作り直すときに引き継ぐ）
         return json({ ok: true, epoch: c["session_epoch"], email: c["email"] ?? null, mail_from: this.mailFrom(shopId), authenticated_at: new Date(this.sessionAuthAt(ms)).toISOString() });
+      }
+      // 0166: メールアドレスの変更。判定の正は DB（test/db/member-email-change.test.ts）。ここは Worker の流れを試すための写し
+      case "member_email_change_start": {
+        if (!enabled) return json({ code: "P0001", message: "members_disabled" }, 400);
+        const from = this.mailFrom(shopId);
+        if (!from) return json({ code: "P0001", message: "mail_not_configured" }, 400);
+        const ms = this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
+        if (!ms) return json({ ok: false, reason: "session" });
+        if (now - this.sessionAuthAt(ms) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
+        const email = String(args["p_new_email"] ?? "").trim().toLowerCase();
+        if (email.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ code: "P0001", message: "invalid_email" }, 400);
+        const c = findCustomer(args["p_customer_id"], args["p_epoch"])!;
+        if (String(c["email"] ?? "").toLowerCase() === email) return json({ ok: false, reason: "same" });
+        const mine = this.memberEmailChanges.filter((r) => r["shop_id"] === shopId && r["customer_id"] === c["id"]);
+        const within = (rows: Row[], msec: number) => rows.filter((r) => now - Number(r["created_at"]) < msec).length;
+        const ip = args["p_ip_hash"] ?? null;
+        const limited = within(mine, 15 * 60_000) >= 3 || within(mine, 86400_000) >= 10
+          || (ip !== null && within(this.memberEmailChanges.filter((r) => r["shop_id"] === shopId && r["ip_hash"] === ip), 3600_000) >= 30);
+        const taken = this.tables.customers.some((x) => x["shop_id"] === shopId && x["id"] !== c["id"] && String(x["email"] ?? "").toLowerCase() === email);
+        if (limited) return json({ ok: true, send: false, mail_from: from });
+        {
+          const limitHit = this.planLimitHit("mail_per_day"); // 0053 と同じ 1 日のメールの上限
+          if (limitHit) return limitHit;
+        }
+        // 使われているアドレスでも同じ後始末（前のコードを無効にし、誰にも合わないコードの行を作って数える）
+        for (const r of mine) if (!r["consumed_at"]) r["consumed_at"] = now;
+        const codeHash = taken ? `unmatchable:${crypto.randomUUID()}` : args["p_code_hash"];
+        this.memberEmailChanges.push({ id: crypto.randomUUID(), shop_id: shopId, customer_id: c["id"], new_email: email, code_hash: codeHash, ip_hash: ip, session_id: args["p_session_id"], epoch: args["p_epoch"], attempts: 0, created_at: now, expires_at: now + 900_000, consumed_at: null });
+        return json({ ok: true, send: !taken, mail_from: from });
+      }
+      case "member_email_change_verify": {
+        if (!enabled) return json({ ok: false, reason: "session" });
+        const ms = this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
+        if (!ms) return json({ ok: false, reason: "session" });
+        if (now - this.sessionAuthAt(ms) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
+        const row = this.memberEmailChanges
+          .filter((r) => r["shop_id"] === shopId && r["customer_id"] === args["p_customer_id"] && !r["consumed_at"] && r["session_id"] === args["p_session_id"] && r["epoch"] === args["p_epoch"])
+          .sort((a, b) => Number(b["created_at"]) - Number(a["created_at"]))[0];
+        if (!row || Number(row["expires_at"]) <= now || Number(row["attempts"]) >= 5) return json({ ok: false, reason: "expired" });
+        if (args["p_code_hash"] !== row["code_hash"]) {
+          row["attempts"] = Number(row["attempts"]) + 1;
+          if (Number(row["attempts"]) >= 5) row["consumed_at"] = now;
+          return json({ ok: false, reason: Number(row["attempts"]) >= 5 ? "expired" : "invalid" });
+        }
+        row["consumed_at"] = now;
+        const email = String(row["new_email"]);
+        if (this.tables.customers.some((x) => x["shop_id"] === shopId && x["id"] !== args["p_customer_id"] && String(x["email"] ?? "").toLowerCase() === email)) return json({ ok: false, reason: "unavailable" });
+        const c = findCustomer(args["p_customer_id"], args["p_epoch"]);
+        if (!c) return json({ ok: false, reason: "session" });
+        const old = (c["email"] as string | null) ?? null;
+        c["email"] = email;
+        c["session_epoch"] = Number(c["session_epoch"] ?? 0) + 1;
+        ms["session_epoch"] = c["session_epoch"];
+        for (const ch of this.memberChallenges) if (ch["shop_id"] === shopId && (ch["email"] === email || ch["email"] === (old ?? "").toLowerCase()) && !ch["consumed_at"]) ch["consumed_at"] = now;
+        return json({ ok: true, old_email: old, new_email: email, epoch: c["session_epoch"], mail_from: this.mailFrom(shopId), authenticated_at: new Date(this.sessionAuthAt(ms)).toISOString() });
       }
       case "import_member_passwords": {
         const out = { imported: 0, created: 0, skipped_format: 0, skipped_has_password: 0, skipped_invalid_email: 0 };

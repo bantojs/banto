@@ -717,6 +717,10 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         news,
         news_unread_count: props.news?.unread ?? 0,
         news_read_url: props.news ? `${s.ctx.shopPath}/account/news/read` : null,
+        // メールアドレスの変更（0166）: 当たるまで null。step が email なら POST email_change_url（email）、code なら POST email_verify_url（code）
+        email_change: props.emailChange
+          ? { step: props.emailChange.step, email_change_url: `${s.ctx.shopPath}/account/email`, email_verify_url: `${s.ctx.shopPath}/account/email/verify` }
+          : null,
       }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });

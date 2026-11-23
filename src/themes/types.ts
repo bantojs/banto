@@ -193,6 +193,12 @@ export interface Theme {
      * providers は外部のアカウント。未連携は POST `${shopPath}/account/oauth/<id>/link`、連携済みは POST `${shopPath}/account/oauth/<id>/unlink`
      */
     security?: { password: boolean; hasPassword: boolean; providers: { id: "line" | "google"; linked: boolean }[] };
+    /**
+     * メールアドレスの変更（0166）。null・省略なら欄を出さない。
+     * step が "email" なら POST `${shopPath}/account/email`（email）で新しいアドレスにコードを送る。
+     * "code" なら POST `${shopPath}/account/email/verify`（code）でコードを確かめて変える（入れ直しは "email" のフォームをもう一度出す）
+     */
+    emailChange?: { step: "email" | "code" } | null;
     /** 領収書を出せる（同梱モジュール receipt）。支払い済みの注文に GET `${shopPath}/account/orders/<番号>/receipt` へのリンクを出す */
     receipt?: boolean;
     /**

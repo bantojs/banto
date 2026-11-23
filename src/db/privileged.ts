@@ -119,6 +119,13 @@ export type MemberLoginResult =
   | { ok: false; reason: "invalid" | "locked" | "disabled" | "already_linked" | "other_linked" | "session" | "expired" | "reauth" };
 
 /** パスワードの設定（0057）。reauth = ログインしてから 15 分を過ぎたセッション（確かめのコードで入り直す） */
+/** メールアドレスの変更を始める（0166）。send = false は回数の上限・使われているアドレス（応答は同じにする） */
+export type MemberEmailChangeStart = { ok: true; send: boolean; mail_from: string | null } | { ok: false; reason: "session" | "reauth" | "same" };
+/** メールアドレスの変更を確かめる（0166）。成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる） */
+export type MemberEmailChangeVerify =
+  | { ok: true; old_email: string | null; new_email: string; epoch: number; mail_from: string | null; authenticated_at: string | null }
+  | { ok: false; reason: "session" | "reauth" | "invalid" | "expired" | "unavailable" };
+
 export type MemberSetPasswordResult =
   /** authenticated_at: このセッションがログインを確かめた時刻（0090。セッションを作り直すときに引き継ぐ。0090 より前の DB では null） */
   | { ok: true; epoch: number; email: string | null; mail_from: string | null; authenticated_at: string | null }
@@ -368,6 +375,9 @@ export interface PrivilegedDb {
    * 成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる）
    */
   memberSetPassword(shopId: string, customerId: string, epoch: number, password: string, sessionId?: string): Promise<MemberSetPasswordResult>;
+  /** 会員が自分でメールアドレスを変える（0166）。ログインしてから 15 分以内のセッションだけ。コードは HMAC の値だけを渡す */
+  memberEmailChangeStart(shopId: string, customerId: string, epoch: number, sessionId: string, newEmail: string, codeHash: string, ipHash: string | null): Promise<MemberEmailChangeStart>;
+  memberEmailChangeVerify(shopId: string, customerId: string, epoch: number, sessionId: string, codeHash: string): Promise<MemberEmailChangeVerify>;
   /** WordPress のパスワードの取り込み（0013、bcrypt の形式だけ）。呼び出し側が owner の所有を確かめてから呼ぶ */
   importMemberPasswords(shopId: string, rows: { email: string; hash: string }[]): Promise<Record<string, number>>;
   /** 外部のアカウントでログインする（0014）。link があればログイン中のその会員に結びつける */
@@ -673,6 +683,23 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
         return { ok: true, epoch: r.epoch, email: r.email ?? null, mail_from: r.mail_from ?? null, authenticated_at: typeof r.authenticated_at === "string" ? r.authenticated_at : null };
       }
       return { ok: false, reason: r.reason === "reauth" ? "reauth" : "session" };
+    },
+    memberEmailChangeStart: async (shopId, customerId, epoch, sessionId, newEmail, codeHash, ipHash) => {
+      const r = await rpc<{ ok: boolean; reason?: string; send?: boolean; mail_from?: string | null } | null>("member_email_change_start", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_new_email: newEmail, p_code_hash: codeHash, p_ip_hash: ipHash,
+      });
+      if (r?.ok) return { ok: true, send: r.send === true, mail_from: r.mail_from ?? null };
+      return { ok: false, reason: r?.reason === "reauth" ? "reauth" : r?.reason === "same" ? "same" : "session" };
+    },
+    memberEmailChangeVerify: async (shopId, customerId, epoch, sessionId, codeHash) => {
+      const r = await rpc<{ ok: boolean; reason?: string; old_email?: string | null; new_email?: string; epoch?: number; mail_from?: string | null; authenticated_at?: string | null } | null>("member_email_change_verify", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_code_hash: codeHash,
+      });
+      if (r?.ok && typeof r.epoch === "number" && typeof r.new_email === "string") {
+        return { ok: true, old_email: r.old_email ?? null, new_email: r.new_email, epoch: r.epoch, mail_from: r.mail_from ?? null, authenticated_at: typeof r.authenticated_at === "string" ? r.authenticated_at : null };
+      }
+      const reason = r?.reason;
+      return { ok: false, reason: reason === "reauth" || reason === "invalid" || reason === "expired" || reason === "unavailable" ? reason : "session" };
     },
     importMemberPasswords: (shopId, rows) => rpc("import_member_passwords", { p_shop_id: shopId, p_rows: rows }),
     memberOauthLogin: (shopId, provider, subject, email, emailVerified, link) =>
