@@ -354,7 +354,7 @@ export const PAGE_EDITOR_SCRIPT = `
 
 /** 見たままの編集のスクリプト（関数の toString() と設定。</script> を閉じさせないよう < を逃がす） */
 export function visualEditorScript(base: string): string {
-  const cfg = { render: `${base}/render`, t: { cell: t("pages.tool_table_cell") } };
+  const cfg = { render: `${base}/render`, t: { cell: t("pages.tool_table_cell"), image_link: t("pages.tool_image_link_ask") } };
   return `${CLIENT_PRELUDE}(${pageEditorClient.toString()})().mount(${JSON.stringify(cfg).replace(/</g, "\\u003c")});`;
 }
 
@@ -369,6 +369,8 @@ export const EDITOR_CSS = `
 #page-form .pe-title:focus{outline:none;box-shadow:none;border-bottom-color:var(--border-strong)}
 #body-visual{min-height:24rem;padding:.5rem 2.5rem 3rem;overflow:visible;border:0;border-radius:0}
 #body-visual:focus{outline:none}
+#body-visual img{cursor:pointer}
+#body-visual img[data-picked]{outline:2px solid var(--link);outline-offset:2px}
 #body-visual>*,#body-visual [data-slot]>*,#body-visual .banto-accordion__title{position:relative;border-radius:3px;transition:box-shadow .1s}
 #body-visual>*:hover,#body-visual [data-slot]>*:hover{box-shadow:0 0 0 1px var(--border)}
 #body-visual .is-sel,#body-visual .is-sel:hover{box-shadow:0 0 0 1.5px var(--link)}

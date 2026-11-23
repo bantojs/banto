@@ -431,6 +431,19 @@ export function pageEditorClient() {
   interface Doc {
     getElementById(id: string): El | null;
     execCommand(cmd: string, ui?: boolean, value?: string): boolean;
+    createElement(tag: string): Box;
+  }
+  /** 画像にリンクを付けるときに触る節（見たままの画面の DOM） */
+  interface Box {
+    nodeName: string;
+    parentNode: Box | null;
+    getAttribute(k: string): string | null;
+    setAttribute(k: string, v: string): void;
+    removeAttribute(k: string): void;
+    insertBefore(n: Box, ref: Box | null): void;
+    appendChild(n: Box): void;
+    removeChild(n: Box): void;
+    contains(n: Box | null): boolean;
   }
   interface MountConfig {
     /** 本文を HTML にしてもらう先（…/pages/render） */
@@ -499,6 +512,43 @@ export function pageEditorClient() {
       doc.execCommand("insertText", false, text);
     });
     ed.addEventListener("drop", (e) => e.preventDefault());
+    // 画像を押すと選んだ印を付ける（「リンク」のボタンがその画像にリンクを付ける。ブラウザは画像を文字の選択にしてくれないことがあるため）
+    let picked: Box | null = null;
+    const pick = (img: Box | null) => {
+      if (picked) picked.removeAttribute("data-picked");
+      picked = img;
+      if (img) img.setAttribute("data-picked", "1");
+    };
+    ed.addEventListener("click", (e) => {
+      const t = e.target as unknown as Box | null;
+      pick(t && t.nodeName.toUpperCase() === "IMG" ? t : null);
+    });
+    ed.addEventListener("keydown", () => pick(null));
+    /** 選んだ画像のリンクを付ける・変える・外す（空にすると外す）。画像を選んでいなければ false */
+    const linkPicked = (ask: string): boolean => {
+      const img = picked;
+      if (!img || !(ed as unknown as Box).contains(img) || !img.parentNode) return false;
+      const parent = img.parentNode;
+      const a = parent.nodeName.toUpperCase() === "A" ? parent : null;
+      const u = g.prompt(cfg.t["image_link"] ?? ask, a?.getAttribute("href") ?? "https://");
+      if (u === null) return true;
+      const href = u.replace(/[\s()<>"]/g, "");
+      if (!href || href === "https://") {
+        // 外す: 画像を <a> の外へ出して <a> を消す
+        if (a && a.parentNode) {
+          a.parentNode.insertBefore(img, a);
+          a.parentNode.removeChild(a);
+        }
+      } else if (a) a.setAttribute("href", href);
+      else {
+        const link = doc.createElement("a");
+        link.setAttribute("href", href);
+        parent.insertBefore(link, img);
+        link.appendChild(img);
+      }
+      pick(null);
+      return true;
+    };
     const run = (cmd: string, value?: string) => {
       ed.focus();
       doc.execCommand(cmd, false, value);
@@ -520,6 +570,7 @@ export function pageEditorClient() {
         else if (k === "hr") run("insertHorizontalRule");
         else if (k === "table") run("insertHTML", `<table><thead><tr><th>${cfg.t["cell"] ?? ""}</th><th>${cfg.t["cell"] ?? ""}</th></tr></thead><tbody><tr><td>${cfg.t["cell"] ?? ""}</td><td>${cfg.t["cell"] ?? ""}</td></tr></tbody></table><p><br></p>`);
         else if (k === "link") {
+          if (linkPicked(b.getAttribute("data-ask") ?? "URL")) return;
           const u = g.prompt(b.getAttribute("data-ask") ?? "URL", "https://");
           if (u) run("createLink", u.replace(/[\s()<>"]/g, ""));
         }

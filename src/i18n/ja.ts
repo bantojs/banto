@@ -2646,6 +2646,7 @@ export const ja = {
   "pages.tool_italic": "斜体",
   "pages.tool_link": "リンク",
   "pages.tool_link_ask": "リンク先の URL（https:// か / から）",
+  "pages.tool_image_link_ask": "画像のリンク先の URL（https:// か / から。空にするとリンクを外します）",
   "pages.tool_ul": "箇条書き",
   "pages.tool_ol": "番号付き",
   "pages.tool_quote": "引用",
