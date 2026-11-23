@@ -1322,6 +1322,7 @@ export const en: Record<MessageKey, string> = {
   "tokens.scope.coupons_write": "Create, update and delete coupons; issue them to members and revoke them",
   "tokens.scope.customers_read": "Read members (email address, name, address: personal data)",
   "tokens.scope.customers_write": "Create members, update names and addresses, delete members (email addresses cannot be changed)",
+  "tokens.scope.customers_links": "Member IDs, external codes and custom fields, plus a keyed hash of the LINE UID only (no personal information)",
   "tokens.scope.inquiries_read": "Read inquiries and their conversation (contact details only together with the buyer details scope)",
   "tokens.scope.inquiries_write": "Reply to inquiries (the customer gets a link-only email) and close them",
   "tokens.scope.theme_write": "Upload theme versions, get preview links and delete unpublished versions (themes can include storefront JS; publishing needs theme:publish)",

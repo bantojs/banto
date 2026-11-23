@@ -1327,6 +1327,7 @@ export const ja = {
   "tokens.scope.coupons_write": "クーポンの作成・更新・削除、会員への発行と取り消し",
   "tokens.scope.customers_read": "会員の参照（メールアドレス・氏名・住所。個人情報）",
   "tokens.scope.customers_write": "会員の作成・氏名と住所の更新・削除（メールアドレスは変えられません）",
+  "tokens.scope.customers_links": "会員の ID・外部コード・独自項目と、LINE の UID の鍵付きハッシュだけ（個人情報なし）",
   "tokens.scope.inquiries_read": "お問い合わせとやり取りの参照（連絡先は「注文の購入者情報」もあるときだけ）",
   "tokens.scope.inquiries_write": "お問い合わせへの返事（お客様にはリンクだけのメール）・完了にする",
   "tokens.scope.theme_write": "テーマの版の取り込み・プレビューのリンク・公開していない版の削除（お店の画面の JS も取り込めます。公開は theme:publish）",

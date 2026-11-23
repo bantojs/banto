@@ -21,6 +21,7 @@ export const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "coupons:write": "tokens.scope.coupons_write",
   "customers:read": "tokens.scope.customers_read",
   "customers:write": "tokens.scope.customers_write",
+  "customers:links": "tokens.scope.customers_links",
   "inquiries:read": "tokens.scope.inquiries_read",
   "inquiries:write": "tokens.scope.inquiries_write",
   "theme:write": "tokens.scope.theme_write",
@@ -38,7 +39,7 @@ export const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
 export const SCOPE_GROUPS: { label: MessageKey; scopes: ApiScope[] }[] = [
   { label: "purpose.products", scopes: ["products:read", "products:write", "app_data:write"] },
   { label: "purpose.orders", scopes: ["orders:read", "orders:write", "orders:pii"] },
-  { label: "purpose.customers", scopes: ["customers:read", "customers:write"] },
+  { label: "purpose.customers", scopes: ["customers:read", "customers:write", "customers:links"] },
   { label: "purpose.marketing", scopes: ["coupons:read", "coupons:write", "line:send", "dialogs:write", "member_news:write"] },
   { label: "purpose.support", scopes: ["inquiries:read", "inquiries:write"] },
   { label: "purpose.content", scopes: ["content:read", "content:write", "theme:write", "theme:publish"] },

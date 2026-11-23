@@ -323,6 +323,14 @@ export function openapiDocument(origin: string, version: string): Record<string,
         get: { summary: "会員の一覧（customers:read。個人情報を含む）", security: bearer, parameters: [{ name: "q", in: "query", schema: str, description: "メールアドレス・氏名の部分一致" }, { name: "email", in: "query", schema: str, description: "メールアドレスの完全一致" }, { name: "external_provider", in: "query", schema: str, description: "external_ref.provider の完全一致（0047）" }, { name: "external_id", in: "query", schema: str, description: "external_ref.id の完全一致（external_provider と一緒に）" }, { name: "updated_since", in: "query", schema: str, description: "この時刻（ISO 8601）以後に変わった会員だけ、updated_at の昇順（同期の取り込み向け）" }, { name: "marketing_consent", in: "query", schema: { type: "string", enum: ["true", "false"] }, description: "案内メールの同意で絞る（0050）" }, ...page], responses: { 200: resp("ok", list(customer)), ...errors } },
         post: { summary: "会員を作成（customers:write）。同じメールアドレスがあれば 409 email_taken。Banto からは知らせない", security: bearer, requestBody: { content: { "application/json": { schema: obj({ email: str, name: nullableStr, default_address: address, external_ref: externalRef, attributes, marketing_consent: consentWrite }, ["email"]) } } }, responses: { 201: resp("created", customer), ...errors } },
       },
+      "/customers/links": {
+        get: {
+          summary: "会員の結びつけの一覧（customers:links、0167）。個人情報を含まない: 会員 ID・external_ref・attributes・updated_at と、LINE の利用者 ID の鍵付きハッシュ line_link（HMAC-SHA256、鍵 = X-Banto-Link-Key の値の UTF-8、本文 = UID の UTF-8、16 進の小文字。LINE でログインしていなければ null）だけ。LINE の UID そのものは返さない。鍵は保存しない。作った順・id の順、limit は 1〜100（既定 100）。鍵が無い・ASCII の見える文字の 32〜256 文字でなければ 400 invalid_link_key。updated_at は LINE で結んだだけでは変わらない（line_link の変化は全件を読んで比べる）。attributes はショップが決めた独自項目をそのまま返す",
+          security: bearer,
+          parameters: [{ name: "X-Banto-Link-Key", in: "header", required: true, schema: { type: "string", minLength: 32, maxLength: 256, pattern: "^[\\x21-\\x7e]+$" }, description: "line_link を作る鍵。連携側で決めた秘密の値（ASCII の見える文字の 32〜256 文字。例: 乱数の 16 進 64 文字）。Banto は保存しない" }, ...page],
+          responses: { 200: resp("ok", list(obj({ id: str, line_link: { type: ["string", "null"], description: "HMAC-SHA256 の 16 進（小文字、64 文字）" }, external_ref: externalRef, attributes, updated_at: str }))), ...errors },
+        },
+      },
       "/customers/upsert": {
         post: { summary: "メールアドレスで引いて、あれば渡した鍵だけ更新、無ければ作る（customers:write、0047）。外部の顧客マスタからの同期の窓口。email は変えない。同じ external_ref が別の会員にあれば 409 external_ref_taken", security: bearer, requestBody: { content: { "application/json": { schema: obj({ email: str, name: nullableStr, default_address: address, external_ref: externalRef, attributes, marketing_consent: consentWrite }, ["email"]) } } }, responses: { 200: resp("updated", customer), 201: resp("created", customer), ...errors } },
       },
