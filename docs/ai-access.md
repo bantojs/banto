@@ -386,11 +386,12 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 
 | 口 | スコープ（項目） | MCP |
 | --- | --- | --- |
-| `GET /api/v1/product-fields` | `products:read`（catalog） | `product_fields_get` |
+| `GET /api/v1/product-fields` | `products:read` か `products:write`（catalog） | `product_fields_get` |
 | `PUT /api/v1/product-fields` | `products:write`（catalog） | `product_fields_set` |
-| `GET /api/v1/customer-fields` | `customers:read`（customers） | `customer_fields_get` |
+| `GET /api/v1/customer-fields` | `customers:read`・`customers:write`・`customers:links` のどれか（customers） | `customer_fields_get` |
 | `PUT /api/v1/customer-fields` | `customers:write`（customers） | `customer_fields_set` |
 
+- 定義は個人情報ではないので、書き込みのスコープ（会員は `customers:links` も）でも読めます（0169、メンテナの決定 2026-11-23）。`attributes` を書く同期や結びつけの連携に、名簿そのものの `customers:read` を付けなくて済みます。0169 を当てる前は読み取りのスコープだけです。
 - 本文と応答は `{ "fields": [...] }`。1 つの項目は次の形です（管理画面と同じ）。
 
   | 欄 | 形 | 意味 |
@@ -465,7 +466,7 @@ X-Banto-Link-Key: <連携側で決めた秘密の値（ASCII の見える文字�
 - **鍵は Banto に保存しません**。呼ぶたびに見出しで渡します。鍵を知らない人には `line_link` から UID を引けず、鍵を変えれば前の値とは照らせなくなります。鍵はトークンと同じく秘密として扱ってください。鍵は ASCII の見える文字（`!` 〜 `~`、空白なし）の 32〜256 文字です（例: 乱数の 16 進 64 文字）。見出しが無い・それ以外の文字を含む・長さが合わないと 400 `invalid_link_key`。0167 を当てる前は 409 `migration_required`。
 - `updated_at` は会員の行（氏名・独自項目・`external_ref` など）が変わった時刻です。**LINE で結んだだけでは変わりません**。`line_link` の変化を拾うには、`updated_at` で絞らずに全件を読んで比べてください。
 - 逆向き（連携側が UID を Banto に送って 1 人を引く口）は作りません。連携側の会員全員の UID が Banto に渡らないようにするためです。
-- 結んだら、今ある `PATCH /api/v1/customers/{id}`（`customers:write`）で `external_ref` と `attributes` を書きます（§7）。
+- 結んだら、今ある `PATCH /api/v1/customers/{id}`（`customers:write`）で `external_ref` と `attributes` を書きます（§7）。書く前に会員の項目の定義（`GET /api/v1/customer-fields`、§19）を読むなら、0169 からは `customers:links` か `customers:write` で読めます（`customers:read` は要りません）。
 
 連携側で照らす値を作る例（Node）:
 

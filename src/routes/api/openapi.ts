@@ -89,11 +89,11 @@ export function openapiDocument(origin: string, version: string): Record<string,
         post: { summary: "商品を作成（products:write）", security: bearer, requestBody: { content: { "application/json": { schema: obj({ slug: str, name: str, description: str, tags, category: str, extra_categories: { type: "array", items: str, maxItems: 20 }, brand: str, attributes: objAny, published: bool, audience: audienceRef, audience_mode: audienceMode, audience_hide: audienceHide, released_at: releasedAt, publish_at: publishAt, store_only: { type: "boolean", description: "店頭のみ（0149）。ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める" }, search_keywords: { type: ["string", "null"], maxLength: 200, description: "検索用のキーワード（0163）。お店の検索だけに使い、お客様には見せない。null か空で外す" } }, ["slug", "name"]) } } }, responses: { 201: resp("created", product), ...errors } },
       },
       "/product-fields": {
-        get: { summary: "商品の項目（カスタム項目）の定義（products:read、0145）。値は商品の attributes", security: bearer, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
+        get: { summary: "商品の項目（カスタム項目）の定義（products:read か products:write（0169 から）、0145）。値は商品の attributes", security: bearer, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
         put: { summary: "商品の項目の定義を丸ごと置き換える（products:write、0145）。送らなかった項目は消える（値は残る）。形が違えば 400 invalid_fields:<番号>:<理由>", security: bearer, requestBody: { content: { "application/json": { schema: obj({ fields: { type: "array", items: fieldDef, maxItems: 150 } }, ["fields"]) } } }, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
       },
       "/customer-fields": {
-        get: { summary: "会員の項目の定義（customers:read、0145）。値は会員の attributes", security: bearer, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
+        get: { summary: "会員の項目の定義（customers:read・customers:write・customers:links のどれか（write と links は 0169 から）、0145）。値は会員の attributes", security: bearer, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
         put: { summary: "会員の項目の定義を丸ごと置き換える（customers:write、0145）。image・public・card は使えない", security: bearer, requestBody: { content: { "application/json": { schema: obj({ fields: { type: "array", items: fieldDef, maxItems: 150 } }, ["fields"]) } } }, responses: { 200: resp("ok", obj({ fields: { type: "array", items: fieldDef } })), ...errors, 409: resp("データベースの更新（0145）が要る") } },
       },
       "/audiences": {

@@ -3511,7 +3511,11 @@ export class FakeSupabase {
       case "api_field_defs_set": {
         const kind = String(args["p_kind"]);
         const write = fn === "api_field_defs_set";
-        if (!need(kind === "product" ? (write ? "products:write" : "products:read") : write ? "customers:write" : "customers:read")) return unauthorized();
+        // 読み取りは 0169 から書き込みのスコープ（会員は customers:links も）でも通る
+        const ok = write
+          ? need(kind === "product" ? "products:write" : "customers:write")
+          : (kind === "product" ? ["products:read", "products:write"] : ["customers:read", "customers:write", "customers:links"]).some((s) => need(s));
+        if (!ok) return unauthorized();
         const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
         const settings = ((shop["settings"] as Row | undefined) ?? {}) as Row;
         if (write) {

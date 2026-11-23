@@ -224,7 +224,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "product_fields_get",
-    description: "商品の項目（カスタム項目）の定義を読む。値は商品の attributes に入る。スコープ products:read。" + DATA_NOTE,
+    description: "商品の項目（カスタム項目）の定義を読む。値は商品の attributes に入る。スコープ products:read か products:write。" + DATA_NOTE,
     inputSchema: obj({}),
     readOnly: true,
     run: (api) => api.fieldDefsGet("product"),
@@ -238,7 +238,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "customer_fields_get",
-    description: "会員の項目の定義を読む（ランク・担当者などのマーケティングの属性。値は会員の attributes）。スコープ customers:read。" + DATA_NOTE,
+    description: "会員の項目の定義を読む（ランク・担当者などのマーケティングの属性。値は会員の attributes）。スコープ customers:read か customers:write。" + DATA_NOTE,
     inputSchema: obj({}),
     readOnly: true,
     run: (api) => api.fieldDefsGet("customer"),
