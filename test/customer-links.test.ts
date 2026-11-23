@@ -63,7 +63,7 @@ describe("GET /api/v1/customers/links", () => {
 
   it("返すのは 5 つの項目だけ。LINE の UID は鍵付きハッシュ、結んでいなければ null。ほかのショップの会員は出ない", async () => {
     const { sb, shop, other, app } = setup();
-    const a = addMember(sb, shop.id, 1, { external_ref: { provider: "pocket", id: "C001" }, attributes: { rank: "gold" } });
+    const a = addMember(sb, shop.id, 1, { external_ref: { provider: "crm", id: "C001" }, attributes: { rank: "gold" } });
     addMember(sb, shop.id, 2);
     addMember(sb, other.id, 3);
     sb.memberIdentities.push({ shop_id: shop.id, provider: "line", subject: "U1234567890abcdef1234567890abcdef", customer_id: a.id });
@@ -74,7 +74,7 @@ describe("GET /api/v1/customers/links", () => {
     expect(r.json.items).toHaveLength(2);
     for (const it of r.json.items) expect(Object.keys(it).sort()).toEqual(["attributes", "external_ref", "id", "line_link", "updated_at"]);
     const want = createHmac("sha256", Buffer.from(KEY, "utf8")).update(Buffer.from("U1234567890abcdef1234567890abcdef", "utf8")).digest("hex");
-    expect(r.json.items[0]).toEqual({ id: a.id, line_link: want, external_ref: { provider: "pocket", id: "C001" }, attributes: { rank: "gold" }, updated_at: a.updated_at });
+    expect(r.json.items[0]).toEqual({ id: a.id, line_link: want, external_ref: { provider: "crm", id: "C001" }, attributes: { rank: "gold" }, updated_at: a.updated_at });
     expect(r.json.items[1]!["line_link"]).toBeNull();
     const text = JSON.stringify(r.json);
     expect(text).not.toContain("U1234567890abcdef");

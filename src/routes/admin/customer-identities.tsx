@@ -186,7 +186,7 @@ function Page(p: PageProps) {
             <input type="radio" name="match" value="attribute" checked={match === "attribute"} disabled={p.fields.length === 0} /> {t("identities.match.attribute")}
           </label>
           <label for="provider">{t("identities.match.provider")}</label>
-          <input id="provider" name="provider" maxlength={100} value={match === "external_ref" ? (p.matchKey ?? "") : ""} placeholder="pocket" />
+          <input id="provider" name="provider" maxlength={100} value={match === "external_ref" ? (p.matchKey ?? "") : ""} placeholder="crm" />
           {p.fields.length > 0 ? (
             <div>
               <label for="field">{t("identities.match.field")}</label>

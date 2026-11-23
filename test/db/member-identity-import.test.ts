@@ -36,7 +36,7 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
     const ins = async (shop: string, email: string | null, attrs: object, ref: object | null) =>
       (await pool.query<{ id: string }>("insert into customers (shop_id, email, attributes, external_ref) values ($1, $2, $3, $4) returning id", [shop, email, attrs, ref])).rows[0]!.id;
     cardCid = await ins(f.shopId, "card@example.com", { card_no: "C001", rank: "gold" }, null);
-    refCid = await ins(f.shopId, "ref@example.com", { rank: "gold" }, { provider: "pocket", id: "P001" });
+    refCid = await ins(f.shopId, "ref@example.com", { rank: "gold" }, { provider: "crm", id: "E001" });
     mailCid = await ins(f.shopId, "Mail@Example.com", {}, null);
     linkedCid = await ins(f.shopId, "linked@example.com", { card_no: "C009" }, null);
     await ins(f.shopId, "dup1@example.com", { card_no: "C777" }, null);
@@ -82,7 +82,7 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
   });
 
   it("external_ref とメールアドレス（大文字小文字を問わない）で引く。Google の ID も", async () => {
-    const r1 = await imp(f.ownerId, "external_ref", "pocket", [{ key: "P001", line: uid(10), google: "109876543210987654321" }]);
+    const r1 = await imp(f.ownerId, "external_ref", "crm", [{ key: "E001", line: uid(10), google: "109876543210987654321" }]);
     expect(r1.counts).toMatchObject({ linked: 2 });
     expect(await identityOf("line", uid(10))).toBe(refCid);
     expect(await identityOf("google", "109876543210987654321")).toBe(refCid);
@@ -90,7 +90,7 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
     expect(r2.counts).toMatchObject({ linked: 1 });
     expect(await identityOf("line", uid(11))).toBe(mailCid);
     // 違う provider の external_ref では当たらない
-    expect((await imp(f.ownerId, "external_ref", "hubspot", [{ key: "P001", line: uid(12) }])).counts).toMatchObject({ not_found: 1 });
+    expect((await imp(f.ownerId, "external_ref", "hubspot", [{ key: "E001", line: uid(12) }])).counts).toMatchObject({ not_found: 1 });
   });
 
   it("上書きしない: 同じ組は unchanged、ID が別の会員に結ばれている・会員に別の ID があるのは飛ばす", async () => {
@@ -165,14 +165,14 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
     await pool.query(`update shops set settings = settings || '{"customer_fields": [{"key": "card_no", "label": "card", "type": "text"}]}' where id = $1`, [big.shopId]);
     await pool.query(
       `insert into customers (shop_id, email, attributes, external_ref)
-       select $1, 'big' || g || '@example.com', jsonb_build_object('card_no', 'K' || g), jsonb_build_object('provider', 'pocket', 'id', 'P' || g)
+       select $1, 'big' || g || '@example.com', jsonb_build_object('card_no', 'K' || g), jsonb_build_object('provider', 'crm', 'id', 'E' || g)
          from generate_series(1, 20000) g`,
       [big.shopId],
     );
     await pool.query("analyze customers");
-    const rows = (mode: string) => Array.from({ length: 500 }, (_, i) => ({ key: mode === "email" ? `big${i + 1}@example.com` : mode === "external_ref" ? `P${i + 1}` : `K${i + 1}`, line: uid(100000 + i) }));
+    const rows = (mode: string) => Array.from({ length: 500 }, (_, i) => ({ key: mode === "email" ? `big${i + 1}@example.com` : mode === "external_ref" ? `E${i + 1}` : `K${i + 1}`, line: uid(100000 + i) }));
     await asUser(big.ownerId, async (c) => {
-      for (const [mode, key] of [["email", null], ["external_ref", "pocket"], ["attribute", "card_no"]] as const) {
+      for (const [mode, key] of [["email", null], ["external_ref", "crm"], ["attribute", "card_no"]] as const) {
         for (let n = 0; n < 7; n++) {
           const t0 = Date.now();
           const r = (await c.query<{ r: Result }>("select member_identities_import($1, $2, $3, $4::jsonb, true) as r", [big.shopId, mode, key, JSON.stringify(rows(mode))])).rows[0]!.r;

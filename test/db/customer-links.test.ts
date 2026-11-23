@@ -40,7 +40,7 @@ describe.skipIf(!dbAvailable)("会員の結びつけの一覧（0167）", () => 
     await pool.query(`update shops set settings = settings || '{"members_enabled": true, "customer_fields": [{"key": "rank", "label": "rank", "type": "text"}]}' where id = $1`, [f.shopId]);
     lineCid = (await pool.query<{ id: string }>(
       `insert into customers (shop_id, email, name, default_address, attributes, external_ref, marketing_consent, created_at)
-       values ($1, 'cl1@example.com', '山田 花子', '{"state": "東京都"}', '{"rank": "gold"}', '{"provider": "pocket", "id": "C001"}', true, now() - interval '2 day') returning id`, [f.shopId])).rows[0]!.id;
+       values ($1, 'cl1@example.com', '山田 花子', '{"state": "東京都"}', '{"rank": "gold"}', '{"provider": "crm", "id": "C001"}', true, now() - interval '2 day') returning id`, [f.shopId])).rows[0]!.id;
     plainCid = (await pool.query<{ id: string }>("insert into customers (shop_id, email, created_at) values ($1, 'cl2@example.com', now() - interval '1 day') returning id", [f.shopId])).rows[0]!.id;
     await pool.query("insert into customers (shop_id, email) values ($1, 'cl3@example.com')", [other.shopId]);
     await pool.query("insert into member_identities (shop_id, provider, subject, customer_id) values ($1, 'line', $2, $3)", [f.shopId, UID, lineCid]);
@@ -75,7 +75,7 @@ describe.skipIf(!dbAvailable)("会員の結びつけの一覧（0167）", () => 
     expect(r.items.map((i) => i["id"])).toEqual([lineCid, plainCid]);
     for (const it of r.items) expect(Object.keys(it).sort()).toEqual(["attributes", "external_ref", "id", "line_link", "updated_at"]);
     expect(r.items[0]!["line_link"]).toBe(createHmac("sha256", Buffer.from(KEY, "utf8")).update(Buffer.from(UID, "utf8")).digest("hex"));
-    expect(r.items[0]).toMatchObject({ external_ref: { provider: "pocket", id: "C001" }, attributes: { rank: "gold" } });
+    expect(r.items[0]).toMatchObject({ external_ref: { provider: "crm", id: "C001" }, attributes: { rank: "gold" } });
     expect(r.items[1]).toMatchObject({ line_link: null, external_ref: null, attributes: {} });
     const text = JSON.stringify(r);
     for (const pii of [UID, "@example.com", "山田", "東京都", "marketing_consent", "orders", "g-sub-1"]) expect(text).not.toContain(pii);
