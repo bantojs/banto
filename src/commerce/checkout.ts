@@ -642,6 +642,17 @@ export interface PlaceOrderDeps {
   migrationState?: MigrationStateDeps | null;
 }
 
+/** 注文は会員だけ（0165、ショップの設定 checkout_members_only）。DB の reserve_stock も会員でない予約を断る */
+export const CHECKOUT_MEMBERS_ONLY_MIGRATION = "0165_checkout_members_only";
+
+/**
+ * 購入手続きにログイン（会員）が要るショップか。会員機能が ON で checkout_members_only が true のとき（DB の banto_checkout_members_only と同じ）。
+ * 会員の登録はログインのときにその場で作るので、「会員登録が必須」と同じ
+ */
+export function checkoutMembersOnly(settings: Record<string, unknown> | null | undefined): boolean {
+  return settings?.["members_enabled"] === true && settings?.["checkout_members_only"] === true;
+}
+
 /** 会員の注文のお届け先を既定の住所に写す（0159）。レジの「保存します」「次回も使う」は当ててから出す */
 export const MEMBER_ADDRESS_MIGRATION = "0159_member_address_from_order";
 
@@ -664,7 +675,7 @@ export interface PlaceOrderInput {
 }
 
 /** free: 0 円の注文で、決済なしで確定した（url は完了画面、orderId は確定した注文）。cod: 代金引換で受付（未入金）として確定した */
-export type PlaceOrderResult = { ok: true; url: string; reservationId: string; free?: { orderId: string }; cod?: { orderId: string } } | { ok: false; error: "stock" | "payment" | "coupon" | "member" | "limit" | "quote_used" | "price" };
+export type PlaceOrderResult = { ok: true; url: string; reservationId: string; free?: { orderId: string }; cod?: { orderId: string } } | { ok: false; error: "stock" | "payment" | "coupon" | "member" | "member_required" | "limit" | "quote_used" | "price" };
 
 /** Stripe の決済ページと領収メールに出す値引きの名前（例: クーポン SUMMER10 + FREESHIP） */
 export function discountLabel(discount: DiscountResult): string {
@@ -681,6 +692,8 @@ export async function reserveLimits(secret: string, quote: Quote, ip: string | n
 export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): Promise<PlaceOrderResult> {
   const { shop, quote, lines } = input;
   const a = quote.address;
+  // 注文は会員だけのショップ（0165）: ゲストは予約の前に断る（DB の reserve_stock も断る）
+  if (checkoutMembersOnly(shop.settings) && !input.customerId) return { ok: false, error: "member_required" };
   let reservationId: string;
   try {
     // 会員 id を渡すと reserve_stock が会員限定の商品を確かめる（0129）
@@ -713,6 +726,7 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     // 0029: 同じ quote で 2 回目 / 同じ人・同じ IP の未確定の予約が上限（決済せずに在庫を押さえ続けられない）
     if (e instanceof PrivilegedRpcError && e.is("quote_already_used")) return { ok: false, error: "quote_used" };
     if (e instanceof PrivilegedRpcError && e.is("too_many_reservations")) return { ok: false, error: "limit" };
+    if (e instanceof PrivilegedRpcError && e.is("member_required")) return { ok: false, error: "member_required" };
     // 全端末からログアウトした後の古いセッション。予約を戻して、ログインし直してもらう
     if (e instanceof PrivilegedRpcError && e.is("member_session_invalid")) {
       await deps.privileged.releaseReservation(reservationId!, shop.id).catch(() => false);

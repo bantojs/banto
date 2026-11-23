@@ -130,7 +130,7 @@ export interface Theme {
   MembersOnlyPage?(props: { ctx: ThemeContext; loginUrl: string }): Rendered;
   /** coupons が null / 省略なら、クーポン欄を出さない。入力は `${ctx.shopPath}/cart/coupon` に code、外すときは remove を POST する */
   /** tryon が true なら（同梱モジュール store_tryon）、GET `${ctx.shopPath}/tryon` への「お店で試着を申し込む」を出す */
-  CartPage(props: { ctx: ThemeContext; lines: CartLine[]; total: number; payments: PaymentOptions; shipping: ShippingInfo; coupons?: CartCoupons | null; error?: string; tryon?: boolean }): Rendered;
+  CartPage(props: { ctx: ThemeContext; lines: CartLine[]; total: number; payments: PaymentOptions; shipping: ShippingInfo; coupons?: CartCoupons | null; error?: string; tryon?: boolean; /** 注文は会員だけのショップでゲストのとき、ログイン（その場で会員登録）の URL（0165） */ loginRequired?: string }): Rendered;
   /** 決済ページへ行く前の配送先入力（全決済手段で共通）。prefectures は都道府県の選択肢 */
   /**
    * delivery があれば（同梱モジュール delivery_time）、delivery_date・delivery_slot の選択欄を出す（value が "" なら指定なし）

@@ -43,7 +43,8 @@ import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import type { CodBlock } from "../../modules/cod";
-import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
+import { loginUrlFor } from "../../members/return-path";
+import { ADDRESS_FIELDS, PROVIDERS, checkoutMembersOnly, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
 import { bindScope, checkoutMember, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
@@ -1083,15 +1084,17 @@ storefront.get("/:shop/cart", async (c: Ctx) => {
   const coupons = await cartCoupons(c, s, lines, total);
   const errorKey = CART_ERRORS[c.req.query("error") ?? ""];
   const tryon = moduleEnabled(s.shop.settings, TRYON_MODULE) && !!s.theme.TryonPage;
+  // 注文は会員だけのショップ（0165）でゲストのとき: ログイン（その場で会員登録）してカートへ戻るリンク
+  const loginRequired = checkoutMembersOnly(s.shop.settings) && !s.ctx.member ? loginUrlFor(s.ctx.shopPath, `${s.ctx.shopPath}/cart`) : undefined;
   // 金額（小計）に入れない店頭のみの行（0149）は、品目からも外す
   if (lines.length > 0) track(c, "cart_view", total, cartItems(lines.filter((l) => !l.storeOnly)));
   // Liquid のテーマの templates/cart（無ければ既定のテーマ）
   const lt = await liquidThemeFor(c, s, { cartLines: lines });
   if (lt) {
-    const res = renderCart(c, s, lt, { lines, discounts: coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null, payments: options, ...(errorKey ? { error: t(errorKey) } : {}), categories: await s.sf.listCategories(s.shop) });
+    const res = renderCart(c, s, lt, { lines, discounts: coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null, payments: options, ...(errorKey ? { error: t(errorKey) } : {}), ...(loginRequired ? { loginRequired } : {}), categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
-  return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping: shippingSummary(s.shop), coupons, error: errorKey ? t(errorKey) : undefined, tryon }));
+  return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping: shippingSummary(s.shop), coupons, error: errorKey ? t(errorKey) : undefined, tryon, ...(loginRequired ? { loginRequired } : {}) }));
 });
 
 // ---------- お店で試着（同梱モジュール store_tryon、決済なし。docs/store-tryon.md） ----------
@@ -1530,6 +1533,8 @@ storefront.post("/:shop/checkout", async (c: Ctx) => {
 /** 配送先の画面を出す。決済手段は provider（無ければ使える最初のもの。Liquid のテーマのカートは選ばずに送ってくる） */
 async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): Promise<Response> {
   const cartUrl = `${s.ctx.shopPath}/cart`;
+  // 注文は会員だけのショップ（0165）: ゲストはログイン（その場で会員登録）へ回し、済んだらカートへ戻す
+  if (checkoutMembersOnly(s.shop.settings) && !s.ctx.member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
   const setup = await paymentOptions(c, s);
   const provider = f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe";
   if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
@@ -1596,6 +1601,8 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   if (!secret) return c.redirect(`${cartUrl}?error=config`);
   const base = publicBaseUrl(c);
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
+  // 注文は会員だけのショップ（0165）: 配送先・確定のどちらの段でも、ゲストはログインへ回す
+  if (checkoutMembersOnly(s.shop.settings) && !member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
   const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop) };
   const f = await formFields(c);
 
@@ -1643,6 +1650,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   });
   // 全端末からログアウトした後の古いセッション: ログインし直してもらう
   if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);
+  if (!placed.ok && placed.error === "member_required") return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
   if (!placed.ok) return c.redirect(`${cartUrl}?error=${placed.error}`);
   // 0 円の注文・代金引換の注文はこの時点で確定している（完了画面は照会トークンで注文番号を出す）
   return c.redirect(placed.free ? withQueryParam(placed.url, "free", "1") : placed.url, 303);

@@ -260,7 +260,7 @@ POST /api/shops/<shop>/checkout/quote
 
 `total_jpy` が 0 のとき（クーポンで全額値引き・0 円の商品）は `payment.free: true` になり、`submit_label` は「注文を確定する」です。3 で決済ページへは行かずに注文が確定します。
 
-エラー: 400 `invalid_address`（`fields` に不備のある項目名）、400 `invalid_cart`、409 `empty_cart`、409 `stock`、409 `payment_unavailable`、409 `minimum_amount`（値引き後の支払額が 1〜49 円。決済の最低額は 50 円）。
+エラー: 400 `invalid_address`（`fields` に不備のある項目名）、400 `invalid_cart`、403 `member_required`（注文は会員だけのショップで会員トークンが無い。0165）、409 `empty_cart`、409 `stock`、409 `payment_unavailable`、409 `minimum_amount`（値引き後の支払額が 1〜49 円。決済の最低額は 50 円）。
 
 ### 2. 最終確認画面を表示する（連携側の責任）
 
@@ -311,6 +311,7 @@ Banto は確定の直前に、価格・送料・在庫・クーポンを **引�
 | status | `error` | 意味 |
 | --- | --- | --- |
 | 400 | `invalid_quote` | 署名が合わない・期限切れ（1 時間）・別ショップ。quote から作り直す |
+| 403 | `member_required` | 注文は会員だけのショップ（0165）で、会員トークンが無い。ログイン（その場で会員登録）に回す |
 | 409 | `changed` | 確認後に内容が変わった（上記） |
 | 409 | `stock` | 在庫が確保できなかった |
 | 409 | `coupon_unavailable` | 確定の瞬間にクーポンの枠が無くなった・回数の上限に達した（在庫も戻してある）。quote から作り直す |
@@ -397,6 +398,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 | 409 | `plan_limit_exceeded` | 初めての方の登録が、この Banto のプランの会員数の上限（0052）に達した（verify）。お店に知らせる |
 | 429 | `plan_limit_exceeded` | この Banto のプランの 1 日のメール（ログインのコード・招待）の上限（0053）に達した（login）。しばらくしてからやり直す |
 | 401 | `invalid_member_token` | トークンが確かめられない（期限切れ・改ざん・他店のトークン・全端末からログアウトした後）。refresh して呼び直す。黙ってゲスト扱いにはしない |
+| 403 | `member_required` | 注文は会員だけのショップ（0165）で、会員トークンを付けずに購入手続き（`/checkout/quote`・`/checkout`）を呼んだ。ログイン（初めてならその場で会員登録）に回す。ショップがそうかは `GET /api/shops/<ショップ>` の `shop.checkout_members_only` で分かる |
 | 401 | `invalid_refresh_token` | refresh できない（期限切れ・退会・ログアウト・全端末からログアウトした後・`0045` より前に発行した refresh）。login からやり直す |
 | 401 | `refresh_token_reused` | 前の refresh を使い回した。その端末のログインを取り消した。login からやり直す |
 | 502 | `mail_failed` | メールを送れなかった |

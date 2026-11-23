@@ -27,6 +27,7 @@ import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, ret
 import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, optionsHaveSeparator, optionsText, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
 import { customerFields } from "../../customers/fields";
 import { COD_MIGRATION, enabledModules, moduleEnabled } from "../../modules/registry";
+import { CHECKOUT_MEMBERS_ONLY_MIGRATION } from "../../commerce/checkout";
 import { migrated } from "../../db/migration-state";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
 import { TAX_ROUNDINGS, shopTaxRates, taxRoundingOf } from "../../commerce/tax";
@@ -463,7 +464,7 @@ function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeCo
 }
 
 /** 会員とログイン: 会員機能の欄（owner / admin）と、ログインの方法（LINE・Google・パスキーは同梱モジュール） */
-function MembersSection(props: { shop: ShopRow; access: ShopAccess | undefined }) {
+function MembersSection(props: { shop: ShopRow; access: ShopAccess | undefined; membersOnlyReady?: boolean }) {
   const { shop, access } = props;
   const s = shop.settings ?? {};
   const admin = can(access, "admin");
@@ -484,6 +485,15 @@ function MembersSection(props: { shop: ShopRow; access: ShopAccess | undefined }
             <input type="checkbox" name="members_password" value="on" checked={s["members_password"] === true} /> {t("shop.members_password")}
           </label>
           <p class="muted">{t("shop.members_password_hint")}</p>
+          {props.membersOnlyReady ? (
+            <>
+              <input type="hidden" name="checkout_members_only_present" value="1" />
+              <label>
+                <input type="checkbox" name="checkout_members_only" value="on" checked={s["checkout_members_only"] === true} /> {t("shop.checkout_members_only")}
+              </label>
+              <p class="muted">{t("shop.checkout_members_only_hint")}</p>
+            </>
+          ) : null}
           <label>
             <input type="checkbox" name="marketing_consent" value="on" checked={s["marketing_consent"] === true} /> {t("shop.marketing_consent")}
           </label>
@@ -888,7 +898,7 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
       break;
     }
     case "members":
-      body = <MembersSection shop={shop} access={access} />;
+      body = <MembersSection shop={shop} access={access} membersOnlyReady={await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, CHECKOUT_MEMBERS_ONLY_MIGRATION)} />;
       break;
     case "advanced":
       body = <AdvancedSectionList shop={shop} access={access} />;
@@ -1073,6 +1083,8 @@ shops.post("/:shopId/members", requireOwner, async (c: AdminContext) => {
     members_enabled: f.members_enabled === "on",
     members_password: f.members_password === "on",
     marketing_consent: f.marketing_consent === "on",
+    // 注文は会員だけ（0165）: 欄があったときだけ書く（会員機能が OFF なら効かない）
+    ...(f.checkout_members_only_present === "1" ? { checkout_members_only: f.checkout_members_only === "on" } : {}),
   };
   try {
     await updateShop(c, shopId, { settings });

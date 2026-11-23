@@ -4607,6 +4607,10 @@ export class FakeSupabase {
       const shopId = args["p_shop_id"];
       // 全件検証してから減算（失敗時は何も変えない = ロールバック相当）
       const customerId = (args["p_customer_id"] as string | null | undefined) ?? null;
+      // 0165: 注文は会員だけのショップは、会員でない予約を断る
+      const shopRow = this.tables.shops.find((x) => x["id"] === shopId);
+      const st = (shopRow?.["settings"] ?? {}) as Row;
+      if (!customerId && st["members_enabled"] === true && st["checkout_members_only"] === true && this.appliedMigrations.includes("0165_checkout_members_only")) return json({ code: "42501", message: "member_required" }, 403);
       const aud = customerId ? this.memberAudienceIdsFor(String(shopId), customerId) : [];
       for (const it of items) {
         const sku = this.tables.skus.find((k) => k["id"] === it.sku_id && k["shop_id"] === shopId);
