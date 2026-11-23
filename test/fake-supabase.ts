@@ -124,6 +124,9 @@ export class FakeSupabase {
   /** パスワードの失敗（0013）・外部アカウント（0014）・引き換え券（0014） */
   readonly memberFailures: Row[] = [];
   readonly memberIdentities: Row[] = [];
+  /** 0168 の取り込みの画面のテスト: この回数の後の呼び出しを DB のエラーにする（null で失敗させない） */
+  identityImportFailAfter: number | null = null;
+  identityImportCalls = 0;
   /** LINE で送る口の記録（0105。line_messages の代わり。月の区切りは見ない。本物は test/db/ma-ports.test.ts） */
   readonly lineMessages: Row[] = [];
   readonly memberHandoffs: Row[] = [];
@@ -2619,6 +2622,74 @@ export class FakeSupabase {
       cur["attributes"] = next;
       cur["updated_at"] = this.now();
       return json(next);
+    }
+    if (fn === "customer_login_providers") {
+      // 0168。会員の詳細の「LINE・Google の連携」（ID は返さない）。項目 customers
+      const shopId = String(args["p_shop_id"]);
+      if (!this.ownedShopIds(uid).has(shopId) && !this.memberPerms(uid, shopId).includes("customers")) return json({ code: "42501", message: "shop_not_found" }, 403);
+      return json([...new Set(this.memberIdentities.filter((i) => i["shop_id"] === shopId && i["customer_id"] === args["p_customer_id"]).map((i) => String(i["provider"])))].sort());
+    }
+    if (fn === "member_identities_import") {
+      // 0168。DB の本物は test/db/member-identity-import.test.ts。ここは画面のテスト用の写し（owner / admin だけ・ちょうど 1 人・上書きしない）
+      const shopId = String(args["p_shop_id"]);
+      if (!this.ownedShopIds(uid).has(shopId)) return json({ code: "42501", message: "shop_not_found" }, 403);
+      const match = String(args["p_match"]);
+      const mk = args["p_match_key"] == null ? "" : String(args["p_match_key"]);
+      if (!["email", "external_ref", "attribute"].includes(match)) return json({ code: "P0001", message: "invalid_match" }, 400);
+      if (match !== "email" && !mk) return json({ code: "P0001", message: "invalid_match_key" }, 400);
+      const shopRow = this.tables.shops.find((x) => x["id"] === shopId);
+      const defs = ((shopRow?.["settings"] as Record<string, unknown> | undefined)?.["customer_fields"] as { key: string }[] | undefined) ?? [];
+      if (match === "attribute" && !defs.some((d) => d.key === mk)) return json({ code: "P0001", message: "invalid_match_key" }, 400);
+      const rows = args["p_rows"] as Record<string, unknown>[];
+      if (this.identityImportFailAfter !== null && this.identityImportCalls++ >= this.identityImportFailAfter) return json({ code: "57014", message: "canceling statement due to statement timeout" }, 500);
+      if (rows.length > 500) return json({ code: "P0001", message: "too_many_rows" }, 400);
+      const counts: Record<string, number> = { linked: 0, unchanged: 0, not_found: 0, ambiguous: 0, invalid: 0, subject_taken: 0, member_has_other: 0 };
+      const issues: Record<string, unknown>[] = [];
+      const added: Row[] = [];
+      rows.forEach((r, idx) => {
+        const key = String(r["key"] ?? "").trim();
+        const line = r["line"] ? String(r["line"]) : "";
+        const google = r["google"] ? String(r["google"]) : "";
+        if (!key || (!line && !google) || (line && !/^U[0-9a-f]{32}$/.test(line)) || (google && !/^[0-9]{1,200}$/.test(google))) {
+          counts["invalid"]!++;
+          issues.push({ row: idx, reason: "invalid" });
+          return;
+        }
+        const hits = this.tables.customers.filter((c) => {
+          if (c["shop_id"] !== shopId) return false;
+          if (match === "email") return String(c["email"] ?? "").toLowerCase() === key.toLowerCase();
+          if (match === "external_ref") {
+            const ref = c["external_ref"] as Record<string, unknown> | null | undefined;
+            return ref?.["provider"] === mk && ref?.["id"] === key;
+          }
+          const a = c["attributes"] as Record<string, unknown> | null | undefined;
+          return a?.[mk] != null && String(a[mk]) === key;
+        });
+        if (hits.length !== 1) {
+          const reason = hits.length === 0 ? "not_found" : "ambiguous";
+          counts[reason]!++;
+          issues.push({ row: idx, reason });
+          return;
+        }
+        const cid = hits[0]!["id"];
+        for (const [provider, subject] of [["line", line], ["google", google]] as const) {
+          if (!subject) continue;
+          const all = [...this.memberIdentities, ...added];
+          const owner = all.find((i) => i["shop_id"] === shopId && i["provider"] === provider && i["subject"] === subject);
+          const other = all.find((i) => i["shop_id"] === shopId && i["provider"] === provider && i["customer_id"] === cid);
+          if (owner && owner["customer_id"] === cid) counts["unchanged"]!++;
+          else if (owner || other) {
+            const reason = owner ? "subject_taken" : "member_has_other";
+            counts[reason]!++;
+            issues.push({ row: idx, provider, reason });
+          } else {
+            added.push({ shop_id: shopId, provider, subject, customer_id: cid });
+            counts["linked"]!++;
+          }
+        }
+      });
+      if (!args["p_dry_run"]) this.memberIdentities.push(...added);
+      return json({ counts, issues, dry_run: Boolean(args["p_dry_run"]) });
     }
     if (fn === "member_set_email") {
       if (!this.ownedShopIds(uid).has(String(args["p_shop_id"]))) return json({ code: "42501", message: "shop_not_found" }, 403);

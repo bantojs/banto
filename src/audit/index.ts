@@ -11,6 +11,7 @@ export type AuditActorKind = "user" | "api_token" | "system";
 export const AUDIT_ACTIONS = [
   "customer.email_changed",
   "customer.deleted",
+  "customer.identity_imported",
   "order.status_changed",
   "order.payment_recorded",
   "org_member.added",

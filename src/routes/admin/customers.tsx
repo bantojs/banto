@@ -10,6 +10,8 @@ import { requireOwner } from "./auth";
 /** CSV に入れる行の上限（一覧と同じ条件の新しい順）。それより多いときは条件で絞る。全件のバックアップは docs/backup.md */
 const CSV_MAX_ROWS = 5000;
 import { loadShop } from "./shops";
+import { migrated } from "../../db/migration-state";
+import { IDENTITY_IMPORT_MIGRATION } from "./customer-identities";
 import { can } from "./access";
 import { DbError, type Filter } from "../../db/client";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
@@ -151,7 +153,11 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   if (!shop) return c.text(t("shop.not_found"), 404);
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
-  const list = await listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
+  const [list, identityImport] = await Promise.all([
+    listCustomers(c, shopId, shop.settings ?? {}, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) }),
+    // LINE・Google の ID の取り込み（0168）は組織の owner / admin だけ
+    can(c.get("shopAccess"), "admin") ? migrated({ db: owner(c).db, cache: c.get("adapters").cache }, IDENTITY_IMPORT_MIGRATION) : Promise.resolve(false),
+  ]);
   const { fields, params, filtered } = list;
   const page = splitPage(list.rows, (r) => r.created_at);
   const rows = page.rows;
@@ -167,6 +173,11 @@ customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("customers.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("customers.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "customers" }}>
       <PageHead title={t("customers.title")}>
+        {identityImport ? (
+          <a class="btn secondary" href={`/admin/shops/${shop.id}/customers/import/identities`}>
+            {t("identities.title")}
+          </a>
+        ) : null}
         {rows.length > 0 || filtered ? (
           <a class="btn secondary" href={`/admin/shops/${shop.id}/customers.csv${listHref.slice(base.length)}`}>
             {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("customers.csv")}
@@ -305,9 +316,11 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
   const r = await db.from<CustomerRow>("customers").selectOne(CUSTOMER_COLUMNS, { eq: { shop_id: shopId, id: customerId } });
   if (!r) return c.text(t("customers.not_found"), 404);
   const inquiriesOn = moduleEnabled(shop.settings, "inquiries") && can(access, "support");
-  const [orders, inquiries] = await Promise.all([
+  const [orders, inquiries, providers] = await Promise.all([
     can(access, "orders") ? db.from<MemberOrderRow>("orders").select("id,number,status,total_jpy,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc,id.desc", limit: 20 }) : Promise.resolve(null),
     inquiriesOn ? db.from<MemberInquiryRow>("inquiries").select("id,number,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 20 }) : Promise.resolve(null),
+    // ログインの方法（LINE / Google の別だけ。取り込みで結んだかも分かるように、0168 から）
+    migrated({ db, cache: c.get("adapters").cache }, IDENTITY_IMPORT_MIGRATION).then((on) => (on ? db.rpc<string[] | null>("customer_login_providers", { p_shop_id: shopId, p_customer_id: customerId }) : null)),
   ]);
   const fields = customerFields(shop.settings);
   const ref = externalRef(r.external_ref);
@@ -428,6 +441,12 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
               <dd>{formatDateTime(r.created_at, { dateOnly: true })}</dd>
               <dt>{t("customers.last_login_at")}</dt>
               <dd>{r.last_login_at ? formatDateTime(r.last_login_at) : "-"}</dd>
+              {providers ? (
+                <>
+                  <dt>{t("customers.login_providers")}</dt>
+                  <dd>{providers.length > 0 ? providers.map((p) => (p === "line" ? "LINE" : p === "google" ? "Google" : p)).join("・") : "-"}</dd>
+                </>
+              ) : null}
               {ref ? (
                 <>
                   <dt>{t("customers.external_ref")}</dt>

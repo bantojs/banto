@@ -48,42 +48,8 @@ const IGNORED: readonly string[] = ["note", "source_meta"];
 export const MAX_COUPON_CSV_ROWS = 500;
 export const MAX_COUPON_CSV_BYTES = 2 * 1024 * 1024;
 
-/** RFC 4180 の CSV（ダブルクォート、"" のエスケープ、改行を含むセル、CRLF / LF、先頭の BOM） */
-export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let quoted = false;
-  for (let i = text.charCodeAt(0) === 0xfeff ? 1 : 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quoted) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          cell += '"';
-          i++;
-        } else quoted = false;
-      } else cell += ch;
-    } else if (ch === '"') quoted = true;
-    else if (ch === ",") {
-      row.push(cell);
-      cell = "";
-    } else if (ch === "\n" || ch === "\r") {
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-      row.push(cell);
-      rows.push(row);
-      row = [];
-      cell = "";
-    } else cell += ch;
-  }
-  if (cell !== "" || row.length > 0) {
-    row.push(cell);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((c) => c.trim() !== ""));
-}
-
-import { csvCell } from "../../util/csv";
-export { csvCell };
+import { csvCell, parseCsv } from "../../util/csv";
+export { csvCell, parseCsv };
 
 /** クーポン CSV を書く（BOM 付き、CRLF。表計算ソフトで文字化けしないように） */
 export function couponCsv(rows: Partial<Record<CouponCsvColumn, string | number | boolean | null>>[]): string {
