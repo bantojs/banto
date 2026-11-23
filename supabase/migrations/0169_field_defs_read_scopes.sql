@@ -14,6 +14,7 @@ declare v_tok api_tokens; v_defs jsonb; v_scopes text[]; v_scope text;
 begin
   if p_kind not in ('product', 'customer') then raise exception 'invalid_fields:kind'; end if;
   -- トークンが持っている、読める スコープのうち最初のもので確かめる（無ければ今までのスコープで断る）
+  -- 候補はどれも同じ項目（customers / catalog、banto_scope_perm）に結ぶ。発行者がその項目を持つかは api_require が確かめる
   select t.scopes into v_scopes from api_tokens t where t.token_hash = p_token_hash;
   select s into v_scope
     from unnest(case when p_kind = 'product' then array['products:read', 'products:write']

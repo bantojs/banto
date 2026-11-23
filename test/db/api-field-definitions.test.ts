@@ -112,6 +112,8 @@ describe.skipIf(!dbAvailable)("項目の定義の AI 用 API（0145）", () => {
     expect(await expectDbError(() => set(tokens["cr"]!, "customer", []))).toMatch(/insufficient_scope|unauthorized|forbidden/);
     expect(await expectDbError(() => set(tokens["cw"]!, "product", []))).toMatch(/insufficient_scope|unauthorized|forbidden/);
     expect(await expectDbError(() => get(tokens["pw"]!, "customer"))).toMatch(/insufficient_scope|unauthorized|forbidden/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select api_field_defs_set($1, 'product', '[]')", [hash(tokens["pw"]!)])))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select banto_field_defs_norm('[]', 'product')")))).toMatch(/permission denied/);
   });
 
   it("読み取り（0169）: 定義は書き込みのスコープでも、会員は customers:links でも読める。種類が違えば読めない", async () => {
@@ -122,8 +124,10 @@ describe.skipIf(!dbAvailable)("項目の定義の AI 用 API（0145）", () => {
     expect(await expectDbError(() => get(tokens["pwo"]!, "customer"))).toMatch(/unauthorized/);
     expect(await expectDbError(() => get(tokens["cwo"]!, "product"))).toMatch(/unauthorized/);
     expect(await expectDbError(() => get("no-such-token", "customer"))).toMatch(/unauthorized/);
-    expect(await expectDbError(() => asAnon((c) => c.query("select api_field_defs_set($1, 'product', '[]')", [hash(tokens["pw"]!)])))).toMatch(/permission denied/);
-    expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select banto_field_defs_norm('[]', 'product')")))).toMatch(/permission denied/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select api_field_defs_get($1, 'customer')", [hash(tokens["cl"]!)])))).toMatch(/permission denied/);
+    // 取り消したトークンは書き込み・結びつけのスコープでも読めない
+    await getPool().query("update api_tokens set revoked_at = now() where token_hash = $1", [hash(tokens["cl"]!)]);
+    expect(await expectDbError(() => get(tokens["cl"]!, "customer"))).toMatch(/unauthorized/);
   });
 
   it("答え合わせ: DB が組み直した定義は、管理画面の読み手（fieldDefinitions / customerFields）を通しても変わらない", async () => {

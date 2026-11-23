@@ -238,7 +238,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "customer_fields_get",
-    description: "会員の項目の定義を読む（ランク・担当者などのマーケティングの属性。値は会員の attributes）。スコープ customers:read か customers:write。" + DATA_NOTE,
+    description: "会員の項目の定義を読む（ランク・担当者などのマーケティングの属性。値は会員の attributes）。スコープ customers:read・customers:write・customers:links のどれか。" + DATA_NOTE,
     inputSchema: obj({}),
     readOnly: true,
     run: (api) => api.fieldDefsGet("customer"),
