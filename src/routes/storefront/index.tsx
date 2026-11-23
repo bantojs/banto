@@ -1638,6 +1638,8 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   const check = await recheckQuote(qctx, quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, lines: check.fresh.lines, error: t("confirm.changed"), status: 409 });
+    // 作り直しが支払い方法で断られた（手数料の決まりができた後の古い確認・種類を外した）ときは在庫ではなく支払い方法の誤り
+    if (check.error === "changed" && !check.fresh.ok && check.fresh.error === "payment_method") return c.redirect(`${cartUrl}?error=payment_method`);
     return c.redirect(`${cartUrl}?error=${check.error === "store_only" ? "store_only" : "stock"}`);
   }
   const deps = placeOrderDeps(c, setup);

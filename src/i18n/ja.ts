@@ -3722,6 +3722,9 @@ export const ja = {
   "payfees.saved": "お支払い手数料を保存しました。",
   "payfees.invalid": "保存できませんでした。種類は英小文字と _ の 40 字まで、同じ種類は 1 つだけ（{max} 種類まで）、段は「この金額まで,手数料」の行です。",
   "payfees.after_note": "手数料は値引きの対象外で、消費税は標準税率です。確定の前にデータベースがこの決まりで確かめます。",
+  "payfees.warn_types_empty": "KOMOJU のプラグインの「受け付ける支払い方法」が空です。このままだと、手数料を決めた種類だけがカートに並び、ほかの支払い方法（クレジットカードなど）は選べなくなります。受け付ける支払い方法を書くか、手数料なしの種類も 0 円で足してください。",
+  "payfees.warn_not_accepted": "「{type}」は KOMOJU のプラグインの「受け付ける支払い方法」にありません。この手数料は使われません。",
+  "payfees.warn_unknown_type": "「{type}」は知らない種類の名前です。KOMOJU の種類の名前（konbini・bank_transfer など）か確かめてください。",
   "payfees.link": "KOMOJU の支払い方法ごとの手数料",
   "confirm.cod_fee": "代引き手数料",
 } as const;

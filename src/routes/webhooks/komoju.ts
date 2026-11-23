@@ -62,6 +62,8 @@ komojuWebhook.post("/", async (c: Ctx) => {
     await createKomojuClient({ secretKey, fetch: c.get("deps").fetch }).refundPayment(payment.id, `refund-${event.id}`);
     return true;
   };
+  // 種類が届かないときも確定は止めない（決済ページは選んだ種類だけに絞ってある）。気づけるように残す（個人情報は出さない）
+  if (typeof payment.payment_details?.type !== "string") console.warn(`komoju webhook ${event.id}: payment_details.type missing; payment type not verified`);
   const order = {
     customer_email: payment.customer_email ?? null,
     payment_provider: "komoju",

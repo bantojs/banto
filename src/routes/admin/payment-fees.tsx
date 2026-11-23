@@ -10,7 +10,8 @@ import { DbError } from "../../db/client";
 import { migrated } from "../../db/migration-state";
 import type { ShopRow } from "../../db/types";
 import { t, tf } from "../../i18n";
-import { FEE_MAX, FEE_MAX_TIERS, KOMOJU_TYPE_RE, PAYMENT_FEE_MAX_TYPES, PAYMENT_FEES_MIGRATION, paymentFeeRules, type FeeRule } from "../../commerce/payment-fees";
+import { FEE_MAX, FEE_MAX_TIERS, KOMOJU_TYPE_RE, PAYMENT_FEE_MAX_TYPES, PAYMENT_FEES_MIGRATION, paymentFeeRules, paymentFeeWarnings, type FeeRule, type PaymentFeeWarning } from "../../commerce/payment-fees";
+import { parsePaymentTypes } from "../../plugins/komoju";
 import { komojuTypeLabel } from "../../commerce/checkout";
 import { parseTiers, tiersText } from "../../modules/cod/admin";
 import { AdminLayout, PageHead } from "./layout";
@@ -24,6 +25,23 @@ export const paymentFeesAdmin = new Hono<AppEnv>();
 /** 0170 が当たっているか（入口のリンクにも使う） */
 export async function paymentFeesReady(c: AdminContext): Promise<boolean> {
   return migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_FEES_MIGRATION);
+}
+
+/** KOMOJU のプラグインの「受け付ける支払い方法」。プラグインが無い・読めない（項目 integrations が無い）ときは null（警告を出さない） */
+async function komojuConfigured(c: AdminContext, shopId: string): Promise<string[] | null> {
+  try {
+    const row = await owner(c).db.from<{ settings: Record<string, string | boolean> | null }>("hook_endpoints").selectOne("settings", { eq: { shop_id: shopId, url: "https://banto.invalid/plugins/komoju" } });
+    return row ? parsePaymentTypes(row.settings ?? {}) : null;
+  } catch (e) {
+    if (e instanceof DbError) return null;
+    throw e;
+  }
+}
+
+function warningText(w: PaymentFeeWarning): string {
+  if (w.kind === "types_empty") return t("payfees.warn_types_empty");
+  if (w.kind === "not_accepted") return tf("payfees.warn_not_accepted", { type: w.type });
+  return tf("payfees.warn_unknown_type", { type: w.type });
 }
 
 async function scope(c: AdminContext): Promise<ShopRow | null> {
@@ -63,6 +81,7 @@ paymentFeesAdmin.get("/:shopId/payment-fees", requireOwner, async (c: AdminConte
   const shop = await scope(c);
   if (!shop) return c.notFound();
   const rules = [...paymentFeeRules(shop.settings).entries()];
+  const warnings = paymentFeeWarnings(rules.map(([type]) => type), await komojuConfigured(c, shop.id));
   const flash = c.req.query("flash");
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("payfees.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("payfees.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
@@ -72,6 +91,13 @@ paymentFeesAdmin.get("/:shopId/payment-fees", requireOwner, async (c: AdminConte
       <NotSavedNotice flash={flash} />
       <p>{t("payfees.intro")}</p>
       <p class="muted">{t("payfees.types_hint")}</p>
+      {warnings.length > 0 ? (
+        <ul class="error" data-payfees-warnings>
+          {warnings.map((w) => (
+            <li>{warningText(w)}</li>
+          ))}
+        </ul>
+      ) : null}
       <form method="post" action={`/admin/shops/${shop.id}/payment-fees`}>
         {rules.map(([type, rule], i) => (
           <Row i={i} type={type} rule={rule} />

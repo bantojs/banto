@@ -4864,6 +4864,8 @@ export class FakeSupabase {
       // 0170: 手数料つきは KOMOJU の種類を選んで確かめた予約だけ。KOMOJU が知らせた種類が違えば確定しない
       const method = String(res["payment_method"] ?? "");
       if (fee !== 0 && !cod && (order["payment_provider"] !== "komoju" || !/^komoju:[a-z_]{1,40}$/.test(method) || res["fee_checked"] !== true)) return fail("amount_mismatch");
+      // 種類を選んだ予約は手数料が 0 でも確かめてから（0170）
+      if (!cod && /^komoju:[a-z_]{1,40}$/.test(method) && res["fee_checked"] !== true) return fail("amount_mismatch");
       if (order["payment_provider"] === "komoju" && /^komoju:/.test(method) && typeof order["payment_type"] === "string" && order["payment_type"] !== "" && order["payment_type"] !== method.slice(7)) return fail("amount_mismatch");
       const expected = base + fee;
       if (cod) {

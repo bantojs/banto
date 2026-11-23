@@ -230,6 +230,10 @@ begin
       raise exception 'amount_mismatch' using detail = 'fee_unchecked';
     end if;
   end if;
+  -- 種類を選んだ予約（komoju:<種類>）は、手数料が 0 でも確かめた予約だけ（Worker の古い設定で 0 と計算したあいだに手数料を足したとき）
+  if not v_cod and coalesce(v_res.payment_method, '') ~ '^komoju:[a-z_]{1,40}$' and not v_res.fee_checked then
+    raise exception 'amount_mismatch' using detail = 'fee_unchecked';
+  end if;
   -- 決済ページは選んだ種類だけに絞って作る（0170）。決済事業者が知らせた種類（KOMOJU の payment_details.type）が違えば確定しない
   if coalesce(p_order->>'payment_provider', '') = 'komoju' and coalesce(v_res.payment_method, '') ~ '^komoju:[a-z_]{1,40}$'
      and coalesce(p_order->>'payment_type', '') <> '' and p_order->>'payment_type' <> substr(v_res.payment_method, 8) then

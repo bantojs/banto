@@ -881,8 +881,9 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     }
   }
 
-  // 支払い方法の手数料（0170）: 値引きを付けた後の金額で、DB がショップの決まりで確かめる（違えば確定しない）
-  if (quote.provider === "komoju" && quote.method && quote.fee > 0) {
+  // 支払い方法の手数料（0170）: 値引きを付けた後の金額で、DB がショップの決まりで確かめる（違えば確定しない）。
+  // 手数料が 0 でも確かめる（Worker が覚えている設定が古く 0 と計算したあいだに、運営者が手数料を足したとき）
+  if (quote.provider === "komoju" && quote.method) {
     try {
       await deps.privileged.reservationPaymentFeeCheck(reservationId, shop.id);
     } catch (e) {

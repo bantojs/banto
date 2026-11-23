@@ -3715,6 +3715,9 @@ export const en: Record<MessageKey, string> = {
   "payfees.saved": "Saved the payment fees.",
   "payfees.invalid": "Could not save. A method is lowercase letters and _ (up to 40), each method once (up to {max}), and tiers are lines of \"up to this amount,fee\".",
   "payfees.after_note": "The fee is not discounted and is taxed at the standard rate. The database checks it with these rules before the order is placed.",
+  "payfees.warn_types_empty": "The KOMOJU plugin's accepted payment methods are empty. Only the methods with a fee rule will be listed at checkout, and the other methods (such as credit card) can't be chosen. Enter the accepted methods, or add the methods without a fee at 0 yen.",
+  "payfees.warn_not_accepted": "“{type}” is not in the KOMOJU plugin's accepted payment methods, so this fee is not used.",
+  "payfees.warn_unknown_type": "“{type}” is not a known method name. Check that it's a KOMOJU method name (konbini, bank_transfer, etc.).",
   "payfees.link": "Fees per KOMOJU payment method",
   "confirm.cod_fee": "Cash-on-delivery fee",
 };

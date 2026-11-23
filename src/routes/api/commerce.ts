@@ -214,6 +214,7 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   const check = await recheckQuote(quoteContext(s, setup), quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return c.json({ error: "changed", quote: check.fresh.token, expires_at: new Date(check.fresh.quote.expiresAt * 1000).toISOString(), confirmation: check.fresh.confirmation }, 409);
+    if (check.error === "changed" && !check.fresh.ok && check.fresh.error === "payment_method") return c.json({ error: "payment_method", payments: setup.options }, 409);
     return c.json({ error: check.error === "store_only" ? "store_only" : "stock" }, 409);
   }
   const deps = placeOrderDeps(c, setup);

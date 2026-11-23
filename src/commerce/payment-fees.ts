@@ -140,3 +140,23 @@ export function komojuMethodButtonLabel(m: { name: string; fee: number | null })
 export function feeLabelFor(provider: unknown): string {
   return t(provider === "cod" ? "confirm.cod_fee" : "confirm.payment_fee");
 }
+
+/** KOMOJU の種類の名前として知っているもの（表示名のある種類）。知らない名前は警告だけ（保存はできる） */
+export const KOMOJU_KNOWN_TYPES: readonly string[] = ["credit_card", "konbini", "bank_transfer", "pay_easy", "paypay", "linepay", "merpay", "rakutenpay", "aupay", "web_money"];
+
+export type PaymentFeeWarning = { kind: "types_empty" } | { kind: "not_accepted"; type: string } | { kind: "unknown_type"; type: string };
+
+/**
+ * 管理画面の警告。configured は KOMOJU のプラグインの「受け付ける支払い方法」（読めない・プラグインが無いときは null）。
+ * 受け付ける支払い方法が空のまま決まりを足すと、決まりのある種類だけが並ぶ（ほかの支払い方法が消える）ので知らせる
+ */
+export function paymentFeeWarnings(ruleTypes: string[], configured: string[] | null): PaymentFeeWarning[] {
+  const out: PaymentFeeWarning[] = [];
+  if (ruleTypes.length === 0) return out;
+  if (configured !== null && configured.length === 0) out.push({ kind: "types_empty" });
+  for (const type of ruleTypes) {
+    if (configured !== null && configured.length > 0 && !configured.includes(type)) out.push({ kind: "not_accepted", type });
+    if (!KOMOJU_KNOWN_TYPES.includes(type)) out.push({ kind: "unknown_type", type });
+  }
+  return out;
+}

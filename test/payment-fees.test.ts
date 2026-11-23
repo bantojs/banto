@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { PAYMENT_FEE_CASES } from "./fixtures/payment-fee-cases";
 import { COD_FEE_CASES } from "./fixtures/cod-fee-cases";
-import { feeOfRule, komojuFee, komojuMethods, komojuMethodButtonLabel, flatFee } from "../src/commerce/payment-fees";
+import { feeOfRule, komojuFee, komojuMethods, komojuMethodButtonLabel, flatFee, paymentFeeWarnings } from "../src/commerce/payment-fees";
+import { receiptData } from "../src/modules/receipt/data";
 import { codFee } from "../src/modules/cod";
 import { parsePaymentChoice } from "../src/commerce/checkout";
 import { parsePaymentFeesForm } from "../src/routes/admin/payment-fees";
@@ -61,5 +62,25 @@ describe("支払い方法の手数料（0170）", () => {
     expect(parsePaymentFeesForm({ rows: "2", type_0: "konbini", fee_jpy_0: "220", type_1: "konbini", fee_jpy_1: "330" })).toBeNull();
     expect(parsePaymentFeesForm({ rows: "1", type_0: "konbini", fee_type_0: "tiers", fee_tiers_0: "" })).toBeNull();
     expect(parsePaymentFeesForm({ rows: "1", type_0: "konbini", fee_jpy_0: "100001" })).toBeNull();
+  });
+});
+
+describe("管理画面の警告（0170）", () => {
+  it("受け付ける支払い方法が空・その中に無い種類・知らない種類の名前を知らせる。決まりが無い・プラグインが読めないときは何も出さない", () => {
+    expect(paymentFeeWarnings([], [])).toEqual([]);
+    expect(paymentFeeWarnings(["konbini"], null)).toEqual([]);
+    expect(paymentFeeWarnings(["konbini"], [])).toEqual([{ kind: "types_empty" }]);
+    expect(paymentFeeWarnings(["konbini", "bank_transfer"], ["konbini", "paypay"])).toEqual([{ kind: "not_accepted", type: "bank_transfer" }]);
+    expect(paymentFeeWarnings(["konbinii"], ["konbinii"])).toEqual([{ kind: "unknown_type", type: "konbinii" }]);
+  });
+});
+
+describe("ヘッドレスの領収書の手数料の見出し（0170）", () => {
+  it("fee_label と payment_provider を返す（手数料が無ければ見出しは null）", () => {
+    const base = { number: 1001, created_at: "2026-11-23T00:00:00Z", items: [{ name: "Tシャツ", sku: "T", qty: 1, unit_price_jpy: 3000, tax_rate: 0.1 }], shipping_jpy: 500, total_jpy: 3720, shipping_tax_rate: 0.1, status: "paid" };
+    const komoju = receiptData({ name: "店" }, { ...base, fee_jpy: 220, payment_provider: "komoju" }, new Date());
+    expect(komoju).toMatchObject({ fee_jpy: 220, fee_label: "お支払い手数料", payment_provider: "komoju" });
+    expect(receiptData({ name: "店" }, { ...base, fee_jpy: 330, payment_provider: "cod" }, new Date())).toMatchObject({ fee_label: "代引き手数料", payment_provider: "cod" });
+    expect(receiptData({ name: "店" }, { ...base, total_jpy: 3500, payment_provider: "stripe" }, new Date())).toMatchObject({ fee_jpy: 0, fee_label: null });
   });
 });

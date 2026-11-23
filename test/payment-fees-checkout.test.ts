@@ -129,6 +129,19 @@ describe("お店の画面: KOMOJU を種類ごとに（0170）", () => {
     // 予約は戻す
     expect(sb.tables.reservations[0]!["status"]).toBe("released");
   });
+
+  it("手数料なしの種類に、確認のあとで手数料を足しても（お店の画面が古い決まりで 0 と計算しても）DB が断る", async () => {
+    const { sb, shop, sku, sessions, b } = setup();
+    await b.post("/my-shop/cart/add", { sku_id: sku.id, qty: "1" });
+    await b.post("/my-shop/checkout", { provider: "komoju:paypay" });
+    const review = await b.post("/my-shop/checkout/komoju", { ...ADDRESS, method: "paypay" });
+    const quote = quoteFrom(await review.text());
+    const row = sb.tables.shops.find((s) => s["id"] === shop.id)!;
+    row["settings"] = { ...(row["settings"] as Record<string, unknown>), payment_fees: { konbini: { fee_type: "flat", fee_jpy: 220 }, paypay: { fee_type: "flat", fee_jpy: 220 } } };
+    const again = await b.post("/my-shop/checkout/komoju", { quote });
+    expect(again.headers.get("location")).toBe("/my-shop/cart?error=price");
+    expect(sessions).toHaveLength(0);
+  });
 });
 
 describe("ヘッドレス: provider に komoju:<種類>（0170）", () => {
@@ -163,6 +176,9 @@ describe("管理画面: KOMOJU の支払い方法ごとの手数料（0170）", 
     const base = `/admin/shops/${shop.id}/payment-fees`;
     expect(await (await admin.get(`/admin/shops/${shop.id}/settings/payments`)).text()).toContain(`href="${base}"`);
     expect(await (await admin.get(base)).text()).toContain('name="type_0"');
+    // 受け付ける支払い方法に無い種類・知らない名前は警告（保存はできる）
+    await admin.post(base, { rows: "1", type_0: "bank_transfer", fee_type_0: "flat", fee_jpy_0: "110" });
+    expect(await (await admin.get(base)).text()).toContain("data-payfees-warnings");
     let res = await admin.post(base, { rows: "1", type_0: "konbini", fee_type_0: "flat", fee_jpy_0: "220" });
     expect(res.headers.get("location")).toBe(`${base}?flash=saved`);
     expect((shop["settings"] as Record<string, unknown>)["payment_fees"]).toEqual({ konbini: { fee_type: "flat", fee_jpy: 220, fee_tiers: [] } });

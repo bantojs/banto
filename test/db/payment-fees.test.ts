@@ -96,11 +96,24 @@ describe.skipIf(!dbAvailable)("支払い方法の手数料（0170）", () => {
     await check(r);
     expect(await expectDbError(() => confirm(r, { payment_provider: "komoju", amount_paid_jpy: price + 720, payment_type: "paypay" }))).toMatch(/amount_mismatch/);
     const free = await reserve({ method: "komoju:paypay" });
+    await check(free);
     expect(await expectDbError(() => confirm(free, { payment_provider: "komoju", amount_paid_jpy: price + 500, payment_type: "konbini" }))).toMatch(/amount_mismatch/);
     expect(await confirm(free, { payment_provider: "komoju", amount_paid_jpy: price + 500 })).toMatch(/^[0-9a-f-]{36}$/);
     // 種類を選ばない今までの KOMOJU の予約は変わらない
     const plain = await reserve({ method: "komoju" });
     expect(await confirm(plain, { payment_provider: "komoju", amount_paid_jpy: price + 500, payment_type: "konbini" })).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("手数料が 0 の種類でも、種類を選んだ予約は確かめてから（Worker の古い設定で 0 と計算したあいだに手数料を足したとき）", async () => {
+    await setSettings({ payment_fees: { konbini: { fee_type: "flat", fee_jpy: 220 }, paypay: { fee_type: "flat", fee_jpy: 0 } } });
+    // 確かめずに確定 → 断る
+    const r1 = await reserve({ method: "komoju:paypay" });
+    expect(await expectDbError(() => confirm(r1, { payment_provider: "komoju", amount_paid_jpy: price + 500 }))).toMatch(/amount_mismatch/);
+    // 決まりが 0 → 220 に変わった後、Worker が 0 で作った予約は確かめで止まる
+    await setSettings({ payment_fees: { konbini: { fee_type: "flat", fee_jpy: 220 }, paypay: { fee_type: "flat", fee_jpy: 220 } } });
+    const r2 = await reserve({ method: "komoju:paypay" });
+    expect(await expectDbError(() => check(r2))).toMatch(/amount_mismatch/);
+    expect(await expectDbError(() => confirm(r2, { payment_provider: "komoju", amount_paid_jpy: price + 500 }))).toMatch(/amount_mismatch/);
   });
 
   it("お客様の画面の settings に payment_fees が載る（レジが手数料を出す）", async () => {
