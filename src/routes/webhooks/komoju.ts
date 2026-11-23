@@ -70,6 +70,8 @@ komojuWebhook.post("/", async (c: Ctx) => {
     currency: typeof payment.currency === "string" ? payment.currency : null,
     // 決済した口座（0090）。KOMOJU は API キー方式だけ
     payment_account: "komoju",
+    // 使われた支払い方法の種類（0170）。確認画面で種類を選んだ予約は、違えば確定しない（返金）
+    ...(typeof payment.payment_details?.type === "string" ? { payment_type: payment.payment_details.type } : {}),
   };
   return c.json(await confirmFromWebhook({ db, provider: "komoju", eventId: event.id, reservationId, shopId, order, refund }));
 });

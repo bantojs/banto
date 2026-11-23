@@ -14,6 +14,7 @@ import { memberNewsHref } from "../../modules/member-news";
 import { receiptAvailable } from "../../modules/receipt/data";
 import { shopImageSrc } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
+import { feeLabelFor, komojuMethodButtonLabel } from "../../commerce/payment-fees";
 import { formatDateTime, isoToZonedDate } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
 import { OPTION_AXES_SCRIPT, displayOptionAxes } from "../../products/option-axes";
@@ -829,7 +830,20 @@ export const defaultTheme: Theme = {
                     </p>
                   </form>
                 ) : null}
-                {payments.komoju ? (
+                {payments.komoju && payments.komoju_methods
+                  ? // 支払い方法の手数料（0170）: KOMOJU を種類ごとに（決済ページはその種類だけ）
+                    payments.komoju_methods.map((m) => (
+                      <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
+                        <input type="hidden" name="provider" value={`komoju:${m.type}`} />
+                        <p>
+                          <button type="submit" disabled={short}>
+                            {komojuMethodButtonLabel(m)}
+                          </button>
+                        </p>
+                      </form>
+                    ))
+                  : null}
+                {payments.komoju && !payments.komoju_methods ? (
                   <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
                     <input type="hidden" name="provider" value="komoju" />
                     <p>
@@ -984,7 +998,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  AddressPage({ ctx, provider, values, prefectures, shipping, subtotal, error, delivery, consent, saveAddress }) {
+  AddressPage({ ctx, provider, method, values, prefectures, shipping, subtotal, error, delivery, consent, saveAddress }) {
     const field = (name: keyof typeof values, label: string, type = "text", required = true, autocomplete?: string) => (
       <div>
         <label for={name}>{label}</label>
@@ -1001,6 +1015,7 @@ export const defaultTheme: Theme = {
         </p>
         {error ? <p class="error">{error}</p> : null}
         <form method="post" action={`${ctx.shopPath}/checkout/${provider}`}>
+          {method ? <input type="hidden" name="method" value={method} /> : null}
           {field("customer_name", t("store.address_name"), "text", true, "name")}
           {field("customer_email", t("store.address_email"), "email", true, "email")}
           {field("phone", t("store.address_phone"), "tel", true, "tel")}
@@ -1824,7 +1839,7 @@ export const defaultTheme: Theme = {
                 </tr>
                 {Number(r["fee_jpy"] ?? 0) > 0 ? (
                   <tr>
-                    <td>{t("confirm.cod_fee")}</td>
+                    <td>{feeLabelFor(r["payment_provider"])}</td>
                     <td></td>
                     <td>{yen(Number(r["fee_jpy"]))}</td>
                   </tr>

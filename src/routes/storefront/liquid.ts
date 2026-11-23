@@ -565,7 +565,7 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
 const paymentLabel = (p: "stripe" | "komoju" | "amazon_pay" | "cod"): string => t(p === "stripe" ? "store.pay_with_stripe" : p === "amazon_pay" ? "store.pay_with_amazon_pay" : p === "cod" ? "store.pay_with_cod" : "store.pay_with_komoju");
 
 /** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く）。payments は使える決済手段（cart.banto_payment_methods） */
-export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean }; error?: string; categories: CategoryRow[]; loginRequired?: string }): Response | null {
+export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean; komoju_methods?: { type: string; name: string; fee: number | null }[] }; error?: string; categories: CategoryRow[]; loginRequired?: string }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   // banto_login_required: 注文は会員だけのショップでゲストのとき、ログイン（その場で会員登録）の URL（0165。無ければ null）
   const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel), banto_login_required: p.loginRequired ?? null };
@@ -577,7 +577,7 @@ export function renderCheckoutAddress(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; saveAddress?: "auto" | "ask" | null; categories: CategoryRow[]; status?: 200 | 400 },
+  p: { provider: string; method?: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; saveAddress?: "auto" | "ask" | null; categories: CategoryRow[]; status?: 200 | 400 },
 ): Response | null {
   const fee = (pref: string) => p.shipping.table?.find((x) => x.prefecture === pref)?.fee;
   const checkout = {
@@ -595,7 +595,8 @@ export function renderCheckoutAddress(
     marketing_consent: Boolean(p.consent),
     cart_url: `${s.ctx.shopPath}/cart`,
   };
-  return render(c, s, choice, { template: "checkout", values: { checkout }, title: t("store.address_title"), path: "/checkout", noindex: true, categories: p.categories, checkout: "address", ...(p.status ? { status: p.status } : {}) });
+  // KOMOJU の種類（0170）は {% form 'checkout_address' %} に Banto が隠しの値 method で入れる
+  return render(c, s, choice, { template: "checkout", values: { checkout, ...(p.method ? { __banto_forms: { checkout_address: { method: p.method } } } : {}) }, title: t("store.address_title"), path: "/checkout", noindex: true, categories: p.categories, checkout: "address", ...(p.status ? { status: p.status } : {}) });
 }
 
 /**
@@ -614,8 +615,10 @@ export async function renderCheckoutConfirm(c: Ctx, s: LiquidScope, choice: Liqu
       shipping_price: money(cf.shipping_jpy),
       total_discount: money(cf.discount_jpy),
       fee_price: money(cf.fee_jpy),
+      fee_label: cf.fee_label ?? null,
       total_price: money(cf.total_jpy),
       payment_method: cf.payment.method,
+      payment_type: cf.payment.type ?? null,
       cod: Boolean(cf.payment.cod),
       free: Boolean(cf.payment.free),
     },

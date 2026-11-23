@@ -6,6 +6,7 @@ import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, ty
 import { selectIn } from "../../db/select-in";
 import type { OrderItemRow, OrderRow, SkuRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
+import { feeLabelFor } from "../../commerce/payment-fees";
 import { formatDateTime } from "../../i18n/time";
 import { yen } from "../common";
 import { AdminLayout, PageHead } from "./layout";
@@ -101,7 +102,7 @@ const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
   { key: "shipping", label: "送料", group: "csvx.g_amounts", value: (r) => r.o.shipping_jpy },
   { key: "discount", label: "値引き", group: "csvx.g_amounts", value: (r) => r.o.discount_jpy ?? 0 },
   // 代引き手数料（0157）と入金の状態（0156。列が無い古い行は入金済み）
-  { key: "fee", label: "代引き手数料", group: "csvx.g_amounts", value: (r) => r.o.fee_jpy ?? 0 },
+  { key: "fee", label: "手数料", group: "csvx.g_amounts", value: (r) => r.o.fee_jpy ?? 0 },
   { key: "payment_status", label: "入金", group: "csvx.g_amounts", value: (r) => (unpaid(r.o) ? "unpaid" : "paid") },
   { key: "coupon", label: "クーポン", group: "csvx.g_amounts", value: (r) => (r.o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" ") },
   { key: "name", label: "氏名", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_name },
@@ -462,7 +463,7 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
               <dd>{yen(order.shipping_jpy)}</dd>
               {order.fee_jpy ? (
                 <>
-                  <dt>{t("confirm.cod_fee")}</dt>
+                  <dt>{feeLabelFor(order.payment_provider)}</dt>
                   <dd>{yen(order.fee_jpy)}</dd>
                 </>
               ) : null}

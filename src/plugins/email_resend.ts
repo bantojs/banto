@@ -20,7 +20,7 @@ interface Contact {
   created_at: string;
   total_jpy: number;
   shipping_jpy: number;
-  /** 代引き手数料（0157） */
+  /** 手数料（代引き 0157・支払い方法 0170） */
   fee_jpy?: number;
   /** お支払いの状態（0156。0157 から載る） */
   payment_status?: string;
@@ -74,7 +74,8 @@ export function orderMailValues(kind: "paid" | "shipped", c: Contact, publicBase
   const discount = c.discount_jpy ?? 0;
   const fee = c.fee_jpy ?? 0;
   const subtotal = c.total_jpy - c.shipping_jpy - fee + discount;
-  const feeLine = fee > 0 ? `代引き手数料: ${yen(fee)}\n` : "";
+  // 手数料: 代金引換は代引き手数料（0157）、KOMOJU の種類はお支払い手数料（0170）
+  const feeLine = fee > 0 ? `${c.payment_provider === "cod" ? "代引き手数料" : "お支払い手数料"}: ${yen(fee)}\n` : "";
   // 代金引換（0157）: 支払いは配達のとき
   const codLine = c.payment_provider === "cod" ? `\nお支払い方法: 代金引換（商品のお届けのときに ${yen(c.total_jpy)} をお支払いください）\n` : "";
   const discountLines = discount > 0 ? `${(c.discounts ?? []).map((d) => `値引き（${d.code}）: -${yen(d.amount_jpy)}`).join("\n") || `値引き: -${yen(discount)}`}\n` : "";

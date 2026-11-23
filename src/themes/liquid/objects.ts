@@ -27,6 +27,7 @@ import { displayOptionAxes } from "../../products/option-axes";
 import { categoryDescriptionHtml } from "../../products/category-media";
 import { comingSoon } from "../../products/sale";
 import { categoryUrl, productUrl, productsUrl } from "../../storefront/urls";
+import { komojuMethodButtonLabel } from "../../commerce/payment-fees";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
 
@@ -393,8 +394,16 @@ export interface CartDiscounts {
 }
 
 /** カートの決済手段の選択肢（cart.banto_payment_methods。{% form 'cart' %} の provider の欄に入れる id） */
-export function paymentMethodsObject(options: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean }, label: (provider: "stripe" | "komoju" | "amazon_pay" | "cod") => string): { id: string; name: string }[] {
-  return (["stripe", "komoju", "amazon_pay", "cod"] as const).filter((p) => options[p] === true).map((p) => ({ id: p, name: label(p) }));
+export function paymentMethodsObject(
+  options: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean; komoju_methods?: { type: string; name: string; fee: number | null }[] },
+  label: (provider: "stripe" | "komoju" | "amazon_pay" | "cod") => string,
+): { id: string; name: string; fee?: number | null }[] {
+  return (["stripe", "komoju", "amazon_pay", "cod"] as const)
+    .filter((p) => options[p] === true)
+    .flatMap((p): { id: string; name: string; fee?: number | null }[] =>
+      // 支払い方法の手数料（0170）: KOMOJU は種類ごと（id は komoju:<type>、fee は一律の手数料・段なら null）
+      p === "komoju" && options.komoju_methods ? options.komoju_methods.map((m) => ({ id: `komoju:${m.type}`, name: komojuMethodButtonLabel(m), fee: m.fee })) : [{ id: p, name: label(p) }],
+    );
 }
 
 /**

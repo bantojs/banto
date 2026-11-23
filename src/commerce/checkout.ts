@@ -20,17 +20,36 @@ import { StripeError, type StripeClient } from "../payments/stripe";
 import { KomojuError, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
 import { amazonPayConfigured } from "../plugins/amazon_pay";
 import { AMAZON_PAY_URL_MAX, sealAmazonPayTicket } from "../payments/amazon-pay";
-import { t, type MessageKey } from "../i18n";
+import { t, tf, type MessageKey } from "../i18n";
 import { EMPTY_DISCOUNT, couponSubject, customerAttributesOf, evaluateDiscounts, parseCampaigns, type DiscountLine, type DiscountResult, type RejectedCoupon } from "./discounts";
 import { marketingConsentEnabled } from "../customers/fields";
 import { shopHome } from "../storefront/urls";
 import { checkDelivery, deliveryText, isDeliverySlot } from "../modules/delivery-time";
 import { COD_PROVIDER, codNote, codQuote, codSettings, type CodBlock } from "../modules/cod";
+import { KOMOJU_TYPE_RE, flatFee, komojuFee, komojuMethods } from "./payment-fees";
 import { rateFor, shopTaxRates, taxBreakdown, taxClassOf, taxRoundingOf, type TaxGroup } from "./tax";
 
 /** cod: 代金引換（同梱モジュール cod、0157）。決済ページへ行かず、受付（未入金）で確定する */
 export type Provider = "stripe" | "komoju" | "amazon_pay" | "cod";
 export const PROVIDERS: readonly Provider[] = ["stripe", "komoju", "amazon_pay", "cod"];
+
+/**
+ * 決済手段の選び方（フォーム・ヘッドレスの provider）。KOMOJU は種類つき（komoju:konbini）でも受ける（0170、支払い方法の手数料）。
+ * 形が合わなければ null
+ */
+export function parsePaymentChoice(v: unknown): { provider: Provider; method: string | null } | null {
+  if (typeof v !== "string") return null;
+  const m = /^komoju:([a-z_]{1,40})$/.exec(v);
+  if (m) return { provider: "komoju", method: m[1]! };
+  return isProvider(v) ? { provider: v, method: null } : null;
+}
+
+/** KOMOJU の種類の表示名（知らない種類は種類の名前のまま） */
+export function komojuTypeLabel(type: string): string {
+  const key = `komoju.type.${type}` as MessageKey;
+  const v = t(key);
+  return v === key ? type : v;
+}
 
 export function isProvider(s: unknown): s is Provider {
   return s === "stripe" || s === "komoju" || s === "amazon_pay" || s === "cod";
@@ -163,7 +182,7 @@ interface DiscountContext {
 
 /** カートの値引き。コードが無い・モジュールが OFF なら DB に触らず「値引きなし」 */
 /** provider: 選んだ支払い方法（確認画面と確定）。カートでは無し（支払い方法の条件は仮に通す） */
-export async function discountCart(ctx: DiscountContext, priced: PricedCart, codes: string[] | undefined, shipping: number, email: string | null, provider?: Provider): Promise<DiscountResult> {
+export async function discountCart(ctx: DiscountContext, priced: PricedCart, codes: string[] | undefined, shipping: number, email: string | null, provider?: Provider, method?: string | null): Promise<DiscountResult> {
   if (!ctx.coupons || !codes || codes.length === 0 || priced.lines.length === 0) return EMPTY_DISCOUNT;
   const subject = await couponSubject(ctx.member, email);
   // 会員の独自項目の条件（0049）: ログイン中の会員の id を渡して、判定の材料に attributes を載せてもらう（往復は増やさない）
@@ -186,7 +205,7 @@ export async function discountCart(ctx: DiscountContext, priced: PricedCart, cod
     member: Boolean(ctx.member),
     memberId: ctx.member?.id ?? null,
     attributes: customerAttributesOf(rows),
-    ...(provider ? { payment: { provider } } : {}),
+    ...(provider ? { payment: { provider, ...(provider === "komoju" && method ? { type: method } : {}) } } : {}),
     ancestors: (id) => {
       const out: string[] = [];
       for (let cur: string | null = id, n = 0; cur && n < 5; cur = parent.get(cur) ?? null, n++) out.push(cur);
@@ -276,8 +295,10 @@ export interface Confirmation {
   lines: ConfirmationLine[];
   subtotal_jpy: number;
   shipping_jpy: number;
-  /** 代引き手数料（同梱モジュール cod、0157）。代金引換でなければ 0 */
+  /** 手数料: 代引き手数料（同梱モジュール cod、0157）か支払い方法の手数料（KOMOJU の種類、0170）。無ければ 0 */
   fee_jpy: number;
+  /** 手数料の見出し（「代引き手数料」「お支払い手数料」）。手数料が無ければ null */
+  fee_label?: string | null;
   /** 適用したクーポン（額はその値引きの分。送料無料なら送料の額） */
   discounts: { code: string; name: string; amount_jpy: number }[];
   /** 値引きの合計（商品 + 送料） */
@@ -293,7 +314,16 @@ export interface Confirmation {
   /** 価格はすべて税込 */
   tax_included: true;
   /** free: true なら支払いが無い（0 円）。申込みボタンで注文が確定し、決済ページへは行かない */
-  payment: { provider: Provider; method: string; timing: string; note: string | null; free?: true; /** 代金引換（その場で受付として確定し、支払いは配達のとき） */ cod?: true };
+  payment: {
+    provider: Provider;
+    method: string;
+    timing: string;
+    note: string | null;
+    free?: true;
+    /** 代金引換（その場で受付として確定し、支払いは配達のとき） */ cod?: true;
+    /** KOMOJU の種類（0170。確認画面で選んだもの。決済ページはこの種類だけ） */ type?: string;
+    /** 選び直し（「修正する」）に送る provider の値（KOMOJU の種類つきは komoju:<種類>） */ choice?: string;
+  };
   /** 引渡時期。未設定なら null（特商法表記のページを案内する） */
   delivery: string | null;
   /** お届け希望日時（同梱モジュール delivery_time）。指定なしなら null */
@@ -311,7 +341,8 @@ export interface Confirmation {
   submit_label: string;
 }
 
-export function paymentDescription(provider: Provider): { method: string; timing: string } {
+export function paymentDescription(provider: Provider, type?: string | null): { method: string; timing: string } {
+  if (provider === "komoju" && type) return { method: tf("confirm.method_komoju_type", { method: komojuTypeLabel(type) }), timing: t("confirm.timing_komoju") };
   if (provider === "stripe") return { method: t("confirm.method_stripe"), timing: t("confirm.timing_stripe") };
   if (provider === "amazon_pay") return { method: t("confirm.method_amazon_pay"), timing: t("confirm.timing_amazon_pay") };
   if (provider === "cod") return { method: t("confirm.method_cod"), timing: t("confirm.timing_cod") };
@@ -331,8 +362,10 @@ interface QuotePayload {
   prices: Record<string, number>;
   address: Address;
   shipping: number;
-  /** 代引き手数料（0157。代金引換で 0 でないときだけ） */
+  /** 手数料（代引き 0157・支払い方法 0170。0 でないときだけ） */
   f?: number;
+  /** KOMOJU の種類（0170。選んだときだけ） */
+  m?: string;
   /** 適用したクーポンのコードと値引きの合計 */
   c?: string[];
   d?: number;
@@ -347,8 +380,10 @@ export interface Quote {
   prices: Record<string, number>;
   address: Address;
   shipping: number;
-  /** 代引き手数料（0157）。代金引換でなければ 0 */
+  /** 手数料（代引き 0157・支払い方法 0170）。無ければ 0 */
   fee: number;
+  /** KOMOJU の種類（0170）。選んでいなければ null */
+  method: string | null;
   /** 適用したクーポンのコード（確定時に同じ判定になるか確かめる） */
   coupons: string[];
   /** 値引きの合計 */
@@ -362,7 +397,14 @@ export interface Quote {
 
 export type QuoteResult =
   | { ok: true; quote: Quote; token: string; confirmation: Confirmation; lines: CartLine[]; discount: DiscountResult; /** 購入手続きから外した店頭のみの行（0149。カートには残る） */ excluded?: CartLine[] }
-  | { ok: false; error: "empty_cart" | "stock" | "invalid_address" | "minimum_amount" | "store_only" | "cod_unavailable"; invalid?: string[]; dropped?: string[]; /** cod_unavailable の理由 */ cod?: CodBlock };
+  | {
+      ok: false;
+      /** payment_method: KOMOJU の種類を選んでいない・使えない種類・手数料の段に当たらない（0170） */
+      error: "empty_cart" | "stock" | "invalid_address" | "minimum_amount" | "store_only" | "cod_unavailable" | "payment_method";
+      invalid?: string[];
+      dropped?: string[];
+      /** cod_unavailable の理由 */ cod?: CodBlock;
+    };
 
 /** 購入手続きに進める行だけの値付け（店頭のみの行を外す。0149） */
 export function checkoutPart(priced: PricedCart): { priced: PricedCart; excluded: CartLine[] } {
@@ -386,10 +428,28 @@ export interface QuoteContext {
   member?: { id: string } | null;
   /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定。呼び出し側が consentCollected() で決める） */
   consent?: boolean;
+  /** KOMOJU の受け付ける種類（プラグインの設定 payment_types。0170 の種類の選び方に使う）。無ければ [] */
+  komojuTypes?: string[];
+}
+
+/**
+ * KOMOJU の種類と手数料（0170）。手数料の決まりの無いショップは種類を見ない（今までどおり）。
+ * 決まりのあるショップは種類が要り、並べる種類（komojuMethods）のどれかで、手数料の段に当たること
+ */
+function komojuChoice(ctx: QuoteContext, provider: Provider, method: string | null | undefined, base: number): { ok: true; fee: number; method: string | null } | { ok: false } {
+  if (provider !== "komoju") return { ok: true, fee: 0, method: null };
+  const settings = ctx.shop.settings ?? {};
+  const methods = komojuMethods(settings, ctx.komojuTypes ?? []);
+  if (!methods) return { ok: true, fee: 0, method: null };
+  if (!method || !KOMOJU_TYPE_RE.test(method) || !methods.some((m) => m.type === method)) return { ok: false };
+  // 0 円の注文は支払いが無いので手数料も無い（決済なしで確定する）
+  if (base === 0) return { ok: true, fee: 0, method };
+  const fee = komojuFee(settings, method, base);
+  return fee === null ? { ok: false } : { ok: true, fee, method };
 }
 
 /** カート + 配送先から最終確認の内容を作り、署名付きの quote を発行する */
-export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provider, rawAddress: Record<string, unknown>): Promise<QuoteResult> {
+export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provider, rawAddress: Record<string, unknown>, method?: string | null): Promise<QuoteResult> {
   const normalized = normalizeCart(cart);
   const all = await priceCart(ctx.sf, ctx.shop, normalized);
   // 店頭のみの商品（0149）は購入手続きから外して知らせる（カートには残す）。それしか無ければ進めない
@@ -405,7 +465,7 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
   const settings = ctx.shop.settings ?? {};
   // 送料無料のラインは値引き前の小計で判定する（WooCommerce の既定と同じ）
   const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, address.state);
-  const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider);
+  const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider, method);
   const base = priced.subtotal + shipping - discount.total;
   // 決済事業者の下限（50 円）。代金引換は決済事業者を通らないので当てない
   if (provider !== "cod" && base > 0 && base < MIN_PAYMENT_JPY) return { ok: false, error: "minimum_amount" };
@@ -416,6 +476,10 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     if (!cod.ok) return { ok: false, error: "cod_unavailable", cod: cod.reason };
     fee = cod.fee;
   }
+  // KOMOJU の種類と手数料（0170）。確定の前に DB も同じ決まりで確かめる（reservation_payment_fee_check）
+  const km = komojuChoice(ctx, provider, method, base);
+  if (!km.ok) return { ok: false, error: "payment_method" };
+  fee += km.fee;
   const total = base + fee;
   const now = (ctx.now ?? Date.now)();
   const quote: Quote = {
@@ -426,6 +490,7 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     address,
     shipping,
     fee,
+    method: km.method,
     coupons: discount.applied.map((a) => a.code),
     discount: discount.total,
     total,
@@ -442,6 +507,7 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     address,
     shipping,
     ...(fee > 0 ? { f: fee } : {}),
+    ...(km.method ? { m: km.method } : {}),
     ...(quote.coupons.length > 0 ? { c: quote.coupons, d: quote.discount } : {}),
     total: quote.total,
     exp: quote.expiresAt,
@@ -467,7 +533,7 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     [
       ...lines.map((l) => ({ amount_jpy: l.sku.price_jpy * l.qty, rate: lineRate(l), discount_jpy: discount.lines[l.sku.id] ?? 0 })),
       { amount_jpy: quote.shipping, rate: rates.standard, discount_jpy: discount.shippingDiscount },
-      // 代引き手数料は標準税率（値引きの対象にしない）
+      // 手数料（代引き・支払い方法）は標準税率（値引きの対象にしない）
       ...(quote.fee > 0 ? [{ amount_jpy: quote.fee, rate: rates.standard, discount_jpy: 0 }] : []),
     ],
     Math.max(0, discount.total - discount.itemDiscount - discount.shippingDiscount),
@@ -489,6 +555,7 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     subtotal_jpy: subtotal,
     shipping_jpy: quote.shipping,
     fee_jpy: quote.fee,
+    fee_label: quote.fee > 0 ? t(quote.provider === "cod" ? "confirm.cod_fee" : "confirm.payment_fee") : null,
     discounts: discount.applied.map((a) => ({ code: a.code, name: a.name, amount_jpy: a.amount_jpy })),
     discount_jpy: discount.total,
     total_jpy: quote.total,
@@ -499,8 +566,14 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     // 0 円の注文は決済なしで確定する（決済ページへ行かない）
     payment:
       quote.total === 0
-        ? { provider: quote.provider, method: t("confirm.method_free"), timing: t("confirm.timing_free"), note: null, free: true }
-        : { provider: quote.provider, ...paymentDescription(quote.provider), note: quote.provider === "cod" ? (codNote(settings) ?? terms.payment_note) : terms.payment_note, ...(quote.provider === "cod" ? { cod: true as const } : {}) },
+        ? { provider: quote.provider, method: t("confirm.method_free"), timing: t("confirm.timing_free"), note: null, free: true, ...(quote.method ? { type: quote.method, choice: `komoju:${quote.method}` } : {}) }
+        : {
+            provider: quote.provider,
+            ...paymentDescription(quote.provider, quote.method),
+            note: quote.provider === "cod" ? (codNote(settings) ?? terms.payment_note) : terms.payment_note,
+            ...(quote.provider === "cod" ? { cod: true as const } : {}),
+            ...(quote.method ? { type: quote.method, choice: `komoju:${quote.method}` } : {}),
+          },
     delivery: terms.delivery,
     delivery_request: a.delivery_date || a.delivery_slot ? { date: a.delivery_date || null, slot: a.delivery_slot || null, text: deliveryText({ date: a.delivery_date, slot: a.delivery_slot })! } : null,
     cancellation: terms.cancellation,
@@ -527,7 +600,8 @@ export async function openQuote(secret: string, token: string | undefined, shopI
   const discount = typeof raw.d === "number" ? raw.d : 0;
   const fee = typeof raw.f === "number" && Number.isInteger(raw.f) && raw.f >= 0 ? raw.f : 0;
   const id = typeof raw.j === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(raw.j) ? raw.j : null;
-  return { shopId, provider: raw.provider, cart, prices: raw.prices, address, shipping: raw.shipping, fee, coupons, discount, total: raw.total, expiresAt: raw.exp, id };
+  const method = raw.provider === "komoju" && typeof raw.m === "string" && KOMOJU_TYPE_RE.test(raw.m) ? raw.m : null;
+  return { shopId, provider: raw.provider, cart, prices: raw.prices, address, shipping: raw.shipping, fee, method, coupons, discount, total: raw.total, expiresAt: raw.exp, id };
 }
 
 /**
@@ -539,7 +613,7 @@ export async function recheckQuote(
   quote: Quote,
 ): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" | "store_only" }> {
   const all = await priceCart(ctx.sf, ctx.shop, quote.cart);
-  const again = (cart: Cart) => createQuote(ctx, { ...cart, coupons: quote.coupons }, quote.provider, quote.address);
+  const again = (cart: Cart) => createQuote(ctx, { ...cart, coupons: quote.coupons }, quote.provider, quote.address, quote.method);
   // 確認のあとで店頭のみになった商品（0149）は、外して確認画面を出し直す
   const { priced, excluded } = checkoutPart(all);
   if (excluded.length > 0) return priced.lines.length === 0 ? { ok: false, error: "store_only" } : { ok: false, error: "changed", fresh: await again(priced.cart) };
@@ -551,7 +625,7 @@ export async function recheckQuote(
   const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, quote.address.state);
   const samePrices = priced.lines.every((l) => quote.prices[l.sku.id] === l.sku.price_jpy);
   // クーポンも判定し直す（期間が終わった・上限に達した・条件を満たさなくなったら、確認画面を出し直す）
-  const discount = await discountCart(ctx, priced, quote.coupons, shipping, quote.address.customer_email, quote.provider);
+  const discount = await discountCart(ctx, priced, quote.coupons, shipping, quote.address.customer_email, quote.provider, quote.method);
   const sameCoupons = discount.applied.length === quote.coupons.length && discount.applied.every((a) => quote.coupons.includes(a.code));
   // 代引き手数料も引き直す（決まり・上限・会員だけ。0157）
   const base = priced.subtotal + shipping - discount.total;
@@ -561,6 +635,10 @@ export async function recheckQuote(
     if (!cod.ok) return { ok: false, error: "changed", fresh: await again(priced.cart) };
     fee = cod.fee;
   }
+  // KOMOJU の種類の手数料も引き直す（0170）。種類が使えなくなったら確認画面を出し直す
+  const km = komojuChoice(ctx, quote.provider, quote.method, base);
+  if (!km.ok) return { ok: false, error: "changed", fresh: await again(priced.cart) };
+  fee += km.fee;
   if (!samePrices || shipping !== quote.shipping || !sameCoupons || discount.total !== quote.discount || fee !== quote.fee || base + fee !== quote.total) {
     return { ok: false, error: "changed", fresh: await again(priced.cart) };
   }
@@ -592,7 +670,17 @@ export function stripeMode(shop: PublicShop, bundled: BundledOption[], cfg: Conf
 }
 
 export interface PaymentSetup {
-  options: { stripe: boolean; komoju: boolean; amazon_pay: boolean; /** 代金引換（同梱モジュール cod が ON。金額・会員だけの判定は確認画面で） */ cod: boolean };
+  options: {
+    stripe: boolean;
+    komoju: boolean;
+    amazon_pay: boolean;
+    /** 代金引換（同梱モジュール cod が ON。金額・会員だけの判定は確認画面で） */ cod: boolean;
+    /**
+     * KOMOJU を種類ごとに並べる（0170、支払い方法の手数料の決まりがあるショップだけ）。provider には komoju:<type> を送る。
+     * fee: 一律の手数料（段は金額で変わるので null、決まりの無い種類は 0）
+     */
+    komoju_methods?: { type: string; name: string; fee: number | null }[];
+  };
   komoju: BundledOption | null;
   stripe: StripeMode;
   /** 同梱プラグイン「Amazon Pay」が有効 + 設定が揃っている（0130） */
@@ -614,7 +702,29 @@ export async function paymentSetup(sf: StorefrontData, shop: PublicShop, cfg: Co
   const amazonReady = amazon !== null && amazonPayConfigured(cfg) && Boolean(cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
   // 代金引換（0157）: モジュールが ON（ON にできるのは 0157 が当たってから）。確定は service_role の confirm_reservation
   const cod = codSettings(shop.settings) !== null && Boolean(cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
-  return { options: { stripe: stripe !== null, komoju: komojuReady, amazon_pay: amazonReady, cod }, komoju: komojuReady ? komoju : null, stripe, amazonPay: amazonReady ? amazon : null };
+  // 支払い方法の手数料（0170）: 決まりのあるショップは KOMOJU を種類ごとに並べる
+  const methods = komojuReady ? komojuMethods(shop.settings, parsePaymentTypes(komoju.settings)) : null;
+  const komojuMethodsOption = methods ? { komoju_methods: methods.map((m) => ({ type: m.type, name: komojuTypeLabel(m.type), fee: flatFee(m.rule) })) } : {};
+  return {
+    options: { stripe: stripe !== null, komoju: komojuReady, amazon_pay: amazonReady, cod, ...komojuMethodsOption },
+    komoju: komojuReady ? komoju : null,
+    stripe,
+    amazonPay: amazonReady ? amazon : null,
+  };
+}
+
+/** KOMOJU の受け付ける種類（プラグインの設定）。quote の文脈（QuoteContext.komojuTypes）に渡す */
+export function komojuTypesOf(setup: PaymentSetup): string[] {
+  return setup.komoju ? parsePaymentTypes(setup.komoju.settings) : [];
+}
+
+/** 種類つきの選び方が使えるか（0170）。種類を並べるショップは種類が要り、並べていないショップは種類を受けない */
+export function choiceAvailable(setup: PaymentSetup, choice: { provider: Provider; method: string | null }): boolean {
+  if (!providerAvailable(setup, choice.provider)) return false;
+  if (choice.provider !== "komoju") return choice.method === null;
+  const methods = setup.options.komoju_methods;
+  if (!methods) return choice.method === null;
+  return choice.method !== null && methods.some((m) => m.type === choice.method);
 }
 
 export function providerAvailable(setup: PaymentSetup, provider: Provider): boolean {
@@ -709,8 +819,10 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       customer_name: a.customer_name,
       shipping_address: { name: a.customer_name, phone: a.phone, postal_code: a.postal_code, country: "JP", state: a.state, city: a.city, line1: a.line1, line2: a.line2 || null },
       shipping_jpy: quote.shipping,
-      // 0157: 代引き手数料（確定のとき DB がショップの決まりで引き直す）
+      // 0157: 代引き手数料（確定のとき DB がショップの決まりで引き直す）。0170: KOMOJU の種類の手数料（値引きの後に DB が確かめる）
       ...(quote.fee > 0 ? { fee_jpy: quote.fee } : {}),
+      // 0170: 選んだ KOMOJU の種類（決済ページはこの種類だけ。確定のとき KOMOJU が知らせた種類と比べる）
+      ...(quote.provider === "komoju" && quote.method ? { payment_method: `komoju:${quote.method}` } : {}),
       // 0018: 注文の orders.delivery にトリガーで写る
       ...(a.delivery_date || a.delivery_slot ? { delivery: { date: a.delivery_date || null, slot: a.delivery_slot || null } } : {}),
       ...(input.customerId ? { customer_id: input.customerId, customer_epoch: input.customerEpoch ?? -1 } : {}),
@@ -765,6 +877,17 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     } catch (e) {
       await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
       if (e instanceof PrivilegedRpcError && (e.is("coupon_exhausted") || e.is("coupon_limit_reached") || e.is("coupon_unavailable"))) return { ok: false, error: "coupon" };
+      throw e;
+    }
+  }
+
+  // 支払い方法の手数料（0170）: 値引きを付けた後の金額で、DB がショップの決まりで確かめる（違えば確定しない）
+  if (quote.provider === "komoju" && quote.method && quote.fee > 0) {
+    try {
+      await deps.privileged.reservationPaymentFeeCheck(reservationId, shop.id);
+    } catch (e) {
+      await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
+      if (e instanceof PrivilegedRpcError && e.is("amount_mismatch")) return { ok: false, error: "price" };
       throw e;
     }
   }
@@ -838,13 +961,16 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     if (!deps.komoju) throw new Error("komoju not configured");
     // クーポンが支払い方法を絞っていれば、決済ページに出す種類もそれだけにする（設定の種類と重ねる）
     const configured = parsePaymentTypes(deps.setup.komoju?.settings ?? {});
-    const paymentTypes = discount.paymentTypes ? (configured.length > 0 ? configured.filter((x) => discount.paymentTypes!.includes(x)) : discount.paymentTypes) : configured;
+    // 確認画面で種類を選んだ（0170）: 決済ページはその種類だけ（選び直して手数料を外せないように）
+    const offered = quote.method ? [quote.method] : configured;
+    const paymentTypes = discount.paymentTypes ? (offered.length > 0 ? offered.filter((x) => discount.paymentTypes!.includes(x)) : discount.paymentTypes) : offered;
     if (discount.paymentTypes && paymentTypes.length === 0) {
       await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
       return { ok: false, error: "coupon" };
     }
     const session = await deps.komoju.createSession({
-      amountJpy: input.subtotal + quote.shipping - discount.total,
+      // 支払い方法の手数料（0170）を含む
+      amountJpy: input.subtotal + quote.shipping - discount.total + quote.fee,
       returnUrl: input.successUrl,
       reservationId,
       shopId: shop.id,

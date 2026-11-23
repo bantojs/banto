@@ -266,8 +266,8 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           summary: "カート + 配送先 → 最終確認の内容（confirmation）と quote",
           security: memberOptional,
           parameters: [shopPath],
-          requestBody: body(obj({ cart: str, provider: { type: "string", enum: ["stripe", "komoju", "amazon_pay", "cod"] }, address }, ["cart", "address"])),
-          responses: { 200: ok(quoted), 400: err("invalid_address（fields に不備の項目）・invalid_cart・invalid_request"), 401: err("invalid_member_token"), 409: err("empty_cart・stock・payment_unavailable・minimum_amount・cod_unavailable（reason: fee・max_total・members_only）"), ...common },
+          requestBody: body(obj({ cart: str, provider: { type: "string", pattern: "^(stripe|komoju|amazon_pay|cod|komoju:[a-z_]{1,40})$", description: "決済手段。支払い方法の手数料を決めたショップ（0170、payments.komoju_methods がある）では KOMOJU は種類つき（komoju:konbini など）だけ" }, address }, ["cart", "address"])),
+          responses: { 200: ok(quoted), 400: err("invalid_address（fields に不備の項目）・invalid_cart・invalid_request"), 401: err("invalid_member_token"), 409: err("empty_cart・stock・payment_unavailable・minimum_amount・cod_unavailable（reason: fee・max_total・members_only）・payment_method（KOMOJU の種類が要る・使えない、0170）"), ...common },
         },
       },
       "/shops/{shop}/checkout": {

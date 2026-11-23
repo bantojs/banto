@@ -27,6 +27,7 @@ import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, ret
 import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, optionsHaveSeparator, optionsText, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
 import { customerFields } from "../../customers/fields";
 import { COD_MIGRATION, enabledModules, moduleEnabled } from "../../modules/registry";
+import { PAYMENT_FEES_MIGRATION } from "../../commerce/payment-fees";
 import { CHECKOUT_MEMBERS_ONLY_MIGRATION } from "../../commerce/checkout";
 import { migrated } from "../../db/migration-state";
 import { normalizeDomain, shopHome } from "../../storefront/urls";
@@ -398,7 +399,7 @@ function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined 
 }
 
 /** 決済: Stripe の状態と、ほかの決済（プラグイン）への案内。保存する欄は無い（Stripe Connect のつなぐ・外すだけ） */
-function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; codReady: boolean }) {
+function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeConnectConfigured: boolean; stripeDirectEnabled: boolean; codReady: boolean; /** 0170: KOMOJU の支払い方法ごとの手数料 */ payFeesReady?: boolean }) {
   const { shop } = props;
   return (
     <>
@@ -442,6 +443,11 @@ function PaymentsSection(props: { shop: ShopRow; publicBaseUrl: string; stripeCo
         <p class="muted">
           {t("settings.payments_others_hint")} <a href={`/admin/shops/${shop.id}/plugins`}>{t("plugins.title")}</a>
         </p>
+        {props.payFeesReady ? (
+          <p>
+            <a href={`/admin/shops/${shop.id}/payment-fees`}>{t("payfees.link")}</a>
+          </p>
+        ) : null}
       </section>
       {/* 0157 を当てる前は出さない（モジュールの画面も出ない） */}
       {props.codReady ? (
@@ -894,7 +900,7 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
       const cfg = c.get("adapters").config;
       const stripeKeySet = Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_WEBHOOK_SECRET"));
       const direct = await owner(c).db.from<{ id: string; enabled: boolean }>("hook_endpoints").selectOne("id,enabled", { eq: { shop_id: shop.id, url: bundledPluginUrl("stripe") } });
-      body = <PaymentsSection shop={shop} publicBaseUrl={base} stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))} stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet} codReady={await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COD_MIGRATION)} />;
+      body = <PaymentsSection shop={shop} publicBaseUrl={base} stripeConnectConfigured={Boolean(cfg.get("STRIPE_SECRET_KEY") && cfg.get("STRIPE_CLIENT_ID"))} stripeDirectEnabled={Boolean(direct?.enabled) && stripeKeySet} codReady={await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, COD_MIGRATION)} payFeesReady={await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_FEES_MIGRATION)} />;
       break;
     }
     case "members":
