@@ -320,6 +320,7 @@ export class ApiService {
   };
   /**
    * 項目の定義（0145）。product = 商品の項目（products:read / write）、customer = 会員の項目（customers:read / write）。
+   * 読み取りは 0169 から書き込みのスコープでも、会員は customers:links でも（DB の api_field_defs_get）。
    * 読み取りは管理画面と同じ読み手（fieldDefinitions）を通す。書き込みは丸ごと置き換えで、形の検査は DB
    */
   fieldDefsGet = async (kind: "product" | "customer") => {

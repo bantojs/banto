@@ -38,6 +38,18 @@ async function get(app: ReturnType<typeof appWith>, tok: string, query = "", key
 }
 
 describe("GET /api/v1/customers/links", () => {
+  it("同じトークンで会員の項目の定義も読める（0169）", async () => {
+    const { sb, shop, app } = setup();
+    (sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, unknown>)["customer_fields"] = [{ key: "card_no", label: "会員カード", type: "text" }];
+    for (const scopes of [["customers:links"], ["customers:write"]]) {
+      const res = await app.request(`${BASE}/api/v1/customer-fields`, { headers: { authorization: `Bearer ${await issue(sb, shop.id, scopes)}` } });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { fields: { key: string }[] }).fields.map((f) => f.key)).toEqual(["card_no"]);
+    }
+    const res = await app.request(`${BASE}/api/v1/customer-fields`, { headers: { authorization: `Bearer ${await issue(sb, shop.id, ["products:read"])}` } });
+    expect(res.status).toBe(401);
+  });
+
   it("customers:links だけで読める。customers:read だけでは読めない", async () => {
     const { sb, shop, app } = setup();
     addMember(sb, shop.id, 1);
