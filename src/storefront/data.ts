@@ -91,7 +91,7 @@ export interface PublicShop {
 export const PUBLIC_PRODUCT_COLUMNS = "id,shop_id,slug,name,description,published,created_at,updated_at,tags,category_id,brand,tax_class,extra_category_ids";
 
 /** お客様の画面に渡す settings の鍵（0028 の banto_shop_public_settings と同じ。足すときは SQL と test/fake-supabase.ts も揃える） */
-export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent", "page_layouts", "cod", "checkout_members_only"] as const;
+export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent", "page_layouts", "cod", "checkout_members_only", "payment_fees"] as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 

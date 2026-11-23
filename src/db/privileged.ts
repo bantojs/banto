@@ -54,6 +54,8 @@ export interface OrderInput {
   currency?: string | null;
   /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"、Amazon Pay は "amazon_pay"）。返金はこの口座で行う */
   payment_account?: string | null;
+  /** 決済事業者が知らせた支払い方法の種類（0170。KOMOJU の payment_details.type）。確認画面で選んだ種類と違えば amount_mismatch */
+  payment_type?: string | null;
 }
 
 /** 在庫予約の上限の材料（0029）。quote は 1 回限り、同じ人・同じ IP の未確定の予約に上限 */
@@ -266,6 +268,8 @@ export interface PrivilegedDb {
   reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null, customerId?: string | null): Promise<string>;
   /** 予約を注文に変換（冪等）。戻り値は order id */
   confirmReservation(reservationId: string, shopId: string, order: OrderInput): Promise<string>;
+  /** 予約の支払い方法の手数料をショップの決まりで確かめる（0170。値引きを付けた後、決済ページを作る前）。違えば amount_mismatch */
+  reservationPaymentFeeCheck(reservationId: string, shopId: string): Promise<number>;
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
   attachReservationCustomer(reservationId: string, shopId: string, customer: ReservationCustomer): Promise<void>;
   /** クーポンのコードからキャンペーンを引く（0010）。subject があればその人の使用回数も返す */
@@ -592,6 +596,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       }),
     confirmReservation: (reservationId, shopId, order) =>
       rpc<string>("confirm_reservation", { p_reservation_id: reservationId, p_shop_id: shopId, p_order: order }),
+    reservationPaymentFeeCheck: (reservationId, shopId) => rpc<number>("reservation_payment_fee_check", { p_reservation_id: reservationId, p_shop_id: shopId }),
     attachReservationCustomer: (reservationId, shopId, customer) =>
       rpc<void>("attach_reservation_customer", { p_reservation_id: reservationId, p_shop_id: shopId, p_customer: customer }),
     couponLookup: (shopId, codes, subject, customerId) => rpc("coupon_lookup", { p_shop_id: shopId, p_codes: codes, p_subject: subject, ...(customerId ? { p_customer_id: customerId } : {}) }),

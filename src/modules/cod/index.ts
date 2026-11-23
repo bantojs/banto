@@ -6,21 +6,19 @@
  * 答え合わせの表（test/fixtures/cod-fee-cases.ts）で縛る。確定のとき DB が引き直し、1 円でも違えば確定しない。
  */
 import { COD_MIGRATION, moduleEnabled } from "../registry";
+import { FEE_MAX, FEE_MAX_TIERS, FEE_UPTO_MAX, feeOfRule, feeTiers, type FeeTier } from "../../commerce/payment-fees";
 
 export { COD_MIGRATION };
 export const COD_MODULE = "cod";
 export const COD_PROVIDER = "cod";
 /** 上限金額（合計・手数料込み）の既定。運送会社の代引きの一般的な上限 */
 export const COD_DEFAULT_MAX_TOTAL = 300_000;
-export const COD_MAX_TIERS = 10;
-export const COD_FEE_MAX = 100_000;
-export const COD_UPTO_MAX = 10_000_000;
+// 決まりの形（一律か金額の段）は支払い方法の手数料（0170、src/commerce/payment-fees.ts）と共通
+export const COD_MAX_TIERS = FEE_MAX_TIERS;
+export const COD_FEE_MAX = FEE_MAX;
+export const COD_UPTO_MAX = FEE_UPTO_MAX;
 
-export interface CodTier {
-  /** この金額（手数料の対象の金額、円）まで */
-  upto: number;
-  fee: number;
-}
+export type CodTier = FeeTier;
 
 export interface CodSettings {
   fee_type: "flat" | "tiers";
@@ -40,21 +38,8 @@ export const COD_NOTE_MAX = 500;
 
 const intIn = (v: unknown, lo: number, hi: number): number | null => (typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi ? v : null);
 
-/** 段の有効なもの（10 個まで・形の違う値は捨てる）を upto の小さい順に。DB の banto_cod_fee と同じ */
-export function codTiers(raw: unknown): CodTier[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .slice(0, COD_MAX_TIERS)
-    .map((t, i) => {
-      const o = t && typeof t === "object" && !Array.isArray(t) ? (t as Record<string, unknown>) : {};
-      const upto = intIn(o["upto"], 1, COD_UPTO_MAX);
-      const fee = intIn(o["fee"], 0, COD_FEE_MAX);
-      return upto === null || fee === null ? null : { upto, fee, i };
-    })
-    .filter((t): t is CodTier & { i: number } => t !== null)
-    .sort((a, b) => a.upto - b.upto || a.i - b.i)
-    .map(({ upto, fee }) => ({ upto, fee }));
-}
+/** 段の有効なもの（10 個まで・形の違う値は捨てる）を upto の小さい順に。DB の banto_fee_rule と同じ */
+export const codTiers = feeTiers;
 
 /** 設定を読む（形の違う値は既定）。モジュールが OFF でも読む（画面用）。ON かどうかは codSettings */
 export function readCodSettings(settings: Record<string, unknown> | null | undefined): CodSettings {
@@ -85,13 +70,8 @@ export function codNote(settings: Record<string, unknown> | null | undefined): s
  * DB の banto_cod_fee(settings, amount) と同じ（settings はショップの settings をそのまま）
  */
 export function codFee(settings: Record<string, unknown> | null | undefined, amount: number): number | null {
-  if (!Number.isInteger(amount) || amount < 0) return null;
-  const s = readCodSettings(settings);
-  if (s.fee_type === "tiers") {
-    const tier = s.fee_tiers.find((t) => amount <= t.upto);
-    return tier ? tier.fee : null;
-  }
-  return s.fee_jpy;
+  // 決まりの読み方は支払い方法の手数料と共通（feeOfRule。DB は banto_cod_fee → banto_fee_rule）
+  return feeOfRule((settings ?? {})["cod"], amount);
 }
 
 export type CodBlock = "module" | "fee" | "max_total" | "members_only";

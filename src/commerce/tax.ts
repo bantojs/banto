@@ -88,7 +88,7 @@ export function orderTaxBreakdown(
   order: {
     shipping_jpy?: number | null;
     discount_jpy?: number | null;
-    /** 代引き手数料（0157）。送料と同じ標準税率（注文の時点の shipping_tax_rate）、値引きの対象にしない */
+    /** 手数料（代引き 0157・KOMOJU の支払い方法 0170）。送料と同じ標準税率（注文の時点の shipping_tax_rate）、値引きの対象にしない */
     fee_jpy?: number | null;
     shipping_tax_rate?: number | string | null;
     tax_rounding?: string | null;

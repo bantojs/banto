@@ -5,6 +5,7 @@
  */
 import { orderTaxBreakdown, type TaxGroup } from "../../commerce/tax";
 import { RECEIPT_STATUSES, receiptSettings, type ReceiptOrder } from "./render";
+import { feeLabelFor } from "../../commerce/payment-fees";
 
 export interface ReceiptData {
   /** qualified_simplified_invoice = 適格簡易請求書（登録番号あり）、receipt = 領収書 */
@@ -17,8 +18,12 @@ export interface ReceiptData {
   order_date: string;
   items: { name: string; sku: string | null; qty: number; unit_price_jpy: number; line_total_jpy: number; reduced: boolean }[];
   shipping_jpy: number;
-  /** 代引き手数料（0157）。代金引換でなければ 0 */
+  /** 手数料（代金引換の手数料 0157・KOMOJU の支払い方法の手数料 0170）。無ければ 0 */
   fee_jpy: number;
+  /** 手数料の見出し（代金引換は「代引き手数料」、KOMOJU は「お支払い手数料」）。手数料が無ければ null */
+  fee_label: string | null;
+  /** 支払い方法（stripe / komoju / amazon_pay / cod / free など）。手数料の種類を見分けるため */
+  payment_provider: string | null;
   discounts: { code: string; name: string; amount_jpy: number }[];
   total_jpy: number;
   tax: TaxGroup[];
@@ -43,6 +48,8 @@ export function receiptData(shop: { name: string; settings?: Record<string, unkn
     items: order.items.map((i) => ({ name: i.name, sku: i.sku ?? null, qty: i.qty, unit_price_jpy: i.unit_price_jpy, line_total_jpy: i.unit_price_jpy * i.qty, reduced: reduced(i.tax_rate) })),
     shipping_jpy: order.shipping_jpy ?? 0,
     fee_jpy: order.fee_jpy ?? 0,
+    fee_label: (order.fee_jpy ?? 0) > 0 ? feeLabelFor(order.payment_provider) : null,
+    payment_provider: order.payment_provider ?? null,
     discounts: order.discounts ?? [],
     total_jpy: order.total_jpy,
     tax: orderTaxBreakdown(order, shop.settings),

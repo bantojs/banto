@@ -9,6 +9,7 @@ import { publicBaseUrl } from "../common";
 import { owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
+import { paymentFeesReady } from "./payment-fees";
 
 /**
  * 同梱プラグイン（/admin/shops/:shopId/plugins）。有効化 = hooks の送信先行（URL は内部マーカー）を作る。
@@ -31,6 +32,9 @@ plugins.get("/:shopId/plugins", requireOwner, async (c: AdminContext) => {
   const byUrl = new Map(rows.map((r) => [r.url, r]));
   const cfg = c.get("adapters").config;
   const base = publicBaseUrl(c);
+  // KOMOJU の支払い方法ごとの手数料（0170）の入口。設定の項目 settings を持つ人だけ・0170 の後だけ
+  const access = c.get("shopAccess");
+  const feesLink = (!access || access.role !== "member" || access.perms.includes("settings")) && (await paymentFeesReady(c));
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("plugins.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins" }}>
       <PageHead title={t("plugins.title")} sub={t("plugins.intro")}>
@@ -58,6 +62,11 @@ plugins.get("/:shopId/plugins", requireOwner, async (c: AdminContext) => {
             {p.id === "line_notify" || p.id === "line_buyer_notify" ? (
               <p class="muted">
                 <a href={`/admin/shops/${shop.id}/line-messaging`}>{t("linemsg.card_link")}</a>
+              </p>
+            ) : null}
+            {p.id === "komoju" && feesLink ? (
+              <p class="muted">
+                <a href={`/admin/shops/${shop.id}/payment-fees`}>{t("payfees.link")}</a>
               </p>
             ) : null}
             {p.id === "email_resend" ? <p class="muted">{tf("plugins.mail_transport", { name: mailTransportName(cfg) ?? `${cfg.get("MAIL_TRANSPORT")} (?)` })}</p> : null}

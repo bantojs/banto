@@ -6,7 +6,7 @@ import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
-import { anyProvider, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
+import { anyProvider, choiceAvailable, komojuTypesOf, parsePaymentChoice, type PaymentSetup, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
@@ -177,19 +177,24 @@ commerceApi.post("/shops/:shop/checkout/quote", async (c: Ctx) => {
   if (!body) return c.json({ error: "invalid_request" }, 400);
   const cart = await openCartToken(s.secret, body.cart);
   if (!cart) return c.json({ error: "invalid_cart" }, 400);
-  const provider = body.provider ?? "stripe";
-  if (!isProvider(provider)) return c.json({ error: "invalid_request", field: "provider" }, 400);
+  // KOMOJU は種類つき（komoju:konbini、0170 の支払い方法の手数料）でも受ける。種類を並べるショップは種類が要る
+  const choice = parsePaymentChoice(body.provider ?? "stripe");
+  if (!choice) return c.json({ error: "invalid_request", field: "provider" }, 400);
+  const provider = choice.provider;
   const setup = await paymentSetup(s.sf, s.shop, c.get("adapters").config);
   if (!providerAvailable(setup, provider)) return c.json({ error: "payment_unavailable", payments: setup.options }, 409);
+  if (!choiceAvailable(setup, choice)) return c.json({ error: "payment_method", payments: setup.options }, 409);
   // 注文は会員だけのショップ（0165）: 会員トークンが無ければ断る（連携側はログイン・会員登録に回す）
   if (checkoutMembersOnly(s.shop.settings) && !s.member) return c.json({ error: "member_required" }, 403);
   const address = body.address && typeof body.address === "object" ? (body.address as Record<string, unknown>) : {};
-  const r = await createQuote(quoteContext(s), cart, provider, address);
+  const r = await createQuote(quoteContext(s, setup), cart, provider, address, choice.method);
   if (!r.ok) {
     if (r.error === "invalid_address") return c.json({ error: "invalid_address", fields: r.invalid }, 400);
     // minimum_amount: 値引き後の支払い額が決済の最低額（50 円）未満
     // cod_unavailable: 代金引換を選べない（reason: fee = 手数料の段に当たらない / max_total = 上限を超える / members_only = 会員だけ。0157）
     if (r.error === "cod_unavailable") return c.json({ error: r.error, reason: r.cod ?? "module" }, 409);
+    // payment_method: KOMOJU の種類が使えない（手数料の段に当たらない・並べていない種類。0170）
+    if (r.error === "payment_method") return c.json({ error: r.error, payments: setup.options }, 409);
     return c.json({ error: r.error }, 409);
   }
   // excluded: 購入手続きから外した店頭のみの商品の SKU（0149。カートのトークンには残っている）
@@ -206,9 +211,10 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   if (!quote) return c.json({ error: "invalid_quote" }, 400);
   const setup = await paymentSetup(s.sf, s.shop, c.get("adapters").config);
   if (!providerAvailable(setup, quote.provider)) return c.json({ error: "payment_unavailable", payments: setup.options }, 409);
-  const check = await recheckQuote(quoteContext(s), quote);
+  const check = await recheckQuote(quoteContext(s, setup), quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return c.json({ error: "changed", quote: check.fresh.token, expires_at: new Date(check.fresh.quote.expiresAt * 1000).toISOString(), confirmation: check.fresh.confirmation }, 409);
+    if (check.error === "changed" && !check.fresh.ok && check.fresh.error === "payment_method") return c.json({ error: "payment_method", payments: setup.options }, 409);
     return c.json({ error: check.error === "store_only" ? "store_only" : "stock" }, 409);
   }
   const deps = placeOrderDeps(c, setup);
@@ -269,6 +275,6 @@ commerceApi.get("/shops/:shop/checkout/status", async (c: Ctx) => {
   return c.json(r, 200, { "cache-control": "no-store" });
 });
 
-function quoteContext(s: Scope): QuoteContext {
-  return { sf: s.sf, shop: s.shop, secret: s.secret, baseUrl: s.base, coupons: s.coupons, member: s.member, consent: s.consent };
+function quoteContext(s: Scope, setup: PaymentSetup): QuoteContext {
+  return { sf: s.sf, shop: s.shop, secret: s.secret, baseUrl: s.base, coupons: s.coupons, member: s.member, consent: s.consent, komojuTypes: komojuTypesOf(setup) };
 }

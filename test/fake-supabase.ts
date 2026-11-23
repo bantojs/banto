@@ -15,6 +15,7 @@ import { publicShopSettings } from "../src/storefront/data";
 import { audienceDisplayOnly, audienceOk } from "../src/members/audience";
 import { legalLinksOf } from "../src/storefront/legal-links";
 import { codFee, readCodSettings } from "../src/modules/cod";
+import { komojuFee } from "../src/commerce/payment-fees";
 
 /** PostgREST の db-max-rows（Supabase の既定）。本物と同じく 1 回の応答をここまでで切る */
 const FAKE_MAX_ROWS = 1000;
@@ -4642,14 +4643,17 @@ export class FakeSupabase {
     if (fn === "attach_reservation_customer") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"] && r["status"] === "pending");
       if (!res) return json({ code: "P0001", message: "reservation_not_found" }, 400);
-      const { shipping_jpy, fee_jpy, customer_id, customer_epoch, ...customer } = (args["p_customer"] ?? {}) as Row;
+      const { shipping_jpy, fee_jpy, payment_method, customer_id, customer_epoch, ...customer } = (args["p_customer"] ?? {}) as Row;
       if (customer_id && !this.tables.customers.some((c) => c["shop_id"] === args["p_shop_id"] && c["id"] === customer_id && Number(c["session_epoch"] ?? 0) === Number(customer_epoch ?? -1))) {
         return json({ code: "P0001", message: "member_session_invalid" }, 400);
       }
       res["customer"] = customer;
       res["shipping_jpy"] = Number(shipping_jpy ?? 0);
-      // 0157: 代引き手数料
+      // 0157: 代引き手数料。0170: 選んだ支払い方法（KOMOJU の種類）、手数料はまだ確かめていない
       res["fee_jpy"] = Number(fee_jpy ?? 0);
+      if (payment_method !== undefined && !/^[a-z_]{1,40}(:[a-z_]{1,40})?$/.test(String(payment_method))) return json({ code: "P0001", message: "invalid_payment_method" }, 400);
+      res["payment_method"] = payment_method ?? null;
+      res["fee_checked"] = false;
       res["customer_id"] = customer_id ?? null;
       return new Response(null, { status: 204 });
     }
@@ -4826,6 +4830,20 @@ export class FakeSupabase {
       }
       return json(n);
     }
+    // 0170: 予約の手数料をショップの決まりで確かめる（値引きの後）
+    if (fn === "reservation_payment_fee_check") {
+      const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"] && r["status"] === "pending");
+      if (!res) return json({ code: "P0001", message: "reservation_not_found" }, 400);
+      const method = String(res["payment_method"] ?? "");
+      if (!/^komoju:[a-z_]{1,40}$/.test(method)) return json({ code: "P0001", message: "amount_mismatch" }, 400);
+      const items = res["items"] as { qty: number; unit_price_jpy: number }[];
+      const base = Math.max(0, items.reduce((n, it) => n + it.qty * it.unit_price_jpy, 0) + Number(res["shipping_jpy"] ?? 0) - Number(res["discount_jpy"] ?? 0));
+      const settings = (this.tables.shops.find((x) => x["id"] === res["shop_id"])?.["settings"] ?? {}) as Row;
+      const want = komojuFee(settings, method.slice(7), base);
+      if (want === null || want !== Number(res["fee_jpy"] ?? 0)) return json({ code: "P0001", message: "amount_mismatch" }, 400);
+      res["fee_checked"] = true;
+      return json(want);
+    }
     if (fn === "confirm_reservation") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"]);
       if (!res) return fail("reservation_not_found");
@@ -4843,7 +4861,12 @@ export class FakeSupabase {
       // 0157: 代金引換は手数料をショップの決まりで引き直し、受付（未入金）で確定する。受け取る額は 0
       const fee = Number(res["fee_jpy"] ?? 0);
       const cod = order["payment_provider"] === "cod";
-      if (fee !== 0 && !cod) return fail("amount_mismatch");
+      // 0170: 手数料つきは KOMOJU の種類を選んで確かめた予約だけ。KOMOJU が知らせた種類が違えば確定しない
+      const method = String(res["payment_method"] ?? "");
+      if (fee !== 0 && !cod && (order["payment_provider"] !== "komoju" || !/^komoju:[a-z_]{1,40}$/.test(method) || res["fee_checked"] !== true)) return fail("amount_mismatch");
+      // 種類を選んだ予約は手数料が 0 でも確かめてから（0170）
+      if (!cod && /^komoju:[a-z_]{1,40}$/.test(method) && res["fee_checked"] !== true) return fail("amount_mismatch");
+      if (order["payment_provider"] === "komoju" && /^komoju:/.test(method) && typeof order["payment_type"] === "string" && order["payment_type"] !== "" && order["payment_type"] !== method.slice(7)) return fail("amount_mismatch");
       const expected = base + fee;
       if (cod) {
         const settings = (this.tables.shops.find((x) => x["id"] === res["shop_id"])?.["settings"] ?? {}) as Row;

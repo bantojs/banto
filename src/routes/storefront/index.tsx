@@ -44,7 +44,7 @@ import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import type { CodBlock } from "../../modules/cod";
 import { loginUrlFor } from "../../members/return-path";
-import { ADDRESS_FIELDS, PROVIDERS, checkoutMembersOnly, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, PROVIDERS, checkoutMembersOnly, choiceAvailable, komojuTypesOf, parsePaymentChoice, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
 import { bindScope, checkoutMember, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
@@ -1064,6 +1064,8 @@ const CART_ERRORS: Record<string, MessageKey> = {
   store_only: "store.checkout_error_store_only",
   coupon: "store.checkout_error_coupon",
   minimum: "store.checkout_error_minimum",
+  // KOMOJU の種類を選んでいない・使えない（0170）
+  payment_method: "store.checkout_error_payment_method",
   // 代金引換（0157）で買えない理由
   cod_max_total: "cod.error_max_total",
   cod_members_only: "cod.error_members_only",
@@ -1536,8 +1538,12 @@ async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): P
   // 注文は会員だけのショップ（0165）: ゲストはログイン（その場で会員登録）へ回し、済んだらカートへ戻す
   if (checkoutMembersOnly(s.shop.settings) && !s.ctx.member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
   const setup = await paymentOptions(c, s);
-  const provider = f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe";
-  if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
+  // KOMOJU は種類つき（komoju:konbini、0170 の支払い方法の手数料）でも受ける。「修正する」は method で送ってくる
+  const choice = parsePaymentChoice(f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe");
+  const method = choice?.provider === "komoju" && choice.method === null && f.method ? f.method : (choice?.method ?? null);
+  if (!choice || !providerAvailable(setup, choice.provider)) return c.redirect(cartUrl);
+  if (!choiceAvailable(setup, { provider: choice.provider, method })) return c.redirect(`${cartUrl}?error=payment_method`);
+  const provider = choice.provider;
   const { lines: all, total } = await cartLines(s);
   // 店頭のみの商品（0149）は購入手続きに含めない（カートには残る）。それしか無ければカートに戻して知らせる
   const lines = all.filter((l) => !l.storeOnly);
@@ -1546,7 +1552,7 @@ async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): P
   const edited = addressValues(f);
   const member = s.ctx.membersEnabled ? await checkoutMember(c, s) : null;
   const values = Object.keys(edited).length > 0 ? edited : (member?.values ?? {});
-  return addressPage(c, s, { provider, values, subtotal: total, lines, member });
+  return addressPage(c, s, { provider, method, values, subtotal: total, lines, member });
 }
 
 /**
@@ -1563,9 +1569,9 @@ async function saveAddressMode(c: Ctx, s: ShopScope, member?: { hasAddress: bool
 }
 
 /** 配送先の画面（Liquid のテーマの templates/checkout、無ければ既定のテーマ） */
-async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400; member?: { hasAddress: boolean | null } | null }): Promise<Response> {
+async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; method?: string | null; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400; member?: { hasAddress: boolean | null } | null }): Promise<Response> {
   const saveAddress = await saveAddressMode(c, s, p.member);
-  const props = { provider: p.provider, values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), saveAddress, ...(p.error ? { error: p.error } : {}) };
+  const props = { provider: p.provider, ...(p.method ? { method: p.method } : {}), values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), saveAddress, ...(p.error ? { error: p.error } : {}) };
   const lt = await liquidThemeFor(c, s, { cartLines: p.lines });
   if (lt) {
     const res = renderCheckoutAddress(c, s, lt, { ...props, categories: await s.sf.listCategories(s.shop), ...(p.status ? { status: p.status } : {}) });
@@ -1603,20 +1609,22 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
   // 注文は会員だけのショップ（0165）: 配送先・確定のどちらの段でも、ゲストはログインへ回す
   if (checkoutMembersOnly(s.shop.settings) && !member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
-  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop) };
+  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop), komojuTypes: komojuTypesOf(setup) };
   const f = await formFields(c);
+  // KOMOJU の種類（0170、配送先の画面が隠しの値 method で送る）
+  const method = provider === "komoju" && f.method ? f.method : null;
 
   // 1. 配送先 → 最終確認画面
   if (f.quote === undefined) {
-    const r = await createQuote(qctx, s.cart, provider, f);
+    const r = await createQuote(qctx, s.cart, provider, f, method);
     if (!r.ok && r.error === "invalid_address") {
       const { total: subtotal, lines: all } = await cartLines(s);
       // 最初の配送先の画面と同じく、店頭のみの行（0149）は出さない
       const lines = all.filter((l) => !l.storeOnly);
       const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
-      return addressPage(c, s, { provider, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
+      return addressPage(c, s, { provider, method, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
     }
-    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : r.error === "store_only" ? "store_only" : r.error === "cod_unavailable" ? codCartError(r.cod) : "stock"}`);
+    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : r.error === "store_only" ? "store_only" : r.error === "cod_unavailable" ? codCartError(r.cod) : r.error === "payment_method" ? "payment_method" : "stock"}`);
     const conf = r.confirmation;
     track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
     // 店頭のみの商品（0149）を外したときは、確認画面で知らせる（カートには残っている）
@@ -1630,6 +1638,8 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   const check = await recheckQuote(qctx, quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, lines: check.fresh.lines, error: t("confirm.changed"), status: 409 });
+    // 作り直しが支払い方法で断られた（手数料の決まりができた後の古い確認・種類を外した）ときは在庫ではなく支払い方法の誤り
+    if (check.error === "changed" && !check.fresh.ok && check.fresh.error === "payment_method") return c.redirect(`${cartUrl}?error=payment_method`);
     return c.redirect(`${cartUrl}?error=${check.error === "store_only" ? "store_only" : "stock"}`);
   }
   const deps = placeOrderDeps(c, setup);

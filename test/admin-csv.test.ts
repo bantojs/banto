@@ -38,7 +38,7 @@ describe("CSV の書き出しの列と範囲", () => {
     const { app, base } = setup();
     const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
     const acc = await (await b.get(`${base}/orders.csv?preset=accounting`)).text();
-    expect(lines(acc)[0]).toBe("注文番号,日時,状態,決済,決済参照,合計,送料,値引き,代引き手数料,入金,クーポン");
+    expect(lines(acc)[0]).toBe("注文番号,日時,状態,決済,決済参照,合計,送料,値引き,手数料,入金,クーポン");
     expect(acc).not.toContain("example.com");
     const sold = lines(await (await b.get(`${base}/orders.csv?preset=sold&status=paid`)).text());
     expect(sold[0]).toBe("注文番号,日時,品番,商品,数量,単価,小計");
