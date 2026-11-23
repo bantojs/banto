@@ -6,7 +6,7 @@ import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
-import { anyProvider, STATUS_QUERY_PARAM, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
+import { anyProvider, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
 import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
@@ -181,6 +181,8 @@ commerceApi.post("/shops/:shop/checkout/quote", async (c: Ctx) => {
   if (!isProvider(provider)) return c.json({ error: "invalid_request", field: "provider" }, 400);
   const setup = await paymentSetup(s.sf, s.shop, c.get("adapters").config);
   if (!providerAvailable(setup, provider)) return c.json({ error: "payment_unavailable", payments: setup.options }, 409);
+  // 注文は会員だけのショップ（0165）: 会員トークンが無ければ断る（連携側はログイン・会員登録に回す）
+  if (checkoutMembersOnly(s.shop.settings) && !s.member) return c.json({ error: "member_required" }, 403);
   const address = body.address && typeof body.address === "object" ? (body.address as Record<string, unknown>) : {};
   const r = await createQuote(quoteContext(s), cart, provider, address);
   if (!r.ok) {
@@ -239,6 +241,7 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
     if (placed.error === "coupon") return c.json({ error: "coupon_unavailable" }, 409);
     // 会員のトークンが古い（全端末からログアウトした後）。連携側はログインし直す
     if (placed.error === "member") return c.json({ error: "invalid_member_token" }, 401);
+    if (placed.error === "member_required") return c.json({ error: "member_required" }, 403);
     // 0099: 会員価格が最終確認のあとで変わった（決まりやランクが変わった）。quote を作り直して見せ直す
     if (placed.error === "price") return c.json({ error: "price_changed" }, 409);
     return c.json({ error: "payment_failed" }, 502);

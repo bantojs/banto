@@ -678,7 +678,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon }) {
+  CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon, loginRequired }) {
     // 店頭のみの行（0149）だけのカートは購入手続きに進めない（お店で試着で申し込む）。在庫不足は購入手続きに進む行だけで見る
     const buyable = lines.filter((l) => !l.storeOnly);
     const checkoutEnabled = (payments.stripe || payments.komoju || payments.amazon_pay || payments.cod === true) && buyable.length > 0;
@@ -687,6 +687,11 @@ export const defaultTheme: Theme = {
       <Layout title={t("store.cart")} ctx={ctx} seo={{ noindex: true }}>
         <h1>{t("store.cart")}</h1>
         {error ? <p class="error">{error}</p> : null}
+        {loginRequired && lines.length > 0 ? (
+          <p class="notice">
+            {t("store.checkout_members_only")} <a href={loginRequired}>{t("store.checkout_login")}</a>
+          </p>
+        ) : null}
         {lines.length === 0 ? (
           <p>
             {t("store.cart_empty")} <a href={ctx.shopPath || "/"}>{t("store.continue")}</a>

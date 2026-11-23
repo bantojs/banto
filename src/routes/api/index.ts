@@ -1,4 +1,5 @@
 import { eventsApi } from "../../modules/event-relay/routes";
+import { checkoutMembersOnly } from "../../commerce/checkout";
 import { CARE_MODULE, productCareView } from "../../care-labels/care";
 import { moduleEnabled } from "../../modules/registry";
 import { dialogsApi } from "../../modules/dialogs/api";
@@ -94,7 +95,8 @@ api.get("/shops/:shop", async (c: Ctx) => {
   const shop = await d.sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
   // legal_links: 法務のページを連携サイトに向けていて、最後の確認で生きていた外の URL（0062。無ければ空）
-  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy, legal_links: shop.legal_links ?? {} } });
+  // checkout_members_only: 注文に会員トークンが要るショップか（0165。連携側はカートの段階でログイン・会員登録に回せる）
+  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy, legal_links: shop.legal_links ?? {}, checkout_members_only: checkoutMembersOnly(shop.settings) } });
 });
 
 /**

@@ -397,6 +397,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 | 409 | `plan_limit_exceeded` | 初めての方の登録が、この Banto のプランの会員数の上限（0052）に達した（verify）。お店に知らせる |
 | 429 | `plan_limit_exceeded` | この Banto のプランの 1 日のメール（ログインのコード・招待）の上限（0053）に達した（login）。しばらくしてからやり直す |
 | 401 | `invalid_member_token` | トークンが確かめられない（期限切れ・改ざん・他店のトークン・全端末からログアウトした後）。refresh して呼び直す。黙ってゲスト扱いにはしない |
+| 403 | `member_required` | 注文は会員だけのショップ（0165）で、会員トークンを付けずに購入手続き（`/checkout/quote`・`/checkout`）を呼んだ。ログイン（初めてならその場で会員登録）に回す。ショップがそうかは `GET /api/shops/<ショップ>` の `shop.checkout_members_only` で分かる |
 | 401 | `invalid_refresh_token` | refresh できない（期限切れ・退会・ログアウト・全端末からログアウトした後・`0045` より前に発行した refresh）。login からやり直す |
 | 401 | `refresh_token_reused` | 前の refresh を使い回した。その端末のログインを取り消した。login からやり直す |
 | 502 | `mail_failed` | メールを送れなかった |
