@@ -454,7 +454,7 @@ X-Banto-Link-Key: <連携側で決めた秘密の値（ASCII の見える文字�
 ```json
 {
   "items": [
-    { "id": "…", "line_link": "3f1a…（64 文字）", "external_ref": { "provider": "pocket", "id": "C001" }, "attributes": { "rank": "gold" }, "updated_at": "2026-11-23T01:00:00+00:00" }
+    { "id": "…", "line_link": "3f1a…（64 文字）", "external_ref": { "provider": "crm", "id": "C001" }, "attributes": { "rank": "gold" }, "updated_at": "2026-11-23T01:00:00+00:00" }
   ],
   "total": 1234, "limit": 100, "offset": 0
 }
