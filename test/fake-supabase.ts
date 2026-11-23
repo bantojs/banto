@@ -8,6 +8,7 @@ import { checkNoticeText, normalizeNoticeBody, type NoticeChannel, type NoticeKi
 import { pageHandleOk } from "../src/pages";
 import { searchTooShort, searchWords } from "../src/storefront/search-words";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
+import { createHmac } from "node:crypto";
 import { normalizeTags } from "../src/products/tags";
 import { productFields } from "../src/products/fields";
 import { publicShopSettings } from "../src/storefront/data";
@@ -3137,6 +3138,27 @@ export class FakeSupabase {
           return json({ id: g["id"], status: "revoked" });
         }
       }
+    }
+    // 0167: 会員の結びつけの一覧（customers:links）。LINE の UID は鍵付きハッシュ（HMAC-SHA256、16 進）だけ
+    if (fn === "api_customers_links") {
+      if (!need("customers:links")) return unauthorized();
+      const key = typeof args["p_link_key"] === "string" ? args["p_link_key"] : "";
+      if (key.length < 32 || key.length > 256) return json({ code: "P0001", message: "invalid_link_key" }, 400);
+      const limit = Math.max(1, Math.min(Number(args["p_limit"] ?? 100) || 100, 100));
+      const offset = Math.max(0, Number(args["p_offset"] ?? 0) || 0);
+      const rows = this.tables.customers.filter((c) => c["shop_id"] === shopId)
+        .sort((a, b) => String(a["created_at"] ?? "").localeCompare(String(b["created_at"] ?? "")) || String(a["id"]).localeCompare(String(b["id"])));
+      const items = rows.slice(offset, offset + limit).map((c) => {
+        const line = this.memberIdentities.find((i) => i["shop_id"] === shopId && i["customer_id"] === c["id"] && i["provider"] === "line");
+        return {
+          id: c["id"],
+          line_link: line ? createHmac("sha256", key).update(String(line["subject"])).digest("hex") : null,
+          external_ref: c["external_ref"] ?? null,
+          attributes: c["attributes"] ?? {},
+          updated_at: c["updated_at"] ?? c["created_at"] ?? null,
+        };
+      });
+      return json({ items, total: rows.length, limit, offset });
     }
     if (fn.startsWith("api_customer")) {
       if (!need(/create|update|delete|upsert/.test(fn) ? "customers:write" : "customers:read")) return unauthorized();

@@ -453,6 +453,13 @@ v1.get("/customers", async (c) =>
     .then((r) => c.json(r, 200, { "cache-control": "no-store" }))
     .catch((e) => errorJson(c, e)),
 );
+// 会員の結びつけの一覧（0167。customers:links。個人情報なし、LINE の UID は鍵付きハッシュだけ。鍵は X-Banto-Link-Key）
+v1.get("/customers/links", async (c) =>
+  api(c)
+    .customersLinks({ linkKey: c.req.header("x-banto-link-key"), limit: int(c.req.query("limit"), 100), offset: int(c.req.query("offset"), 0) })
+    .then((r) => c.json(r, 200, { "cache-control": "no-store" }))
+    .catch((e) => errorJson(c, e)),
+);
 v1.post("/customers", async (c) => body(c).then((b) => api(c).customerCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
 // 0047: メールアドレスで引いて、あれば更新、無ければ作る（外部の顧客マスタからの同期の窓口）。created なら 201
 v1.post("/customers/upsert", async (c) =>
