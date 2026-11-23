@@ -48,6 +48,10 @@ interface Parsed {
   lines: number[];
 }
 
+/** DB と同じ形（0168）。形の誤りは DB が invalid にする */
+const LINE_ID_RE = /^U[0-9a-f]{32}$/;
+const GOOGLE_ID_RE = /^[0-9]{1,200}$/;
+
 /** CSV → 行。見出し（key・line・google）があれば列の名前で、無ければ key, line, google の順 */
 export function parseIdentityCsv(text: string): Parsed | "too_many_rows" | "empty" {
   const table = parseCsv(text);
@@ -71,23 +75,27 @@ export function parseIdentityCsv(text: string): Parsed | "too_many_rows" | "empt
 }
 
 /**
- * CSV の中の重なり: 同じ LINE / Google の ID、同じ引く値（メールは大文字小文字を区別しない）の 2 つ目からを外す。
+ * CSV の中の重なり: LINE・Google ごとに、同じ ID・同じ引く値（メールは大文字小文字を区別しない）の 2 つ目からを外す。
+ * 同じ会員の LINE と Google が別の行にあるのは重なりではない（両方送る）。形の誤った ID・引く値は DB が invalid にするので、
+ * ここでは覚えない（後の正しい行を止めない）。
  * DB には塊ごとに渡すので、塊をまたぐ重なりは DB では見えない（確かめるときは塊ごとに巻き戻すため）。先にここで外す
  */
 export function splitDuplicates(rows: Parsed["rows"], match: Match): { send: number[]; duplicates: number[] } {
-  const keys = new Set<string>();
-  const ids = new Set<string>();
+  const seen = new Set<string>();
   const send: number[] = [];
   const duplicates: number[] = [];
   rows.forEach((r, i) => {
-    const k = match === "email" ? r.key.trim().toLowerCase() : r.key.trim();
-    const own = [r.line ? `line:${r.line}` : "", r.google ? `google:${r.google}` : ""].filter(Boolean);
-    if ((k && keys.has(k)) || own.some((x) => ids.has(x))) {
+    const raw = r.key.trim();
+    const k = raw && raw.length <= 254 ? (match === "email" ? raw.toLowerCase() : raw) : "";
+    const own: [string, string][] = [];
+    if (r.line && LINE_ID_RE.test(r.line)) own.push(["line", r.line]);
+    if (r.google && GOOGLE_ID_RE.test(r.google)) own.push(["google", r.google]);
+    const marks = own.flatMap(([p, id]) => [`id:${p}:${id}`, ...(k ? [`key:${p}:${k}`] : [])]);
+    if (marks.some((m) => seen.has(m))) {
       duplicates.push(i);
       return;
     }
-    if (k) keys.add(k);
-    for (const x of own) ids.add(x);
+    for (const m of marks) seen.add(m);
     send.push(i);
   });
   return { send, duplicates };

@@ -46,6 +46,12 @@ describe("CSV の中の重なり", () => {
     expect(splitDuplicates(rows, "email")).toEqual({ send: [0, 3], duplicates: [1, 2, 4] });
     expect(splitDuplicates([{ key: "A", line: UID1 }, { key: "a", line: UID2 }], "attribute")).toEqual({ send: [0, 1], duplicates: [] });
   });
+
+  it("同じ会員の LINE と Google が別の行なら両方送る。形の誤った行は後の正しい行を止めない", () => {
+    expect(splitDuplicates([{ key: "C001", line: UID1 }, { key: "C001", google: "123" }], "attribute")).toEqual({ send: [0, 1], duplicates: [] });
+    expect(splitDuplicates([{ key: "C001", line: "Ubad" }, { key: "C001", line: UID1 }, { key: "C002", line: UID1 }], "attribute")).toEqual({ send: [0, 1], duplicates: [2] });
+    expect(splitDuplicates([{ key: "C001", google: "a@b.jp" }, { key: "C001", google: "123" }], "attribute")).toEqual({ send: [0, 1], duplicates: [] });
+  });
 });
 
 describe("LINE・Google の ID の取り込みの画面", () => {
