@@ -557,7 +557,11 @@ membersApi.post("/shops/:shop/members/email", async (c: Ctx) => {
   const s = await emailChangeScope(c);
   if (s instanceof Response) return s;
   const r = await startEmailChange(s.deps, s.shop, { id: s.member.id, epoch: s.member.epoch, sid: s.member.sid }, str((await body(c))["email"]).slice(0, 300), await clientIpFor(c, s.shop));
-  if (r.ok) return c.json({ ok: true }, 202, NO_STORE);
+  if (r.ok) {
+    // コードのメールは応答の後に送る（使われているアドレスかどうかで応答の時間を変えない）
+    await afterResponse(c, r.deliver());
+    return c.json({ ok: true }, 202, NO_STORE);
+  }
   switch (r.error) {
     case "invalid_email":
       return c.json({ error: "invalid_email" }, 400);
@@ -569,8 +573,6 @@ membersApi.post("/shops/:shop/members/email", async (c: Ctx) => {
       return c.json({ error: "invalid_member_token" }, 401);
     case "disabled":
       return c.json({ error: "members_disabled" }, 409);
-    case "mail_failed":
-      return c.json({ error: "mail_failed" }, 502);
     case "limit":
       return c.json({ error: "plan_limit_exceeded" }, 429); // 1 日のメールの上限（0053）
     default:

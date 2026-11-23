@@ -4118,21 +4118,24 @@ export class FakeSupabase {
         const limited = within(mine, 15 * 60_000) >= 3 || within(mine, 86400_000) >= 10
           || (ip !== null && within(this.memberEmailChanges.filter((r) => r["shop_id"] === shopId && r["ip_hash"] === ip), 3600_000) >= 30);
         const taken = this.tables.customers.some((x) => x["shop_id"] === shopId && x["id"] !== c["id"] && String(x["email"] ?? "").toLowerCase() === email);
-        if (limited || taken) return json({ ok: true, send: false, mail_from: from });
+        if (limited) return json({ ok: true, send: false, mail_from: from });
         {
           const limitHit = this.planLimitHit("mail_per_day"); // 0053 と同じ 1 日のメールの上限
           if (limitHit) return limitHit;
         }
+        // 使われているアドレスでも同じ後始末（前のコードを無効にし、誰にも合わないコードの行を作って数える）
         for (const r of mine) if (!r["consumed_at"]) r["consumed_at"] = now;
-        this.memberEmailChanges.push({ id: crypto.randomUUID(), shop_id: shopId, customer_id: c["id"], new_email: email, code_hash: args["p_code_hash"], ip_hash: ip, attempts: 0, created_at: now, expires_at: now + 900_000, consumed_at: null });
-        return json({ ok: true, send: true, mail_from: from });
+        const codeHash = taken ? `unmatchable:${crypto.randomUUID()}` : args["p_code_hash"];
+        this.memberEmailChanges.push({ id: crypto.randomUUID(), shop_id: shopId, customer_id: c["id"], new_email: email, code_hash: codeHash, ip_hash: ip, session_id: args["p_session_id"], epoch: args["p_epoch"], attempts: 0, created_at: now, expires_at: now + 900_000, consumed_at: null });
+        return json({ ok: true, send: !taken, mail_from: from });
       }
       case "member_email_change_verify": {
+        if (!enabled) return json({ ok: false, reason: "session" });
         const ms = this.liveMemberSession(shopId, args["p_customer_id"], args["p_epoch"], args["p_session_id"], now);
         if (!ms) return json({ ok: false, reason: "session" });
         if (now - this.sessionAuthAt(ms) > 15 * 60_000) return json({ ok: false, reason: "reauth" });
         const row = this.memberEmailChanges
-          .filter((r) => r["shop_id"] === shopId && r["customer_id"] === args["p_customer_id"] && !r["consumed_at"])
+          .filter((r) => r["shop_id"] === shopId && r["customer_id"] === args["p_customer_id"] && !r["consumed_at"] && r["session_id"] === args["p_session_id"] && r["epoch"] === args["p_epoch"])
           .sort((a, b) => Number(b["created_at"]) - Number(a["created_at"]))[0];
         if (!row || Number(row["expires_at"]) <= now || Number(row["attempts"]) >= 5) return json({ ok: false, reason: "expired" });
         if (args["p_code_hash"] !== row["code_hash"]) {

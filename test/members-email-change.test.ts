@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { BASE, Browser, appWith, memberLogin, memberMail } from "./helpers";
+import { maskEmail } from "../src/members/email-change";
 
 /**
  * 会員が自分でメールアドレスを変える（0166、メンテナの決定 2026-11-23）。
  * 新しいアドレスに届いたコードで変わる。ログインしてから 15 分以内のセッションだけ。
  * 変わったら前後のアドレスに知らせ、ほかの端末はログアウト、今の端末は続く。
- * ほかの会員が使っているアドレスには送らない（応答は同じ）。0166 の前は出さない
+ * ほかの会員が使っているアドレスには送らない（応答・後始末・数え方は同じ）。コードは始めたセッションだけで使える。
+ * 前のアドレスへの知らせでは新しいアドレスを伏せる。コードのメールは応答の後に送る。0166 の前は出さない
  */
 let disposers: (() => void)[] = [];
 afterEach(() => {
@@ -68,7 +70,10 @@ describe("同梱テーマ: 会員ページでメールアドレスを変える",
     expect(notices.map((m) => m.to).sort()).toEqual(["new@example.com", "old@example.com"]);
     const toOld = notices.find((m) => m.to === "old@example.com")!;
     expect(toOld.subject).toContain("メールアドレスが変更されました");
-    expect(toOld.text).toContain("new@example.com");
+    // 新しいアドレスは伏せる（頭の 1 文字と @ 以降だけ）
+    expect(toOld.text).toContain("n***@example.com");
+    expect(toOld.text).not.toContain("new@example.com");
+    expect(toOld.html ?? "").not.toContain("new@example.com");
     expect(toOld.text).toContain("お店へご連絡ください");
 
     // この端末は続く（新しいアドレスで）。ほかの端末はログアウト
@@ -118,16 +123,30 @@ describe("同梱テーマ: 会員ページでメールアドレスを変える",
     expect(await (await b.get("/my-shop/account?error=email_code_invalid")).text()).toContain("コードが違います");
   });
 
-  it("ほかの会員が使っているアドレスには送らない（応答は送ったときと同じ）。同じアドレス・形の誤りは断る", async () => {
+  it("ほかの会員が使っているアドレスには送らない。応答・前のコードの無効化・回数の数え方は送ったときと同じ。同じアドレス・形の誤りは断る", async () => {
     const { sb, app, mail, b } = setup();
     const taken = new Browser(app);
     await memberLogin(taken, mail, "/my-shop", "taken@example.com");
     await memberLogin(b, mail, "/my-shop", "old@example.com");
+    // 先に自分のアドレスへコードを受け取っておく
+    await b.post("/my-shop/account/email", { email: "mine@example.com" });
+    const ownCode = mail.code("mine@example.com");
     const before = mail.sent.length;
     const res = await b.post("/my-shop/account/email", { email: "taken@example.com" });
     expect(res.headers.get("location")).toBe("/my-shop/account?flash=email_code#email-change");
     expect(mail.sent.length).toBe(before);
-    expect(sb.memberEmailChanges).toHaveLength(0);
+    // 行は作る（誰にも合わないコード）。前の行は使えなくなる
+    expect(sb.memberEmailChanges).toHaveLength(2);
+    expect(sb.memberEmailChanges.filter((r) => !r["consumed_at"])).toHaveLength(1);
+    // 前のコードで確かめても「違う」（使われているかどうかの手がかりにならない）
+    expect((await b.post("/my-shop/account/email/verify", { code: ownCode })).headers.get("location")).toBe("/my-shop/account?error=email_code_invalid#email-change");
+    expect(sb.tables.customers.some((c) => c["email"] === "old@example.com")).toBe(true);
+    // 回数に数える（15 分に 3 回まで: 自分のアドレス・使われているアドレスで 2 回、3 回目は送る、4 回目は送らない）
+    await b.post("/my-shop/account/email", { email: "third@example.com" });
+    expect(mail.sent.at(-1)!.to).toBe("third@example.com");
+    const n = mail.sent.length;
+    expect((await b.post("/my-shop/account/email", { email: "fourth@example.com" })).headers.get("location")).toBe("/my-shop/account?flash=email_code#email-change");
+    expect(mail.sent.length).toBe(n);
 
     expect((await b.post("/my-shop/account/email", { email: "OLD@example.com" })).headers.get("location")).toBe("/my-shop/account?error=email_same#email-change");
     expect((await b.post("/my-shop/account/email", { email: "not-an-email" })).headers.get("location")).toBe("/my-shop/account?error=invalid_email#email-change");
@@ -141,6 +160,26 @@ describe("同梱テーマ: 会員ページでメールアドレスを変える",
     sb.tables.customers.push({ id: crypto.randomUUID(), shop_id: sb.tables.customers[0]!["shop_id"], email: "new@example.com", session_epoch: 0 });
     expect((await b.post("/my-shop/account/email/verify", { code })).headers.get("location")).toBe("/my-shop/account?error=email_unavailable#email-change");
     expect(sb.tables.customers[0]!["email"]).toBe("old@example.com");
+  });
+
+  it("コードは始めたセッションだけで使える（同じ会員のほかの端末からは使えない）", async () => {
+    const { sb, app, mail, b } = setup();
+    await memberLogin(b, mail, "/my-shop", "old@example.com");
+    const other = new Browser(app);
+    await memberLogin(other, mail, "/my-shop", "old@example.com");
+    await b.post("/my-shop/account/email", { email: "new@example.com" });
+    const code = mail.code("new@example.com");
+    expect((await other.post("/my-shop/account/email/verify", { code })).headers.get("location")).toBe("/my-shop/account?error=email_code_expired#email-change");
+    expect(sb.tables.customers[0]!["email"]).toBe("old@example.com");
+    // 始めた端末では使える（ほかの端末の試しで消えていない）
+    expect((await b.post("/my-shop/account/email/verify", { code })).headers.get("location")).toBe("/my-shop/account?flash=email_changed");
+    expect(sb.tables.customers[0]!["email"]).toBe("new@example.com");
+  });
+
+  it("前のアドレスへの知らせに出す新しいアドレスは、頭の 1 文字と @ 以降だけ", () => {
+    expect(maskEmail("new@example.com")).toBe("n***@example.com");
+    expect(maskEmail("あいう@example.jp")).toBe("あ***@example.jp");
+    expect(maskEmail("broken")).toBe("***");
   });
 
   it("フォームの送信（navigate）だけ受ける", async () => {
@@ -222,6 +261,26 @@ describe("ヘッドレスの会員 API: メールアドレスの変更", () => {
     expect(await call("/api/shops/my-shop/members/email", { email: "third@example.com" }, t.access)).toMatchObject({ status: 403, json: { error: "reauth_required" } });
     expect(await call("/api/shops/my-shop/members/email/verify", { code: "123456" }, t.access)).toMatchObject({ status: 403, json: { error: "reauth_required" } });
     expect(await call("/api/shops/my-shop/members/email", { email: "third@example.com" })).toMatchObject({ status: 401 });
+  });
+
+  it("コードのメールは応答の後に送る（Workers の waitUntil）", async () => {
+    const { mail, app } = setup();
+    const call = api(app);
+    const t = await login(call, mail, "old@example.com");
+    const pending: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => void pending.push(p), passThroughOnException: () => undefined, props: {} };
+    const before = mail.sent.length;
+    const res = await app.request(
+      `${BASE}/api/shops/my-shop/members/email`,
+      { method: "POST", headers: { origin: "https://wp.example.com", authorization: `Bearer ${t.access}`, "content-type": "application/json" }, body: JSON.stringify({ email: "new@example.com" }) },
+      undefined,
+      ctx,
+    );
+    expect(res.status).toBe(202);
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(mail.sent.length).toBe(before + 1);
+    expect(mail.sent.at(-1)!.to).toBe("new@example.com");
   });
 
   it("0166 の前は 409 migration_required", async () => {

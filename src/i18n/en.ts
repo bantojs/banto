@@ -2053,7 +2053,7 @@ export const en: Record<MessageKey, string> = {
   "member.email_self_changed_subject": "[{shop}] Your email address was changed",
   "member.email_changed_heading": "Your email address was changed",
   "member.email_changed_intro_new": "The email address of your member account was changed to {email} at {time}. Please sign in with this address from now on.",
-  "member.email_changed_intro_old": "The email address of the member account {old} was changed to {email} at {time}. You can no longer sign in with this address.",
+  "member.email_changed_intro_old": "The email address of the member account {old} was changed to {email} (partly hidden) at {time}. You can no longer sign in with this address.",
   "member.email_changed_advice_new": "If this was you, you can ignore this email.",
   "member.email_changed_advice_old": "If this was you, you can ignore this email. If not, please contact the shop right away.",
   "member.mail_subject": "[{shop}] Your login code: {code}",

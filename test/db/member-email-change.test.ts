@@ -6,7 +6,8 @@ const h = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /**
  * 0166_member_email_change: 会員が自分でメールアドレスを変える。
- * ログインしてから 15 分以内のセッションだけ・コードは 15 分 5 回・回数の上限・ほかの会員のアドレスは送らずに変えない・
+ * ログインしてから 15 分以内のセッションだけ・コードは 15 分 5 回・始めたセッションだけで確かめる・回数の上限・
+ * ほかの会員のアドレスは送らずに変えない（後始末と数え方は送ったときと同じ）・
  * 変わったら世代を上げて今のセッションの行だけ付け替え・監査ログ・1 日のメールの上限・service_role だけ
  */
 describe.skipIf(!dbAvailable)("会員のメールアドレスの変更（0166）", () => {
@@ -86,16 +87,70 @@ describe.skipIf(!dbAvailable)("会員のメールアドレスの変更（0166）
     expect(JSON.stringify(audit.rows[0]!.detail)).not.toContain("@");
   });
 
-  it("ほかの会員が使っているアドレス: 始めるときは送らない（答えは ok）。送った後に使われたら unavailable", async () => {
+  it("ほかの会員が使っているアドレス: 送らない（答えは ok）が、前のコードを無効にし、誰にも合わない行を作って数える。送った後に使われたら unavailable", async () => {
     const cid = await newCustomer("g@example.com");
     await newCustomer("taken@example.com");
     const sid = await sessionStart(cid, 0);
+    expect(await start(cid, 0, sid, "own@example.com", "656565")).toMatchObject({ ok: true, send: true });
+    const mailBefore = Number((await getPool().query<{ n: string }>("select banto_plan_mail_count() as n")).rows[0]!.n);
     expect(await start(cid, 0, sid, "Taken@example.com", "666666")).toEqual({ ok: true, send: false, mail_from: "Shop <shop@example.com>" });
-    expect(await pending(cid)).toBe(0);
+    // 行ができ（1 日のメールにも数える）、前のコードは使えない。送ったつもりのコードでも合わない
+    expect(await pending(cid)).toBe(2);
+    expect(Number((await getPool().query<{ n: string }>("select banto_plan_mail_count() as n")).rows[0]!.n)).toBe(mailBefore + 1);
+    expect(await verify(cid, 0, sid, "656565")).toEqual({ ok: false, reason: "invalid" });
+    expect(await verify(cid, 0, sid, "666666")).toEqual({ ok: false, reason: "invalid" });
+    // 回数の上限にも数える（15 分 3 回: own・taken・3 回目は送る・4 回目は送らない）
+    expect(await start(cid, 0, sid, "third@example.com", "676767")).toMatchObject({ ok: true, send: true });
+    expect(await start(cid, 0, sid, "fourth@example.com", "686868")).toMatchObject({ ok: true, send: false });
+    await getPool().query("update member_email_changes set created_at = now() - interval '20 minutes' where customer_id = $1", [cid]);
     await start(cid, 0, sid, "later@example.com", "777777");
     await newCustomer("later@example.com");
     expect(await verify(cid, 0, sid, "777777")).toEqual({ ok: false, reason: "unavailable" });
     expect(await epochOf(cid)).toBe(0);
+  });
+
+  it("コードは始めたセッション・世代からだけ確かめられる", async () => {
+    const cid = await newCustomer("sb@example.com");
+    const a = await sessionStart(cid, 0);
+    const b = await sessionStart(cid, 0);
+    await start(cid, 0, a, "sb2@example.com", "717171");
+    // ほかのセッションからは行が見えない（期限切れと同じ答え・試しの回数も増えない）
+    expect(await verify(cid, 0, b, "717171")).toEqual({ ok: false, reason: "expired" });
+    expect((await getPool().query("select attempts from member_email_changes where customer_id = $1 and consumed_at is null", [cid])).rows).toEqual([{ attempts: 0 }]);
+    expect(await verify(cid, 0, a, "717171")).toMatchObject({ ok: true, new_email: "sb2@example.com" });
+  });
+
+  it("会員機能を止めたら確かめられない", async () => {
+    const cid = await newCustomer("me@example.com");
+    const sid = await sessionStart(cid, 0);
+    await start(cid, 0, sid, "me2@example.com", "727272");
+    await getPool().query("update shops set settings = settings || '{\"members_enabled\": false}' where id = $1", [f.shopId]);
+    try {
+      expect(await verify(cid, 0, sid, "727272")).toEqual({ ok: false, reason: "session" });
+    } finally {
+      await getPool().query("update shops set settings = settings || '{\"members_enabled\": true}' where id = $1", [f.shopId]);
+    }
+    expect((await getPool().query("select email from customers where id = $1", [cid])).rows[0]).toEqual({ email: "me@example.com" });
+    expect(await verify(cid, 0, sid, "727272")).toMatchObject({ ok: true });
+  });
+
+  it("確かめの途中で、ほかの経路（取り込みなど）がそのアドレスの会員を作ったら unavailable（一意の制約の違反を受け止める）", async () => {
+    const cid = await newCustomer("uv@example.com");
+    const sid = await sessionStart(cid, 0);
+    await start(cid, 0, sid, "uv2@example.com", "737373");
+    // 別の取引がアドレスの会員を作ってまだコミットしていない（変更の鍵を通らない経路）
+    const other = await getPool().connect();
+    try {
+      await other.query("begin");
+      await other.query("insert into customers (shop_id, email) values ($1, 'uv2@example.com')", [f.shopId]);
+      const pendingVerify = verify(cid, 0, sid, "737373");
+      await new Promise((r) => setTimeout(r, 150));
+      await other.query("commit");
+      expect(await pendingVerify).toEqual({ ok: false, reason: "unavailable" });
+    } finally {
+      other.release();
+    }
+    expect((await getPool().query("select email, session_epoch from customers where id = $1", [cid])).rows[0]).toEqual({ email: "uv@example.com", session_epoch: 0 });
   });
 
   it("同じアドレスへの変更が重なっても、変わるのは 1 人だけ", async () => {
@@ -132,12 +187,12 @@ describe.skipIf(!dbAvailable)("会員のメールアドレスの変更（0166）
     expect(await pending(cid)).toBe(3);
     // 1 日 10 回（15 分より前の分も数える）
     await getPool().query("update member_email_changes set created_at = now() - interval '1 hour' where customer_id = $1", [cid]);
-    await getPool().query("insert into member_email_changes (shop_id, customer_id, new_email, code_hash, expires_at, created_at) select $1, $2, 'x@example.com', $3, now(), now() - interval '2 hours' from generate_series(1, 7)", [f.shopId, cid, h("z")]);
+    await getPool().query("insert into member_email_changes (shop_id, customer_id, new_email, code_hash, session_id, epoch, expires_at, created_at) select $1, $2, 'x@example.com', $3, gen_random_uuid(), 0, now(), now() - interval '2 hours' from generate_series(1, 7)", [f.shopId, cid, h("z")]);
     expect(await start(cid, 0, sid, "h10@example.com", "121212")).toMatchObject({ ok: true, send: false });
     // 同じ IP
     const ip = h("ip-many");
     const others = await Promise.all(Array.from({ length: 3 }, (_, i) => newCustomer(`ipx${i}@example.com`)));
-    await getPool().query("insert into member_email_changes (shop_id, customer_id, new_email, code_hash, ip_hash, expires_at) select $1, $2, 'y@example.com', $3, $4, now() from generate_series(1, 30)", [f.shopId, others[0], h("z"), ip]);
+    await getPool().query("insert into member_email_changes (shop_id, customer_id, new_email, code_hash, ip_hash, session_id, epoch, expires_at) select $1, $2, 'y@example.com', $3, $4, gen_random_uuid(), 0, now() from generate_series(1, 30)", [f.shopId, others[0], h("z"), ip]);
     const s = await sessionStart(others[1]!, 0);
     expect(await start(others[1]!, 0, s, "ipnew@example.com", "131313", ip)).toMatchObject({ ok: true, send: false });
     expect(await start(others[1]!, 0, s, "ipnew@example.com", "131313", h("ip-other"))).toMatchObject({ ok: true, send: true });

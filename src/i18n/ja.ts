@@ -2060,7 +2060,7 @@ export const ja = {
   "member.email_self_changed_subject": "【{shop}】メールアドレスが変更されました",
   "member.email_changed_heading": "メールアドレスが変更されました",
   "member.email_changed_intro_new": "{time} に、会員のアカウントのメールアドレスが {email} に変更されました。次回からはこのアドレスでログインしてください。",
-  "member.email_changed_intro_old": "{time} に、{old} の会員のアカウントのメールアドレスが {email} に変更されました。このアドレスではログインできなくなりました。",
+  "member.email_changed_intro_old": "{time} に、{old} の会員のアカウントのメールアドレスが {email}（一部を伏せています）に変更されました。このアドレスではログインできなくなりました。",
   "member.email_changed_advice_new": "ご本人の操作なら、このメールは破棄してください。",
   "member.email_changed_advice_old": "ご本人の操作なら、このメールは破棄してください。心当たりがない場合は、すぐにお店へご連絡ください。",
   "member.mail_subject": "【{shop}】ログインのコード：{code}",

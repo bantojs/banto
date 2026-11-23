@@ -3,8 +3,10 @@
 --   - 新しいアドレスに 6 桁のコードを送り、会員ページで入れてもらって初めて変わる（コードは Worker が HMAC にした値だけを置く。15 分・5 回まで）
 --   - 変わったら世代を上げ、今の端末のセッションの行だけを新しい世代に付け替える（ほかの端末はログアウト）。前後のアドレスに Worker が知らせる。
 --     監査ログは 0051 の customers のトリガーが書く（アドレスはハッシュの先頭だけ）
---   - 同じショップのほかの会員が使っているアドレスには変えない。始めるときは「送った」と同じ答え（使われているかを探らせない）
---   - 送ったコードの行はプランの 1 日のメール（plan_limits.mail_per_day、0053）にも数える
+--   - 同じショップのほかの会員が使っているアドレスには変えない。始めるときは「送った」と同じ答え・同じ後始末（前のコードを無効にし、
+--     誰にも合わないコードの行を作る。回数の上限と 1 日のメールにも数える）。使われているかを、答え・回数・前のコードの効き方から探らせない
+--   - コードの行は始めたセッション（行と世代）に結ぶ。確かめは同じセッションからだけ
+--   - コードの行はプランの 1 日のメール（plan_limits.mail_per_day、0053）にも数える
 --   - AI 用 API からは変えない（CLAUDE.md §7b のまま）。会員本人のセッションだけ
 
 create table if not exists member_email_changes (
@@ -15,6 +17,9 @@ create table if not exists member_email_changes (
   new_email text not null check (length(new_email) between 3 and 254),
   code_hash text not null check (code_hash ~ '^[0-9a-f]{64}$'),
   ip_hash text check (ip_hash ~ '^[0-9a-f]{64}$'),
+  -- 始めたセッション（確かめは同じセッション・同じ世代からだけ）
+  session_id uuid not null,
+  epoch integer not null,
   attempts smallint not null default 0,
   created_at timestamptz not null default now(),
   expires_at timestamptz not null,
@@ -48,7 +53,8 @@ create trigger member_email_changes_plan_mail after insert on member_email_chang
 
 -- ---------- 始める: 新しいアドレスにコードを送る ----------
 -- 戻り値: { ok: true, send, mail_from } / { ok: false, reason: 'session' | 'reauth' | 'same' }
--- send = false: 回数の上限・ほかの会員が使っているアドレス（応答は送ったときと同じにする）
+-- send = false: 回数の上限・ほかの会員が使っているアドレス。send は Worker だけが見る（HTTP の応答には出さない。メールは応答の後に送る）。
+-- 使われているアドレスでも、前のコードを無効にして誰にも合わないコードの行を作る（回数・1 日のメールにも数える）
 create or replace function member_email_change_start(p_shop_id uuid, p_customer_id uuid, p_epoch integer, p_session_id uuid,
                                                      p_new_email text, p_code_hash text, p_ip_hash text)
 returns jsonb
@@ -61,6 +67,7 @@ declare
   v_from text;
   v_current text;
   v_limited boolean;
+  v_taken boolean;
 begin
   if auth.role() is distinct from 'service_role' then
     raise exception 'member_email_change_start: service_role only' using errcode = '42501';
@@ -88,16 +95,21 @@ begin
   v_limited := (select count(*) from member_email_changes where shop_id = p_shop_id and customer_id = p_customer_id and created_at > now() - interval '15 minutes') >= 3
             or (select count(*) from member_email_changes where shop_id = p_shop_id and customer_id = p_customer_id and created_at > now() - interval '1 day') >= 10
             or (p_ip_hash is not null and (select count(*) from member_email_changes where shop_id = p_shop_id and ip_hash = p_ip_hash and created_at > now() - interval '1 hour') >= 30);
-  -- ほかの会員が使っているアドレス: 送らない（答えは同じ。確かめで変えようとしても unavailable で断る）
-  if v_limited or exists (select 1 from customers where shop_id = p_shop_id and lower(email) = v_email and id <> p_customer_id) then
+  if v_limited then
     return jsonb_build_object('ok', true, 'send', false, 'mail_from', v_from);
   end if;
+  -- ほかの会員が使っているアドレス: 送らないが、送るときと同じ後始末をする（前のコードを無効にし、誰にも合わないコードの行を作る）。
+  -- 確かめは invalid / expired で断る（もし変えようとしても unavailable で断る）
+  v_taken := exists (select 1 from customers where shop_id = p_shop_id and lower(email) = v_email and id <> p_customer_id);
   -- 有効なコードはいつも 1 つ（前のものは無効にする）
   update member_email_changes set consumed_at = now()
    where shop_id = p_shop_id and customer_id = p_customer_id and consumed_at is null;
-  insert into member_email_changes (shop_id, customer_id, new_email, code_hash, ip_hash, expires_at)
-  values (p_shop_id, p_customer_id, v_email, p_code_hash, nullif(p_ip_hash, ''), now() + interval '15 minutes');
-  return jsonb_build_object('ok', true, 'send', true, 'mail_from', v_from);
+  insert into member_email_changes (shop_id, customer_id, new_email, code_hash, ip_hash, session_id, epoch, expires_at)
+  values (p_shop_id, p_customer_id, v_email,
+          -- 使われているアドレスは、HMAC の値として出てこない乱数（6 桁のコードの HMAC と一致しない）
+          case when v_taken then md5(gen_random_uuid()::text) || md5(gen_random_uuid()::text) else p_code_hash end,
+          nullif(p_ip_hash, ''), p_session_id, p_epoch, now() + interval '15 minutes');
+  return jsonb_build_object('ok', true, 'send', not v_taken, 'mail_from', v_from);
 end;
 $$;
 revoke execute on function member_email_change_start(uuid, uuid, integer, uuid, text, text, text) from public, anon, authenticated;
@@ -121,14 +133,20 @@ begin
   if auth.role() is distinct from 'service_role' then
     raise exception 'member_email_change_verify: service_role only' using errcode = '42501';
   end if;
+  -- 会員機能を止めたショップでは変えない（始めるときと同じ）
+  if not exists (select 1 from shops where id = p_shop_id and coalesce(settings->>'members_enabled', 'false') = 'true') then
+    return jsonb_build_object('ok', false, 'reason', 'session');
+  end if;
   if p_session_id is null or not banto_member_session_live(p_shop_id, p_customer_id, p_epoch, p_session_id) then
     return jsonb_build_object('ok', false, 'reason', 'session');
   end if;
   if not banto_member_recent_auth(p_shop_id, p_customer_id, p_epoch, p_session_id, 15) then
     return jsonb_build_object('ok', false, 'reason', 'reauth');
   end if;
+  -- 始めたセッション・世代のコードだけ（ほかの端末・全端末のログアウトの前に始めたものは使えない）
   select * into v_row from member_email_changes
    where shop_id = p_shop_id and customer_id = p_customer_id and consumed_at is null
+     and session_id = p_session_id and epoch = p_epoch
    order by created_at desc limit 1
    for update;
   if not found or v_row.expires_at <= now() or v_row.attempts >= 5 then
@@ -147,9 +165,14 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'unavailable');
   end if;
   select email into v_old from customers where shop_id = p_shop_id and id = p_customer_id for update;
-  update customers set email = v_row.new_email, session_epoch = session_epoch + 1
-   where shop_id = p_shop_id and id = p_customer_id and session_epoch = p_epoch
-  returning session_epoch into v_epoch;
+  -- ほかの経路（ログイン・連携での会員の作成、運営者の変更、取り込み）と重なって一意の制約に当たったら、使われているのと同じに断る
+  begin
+    update customers set email = v_row.new_email, session_epoch = session_epoch + 1
+     where shop_id = p_shop_id and id = p_customer_id and session_epoch = p_epoch
+    returning session_epoch into v_epoch;
+  exception when unique_violation then
+    return jsonb_build_object('ok', false, 'reason', 'unavailable');
+  end;
   if v_epoch is null then return jsonb_build_object('ok', false, 'reason', 'session'); end if;
   -- この端末のセッションだけ新しい世代へ（ほかの端末は世代が合わなくなって止まる）。ログインを確かめた時刻は変えない
   update member_sessions set session_epoch = v_epoch where id = p_session_id returning authenticated_at into v_auth;

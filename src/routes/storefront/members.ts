@@ -1164,7 +1164,6 @@ const EMAIL_START_ERRORS: Record<string, string> = {
   same_email: "email_same",
   unavailable: "email_mail_unavailable",
   disabled: "email_mail_unavailable",
-  mail_failed: "email_mail_failed",
   limit: "email_mail_limit",
 };
 
@@ -1176,7 +1175,11 @@ members.post("/:shop/account/email", navigateOnly, async (c: Ctx) => {
   if (!s.session || !s.session.sid || !ld) return c.redirect(`${s.shopPath}/account/login`);
   const email = ((await formFields(c)).email ?? "").slice(0, 300);
   const r = await startEmailChange(ld, s.shop, { id: s.session.cid, epoch: s.session.ep, sid: s.session.sid }, email, await clientIpFor(c, s.shop));
-  if (r.ok) return c.redirect(`${s.shopPath}/account?flash=email_code#email-change`);
+  if (r.ok) {
+    // コードのメールは応答の後に送る（使われているアドレスかどうかで応答の時間を変えない。送れなくても答えは変えない）
+    await afterResponse(c, r.deliver());
+    return c.redirect(`${s.shopPath}/account?flash=email_code#email-change`);
+  }
   if (r.error === "reauth") return reauthRedirect(c, s);
   if (r.error === "session") {
     await writeSession(c, s, null);
