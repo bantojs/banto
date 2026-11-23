@@ -30,7 +30,8 @@ import { couponSource, privilegedFor } from "../payment-deps";
 import { listUrl, productUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import type { AccountPageProps, Theme, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
-import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, checkoutMembersOnly, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
+import { loginUrlFor } from "../../members/return-path";
 import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
 import { ConfirmationBlock } from "../../themes/default/confirmation";
 import { AccountBody } from "../../themes/default";
@@ -294,7 +295,9 @@ export async function cartSections(c: Ctx, s: LiquidScope, raw: unknown, lines: 
   if (!choice) return null;
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const [categories, setup] = await Promise.all([s.sf.listCategories(s.shop), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
-  const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel) };
+  // カートの引き出しにも、注文は会員だけのショップ（0165）のゲストにはログインの URL を渡す（カートのページと同じ）
+  const loginRequired = checkoutMembersOnly(s.shop.settings) && !s.ctx.member ? loginUrlFor(s.ctx.shopPath, `${s.ctx.shopPath}/cart`) : null;
+  const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel), banto_login_required: loginRequired };
   const input = pageInput(c, s, choice, { template: "cart", values: { cart }, title: t("store.cart"), path: "/cart", noindex: true, categories });
   try {
     return renderThemeSections(choice.lt, input, ids);

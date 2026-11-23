@@ -260,7 +260,7 @@ POST /api/shops/<shop>/checkout/quote
 
 `total_jpy` が 0 のとき（クーポンで全額値引き・0 円の商品）は `payment.free: true` になり、`submit_label` は「注文を確定する」です。3 で決済ページへは行かずに注文が確定します。
 
-エラー: 400 `invalid_address`（`fields` に不備のある項目名）、400 `invalid_cart`、409 `empty_cart`、409 `stock`、409 `payment_unavailable`、409 `minimum_amount`（値引き後の支払額が 1〜49 円。決済の最低額は 50 円）。
+エラー: 400 `invalid_address`（`fields` に不備のある項目名）、400 `invalid_cart`、403 `member_required`（注文は会員だけのショップで会員トークンが無い。0165）、409 `empty_cart`、409 `stock`、409 `payment_unavailable`、409 `minimum_amount`（値引き後の支払額が 1〜49 円。決済の最低額は 50 円）。
 
 ### 2. 最終確認画面を表示する（連携側の責任）
 
@@ -311,6 +311,7 @@ Banto は確定の直前に、価格・送料・在庫・クーポンを **引�
 | status | `error` | 意味 |
 | --- | --- | --- |
 | 400 | `invalid_quote` | 署名が合わない・期限切れ（1 時間）・別ショップ。quote から作り直す |
+| 403 | `member_required` | 注文は会員だけのショップ（0165）で、会員トークンが無い。ログイン（その場で会員登録）に回す |
 | 409 | `changed` | 確認後に内容が変わった（上記） |
 | 409 | `stock` | 在庫が確保できなかった |
 | 409 | `coupon_unavailable` | 確定の瞬間にクーポンの枠が無くなった・回数の上限に達した（在庫も戻してある）。quote から作り直す |

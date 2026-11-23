@@ -20,6 +20,10 @@ describe.skipIf(!dbAvailable)("注文は会員だけ（0165）", () => {
     await settings({ members_enabled: true, checkout_members_only: true });
     expect(await expectDbError(() => reserve(null))).toMatch(/member_required/);
     expect(await reserve(customerId)).toMatch(/^[0-9a-f-]{36}$/);
+    // ほかのショップの会員の id では通さない
+    const other = await createShopFixture({ email: "mo-other@example.com", slug: "mo-other", publish: true });
+    const stranger = (await getPool().query<{ id: string }>("insert into customers (shop_id, email) values ($1, 'x@example.com') returning id", [other.shopId])).rows[0]!.id;
+    expect(await expectDbError(() => reserve(stranger))).toMatch(/member_required/);
   });
 
   it("会員機能が OFF・設定が文字の true・設定が無いときはゲストも予約できる（今までどおり）", async () => {

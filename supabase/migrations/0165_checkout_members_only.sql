@@ -131,7 +131,9 @@ begin
 
   -- 会員限定の商品（audience_id）は、条件に合う会員だけが買える（product_member_skus の purchasable と同じ判定を DB でも）
   -- 注文は会員だけのショップ（0165）: 会員でない予約は断る（お店の画面・ヘッドレス・どの支払い方法でも）
-  if p_customer_id is null and exists (select 1 from shops s where s.id = p_shop_id and banto_checkout_members_only(s.settings)) then
+  -- （会員はこのショップの会員だけ。ログインの世代は予約に結ぶとき attach_reservation_customer が確かめる）
+  if exists (select 1 from shops s where s.id = p_shop_id and banto_checkout_members_only(s.settings))
+     and (p_customer_id is null or not exists (select 1 from customers c where c.id = p_customer_id and c.shop_id = p_shop_id)) then
     raise exception 'member_required' using errcode = '42501';
   end if;
   if p_customer_id is not null then v_aud := banto_member_audience_ids(p_shop_id, p_customer_id); end if;
