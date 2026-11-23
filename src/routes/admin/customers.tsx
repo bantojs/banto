@@ -316,9 +316,11 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
   const r = await db.from<CustomerRow>("customers").selectOne(CUSTOMER_COLUMNS, { eq: { shop_id: shopId, id: customerId } });
   if (!r) return c.text(t("customers.not_found"), 404);
   const inquiriesOn = moduleEnabled(shop.settings, "inquiries") && can(access, "support");
-  const [orders, inquiries] = await Promise.all([
+  const [orders, inquiries, providers] = await Promise.all([
     can(access, "orders") ? db.from<MemberOrderRow>("orders").select("id,number,status,total_jpy,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc,id.desc", limit: 20 }) : Promise.resolve(null),
     inquiriesOn ? db.from<MemberInquiryRow>("inquiries").select("id,number,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 20 }) : Promise.resolve(null),
+    // ログインの方法（LINE / Google の別だけ。取り込みで結んだかも分かるように、0168 から）
+    migrated({ db, cache: c.get("adapters").cache }, IDENTITY_IMPORT_MIGRATION).then((on) => (on ? db.rpc<string[] | null>("customer_login_providers", { p_shop_id: shopId, p_customer_id: customerId }) : null)),
   ]);
   const fields = customerFields(shop.settings);
   const ref = externalRef(r.external_ref);
@@ -439,6 +441,12 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
               <dd>{formatDateTime(r.created_at, { dateOnly: true })}</dd>
               <dt>{t("customers.last_login_at")}</dt>
               <dd>{r.last_login_at ? formatDateTime(r.last_login_at) : "-"}</dd>
+              {providers ? (
+                <>
+                  <dt>{t("customers.login_providers")}</dt>
+                  <dd>{providers.length > 0 ? providers.map((p) => (p === "line" ? "LINE" : p === "google" ? "Google" : p)).join("・") : "-"}</dd>
+                </>
+              ) : null}
               {ref ? (
                 <>
                   <dt>{t("customers.external_ref")}</dt>

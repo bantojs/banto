@@ -32,7 +32,7 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
     f = await createShopFixture({ email: "mii-owner@example.com", slug: "mii-shop", publish: true });
     other = await createShopFixture({ email: "mii-other@example.com", slug: "mii-other", publish: true });
     const pool = getPool();
-    await pool.query(`update shops set settings = settings || '{"members_enabled": true, "modules": {"line_login": true}, "customer_fields": [{"key": "card_no", "label": "会員カード", "type": "text"}, {"key": "rank", "label": "rank", "type": "text"}]}' where id = $1`, [f.shopId]);
+    await pool.query(`update shops set settings = settings || '{"members_enabled": true, "modules": {"line_login": true}, "customer_fields": [{"key": "card_no", "label": "会員カード", "type": "text"}, {"key": "rank", "label": "rank", "type": "text"}, {"key": "size", "label": "size", "type": "select", "options": ["S", "M"]}]}' where id = $1`, [f.shopId]);
     const ins = async (shop: string, email: string | null, attrs: object, ref: object | null) =>
       (await pool.query<{ id: string }>("insert into customers (shop_id, email, attributes, external_ref) values ($1, $2, $3, $4) returning id", [shop, email, attrs, ref])).rows[0]!.id;
     cardCid = await ins(f.shopId, "card@example.com", { card_no: "C001", rank: "gold" }, null);
@@ -110,11 +110,15 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
 
   it("鍵の誤り・行の数の上限・確かめるだけ（書かない）", async () => {
     expect(await expectDbError(() => imp(f.ownerId, "attribute", "nope", []))).toMatch(/invalid_match_key/);
+    // 引く値にできるのは文字と数の項目だけ
+    expect(await expectDbError(() => imp(f.ownerId, "attribute", "size", []))).toMatch(/invalid_match_key/);
+    // Google の ID は sub（数字）だけ
+    expect((await imp(f.ownerId, "email", null, [{ key: "card@example.com", google: "card@example.com" }], true)).counts).toMatchObject({ invalid: 1 });
     expect(await expectDbError(() => imp(f.ownerId, "external_ref", "", []))).toMatch(/invalid_match_key/);
     expect(await expectDbError(() => imp(f.ownerId, "phone", null, []))).toMatch(/invalid_match/);
     expect(await expectDbError(() => imp(f.ownerId, "email", null, Array.from({ length: 501 }, () => ({}))))).toMatch(/too_many_rows/);
     const before = (await getPool().query("select count(*)::int as n from audit_log where action = 'customer.identity_imported'")).rows[0]!.n as number;
-    const dry = await imp(f.ownerId, "attribute", "rank", [{ key: "gold", line: uid(30) }, { key: "silver", google: "abc" }], true);
+    const dry = await imp(f.ownerId, "attribute", "rank", [{ key: "gold", line: uid(30) }, { key: "silver", google: "123" }], true);
     expect(dry).toMatchObject({ dry_run: true, counts: { ambiguous: 1, not_found: 1 } });
     const dry2 = await imp(f.ownerId, "email", null, [{ key: "dup1@example.com", line: uid(31) }, { key: "dup2@example.com", line: uid(31) }], true);
     expect(dry2.counts).toMatchObject({ linked: 1, subject_taken: 1 });
@@ -145,4 +149,37 @@ describe.skipIf(!dbAvailable)("会員のログインの ID の取り込み（016
     expect(r).toMatchObject({ ok: true, customer_id: cardCid, created: false });
     expect((await getPool().query("select count(*)::int as n from customers where shop_id = $1", [f.shopId])).rows[0]!.n).toBe(before);
   });
+
+  it("会員の詳細の「LINE・Google の連携」: 種類だけ・項目 customers", async () => {
+    const staff = await member("mii-staff2@example.com", "member", ["customers"]);
+    const nope = await member("mii-staff3@example.com", "member", ["orders"]);
+    const read = (who: string) => asUser(who, async (c) => (await c.query<{ r: string[] }>("select customer_login_providers($1, $2) as r", [f.shopId, refCid])).rows[0]!.r);
+    expect(await read(staff)).toEqual(["google", "line"]);
+    expect(await expectDbError(() => read(nope))).toMatch(/shop_not_found/);
+    expect(await expectDbError(() => asAnon((c) => c.query("select customer_login_providers($1, $2)", [f.shopId, refCid])))).toMatch(/permission denied/);
+  });
+
+  it("会員が多くても、1 回の呼び出しで会員をまとめて引く（同じ接続で 6 回以上呼んでも索引を使う）", async () => {
+    const big = await createShopFixture({ email: "mii-big@example.com", slug: "mii-big", publish: true });
+    const pool = getPool();
+    await pool.query(`update shops set settings = settings || '{"customer_fields": [{"key": "card_no", "label": "card", "type": "text"}]}' where id = $1`, [big.shopId]);
+    await pool.query(
+      `insert into customers (shop_id, email, attributes, external_ref)
+       select $1, 'big' || g || '@example.com', jsonb_build_object('card_no', 'K' || g), jsonb_build_object('provider', 'pocket', 'id', 'P' || g)
+         from generate_series(1, 20000) g`,
+      [big.shopId],
+    );
+    await pool.query("analyze customers");
+    const rows = (mode: string) => Array.from({ length: 500 }, (_, i) => ({ key: mode === "email" ? `big${i + 1}@example.com` : mode === "external_ref" ? `P${i + 1}` : `K${i + 1}`, line: uid(100000 + i) }));
+    await asUser(big.ownerId, async (c) => {
+      for (const [mode, key] of [["email", null], ["external_ref", "pocket"], ["attribute", "card_no"]] as const) {
+        for (let n = 0; n < 7; n++) {
+          const t0 = Date.now();
+          const r = (await c.query<{ r: Result }>("select member_identities_import($1, $2, $3, $4::jsonb, true) as r", [big.shopId, mode, key, JSON.stringify(rows(mode))])).rows[0]!.r;
+          expect(r.counts["linked"]).toBe(500);
+          expect(Date.now() - t0).toBeLessThan(2000);
+        }
+      }
+    });
+  }, 120_000);
 });

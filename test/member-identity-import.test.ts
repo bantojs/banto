@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
-import { parseIdentityCsv } from "../src/routes/admin/customer-identities";
+import { parseIdentityCsv, splitDuplicates } from "../src/routes/admin/customer-identities";
 
 /**
  * 会員の LINE・Google の ID の取り込みの画面（0168、メンテナの決定 2026-11-23）。
@@ -31,6 +31,20 @@ describe("CSV の読み方", () => {
     expect(parseIdentityCsv(`C001,${UID1}\n C002 ,,456\n`)).toEqual({ rows: [{ key: "C001", line: UID1 }, { key: "C002", google: "456" }], lines: [1, 2] });
     expect(parseIdentityCsv("key,line\n")).toBe("empty");
     expect(parseIdentityCsv(Array.from({ length: 5001 }, (_, i) => `C${i},${UID1}`).join("\n"))).toBe("too_many_rows");
+  });
+});
+
+describe("CSV の中の重なり", () => {
+  it("同じ ID・同じ引く値（メールは大文字小文字を問わない）の 2 つ目からを外す", () => {
+    const rows = [
+      { key: "A@x.jp", line: UID1 },
+      { key: "a@x.jp", line: UID2 },
+      { key: "b@x.jp", line: UID1 },
+      { key: "c@x.jp", google: "1" },
+      { key: "d@x.jp", line: UID2, google: "1" },
+    ];
+    expect(splitDuplicates(rows, "email")).toEqual({ send: [0, 3], duplicates: [1, 2, 4] });
+    expect(splitDuplicates([{ key: "A", line: UID1 }, { key: "a", line: UID2 }], "attribute")).toEqual({ send: [0, 1], duplicates: [] });
   });
 });
 
@@ -82,5 +96,51 @@ describe("LINE・Google の ID の取り込みの画面", () => {
     const b = await Browser.loggedIn(old.app, "owner@example.com", "password-123");
     expect(await (await b.get(`/admin/shops/${old.shop.id}/customers`)).text()).not.toContain("/customers/import/identities");
     expect((await b.get(`/admin/shops/${old.shop.id}/customers/import/identities`)).status).toBe(404);
+  });
+
+  it("500 行を超える CSV: 塊をまたぐ重なりも、確かめるときと結ぶときで同じ結果（重なりは DB に渡さない）。画面は覚えさせない", async () => {
+    const { sb, shop, app } = setup();
+    for (let i = 3; i <= 700; i++) sb.tables.customers.push({ id: `00000000-0000-4000-a000-${String(i).padStart(12, "0")}`, shop_id: shop.id, email: `m${i}@example.com`, attributes: { card_no: `C${String(i).padStart(3, "0")}` }, created_at: "2026-10-03T00:00:00Z" });
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/customers/import/identities`;
+    const uid = (i: number) => `U${i.toString(16).padStart(32, "0")}`;
+    const lines = ["key,line"];
+    for (let i = 3; i <= 700; i++) lines.push(`C${String(i).padStart(3, "0")},${uid(i)}`);
+    lines.push(`C001,${uid(10)}`); // 10 行目の ID と重なる（2 つ目の塊）
+    const csv = lines.join("\n");
+    const res = await b.postMultipart(base, { step: "check", match: "attribute", field: "card_no", csv });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const check = await res.text();
+    expect(check).toContain("698 件を結ぶ");
+    expect(check).toContain("CSV の中で重なっている（同じ ID・同じ引く値の 2 つ目から。最初の行だけを使う）: 1");
+    expect(check).toContain(`<td>${lines.length}</td><td></td><td>CSV の中で重なっている`);
+    expect(sb.memberIdentities).toHaveLength(0);
+    const done = await (await b.post(base, { step: "import", match: "attribute", match_key: "card_no", csv })).text();
+    expect(done).toContain("結んだ（結ぶ）: 698");
+    expect(sb.memberIdentities).toHaveLength(698);
+  });
+
+  it("途中の塊で DB が失敗したら、そこまでの結果と案内を出し、確かめるときは「結ぶ」を出さない", async () => {
+    const { sb, shop, app } = setup();
+    for (let i = 3; i <= 600; i++) sb.tables.customers.push({ id: `00000000-0000-4000-b000-${String(i).padStart(12, "0")}`, shop_id: shop.id, email: `n${i}@example.com`, attributes: { card_no: `D${i}` }, created_at: "2026-10-03T00:00:00Z" });
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/customers/import/identities`;
+    const csv = ["key,line", ...Array.from({ length: 598 }, (_, k) => `D${k + 3},U${(k + 3).toString(16).padStart(32, "0")}`)].join("\n");
+    sb.identityImportFailAfter = 1;
+    const check = await (await b.postMultipart(base, { step: "check", match: "attribute", field: "card_no", csv })).text();
+    expect(check).toContain("取り込めませんでした");
+    expect(check).toContain("結んだ（結ぶ）: 500");
+    expect(check).not.toContain("件を結ぶ</button>");
+    expect(check).not.toContain('name="step" value="import"');
+  });
+
+  it("会員の詳細に LINE・Google の連携（種類だけ）を出す", async () => {
+    const { sb, shop, app } = setup();
+    sb.memberIdentities.push({ shop_id: shop.id, provider: "line", subject: UID1, customer_id: "00000000-0000-4000-a000-000000000001" });
+    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const html = await (await b.get(`/admin/shops/${shop.id}/customers/00000000-0000-4000-a000-000000000001`)).text();
+    expect(html).toContain("LINE・Google の連携");
+    expect(html).toContain("<dd>LINE</dd>");
+    expect(html).not.toContain(UID1);
   });
 });

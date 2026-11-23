@@ -124,6 +124,9 @@ export class FakeSupabase {
   /** パスワードの失敗（0013）・外部アカウント（0014）・引き換え券（0014） */
   readonly memberFailures: Row[] = [];
   readonly memberIdentities: Row[] = [];
+  /** 0168 の取り込みの画面のテスト: この回数の後の呼び出しを DB のエラーにする（null で失敗させない） */
+  identityImportFailAfter: number | null = null;
+  identityImportCalls = 0;
   /** LINE で送る口の記録（0105。line_messages の代わり。月の区切りは見ない。本物は test/db/ma-ports.test.ts） */
   readonly lineMessages: Row[] = [];
   readonly memberHandoffs: Row[] = [];
@@ -2620,6 +2623,12 @@ export class FakeSupabase {
       cur["updated_at"] = this.now();
       return json(next);
     }
+    if (fn === "customer_login_providers") {
+      // 0168。会員の詳細の「LINE・Google の連携」（ID は返さない）。項目 customers
+      const shopId = String(args["p_shop_id"]);
+      if (!this.ownedShopIds(uid).has(shopId) && !this.memberPerms(uid, shopId).includes("customers")) return json({ code: "42501", message: "shop_not_found" }, 403);
+      return json([...new Set(this.memberIdentities.filter((i) => i["shop_id"] === shopId && i["customer_id"] === args["p_customer_id"]).map((i) => String(i["provider"])))].sort());
+    }
     if (fn === "member_identities_import") {
       // 0168。DB の本物は test/db/member-identity-import.test.ts。ここは画面のテスト用の写し（owner / admin だけ・ちょうど 1 人・上書きしない）
       const shopId = String(args["p_shop_id"]);
@@ -2632,6 +2641,7 @@ export class FakeSupabase {
       const defs = ((shopRow?.["settings"] as Record<string, unknown> | undefined)?.["customer_fields"] as { key: string }[] | undefined) ?? [];
       if (match === "attribute" && !defs.some((d) => d.key === mk)) return json({ code: "P0001", message: "invalid_match_key" }, 400);
       const rows = args["p_rows"] as Record<string, unknown>[];
+      if (this.identityImportFailAfter !== null && this.identityImportCalls++ >= this.identityImportFailAfter) return json({ code: "57014", message: "canceling statement due to statement timeout" }, 500);
       if (rows.length > 500) return json({ code: "P0001", message: "too_many_rows" }, 400);
       const counts: Record<string, number> = { linked: 0, unchanged: 0, not_found: 0, ambiguous: 0, invalid: 0, subject_taken: 0, member_has_other: 0 };
       const issues: Record<string, unknown>[] = [];
@@ -2640,7 +2650,7 @@ export class FakeSupabase {
         const key = String(r["key"] ?? "").trim();
         const line = r["line"] ? String(r["line"]) : "";
         const google = r["google"] ? String(r["google"]) : "";
-        if (!key || (!line && !google) || (line && !/^U[0-9a-f]{32}$/.test(line)) || (google && !/^[!-~]{1,200}$/.test(google))) {
+        if (!key || (!line && !google) || (line && !/^U[0-9a-f]{32}$/.test(line)) || (google && !/^[0-9]{1,200}$/.test(google))) {
           counts["invalid"]!++;
           issues.push({ row: idx, reason: "invalid" });
           return;

@@ -3,8 +3,10 @@
  *   GET  /admin/shops/:shopId/customers/import/identities   取り込みの画面
  *   POST 同じ                                                 step=check: 書かずに結果を出す / step=import: 結ぶ
  * 使えるのは組織の owner / admin だけ（どの会員として入れるかを決める力なので、メールアドレスの変更と同じ線）。
- * CSV は Worker で行に直し、500 行ずつ DB の member_identities_import に渡す（会員の引き当て・上書きしない判定は DB）。
- * 画面にも DB の応答にも LINE・Google の ID は出さない（行の番号と理由だけ）。AI 用 API には出さない。
+ * CSV は Worker で行に直し、CSV の中で重なる行（同じ ID・同じ引く値の 2 つ目から）を外してから、500 行ずつ DB の
+ * member_identities_import に渡す（会員の引き当て・上書きしない判定は DB）。重なりを先に外すので、確かめるときと結ぶときの結果が同じになる。
+ * 結果（件数と行の番号・理由）に ID は出さない。ただし「確かめる」の後の「結ぶ」のフォームには上げた CSV をそのまま入れて渡す
+ * （覚えておく場所を持たないため）ので、その画面は覚えさせない（no-store）。AI 用 API には出さない。
  */
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
@@ -27,7 +29,8 @@ const CHUNK = 500;
 export const customerIdentities = new Hono<AppEnv>();
 
 type Match = "email" | "external_ref" | "attribute";
-const OUTCOMES = ["linked", "unchanged", "not_found", "ambiguous", "invalid", "subject_taken", "member_has_other"] as const;
+const OUTCOMES = ["linked", "unchanged", "not_found", "ambiguous", "invalid", "duplicate_in_csv", "subject_taken", "member_has_other"] as const;
+const ISSUES_SHOWN = 1000;
 type Outcome = (typeof OUTCOMES)[number];
 
 interface DbResult {
@@ -65,6 +68,29 @@ export function parseIdentityCsv(text: string): Parsed | "too_many_rows" | "empt
     return { key: at(r, ki), ...(line ? { line } : {}), ...(google ? { google } : {}) };
   });
   return { rows, lines: body.map((_, i) => i + 1 + (hasHeader ? 1 : 0)) };
+}
+
+/**
+ * CSV の中の重なり: 同じ LINE / Google の ID、同じ引く値（メールは大文字小文字を区別しない）の 2 つ目からを外す。
+ * DB には塊ごとに渡すので、塊をまたぐ重なりは DB では見えない（確かめるときは塊ごとに巻き戻すため）。先にここで外す
+ */
+export function splitDuplicates(rows: Parsed["rows"], match: Match): { send: number[]; duplicates: number[] } {
+  const keys = new Set<string>();
+  const ids = new Set<string>();
+  const send: number[] = [];
+  const duplicates: number[] = [];
+  rows.forEach((r, i) => {
+    const k = match === "email" ? r.key.trim().toLowerCase() : r.key.trim();
+    const own = [r.line ? `line:${r.line}` : "", r.google ? `google:${r.google}` : ""].filter(Boolean);
+    if ((k && keys.has(k)) || own.some((x) => ids.has(x))) {
+      duplicates.push(i);
+      return;
+    }
+    if (k) keys.add(k);
+    for (const x of own) ids.add(x);
+    send.push(i);
+  });
+  return { send, duplicates };
 }
 
 function matchOf(v: unknown): Match {
@@ -110,7 +136,7 @@ function Page(p: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {p.issues.slice(0, 1000).map((x) => (
+                {p.issues.slice(0, ISSUES_SHOWN).map((x) => (
                   <tr>
                     <td>{x.line}</td>
                     <td>{x.provider === "line" ? "LINE" : x.provider === "google" ? "Google" : ""}</td>
@@ -120,7 +146,8 @@ function Page(p: PageProps) {
               </tbody>
             </table>
           ) : null}
-          {!p.done && p.counts.linked > 0 ? (
+          {p.issues && p.issues.length > ISSUES_SHOWN ? <p class="muted">{tf("identities.more_issues", { n: p.issues.length - ISSUES_SHOWN })}</p> : null}
+          {!p.done && !p.fatal && p.counts.linked > 0 ? (
             <form method="post" action={p.base}>
               <input type="hidden" name="step" value="import" />
               <input type="hidden" name="match" value={match} />
@@ -185,6 +212,10 @@ function Page(p: PageProps) {
   );
 }
 
+function sortIssues(xs: Issue[]): Issue[] {
+  return xs.sort((a, b) => a.line - b.line);
+}
+
 async function guard(c: AdminContext) {
   const shopId = param(c, "shopId");
   const shop = await loadShop(c, shopId, "admin");
@@ -195,7 +226,11 @@ async function guard(c: AdminContext) {
 
 function layout(c: AdminContext, shop: { id: string; name: string; settings?: Record<string, unknown> | null }, props: Omit<PageProps, "base" | "fields">) {
   const base = `/admin/shops/${shop.id}/customers/import/identities`;
-  const fields = customerFields(shop.settings ?? {}).map((f) => ({ key: f.key, label: f.label }));
+  // 引く値にできるのは文字と数の項目だけ（DB も同じに断る。保存してある文字のまま比べる）
+  const fields = customerFields(shop.settings ?? {})
+    .filter((f) => f.type === "text" || f.type === "number")
+    .map((f) => ({ key: f.key, label: f.label }));
+  c.header("cache-control", "no-store");
   return c.html(
     <AdminLayout
       title={`${shop.name} · ${t("identities.title")}`}
@@ -228,28 +263,35 @@ customerIdentities.post("/:shopId/customers/import/identities", requireOwner, as
     if (file.size > IDENTITY_IMPORT_MAX_BYTES) return layout(c, shop, { ...keep, fatal: "too_large" });
     csv = await file.text();
   }
-  if (csv.length > IDENTITY_IMPORT_MAX_BYTES) return layout(c, shop, { ...keep, fatal: "too_large" });
+  if (new TextEncoder().encode(csv).byteLength > IDENTITY_IMPORT_MAX_BYTES) return layout(c, shop, { ...keep, fatal: "too_large" });
   if (match !== "email" && !matchKey) return layout(c, shop, { ...keep, fatal: "match_key" });
   const parsed = parseIdentityCsv(csv);
   if (parsed === "empty" || parsed === "too_many_rows") return layout(c, shop, { ...keep, fatal: parsed });
   const write = body["step"] === "import";
   const counts = Object.fromEntries(OUTCOMES.map((o) => [o, 0])) as Record<Outcome, number>;
   const issues: Issue[] = [];
+  const { send, duplicates } = splitDuplicates(parsed.rows, match);
+  counts.duplicate_in_csv = duplicates.length;
+  const dupIssues: Issue[] = duplicates.map((i) => ({ line: parsed.lines[i] ?? i + 1, reason: "duplicate_in_csv" }));
   const { db } = owner(c);
-  for (let i = 0; i < parsed.rows.length; i += CHUNK) {
+  for (let i = 0; i < send.length; i += CHUNK) {
+    const part = send.slice(i, i + CHUNK);
     let r: DbResult;
     try {
-      r = await db.rpc<DbResult>("member_identities_import", { p_shop_id: shop.id, p_match: match, p_match_key: match === "email" ? null : matchKey, p_rows: parsed.rows.slice(i, i + CHUNK), p_dry_run: !write });
+      r = await db.rpc<DbResult>("member_identities_import", { p_shop_id: shop.id, p_match: match, p_match_key: match === "email" ? null : matchKey, p_rows: part.map((j) => parsed.rows[j]), p_dry_run: !write });
     } catch (e) {
       if (e instanceof DbError) {
         const fatal = /invalid_match_key/.test(e.message) ? "match_key" : "db";
         // 途中の塊まで結んだときは、そこまでの結果も見せる（結んだ分は残る。もう一度取り込めば「変わらない」になる）
-        return layout(c, shop, { ...keep, fatal, ...(i > 0 ? { counts, issues, done: write } : {}) });
+        return layout(c, shop, { ...keep, fatal, ...(i > 0 ? { counts, issues: sortIssues([...issues, ...dupIssues]), done: write } : {}) });
       }
       throw e;
     }
     for (const o of OUTCOMES) counts[o] += Number(r.counts[o] ?? 0);
-    for (const x of r.issues) issues.push({ line: parsed.lines[i + x.row] ?? i + x.row + 1, reason: x.reason, ...(x.provider ? { provider: x.provider } : {}) });
+    for (const x of r.issues) {
+      const j = part[x.row] ?? 0;
+      issues.push({ line: parsed.lines[j] ?? j + 1, reason: x.reason, ...(x.provider ? { provider: x.provider } : {}) });
+    }
   }
-  return layout(c, shop, { ...keep, csv, counts, issues, done: write });
+  return layout(c, shop, { ...keep, csv, counts, issues: sortIssues([...issues, ...dupIssues]), done: write });
 });
