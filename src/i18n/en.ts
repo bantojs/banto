@@ -2639,6 +2639,7 @@ export const en: Record<MessageKey, string> = {
   "pages.tool_italic": "Italic",
   "pages.tool_link": "Link",
   "pages.tool_link_ask": "Link URL (starting with https:// or /)",
+  "pages.tool_image_link_ask": "Image link URL (starting with https:// or /; leave empty to remove the link)",
   "pages.tool_ul": "Bulleted list",
   "pages.tool_ol": "Numbered list",
   "pages.tool_quote": "Quote",
