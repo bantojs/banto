@@ -376,6 +376,12 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 ほかのログインの方法（ショップの設定で有効なときだけ。`/members/config` の `login` に出ます）:
 
 - **パスワード**（`password`）: `POST /api/shops/<shop>/members/password-login` `{ "email", "password" }` → verify と同じ形のトークン。間違いが続くと 429 `locked`（コードでは入れる）。パスワードを決める・変えるのは `POST /api/shops/<shop>/members/password` `{ "password" }`（Bearer）→ 新しいトークンの組（ほかの端末はログアウト）。password-login に成功すると、会員に「パスワードでログインしました」のメールが毎回届きます（同梱テーマの画面では、初めての端末のときだけ。docs/members.md 3-2）。
+
+**メールアドレスの変更**（0166、どのログインの方法でも。docs/members.md「メールアドレスの変更」）: どちらも Bearer の会員トークンで、ログインしてから 15 分以内だけ。
+
+- `POST /api/shops/<shop>/members/email` `{ "email" }` → 202 `{ "ok": true }`。新しいアドレスに 6 桁のコードを送ります。ほかの会員が使っているアドレス・回数の上限のときも同じ応答です（送りません）。
+- `POST /api/shops/<shop>/members/email/verify` `{ "code" }` → 新しいトークンの組と `member`（`{ id, email }`）。アドレスが変わり、ほかの端末はログアウトします（前のトークンも使えなくなるので、受け取った組で置き換えてください）。前後のアドレスに知らせのメールが届きます。
+- エラー: 403 `reauth_required`（15 分を過ぎた。ログインし直させる）・400 `invalid_email`・400 `same_email`・400 `invalid_code`（間違い。あと何回か試せる）・400 `expired`（期限切れ・5 回間違えた・送っていない。`/members/email` からやり直す）・409 `unavailable`（ほかの会員が使い始めた）・409 `migration_required`（データベースの更新 `0166_member_email_change` の前）・429 `plan_limit_exceeded`（1 日のメールの上限）・401 `invalid_member_token`。
 - **パスキー**（`passkey`。同梱モジュール passkey、ショップに独自ドメインがあるときだけ）: ブラウザで `GET /api/shops/<shop>/members/passkey?return_to=<許可リストの URL>` を開くと、**ショップのドメインの** パスキーの画面へ進み、ログインすると `<return_to>?banto_handoff=<券>` に戻ります。あとは LINE・Google と同じく `verify` `{ "handoff" }` でトークンに引き換えます。パスキーはショップのドメインに結びつくので、連携サイトの画面の上では使いません。
   - **パスキーの追加**（0070）: `POST /api/shops/<shop>/members/passkey/add` `{ "return_to": "<許可リストの URL>" }`（Bearer）→ `{ "url", "expires_in": 120 }`。会員のブラウザを `url`（ショップのドメインの追加の画面）へ送ると、ボタンを 2 回（続ける → この端末のパスキーを追加）押して、`<return_to>?banto_passkey=added` に戻ります。券は 2 分・1 回限りです。
   - 追加できるのは **ログインしてから 15 分以内の会員トークン** だけです（盗まれたトークンからパスキーを足して居座れないように。会員ページと同じ決まり）。過ぎていたら 403 `reauth`。login からやり直してもらってから呼んでください。追加すると、会員に「パスキーを追加しました」のメールが届きます。

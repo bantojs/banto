@@ -40,6 +40,7 @@ import {
   type MemberSession,
 } from "../../members/auth";
 import { peekLogin, startLogin, verifyLogin, type LoginDeps } from "../../members/login";
+import { EMAIL_CHANGE_MIGRATION, startEmailChange, verifyEmailChange } from "../../members/email-change";
 import { openJson, randomToken, sealJson } from "../../util/signed";
 import { moduleEnabled } from "../../modules/registry";
 import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, providerClientId, providerIdentity, providerModule, secretPurpose, type Provider } from "../../modules/social-login/providers";
@@ -283,6 +284,15 @@ const ACCOUNT_ERRORS: Record<string, MessageKey> = {
   last_method: "member.oauth_last_method",
   tryon_not_cancellable: "member.tryon_not_cancellable",
   tryon_not_extendable: "member.tryon_not_extendable",
+  // メールアドレスの変更（0166）
+  invalid_email: "member.invalid_email",
+  email_same: "member.email_same",
+  email_code_invalid: "member.email_code_invalid",
+  email_code_expired: "member.email_code_expired",
+  email_unavailable: "member.email_unavailable",
+  email_mail_unavailable: "member.email_mail_unavailable",
+  email_mail_failed: "member.mail_failed",
+  email_mail_limit: "member.email_mail_limit",
 };
 
 const LOGIN_ERRORS: Record<string, MessageKey> = {
@@ -341,7 +351,14 @@ members.get("/:shop/account", async (c: Ctx) => {
   const opts = await loginOptions(c, s.shop);
   const linked = rec.customer.providers ?? [];
   const security = { password: opts.password, hasPassword: rec.customer.has_password === true, providers: opts.providers.map((id) => ({ id, linked: linked.includes(id) })) };
-  const errorKey = ACCOUNT_ERRORS[c.req.query("error") ?? ""];
+  const errorCode = c.req.query("error") ?? "";
+  const errorKey = ACCOUNT_ERRORS[errorCode];
+  const flash = c.req.query("flash");
+  // メールアドレスの変更（0166）。当たるまで欄を出さない。コードを送った後とコードの誤りのときはコードの欄
+  const sfData = storefrontData(c);
+  const emailChange = sfData && Boolean(s.session.sid) && (await sfData.migratedTo(EMAIL_CHANGE_MIGRATION))
+    ? { step: flash === "email_code" || errorCode === "email_code_invalid" ? ("code" as const) : ("email" as const) }
+    : null;
   const tryonConf = tryonSettings(s.shop.settings);
   const today = todayHere();
   const props: AccountPageProps = {
@@ -349,8 +366,9 @@ members.get("/:shop/account", async (c: Ctx) => {
       customer: rec.customer,
       orders: rec.orders,
       prefectures: PREFECTURES,
-      flash: c.req.query("flash"),
+      flash,
       security,
+      emailChange,
       error: errorKey ? t(errorKey) : undefined,
       favorites: withFavorites ? (favorites ?? []) : null,
       news: withNews ? (news ?? { items: [], unread: 0 }) : null,
@@ -377,7 +395,7 @@ members.get("/:shop/account", async (c: Ctx) => {
         : null,
   };
   // Liquid のテーマの会員ページ（templates/customers/account）。無ければ・描けなければ既定のテーマ
-  const sf = storefrontData(c);
+  const sf = sfData;
   const ls = sf ? { shop: s.shop, sf, ctx: props.ctx } : null;
   const lt = ls ? await liquidThemeFor(c, ls) : null;
   if (ls && lt) {
@@ -1137,6 +1155,58 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
   const ld = loginDeps(c);
   if (ld) await afterResponse(c, sendAccountChangeNotice(ld, s.shop, { kind: "password", from: r.mail_from, to: r.email ?? s.session.email, accountUrl: memberAccountUrl(publicBaseUrl(c), s.shop) }));
   return c.redirect(`${s.shopPath}/account?flash=password_saved`);
+});
+
+// ---------- メールアドレスの変更（0166、メンテナの決定 2026-11-23） ----------
+// フォームの送信だけ受ける。ログインしてから 15 分以内のセッションだけ（過ぎていればパスワードの設定と同じく入り直してもらう）
+const EMAIL_START_ERRORS: Record<string, string> = {
+  invalid_email: "invalid_email",
+  same_email: "email_same",
+  unavailable: "email_mail_unavailable",
+  disabled: "email_mail_unavailable",
+  mail_failed: "email_mail_failed",
+  limit: "email_mail_limit",
+};
+
+members.post("/:shop/account/email", navigateOnly, async (c: Ctx) => {
+  const s = await scope(c);
+  const sf = storefrontData(c);
+  if (!s || !sf || !(await sf.migratedTo(EMAIL_CHANGE_MIGRATION))) return notFound(c);
+  const ld = loginDeps(c);
+  if (!s.session || !s.session.sid || !ld) return c.redirect(`${s.shopPath}/account/login`);
+  const email = ((await formFields(c)).email ?? "").slice(0, 300);
+  const r = await startEmailChange(ld, s.shop, { id: s.session.cid, epoch: s.session.ep, sid: s.session.sid }, email, await clientIpFor(c, s.shop));
+  if (r.ok) return c.redirect(`${s.shopPath}/account?flash=email_code#email-change`);
+  if (r.error === "reauth") return reauthRedirect(c, s);
+  if (r.error === "session") {
+    await writeSession(c, s, null);
+    return c.redirect(`${s.shopPath}/account/login`);
+  }
+  return c.redirect(`${s.shopPath}/account?error=${EMAIL_START_ERRORS[r.error] ?? "email_mail_failed"}#email-change`);
+});
+
+members.post("/:shop/account/email/verify", navigateOnly, async (c: Ctx) => {
+  const s = await scope(c);
+  const sf = storefrontData(c);
+  if (!s || !sf || !(await sf.migratedTo(EMAIL_CHANGE_MIGRATION))) return notFound(c);
+  const ld = loginDeps(c);
+  if (!s.session || !s.session.sid || !ld) return c.redirect(`${s.shopPath}/account/login`);
+  const code = ((await formFields(c)).code ?? "").slice(0, 20);
+  const { result: r, notify } = await verifyEmailChange(ld, s.shop, { id: s.session.cid, epoch: s.session.ep, sid: s.session.sid }, code, memberAccountUrl(publicBaseUrl(c), s.shop));
+  if (!r.ok) {
+    if (r.reason === "reauth") return reauthRedirect(c, s);
+    if (r.reason === "session") {
+      await writeSession(c, s, null);
+      return c.redirect(`${s.shopPath}/account/login`);
+    }
+    const err = r.reason === "invalid" ? "email_code_invalid" : r.reason === "unavailable" ? "email_unavailable" : "email_code_expired";
+    return c.redirect(`${s.shopPath}/account?error=${err}#email-change`);
+  }
+  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代・新しいアドレスで続ける
+  await writeSession(c, s, { ...s.session, ep: r.epoch, email: r.new_email, chk: Math.floor(Date.now() / 1000) });
+  // 前後のアドレスに知らせる（盗まれたセッションから変えられても、前のアドレスの持ち主が気づけるように）
+  await afterResponse(c, notify());
+  return c.redirect(`${s.shopPath}/account?flash=email_changed`);
 });
 
 // ---------- LINE・Google でログイン（0014、同梱モジュール line_login・google_login） ----------

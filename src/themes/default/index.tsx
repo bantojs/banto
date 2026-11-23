@@ -279,7 +279,7 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
  */
 const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
-export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
+export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, emailChange, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
   const field = (name: string, label: string, value: string, type = "text", required = true) => (
@@ -295,6 +295,8 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "logged_out_all" ? <p class="notice">{t("member.logged_out_all")}</p> : null}
       {flash === "password_saved" ? <p class="notice">{t("member.password_saved")}</p> : null}
+      {flash === "email_code" ? <p class="notice">{t("member.email_code_sent")}</p> : null}
+      {flash === "email_changed" ? <p class="notice">{t("member.email_changed")}</p> : null}
       {flash === "oauth_linked" ? <p class="notice">{t("member.oauth_linked_done")}</p> : null}
       {flash === "oauth_unlinked" ? <p class="notice">{t("member.oauth_unlinked_done")}</p> : null}
       {flash === "coupon_claimed" ? <p class="notice">{t("claim.done")}</p> : null}
@@ -503,6 +505,29 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
             <button type="submit">{t("shop.save")}</button>
           </p>
         </form>
+      ) : null}
+      {emailChange ? (
+        <div id="email-change">
+          <h2>{t("member.email_change_title")}</h2>
+          <p class="muted">{t("member.email_change_help")}</p>
+          {emailChange.step === "code" ? (
+            <form method="post" action={`${ctx.shopPath}/account/email/verify`}>
+              <label for="email-change-code">{t("member.email_change_code")}</label>
+              <input id="email-change-code" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength={7} required autocomplete="one-time-code" style="width:100%;max-width:12rem;padding:.5rem;font:inherit;box-sizing:border-box" />
+              <p>
+                <button type="submit">{t("member.email_change_confirm")}</button> <a href={`${ctx.shopPath}/account#email-change`}>{t("member.email_change_restart")}</a>
+              </p>
+            </form>
+          ) : (
+            <form method="post" action={`${ctx.shopPath}/account/email`}>
+              <label for="email-change-new">{t("member.email_change_new")}</label>
+              <input id="email-change-new" type="email" name="email" required maxlength={254} autocomplete="email" style="width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box" />
+              <p>
+                <button type="submit">{t("member.email_change_send")}</button>
+              </p>
+            </form>
+          )}
+        </div>
       ) : null}
       {security && (security.password || security.providers.length > 0) ? (
         <div>

@@ -4,6 +4,7 @@ import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
+import { EMAIL_CHANGE_MIGRATION, startEmailChange, verifyEmailChange } from "../../members/email-change";
 import { consentCollected, returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/checkout";
 import { StorefrontData, storefrontCacheTtl, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
@@ -48,6 +49,8 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
  *   POST /api/shops/:shop/members/tryon/:number/extend  取り置きの期限を延ばす（回数・日数はショップの設定、0151）
  *   POST /api/shops/:shop/members/password-login { email, password } → トークン（店の設定 members_password がオンのとき、0013）
  *   POST /api/shops/:shop/members/password    { password }（Bearer）パスワードを決める・変える → 新しいトークン（ほかの端末はログアウト）
+ *   POST /api/shops/:shop/members/email       { email }（Bearer、ログインしてから 15 分以内）→ 202 { ok: true }: 新しいアドレスに確かめのコードを送る（0166）
+ *   POST /api/shops/:shop/members/email/verify { code }（Bearer）→ 新しいトークン（アドレスが変わり、ほかの端末はログアウト）
  *   GET  /api/shops/:shop/members/oauth/:provider?return_to=…  LINE・Google へ送り出す（ブラウザで開く。0014）。戻ってきたら
  *        `<return_to>?banto_handoff=<券>` に戻すので、/members/verify に { handoff } で渡す（2 分・1 回限り）
  *   POST /api/shops/:shop/members/passkey/add { return_to }（Bearer、ログインしてから 15 分以内）→ { url }: パスキーを追加する画面へ送る券（0070）
@@ -532,6 +535,65 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）
   const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+// ---------- メールアドレスの変更（0166、メンテナの決定 2026-11-23） ----------
+// どちらもログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth_required。連携側はログインし直させる）
+/** 0166 が当たるまで 409 migration_required。トークンの無い会員・世代の古い会員は bearerMember / DB が断る */
+async function emailChangeScope(c: Ctx): Promise<{ shop: PublicShop; member: ApiMember & { sid: string }; deps: NonNullable<ReturnType<typeof loginDeps>> } | Response> {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  const sf = storefrontData(c);
+  if (!sf || !(await sf.migratedTo(EMAIL_CHANGE_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  const deps = loginDeps(c);
+  if (!deps) return c.json({ error: "not_configured" }, 503);
+  // セッションの行の無い（0045 より前の）トークンでは変えさせない
+  if (!s.member.sid) return c.json({ error: "reauth_required" }, 403);
+  return { shop: s.shop, member: { ...s.member, sid: s.member.sid }, deps };
+}
+
+/** { email } → 202 { ok: true }。新しいアドレスにコードを送る（使われているアドレス・回数の上限でも同じ応答） */
+membersApi.post("/shops/:shop/members/email", async (c: Ctx) => {
+  const s = await emailChangeScope(c);
+  if (s instanceof Response) return s;
+  const r = await startEmailChange(s.deps, s.shop, { id: s.member.id, epoch: s.member.epoch, sid: s.member.sid }, str((await body(c))["email"]).slice(0, 300), await clientIpFor(c, s.shop));
+  if (r.ok) return c.json({ ok: true }, 202, NO_STORE);
+  switch (r.error) {
+    case "invalid_email":
+      return c.json({ error: "invalid_email" }, 400);
+    case "same_email":
+      return c.json({ error: "same_email" }, 400);
+    case "reauth":
+      return c.json({ error: "reauth_required" }, 403);
+    case "session":
+      return c.json({ error: "invalid_member_token" }, 401);
+    case "disabled":
+      return c.json({ error: "members_disabled" }, 409);
+    case "mail_failed":
+      return c.json({ error: "mail_failed" }, 502);
+    case "limit":
+      return c.json({ error: "plan_limit_exceeded" }, 429); // 1 日のメールの上限（0053）
+    default:
+      return c.json({ error: "unavailable" }, 503); // メールの送信元が無い
+  }
+});
+
+/** { code } → 新しいトークンの組（ほかの端末はログアウト）。前後のアドレスに知らせる */
+membersApi.post("/shops/:shop/members/email/verify", async (c: Ctx) => {
+  const s = await emailChangeScope(c);
+  if (s instanceof Response) return s;
+  const { result: r, notify } = await verifyEmailChange(s.deps, s.shop, { id: s.member.id, epoch: s.member.epoch, sid: s.member.sid }, str((await body(c))["code"]).slice(0, 20), memberAccountUrl(publicBaseUrl(c), s.shop));
+  if (!r.ok) {
+    if (r.reason === "reauth") return c.json({ error: "reauth_required" }, 403);
+    if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
+    // invalid: 間違い（あと何回か試せる）/ expired: 期限切れ・使用済み・5 回間違えた（email からやり直す）/ unavailable: ほかの会員が使っている
+    if (r.reason === "unavailable") return c.json({ error: "unavailable" }, 409);
+    return c.json({ error: r.reason === "invalid" ? "invalid_code" : "expired" }, 400);
+  }
+  await afterResponse(c, notify());
+  // パスワードの設定と同じく、新しい世代のセッションの行を作ってトークンを渡す（ログインを確かめた時刻は引き継ぐ。0090）
+  const tokens = await grant(c, s.deps.db, s.deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
+  return tokens ? c.json({ ...tokens, member: { id: s.member.id, email: r.new_email } }, 200, NO_STORE) : c.json({ error: "invalid_member_token" }, 401);
 });
 
 membersApi.get("/shops/:shop/members/oauth/:provider", async (c: Ctx) => {
