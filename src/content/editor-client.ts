@@ -436,7 +436,11 @@ export function pageEditorClient() {
   /** 画像にリンクを付けるときに触る節（見たままの画面の DOM） */
   interface Box {
     nodeName: string;
+    nodeType: number;
+    textContent: string | null;
+    childNodes: ArrayLike<Box>;
     parentNode: Box | null;
+    closest(sel: string): Box | null;
     getAttribute(k: string): string | null;
     setAttribute(k: string, v: string): void;
     removeAttribute(k: string): void;
@@ -451,8 +455,43 @@ export function pageEditorClient() {
     t: Record<string, string>;
   }
 
+  /**
+   * 見たままの画面で、リンクを付けられる画像か。レイアウトのブロック（カバー・画像と文・ギャラリーなど、書式に戻すときに画像の
+   * リンクを持たないもの）の中の画像と、文字も入ったリンク・書式の中のリンクの中の画像は選ばない（今までどおり文字のリンクの扱い）
+   */
+  function imagePickable(img: Box): boolean {
+    if (img.nodeName.toUpperCase() !== "IMG") return false;
+    if (img.closest("[data-banto-block],[contenteditable=false]")) return false;
+    const a = img.closest("a");
+    if (!a) return true;
+    return img.parentNode === a && Array.from(a.childNodes).every((n) => n === img || (n.nodeType === 3 && !(n.textContent ?? "").trim()));
+  }
+
+  /** 画像のリンクを付ける・変える・外す（href が空なら外す）。何をしたかを返す */
+  function setImageLink(doc: { createElement(tag: string): Box }, img: Box, href: string): "added" | "updated" | "removed" | "none" {
+    const parent = img.parentNode;
+    if (!parent) return "none";
+    const a = parent.nodeName.toUpperCase() === "A" ? parent : null;
+    if (!href) {
+      if (!a || !a.parentNode) return "none";
+      // 外す: 画像を <a> の外へ出して <a> を消す（<a> の中は画像だけ）
+      a.parentNode.insertBefore(img, a);
+      a.parentNode.removeChild(a);
+      return "removed";
+    }
+    if (a) {
+      a.setAttribute("href", href);
+      return "updated";
+    }
+    const link = doc.createElement("a");
+    link.setAttribute("href", href);
+    parent.insertBefore(link, img);
+    link.appendChild(img);
+    return "added";
+  }
+
   function mount(cfg: MountConfig): void {
-    const g = globalThis as unknown as { document: Doc; fetch: (u: string, i: unknown) => Promise<{ ok: boolean; json(): Promise<{ html?: string }> }>; prompt: (m: string, d: string) => string | null; FormData: new () => { append(k: string, v: string): void } };
+    const g = globalThis as unknown as { document: Doc; Event: new (type: string, init?: { bubbles?: boolean }) => unknown; fetch: (u: string, i: unknown) => Promise<{ ok: boolean; json(): Promise<{ html?: string }> }>; prompt: (m: string, d: string) => string | null; FormData: new () => { append(k: string, v: string): void } };
     const doc = g.document;
     const ta = doc.getElementById("body");
     const ed = doc.getElementById("body-visual");
@@ -521,32 +560,21 @@ export function pageEditorClient() {
     };
     ed.addEventListener("click", (e) => {
       const t = e.target as unknown as Box | null;
-      pick(t && t.nodeName.toUpperCase() === "IMG" ? t : null);
+      pick(t && imagePickable(t) ? t : null);
     });
     ed.addEventListener("keydown", () => pick(null));
     /** 選んだ画像のリンクを付ける・変える・外す（空にすると外す）。画像を選んでいなければ false */
     const linkPicked = (ask: string): boolean => {
       const img = picked;
-      if (!img || !(ed as unknown as Box).contains(img) || !img.parentNode) return false;
-      const parent = img.parentNode;
-      const a = parent.nodeName.toUpperCase() === "A" ? parent : null;
+      if (!img || !(ed as unknown as Box).contains(img) || !img.parentNode || !imagePickable(img)) return false;
+      const a = img.parentNode.nodeName.toUpperCase() === "A" ? img.parentNode : null;
       const u = g.prompt(cfg.t["image_link"] ?? ask, a?.getAttribute("href") ?? "https://");
       if (u === null) return true;
       const href = u.replace(/[\s()<>"]/g, "");
-      if (!href || href === "https://") {
-        // 外す: 画像を <a> の外へ出して <a> を消す
-        if (a && a.parentNode) {
-          a.parentNode.insertBefore(img, a);
-          a.parentNode.removeChild(a);
-        }
-      } else if (a) a.setAttribute("href", href);
-      else {
-        const link = doc.createElement("a");
-        link.setAttribute("href", href);
-        parent.insertBefore(link, img);
-        link.appendChild(img);
-      }
+      const done = setImageLink(doc, img, href === "https://" ? "" : href);
       pick(null);
+      // 変えたことを知らせる（保存せずに離れるときの確認・横のプレビューの描き直しは input で動く）
+      if (done !== "none") (ed as unknown as { dispatchEvent(e: unknown): boolean }).dispatchEvent(new g.Event("input", { bubbles: true }));
       return true;
     };
     const run = (cmd: string, value?: string) => {
@@ -584,5 +612,5 @@ export function pageEditorClient() {
     };
   }
 
-  return { toMarkdown, mount };
+  return { toMarkdown, mount, imagePickable, setImageLink };
 }
