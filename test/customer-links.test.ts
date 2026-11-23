@@ -42,6 +42,7 @@ describe("GET /api/v1/customers/links", () => {
     const { sb, shop, app } = setup();
     addMember(sb, shop.id, 1);
     expect((await get(app, await issue(sb, shop.id, ["customers:read"]))).status).toBe(401);
+    expect((await get(app, await issue(sb, shop.id, ["customers:write"]))).status).toBe(401);
     const r = await get(app, await issue(sb, shop.id, ["customers:links"]));
     expect(r.status).toBe(200);
     expect(r.cache).toBe("no-store");
@@ -75,7 +76,7 @@ describe("GET /api/v1/customers/links", () => {
   it("鍵が無い・32 文字未満・256 文字を超えると 400 invalid_link_key", async () => {
     const { sb, shop, app } = setup();
     const tok = await issue(sb, shop.id, ["customers:links"]);
-    for (const key of [null, "", "short", "x".repeat(31), "x".repeat(257)]) {
+    for (const key of [null, "", "short", "x".repeat(31), "x".repeat(257), `${"x".repeat(40)} y`, `${"x".repeat(40)}\u00e9`]) {
       const r = await get(app, tok, "", key);
       expect(r.status).toBe(400);
       expect(r.json.error?.message).toContain("invalid_link_key");

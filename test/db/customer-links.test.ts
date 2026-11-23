@@ -56,6 +56,8 @@ describe.skipIf(!dbAvailable)("会員の結びつけの一覧（0167）", () => 
     expect((await links(tok)).total).toBe(2);
     const readOnly = await issue(["customers:read"]);
     expect(await expectDbError(() => links(readOnly))).toMatch(/unauthorized/);
+    const writeOnly = await issue(["customers:write"]);
+    expect(await expectDbError(() => links(writeOnly))).toMatch(/unauthorized/);
     expect(await expectDbError(() => issue(["customers:linkz"]))).toMatch(/api_tokens_scopes_valid/);
   });
 
@@ -81,12 +83,14 @@ describe.skipIf(!dbAvailable)("会員の結びつけの一覧（0167）", () => 
 
   it("鍵は 32〜256 文字。ページ送りと limit の上限", async () => {
     const tok = await issue(["customers:links"]);
-    for (const key of [null, "", "x".repeat(31), "x".repeat(257)]) expect(await expectDbError(() => links(tok, key))).toMatch(/invalid_link_key/);
+    for (const key of [null, "", "x".repeat(31), "x".repeat(257), `${"x".repeat(40)} y`, `${"x".repeat(40)}\u00e9`]) expect(await expectDbError(() => links(tok, key))).toMatch(/invalid_link_key/);
     expect((await links(tok, "x".repeat(256))).total).toBe(2);
     const p2 = await links(tok, KEY, 1, 1);
     expect(p2).toMatchObject({ total: 2, limit: 1, offset: 1 });
     expect(p2.items.map((i) => i["id"])).toEqual([plainCid]);
     expect((await links(tok, KEY, 1000, -5))).toMatchObject({ limit: 100, offset: 0 });
+    expect((await links(tok, KEY, 0, null))).toMatchObject({ limit: 1, offset: 0 });
+    expect((await links(tok, KEY, null, 0))).toMatchObject({ limit: 100 });
   });
 
   it("anon と authenticated は呼べない", async () => {

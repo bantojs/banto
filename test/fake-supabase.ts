@@ -3143,7 +3143,7 @@ export class FakeSupabase {
     if (fn === "api_customers_links") {
       if (!need("customers:links")) return unauthorized();
       const key = typeof args["p_link_key"] === "string" ? args["p_link_key"] : "";
-      if (key.length < 32 || key.length > 256) return json({ code: "P0001", message: "invalid_link_key" }, 400);
+      if (!/^[\x21-\x7e]{32,256}$/.test(key)) return json({ code: "P0001", message: "invalid_link_key" }, 400);
       const limit = Math.max(1, Math.min(Number(args["p_limit"] ?? 100) || 100, 100));
       const offset = Math.max(0, Number(args["p_offset"] ?? 0) || 0);
       const rows = this.tables.customers.filter((c) => c["shop_id"] === shopId)

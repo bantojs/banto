@@ -447,7 +447,7 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 
 ```
 GET /api/v1/customers/links?limit=100&offset=0
-X-Banto-Link-Key: <連携側で決めた秘密の値（32〜256 文字）>
+X-Banto-Link-Key: <連携側で決めた秘密の値（ASCII の見える文字の 32〜256 文字）>
 ```
 
 ```json
@@ -459,10 +459,11 @@ X-Banto-Link-Key: <連携側で決めた秘密の値（32〜256 文字）>
 }
 ```
 
-- 返すのは会員 ID・`external_ref`・`attributes`・`updated_at` と `line_link` の 5 つだけです。メールアドレス・氏名・住所・注文・同意は返しません。`customers:read`（個人情報を含む）を付けなくても使えます。
-- 対象はそのショップの会員すべて（LINE でログインしていない会員も。`line_link` は null）。並びは作った順・id の順で、ページをまたいで変わりません。`limit` は 1〜100（既定 100）。
+- 返すのは会員 ID・`external_ref`・`attributes`・`updated_at` と `line_link` の 5 つだけです。メールアドレス・氏名・住所・注文・同意は返しません。`customers:read`（個人情報を含む）を付けなくても使えます。ただし `attributes` はショップが決めた独自項目（`customer_fields`）をそのまま返します。独自項目に誕生日・電話番号のような個人情報を置いたショップでは、それも返ります。
+- 対象はそのショップの会員すべて（LINE でログインしていない会員も。`line_link` は null）。並びは作った順・id の順です。読んでいるあいだに退会した会員がいると、後ろの会員が 1 人ずつ前にずれるので、取りこぼしが困るときは 1 回の同期で読み終えた後に `total` を比べてください。`limit` は 1〜100（既定 100）。
 - **LINE の利用者 ID（UID）そのものは返しません**（「LINE の利用者 ID は外へ出さない」、§12・docs/line.md）。返すのは鍵付きのハッシュ `line_link` = HMAC-SHA256（鍵 = `X-Banto-Link-Key` の値の UTF-8 のバイト、本文 = UID の UTF-8 のバイト）の 16 進（小文字、64 文字）です。連携側は自分が持っている UID から同じ値を作って照らします。
-- **鍵は Banto に保存しません**。呼ぶたびに見出しで渡します。鍵を知らない人には `line_link` から UID を引けず、鍵を変えれば前の値とは照らせなくなります。鍵はトークンと同じく秘密として扱ってください。見出しが無い・32 文字未満・256 文字を超えると 400 `invalid_link_key`。0167 を当てる前は 409 `migration_required`。
+- **鍵は Banto に保存しません**。呼ぶたびに見出しで渡します。鍵を知らない人には `line_link` から UID を引けず、鍵を変えれば前の値とは照らせなくなります。鍵はトークンと同じく秘密として扱ってください。鍵は ASCII の見える文字（`!` 〜 `~`、空白なし）の 32〜256 文字です（例: 乱数の 16 進 64 文字）。見出しが無い・それ以外の文字を含む・長さが合わないと 400 `invalid_link_key`。0167 を当てる前は 409 `migration_required`。
+- `updated_at` は会員の行（氏名・独自項目・`external_ref` など）が変わった時刻です。**LINE で結んだだけでは変わりません**。`line_link` の変化を拾うには、`updated_at` で絞らずに全件を読んで比べてください。
 - 逆向き（連携側が UID を Banto に送って 1 人を引く口）は作りません。連携側の会員全員の UID が Banto に渡らないようにするためです。
 - 結んだら、今ある `PATCH /api/v1/customers/{id}`（`customers:write`）で `external_ref` と `attributes` を書きます（§7）。
 

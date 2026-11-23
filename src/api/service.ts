@@ -61,6 +61,7 @@ export type ApiErrorCode = "unauthorized" | "forbidden" | "not_found" | "invalid
 /** 会員の結びつけの一覧の鍵の長さ（0167 の api_customers_links と同じ） */
 export const LINK_KEY_MIN = 32;
 export const LINK_KEY_MAX = 256;
+const LINK_KEY_RE = new RegExp(`^[\\x21-\\x7e]{${LINK_KEY_MIN},${LINK_KEY_MAX}}$`);
 
 export class ApiError extends Error {
   constructor(
@@ -829,11 +830,12 @@ export class ApiService {
   customersLinks = async (q: { linkKey: string | undefined; limit?: number; offset?: number }) => {
     await this.requireMigration("0167_customer_links");
     const key = q.linkKey ?? "";
-    if (key.length < LINK_KEY_MIN || key.length > LINK_KEY_MAX) throw new ApiError("invalid", `invalid_link_key: send X-Banto-Link-Key with ${LINK_KEY_MIN} to ${LINK_KEY_MAX} characters`, 400);
+    // 見出しの値は ASCII の見える文字だけ（空白・ASCII の外は、見出しの読み方で前後が削られたり別のバイトになったりして、黙って違うハッシュになるため）
+    if (!LINK_KEY_RE.test(key)) throw new ApiError("invalid", `invalid_link_key: send X-Banto-Link-Key with ${LINK_KEY_MIN} to ${LINK_KEY_MAX} visible ASCII characters`, 400);
     return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("api_customers_links", {
       p_link_key: key,
-      p_limit: q.limit ?? 100,
-      p_offset: q.offset ?? 0,
+      p_limit: Math.min(q.limit ?? 100, 100),
+      p_offset: Math.min(q.offset ?? 0, 1_000_000_000),
     });
   };
   /** 会員のお気に入り（0123、新しい順）。customers:read */

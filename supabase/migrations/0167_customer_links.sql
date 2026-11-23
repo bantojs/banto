@@ -63,7 +63,8 @@ as $$
 declare v_tok api_tokens; v_limit integer; v_offset integer; v_total integer; v_items jsonb;
 begin
   v_tok := api_require(p_token_hash, 'customers:links');
-  if p_link_key is null or length(p_link_key) < 32 or length(p_link_key) > 256 then raise exception 'invalid_link_key'; end if;
+  -- 鍵は ASCII の見える文字（! 〜 ~）の 32〜256 文字（見出しで渡すので、空白・ASCII の外は黙って違うバイトになりうる）
+  if p_link_key is null or p_link_key !~ '^[!-~]+$' or length(p_link_key) not between 32 and 256 then raise exception 'invalid_link_key'; end if;
   v_limit := greatest(1, least(coalesce(p_limit, 100), 100));
   v_offset := greatest(0, coalesce(p_offset, 0));
   select count(*) into v_total from customers c where c.shop_id = v_tok.shop_id;
