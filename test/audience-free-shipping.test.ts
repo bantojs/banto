@@ -87,6 +87,13 @@ describe("送料の計算（shipping.ts）", () => {
     expect(freeShippingObject(info(10000, false), 12000)).toMatchObject({ applied: true, member: false });
     expect(freeShippingObject({ ...info(null, false), freeOver: null }, 2000)).toBeNull();
     expect(freeShippingObject(undefined, 2000)).toBeNull();
+    // 買える商品が無いカートは null（金額 0 のゴールドでも「届いた」と出さない）
+    expect(freeShippingObject(info(0, true), 0, { empty: true })).toBeNull();
+    // 送料無料のクーポンが入っていれば届いた扱い（あと 0 円、会員特典ではない）
+    const coupon = freeShippingObject(info(3000, true), 1000, { coupon: true })!;
+    expect(coupon).toMatchObject({ applied: true, member: false, coupon: true });
+    expect(JSON.stringify(coupon.remaining)).toContain("0");
+    expect(freeShippingObject(info(3000, true), 1000)).toMatchObject({ applied: false, coupon: false });
   });
   it("管理画面のフォーム: 選べる条件だけ・外す・重ならない。欄が無い・条件が読めないなら今の決まりのまま", () => {
     const current = [{ audience_id: GOLD, free_over_jpy: 0, label: null }];

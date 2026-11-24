@@ -568,18 +568,20 @@ const paymentLabel = (p: "stripe" | "komoju" | "amazon_pay" | "cod"): string => 
 export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; subtotal?: number; shipping?: ShippingInfo; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean; komoju_methods?: { type: string; name: string; fee: number | null }[] }; error?: string; categories: CategoryRow[]; loginRequired?: string }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   // banto_login_required: 注文は会員だけのショップでゲストのとき、ログイン（その場で会員登録）の URL（0165。無ければ null）
-  const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel), banto_login_required: p.loginRequired ?? null, banto_free_shipping: freeShippingObject(p.shipping, p.subtotal) };
+  const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel), banto_login_required: p.loginRequired ?? null, banto_free_shipping: freeShippingObject(p.shipping, p.subtotal, { empty: p.lines.every((l) => l.storeOnly === true), coupon: p.discounts?.applied.some((a) => a.free_shipping) === true }) };
   return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
 }
 
 /**
  * cart.banto_free_shipping（0171）: 送料無料までの目安。over = 見る人の送料無料の金額（ショップ全体と、ログイン中の会員が当てはまる会員の条件の低い方）、
- * remaining = あといくら（届いていれば 0）、applied = 届いたか、member = 会員特典の金額か。送料無料の金額が無ければ null。表示だけ（確認画面の送料が正）
+ * remaining = あといくら（届いていれば 0）、applied = 届いたか、member = 会員特典の金額か、coupon = 送料無料のクーポンが入っているか
+ * （そのときは applied = true・remaining = 0）。送料無料の金額が無い・カートに買える商品が無ければ null。表示だけ（確認画面の送料が正）
  */
-export function freeShippingObject(shipping: ShippingInfo | undefined, subtotal: number | undefined) {
+export function freeShippingObject(shipping: ShippingInfo | undefined, subtotal: number | undefined, opts: { empty?: boolean; coupon?: boolean } = {}) {
   const over = shipping?.viewerFreeOver ?? shipping?.freeOver ?? null;
-  if (!shipping || over === null || subtotal === undefined) return null;
-  return { over: money(over), remaining: money(Math.max(0, over - subtotal)), applied: subtotal >= over, member: shipping.viewerFreeMember === true };
+  if (!shipping || over === null || subtotal === undefined || opts.empty === true) return null;
+  const coupon = opts.coupon === true;
+  return { over: money(over), remaining: money(coupon ? 0 : Math.max(0, over - subtotal)), applied: coupon || subtotal >= over, member: !coupon && shipping.viewerFreeMember === true, coupon };
 }
 
 /** 配送先の画面（templates/checkout）。checkout に値・都道府県・お届け日時・誤りを渡し、{% form 'checkout_address' %} で送らせる */
@@ -598,7 +600,9 @@ export function renderCheckoutAddress(
     error: p.error ?? null,
     subtotal_price: money(p.subtotal),
     shipping_summary: p.shipping.summary,
+    // ショップ全体の送料無料の金額（会員の条件の金額は含まない）。見る人の金額は banto_free_shipping（0171）
     free_shipping_over: p.shipping.freeOver === null ? null : money(p.shipping.freeOver),
+    banto_free_shipping: freeShippingObject(p.shipping, p.subtotal),
     // 見る人の送料無料の金額（0171: ログイン中の会員は会員の条件の金額も）で判定する。表示だけ
     free_shipping_applied: (p.shipping.viewerFreeOver ?? p.shipping.freeOver) !== null && p.subtotal >= (p.shipping.viewerFreeOver ?? p.shipping.freeOver)!,
     // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは確認画面で決まる

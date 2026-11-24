@@ -821,7 +821,8 @@ export const defaultTheme: Theme = {
             {(() => {
               // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料が正）
               const over = shipping.viewerFreeOver ?? shipping.freeOver;
-              if (over === null || buyable.length === 0) return null;
+              // 送料無料のクーポンが入っていれば出さない（クーポンの案内の文がある）
+              if (over === null || buyable.length === 0 || coupons?.applied.some((a) => a.free_shipping)) return null;
               const left = over - total;
               return (
                 <p class="free-shipping-hint">

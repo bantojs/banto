@@ -60,6 +60,33 @@ describe.skipIf(!dbAvailable)("会員の条件ごとの送料無料（0171）", 
     expect(await over(other.shopId, ids["cGold"]!)).toBeNull();
   });
 
+  it("shop_audiences_render（カートの目安）: 決まりのある条件だけ free_over_jpy。表示用の条件・ほかのショップの条件の id・決まりの無いショップ・モジュール OFF には付けない", async () => {
+    const render = (shopId: string) => asService(async (c) => (await c.query<{ r: J[] }>("select shop_audiences_render($1) as r", [shopId])).rows[0]!.r);
+    const byId = (rows: J[]) => Object.fromEntries(rows.map((r) => [String(r["id"]), r]));
+    const mine = byId(await render(f.shopId));
+    expect(mine[ids["gold"]!]!["free_over_jpy"]).toBe(0);
+    expect(mine[ids["silver"]!]!["free_over_jpy"]).toBe(3000);
+    // 表示用の条件（URL のパラメータ）は決まりがあっても付けない
+    expect(mine[ids["param"]!]).toBeDefined();
+    expect("free_over_jpy" in mine[ids["param"]!]!).toBe(false);
+    // ほかのショップの条件は一覧に出ない。ほかのショップの一覧では、こちらの決まりが指していても付かない（決まりの無いショップ）
+    expect(mine[ids["otherGold"]!]).toBeUndefined();
+    const theirs = byId(await render(other.shopId));
+    expect(theirs[ids["otherGold"]!]).toBeDefined();
+    expect("free_over_jpy" in theirs[ids["otherGold"]!]!).toBe(false);
+    // モジュール OFF なら一覧そのものが空
+    const off = await createShopFixture({ email: "afs-render-off@example.com", slug: "afs-render-off", publish: true });
+    await setSettings(off.shopId, { customer_fields: [{ key: "rank", label: "ランク", type: "select", options: ["gold", "silver", "regular"] }] });
+    const offAud = await audience(off.shopId, "ゴールド", { attr: "rank", in: ["gold"] });
+    await setSettings(off.shopId, { modules: { audiences: false }, shipping: { mode: "flat", flat_fee_jpy: 800, free_over_jpy: null, by_prefecture: {}, free_over_by_audience: [{ audience_id: offAud, free_over_jpy: 0 }] } });
+    expect(await render(off.shopId)).toEqual([]);
+    // ON でも決まりが無ければ付かない
+    await setSettings(off.shopId, { modules: { audiences: true }, shipping: { mode: "flat", flat_fee_jpy: 800, free_over_jpy: null, by_prefecture: {} } });
+    const noRules = await render(off.shopId);
+    expect(noRules.map((r) => r["id"])).toEqual([offAud]);
+    expect("free_over_jpy" in noRules[0]!).toBe(false);
+  });
+
   it("セッションを確かめる: 世代が違う・取り消した・ほかの会員のセッションなら null（送料がかかる）", async () => {
     expect(await over(f.shopId, ids["cGold"]!, 1)).toBeNull();
     expect(await over(f.shopId, ids["cGold"]!, 0, sids[ids["cSilver"]!]!)).toBeNull();
