@@ -157,6 +157,8 @@ async function applyFromForm(c: Context<AppEnv>, applied: readonly string[]): Pr
       if (e.stage === "connect") {
         if (e.message === "host_not_allowed") return { ok: false, message: t("migrate.error_host") };
         if (e.message === "invalid") return { ok: false, message: t("migrate.error_invalid") };
+        if (e.message === "ssl_required") return { ok: false, message: t("migrate.error_ssl_required") };
+        if (e.message.endsWith("[tls]")) return { ok: false, message: `${t("migrate.error_tls")} ${e.message.replace(" [tls]", "")}` };
         if (e.message.endsWith("[direct_connection]")) return { ok: false, message: `${t("migrate.error_direct")} ${e.message.replace(" [direct_connection]", "")}` };
         return { ok: false, message: `${t("migrate.error_connect")} ${e.message}` };
       }
