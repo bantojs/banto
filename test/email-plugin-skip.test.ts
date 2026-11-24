@@ -23,6 +23,21 @@ function ctx(event: string, data: Record<string, unknown>, settings: Record<stri
   };
 }
 
+const tryonContact = {
+  request_id: "r1",
+  number: 7,
+  status: "requested",
+  visit_date: null,
+  hold_until: null,
+  customer_email: "a@example.com",
+  customer_name: "山田",
+  customer_phone: "0312345678",
+  note: null,
+  store: { name: "渋谷店", postal_code: null, address: null, phone: null, hours: {}, special_days: [], email: "st@example.com", notify_email: true },
+  shop: { name: "マイショップ", slug: "my-shop", contact_email: "shop@example.com" },
+  items: [{ name: "Tシャツ", sku: "M", qty: 1, unit_price_jpy: 3000 }],
+};
+
 describe("メール通知: 注文のメール・試着の知らせを止める", () => {
   it("設定の読み取り: 印を付けたときだけ止める（既定は送る）", () => {
     expect(skipOrders({})).toBe(false);
@@ -42,11 +57,37 @@ describe("メール通知: 注文のメール・試着の知らせを止める",
     await expect(handle(ctx("tryon.requested", { request_id: "r1" }, settings))).rejects.toThrow(/送信元が未設定/);
   });
 
-  it("skip_tryon: 試着の知らせだけ止め、注文のメールは送る", async () => {
-    const settings = { from: "", skip_tryon: true };
-    await expect(handle(ctx("tryon.requested", { request_id: "r1" }, settings))).resolves.toBeUndefined();
-    await expect(handle(ctx("tryon.updated", { request_id: "r1", status: "ready" }, settings))).resolves.toBeUndefined();
-    await expect(handle(ctx("order.paid", { order_id: "o1" }, settings))).rejects.toThrow(/送信元が未設定/);
+  it("skip_tryon: 注文のメールは止めない", async () => {
+    await expect(handle(ctx("order.paid", { order_id: "o1" }, { from: "", skip_tryon: true }))).rejects.toThrow(/送信元が未設定/);
+  });
+
+  it("skip_tryon: お客様あて（と控え）だけ止め、店舗あては送る", async () => {
+    const run = async (settings: Record<string, string | boolean>) => {
+      const sent: Record<string, unknown>[] = [];
+      const c = ctx("tryon.requested", { request_id: "r1" }, settings);
+      c.fetch = (async (_url: string, init: RequestInit) => {
+        sent.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return new Response('{"id":"x"}', { status: 200 });
+      }) as unknown as typeof fetch;
+      c.privileged = { tryonContact: async () => tryonContact, shopNoticeTexts: async () => [], shopSecret: async () => null } as unknown as PrivilegedDb;
+      await handle(c);
+      return sent;
+    };
+    const both = await run({ from: "shop@example.com", bcc_owner: true });
+    expect(both).toHaveLength(2);
+    expect(JSON.stringify(both)).toContain("a@example.com");
+    expect(JSON.stringify(both)).toContain("st@example.com");
+    const storeOnly = await run({ from: "shop@example.com", bcc_owner: true, skip_tryon: true });
+    expect(storeOnly).toHaveLength(1);
+    expect(JSON.stringify(storeOnly[0]!["to"])).toContain("st@example.com");
+    expect(storeOnly[0]!["bcc"]).toBeUndefined();
+    // 店舗あての本文にはお客様の連絡先が載る（今までどおり）。宛先にお客様は入らない
+    expect(storeOnly[0]!["to"]).toEqual(["st@example.com"]);
+  });
+
+  it("bcc_owner と skip_orders を両方付けると、注文の控えも送らない（送り手にも DB にも触らない）", async () => {
+    await expect(handle(ctx("order.paid", { order_id: "o1" }, { from: "shop@example.com", bcc_owner: true, skip_orders: true }))).resolves.toBeUndefined();
+    await expect(handle(ctx("order.created", { order_id: "o1", payment_status: "unpaid" }, { from: "shop@example.com", bcc_owner: true, skip_orders: true }))).resolves.toBeUndefined();
   });
 
   it("何も付けなければ今までどおり送ろうとする", async () => {

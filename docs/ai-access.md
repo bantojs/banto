@@ -488,5 +488,7 @@ PHP なら `hash_hmac('sha256', $uid, $key)`、Python なら `hmac.new(key.encod
 
 - 番号の無い注文は `"tracking": null` です。`carrier` は `yamato` / `sagawa` / `japanpost` / `other`、`url` は運送会社の照会ページ（`other` は `null`）。番号は区切り（`-` と空白）を外した英数字です。
 - **`orders:read` で返します**（`orders:pii` は求めません）。お問い合わせ番号は氏名・住所・メール・電話ではないためです。宛先（メールアドレス）が要る発送のメールのプラグインは、どのみち `orders:pii` を持っています。
+- 運送会社とお問い合わせ番号があれば、だれでも運送会社の照会ページで配達の状況と届け先の地域を見られます。`orders:read` を渡す相手は選んでください。
+- お問い合わせ番号は、発送済みの注文の個人情報のマスキング（既定 180 日、`mask_shipped_orders`）では消えません。
 - hooks の `order.shipped` のペイロードには入れません（hooks は最小の中身のまま。番号は API で引きます）。
 - 0172 を当てる前は `tracking` が入りません。

@@ -346,7 +346,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "orders_list",
-    description: "注文の一覧。購入者の個人情報はトークンに orders:pii が無ければマスクされる。スコープ orders:read。" + DATA_NOTE,
+    description: "注文の一覧。購入者の個人情報はトークンに orders:pii が無ければマスクされる。発送していれば各注文の tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ query: s("string", "注文番号、または（orders:pii があれば）メール・氏名の部分一致"), status: s("string", "pending（受付・未入金、0156）| paid | shipped | cancelled | refunded", { enum: ["pending", "paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,
     run: (api, a) => api.ordersList({ query: str(a, "query"), status: str(a, "status"), from: str(a, "from"), to: str(a, "to"), limit: num(a, "limit"), offset: num(a, "offset") }),
@@ -360,7 +360,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "order_update_status",
-    description: "【書き込み】支払い済みの注文を発送済みまたはキャンセルにする。キャンセルすると決済事業者（Stripe / KOMOJU）で全額返金し、在庫を戻す。返金に失敗した場合は注文は変わらない。スコープ orders:write。",
+    description: "【書き込み】支払い済みの注文を発送済みまたはキャンセルにする。キャンセルすると決済事業者（Stripe / KOMOJU）で全額返金し、在庫を戻す。返金に失敗した場合は注文は変わらない。返る注文にも tracking（運送会社とお問い合わせ番号、0172）が入る。スコープ orders:write。",
     inputSchema: obj({ order_id: s("string"), status: s("string", "shipped | cancelled", { enum: ["shipped", "cancelled"] }) }, ["order_id", "status"]),
     readOnly: false,
     run: (api, a) => {
