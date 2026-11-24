@@ -36,7 +36,7 @@ import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
-import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { amazonPayCancel, amazonPayRelayScript, amazonPayReturn, amazonPayStart } from "./amazon-pay";
 import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
@@ -1609,7 +1609,8 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
   // 注文は会員だけのショップ（0165）: 配送先・確定のどちらの段でも、ゲストはログインへ回す
   if (checkoutMembersOnly(s.shop.settings) && !member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
-  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop), komojuTypes: komojuTypesOf(setup) };
+  const memberFreeOver = memberFreeOverSource(c, s.shop, member?.cid);
+  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop), komojuTypes: komojuTypesOf(setup), ...(memberFreeOver ? { memberFreeOver } : {}) };
   const f = await formFields(c);
   // KOMOJU の種類（0170、配送先の画面が隠しの値 method で送る）
   const method = provider === "komoju" && f.method ? f.method : null;

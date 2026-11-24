@@ -590,6 +590,8 @@ export function renderCheckoutAddress(
     shipping_summary: p.shipping.summary,
     free_shipping_over: p.shipping.freeOver === null ? null : money(p.shipping.freeOver),
     free_shipping_applied: p.shipping.freeOver !== null && p.subtotal >= p.shipping.freeOver,
+    // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは確認画面で決まる
+    member_free_shipping: (p.shipping.memberFree ?? []).map((m) => ({ label: m.label, free_shipping_over: money(m.freeOver) })),
     prefectures: p.prefectures.map((name) => ({ name, shipping_price: fee(name) === undefined ? null : money(fee(name)) })),
     delivery: p.delivery ? { dates: p.delivery.dates, slots: p.delivery.slots, note: t("delivery.note") } : null,
     marketing_consent: Boolean(p.consent),
@@ -613,6 +615,8 @@ export async function renderCheckoutConfirm(c: Ctx, s: LiquidScope, choice: Liqu
       lines: cf.lines.map((l) => ({ title: l.product_name, variant_title: l.sku_name, sku: l.code, quantity: l.qty, price: money(l.unit_price_jpy), line_price: money(l.line_total_jpy), reduced_tax: l.reduced })),
       subtotal_price: money(cf.subtotal_jpy),
       shipping_price: money(cf.shipping_jpy),
+      // 送料が 0 円になった理由（0171）: "audience" は会員の条件の送料無料（会員特典）、"threshold" は ○円以上で送料無料
+      shipping_free_reason: cf.shipping_free_reason ?? null,
       total_discount: money(cf.discount_jpy),
       fee_price: money(cf.fee_jpy),
       fee_label: cf.fee_label ?? null,

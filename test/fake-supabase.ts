@@ -222,6 +222,8 @@ export class FakeSupabase {
   confirmEmail: boolean;
   signupsAllowed: boolean;
   appliedMigrations: string[];
+  /** member_free_shipping_over を呼んだ回数（0171。ゲスト・決まりの無いショップで呼ばないことのテスト） */
+  memberFreeShippingCalls?: number;
   /** product_public_pick / product_member_pick を引いた回数（0112。ページのブロックをまとめて 1 回で引くか） */
   pickCalls = 0;
   /** 0070 のパスキーの追加の券 */
@@ -4637,7 +4639,7 @@ export class FakeSupabase {
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
-    if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_")) || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client" || fn === "shop_audiences_render") {
+    if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_") && fn !== "member_free_shipping_over") || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client" || fn === "shop_audiences_render") {
       return this.memberRpc(fn, args);
     }
     if (fn === "attach_reservation_customer") {
@@ -4831,6 +4833,27 @@ export class FakeSupabase {
       return json(n);
     }
     // 0170: 予約の手数料をショップの決まりで確かめる（値引きの後）
+    // 0171: 会員の条件ごとの送料無料（member_free_shipping_over と同じ: モジュールが ON・会員の最新の独自項目・表示用の条件は除く・低い金額）
+    if (fn === "member_free_shipping_over") {
+      this.memberFreeShippingCalls = (this.memberFreeShippingCalls ?? 0) + 1;
+      const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
+      const settings = (shop?.["settings"] as Row | undefined) ?? {};
+      if (((settings["modules"] as Row | undefined)?.["audiences"]) !== true) return json(null);
+      const rules = ((settings["shipping"] as Row | undefined)?.["free_over_by_audience"] as unknown[] | undefined) ?? [];
+      const cust = this.tables.customers.find((x) => x["shop_id"] === args["p_shop_id"] && x["id"] === args["p_customer_id"]);
+      if (!cust || !Array.isArray(rules)) return json(null);
+      const attrs = (cust["attributes"] as Record<string, unknown> | undefined) ?? {};
+      let min: number | null = null;
+      for (const r of rules.slice(0, 10)) {
+        if (!r || typeof r !== "object") continue;
+        const o = r as Row;
+        const a = this.tables.audiences.find((x) => x["shop_id"] === args["p_shop_id"] && String(x["id"]) === o["audience_id"]);
+        const over = o["free_over_jpy"];
+        if (!a || typeof over !== "number" || !Number.isInteger(over) || over < 0 || audienceDisplayOnly(a["condition"]) || !audienceOk(a["condition"], { member: true, attrs })) continue;
+        min = min === null ? over : Math.min(min, over);
+      }
+      return json(min);
+    }
     if (fn === "reservation_payment_fee_check") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"] && r["status"] === "pending");
       if (!res) return json({ code: "P0001", message: "reservation_not_found" }, 400);

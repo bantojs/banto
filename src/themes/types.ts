@@ -51,6 +51,8 @@ export interface ShippingInfo {
   summary: string;
   freeOver: number | null;
   table: { prefecture: string; fee: number }[] | null;
+  /** 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ（会員の条件の名前・中身は出さない） */
+  memberFree?: { label: string; freeOver: number }[];
   taxRate: number;
 }
 

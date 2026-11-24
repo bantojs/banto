@@ -12,7 +12,7 @@ import type { Cart, CartItem } from "../cart/cart";
 import { normalizeCart } from "../cart/cart";
 import { openJson, randomToken, sealJson } from "../util/signed";
 import { ipHash, subjectHash } from "../members/auth";
-import { PREFECTURES, describeShipping, isPrefecture, parseShippingSettings, shippingFee, taxRate } from "./shipping";
+import { PREFECTURES, describeShipping, isPrefecture, parseShippingSettings, shippingQuote, taxRate, type ShippingFreeReason } from "./shipping";
 import type { AddressFormValues, CartLine } from "../themes/types";
 import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db/privileged";
 import type { MigrationStateDeps } from "../db/migration-state";
@@ -27,6 +27,8 @@ import { shopHome } from "../storefront/urls";
 import { checkDelivery, deliveryText, isDeliverySlot } from "../modules/delivery-time";
 import { COD_PROVIDER, codNote, codQuote, codSettings, type CodBlock } from "../modules/cod";
 import { KOMOJU_TYPE_RE, flatFee, komojuFee, komojuMethods } from "./payment-fees";
+import { moduleEnabled } from "../modules/registry";
+import { AUDIENCES_MODULE } from "../members/audience";
 import { rateFor, shopTaxRates, taxBreakdown, taxClassOf, taxRoundingOf, type TaxGroup } from "./tax";
 
 /** cod: 代金引換（同梱モジュール cod、0157）。決済ページへ行かず、受付（未入金）で確定する */
@@ -295,6 +297,8 @@ export interface Confirmation {
   lines: ConfirmationLine[];
   subtotal_jpy: number;
   shipping_jpy: number;
+  /** 送料が 0 円になった理由（0171）: threshold = ○円以上で送料無料・audience = 会員の条件の送料無料（会員特典）。送料がかかるなら null */
+  shipping_free_reason: ShippingFreeReason;
   /** 手数料: 代引き手数料（同梱モジュール cod、0157）か支払い方法の手数料（KOMOJU の種類、0170）。無ければ 0 */
   fee_jpy: number;
   /** 手数料の見出し（「代引き手数料」「お支払い手数料」）。手数料が無ければ null */
@@ -380,6 +384,8 @@ export interface Quote {
   prices: Record<string, number>;
   address: Address;
   shipping: number;
+  /** 送料が 0 円になった理由（0171。確認画面の「会員特典」）。署名には入れない（確定の前に引き直す） */
+  shippingReason?: ShippingFreeReason;
   /** 手数料（代引き 0157・支払い方法 0170）。無ければ 0 */
   fee: number;
   /** KOMOJU の種類（0170）。選んでいなければ null */
@@ -430,6 +436,25 @@ export interface QuoteContext {
   consent?: boolean;
   /** KOMOJU の受け付ける種類（プラグインの設定 payment_types。0170 の種類の選び方に使う）。無ければ [] */
   komojuTypes?: string[];
+  /**
+   * ログイン中の会員が当てはまる会員の条件のうち、いちばん低い送料無料の金額（0171。DB の member_free_shipping_over、最新の独自項目で判定）。
+   * 決まりの無いショップ・ゲスト・モジュールが OFF では呼ばない（DB の往復を足さない）。無ければ null
+   */
+  memberFreeOver?: () => Promise<number | null>;
+}
+
+/**
+ * 送料（0171 の会員の条件ごとの送料無料を含む）。計算は shipping.ts、会員の判定の材料は DB。
+ * ゲスト・会員の条件のモジュールが OFF・決まりが無いときは DB に問い合わせない
+ */
+async function shippingFor(ctx: QuoteContext, subtotal: number, state: string): Promise<{ fee: number; free_reason: ShippingFreeReason }> {
+  const settings = ctx.shop.settings ?? {};
+  const cfg = parseShippingSettings(settings["shipping"]);
+  const needsMember = Boolean(ctx.member?.id) && cfg.free_over_by_audience.length > 0 && moduleEnabled(settings, AUDIENCES_MODULE) && ctx.memberFreeOver !== undefined;
+  // ショップ全体の金額で無料なら、会員の判定は要らない
+  const plain = shippingQuote(cfg, subtotal, state, null);
+  if (!needsMember || plain.fee === 0) return plain;
+  return shippingQuote(cfg, subtotal, state, await ctx.memberFreeOver!());
 }
 
 /**
@@ -463,8 +488,9 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
   address.delivery_slot = dl.request?.slot ?? "";
   if (priced.lines.some((l) => l.short)) return { ok: false, error: "stock", dropped: priced.dropped };
   const settings = ctx.shop.settings ?? {};
-  // 送料無料のラインは値引き前の小計で判定する（WooCommerce の既定と同じ）
-  const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, address.state);
+  // 送料無料のラインは値引き前の小計で判定する（WooCommerce の既定と同じ）。会員の条件ごとの金額（0171）も
+  const ship = await shippingFor(ctx, priced.subtotal, address.state);
+  const shipping = ship.fee;
   const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider, method);
   const base = priced.subtotal + shipping - discount.total;
   // 決済事業者の下限（50 円）。代金引換は決済事業者を通らないので当てない
@@ -489,6 +515,7 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     prices: Object.fromEntries(priced.lines.map((l) => [l.sku.id, l.sku.price_jpy])),
     address,
     shipping,
+    shippingReason: ship.free_reason,
     fee,
     method: km.method,
     coupons: discount.applied.map((a) => a.code),
@@ -554,6 +581,7 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     })),
     subtotal_jpy: subtotal,
     shipping_jpy: quote.shipping,
+    shipping_free_reason: quote.shippingReason ?? null,
     fee_jpy: quote.fee,
     fee_label: quote.fee > 0 ? t(quote.provider === "cod" ? "confirm.cod_fee" : "confirm.payment_fee") : null,
     discounts: discount.applied.map((a) => ({ code: a.code, name: a.name, amount_jpy: a.amount_jpy })),
@@ -622,7 +650,7 @@ export async function recheckQuote(
     return { ok: false, error: "changed", fresh: await again(priced.cart) };
   }
   const settings = ctx.shop.settings ?? {};
-  const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, quote.address.state);
+  const shipping = (await shippingFor(ctx, priced.subtotal, quote.address.state)).fee;
   const samePrices = priced.lines.every((l) => quote.prices[l.sku.id] === l.sku.price_jpy);
   // クーポンも判定し直す（期間が終わった・上限に達した・条件を満たさなくなったら、確認画面を出し直す）
   const discount = await discountCart(ctx, priced, quote.coupons, shipping, quote.address.customer_email, quote.provider, quote.method);
@@ -1134,9 +1162,11 @@ function bantoKey(key: string): boolean {
 }
 
 /** 送料の案内（カート・確認画面・API で共通） */
-export function shippingSummary(shop: PublicShop): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; taxRate: number } {
+export function shippingSummary(shop: PublicShop): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; memberFree: { label: string; freeOver: number }[]; taxRate: number } {
   const settings = shop.settings ?? {};
-  return { ...describeShipping(parseShippingSettings(settings["shipping"])), taxRate: taxRate(settings) };
+  const d = describeShipping(parseShippingSettings(settings["shipping"]));
+  // 会員の条件ごとの送料無料（0171）は、会員の条件のモジュールが ON のときだけ案内する
+  return { ...d, memberFree: moduleEnabled(settings, AUDIENCES_MODULE) ? d.memberFree : [], taxRate: taxRate(settings) };
 }
 
 export { PREFECTURES };

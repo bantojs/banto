@@ -1101,6 +1101,9 @@ export const defaultTheme: Theme = {
         <h1>{t("store.shipping_title")}</h1>
         <p>{shipping.summary}</p>
         {shipping.freeOver !== null ? <p>{`${yen(shipping.freeOver)}以上のご注文で送料無料`}</p> : null}
+        {(shipping.memberFree ?? []).map((m) => (
+          <p>{m.freeOver === 0 ? tf("store.member_free_shipping_always", { label: m.label }) : tf("store.member_free_shipping", { label: m.label, amount: yen(m.freeOver) })}</p>
+        ))}
         {shipping.table ? (
           <table>
             <tbody>
