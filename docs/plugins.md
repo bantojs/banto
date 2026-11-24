@@ -39,7 +39,7 @@ API キー等のシークレットは DB に置かず、Cloudflare の **変数�
 
 「注文のメールを送らない」に印を付けると、運営者への注文の控えも止まります。新しい注文を運営者に知らせたいときは、同梱の「LINE 通知」（`line_notify`、運営者の LINE に届きます）を ON にするか、外部プラグインから送ってください。AI 用 API はショップの連絡先メールアドレス（`settings.contact_email`）を返さないので、運営者のアドレスは外部プラグインの側の設定で受け取るようにします。
 
-印を付けても hooks（`order.created`・`order.paid`・`order.shipped`・`tryon.requested`・`tryon.updated`）は外部プラグインに今までどおり届きます。外部プラグインは注文 ID で AI 用 API（`GET /api/v1/orders/{id}`、宛先は `orders:pii`）から中身を引いて送ります。発送のメールに書くお問い合わせ番号は、注文の `tracking`（0172、`orders:read`）にあります（[docs/ai-access.md](ai-access.md)）。
+印を付けても hooks（`order.created`・`order.paid`・`order.shipped`・`tryon.requested`・`tryon.updated`）は外部プラグインに今までどおり届きます。外部プラグインは注文 ID で AI 用 API（`GET /api/v1/orders/{id}`、宛名とメールは `orders:contact`。住所も要るなら `orders:pii`）から中身を引いて送ります。発送のメールに書くお問い合わせ番号は、注文の `tracking`（0172、`orders:read`）にあります（[docs/ai-access.md](ai-access.md)）。
 
 送信元ドメインの認証（SPF / DKIM）と Supabase の認証メールの設定は [docs/email.md](email.md) を参照してください。未設定だと迷惑メールに入ります。
 

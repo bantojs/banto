@@ -13,7 +13,8 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
   let a: Fixture;
   let orgId: string;
   let orderId: string;
-  const addr = { name: "山田 太郎", postal_code: "100-0001", state: "東京都", city: "千代田区", line1: "1-1", phone: "03-0000-0000" };
+  // 決まった鍵のほかに、電話・メール・会社名などの鍵が混じっていても orders:address では返さない
+  const addr = { name: "山田 太郎", postal_code: "100-0001", country: "JP", state: "東京都", city: "千代田区", line1: "1-1", line2: null, phone: "03-0000-0000", email: "addr@example.com", tel: "090-0000-0000", company: "山田商店" };
 
   const rpc = <T = J>(fn: string, args: unknown[]) =>
     asService(async (c) => (await c.query<{ r: T }>(`select ${fn}(${args.map((_, i) => `$${i + 1}`).join(", ")}) as r`, args)).rows[0]!.r);
@@ -40,8 +41,8 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
   it("注文の customer はスコープの組み合わせで分かれる。メモは orders:pii だけ", async () => {
     const cases: [string[], J, boolean][] = [
       [[], { masked: true, prefecture: "東京都" }, false],
-      [["orders:contact"], { email: "buyer@example.com", phone: "03-0000-0000", prefecture: "東京都" }, false],
-      [["orders:address"], { name: "山田 太郎", shipping_address: { name: "山田 太郎", postal_code: "100-0001", state: "東京都", city: "千代田区", line1: "1-1" } }, false],
+      [["orders:contact"], { name: "山田 太郎", email: "buyer@example.com", phone: "03-0000-0000", prefecture: "東京都" }, false],
+      [["orders:address"], { name: "山田 太郎", shipping_address: { name: "山田 太郎", postal_code: "100-0001", country: "JP", state: "東京都", city: "千代田区", line1: "1-1" } }, false],
       [["orders:contact", "orders:address"], { email: "buyer@example.com", name: "山田 太郎", shipping_address: addr }, false],
       // orders:pii は今までどおり（両方とメモ）
       [["orders:pii"], { email: "buyer@example.com", name: "山田 太郎", shipping_address: addr }, true],
@@ -51,6 +52,7 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
       const tok = await issue(a.ownerId, ["orders:read", ...extra]);
       const o = await rpc("api_order_get", [tok, orderId]);
       expect(o["customer"], extra.join(",")).toEqual(customer);
+      if (extra.length === 1 && extra[0] === "orders:address") expect(JSON.stringify(o)).not.toMatch(/addr@example|090-0000|山田商店|03-0000/);
       if (note) expect(o["note"]).toBe("メモ");
       else expect(o, extra.join(",")).not.toHaveProperty("note");
       const list = await rpc<{ items: J[]; pii: boolean; pii_parts: J }>("api_orders_list", [tok]);
@@ -62,10 +64,10 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
     }
   });
 
-  it("一覧の検索: メールは orders:contact、氏名は orders:address があるときだけ", async () => {
+  it("一覧の検索: メールは orders:contact、氏名は orders:contact か orders:address があるときだけ", async () => {
     const list = async (scopes: string[], q: string) => (await rpc<{ total: number }>("api_orders_list", [await issue(a.ownerId, ["orders:read", ...scopes]), null, null, null, 50, 0, q])).total;
     expect(await list(["orders:contact"], "buyer@")).toBe(1);
-    expect(await list(["orders:contact"], "山田")).toBe(0);
+    expect(await list(["orders:contact"], "山田")).toBe(1);
     expect(await list(["orders:address"], "山田")).toBe(1);
     expect(await list(["orders:address"], "buyer@")).toBe(0);
     expect(await list(["orders:pii"], "buyer@")).toBe(1);
@@ -83,20 +85,23 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
     expect(r["customer"]).toMatchObject({ email: "buyer@example.com", name: "山田 太郎" });
   });
 
-  it("お店で試着の申し込みの連絡先は orders:contact（か orders:pii）", async () => {
+  it("お店で試着: 名前・メール・電話は orders:contact、名前は orders:address でも、自由記入は orders:pii だけ", async () => {
     const pool = getPool();
     const store = (await pool.query<{ id: string }>("insert into stores (org_id, name) values ($1, '本店') returning id", [orgId])).rows[0]!.id;
-    await pool.query("insert into tryon_requests (shop_id, store_id, number, customer_email, customer_name) values ($1, $2, 1, 't@example.com', '試着')", [a.shopId, store]);
+    await pool.query("insert into tryon_requests (shop_id, store_id, number, customer_email, customer_name, customer_phone, note) values ($1, $2, 1, 't@example.com', '試着', '090-1111-1111', '自由記入')", [a.shopId, store]);
     const get = async (scopes: string[]) => rpc("api_tryon_request_get", [await issue(a.ownerId, ["orders:read", ...scopes]), 1]);
     expect(await get([])).not.toHaveProperty("customer");
-    expect(await get(["orders:address"])).not.toHaveProperty("customer");
-    expect((await get(["orders:contact"]))["customer"]).toMatchObject({ email: "t@example.com" });
-    expect((await get(["orders:pii"]))["customer"]).toMatchObject({ email: "t@example.com" });
-    const list = await rpc<{ items: J[] }>("api_tryon_requests_list", [await issue(a.ownerId, ["orders:read", "orders:contact"])]);
-    expect(list.items[0]!["customer"]).toMatchObject({ email: "t@example.com" });
+    expect((await get(["orders:contact"]))["customer"]).toEqual({ email: "t@example.com", phone: "090-1111-1111", name: "試着" });
+    expect((await get(["orders:address"]))["customer"]).toEqual({ name: "試着" });
+    expect((await get(["orders:contact", "orders:address"]))["customer"]).toEqual({ email: "t@example.com", phone: "090-1111-1111", name: "試着" });
+    expect((await get(["orders:pii"]))["customer"]).toEqual({ email: "t@example.com", phone: "090-1111-1111", name: "試着", note: "自由記入" });
+    const list = await rpc<{ items: J[]; pii: boolean }>("api_tryon_requests_list", [await issue(a.ownerId, ["orders:read", "orders:contact"])]);
+    expect(list.items[0]!["customer"]).toEqual({ email: "t@example.com", phone: "090-1111-1111", name: "試着" });
+    expect(list.pii).toBe(false);
+    expect((await rpc<{ pii: boolean }>("api_tryon_requests_list", [await issue(a.ownerId, ["orders:read", "orders:pii"])])).pii).toBe(true);
   });
 
-  it("お問い合わせ: 連絡先は orders:contact、添付のファイル名と中身は orders:pii だけ", async () => {
+  it("お問い合わせ: メールと名前は orders:contact、名前は orders:address でも、添付のファイル名と中身は orders:pii だけ", async () => {
     const r = await asService(async (c) => (await c.query<{ r: { id: string; number: number } }>("select inquiry_create($1, $2::jsonb, $3, $4) as r",
       [a.shopId, JSON.stringify({ basis: "form", category: "other", body: "質問", email: "q@example.com", name: "質問者" }), sha("link-ps"), sha("ip-ps")])).rows[0]!.r);
     const writer = await issue(a.ownerId, ["inquiries:read", "inquiries:write"]);
@@ -111,7 +116,8 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
     const viaPii = await rpc<J & { messages: { attachments: J[] }[] }>("api_inquiry_get", [pii, r.number]);
     expect(viaPii["contact"]).toEqual({ email: "q@example.com", name: "質問者" });
     expect(viaPii.messages.at(-1)!.attachments[0]).toMatchObject({ filename: "手順.pdf" });
-    expect(await rpc("api_inquiry_get", [await issue(a.ownerId, ["inquiries:read", "orders:address"]), r.number])).not.toHaveProperty("contact");
+    expect((await rpc("api_inquiry_get", [await issue(a.ownerId, ["inquiries:read", "orders:address"]), r.number]))["contact"]).toEqual({ name: "質問者" });
+    expect(await rpc("api_inquiry_get", [await issue(a.ownerId, ["inquiries:read"]), r.number])).not.toHaveProperty("contact");
     const list = await rpc<{ items: J[] }>("api_inquiries_list", [contact]);
     expect(list.items.find((x) => x["number"] === r.number)!["contact"]).toEqual({ email: "q@example.com", name: "質問者" });
 
@@ -131,11 +137,22 @@ describe.skipIf(!dbAvailable)("購入者の個人情報のスコープを分け�
     expect(await expectDbError(() => issue(a.ownerId, ["orders:phone"]))).toMatch(/api_tokens_scopes_valid|check/);
   });
 
+  it("発行した人が customers を失うと、orders:contact のトークンでもマスクに戻る", async () => {
+    const staff = await createAuthUser("ps-staff2@example.com");
+    await asUser(a.ownerId, (c) => c.query("select org_invite($1, $2, 'member', $3::jsonb, $4)", [orgId, "ps-staff2@example.com", JSON.stringify([{ shop_id: a.shopId, perms: ["orders", "customers", "integrations"] }]), sha("inv-ps2")]));
+    await withRole("authenticated", { sub: staff, email: "ps-staff2@example.com" }, (c) => c.query("select org_invitation_accept($1)", [sha("inv-ps2")]));
+    const tok = await issue(staff, ["orders:read", "orders:contact"]);
+    expect((await rpc("api_order_get", [tok, orderId]))["customer"]).toMatchObject({ email: "buyer@example.com" });
+    await getPool().query("update org_member_shops set perms = array['orders','integrations'] where user_id = $1 and shop_id = $2", [staff, a.shopId]);
+    expect((await rpc("api_order_get", [tok, orderId]))["customer"]).toEqual({ masked: true, prefecture: "東京都" });
+  });
+
   it("新しい関数は anon・authenticated から呼べない", async () => {
     const fns = [
       "banto_order_pii(text[], text)",
       "api_order_json(orders, boolean, boolean, boolean)",
-      "api_inquiry_json(inquiries, boolean, boolean, boolean)",
+      "api_inquiry_json(inquiries, boolean, boolean, boolean, boolean)",
+      "api_tryon_json(tryon_requests, boolean, boolean, boolean)",
     ];
     for (const fn of fns) {
       for (const role of ["anon", "authenticated"]) {

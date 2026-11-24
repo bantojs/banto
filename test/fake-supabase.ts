@@ -3009,14 +3009,18 @@ export class FakeSupabase {
       images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"], options: i["options"] ?? {} })),
       skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ id: k["id"], code: k["code"], name: k["name"] ?? null, price_jpy: k["price_jpy"], compare_at_price_jpy: k["compare_at_price_jpy"] ?? null, options: k["options"] ?? {}, gtin: k["gtin"] ?? null, available: this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0 })),
     });
-    // 0173: orders:contact（メール・電話）と orders:address（氏名・住所）。orders:pii は両方とメモ
+    // 0173: orders:contact（氏名・メール・電話）と orders:address（氏名・住所）。orders:pii は両方とメモ
     const piiPart = (part: "contact" | "address"): boolean => need("orders:pii") || (this.appliedMigrations.includes("0173_orders_pii_split") && need(`orders:${part}`));
     const customerView = (o: Row): Row => {
       const c = piiPart("contact"), a = piiPart("address");
       const addr = (o["shipping_address"] as Row | null) ?? null;
       if (c && a) return { email: o["customer_email"] ?? null, name: o["customer_name"] ?? null, shipping_address: addr };
-      if (c) return { email: o["customer_email"] ?? null, phone: addr?.["phone"] ?? null, prefecture: addr?.["state"] ?? null };
-      if (a) { const rest = addr ? { ...addr } : null; if (rest) delete rest["phone"]; return { name: o["customer_name"] ?? null, shipping_address: rest }; }
+      if (c) return { name: o["customer_name"] ?? null, email: o["customer_email"] ?? null, phone: addr?.["phone"] ?? null, prefecture: addr?.["state"] ?? null };
+      if (a) {
+        // 決まった鍵だけ（電話やほかの鍵は返さない）
+        const keep = addr ? Object.fromEntries(["name", "postal_code", "country", "state", "city", "line1", "line2"].filter((k) => addr[k] != null).map((k) => [k, addr[k]])) : null;
+        return { name: o["customer_name"] ?? null, shipping_address: keep };
+      }
       return { masked: true, prefecture: addr?.["state"] ?? null };
     };
     const order = (o: Row): Row => ({
@@ -3364,12 +3368,17 @@ export class FakeSupabase {
       case "api_tryon_request_restock": {
         // 0026 の再現（遷移の中身は test/db/tryon-api.test.ts）
         if (!need(fn === "api_tryon_request_update" || fn === "api_tryon_request_restock" ? "orders:write" : "orders:read")) return unauthorized();
-        const pii = piiPart("contact");
+        const pii = piiPart("contact") && piiPart("address");
         const view = (r: Row): Row => ({
           id: r["id"], number: r["number"], status: r["status"], store_id: r["store_id"], store_name: this.tables.stores.find((x) => x["id"] === r["store_id"])?.["name"] ?? null,
           visit_date: r["visit_date"] ?? null, hold_until: r["hold_until"] ?? null, customer_id: r["customer_id"] ?? null, restocked: r["restocked"] ?? false, created_at: r["created_at"],
           items: this.tables.tryon_items.filter((i) => i["request_id"] === r["id"]).map((i) => ({ sku_id: i["sku_id"], qty: i["qty"], unit_price_jpy: i["unit_price_jpy"] })),
-          ...(pii ? { customer: { email: r["customer_email"] ?? null, name: r["customer_name"] ?? null, phone: r["customer_phone"] ?? null, note: r["note"] ?? null } } : {}),
+          // 0173: 連絡先 → name・email・phone、住所の側 → name、自由記入 → orders:pii だけ
+          ...(piiPart("contact") || piiPart("address") ? { customer: {
+            ...(piiPart("contact") ? { email: r["customer_email"] ?? null, phone: r["customer_phone"] ?? null } : {}),
+            name: r["customer_name"] ?? null,
+            ...(need("orders:pii") ? { note: r["note"] ?? null } : {}),
+          } } : {}),
         });
         const rows = this.tables.tryon_requests.filter((r) => r["shop_id"] === shopId);
         if (fn === "api_tryon_requests_list") {
@@ -3735,7 +3744,7 @@ export class FakeSupabase {
         // 0105 の引数（古い DB は知らない引数で関数を見つけられない）
         if (("p_customer_id" in args || "p_updated_since" in args || "p_after" in args) && !this.appliedMigrations.includes("0105_ma_ports")) return json({ code: "PGRST202", message: "Could not find the function public.api_orders_list" }, 404);
         const q = args["p_query"] as string | null;
-        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || ((piiPart("contact") && String(o["customer_email"] ?? "").includes(q)) || (piiPart("address") && String(o["customer_name"] ?? "").includes(q)))));
+        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || ((piiPart("contact") && String(o["customer_email"] ?? "").includes(q)) || ((piiPart("contact") || piiPart("address")) && String(o["customer_name"] ?? "").includes(q)))));
         return json({ items: all.map((o) => order(o)), total: all.length, limit: 50, offset: 0, pii: piiPart("contact") && piiPart("address"), ...(this.appliedMigrations.includes("0173_orders_pii_split") ? { pii_parts: { contact: piiPart("contact"), address: piiPart("address"), note: need("orders:pii") } } : {}) });
       }
       // 0155: 会員へのお知らせ（本物の形の確かめ・連携の分け方は test/db/member-news.test.ts）
