@@ -92,7 +92,7 @@ export function parseConnectionString(raw: string, extraHosts: readonly string[]
   if (/^\[.*\]$/.test(password)) return { error: "invalid" };
   const params = new URLSearchParams(rawQuery ?? "");
   const sslmode = params.get("sslmode")?.trim().toLowerCase() ?? null;
-  const local = /^(localhost|127\.0\.0\.1|::1)$/.test(host);
+  const local = /^(localhost|127\.0\.0\.1|::1)$/i.test(host);
   const supabase = SUPABASE_HOST_RE.test(host);
   const tls = tlsModeOf(sslmode, { local, supabase });
   if (tls === "invalid") return { error: "invalid" };
@@ -116,8 +116,9 @@ const SUPABASE_HOST_RE = /(^|\.)supabase\.(com|co)$/i;
  * sslmode → 証明書の確かめ方。
  * - Supabase のホスト: 暗号化は必須（disable は断る）。verify-ca なら発行元だけ、それ以外（書かない・require・verify-full など）はホスト名まで確かめる
  *   （libpq の require は確かめないが、Supabase は同梱のルート証明書で確かめられるので、ここでは緩めない）
- * - ローカル（localhost・127.0.0.1・::1）: 書かなければ暗号化しない。書けば libpq と同じ
- * - DB_MIGRATION_HOSTS で許したホスト: 書かなければホスト名まで確かめる。disable・allow・prefer・require は libpq と同じ（disable は暗号化しない、ほかは確かめない）
+ * - ローカル（localhost・127.0.0.1・::1）: 書かなければ暗号化しない。書けば下と同じ扱い
+ * - DB_MIGRATION_HOSTS で許したホスト: 書かなければホスト名まで確かめる。disable は暗号化しない。allow・prefer・require は暗号化して確かめない
+ *   （libpq と違い、allow・prefer でも暗号化に失敗したときに暗号化なしへ戻らない）
  */
 function tlsModeOf(sslmode: string | null, h: { local: boolean; supabase: boolean }): TlsMode | "invalid" | "ssl_required" {
   if (sslmode !== null && !["disable", "allow", "prefer", "require", "verify-ca", "verify-full"].includes(sslmode)) return "invalid";
@@ -135,21 +136,29 @@ function tlsModeOf(sslmode: string | null, h: { local: boolean; supabase: boolea
  * node-postgres に渡す ssl の設定。Node では証明書を確かめる（Supabase は同梱のルート証明書、ほかは Node の既定の信頼する発行元）。
  * Workers では node-postgres が TLS を実行環境の startTls に任せる（pg-cloudflare）ため、ここの ca・rejectUnauthorized は使われない
  */
-export function sslOptions(p: Pick<ParsedConnection, "tls" | "supabase">): false | { rejectUnauthorized: boolean; ca?: string; checkServerIdentity?: () => undefined } {
+export function sslOptions(
+  p: Pick<ParsedConnection, "tls" | "supabase">,
+  systemRoots?: readonly string[],
+): false | { rejectUnauthorized: boolean; ca?: string | string[]; checkServerIdentity?: () => undefined } {
   if (p.tls === "off") return false;
   if (p.tls === "encrypt") return { rejectUnauthorized: false };
   return {
     rejectUnauthorized: true,
-    ...(p.supabase ? { ca: SUPABASE_ROOT_CA_2021 } : {}),
+    // Supabase: 同梱の Supabase のルート証明書に加えて、公の発行元（Node の tls.rootCertificates。Node の入口が渡す）も信頼する。
+    // ca を渡すと Node の既定の発行元が置き換わるので、両方を並べる（Supabase がどちらの発行元の証明書を出しても確かめられる）
+    ...(p.supabase ? { ca: systemRoots && systemRoots.length > 0 ? [...systemRoots, SUPABASE_ROOT_CA_2021] : SUPABASE_ROOT_CA_2021 } : {}),
     // verify-ca: 発行元だけ確かめ、ホスト名は見ない（libpq と同じ）
     ...(p.tls === "verify-ca" ? { checkServerIdentity: () => undefined } : {}),
   };
 }
 
-/** 証明書を確かめられなかったときの node の誤り（自己署名・発行元が分からない・ホスト名が合わない・期限切れなど） */
-function isTlsVerifyError(e: unknown): boolean {
+/** 証明書を確かめられなかったときの node の誤り（自己署名・発行元が分からない・ホスト名が合わない・期限切れ・失効など、TLS の握手の失敗） */
+export function isTlsVerifyError(e: unknown): boolean {
   const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
-  return /^(DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(_LOCALLY)?|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|ERR_TLS_CERT_ALTNAME_INVALID|CERT_UNTRUSTED|CERT_SIGNATURE_FAILURE)$/.test(code);
+  return (
+    /^(DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(_LOCALLY)?|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|CERT_UNTRUSTED|CERT_SIGNATURE_FAILURE|CERT_REVOKED|CERT_REJECTED|INVALID_CA|UNABLE_TO_DECRYPT_CERT_SIGNATURE|ERR_TLS_CERT_ALTNAME_INVALID|ERR_TLS_CERT_ALTNAME_FORMAT)$/.test(code) ||
+    /^ERR_SSL_/.test(code)
+  );
 }
 
 /** 接続文字列を表示用に（パスワードを伏せて）要約する */
@@ -175,7 +184,7 @@ export async function applyMigrations(
   connectionString: string,
   files: readonly MigrationFile[],
   extraHosts: readonly string[] = [],
-  step: { budgetMs: number; now?: () => number } = { budgetMs: Infinity },
+  step: { budgetMs: number; now?: () => number; /** 公の発行元（Node の tls.rootCertificates）。Node の入口・アダプタが渡す（Workers では使われない） */ systemRoots?: readonly string[] } = { budgetMs: Infinity },
 ): Promise<ApplyResult> {
   const now = step.now ?? Date.now;
   const started = now();
@@ -189,7 +198,7 @@ export async function applyMigrations(
     user: parsed.user,
     password: parsed.password,
     // 接続文字列の道でも証明書を確かめる（sslOptions。Supabase は同梱のルート証明書で）
-    ssl: sslOptions(parsed),
+    ssl: sslOptions(parsed, step.systemRoots),
     connectionTimeoutMillis: 15_000,
     statement_timeout: 120_000,
   });

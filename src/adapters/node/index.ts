@@ -16,6 +16,7 @@ import { JobRegistry, runScheduledJobs } from "../scheduler";
 import { S3Storage } from "./s3";
 import { createPublicFetch } from "./public-fetch";
 import { nodeSockets } from "./socket";
+import { rootCertificates } from "node:tls";
 
 export class EnvConfig implements ConfigAdapter {
   constructor(private readonly env: Record<string, string | undefined> = process.env) {}
@@ -184,5 +185,6 @@ export function createNodeAdapters(env: Record<string, string | undefined> = pro
     publicFetch: createPublicFetch(),
     cpuUnlimited: true,
     socket: nodeSockets,
+    tlsRootCertificates: rootCertificates,
   };
 }

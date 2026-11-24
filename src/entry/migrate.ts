@@ -7,6 +7,7 @@
  */
 import { applyMigrations, describeConnection, MigrationError, parseConnectionString } from "../db/migrate";
 import { MIGRATION_FILES } from "../db/migrations";
+import { rootCertificates } from "node:tls";
 
 const url = process.env["DATABASE_URL"] ?? process.argv[2] ?? "";
 const parsed = parseConnectionString(url, ["*"]);
@@ -20,7 +21,7 @@ if ("error" in parsed) {
 }
 console.log(`[banto] migrating ${describeConnection(parsed)} (${MIGRATION_FILES.length} bundled)`);
 try {
-  const r = await applyMigrations(url, MIGRATION_FILES, ["*"]);
+  const r = await applyMigrations(url, MIGRATION_FILES, ["*"], { budgetMs: Infinity, systemRoots: rootCertificates });
   console.log(`[banto] applied ${r.applied.length}: ${r.applied.join(", ") || "(none)"}`);
 } catch (e) {
   if (e instanceof MigrationError) {

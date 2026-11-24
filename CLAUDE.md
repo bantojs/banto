@@ -24,7 +24,7 @@ Banto（番頭）は、個人・中小事業者向けの **セルフホスト型
 7. **在庫の減算は Postgres の RPC（条件付き UPDATE）でのみ行う。** アプリ層でロックや計算をしない。
 8. **Workers から直接 Postgres 接続を張らない。** Supabase の REST API（PostgREST）または RPC 経由。
    マイグレーション適用の既定は `src/db/migrate-api.ts`: 運営者が貼る Supabase のアクセストークンで Management API（HTTPS、`/v1/projects/<ref>/database/query`）に SQL を送る。トークンは保存しない。ref は `SUPABASE_URL` から取る。
-   例外は `src/db/migrate.ts` だけ: 接続文字列で直接つなぐ代替経路（Node 実行・ローカル Supabase 用。Workers から Supabase の pooler への TLS は workerd の制約で切られることがある）。接続文字列は保存しない。接続先は Supabase のホストと、運営者がデプロイの設定 `DB_MIGRATION_HOSTS` で許可したホストに限定（自前の PostgreSQL、docs/self-hosted-db.md。画面からは足せない）。TLS の証明書は確かめる（Supabase は同梱のルート証明書 `src/db/supabase-ca.ts`、`sslmode=disable` は断る。許したホストは既定で確かめ、`sslmode=require` で暗号化だけ。Node のとき効く）。
+   例外は `src/db/migrate.ts` だけ: 接続文字列で直接つなぐ代替経路（Node 実行・ローカル Supabase 用。Workers から Supabase の pooler への TLS は workerd の制約で切られることがある）。接続文字列は保存しない。接続先は Supabase のホストと、運営者がデプロイの設定 `DB_MIGRATION_HOSTS` で許可したホストに限定（自前の PostgreSQL、docs/self-hosted-db.md。画面からは足せない）。TLS の証明書は確かめる（Supabase は同梱のルート証明書 `src/db/supabase-ca.ts` と公の発行元（Node の `tls.rootCertificates`、`adapters.tlsRootCertificates`）、ホスト名も、`sslmode=disable` は断る。許したホストは既定で確かめ、`sslmode=require` で暗号化だけ。設定が効くのは Node、Workers は実行環境がいつも公の発行元で確かめる。メンテナの決定 2026-11-24）。
 9. **テレメトリを送信しない。** 開発チームへの通信は一切入れない。
 10. **owner を単一前提でハードコードしない。** 常に `owner_id` を持たせる（将来のマルチテナント化のため）。
 

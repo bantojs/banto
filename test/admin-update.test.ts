@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith, externalHosts } from "./helpers";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
+import { startFakeTlsPg } from "./fake-tls-pg";
 
 const dbUrl = process.env.BANTO_TEST_DB_URL;
 
@@ -133,6 +134,23 @@ describe("マイグレーション適用フォーム", () => {
     html = await res.text();
     expect(html).toContain("このホストのデータベースには接続できません");
     expect(html).not.toContain("evil.example"); // 入力値をエコーしない
+
+    // Supabase に暗号化なしは断る・証明書を確かめられないときの案内
+    res = await b.post("/admin/setup/migrate", { connection_string: "postgres://u:p@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=disable" });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Supabase のデータベースへは暗号化して接続します");
+    const tlsPg = await startFakeTlsPg();
+    if (tlsPg) {
+      try {
+        res = await b.post("/admin/setup/migrate", { connection_string: `postgres://u:p@127.0.0.1:${tlsPg.port}/db?sslmode=verify-full` });
+        expect(res.status).toBe(400);
+        html = await res.text();
+        expect(html).toContain("データベースの証明書を確かめられませんでした");
+        expect(html).not.toContain("[tls]");
+      } finally {
+        await tlsPg.close();
+      }
+    }
 
     // 適用済みならフォームは出ない・POST は転送
     const done = new Browser(appWith(new FakeSupabase()));

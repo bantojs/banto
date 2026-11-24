@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
-import { applyMigrations, describeConnection, migrationHosts, MigrationError, parseConnectionString, sslOptions, type ParsedConnection } from "../../src/db/migrate";
+import { applyMigrations, describeConnection, isTlsVerifyError, migrationHosts, MigrationError, parseConnectionString, sslOptions, type ParsedConnection } from "../../src/db/migrate";
 import { SUPABASE_ROOT_CA_2021 } from "../../src/db/supabase-ca";
 import { X509Certificate } from "node:crypto";
 import { MIGRATION_FILES } from "../../src/db/migrations";
@@ -114,6 +114,10 @@ describe("接続文字列の TLS（DB 不要）", () => {
     expect(tlsOf("postgres://postgres@localhost:54329/x?sslmode=disable")).toEqual({ tls: "off", ssl: false, supabase: false });
     expect(tlsOf("postgres://postgres@localhost:54329/x?sslmode=require")).toEqual({ tls: "encrypt", ssl: true, supabase: false });
     expect(tlsOf("postgres://postgres@[::1]:54329/x?sslmode=verify-full")).toEqual({ tls: "verify-full", ssl: true, supabase: false });
+    expect(tlsOf("postgres://postgres@LOCALHOST:54329/x")).toEqual({ tls: "off", ssl: false, supabase: false });
+    // ほかのループバックの書き方・別のアドレスは許さない（許したホストだけ）
+    expect(tlsOf("postgres://postgres@[::2]:54329/x", [])).toEqual({ error: "host_not_allowed" });
+    expect(tlsOf("postgres://postgres@[0:0:0:0:0:0:0:1]:54329/x", [])).toEqual({ error: "host_not_allowed" });
   });
 
   it("DB_MIGRATION_HOSTS で許したホストは既定で確かめる。require で暗号化だけ、disable で暗号化なし", () => {
@@ -137,6 +141,24 @@ describe("接続文字列の TLS（DB 不要）", () => {
     const ca = sslOptions({ tls: "verify-ca", supabase: true });
     expect(ca).toMatchObject({ rejectUnauthorized: true, ca: SUPABASE_ROOT_CA_2021 });
     expect(ca && ca.checkServerIdentity?.()).toBeUndefined();
+  });
+
+  it("Node では Supabase のホストに公の発行元と同梱のルート証明書の両方を渡す（ホスト名は確かめたまま）", () => {
+    const roots = ["-----BEGIN CERTIFICATE-----\nPUBLIC-ROOT-A\n-----END CERTIFICATE-----", "-----BEGIN CERTIFICATE-----\nPUBLIC-ROOT-B\n-----END CERTIFICATE-----"];
+    const full = sslOptions({ tls: "verify-full", supabase: true }, roots);
+    expect(full).toEqual({ rejectUnauthorized: true, ca: [...roots, SUPABASE_ROOT_CA_2021] });
+    expect(full && "checkServerIdentity" in full).toBe(false);
+    // 自前の DB は ca を渡さない（Node の既定の発行元のまま）
+    expect(sslOptions({ tls: "verify-full", supabase: false }, roots)).toEqual({ rejectUnauthorized: true });
+    // 空なら同梱のものだけ
+    expect(sslOptions({ tls: "verify-full", supabase: true }, [])).toEqual({ rejectUnauthorized: true, ca: SUPABASE_ROOT_CA_2021 });
+  });
+
+  it("証明書の確かめの失敗の誤りを見分ける", () => {
+    for (const code of ["DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_CERT_ALTNAME_FORMAT", "CERT_REVOKED", "INVALID_CA", "CERT_REJECTED", "UNABLE_TO_DECRYPT_CERT_SIGNATURE", "ERR_SSL_WRONG_VERSION_NUMBER"]) {
+      expect(isTlsVerifyError(Object.assign(new Error("x"), { code }))).toBe(true);
+    }
+    for (const e of [Object.assign(new Error("x"), { code: "ECONNREFUSED" }), new Error("no code"), "string", null]) expect(isTlsVerifyError(e)).toBe(false);
   });
 
   it("同梱の Supabase のルート証明書は Supabase Root 2021 CA（指紋で縛る）", () => {
