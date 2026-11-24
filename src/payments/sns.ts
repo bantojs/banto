@@ -3,9 +3,12 @@
  *
  * - 署名の版は 1（SHA1withRSA）と 2（SHA256withRSA）。正規化した文字列は AWS の決まりどおり、種類ごとに決まった鍵を
  *   「鍵\n値\n」で名前の順に並べる（Notification は Subject があるときだけ Subject を入れる）。
- * - 署名の証明書は SigningCertURL から取る。https・ホストが `sns.<リージョン>.amazonaws.com`・パスが .pem のものだけ。
- *   証明書の信頼は「Amazon の SNS のホストから TLS で取った」ことに置く（証明書の連鎖は確かめない）。
- *   取った証明書の公開鍵（SubjectPublicKeyInfo）は CacheAdapter に 1 日覚える（URL ごと）。
+ * - 署名の証明書は SigningCertURL から取る。https・ホストが `sns.<リージョン>.amazonaws.com`（リージョンの形のものだけ）・
+ *   パスが .pem・クエリとフラグメントなしのものだけ。証明書の信頼は「Amazon の SNS のホストから TLS で取った」ことに置く
+ *   （証明書の連鎖は確かめない）。取った証明書の公開鍵（SubjectPublicKeyInfo）は CacheAdapter に 1 日覚える（オリジン + パスごと）。
+ *   取れなかった URL は 1 分覚えて続けて取りに行かない。取りに行くのは 5 秒まで・16 KiB まで（読みながら数える）。
+ * - 署名が合うことは「どこかの SNS のトピックから送られた」ことしか示さない（だれでも自分のトピックで署名つきの通知を作れる）。
+ *   どのトピックから来たものを受けるかは呼び出し側が TopicArn で決める（snsTopicArn）。
  * - Timestamp が古すぎる（72 時間より前）・先すぎる（15 分より後）ものは断る。中身は API で引き直して冪等に処理するので、
  *   同じ通知が何度届いても注文は 1 回だけ。時間の幅は再送が届く余地を残しつつ、古い通知の使い回しの幅を区切るためのもの。
  */
@@ -15,9 +18,12 @@ export type SnsMessage = Record<string, unknown>;
 export type SnsVerifyResult = { ok: true; envelope: SnsMessage } | { ok: false; reason: SnsRejectReason };
 export type SnsRejectReason = "malformed" | "type" | "version" | "cert_url" | "cert" | "timestamp" | "signature";
 
-const CERT_HOST_RE = /^sns\.[a-z0-9-]{1,40}\.amazonaws\.com$/;
+/** sns.<リージョン>.amazonaws.com（us-east-1・ap-northeast-1・us-gov-west-1 など。S3 のバケットの形の sns.s3… は当たらない） */
+const CERT_HOST_RE = /^sns\.[a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}\.amazonaws\.com$/;
 const CERT_MAX_BYTES = 16 * 1024;
 const CERT_TTL_SECONDS = 86400;
+const CERT_FAIL_TTL_SECONDS = 60;
+const CERT_FETCH_TIMEOUT_MS = 5000;
 export const SNS_MAX_AGE_MS = 72 * 3600 * 1000;
 const SNS_MAX_SKEW_MS = 15 * 60 * 1000;
 
@@ -51,7 +57,32 @@ export function snsCertUrlOk(raw: unknown): raw is string {
   } catch {
     return false;
   }
-  return u.protocol === "https:" && u.port === "" && u.username === "" && u.password === "" && CERT_HOST_RE.test(u.hostname) && u.pathname.endsWith(".pem");
+  return (
+    u.protocol === "https:" &&
+    u.port === "" &&
+    u.username === "" &&
+    u.password === "" &&
+    u.search === "" &&
+    u.hash === "" &&
+    !raw.includes("?") &&
+    !raw.includes("#") &&
+    CERT_HOST_RE.test(u.hostname) &&
+    u.pathname.endsWith(".pem")
+  );
+}
+
+export interface SnsTopic {
+  region: string;
+  account: string;
+  name: string;
+  arn: string;
+}
+
+/** TopicArn（arn:aws:sns:<リージョン>:<アカウント>:<名前>）を分ける。形が違えば null */
+export function snsTopicArn(raw: unknown): SnsTopic | null {
+  if (typeof raw !== "string" || raw.length > 300) return null;
+  const m = /^arn:aws(?:-[a-z]+)?:sns:([a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}):(\d{12}):([A-Za-z0-9_-]{1,256})$/.exec(raw);
+  return m ? { region: m[1]!, account: m[2]!, name: m[3]!, arn: raw } : null;
 }
 
 // ---- DER（X.509 の中から SubjectPublicKeyInfo を取り出すだけの小さな読み手） ----
@@ -128,30 +159,73 @@ export function pemCertToDer(pem: string): Uint8Array {
 }
 
 const CACHE_PREFIX = "sns:cert:";
+const FAIL_PREFIX = "sns:certfail:";
+
+/** 本文を上限まで、読みながら数える。超えたら null */
+async function readCapped(res: Response, max: number): Promise<Uint8Array | null> {
+  if (!res.body) return new Uint8Array(0);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+}
 
 /** 証明書の公開鍵（SPKI の base64）。覚えていればそれ、無ければ取りに行く。取れない・読めなければ null */
-async function certPublicKey(url: string, doFetch: typeof fetch, cache: CacheAdapter | undefined): Promise<string | null> {
-  const key = CACHE_PREFIX + url;
-  const cached = cache ? await cache.get<string>(key) : null;
+async function certPublicKey(rawUrl: string, doFetch: typeof fetch, cache: CacheAdapter | undefined): Promise<string | null> {
+  const u = new URL(rawUrl);
+  const url = u.origin + u.pathname;
+  const cached = cache ? await cache.get<string>(CACHE_PREFIX + url) : null;
   if (cached) return cached;
+  if (cache && (await cache.get<boolean>(FAIL_PREFIX + url))) return null;
+  const fail = async (): Promise<null> => {
+    if (cache) await cache.set(FAIL_PREFIX + url, true, CERT_FAIL_TTL_SECONDS);
+    return null;
+  };
   let res: Response;
   try {
-    res = await doFetch(url, { redirect: "manual" });
+    res = await doFetch(url, { redirect: "manual", signal: AbortSignal.timeout(CERT_FETCH_TIMEOUT_MS) });
   } catch {
-    return null;
+    return fail();
   }
-  if (res.status !== 200) return null;
+  if (res.status !== 200) {
+    await res.body?.cancel().catch(() => undefined);
+    return fail();
+  }
   const declared = Number(res.headers.get("content-length") ?? "0");
-  if (declared > CERT_MAX_BYTES) return null;
-  const buf = new Uint8Array(await res.arrayBuffer());
-  if (buf.length > CERT_MAX_BYTES) return null;
+  if (declared > CERT_MAX_BYTES) {
+    await res.body?.cancel().catch(() => undefined);
+    return fail();
+  }
+  let buf: Uint8Array | null;
+  try {
+    buf = await readCapped(res, CERT_MAX_BYTES);
+  } catch {
+    return fail();
+  }
+  if (!buf) return fail();
   let spki: string;
   try {
     spki = bytesToB64(certSpki(pemCertToDer(new TextDecoder().decode(buf))));
   } catch {
-    return null;
+    return fail();
   }
-  if (cache) await cache.set(key, spki, CERT_TTL_SECONDS);
+  if (cache) await cache.set(CACHE_PREFIX + url, spki, CERT_TTL_SECONDS);
   return spki;
 }
 

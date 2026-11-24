@@ -6,6 +6,8 @@ import { externalHosts } from "./helpers";
 import { snsStringToSign } from "../src/payments/sns";
 
 export const SNS_CERT_URL = "https://sns.ap-northeast-1.amazonaws.com/SimpleNotificationService-test.pem";
+export const SNS_TEST_ACCOUNT = "000000000000";
+export const SNS_TEST_TOPIC = `arn:aws:sns:ap-northeast-1:${SNS_TEST_ACCOUNT}:amazon-pay-ipn`;
 const CERT_ORIGIN = "https://sns.ap-northeast-1.amazonaws.com/";
 
 function len(n: number): number[] {
@@ -77,7 +79,7 @@ export async function snsSigner(): Promise<SnsSigner> {
       const m: Record<string, unknown> = {
         Type: "Notification",
         MessageId: crypto.randomUUID(),
-        TopicArn: "arn:aws:sns:ap-northeast-1:000000000000:amazon-pay-ipn",
+        TopicArn: SNS_TEST_TOPIC,
         Message: typeof message === "string" ? message : JSON.stringify(message),
         Timestamp: new Date().toISOString(),
         SignatureVersion: version,

@@ -323,7 +323,9 @@ GitHub Releases のリリースノートに「手動対応」の項があれば�
 
 ### Amazon Pay の IPN（即時支払い通知）の署名
 
-Amazon Pay の IPN（`/webhooks/amazon-pay`）は、Amazon SNS の署名を確かめてから処理します。署名の無い・合わない通知は 403 で断り、Amazon Pay の API を呼びません。Amazon Pay から届く本物の通知はいつも署名つきなので、運営者がすることはありません。自分で IPN を試しに送る道具やスクリプトを使っている場合は、署名の無い通知が受け付けられなくなります（戻りの確定・注文の確定の流れは変わりません）。
+Amazon Pay の IPN（`/webhooks/amazon-pay`）は、Amazon SNS の署名と、通知を送ったトピック（`TopicArn`）と、`MerchantID` を確かめてから処理します。どれかが合わない通知は 403 で断り、Amazon Pay の API を呼びません。
+
+**Amazon Pay を使っている運営者は、IPN のトピックを許す設定が要ります**（docs/plugins.md「IPN を受け付ける（トピックの許可）」）。設定するまでは IPN が断られ、Worker のログに 1 度だけ `amazon-pay ipn: TopicArn not allowed: …` と出るので、その ARN をデプロイの変数 `AMAZON_PAY_IPN_TOPIC_ARNS` に入れてください。IPN は取りこぼしの保険で、お客様がお店に戻ったときの確定は設定が無くても今までどおりです。Amazon Pay に無かった Charge の通知は、受け取らずに 503 を返すようになりました（Amazon Pay が再送します）。
 
 ### これから無くなる互換（期限）
 

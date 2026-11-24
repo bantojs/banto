@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { CacheAdapter } from "../src/adapters/types";
-import { SNS_MAX_AGE_MS, certSpki, pemCertToDer, snsCertUrlOk, snsStringToSign, verifySnsMessage } from "../src/payments/sns";
+import { SNS_MAX_AGE_MS, certSpki, pemCertToDer, snsCertUrlOk, snsStringToSign, snsTopicArn, verifySnsMessage } from "../src/payments/sns";
 import { SNS_CERT_URL, minimalCertPem, snsSigner, type SnsSigner } from "./sns-fixture";
 
 /** Amazon SNS のメッセージの署名（src/payments/sns.ts） */
@@ -61,6 +61,14 @@ describe("SNS の署名", () => {
       "https://sns.ap-northeast-1.amazonaws.com/x.txt",
       "https://user@sns.ap-northeast-1.amazonaws.com/x.pem",
       "https://sns.ap-northeast-1.amazonaws.com:8443/x.pem",
+      // S3 のバケットの形（sns という名前のバケット）
+      "https://sns.s3.amazonaws.com/x.pem",
+      "https://sns.s3-us-west-2.amazonaws.com/x.pem",
+      "https://sns.s3.us-west-2.amazonaws.com/x.pem",
+      // クエリ・フラグメント
+      "https://sns.ap-northeast-1.amazonaws.com/x.pem?a=b",
+      "https://sns.ap-northeast-1.amazonaws.com/x.pem?",
+      "https://sns.ap-northeast-1.amazonaws.com/x.pem#f",
     ]) {
       expect(snsCertUrlOk(url)).toBe(false);
       const env = await S.envelope(msg, { overrides: { SigningCertURL: url } });
@@ -68,6 +76,47 @@ describe("SNS の署名", () => {
     }
     expect(n.n).toBe(0);
     expect(snsCertUrlOk(SNS_CERT_URL)).toBe(true);
+    expect(snsCertUrlOk("https://sns.us-gov-west-1.amazonaws.com/x.pem")).toBe(true);
+    expect(snsCertUrlOk("https://sns.us-east-1.amazonaws.com/SimpleNotificationService-a86cb10b4e1f29c941702d737128f7b6.pem")).toBe(true);
+  });
+
+  it("TopicArn を分ける", () => {
+    expect(snsTopicArn("arn:aws:sns:us-east-1:291180941288:A3BXB0YN3XH17HAEMGQX8TKDO54")).toEqual({ region: "us-east-1", account: "291180941288", name: "A3BXB0YN3XH17HAEMGQX8TKDO54", arn: "arn:aws:sns:us-east-1:291180941288:A3BXB0YN3XH17HAEMGQX8TKDO54" });
+    for (const bad of ["arn:aws:sns:us-east-1:2911809412:x", "arn:aws:sqs:us-east-1:291180941288:x", "arn:aws:sns:s3:291180941288:x", "arn:aws:sns:us-east-1:291180941288:", "x", 1, null]) expect(snsTopicArn(bad)).toBeNull();
+  });
+
+  it("証明書の応答: リダイレクト・大きすぎる・読めないものは断り、1 分は取りに行き直さない", async () => {
+    const make = (res: () => Response) => {
+      const n = { n: 0 };
+      const f = (async () => {
+        n.n++;
+        return res();
+      }) as unknown as typeof fetch;
+      return { n, f };
+    };
+    for (const res of [
+      () => new Response(null, { status: 302, headers: { location: "https://evil.example/x.pem" } }),
+      () => new Response("x".repeat(17 * 1024), { status: 200 }),
+      () => new Response(new ReadableStream({ start(c) { for (let i = 0; i < 20; i++) c.enqueue(new Uint8Array(1024)); c.close(); } }), { status: 200 }),
+      () => new Response("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n", { status: 200 }),
+    ]) {
+      const { n, f } = make(res);
+      const cache = memCache();
+      const env = JSON.parse(await S.envelope(msg));
+      expect(await verifySnsMessage(env, { fetch: f, cache })).toEqual({ ok: false, reason: "cert" });
+      expect(await verifySnsMessage(env, { fetch: f, cache })).toEqual({ ok: false, reason: "cert" });
+      expect(n.n).toBe(1);
+    }
+  });
+
+  it("証明書はオリジンとパスで取りに行く（クエリは送らない）", async () => {
+    const urls: string[] = [];
+    const f = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(S.pem, { status: 200 });
+    }) as typeof fetch;
+    expect((await verifySnsMessage(JSON.parse(await S.envelope(msg)), { fetch: f })).ok).toBe(true);
+    expect(urls).toEqual([SNS_CERT_URL]);
   });
 
   it("古すぎる・先すぎる Timestamp は断る", async () => {
@@ -105,6 +154,12 @@ describe("SNS の署名", () => {
     const again = minimalCertPem(spki, false);
     expect(Array.from(certSpki(pemCertToDer(again)))).toEqual(Array.from(spki));
     expect(() => certSpki(new Uint8Array([0x30, 0x03, 0x02, 0x01]))).toThrow();
+    // 途中で切れた DER・長さの形の誤り（長い形の長さが本文より長い・長さのバイト数 0）
+    const der = pemCertToDer(S.pem);
+    expect(der[1]! & 0x80).toBe(0x80);
+    for (const cut of [10, 100, der.length - 1]) expect(() => certSpki(der.slice(0, cut))).toThrow();
+    expect(() => certSpki(new Uint8Array([0x30, 0x84, 0xff, 0xff, 0xff, 0xff, 0x00]))).toThrow();
+    expect(() => certSpki(new Uint8Array([0x30, 0x80, 0x00]))).toThrow();
     expect(() => pemCertToDer("nope")).toThrow();
   });
 });
