@@ -6,21 +6,28 @@ import { AmazonPayError, CHARGE_ID_RE, amazonPayFromConfig, type AmazonPayCharge
 import { AMAZON_PAY_PROVIDER, confirmAmazonPayCharge } from "../../payments/amazon-pay";
 import { clientIp, type Ctx } from "../common";
 import { rateLimiter } from "../../adapters/rate-limit";
+import { verifySnsMessage } from "../../payments/sns";
 
 /**
  * Amazon Pay の IPN（即時支払い通知）。取りこぼしの保険（ふだんは戻りで確定する。src/payments/amazon-pay.ts）。
  *
- * 通知の中身は信じない: Amazon Pay の指示どおり、書いてある Charge を API で引き直し、売上が確定（Captured）していれば
- * Charge Permission の merchantMetadata（Banto が署名したボタンの中身に入れた予約 ID とショップ ID）で予約を確定する。
- * 偽の通知が来ても、このデプロイの加盟店の本物の Charge しか確定しない（SNS の署名は検証しない）。
+ * 通知は Amazon SNS の封筒で届く。まず SNS の署名を確かめ（src/payments/sns.ts）、確かめられない通知は
+ * Amazon Pay の API を呼ぶ前に 403 で断る。署名の済んだ通知でも中身は信じない: Amazon Pay の指示どおり、書いてある Charge を
+ * API で引き直し、売上が確定（Captured）していれば Charge Permission の merchantMetadata（Banto が署名したボタンの中身に入れた
+ * 予約 ID とショップ ID）で予約を確定する。このデプロイの加盟店の本物の Charge しか確定しない。
+ * SNS の購読の確認（SubscriptionConfirmation）は Amazon Pay が管理する購読なので、確かめたうえで何もしない（SubscribeURL は開かない）。
  * 冪等の鍵は Charge ID（戻りの確定と同じ）。処理に失敗したら 500 で再送させる。
  */
 export const amazonPayWebhook = new Hono<AppEnv>();
 
 const ID_RE = /^[A-Za-z0-9-]{8,100}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** 1 つの送り元からの通知の数（1 分）。署名を確かめない入口なので、通知ごとの Amazon Pay の API の呼び出しを外から使い切らせない。超えた分は Amazon が再送する */
+/** 1 つの送り元からの通知の数（1 分）。署名の確かめ（証明書の取得・RSA の検証）を外から使い切らせない。超えた分は Amazon が再送する */
 const IPN_PER_MINUTE = 120;
+/** 送り元が分からない構成（Node で IP のヘッダの設定が無い）のデプロイ全体の数（1 分）。通知は署名で絞るので、ふつうの量の本物の通知は止めない大きさ */
+const IPN_PER_MINUTE_ALL = 600;
+/** Amazon Pay に無かった Charge を覚えておく秒数（同じ ID に続けて API を呼ばない） */
+const UNKNOWN_CHARGE_TTL = 600;
 
 amazonPayWebhook.post("/", async (c: Ctx) => {
   const cfg = c.get("adapters").config;
@@ -29,16 +36,28 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
   const client = amazonPayFromConfig(cfg, c.get("deps").fetch);
   if (!client || !url || !serviceRoleKey) return c.json({ error: "not_configured" }, 503);
 
-  // 送り元が分からない構成（Node で IP のヘッダの設定が無い）では数えない: 全員が 1 つの鍵になり、だれかが上限まで送ると本物の通知まで断ってしまう
+  // 送り元ごとに数える。送り元が分からない構成（Node で IP のヘッダの設定が無い）ではデプロイ全体の 1 つの鍵で、大きめの上限で数える
   const from = clientIp(c);
-  if (from && !(await rateLimiter(c.get("adapters")).hit(`amazon-pay-ipn:${from}`, IPN_PER_MINUTE, 60))) return c.json({ error: "too_many_requests" }, 429);
+  const limited = from
+    ? !(await rateLimiter(c.get("adapters")).hit(`amazon-pay-ipn:${from}`, IPN_PER_MINUTE, 60))
+    : !(await rateLimiter(c.get("adapters")).hit("amazon-pay-ipn:*", IPN_PER_MINUTE_ALL, 60));
+  if (limited) return c.json({ error: "too_many_requests" }, 429);
   const body = await webhookBody(c);
   if ("res" in body) return body.res;
   const text = body.text;
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(text);
+  } catch {
+    return c.json({ error: "invalid_payload" }, 400);
+  }
+  const cache = c.get("adapters").cache;
+  const verified = await verifySnsMessage(envelope, { fetch: c.get("deps").fetch, cache });
+  if (!verified.ok) return c.json({ error: "invalid_signature" }, 403);
+  if (verified.envelope["Type"] !== "Notification") return c.json({ received: true, ignored: String(verified.envelope["Type"]) });
   let message: Record<string, unknown>;
   try {
-    const envelope = JSON.parse(text) as Record<string, unknown>;
-    message = (typeof envelope["Message"] === "string" ? JSON.parse(envelope["Message"]) : envelope) as Record<string, unknown>;
+    message = JSON.parse(String(verified.envelope["Message"])) as Record<string, unknown>;
   } catch {
     return c.json({ error: "invalid_payload" }, 400);
   }
@@ -53,6 +72,9 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
   // 済んだ Charge の通知（再送・戻りで確定済み）は、Amazon Pay の API を呼ぶ前に終える
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   if ((await db.webhookEventSeen(AMAZON_PAY_PROVIDER, chargeId))) return c.json({ received: true, duplicate: true });
+  // 少し前に Amazon Pay に無かった Charge は、もう一度 API を呼ばない
+  const unknownKey = `amazon-pay-ipn:unknown:${chargeId}`;
+  if (cache && (await cache.get<boolean>(unknownKey))) return c.json({ received: true, ignored: "not_found" });
 
   // どの予約か: Charge → Charge Permission の merchantMetadata（ボタンの中身は Banto の署名つき）
   let reservationId: string | null = null;
@@ -67,7 +89,10 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
     shopId = permission.merchantMetadata?.customInformation ?? null;
   } catch (e) {
     // 無い Charge（偽の通知・別の環境）は何もしない。それ以外は再送させる
-    if (e instanceof AmazonPayError && e.status === 404) return c.json({ received: true, ignored: "not_found" });
+    if (e instanceof AmazonPayError && e.status === 404) {
+      if (cache) await cache.set(unknownKey, true, UNKNOWN_CHARGE_TTL);
+      return c.json({ received: true, ignored: "not_found" });
+    }
     throw e;
   }
   // 形だけ確かめる（予約がそのショップのものかは DB の confirm_reservation が確かめる）

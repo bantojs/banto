@@ -138,6 +138,7 @@ npx wrangler secret put AMAZON_PAY_PRIVATE_KEY < AmazonPay_privateKey.pem
 4. 戻る前にブラウザを閉じても、Amazon Pay の **IPN** が届けば同じ確かめ方で注文を確定します
 
 - 戻りの URL に付いてくる値は合図にしか使いません。どの予約か・いくらかは Banto が署名した券、支払ったかどうかは Amazon Pay の API の答えで決めます。IPN も、届いた中身ではなく API で引き直した Charge で判断します。
+- IPN は Amazon SNS の封筒で届きます。Banto はまず SNS の署名を確かめます（署名の版 1・2、証明書は `https://sns.<リージョン>.amazonaws.com/…pem` から取って 1 日覚える、72 時間より古い通知は断る）。署名の無い・合わない通知は Amazon Pay の API を呼ぶ前に 403 で断ります。SNS の購読の確認（SubscriptionConfirmation）は Amazon Pay が管理する購読なので、確かめたうえで何もしません。Amazon Pay に無かった Charge の通知は 10 分覚えて、同じ ID で続けて API を呼びません。
 - 確定と返金の冪等の鍵は Amazon Pay の Charge ID です（戻りと IPN のどちらが先に届いても、注文も返金も 1 回だけ）。
 - 在庫の予約は Stripe と同じ 40 分です。期限が切れた後に支払いが済んだときは、在庫があれば確定し、無ければ自動で返金します。
 - Amazon Pay の画面で「戻る」を押すと、予約を戻してカートに戻ります。断られたときも予約を戻し、カートに「お支払いが完了しませんでした」と出します。

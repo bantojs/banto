@@ -5,12 +5,14 @@ import { bundledPluginUrl } from "../src/plugins";
 import { AMAZON_PAY_ALGORITHM, amazonPayPath, amzDate, createAmazonPayClient, parseJpy, pemToPkcs8, pkcs1ToPkcs8, signedHeaders } from "../src/plugins/amazon_pay";
 import { buttonPayload, openAmazonPayTicket, sealAmazonPayTicket } from "../src/payments/amazon-pay";
 import { refundPayment } from "../src/orders/cancel";
+import { snsSigner, type SnsSigner } from "./sns-fixture";
 
 afterEach(() => externalHosts.clear());
 
 const enc = new TextEncoder();
 let PEM = "";
 let PUBLIC: CryptoKey;
+let SNS: SnsSigner;
 
 function toPem(der: ArrayBuffer, label: string): string {
   let s = "";
@@ -33,6 +35,7 @@ beforeAll(async () => {
   const pair = (await crypto.subtle.generateKey({ name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
   PEM = toPem((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer, "PRIVATE KEY");
   PUBLIC = pair.publicKey;
+  SNS = await snsSigner();
 });
 
 describe("Amazon Pay の署名（AMZN-PAY-RSASSA-PSS-V2）", () => {
@@ -175,6 +178,7 @@ function setup(overrides: Record<string, string | undefined> = {}, opts: { enabl
   const app = appWith(sb, { ...AMAZON_VARS(), ...overrides });
   const amazon = new FakeAmazonPay();
   externalHosts.set("https://pay-api.amazon.jp/", amazon.handler);
+  SNS.serve();
   return { sb, shop, sku, app, amazon };
 }
 
@@ -264,7 +268,7 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     expect(amazon.completes).toBe(1);
 
     // IPN が後から来ても二重にならない
-    const ipn = JSON.stringify({ Type: "Notification", Message: JSON.stringify({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-1-bbbbbbbb", NotificationType: "STATE_CHANGE", NotificationId: "n1" }) });
+    const ipn = await SNS.envelope({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-1-bbbbbbbb", NotificationType: "STATE_CHANGE", NotificationId: "n1" });
     const wh = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", headers: { "content-type": "text/plain" }, body: ipn });
     expect(wh.status).toBe(200);
     expect(sb.tables.orders).toHaveLength(1);
@@ -326,17 +330,17 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     const s = amazon.sessions.get(sid)!;
     amazon.charges.set("ch-9-dddddddd", { state: "Captured", permissionId: "cp-9-eeeeeeee", amount: s.amount, refunded: "0" });
     amazon.permissions.set("cp-9-eeeeeeee", { reservationId: s.reservationId, shopId: s.shopId });
-    const ipn = (id: string, merchant = "M123") => JSON.stringify({ Type: "Notification", Message: JSON.stringify({ MerchantID: merchant, ObjectType: "CHARGE", ObjectId: id, NotificationType: "STATE_CHANGE", NotificationId: `n-${id}` }) });
+    const ipn = (id: string, merchant = "M123") => SNS.envelope({ MerchantID: merchant, ObjectType: "CHARGE", ObjectId: id, NotificationType: "STATE_CHANGE", NotificationId: `n-${id}` });
     // 別の加盟店・知らない Charge・CHARGE 以外は何もしない
-    expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-9-dddddddd", "OTHER") })).json()).toMatchObject({ ignored: "merchant" });
-    expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-0-00000000") })).json()).toMatchObject({ ignored: "not_found" });
+    expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: await ipn("ch-9-dddddddd", "OTHER") })).json()).toMatchObject({ ignored: "merchant" });
+    expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: await ipn("ch-0-00000000") })).json()).toMatchObject({ ignored: "not_found" });
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: "not json" })).status).toBe(400);
     // 本文の上限（256 KiB）を超える通知は、中身も Charge も見ずに 413（前は 64K 文字を読み切ってから 400）
-    const huge = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-9-dddddddd") + " ".repeat(256 * 1024) });
+    const huge = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: (await ipn("ch-9-dddddddd")) + " ".repeat(256 * 1024) });
     expect(huge.status).toBe(413);
     expect(sb.tables.orders).toHaveLength(0);
 
-    let wh = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", headers: { "content-type": "text/plain" }, body: ipn("ch-9-dddddddd") });
+    let wh = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", headers: { "content-type": "text/plain" }, body: await ipn("ch-9-dddddddd") });
     expect(await wh.json()).toEqual({ received: true, order_id: expect.any(String) });
     expect(sb.tables.orders).toHaveLength(1);
     expect(sb.tables.orders[0]).toMatchObject({ payment_provider: "amazon_pay", payment_ref: "ch-9-dddddddd", total_jpy: 6000, shop_id: shop.id, reservation_id: reservation["id"] });
@@ -352,11 +356,42 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     sb.tables.inventory[0]!["available"] = 0;
     amazon.charges.set("ch-8-ffffffff", { state: "Captured", permissionId: "cp-8-gggggggg", amount: s2.amount, refunded: "0" });
     amazon.permissions.set("cp-8-gggggggg", { reservationId: s2.reservationId, shopId: s2.shopId });
-    wh = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn("ch-8-ffffffff") });
+    wh = await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: await ipn("ch-8-ffffffff") });
     expect(await wh.json()).toMatchObject({ refunded: true });
     // 戻らなかったのでカートは前の 2 点が残ったまま（+1 点 = 9,000 円）
     expect(amazon.refunds).toEqual([{ chargeId: "ch-8-ffffffff", amount: "9000", key: "refund-ch-8-ffffffff" }]);
     expect(sb.tables.orders).toHaveLength(1);
+  });
+
+  it("IPN: SNS の署名が無い・合わない通知は Amazon Pay の API を呼ぶ前に 403。無かった Charge は続けて引かない。購読の確認は何もしない", async () => {
+    const { sb, app, amazon } = setup();
+    const post = (body: string) => app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", headers: { "content-type": "text/plain" }, body });
+    const message = { MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-7-aaaaaaaa", NotificationType: "STATE_CHANGE" };
+    const calls = amazon.calls.length;
+    // 署名の無い封筒・中身だけの通知・書き換えた通知
+    expect((await post(JSON.stringify({ Type: "Notification", Message: JSON.stringify(message) }))).status).toBe(403);
+    expect((await post(JSON.stringify(message))).status).toBe(403);
+    const tampered = await SNS.envelope(message, { tamper: (m) => void (m["Message"] = JSON.stringify({ ...message, ObjectId: "ch-6-aaaaaaaa" })) });
+    expect((await post(tampered)).status).toBe(403);
+    const otherHost = await SNS.envelope(message, { overrides: { SigningCertURL: "https://example.com/cert.pem" } });
+    expect((await post(otherHost)).status).toBe(403);
+    expect(amazon.calls.length).toBe(calls);
+    // 署名の済んだ通知の、Amazon Pay に無い Charge: 1 回目は API で引き、2 回目は引かない
+    expect(await (await post(await SNS.envelope(message))).json()).toMatchObject({ ignored: "not_found" });
+    const afterFirst = amazon.calls.length;
+    expect(afterFirst).toBeGreaterThan(calls);
+    expect(await (await post(await SNS.envelope(message))).json()).toMatchObject({ ignored: "not_found" });
+    expect(amazon.calls.length).toBe(afterFirst);
+    // 購読の確認: 確かめて何もしない（SubscribeURL は開かない）
+    const sub = await SNS.envelope("You have chosen to subscribe", { overrides: { Type: "SubscriptionConfirmation", SubscribeURL: "https://sns.ap-northeast-1.amazonaws.com/?Action=ConfirmSubscription", Token: "t" } });
+    expect(await (await post(sub)).json()).toEqual({ received: true, ignored: "SubscriptionConfirmation" });
+    expect(amazon.calls.length).toBe(afterFirst);
+    // 証明書は 1 回だけ取りに行く（覚える）
+    expect(SNS.fetches).toBeGreaterThan(0);
+    const fetched = SNS.fetches;
+    await post(await SNS.envelope(message));
+    expect(SNS.fetches).toBe(fetched);
+    expect(sb.tables.orders).toHaveLength(0);
   });
 
   it("同じ予約への 2 回目の支払い: 確定後は中継ページにボタンを出さず、届いた 2 回目の支払いは返金する", async () => {
@@ -380,7 +415,7 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     expect(amazon.refunds).toEqual([{ chargeId: "ch-2-bbbbbbbb", amount: "6000", key: "refund-ch-2-bbbbbbbb" }]);
     // 開き直しても、IPN が来ても、返金は増えない（済んだ Charge は Amazon Pay の API を呼ぶ前に終える）
     const calls = amazon.calls.length;
-    const ipn = JSON.stringify({ Type: "Notification", Message: JSON.stringify({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-2-bbbbbbbb" }) });
+    const ipn = await SNS.envelope({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-2-bbbbbbbb" });
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn })).json()).toEqual({ received: true, duplicate: true });
     expect(amazon.calls.length).toBe(calls);
     expect(amazon.refunds).toHaveLength(1);
@@ -408,7 +443,7 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     const s = amazon.sessions.get(sid2)!;
     amazon.charges.set("ch-9-dddddddd", { state: "Captured", permissionId: "cp-9-eeeeeeee", amount: s.amount, refunded: "0" });
     amazon.permissions.set("cp-9-eeeeeeee", { reservationId: s.reservationId, shopId: s.shopId });
-    const ipn = JSON.stringify({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-9-dddddddd" });
+    const ipn = await SNS.envelope({ MerchantID: "M123", ObjectType: "CHARGE", ObjectId: "ch-9-dddddddd" });
     expect(await (await app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body: ipn })).json()).toMatchObject({ refunded: true, ignored: "paid_elsewhere" });
     expect(amazon.refunds.map((r) => r.chargeId)).toEqual(["ch-2-bbbbbbbb", "ch-9-dddddddd"]);
     expect(sb.tables.orders).toHaveLength(1);
