@@ -72,7 +72,7 @@ Banto には用途の違う 4 つの API があります。まずこの表で自
 
 - `Authorization: Bearer banto_...`。Cookie は見ません。
 - スコープは発行時に選び、**発行する人がそのショップで持つ権限の項目まで**しか付けられません（`products:*` は catalog、`orders:read` / `orders:write` は orders、`orders:pii`・`orders:contact`・`orders:address` は customers、`shop:write` は settings、`stats:read` は reports、`coupons:*` は marketing、`customers:*` は customers）。発行者が項目を失うと、そのスコープだけ `unauthorized` になります。
-- 購入者の個人情報（氏名・住所・メール・電話）は `orders:pii` があるときだけ返ります。氏名・メール・電話だけなら `orders:contact`、氏名と住所だけなら `orders:address` に絞れます（0173、docs/ai-access.md §2）。会員の一覧・取得（`customers:read`）は個人情報そのものなので、必要なトークンにだけ付けてください。
+- 購入者の個人情報（氏名・住所・メール・電話）は `orders:pii`（すべて）、または `orders:contact`（氏名・メール・電話）・`orders:address`（氏名と住所）があるとき、その分だけ返ります（0173、docs/ai-access.md §2）。会員の一覧・取得（`customers:read`）は個人情報そのものなので、必要なトークンにだけ付けてください。
 - 返金・キャンセル（`POST /api/v1/orders/{id}/status` の `cancelled`）は、発行者が `orders_cancel` の項目も持っているときだけ通ります。
 - 失敗は `{"error": {"code": "...", "message": "..."}}`。`unauthorized`（401。トークンが無い・失効・期限切れ・スコープ不足・発行者の権限が無い、のどれでも同じ）、`invalid`（400）、`not_found`（404）、`conflict`（409）、`migration_required`（409。その項目を使うには DB の更新が要る。管理画面 →「アップデート」で適用する）、`upstream`（502 / 503）。
 

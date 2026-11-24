@@ -153,7 +153,7 @@ as $$
           case when p_contact then jsonb_build_object('email', p_i.contact_email) else '{}'::jsonb end
           || jsonb_build_object('name', p_i.contact_name)) else '{}'::jsonb end;
 $$;
-revoke execute on function api_inquiry_json(inquiries, boolean, boolean, boolean, boolean) from public, anon, authenticated;
+revoke execute on function api_inquiry_json(inquiries, boolean, boolean, boolean, boolean) from public, anon, authenticated, service_role;
 
 -- 今までの形（inquiries, boolean, boolean）は「すべてか無しか」として残す
 create or replace function api_inquiry_json(p_i inquiries, p_pii boolean, p_messages boolean)
