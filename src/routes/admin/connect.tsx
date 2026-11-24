@@ -24,7 +24,7 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { can, type ShopAccess } from "./access";
 import { permLabel } from "./denied";
-import { EventChips, ScopeList, ScopePicker } from "./purposes";
+import { EventChips, PII_SCOPES, ScopeList, ScopePicker } from "./purposes";
 import type { ShopRow } from "../../db/types";
 
 
@@ -86,7 +86,7 @@ export function ConnectConfirm(props: { shop: ShopRow; access: ShopAccess | unde
           {/* 目的ごとにまとめて言葉で。自分の項目に無いものは理由つきで選べない（判定の正は app_connect_begin） */}
           <ScopePicker available={scopes} checked={() => true} grantable={(sc) => can(props.access, SCOPE_PERM[sc])} reason={(sc) => tf("access.needs_perm", { perm: permLabel(SCOPE_PERM[sc]) })} />
         </fieldset>
-        {scopes.includes("orders:pii") || scopes.includes("customers:read") || scopes.includes("customers:write") ? <p class="notice">{t("tokens.pii_warning")}</p> : null}
+        {scopes.some((s) => PII_SCOPES.includes(s)) ? <p class="notice">{t("tokens.pii_warning")}</p> : null}
         {(m.events ?? []).filter(isHookEvent).length > 0 ? (
           <>
             <p style="margin-bottom:0">{t("connect.events")}</p>
