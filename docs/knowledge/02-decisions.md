@@ -2,6 +2,10 @@
 
 CLAUDE.md に書いてある規約の「なぜ」と、規約には書ききれない運用上の判断。日付の新しいものが上。
 
+## 2026-11-24
+
+- **接続文字列のマイグレーションでも証明書を確かめる（メンテナの決定 2026-11-24、`src/db/migrate.ts`・`src/db/supabase-ca.ts`）**: 今までは `sslmode=verify-full` を書いたときだけ確かめていた（Supabase の証明書の発行元が公の発行元でないため）。Supabase の公開しているルート証明書（Supabase Root 2021 CA）を同梱し、**Supabase のホストはいつも確かめる**（発行元とホスト名。同梱のルート証明書と公の発行元（Node の `tls.rootCertificates`）の両方を信頼し、Supabase がどちらの証明書を出しても通る。`sslmode=require` は「確かめない」とは読まず、`disable` は断る）。`DB_MIGRATION_HOSTS` で許した自前の PostgreSQL は libpq に近く、書かなければ確かめ、`require` で暗号化だけ、`disable` で暗号化なし（libpq と違い、`allow`・`prefer` でも暗号化なしへは戻らない）。localhost は書かなければ暗号化しない。証明書の設定が効くのは Node（コマンドの migrate と Node で動かす管理画面）で、Workers では TLS を実行環境が受け持つ（公の発行元で確かめるので、自己署名の自前の DB には Workers の管理画面からは届かない。Node のコマンドか、公の発行元の証明書を使う）。既定の道（Supabase のアクセストークンと Management API）は変わらない。
+
 ## 2026-11-23
 
 - **会員の条件ごとの送料無料の金額（メンテナの決定 2026-11-23、0171、docs/audiences.md「会員の条件ごとの送料無料」）**: ランクの高い会員だけ送料無料の金額を下げたい（0 円 = いつでも無料も）。クーポンの「送料無料」+ 会員の項目の条件でも近いことはできるが、お客様がコードを入れるか、マイクーポンから入れる操作が要る。基準 (1)（お金）なので送料の計算はコアの `src/commerce/shipping.ts` のまま、ショップの送料の設定に `free_over_by_audience`（会員の条件 0097 と金額、10 件まで）を足し、当てはまるもののうちいちばん低い金額を使う。**会員が条件に合うかは DB が決める**（`member_free_shipping_over`、会員の最新の独自項目と判定の正の `banto_audience_ok`）: 会員の Cookie・会員トークンの独自項目は数分前の値なので、お金の判定には使わない（会員価格 0099 と同じ考え）。DB は今までどおり送料の額そのものは計算せず、Worker が確認画面と確定の前（`recheckQuote`）の 2 回 DB に聞いて引き直す（ゲスト・決まりの無いショップ・モジュールが OFF では聞かない）。送料の案内に出すのは運営者が付けた名前だけ（会員の条件の名前は運営者のための名前で、お客様に見せる前提ではないため）。
@@ -467,7 +471,7 @@ CLAUDE.md に書いてある規約の「なぜ」と、規約には書ききれ�
   - **メールのアドレスは厳格な形だけ受け付け、SMTP の送り手は改行を含む行を送らない**（プラグインの設定値が SMTP のコマンドに出るため）。
   - **CSV の書き出しは式を無害化する**（`src/util/csv.ts` に集約。先頭が `= + - @` の文字列に `'`）。購入者・会員・外部 API の値が運営者の表計算ソフトで評価されないため。
   - **運営者と連携の入口（`/admin` `/mcp` `/api/v1` `/webhooks`）は Banto 自身のホストだけ**。ショップのドメイン（店主が DNS を握る）では 404。Host は小文字・末尾のドット無しに正規化する。
-  - **Node 実行は「リバースプロキシの後ろ」を前提に**: 利用者の IP は `x-forwarded-for` の末尾（`TRUSTED_PROXY_HOPS`）、CSRF の Origin と Cookie の `Secure` / HSTS は `PUBLIC_BASE_URL` のスキームとオリジンで判定。`MemoryCache` に行数の上限、`IntervalScheduler` は前の回が走っていれば飛ばす。接続文字列でのマイグレーションの証明書の検証は `sslmode=verify-full` の明示のまま（Supabase の CA の同梱は v0.2 で判断）。
+  - **Node 実行は「リバースプロキシの後ろ」を前提に**: 利用者の IP は `x-forwarded-for` の末尾（`TRUSTED_PROXY_HOPS`）、CSRF の Origin と Cookie の `Secure` / HSTS は `PUBLIC_BASE_URL` のスキームとオリジンで判定。`MemoryCache` に行数の上限、`IntervalScheduler` は前の回が走っていれば飛ばす。接続文字列でのマイグレーションの証明書の検証は `sslmode=verify-full` の明示のまま（Supabase の CA の同梱は v0.2 で判断）。→ 2026-11-24 に改めた（下の「接続文字列のマイグレーションでも証明書を確かめる」）。
 
 ## 2026-10-24
 

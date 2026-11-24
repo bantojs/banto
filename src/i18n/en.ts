@@ -1278,6 +1278,8 @@ export const en: Record<MessageKey, string> = {
   "migrate.error_invalid": "The connection string is malformed. Paste the string starting with postgresql:// as is.",
   "migrate.error_host": "This database host is not allowed. To use your own PostgreSQL, add the host name to the DB_MIGRATION_HOSTS setting of your deployment (docs/self-hosted-db.md).",
   "migrate.error_connect": "Could not connect to the database. Check the password replacement and that the Supabase project is not paused. Details:",
+  "migrate.error_ssl_required": "Connections to a Supabase database are always encrypted. Remove sslmode=disable from the connection string and paste it again.",
+  "migrate.error_tls": "Could not verify the database certificate. For Supabase, paste the connection string copied again from the Connect dialog (with the host name unchanged). For your own PostgreSQL without a publicly trusted certificate: when running on Node, add sslmode=require to the connection string to encrypt without verifying the certificate. Cloudflare Workers always verifies, so use the migrate command instead (docs/self-hosted-db.md). Details:",
   "migrate.error_direct": "Could not connect. You pasted the \"Direct connection\" string (db.<ref>.supabase.co), which is IPv6-only and unreachable from here. Copy the \"Session pooler\" string from the Supabase Connect dialog instead. Details:",
   "migrate.error_apply": "An error occurred while applying. Partial changes have been rolled back. Migration",
   "site.title": "Site settings",

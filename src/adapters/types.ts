@@ -169,4 +169,9 @@ export interface Adapters {
    * 無ければ上限なし（Node）。Cron のジョブは数えながら使い、hooks の配信は残りから取り出す数を決める（src/jobs/budget.ts）
    */
   cronSubrequestLimits?: { free: number; paid: number };
+  /**
+   * 公の発行元のルート証明書（PEM）。Node の tls.rootCertificates。接続文字列でマイグレーションを当てるとき、
+   * 同梱の Supabase のルート証明書と一緒に信頼する（src/db/migrate.ts の sslOptions）。Workers は持たない（TLS は実行環境が受け持つ）
+   */
+  tlsRootCertificates?: readonly string[];
 }

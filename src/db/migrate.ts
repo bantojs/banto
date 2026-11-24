@@ -11,6 +11,7 @@
  */
 import pg from "pg";
 import type { MigrationFile } from "./migrations";
+import { SUPABASE_ROOT_CA_2021 } from "./supabase-ca";
 
 export class MigrationError extends Error {
   constructor(
@@ -23,7 +24,7 @@ export class MigrationError extends Error {
   }
 }
 
-const ALLOWED_HOST_RE = /(^|\.)supabase\.(com|co)$|^(localhost|127\.0\.0\.1|\[::1\])$/i;
+const ALLOWED_HOST_RE = /(^|\.)supabase\.(com|co)$|^(localhost|127\.0\.0\.1|::1)$/i;
 
 /**
  * DB_MIGRATION_HOSTS（カンマ区切り）→ 許可するホスト。完全一致だけ（ワイルドカードは受け付けない）。
@@ -36,6 +37,12 @@ export function migrationHosts(raw: string | undefined): string[] {
     .filter((h) => /^[a-z0-9.:-]{1,253}$/.test(h));
 }
 
+/**
+ * TLS の扱い（libpq の sslmode に合わせる）。
+ * off = 暗号化しない、encrypt = 暗号化するが証明書は確かめない、verify-ca = 発行元だけ確かめる、verify-full = 発行元とホスト名を確かめる
+ */
+export type TlsMode = "off" | "encrypt" | "verify-ca" | "verify-full";
+
 export interface ParsedConnection {
   host: string;
   port: number;
@@ -43,6 +50,14 @@ export interface ParsedConnection {
   user: string;
   password: string;
   ssl: boolean;
+  /**
+   * 証明書の確かめ方。Supabase のホストは必ず確かめる（Supabase のルート証明書で、既定はホスト名まで）。
+   * ローカル（localhost）は sslmode の書いたとおり（既定は暗号化しない）。DB_MIGRATION_HOSTS で許したホストは既定で確かめ、
+   * 確かめずに暗号化だけするときは sslmode=require を書く
+   */
+  tls: TlsMode;
+  /** Supabase のホスト（*.supabase.com / *.supabase.co）。証明書は同梱の Supabase のルート証明書で確かめる */
+  supabase: boolean;
   /** Supabase の「Direct connection」（db.<ref>.supabase.co）。IPv6 専用なので接続できない環境がある */
   direct: boolean;
 }
@@ -61,7 +76,7 @@ function safeDecode(s: string): string {
 }
 
 /** 接続文字列を検証して要点を返す（パスワード込み。画面やログには出さないこと） */
-export function parseConnectionString(raw: string, extraHosts: readonly string[] = []): ParsedConnection | { error: "invalid" | "host_not_allowed" } {
+export function parseConnectionString(raw: string, extraHosts: readonly string[] = []): ParsedConnection | { error: "invalid" | "host_not_allowed" | "ssl_required" } {
   const s = raw.trim().replace(/^["'`]+|["'`]+$/g, "");
   if (!/^postgres(ql)?:\/\//i.test(s)) return { error: "invalid" };
   const m = CONN_RE.exec(s);
@@ -76,17 +91,74 @@ export function parseConnectionString(raw: string, extraHosts: readonly string[]
   // [YOUR-PASSWORD] のまま貼った場合は形式エラーとして案内する
   if (/^\[.*\]$/.test(password)) return { error: "invalid" };
   const params = new URLSearchParams(rawQuery ?? "");
-  const sslmode = params.get("sslmode");
-  const local = /^(localhost|127\.0\.0\.1|::1)$/.test(host);
+  const sslmode = params.get("sslmode")?.trim().toLowerCase() ?? null;
+  const local = /^(localhost|127\.0\.0\.1|::1)$/i.test(host);
+  const supabase = SUPABASE_HOST_RE.test(host);
+  const tls = tlsModeOf(sslmode, { local, supabase });
+  if (tls === "invalid") return { error: "invalid" };
+  if (tls === "ssl_required") return { error: "ssl_required" };
   return {
     host,
     port: Number(rawPort || 5432),
     database: safeDecode((rawDb ?? "").replace(/^\//, "")) || "postgres",
     user,
     password,
-    ssl: sslmode ? sslmode !== "disable" : !local,
+    ssl: tls !== "off",
+    tls,
+    supabase,
     direct: /^db\.[a-z0-9]+\.supabase\.co$/i.test(host),
   };
+}
+
+const SUPABASE_HOST_RE = /(^|\.)supabase\.(com|co)$/i;
+
+/**
+ * sslmode → 証明書の確かめ方。
+ * - Supabase のホスト: 暗号化は必須（disable は断る）。verify-ca なら発行元だけ、それ以外（書かない・require・verify-full など）はホスト名まで確かめる
+ *   （libpq の require は確かめないが、Supabase は同梱のルート証明書で確かめられるので、ここでは緩めない）
+ * - ローカル（localhost・127.0.0.1・::1）: 書かなければ暗号化しない。書けば下と同じ扱い
+ * - DB_MIGRATION_HOSTS で許したホスト: 書かなければホスト名まで確かめる。disable は暗号化しない。allow・prefer・require は暗号化して確かめない
+ *   （libpq と違い、allow・prefer でも暗号化に失敗したときに暗号化なしへ戻らない）
+ */
+function tlsModeOf(sslmode: string | null, h: { local: boolean; supabase: boolean }): TlsMode | "invalid" | "ssl_required" {
+  if (sslmode !== null && !["disable", "allow", "prefer", "require", "verify-ca", "verify-full"].includes(sslmode)) return "invalid";
+  if (h.supabase) {
+    if (sslmode === "disable") return "ssl_required";
+    return sslmode === "verify-ca" ? "verify-ca" : "verify-full";
+  }
+  if (sslmode === null) return h.local ? "off" : "verify-full";
+  if (sslmode === "disable") return "off";
+  if (sslmode === "verify-ca" || sslmode === "verify-full") return sslmode;
+  return "encrypt";
+}
+
+/**
+ * node-postgres に渡す ssl の設定。Node では証明書を確かめる（Supabase は同梱のルート証明書、ほかは Node の既定の信頼する発行元）。
+ * Workers では node-postgres が TLS を実行環境の startTls に任せる（pg-cloudflare）ため、ここの ca・rejectUnauthorized は使われない
+ */
+export function sslOptions(
+  p: Pick<ParsedConnection, "tls" | "supabase">,
+  systemRoots?: readonly string[],
+): false | { rejectUnauthorized: boolean; ca?: string | string[]; checkServerIdentity?: () => undefined } {
+  if (p.tls === "off") return false;
+  if (p.tls === "encrypt") return { rejectUnauthorized: false };
+  return {
+    rejectUnauthorized: true,
+    // Supabase: 同梱の Supabase のルート証明書に加えて、公の発行元（Node の tls.rootCertificates。Node の入口が渡す）も信頼する。
+    // ca を渡すと Node の既定の発行元が置き換わるので、両方を並べる（Supabase がどちらの発行元の証明書を出しても確かめられる）
+    ...(p.supabase ? { ca: systemRoots && systemRoots.length > 0 ? [...systemRoots, SUPABASE_ROOT_CA_2021] : SUPABASE_ROOT_CA_2021 } : {}),
+    // verify-ca: 発行元だけ確かめ、ホスト名は見ない（libpq と同じ）
+    ...(p.tls === "verify-ca" ? { checkServerIdentity: () => undefined } : {}),
+  };
+}
+
+/** 証明書を確かめられなかったときの node の誤り（自己署名・発行元が分からない・ホスト名が合わない・期限切れ・失効など、TLS の握手の失敗） */
+export function isTlsVerifyError(e: unknown): boolean {
+  const code = typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
+  return (
+    /^(DEPTH_ZERO_SELF_SIGNED_CERT|SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT(_LOCALLY)?|CERT_HAS_EXPIRED|CERT_NOT_YET_VALID|CERT_UNTRUSTED|CERT_SIGNATURE_FAILURE|CERT_REVOKED|CERT_REJECTED|INVALID_CA|UNABLE_TO_DECRYPT_CERT_SIGNATURE|ERR_TLS_CERT_ALTNAME_INVALID|ERR_TLS_CERT_ALTNAME_FORMAT)$/.test(code) ||
+    /^ERR_SSL_/.test(code)
+  );
 }
 
 /** 接続文字列を表示用に（パスワードを伏せて）要約する */
@@ -112,7 +184,7 @@ export async function applyMigrations(
   connectionString: string,
   files: readonly MigrationFile[],
   extraHosts: readonly string[] = [],
-  step: { budgetMs: number; now?: () => number } = { budgetMs: Infinity },
+  step: { budgetMs: number; now?: () => number; /** 公の発行元（Node の tls.rootCertificates）。Node の入口・アダプタが渡す（Workers では使われない） */ systemRoots?: readonly string[] } = { budgetMs: Infinity },
 ): Promise<ApplyResult> {
   const now = step.now ?? Date.now;
   const started = now();
@@ -125,8 +197,8 @@ export async function applyMigrations(
     database: parsed.database,
     user: parsed.user,
     password: parsed.password,
-    // Supabase の pooler は TLS 必須。CA は Supabase 独自のため、一回限りの操作では検証を緩める（verify-full を指定すれば検証する）
-    ssl: parsed.ssl ? { rejectUnauthorized: /sslmode=verify-full/.test(connectionString) } : false,
+    // 接続文字列の道でも証明書を確かめる（sslOptions。Supabase は同梱のルート証明書で）
+    ssl: sslOptions(parsed, step.systemRoots),
     connectionTimeoutMillis: 15_000,
     statement_timeout: 120_000,
   });
@@ -135,6 +207,8 @@ export async function applyMigrations(
     await client.connect();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    // 証明書を確かめられなかった: 画面で案内を出し分ける（[tls]）
+    if (isTlsVerifyError(e)) throw new MigrationError("connect", null, `${msg} [tls]`);
     // Direct connection は IPv6 専用。IPv4 しか出られない環境では pooler（Session / Transaction）を使ってもらう
     throw new MigrationError("connect", null, parsed.direct ? `${msg} [direct_connection]` : msg);
   }

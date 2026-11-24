@@ -1282,6 +1282,8 @@ export const ja = {
   "migrate.error_invalid": "接続文字列の形式が正しくありません。postgresql:// で始まる文字列をそのまま貼ってください。",
   "migrate.error_host": "このホストのデータベースには接続できません。自前の PostgreSQL を使う場合は、デプロイの設定 DB_MIGRATION_HOSTS にホスト名を足してください（docs/self-hosted-db.md）。",
   "migrate.error_connect": "データベースに接続できませんでした。パスワードの置き換えと、Supabase プロジェクトが一時停止していないかを確認してください。詳細:",
+  "migrate.error_ssl_required": "Supabase のデータベースへは暗号化して接続します。接続文字列から sslmode=disable を外して貼り直してください。",
+  "migrate.error_tls": "データベースの証明書を確かめられませんでした。Supabase の接続文字列なら、Connect 画面からコピーし直したもの（ホスト名を書き換えていないもの）を貼ってください。自前の PostgreSQL で、信頼する発行元の証明書を使っていない場合は、Node で動かしているなら接続文字列に sslmode=require を足すと証明書を確かめずに暗号化だけで接続します。Cloudflare Workers ではいつも確かめるので、コマンドの migrate を使ってください（docs/self-hosted-db.md）。詳細:",
   "migrate.error_direct": "接続できませんでした。貼ったのは「Direct connection」の文字列（db.〜.supabase.co）で、これは IPv6 専用のためここからは届きません。Supabase の Connect 画面で「Session pooler」の文字列をコピーして貼り直してください。詳細:",
   "migrate.error_apply": "適用中にエラーが起きました。途中まで適用された変更は取り消されています。マイグレーション",
   "site.title": "サイトの設定",

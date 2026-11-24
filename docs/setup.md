@@ -257,6 +257,7 @@ Banto は既定で Worker のコードを **縮めて（minify）** 送ります
 | 設定画面にシークレットの欄が出なかった | 配置後に **設定 → 変数とシークレット → 追加** で `SUPABASE_SERVICE_ROLE_KEY`（種類: シークレット）を登録すれば同じです |
 | セットアップ画面で「Supabase に接続できません」 | `SUPABASE_URL` の末尾に `/` が付いていないか。Publishable key（anon キー）が正しいか（Secret key・service_role と取り違えていないか） |
 | 「データベースに接続できませんでした … Connection terminated unexpectedly」 | 接続文字列の方法は Cloudflare からだと TLS の制約で切られることがあります。上の **アクセストークン** の方法を使ってください |
+| 「データベースの証明書を確かめられませんでした」 | 接続文字列の方法は証明書を確かめます。Supabase なら Connect 画面からコピーし直した文字列（ホスト名を書き換えていないもの）を貼るか、上の **アクセストークン** の方法を使ってください。自前の PostgreSQL は docs/self-hosted-db.md の「証明書」の説明を見てください |
 | 「アクセストークンが正しくないか、期限切れです」 | `sbp_` で始まる値をそのまま貼ったか。Supabase の Access Tokens 画面で新しく作り直す |
 | 「データベースに接続できませんでした」（接続文字列の方法） | 接続文字列の `[YOUR-PASSWORD]` を置き換えたか（角括弧ごと置き換える）。**Direct connection**（`db.〜.supabase.co`）ではなく **Session pooler** の文字列か。Supabase のプロジェクトが一時停止（Paused）になっていないか |
 | 変数を入れたのに、再ビルド後に空に戻る | 古い `wrangler.toml` に `vars` が空で書かれていると起きます。最新の `wrangler.jsonc`（`keep_vars: true`、`vars` なし）に更新してください |
