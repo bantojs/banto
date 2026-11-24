@@ -1371,6 +1371,7 @@ export const en: Record<MessageKey, string> = {
   "shipping.audience_title": "Free shipping by member condition",
   "shipping.audience_intro": "Logged-in members matching a condition made with the \"Member conditions\" feature get free shipping at a different amount (0 = always free). When several rules match, the lowest amount is used. The member's custom fields at the time of the order decide. Guests never match.",
   "shipping.audience_label": "Name shown on the storefront (leave empty to keep it off the shipping page)",
+  "shipping.audience_no_perm": "You don't have permission to see member conditions (marketing, catalog, content or customers), so you can't change these rules here. The current rules ({n}) are kept when you save.",
   "shipping.audience_none": "There are no member conditions yet. Create one under \"Member conditions\" first (display-only conditions that use URL parameters can't be chosen).",
   "shipping.audience_off": "The \"Member conditions\" feature is off, so free shipping by member condition has no effect.",
   "shipping.audience_amount": "Free shipping from (JPY)",

@@ -11,6 +11,7 @@ import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { createHmac } from "node:crypto";
 import { normalizeTags } from "../src/products/tags";
 import { productFields } from "../src/products/fields";
+import { audienceFreeRules } from "../src/commerce/shipping";
 import { publicShopSettings } from "../src/storefront/data";
 import { audienceDisplayOnly, audienceOk } from "../src/members/audience";
 import { legalLinksOf } from "../src/storefront/legal-links";
@@ -224,6 +225,8 @@ export class FakeSupabase {
   appliedMigrations: string[];
   /** member_free_shipping_over を呼んだ回数（0171。ゲスト・決まりの無いショップで呼ばないことのテスト） */
   memberFreeShippingCalls?: number;
+  /** member_free_shipping_over を失敗させる（0171。送料がかかる側に倒すことのテスト） */
+  memberFreeShippingFail?: boolean;
   /** product_public_pick / product_member_pick を引いた回数（0112。ページのブロックをまとめて 1 回で引くか） */
   pickCalls = 0;
   /** 0070 のパスキーの追加の券 */
@@ -4832,28 +4835,27 @@ export class FakeSupabase {
       }
       return json(n);
     }
-    // 0170: 予約の手数料をショップの決まりで確かめる（値引きの後）
-    // 0171: 会員の条件ごとの送料無料（member_free_shipping_over と同じ: モジュールが ON・会員の最新の独自項目・表示用の条件は除く・低い金額）
+    // 0171: 会員の条件ごとの送料無料（member_free_shipping_over と同じ: セッションが生きている・モジュールが ON・会員の最新の独自項目・表示用の条件は除く・低い金額）
     if (fn === "member_free_shipping_over") {
       this.memberFreeShippingCalls = (this.memberFreeShippingCalls ?? 0) + 1;
+      if (this.memberFreeShippingFail) return json({ code: "XX000", message: "boom" }, 500);
+      if (!this.liveMemberSession(args["p_shop_id"], args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return json(null);
       const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
       const settings = (shop?.["settings"] as Row | undefined) ?? {};
       if (((settings["modules"] as Row | undefined)?.["audiences"]) !== true) return json(null);
-      const rules = ((settings["shipping"] as Row | undefined)?.["free_over_by_audience"] as unknown[] | undefined) ?? [];
+      const rules = audienceFreeRules((settings["shipping"] as Row | undefined)?.["free_over_by_audience"]);
       const cust = this.tables.customers.find((x) => x["shop_id"] === args["p_shop_id"] && x["id"] === args["p_customer_id"]);
-      if (!cust || !Array.isArray(rules)) return json(null);
+      if (!cust) return json(null);
       const attrs = (cust["attributes"] as Record<string, unknown> | undefined) ?? {};
       let min: number | null = null;
-      for (const r of rules.slice(0, 10)) {
-        if (!r || typeof r !== "object") continue;
-        const o = r as Row;
-        const a = this.tables.audiences.find((x) => x["shop_id"] === args["p_shop_id"] && String(x["id"]) === o["audience_id"]);
-        const over = o["free_over_jpy"];
-        if (!a || typeof over !== "number" || !Number.isInteger(over) || over < 0 || audienceDisplayOnly(a["condition"]) || !audienceOk(a["condition"], { member: true, attrs })) continue;
-        min = min === null ? over : Math.min(min, over);
+      for (const r of rules) {
+        const a = this.tables.audiences.find((x) => x["shop_id"] === args["p_shop_id"] && String(x["id"]).toLowerCase() === r.audience_id);
+        if (!a || audienceDisplayOnly(a["condition"]) || !audienceOk(a["condition"], { member: true, attrs })) continue;
+        min = min === null ? r.free_over_jpy : Math.min(min, r.free_over_jpy);
       }
       return json(min);
     }
+    // 0170: 予約の手数料をショップの決まりで確かめる（値引きの後）
     if (fn === "reservation_payment_fee_check") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"] && r["status"] === "pending");
       if (!res) return json({ code: "P0001", message: "reservation_not_found" }, 400);

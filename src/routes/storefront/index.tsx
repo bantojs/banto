@@ -1609,7 +1609,7 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
   // 注文は会員だけのショップ（0165）: 配送先・確定のどちらの段でも、ゲストはログインへ回す
   if (checkoutMembersOnly(s.shop.settings) && !member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
-  const memberFreeOver = memberFreeOverSource(c, s.shop, member?.cid);
+  const memberFreeOver = memberFreeOverSource(c, s.shop, member ? { id: member.cid, epoch: member.ep, sid: member.sid } : null);
   const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop), komojuTypes: komojuTypesOf(setup), ...(memberFreeOver ? { memberFreeOver } : {}) };
   const f = await formFields(c);
   // KOMOJU の種類（0170、配送先の画面が隠しの値 method で送る）

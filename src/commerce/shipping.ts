@@ -8,7 +8,7 @@
  */
 /** 会員の条件ごとの送料無料の金額（0171） */
 export const AUDIENCE_FREE_SHIPPING_MIGRATION = "0171_audience_free_shipping";
-/** 決まりの数の上限（DB の member_free_shipping_over も先頭の 10 件だけを見る） */
+/** 決まりの数の上限（DB の banto_audience_free_rules も同じ読み方で先頭の 10 件だけを見る） */
 export const AUDIENCE_FREE_RULES_MAX = 10;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const PREFECTURES = [
@@ -30,8 +30,12 @@ export interface ShippingSettings {
   by_prefecture: Partial<Record<Prefecture, number>>;
   /** 商品合計がこの額以上で送料無料。null なら無し */
   free_over_jpy: number | null;
-  /** 会員の条件ごとの送料無料の金額（0171）。label はお店の画面の送料の案内に出す名前（空なら出さない） */
+  /** 会員の条件ごとの送料無料の金額（0171）。label はお店の画面の送料の案内に出す名前（空なら出さない）。お客様の画面の設定（公開の形）では空 */
   free_over_by_audience: AudienceFreeRule[];
+  /** 送料の案内に出す会員の条件ごとの送料無料（名前を付けた決まりだけ。管理画面の形からも公開の形からも作る） */
+  member_free: { label: string; free_over_jpy: number }[];
+  /** 会員の条件ごとの決まりがあるか（あれば会員の判定を DB に聞く。公開の形では member_free: true） */
+  has_member_free: boolean;
 }
 
 export interface AudienceFreeRule {
@@ -45,7 +49,7 @@ export interface AudienceFreeRule {
 /** 送料が 0 円になった理由: threshold = ショップ全体の金額・audience = 会員の条件の金額（会員特典）。送料がかかるか、もともと 0 円なら null */
 export type ShippingFreeReason = "threshold" | "audience" | null;
 
-export const DEFAULT_SHIPPING: ShippingSettings = { mode: "flat", flat_fee_jpy: 0, by_prefecture: {}, free_over_jpy: null, free_over_by_audience: [] };
+export const DEFAULT_SHIPPING: ShippingSettings = { mode: "flat", flat_fee_jpy: 0, by_prefecture: {}, free_over_jpy: null, free_over_by_audience: [], member_free: [], has_member_free: false };
 
 export function isPrefecture(s: string): s is Prefecture {
   return (PREFECTURES as readonly string[]).includes(s);
@@ -55,6 +59,7 @@ export function isPrefecture(s: string): s is Prefecture {
 export function parseShippingSettings(raw: unknown): ShippingSettings {
   if (!raw || typeof raw !== "object") return DEFAULT_SHIPPING;
   const r = raw as Record<string, unknown>;
+  const rules = audienceFreeRules(r["free_over_by_audience"]);
   const fee = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1_000_000 ? v : null);
   const by: Partial<Record<Prefecture, number>> = {};
   if (r["by_prefecture"] && typeof r["by_prefecture"] === "object") {
@@ -68,11 +73,40 @@ export function parseShippingSettings(raw: unknown): ShippingSettings {
     flat_fee_jpy: fee(r["flat_fee_jpy"]) ?? 0,
     by_prefecture: by,
     free_over_jpy: fee(r["free_over_jpy"]),
-    free_over_by_audience: audienceFreeRules(r["free_over_by_audience"]),
+    free_over_by_audience: rules,
+    member_free: rules.length > 0 ? rules.filter((x) => x.label !== null).map((x) => ({ label: x.label!, free_over_jpy: x.free_over_jpy })) : publicMemberFree(r["free_over_by_audience"]),
+    has_member_free: rules.length > 0 || r["member_free"] === true,
   };
 }
 
-/** free_over_by_audience を読む（形の違う行・重なる条件は捨てる。10 件まで） */
+/** 公開の形（banto_public_shipping）の free_over_by_audience: [{ label, free_over_jpy }] */
+function publicMemberFree(raw: unknown): { label: string; free_over_jpy: number }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { label: string; free_over_jpy: number }[] = [];
+  for (const v of raw.slice(0, AUDIENCE_FREE_RULES_MAX)) {
+    if (!v || typeof v !== "object") continue;
+    const o = v as Record<string, unknown>;
+    const over = o["free_over_jpy"];
+    if (typeof o["label"] !== "string" || o["label"].trim() === "" || typeof over !== "number" || !Number.isInteger(over) || over < 0 || over > 1_000_000) continue;
+    out.push({ label: o["label"].trim().slice(0, 40), free_over_jpy: over });
+  }
+  return out;
+}
+
+/**
+ * お客様に公開する送料の設定（DB の banto_public_shipping と同じ）。会員の条件ごとの決まりは、名前を付けたものの名前と金額だけ。
+ * 会員の条件の id・名前の無い決まりの金額は出さない。決まりがあることだけ member_free: true で知らせる（会員の判定を DB に聞くため）
+ */
+export function publicShipping(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const { free_over_by_audience: rawRules, member_free: _drop, ...rest } = raw as Record<string, unknown>;
+  void _drop;
+  const rules = audienceFreeRules(rawRules);
+  if (rules.length === 0) return rest;
+  return { ...rest, member_free: true, free_over_by_audience: rules.filter((x) => x.label !== null).map((x) => ({ label: x.label, free_over_jpy: x.free_over_jpy })) };
+}
+
+/** free_over_by_audience を読む（形の違う行・重なる条件は捨てる。10 件まで。DB の banto_audience_free_rules と同じ読み方） */
 export function audienceFreeRules(raw: unknown): AudienceFreeRule[] {
   if (!Array.isArray(raw)) return [];
   const out: AudienceFreeRule[] = [];
@@ -127,7 +161,7 @@ export function describeShipping(settings: ShippingSettings): {
       : settings.flat_fee_jpy === 0
         ? "送料無料"
         : `送料は全国一律 ${yen(settings.flat_fee_jpy)}（税込）`;
-  const memberFree = settings.free_over_by_audience.filter((r) => r.label !== null).map((r) => ({ label: r.label!, freeOver: r.free_over_jpy }));
+  const memberFree = settings.member_free.map((r) => ({ label: r.label, freeOver: r.free_over_jpy }));
   return { summary, freeOver: settings.free_over_jpy, table, memberFree };
 }
 

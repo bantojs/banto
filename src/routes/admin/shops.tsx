@@ -340,9 +340,18 @@ interface AudienceChoice {
 /**
  * 会員の条件ごとの送料無料の欄（0171）。ready = 0171 を当てた・audiences = 選べる条件（読めなければ null = 欄を出さず、今の決まりを保つ）
  */
-function AudienceFreeShipping(props: { rules: AudienceFreeRule[]; audiences: AudienceChoice[] | null; moduleOn: boolean }) {
-  const { rules, audiences, moduleOn } = props;
+function AudienceFreeShipping(props: { rules: AudienceFreeRule[]; audiences: AudienceChoice[] | null; moduleOn: boolean; canReadAudiences: boolean }) {
+  const { rules, audiences, moduleOn, canReadAudiences } = props;
   if (audiences === null) return null;
+  // 会員の条件を読む項目（marketing・catalog・content・customers）が無い人には一覧が空で返る。決まりは保存しても今のまま残す
+  if (!canReadAudiences) {
+    return (
+      <>
+        <h2>{t("shipping.audience_title")}</h2>
+        <p class="muted">{tf("shipping.audience_no_perm", { n: rules.length })}</p>
+      </>
+    );
+  }
   const rows: (AudienceFreeRule | null)[] = [...rules, ...(rules.length < AUDIENCE_FREE_RULES_MAX ? [null] : [])];
   return (
     <>
@@ -456,7 +465,7 @@ function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined;
             </tbody>
           </table>
         </details>
-        <AudienceFreeShipping rules={shippingCfg.free_over_by_audience} audiences={props.audiences ?? null} moduleOn={moduleEnabled(shop.settings, AUDIENCES_MODULE)} />
+        <AudienceFreeShipping rules={shippingCfg.free_over_by_audience} audiences={props.audiences ?? null} moduleOn={moduleEnabled(shop.settings, AUDIENCES_MODULE)} canReadAudiences={can(props.access, "admin") || (["marketing", "catalog", "content", "customers"] as const).some((p) => can(props.access, p))} />
         <h2>{t("shipping.tax_title")}</h2>
         <label for="tax_rate">{t("shipping.tax_rate")}</label>
         <input id="tax_rate" type="number" name="tax_rate" min={0} max={99} value={String(taxRate(shop.settings ?? {}))} style="width:6rem" />

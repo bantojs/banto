@@ -56,7 +56,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
     },
     ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1"],
   );
-  const quoted = obj({ quote: { ...str, description: "購入者に見せた内容の署名。POST /checkout にそのまま渡す（1 回限り）" }, expires_at: str, confirmation: any("最終確認画面に表示する内容（特商法）。申込みボタンの直前に全部表示する。項目は docs/headless.md「2. 最終確認画面を表示する」") }, ["quote", "expires_at", "confirmation"]);
+  const quoted = obj({ quote: { ...str, description: "購入者に見せた内容の署名。POST /checkout にそのまま渡す（1 回限り）" }, expires_at: str, confirmation: any("最終確認画面に表示する内容（特商法）。申込みボタンの直前に全部表示する。項目は docs/headless.md「2. 最終確認画面を表示する」。shipping_free_reason（0171）: audience = 会員の条件による送料無料（会員特典）、threshold = ショップ全体の金額による送料無料、null = 送料がかかる（もともと 0 円を含む）") }, ["quote", "expires_at", "confirmation"]);
   const tokens = obj({ access_token: { ...str, description: "bm1. で始まる（15 分）。Authorization: Bearer に付ける" }, refresh_token: { ...str, description: "30 日。1 回使うごとに新しいものに置き換わる（使い回すとその端末のセッションが止まる）" }, expires_in: int }, ["access_token", "refresh_token", "expires_in"]);
   const loggedIn = { allOf: [tokens, obj({ member: obj({ id: str, email: str, created: bool }) })] };
   const store = any("実店舗。id・name・住所・hours（曜日ごと）・special_days・today・visit_dates（来店日を選ぶとき）など");

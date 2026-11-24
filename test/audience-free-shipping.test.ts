@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
 import { ADDRESS, BASE, Browser, appWith, externalHosts, memberLogin, memberMail, quoteFrom } from "./helpers";
-import { audienceFreeRules, parseShippingSettings, shippingQuote } from "../src/commerce/shipping";
+import { audienceFreeRules, parseShippingSettings, publicShipping, shippingQuote } from "../src/commerce/shipping";
+import { publicShopSettings } from "../src/storefront/data";
 import { audienceFreeRulesFromForm } from "../src/routes/admin/shops";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
-/** 会員の条件ごとの送料無料の金額（0171、docs/shipping.md「会員の条件ごとの送料無料」） */
+/** 会員の条件ごとの送料無料の金額（0171、docs/audiences.md「会員の条件ごとの送料無料」） */
 
 const GOLD = "11111111-1111-4111-8111-111111111111";
 const SILVER = "22222222-2222-4222-8222-222222222222";
@@ -43,6 +44,22 @@ describe("送料の計算（shipping.ts）", () => {
     expect(rules[0]).toEqual({ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員" });
     expect(rules[1]).toEqual({ audience_id: SILVER, free_over_jpy: 3000, label: "x".repeat(40) });
     expect(rules).toHaveLength(10);
+  });
+  it("公開の形: 名前を付けた決まりの名前と金額だけ（id・名前の無い決まりは出さない）。読み直すと案内と『決まりがある』だけが分かる", () => {
+    const raw = { mode: "flat", flat_fee_jpy: 800, free_over_jpy: 5000, by_prefecture: {}, free_over_by_audience: [{ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員" }, { audience_id: SILVER, free_over_jpy: 3000 }] };
+    const pub = publicShopSettings({ shipping: raw })["shipping"] as Record<string, unknown>;
+    expect(pub).toEqual(publicShipping(raw));
+    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド会員", free_over_jpy: 0 }]);
+    expect(pub["member_free"]).toBe(true);
+    expect(JSON.stringify(pub)).not.toContain(GOLD);
+    expect(JSON.stringify(pub)).not.toContain("3000");
+    const parsed = parseShippingSettings(pub);
+    expect(parsed.free_over_by_audience).toEqual([]);
+    expect(parsed.has_member_free).toBe(true);
+    expect(parsed.member_free).toEqual([{ label: "ゴールド会員", free_over_jpy: 0 }]);
+    // 決まりが無ければ member_free も無い
+    expect(publicShipping({ mode: "flat", flat_fee_jpy: 800, free_over_by_audience: [{ audience_id: "nope", free_over_jpy: 0 }] })).toEqual({ mode: "flat", flat_fee_jpy: 800 });
+    expect(parseShippingSettings({ mode: "flat", flat_fee_jpy: 800 }).has_member_free).toBe(false);
   });
   it("管理画面のフォーム: 選べる条件だけ・外す・重ならない。欄が無い・条件が読めないなら今の決まりのまま", () => {
     const current = [{ audience_id: GOLD, free_over_jpy: 0, label: null }];
@@ -123,6 +140,33 @@ describe("会員の条件ごとの送料無料（お店の画面）", () => {
     expect(stripe.sessions.size).toBe(0);
     const again = res.status === 303 ? await (await gold.b.get(res.headers.get("location")!)).text() : await res.text();
     expect(again).not.toContain("会員特典で送料無料");
+  });
+
+  it("DB に聞くのは 1 リクエストで 1 回（確認画面で 1 回、確定の前の引き直しで 1 回）", async () => {
+    const { app, mail, teeM, sb } = setup();
+    const gold = await confirmAs(app, mail, teeM.id, 1, "gold@example.com");
+    expect(sb.memberFreeShippingCalls).toBe(1);
+    await gold.b.post("/my-shop/checkout/stripe", { quote: quoteFrom(gold.html) });
+    expect(sb.memberFreeShippingCalls).toBe(2);
+  });
+
+  it("セッションの世代が変わった（ログアウトさせた）古い Cookie では効かない", async () => {
+    const { app, mail, teeM, sb } = setup();
+    const b = new Browser(app, BASE);
+    await memberLogin(b, mail, "/my-shop", "gold@example.com");
+    sb.tables.customers.find((x) => x["email"] === "gold@example.com")!["session_epoch"] = 1;
+    await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" });
+    const html = await (await b.post("/my-shop/checkout/stripe", ADDRESS)).text();
+    expect(html).not.toContain("会員特典で送料無料");
+  });
+
+  it("DB に聞けなかったら送料がかかる側で計算する（エラーにしない）", async () => {
+    const { app, mail, teeM, sb } = setup();
+    sb.memberFreeShippingFail = true;
+    const gold = await confirmAs(app, mail, teeM.id, 1, "gold@example.com");
+    expect(gold.html).not.toContain("会員特典で送料無料");
+    expect(gold.html).toContain("¥800");
+    expect(sb.memberFreeShippingCalls).toBe(1);
   });
 
   it("モジュールが OFF・0171 の前・ゲストは DB に聞かない（送料の案内にも出さない）", async () => {

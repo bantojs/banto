@@ -52,7 +52,7 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   // トークンが付いているのに確かめられない: 連携側はトークンを更新して呼び直す（黙ってゲスト扱いにすると、会員の値引きが消えて見える）
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
   // 会員限定の商品（0098）: 会員トークンの会員はカートの値付けも会員の読み取りの経路で（買えるかは DB が判定）
-  const memberFreeOver = memberFreeOverSource(c, shop, m.member?.id);
+  const memberFreeOver = memberFreeOverSource(c, shop, m.member);
   return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop), ...(memberFreeOver ? { memberFreeOver } : {}) };
 }
 

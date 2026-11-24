@@ -450,7 +450,7 @@ export interface QuoteContext {
 async function shippingFor(ctx: QuoteContext, subtotal: number, state: string): Promise<{ fee: number; free_reason: ShippingFreeReason }> {
   const settings = ctx.shop.settings ?? {};
   const cfg = parseShippingSettings(settings["shipping"]);
-  const needsMember = Boolean(ctx.member?.id) && cfg.free_over_by_audience.length > 0 && moduleEnabled(settings, AUDIENCES_MODULE) && ctx.memberFreeOver !== undefined;
+  const needsMember = Boolean(ctx.member?.id) && cfg.has_member_free && moduleEnabled(settings, AUDIENCES_MODULE) && ctx.memberFreeOver !== undefined;
   // ショップ全体の金額で無料なら、会員の判定は要らない
   const plain = shippingQuote(cfg, subtotal, state, null);
   if (!needsMember || plain.fee === 0) return plain;

@@ -271,7 +271,7 @@ export interface PrivilegedDb {
   /** 予約の支払い方法の手数料をショップの決まりで確かめる（0170。値引きを付けた後、決済ページを作る前）。違えば amount_mismatch */
   reservationPaymentFeeCheck(reservationId: string, shopId: string): Promise<number>;
   /** ログイン中の会員が当てはまる会員の条件のうち、いちばん低い送料無料の金額（0171）。無ければ null */
-  memberFreeShippingOver(shopId: string, customerId: string): Promise<number | null>;
+  memberFreeShippingOver(shopId: string, member: { id: string; epoch: number; sid: string }): Promise<number | null>;
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
   attachReservationCustomer(reservationId: string, shopId: string, customer: ReservationCustomer): Promise<void>;
   /** クーポンのコードからキャンペーンを引く（0010）。subject があればその人の使用回数も返す */
@@ -599,8 +599,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     confirmReservation: (reservationId, shopId, order) =>
       rpc<string>("confirm_reservation", { p_reservation_id: reservationId, p_shop_id: shopId, p_order: order }),
     reservationPaymentFeeCheck: (reservationId, shopId) => rpc<number>("reservation_payment_fee_check", { p_reservation_id: reservationId, p_shop_id: shopId }),
-    memberFreeShippingOver: async (shopId, customerId) => {
-      const r = await rpc<unknown>("member_free_shipping_over", { p_shop_id: shopId, p_customer_id: customerId });
+    memberFreeShippingOver: async (shopId, member) => {
+      const r = await rpc<unknown>("member_free_shipping_over", { p_shop_id: shopId, p_customer_id: member.id, p_epoch: member.epoch, p_session_id: member.sid });
       return typeof r === "number" && Number.isInteger(r) && r >= 0 ? r : null;
     },
     attachReservationCustomer: (reservationId, shopId, customer) =>

@@ -47,11 +47,14 @@ export function amazonPayFor(c: Ctx): ReturnType<typeof amazonPayFromConfig> {
 
 /**
  * 会員の条件ごとの送料無料の金額（0171）を DB に聞く関数（QuoteContext.memberFreeOver）。
- * ゲスト・会員の条件のモジュールが OFF・決まりが無い・0171 の前は undefined（DB の往復を足さない）。1 リクエストで 1 回だけ聞く
+ * ゲスト・会員の条件のモジュールが OFF・決まりが無い・0171 の前は undefined（DB の往復を足さない）。1 リクエストで 1 回だけ聞く。
+ * DB はセッション（世代・行）も確かめる。セッションの行の無い古い Cookie・トークンは聞かない（送料がかかる）。
+ * DB のエラーは送料がかかる側に倒す（null。確定の前の引き直しで確認画面を出し直す）
  */
-export function memberFreeOverSource(c: Ctx, shop: PublicShop, memberId: string | null | undefined): (() => Promise<number | null>) | undefined {
-  if (!memberId || !moduleEnabled(shop.settings, AUDIENCES_MODULE)) return undefined;
-  if (parseShippingSettings((shop.settings ?? {})["shipping"]).free_over_by_audience.length === 0) return undefined;
+export function memberFreeOverSource(c: Ctx, shop: PublicShop, member: { id: string; epoch: number; sid?: string | undefined } | null | undefined): (() => Promise<number | null>) | undefined {
+  if (!member?.id || !member.sid || !moduleEnabled(shop.settings, AUDIENCES_MODULE)) return undefined;
+  if (!parseShippingSettings((shop.settings ?? {})["shipping"]).has_member_free) return undefined;
+  const who = { id: member.id, epoch: member.epoch, sid: member.sid };
   const privileged = privilegedFor(c);
   if (!privileged) return undefined;
   const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
@@ -59,7 +62,11 @@ export function memberFreeOverSource(c: Ctx, shop: PublicShop, memberId: string 
   return () =>
     (once ??= (async () => {
       if (!state || !(await migrated(state, AUDIENCE_FREE_SHIPPING_MIGRATION))) return null;
-      return privileged.memberFreeShippingOver(shop.id, memberId);
+      return privileged.memberFreeShippingOver(shop.id, who).catch((e: unknown) => {
+        // 会員の判定ができないときは送料がかかる側（個人情報は出さない）
+        console.warn(`member_free_shipping_over failed (shop ${shop.id}): ${e instanceof Error ? e.name : "error"}`);
+        return null;
+      });
     })());
 }
 
