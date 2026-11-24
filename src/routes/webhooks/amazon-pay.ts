@@ -17,7 +17,9 @@ import type { ConfigAdapter } from "../../adapters/types";
  *   2. TopicArn が運営者の許したもの（デプロイの設定 AMAZON_PAY_IPN_TOPIC_ARNS（ARN そのもの）か AMAZON_PAY_IPN_TOPIC_ACCOUNTS
  *      （AWS のアカウント ID）、どちらもカンマ区切り）。署名が合うだけでは「どこかの SNS のトピックから送られた」ことしか分からず、
  *      だれでも自分のトピックで署名つきの通知を作れるため。Amazon Pay の IPN を送るトピックの ARN は公式に一覧が無いので、Banto は
- *      決め打ちしない。設定が無い・合わないときは断り、確かめた TopicArn を 1 度だけログに出す（運営者がそれを設定に写す）。
+ *      決め打ちしない。設定があれば、署名を確かめる前（証明書を取りに行く前）に TopicArn で断る。設定が無いときは、
+ *      ログに出すためだけに署名を確かめ（isolate ごとに 1 分 30 通まで）、確かめた TopicArn をログに出して断る
+ *      （isolate ごとに 1 分 5 行まで。運営者がそれを設定に写す）。
  *   3. MerchantID がこのデプロイの加盟店（AMAZON_PAY_MERCHANT_ID）と同じ
  * 通った通知でも中身は信じない: 書いてある Charge を API で引き直し、売上が確定（Captured）していれば Charge Permission の
  * merchantMetadata（Banto が署名したボタンの中身に入れた予約 ID とショップ ID）で予約を確定する。
@@ -38,9 +40,13 @@ const IPN_PER_MINUTE = 120;
 export const IPN_PER_MINUTE_ALL = 600;
 /** Amazon Pay に無かった Charge を覚えておく秒数（同じ ID に続けて API を呼ばない） */
 const UNKNOWN_CHARGE_TTL = 600;
+/** トピックを許す設定が無いあいだ、ログに出すためだけに署名を確かめる数（1 分）。その間の通知はどれも断る */
+export const IPN_UNCONFIGURED_PER_MINUTE = 30;
+/** 許していない TopicArn のログの行数（isolate ごとに 1 分） */
+export const IPN_TOPIC_LOG_PER_MINUTE = 5;
 const ACCOUNT_RE = /^\d{12}$/;
-/** 許していない TopicArn をログに出したもの（isolate ごとに 1 度） */
-const loggedTopics = new Set<string>();
+const topicLog = { start: 0, count: 0 };
+let warnedAccounts = false;
 
 function listSetting(cfg: ConfigAdapter, name: string): string[] {
   return (cfg.get(name) ?? "")
@@ -49,10 +55,33 @@ function listSetting(cfg: ConfigAdapter, name: string): string[] {
     .filter((s) => s !== "");
 }
 
+/** 許すトピックの設定（ARN そのものと AWS のアカウント ID）。アカウント ID の形が違うものは使わず、1 度だけ知らせる */
+export function ipnTopicAllowlist(cfg: ConfigAdapter): { arns: string[]; accounts: string[] } {
+  const arns = listSetting(cfg, "AMAZON_PAY_IPN_TOPIC_ARNS");
+  const raw = listSetting(cfg, "AMAZON_PAY_IPN_TOPIC_ACCOUNTS");
+  const accounts = raw.filter((a) => ACCOUNT_RE.test(a));
+  if (accounts.length !== raw.length && !warnedAccounts) {
+    warnedAccounts = true;
+    console.warn("[banto] amazon-pay ipn: AMAZON_PAY_IPN_TOPIC_ACCOUNTS has entries that are not 12-digit AWS account IDs; they are ignored");
+  }
+  return { arns, accounts };
+}
+
 /** TopicArn を受け付けてよいか（デプロイの設定の ARN そのものか、AWS のアカウント ID） */
-export function ipnTopicAllowed(topic: SnsTopic, cfg: ConfigAdapter): boolean {
-  if (listSetting(cfg, "AMAZON_PAY_IPN_TOPIC_ARNS").includes(topic.arn)) return true;
-  return listSetting(cfg, "AMAZON_PAY_IPN_TOPIC_ACCOUNTS").some((a) => ACCOUNT_RE.test(a) && a === topic.account);
+export function ipnTopicAllowed(topic: SnsTopic, list: { arns: string[]; accounts: string[] }): boolean {
+  return list.arns.includes(topic.arn) || list.accounts.includes(topic.account);
+}
+
+/** 許していない TopicArn をログに出す（isolate ごとに 1 分 IPN_TOPIC_LOG_PER_MINUTE 行まで） */
+export function logTopicNotAllowed(arn: string, now = Date.now()): boolean {
+  if (now - topicLog.start >= 60_000) {
+    topicLog.start = now;
+    topicLog.count = 0;
+  }
+  if (topicLog.count >= IPN_TOPIC_LOG_PER_MINUTE) return false;
+  topicLog.count++;
+  console.warn(`[banto] amazon-pay ipn: TopicArn not allowed: ${arn} (set AMAZON_PAY_IPN_TOPIC_ARNS or AMAZON_PAY_IPN_TOPIC_ACCOUNTS to accept it)`);
+  return true;
 }
 
 amazonPayWebhook.post("/", async (c: Ctx) => {
@@ -75,14 +104,18 @@ amazonPayWebhook.post("/", async (c: Ctx) => {
     return c.json({ error: "invalid_payload" }, 400);
   }
   const cache = c.get("adapters").cache;
+  // トピックは署名を確かめる前に見る（許していないトピックの通知のために証明書を取りに行かない）
+  const topic = envelope && typeof envelope === "object" ? snsTopicArn((envelope as Record<string, unknown>)["TopicArn"]) : null;
+  if (!topic) return c.json({ error: "invalid_signature" }, 403);
+  const allow = ipnTopicAllowlist(cfg);
+  const configured = allow.arns.length > 0 || allow.accounts.length > 0;
+  if (configured && !ipnTopicAllowed(topic, allow)) return c.json({ error: "topic_not_allowed" }, 403);
+  // 設定が無いあいだは、ログに出すためだけに確かめる（数を絞る）
+  if (!configured && !(await rateLimiter(c.get("adapters")).hit("amazon-pay-ipn:unconfigured", IPN_UNCONFIGURED_PER_MINUTE, 60))) return c.json({ error: "too_many_requests" }, 429);
   const verified = await verifySnsMessage(envelope, { fetch: c.get("deps").fetch, cache });
   if (!verified.ok) return c.json({ error: "invalid_signature" }, 403);
-  const topic = snsTopicArn(verified.envelope["TopicArn"]);
-  if (!topic || !ipnTopicAllowed(topic, cfg)) {
-    if (topic && !loggedTopics.has(topic.arn) && loggedTopics.size < 20) {
-      loggedTopics.add(topic.arn);
-      console.warn(`[banto] amazon-pay ipn: TopicArn not allowed: ${topic.arn} (set AMAZON_PAY_IPN_TOPIC_ARNS or AMAZON_PAY_IPN_TOPIC_ACCOUNTS to accept it)`);
-    }
+  if (!configured) {
+    logTopicNotAllowed(topic.arn);
     return c.json({ error: "topic_not_allowed" }, 403);
   }
   if (!from && !(await rateLimiter(c.get("adapters")).hit("amazon-pay-ipn:*", IPN_PER_MINUTE_ALL, 60))) return c.json({ error: "too_many_requests" }, 429);

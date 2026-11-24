@@ -82,7 +82,7 @@ describe("SNS の署名", () => {
 
   it("TopicArn を分ける", () => {
     expect(snsTopicArn("arn:aws:sns:us-east-1:291180941288:A3BXB0YN3XH17HAEMGQX8TKDO54")).toEqual({ region: "us-east-1", account: "291180941288", name: "A3BXB0YN3XH17HAEMGQX8TKDO54", arn: "arn:aws:sns:us-east-1:291180941288:A3BXB0YN3XH17HAEMGQX8TKDO54" });
-    for (const bad of ["arn:aws:sns:us-east-1:2911809412:x", "arn:aws:sqs:us-east-1:291180941288:x", "arn:aws:sns:s3:291180941288:x", "arn:aws:sns:us-east-1:291180941288:", "x", 1, null]) expect(snsTopicArn(bad)).toBeNull();
+    for (const bad of ["arn:aws-cn:sns:cn-north-1:291180941288:x", "arn:aws-us-gov:sns:us-gov-west-1:291180941288:x", "arn:aws:sns:us-east-1:291180941288:t.fifo", "arn:aws:sns:us-east-1:2911809412:x", "arn:aws:sqs:us-east-1:291180941288:x", "arn:aws:sns:s3:291180941288:x", "arn:aws:sns:us-east-1:291180941288:", "x", 1, null]) expect(snsTopicArn(bad)).toBeNull();
   });
 
   it("証明書の応答: リダイレクト・大きすぎる・読めないものは断り、1 分は取りに行き直さない", async () => {
@@ -117,6 +117,17 @@ describe("SNS の署名", () => {
     }) as typeof fetch;
     expect((await verifySnsMessage(JSON.parse(await S.envelope(msg)), { fetch: f })).ok).toBe(true);
     expect(urls).toEqual([SNS_CERT_URL]);
+  });
+
+  it("TopicArn が aws の SNS のトピックでない・証明書のリージョンがトピックと違うものは断る", async () => {
+    const n = { n: 0 };
+    for (const TopicArn of [undefined, "x", "arn:aws-cn:sns:cn-north-1:000000000000:t", "arn:aws:sns:ap-northeast-1:000000000000:t.fifo"]) {
+      const env = await S.envelope(msg, { overrides: { TopicArn: "arn:aws:sns:ap-northeast-1:000000000000:t" }, tamper: (m) => void (TopicArn === undefined ? delete m["TopicArn"] : (m["TopicArn"] = TopicArn)) });
+      expect(await verifySnsMessage(JSON.parse(env), { fetch: certFetch(n) })).toMatchObject({ ok: false });
+    }
+    const other = await S.envelope(msg, { overrides: { TopicArn: "arn:aws:sns:us-east-1:000000000000:t" } });
+    expect(await verifySnsMessage(JSON.parse(other), { fetch: certFetch(n) })).toEqual({ ok: false, reason: "cert_url" });
+    expect(n.n).toBe(0);
   });
 
   it("古すぎる・先すぎる Timestamp は断る", async () => {

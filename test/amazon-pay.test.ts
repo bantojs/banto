@@ -1,14 +1,14 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith, externalHosts, memoryAdapters, quoteFrom } from "./helpers";
 import { bundledPluginUrl } from "../src/plugins";
 import { AMAZON_PAY_ALGORITHM, amazonPayPath, amzDate, createAmazonPayClient, parseJpy, pemToPkcs8, pkcs1ToPkcs8, signedHeaders } from "../src/plugins/amazon_pay";
 import { buttonPayload, openAmazonPayTicket, sealAmazonPayTicket } from "../src/payments/amazon-pay";
 import { refundPayment } from "../src/orders/cancel";
-import { IPN_PER_MINUTE_ALL } from "../src/routes/webhooks/amazon-pay";
+import { IPN_PER_MINUTE_ALL, IPN_TOPIC_LOG_PER_MINUTE, IPN_UNCONFIGURED_PER_MINUTE, logTopicNotAllowed } from "../src/routes/webhooks/amazon-pay";
 import { memoryRateLimit } from "../src/adapters/rate-limit";
 import { createApp } from "../src/app";
-import { SNS_TEST_ACCOUNT, SNS_TEST_TOPIC, snsSigner, type SnsSigner } from "./sns-fixture";
+import { SNS_CERT_URL, SNS_TEST_ACCOUNT, SNS_TEST_TOPIC, snsSigner, type SnsSigner } from "./sns-fixture";
 
 afterEach(() => externalHosts.clear());
 
@@ -183,6 +183,21 @@ function setup(overrides: Record<string, string | undefined> = {}, opts: { enabl
   externalHosts.set("https://pay-api.amazon.jp/", amazon.handler);
   SNS.serve();
   return { sb, shop, sku, app, amazon };
+}
+
+/** 回数の制限・キャッシュをこのテストだけのものにした app（ほかのテストの通知と数えを混ぜない） */
+function isolatedApp(overrides: Record<string, string | undefined> = {}) {
+  const sb = new FakeSupabase();
+  const adapters = memoryAdapters({ SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, SESSION_SECRET: "s", PUBLIC_BASE_URL: BASE, ...AMAZON_VARS(), ...overrides });
+  adapters.rateLimit = memoryRateLimit();
+  SNS.serve();
+  return createApp(() => adapters, {
+    fetch: (input, init) => {
+      const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      for (const [prefix, handler] of externalHosts) if (u.startsWith(prefix)) return Promise.resolve(handler(new Request(input, init)));
+      return sb.fetch(input, init);
+    },
+  });
 }
 
 const address = { customer_name: "小森 花子", customer_email: "hanako@example.com", phone: "0312345678", postal_code: "100-0001", state: "東京都", city: "千代田区", line1: "千代田1-1", line2: "" };
@@ -380,7 +395,7 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     const otherHost = await SNS.envelope(message, { overrides: { SigningCertURL: "https://example.com/cert.pem" } });
     expect((await post(otherHost)).status).toBe(403);
     // 署名は合うが、許していないアカウントのトピック（だれでも自分のトピックで署名つきの通知を作れる）
-    const otherTopic = await SNS.envelope(message, { overrides: { TopicArn: "arn:aws:sns:ap-northeast-1:111111111111:attacker" } });
+    const otherTopic = await SNS.envelope(message, { overrides: { TopicArn: "arn:aws:sns:ap-northeast-1:111111111111:other" } });
     const otherRes = await post(otherTopic);
     expect(otherRes.status).toBe(403);
     expect(await otherRes.json()).toEqual({ error: "topic_not_allowed" });
@@ -421,23 +436,65 @@ describe("Amazon Pay（同梱プラグイン amazon_pay）", () => {
     expect((await post(bad.app, await SNS.envelope(message))).status).toBe(403);
   });
 
+  it("IPN のトピック: 許す設定があれば、許していないトピックの通知は証明書を取りに行かずに断る。証明書のリージョンはトピックと同じもの", async () => {
+    const app = isolatedApp();
+    const post = (body: string) => app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body });
+    const message = { MerchantID: "M123", ObjectType: "CHARGE_PERMISSION", ObjectId: "cp-1-aaaaaaaa" };
+    const before = SNS.fetches;
+    expect((await post(await SNS.envelope(message, { overrides: { TopicArn: "arn:aws:sns:ap-northeast-1:111111111111:other" } }))).status).toBe(403);
+    // 署名を確かめていない封筒でも、トピックで先に断る
+    expect((await post(JSON.stringify({ Type: "Notification", TopicArn: "arn:aws:sns:ap-northeast-1:111111111111:other", Message: "{}", SigningCertURL: SNS_CERT_URL }))).status).toBe(403);
+    expect(SNS.fetches).toBe(before);
+    // 許したアカウントのトピックでも、証明書のリージョンが違えば断る（証明書は取りに行かない）
+    expect((await post(await SNS.envelope(message, { overrides: { TopicArn: `arn:aws:sns:us-east-1:${SNS_TEST_ACCOUNT}:amazon-pay-ipn` } }))).status).toBe(403);
+    expect(SNS.fetches).toBe(before);
+    // 同じリージョンなら受け付ける
+    expect(await (await post(await SNS.envelope(message))).json()).toEqual({ received: true, ignored: "CHARGE_PERMISSION" });
+  });
+
+  it("IPN: トピックを許す設定が無いあいだは、確かめる数を絞り（1 分 30 通）、ログは 1 分 5 行まで", async () => {
+    const app = isolatedApp({ AMAZON_PAY_IPN_TOPIC_ACCOUNTS: undefined });
+    const post = (body: string) => app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body });
+    const good = await SNS.envelope({ MerchantID: "M123", ObjectType: "CHARGE_PERMISSION", ObjectId: "cp-1-aaaaaaaa" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (let i = 0; i < IPN_UNCONFIGURED_PER_MINUTE; i++) expect((await post(good)).status).toBe(403);
+      expect((await post(good)).status).toBe(429);
+      const lines = warn.mock.calls.filter((a) => String(a[0]).includes("TopicArn not allowed"));
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.length).toBeLessThanOrEqual(IPN_TOPIC_LOG_PER_MINUTE);
+      expect(String(lines[0]![0])).toContain(SNS_TEST_TOPIC);
+      // 1 分の窓ごとに 5 行まで
+      const t = 4_000_000_000_000;
+      const got = Array.from({ length: IPN_TOPIC_LOG_PER_MINUTE + 2 }, () => logTopicNotAllowed("arn:aws:sns:ap-northeast-1:000000000000:x", t));
+      expect(got.filter(Boolean)).toHaveLength(IPN_TOPIC_LOG_PER_MINUTE);
+      expect(logTopicNotAllowed("arn:aws:sns:ap-northeast-1:000000000000:x", t + 60_000)).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("IPN: アカウント ID の形が違う設定は使わず、1 度だけ知らせる", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const app = isolatedApp({ AMAZON_PAY_IPN_TOPIC_ACCOUNTS: `12345, ${SNS_TEST_ACCOUNT}` });
+      const post = (body: string) => app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body });
+      const good = await SNS.envelope({ MerchantID: "M123", ObjectType: "CHARGE_PERMISSION", ObjectId: "cp-1-aaaaaaaa" });
+      expect((await post(good)).status).toBe(200);
+      expect((await post(good)).status).toBe(200);
+      expect(warn.mock.calls.filter((a) => String(a[0]).includes("not 12-digit")).length).toBeLessThanOrEqual(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("IPN: 送り元が分からない構成のデプロイ全体の上限は、確かめた通知だけを数える", async () => {
-    // 回数の制限はこのテストだけのもの（ほかのテストの通知と数えを混ぜない）
-    const sb = new FakeSupabase();
-    const adapters = memoryAdapters({ SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, SESSION_SECRET: "s", PUBLIC_BASE_URL: BASE, ...AMAZON_VARS() });
-    adapters.rateLimit = memoryRateLimit();
-    SNS.serve();
-    const app = createApp(() => adapters, {
-      fetch: (input, init) => {
-        const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        for (const [prefix, handler] of externalHosts) if (u.startsWith(prefix)) return Promise.resolve(handler(new Request(input, init)));
-        return sb.fetch(input, init);
-      },
-    });
+    const app = isolatedApp();
     const post = (body: string) => app.request(`${BASE}/webhooks/amazon-pay`, { method: "POST", body });
     const message = { MerchantID: "M123", ObjectType: "CHARGE_PERMISSION", ObjectId: "cp-1-aaaaaaaa" };
     // 偽の通知をいくら送っても、本物の通知は断られない
-    const fake = JSON.stringify({ Type: "Notification", Message: JSON.stringify(message) });
+    // （許したトピックを名乗る、署名の無い・合わない通知も数えない）
+    const fake = JSON.stringify({ Type: "Notification", Message: JSON.stringify(message), TopicArn: SNS_TEST_TOPIC, SigningCertURL: SNS_CERT_URL, SignatureVersion: "2", Signature: "AAAA", MessageId: "m", Timestamp: new Date().toISOString() });
     for (let i = 0; i < IPN_PER_MINUTE_ALL + 5; i++) expect((await post(fake)).status).toBe(403);
     const good = await SNS.envelope(message);
     for (let i = 0; i < IPN_PER_MINUTE_ALL; i++) expect((await post(good)).status).toBe(200);

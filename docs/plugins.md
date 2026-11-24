@@ -140,19 +140,10 @@ npx wrangler secret put AMAZON_PAY_PRIVATE_KEY < AmazonPay_privateKey.pem
 - 戻りの URL に付いてくる値は合図にしか使いません。どの予約か・いくらかは Banto が署名した券、支払ったかどうかは Amazon Pay の API の答えで決めます。IPN も、届いた中身ではなく API で引き直した Charge で判断します。
 - IPN は Amazon SNS の封筒で届きます。Banto は次をすべて満たす通知だけを受け付け、どれかが欠けると Amazon Pay の API を呼ぶ前に断ります（403）。
   - SNS の署名が合う（署名の版 1・2、証明書は `https://sns.<リージョン>.amazonaws.com/…pem` から取って 1 日覚える、72 時間より古い通知は断る）
-  - 通知を送った SNS のトピック（`TopicArn`）を、デプロイの設定で許している（下の「IPN を受け付ける」）
+  - 通知を送った SNS のトピック（`TopicArn`）を、デプロイの設定で許している（下の「IPN を受け付ける（トピックの許可）」。許す設定があれば、許していないトピックの通知は署名を確かめる前に断ります）
+  - 署名の証明書が、トピックと同じリージョンの SNS のもの
   - 通知の `MerchantID` が `AMAZON_PAY_MERCHANT_ID` と同じ
 - SNS の購読の確認・解除の通知は、確かめたうえで何もしません。Amazon Pay に無かった Charge の通知は受け取らずに 503 を返して Amazon Pay に再送させ（Amazon Pay は 1 時間ごとに最大 3 時間まで再送します）、同じ ID には 10 分のあいだ API を呼びません。
-
-#### IPN を受け付ける（トピックの許可）
-
-SNS の署名が合うことは「どこかの SNS のトピックから送られた」ことしか示しません（だれでも自分のトピックで署名つきの通知を作れます）。そこで、Amazon Pay の IPN を送るトピックをデプロイの設定で許します。Amazon Pay はそのトピックの一覧を公開していないので、Banto は決め打ちしません。
-
-1. IPN の加盟店 URL を設定した後、Seller Central から IPN を試しに送るか、テスト環境で 1 回支払います。
-2. 設定が無いあいだ、IPN は断られ、Worker のログに 1 度だけ `amazon-pay ipn: TopicArn not allowed: arn:aws:sns:…` と出ます（Cloudflare の画面 → Workers & Pages → あなたの Worker → ログ）。
-3. その ARN を、デプロイの変数 `AMAZON_PAY_IPN_TOPIC_ARNS` に入れます（カンマ区切りで複数。テスト環境と本番の両方を入れられます）。アカウント ID（ARN の 5 つ目の 12 桁）で許すときは `AMAZON_PAY_IPN_TOPIC_ACCOUNTS` に入れます。
-
-IPN は取りこぼしの保険です。設定が無くても、お客様がお店に戻ったときの確定（いつもの流れ）は変わりません。設定が無いと、戻る前にブラウザを閉じたときに注文が自動で確定せず、予約の期限が切れた後に支払いが残ることがあります（管理画面と Seller Central で確かめてください）。
 - 確定と返金の冪等の鍵は Amazon Pay の Charge ID です（戻りと IPN のどちらが先に届いても、注文も返金も 1 回だけ）。
 - 在庫の予約は Stripe と同じ 40 分です。期限が切れた後に支払いが済んだときは、在庫があれば確定し、無ければ自動で返金します。
 - Amazon Pay の画面で「戻る」を押すと、予約を戻してカートに戻ります。断られたときも予約を戻し、カートに「お支払いが完了しませんでした」と出します。
@@ -160,6 +151,16 @@ IPN は取りこぼしの保険です。設定が無くても、お客様がお�
 - 注文のキャンセル（管理画面・AI 用 API）は、Amazon Pay で返金してから在庫を戻します（売り上げた額から返金済みの額を引いた額）。
 - クーポンの条件「使える支払い方法」に **Amazon Pay** があります（マイグレーション `0130_amazon_pay` が要ります）。
 - ヘッドレス: `provider: "amazon_pay"` で quote を作り、`checkout` の `payment_url`（Banto の中継ページ）へ購入者を移します。戻り先は `success_url` / `cancel_url` のとおりです（docs/headless.md）。
+
+#### IPN を受け付ける（トピックの許可）
+
+SNS の署名が合うことは「どこかの SNS のトピックから送られた」ことしか示しません（だれでも自分のトピックで署名つきの通知を作れます）。そこで、Amazon Pay の IPN を送るトピックをデプロイの設定で許します。Amazon Pay はそのトピックの一覧を公開していないので、Banto は決め打ちしません。
+
+1. IPN の加盟店 URL を設定した後、Seller Central から IPN を試しに送るか、1 回支払います。**このデプロイが使う環境（テスト環境か本番。`AMAZON_PAY_SANDBOX` と鍵の ID の `SANDBOX-` / `LIVE-` のとおり）の IPN で** 確かめてください。
+2. 設定が無いあいだ、IPN は断られ、Worker のログに `amazon-pay ipn: TopicArn not allowed: arn:aws:sns:…` と出ます（Cloudflare の画面 → Workers & Pages → あなたの Worker → ログ）。ログは Worker の実行の単位（isolate）ごとに 1 分 5 行までで、少なくとも 1 度は出ます。設定が無いあいだに確かめる通知の数も 1 分 30 通までに絞ります。
+3. その ARN を、デプロイの変数 `AMAZON_PAY_IPN_TOPIC_ARNS` に入れます（カンマ区切り）。**入れるのは、このデプロイが使う環境のトピックだけ** にしてください（テスト環境の IPN の Charge は本番の鍵では見つからず、そのたびに 503 で Amazon Pay の再送（1 時間ごとに最大 3 時間）が起きます）。アカウント ID（ARN の 5 つ目の 12 桁）で許すときは `AMAZON_PAY_IPN_TOPIC_ACCOUNTS` に入れます（12 桁でないものは使わず、ログに 1 度知らせます）。
+
+IPN は取りこぼしの保険です。設定が無くても、お客様がお店に戻ったときの確定（いつもの流れ）は変わりません。設定が無いと、戻る前にブラウザを閉じたときに注文が自動で確定せず、予約の期限が切れた後に支払いが残ることがあります（管理画面と Seller Central で確かめてください）。
 
 ### 1 デプロイ = 1 Amazon Pay アカウント
 

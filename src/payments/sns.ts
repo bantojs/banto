@@ -8,7 +8,8 @@
  *   （証明書の連鎖は確かめない）。取った証明書の公開鍵（SubjectPublicKeyInfo）は CacheAdapter に 1 日覚える（オリジン + パスごと）。
  *   取れなかった URL は 1 分覚えて続けて取りに行かない。取りに行くのは 5 秒まで・16 KiB まで（読みながら数える）。
  * - 署名が合うことは「どこかの SNS のトピックから送られた」ことしか示さない（だれでも自分のトピックで署名つきの通知を作れる）。
- *   どのトピックから来たものを受けるかは呼び出し側が TopicArn で決める（snsTopicArn）。
+ *   どのトピックから来たものを受けるかは呼び出し側が TopicArn で決める（snsTopicArn）。ここでは TopicArn が AWS の
+ *   （aws の区画の）SNS のトピックの形であることと、署名の証明書のホストのリージョンがトピックのリージョンと同じことだけを確かめる。
  * - Timestamp が古すぎる（72 時間より前）・先すぎる（15 分より後）ものは断る。中身は API で引き直して冪等に処理するので、
  *   同じ通知が何度届いても注文は 1 回だけ。時間の幅は再送が届く余地を残しつつ、古い通知の使い回しの幅を区切るためのもの。
  */
@@ -16,7 +17,7 @@ import type { CacheAdapter } from "../adapters/types";
 
 export type SnsMessage = Record<string, unknown>;
 export type SnsVerifyResult = { ok: true; envelope: SnsMessage } | { ok: false; reason: SnsRejectReason };
-export type SnsRejectReason = "malformed" | "type" | "version" | "cert_url" | "cert" | "timestamp" | "signature";
+export type SnsRejectReason = "malformed" | "type" | "version" | "topic" | "cert_url" | "cert" | "timestamp" | "signature";
 
 /** sns.<リージョン>.amazonaws.com（us-east-1・ap-northeast-1・us-gov-west-1 など。S3 のバケットの形の sns.s3… は当たらない） */
 const CERT_HOST_RE = /^sns\.[a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}\.amazonaws\.com$/;
@@ -78,10 +79,13 @@ export interface SnsTopic {
   arn: string;
 }
 
-/** TopicArn（arn:aws:sns:<リージョン>:<アカウント>:<名前>）を分ける。形が違えば null */
+/**
+ * TopicArn（arn:aws:sns:<リージョン>:<アカウント>:<名前>）を分ける。形が違えば null。
+ * 区画は aws だけ（中国・政府の区画の ARN は受けない）。名前に「.」は入らない（FIFO のトピックの .fifo は来ない想定）
+ */
 export function snsTopicArn(raw: unknown): SnsTopic | null {
   if (typeof raw !== "string" || raw.length > 300) return null;
-  const m = /^arn:aws(?:-[a-z]+)?:sns:([a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}):(\d{12}):([A-Za-z0-9_-]{1,256})$/.exec(raw);
+  const m = /^arn:aws:sns:([a-z]{2}(?:-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}):(\d{12}):([A-Za-z0-9_-]{1,256})$/.exec(raw);
   return m ? { region: m[1]!, account: m[2]!, name: m[3]!, arn: raw } : null;
 }
 
@@ -239,7 +243,11 @@ export async function verifySnsMessage(envelope: unknown, opts: { fetch: typeof 
   if (version !== "1" && version !== "2") return { ok: false, reason: "version" };
   const sig = m["Signature"];
   if (typeof sig !== "string" || sig.length === 0 || sig.length > 4096 || !/^[A-Za-z0-9+/=]+$/.test(sig)) return { ok: false, reason: "malformed" };
+  const topic = snsTopicArn(m["TopicArn"]);
+  if (!topic) return { ok: false, reason: "topic" };
   if (!snsCertUrlOk(m["SigningCertURL"])) return { ok: false, reason: "cert_url" };
+  // 証明書はトピックと同じリージョンの SNS のもの
+  if (new URL(m["SigningCertURL"]).hostname !== `sns.${topic.region}.amazonaws.com`) return { ok: false, reason: "cert_url" };
 
   const ts = Date.parse(String(m["Timestamp"]));
   const now = opts.now ?? Date.now();
