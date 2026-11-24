@@ -327,6 +327,12 @@ GitHub Releases のリリースノートに「手動対応」の項があれば�
 - Cloudflare の「変数とシークレット」に項目を追加する
 - Stripe の Webhook で購読するイベントを追加する
 
+### Amazon Pay の IPN（即時支払い通知）の署名
+
+Amazon Pay の IPN（`/webhooks/amazon-pay`）は、Amazon SNS の署名と、通知を送ったトピック（`TopicArn`）と、`MerchantID` を確かめてから処理します。どれかが合わない通知は 403 で断り、Amazon Pay の API を呼びません。
+
+**Amazon Pay を使っている運営者は、IPN のトピックを許す設定が要ります**（docs/plugins.md「IPN を受け付ける（トピックの許可）」）。設定するまでは IPN が断られ、Worker のログに `amazon-pay ipn: TopicArn not allowed: …` と出ます（Worker の実行の単位ごとに 1 分 5 行まで、少なくとも 1 度）。このデプロイが使う環境（テスト環境か本番）の ARN だけを、デプロイの変数 `AMAZON_PAY_IPN_TOPIC_ARNS` に入れてください。IPN は取りこぼしの保険で、お客様がお店に戻ったときの確定は設定が無くても今までどおりです。Amazon Pay に無かった Charge の通知は、受け取らずに 503 を返すようになりました（Amazon Pay が再送します）。
+
 ### これから無くなる互換（期限）
 
 - （済）**v0.13.0**: カートの古い名前の Cookie（v0.12.0 より前に入れたカート）を読まなくなりました。そのお客様のカートは空に戻ります（入れ直せます）。

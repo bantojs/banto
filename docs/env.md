@@ -26,6 +26,7 @@
 | `KOMOJU_SECRET_KEY` / `KOMOJU_WEBHOOK_SECRET` | Secret | KOMOJU を使うなら | KOMOJU の管理画面 |
 | `AMAZON_PAY_PRIVATE_KEY` | Secret | Amazon Pay を使うなら | Amazon Pay の Seller Central → インテグレーションセントラルで作った秘密鍵（`.pem` の中身。docs/plugins.md「Amazon Pay」） |
 | `AMAZON_PAY_PUBLIC_KEY_ID` / `AMAZON_PAY_MERCHANT_ID` / `AMAZON_PAY_STORE_ID` | 変数 | Amazon Pay を使うなら | 同じ画面の公開鍵 ID・出品者 ID・ストア ID |
+| `AMAZON_PAY_IPN_TOPIC_ARNS` / `AMAZON_PAY_IPN_TOPIC_ACCOUNTS` | 変数 | Amazon Pay の IPN を受けるなら | IPN を送る SNS のトピックの ARN（カンマ区切り）か、その AWS のアカウント ID（12 桁、カンマ区切り）。このデプロイが使う環境（テスト環境か本番）のものだけ。無いと IPN は断られ、ログに届いたトピックの ARN が出る（isolate ごとに 1 分 5 行まで）（docs/plugins.md「IPN を受け付ける（トピックの許可）」） |
 | `AMAZON_PAY_SANDBOX` | 変数 | 任意 | 公開鍵 ID が `SANDBOX-` / `LIVE-` で始まらない鍵で、テスト環境を使うときだけ `true` |
 | `MAIL_TRANSPORT` | 変数 | 任意 | メールの送り手: `resend`（既定）/ `smtp` / `sendgrid` / `ses`（docs/email.md §1）。注文メール・会員のログインのコード・招待がすべてこれで送られる |
 | `RESEND_API_KEY` | Secret | `resend` のとき | Resend → API Keys（docs/email.md） |
