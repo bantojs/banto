@@ -218,13 +218,15 @@ describe.skipIf(!dbAvailable)("セキュリティの締め直し 2（0055_securi
         const err = await second;
         expect(err).toBeInstanceOf(Error);
         expect((err as Error).message).toMatch(/plan_limit_exceeded:shops/);
-        await b.query("rollback").catch(() => undefined);
+        expect(Number((await getPool().query("select count(*) from shops")).rows[0]!.count)).toBe(before + 1);
       } finally {
-        a.release();
-        b.release();
+        // 途中で落ちても、開いたトランザクションと上限の設定を残さない（同じ DB を使うほかのテストに漏らさない）
+        const aOk = await a.query("rollback").then(() => true, () => false);
+        const bOk = await b.query("rollback").then(() => true, () => false);
+        a.release(!aOk);
+        b.release(!bOk);
+        await getPool().query("select site_settings_set('plan_limits', '{}'::jsonb)");
       }
-      expect(Number((await getPool().query("select count(*) from shops")).rows[0]!.count)).toBe(before + 1);
-      await getPool().query("select site_settings_set('plan_limits', '{}'::jsonb)");
     });
   });
 });
