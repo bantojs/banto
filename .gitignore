@@ -11,3 +11,4 @@ data/
 selfhost/.env
 selfhost/banto.env
 wrangler.placement.jsonc
+.claude/worktrees/
