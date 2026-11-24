@@ -285,6 +285,7 @@ npm run deploy
 ```
 
 マイグレーションは `npx supabase db push` でも、セットアップ画面からでも適用できます。
+AI（Claude Code など）にコマンドを任せるときは、秘密を AI に渡さない手順の [install-with-ai.md](install-with-ai.md#コマンドが使える-aiclaude-code-などに任せる場合) を使ってください。
 ローカル開発は `cp .dev.vars.example .dev.vars`（Secret key（`sb_secret_…`）か service_role キーを貼る。`SUPABASE_URL` 等は `.dev.vars` に追記するか `wrangler.jsonc` の `vars`）→ `npx supabase start` → `npx supabase db reset` → `npm run dev`。
 
 環境変数と Secret の一覧は [docs/env.md](env.md)。任意の環境変数: `BANTO_LOCALE`（`en` で英語 UI）、`PUBLIC_BASE_URL`（独自ドメインを使うとき）、`MEDIA_BASE_URL`（R2 の公開ドメインから画像を配信するとき）、
