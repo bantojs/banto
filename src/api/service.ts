@@ -232,7 +232,7 @@ export interface ListQuery {
 
 export interface OrdersQuery {
   status?: string;
-  /** 注文番号、または（orders:pii があれば）メール・氏名の部分一致 */
+  /** 注文番号、またはメール（orders:contact / orders:pii）・氏名（orders:contact / orders:address / orders:pii）の部分一致（0173） */
   query?: string;
   from?: string;
   to?: string;
@@ -669,7 +669,7 @@ export class ApiService {
   orderUpdateStatus = (id: string, status: "shipped" | "cancelled", reason?: "refused") =>
     status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status }).then(withTrackingInfo);
 
-  // ---- お店で試着（0026。注文に準じて orders:read / orders:write、連絡先は orders:pii）----
+  // ---- お店で試着（0026。注文に準じて orders:read / orders:write、名前・メール・電話は orders:contact、名前だけ orders:address、自由記入は orders:pii）----
   tryonRequestsList = (q: { status?: string; storeId?: string; limit?: number; offset?: number } = {}) =>
     this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("api_tryon_requests_list", {
       p_status: q.status ?? null,

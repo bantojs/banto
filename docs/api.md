@@ -71,8 +71,8 @@ Banto には用途の違う 4 つの API があります。まずこの表で自
 ### 3-1. 認証とスコープ
 
 - `Authorization: Bearer banto_...`。Cookie は見ません。
-- スコープは発行時に選び、**発行する人がそのショップで持つ権限の項目まで**しか付けられません（`products:*` は catalog、`orders:read` / `orders:write` は orders、`orders:pii` は customers、`shop:write` は settings、`stats:read` は reports、`coupons:*` は marketing、`customers:*` は customers）。発行者が項目を失うと、そのスコープだけ `unauthorized` になります。
-- 購入者の個人情報（氏名・住所・メール・電話）は `orders:pii` があるときだけ返ります。会員の一覧・取得（`customers:read`）は個人情報そのものなので、必要なトークンにだけ付けてください。
+- スコープは発行時に選び、**発行する人がそのショップで持つ権限の項目まで**しか付けられません（`products:*` は catalog、`orders:read` / `orders:write` は orders、`orders:pii`・`orders:contact`・`orders:address` は customers、`shop:write` は settings、`stats:read` は reports、`coupons:*` は marketing、`customers:*` は customers）。発行者が項目を失うと、そのスコープだけ `unauthorized` になります。
+- 購入者の個人情報（氏名・住所・メール・電話）は `orders:pii`（すべて）、または `orders:contact`（氏名・メール・電話）・`orders:address`（氏名と住所）があるとき、その分だけ返ります（0173、docs/ai-access.md §2）。会員の一覧・取得（`customers:read`）は個人情報そのものなので、必要なトークンにだけ付けてください。
 - 返金・キャンセル（`POST /api/v1/orders/{id}/status` の `cancelled`）は、発行者が `orders_cancel` の項目も持っているときだけ通ります。
 - 失敗は `{"error": {"code": "...", "message": "..."}}`。`unauthorized`（401。トークンが無い・失効・期限切れ・スコープ不足・発行者の権限が無い、のどれでも同じ）、`invalid`（400）、`not_found`（404）、`conflict`（409）、`migration_required`（409。その項目を使うには DB の更新が要る。管理画面 →「アップデート」で適用する）、`upstream`（502 / 503）。
 
@@ -97,10 +97,10 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `product_set_option_axes`【書き込み】 | products:write | `PUT /products/{id}/option-axes`（SKU を分ける軸。0065） |
 | `care_set`【書き込み】 | products:write | `PUT /products/{ref}/care`・`PUT /categories/{ref}/care`（洗濯表示。0127） |
 | `size_chart_get` / `size_chart_set`【書き込み】 | products:read / products:write | `GET /size-chart`、`PUT /size-chart`（採寸表。0095） |
-| `orders_list` / `order_get` | orders:read（個人情報は orders:pii） | `GET /orders`、`GET /orders/{id}` |
+| `orders_list` / `order_get` | orders:read（個人情報は orders:pii、連絡先だけ orders:contact・住所だけ orders:address） | `GET /orders`、`GET /orders/{id}` |
 | `order_update_status`【書き込み】 | orders:write（キャンセルは発行者の orders_cancel も） | `POST /orders/{id}/status` |
 | `stores_list` | shop:read | `GET /stores` |
-| `tryon_requests_list` / `tryon_request_get` | orders:read（連絡先は orders:pii） | `GET /tryon-requests`、`GET /tryon-requests/{number}` |
+| `tryon_requests_list` / `tryon_request_get` | orders:read（名前・メール・電話は orders:contact、名前だけなら orders:address、自由記入は orders:pii） | `GET /tryon-requests`、`GET /tryon-requests/{number}` |
 | `tryon_request_update_status` / `tryon_request_restock`【書き込み】 | orders:write | `POST /tryon-requests/{number}/status`、`POST /tryon-requests/{number}/restock` |
 | `sales_summary` / `inventory_low` | stats:read | `GET /stats/sales`、`GET /stats/inventory-low` |
 | `dialogs_list` / `dialog_create` / `dialog_update` / `dialog_delete`【書き込み】 | dialogs:write | `GET /dialogs`、`POST /dialogs`、`PATCH /dialogs/{id}`、`DELETE /dialogs/{id}`（docs/dialogs.md） |

@@ -36,7 +36,7 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 
 **注文のメールを外部プラグインから送る**ときは、同梱の「メール通知」を ON のまま「注文のメールを送らない（外部プラグインに任せる。運営者への控えも止まります）」に印を付けると、お客様に 2 通届きません（会員のログインなどのメールは送り続けます。お店で試着は「お客様あてのお知らせを送らない」で、店舗あては送り続けます。[docs/plugins.md](plugins.md)「注文のメールを外部プラグインに任せる」）。
 
-**個人情報（氏名・住所・メール・電話）は送りません。** 必要なプラグインは注文 ID・会員 ID を使って AI 用トークンの API（`orders:pii` / `customers:read`、[docs/ai-access.md](ai-access.md)）から取得します。
+**個人情報（氏名・住所・メール・電話）は送りません。** 必要なプラグインは注文 ID・会員 ID を使って AI 用トークンの API（`orders:contact`・`orders:address`・`orders:pii` / `customers:read`、[docs/ai-access.md](ai-access.md)）から取得します。
 会員のイベントは、HubSpot などの CRM や自社の顧客マスタに Banto の会員を写すためのものです（向きは Banto → 外部。外部 → Banto は API の `POST /api/v1/customers/upsert`。[docs/knowledge/13-external-customer-master.md](knowledge/13-external-customer-master.md)、実例 [examples/plugin-hubspot](../examples/plugin-hubspot/)）。
 
 ## 2. 送信形式

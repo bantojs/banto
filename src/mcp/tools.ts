@@ -346,8 +346,8 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "orders_list",
-    description: "注文の一覧。購入者の個人情報はトークンに orders:pii が無ければマスクされる。発送していれば各注文の tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
-    inputSchema: obj({ query: s("string", "注文番号、または（orders:pii があれば）メール・氏名の部分一致"), status: s("string", "pending（受付・未入金、0156）| paid | shipped | cancelled | refunded", { enum: ["pending", "paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
+    description: "注文の一覧。購入者の個人情報は、トークンの orders:contact（氏名・メール・電話）・orders:address（氏名・住所）・orders:pii（両方と社内のメモ）の範囲だけ返り、無ければマスクされる。発送していれば各注文の tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
+    inputSchema: obj({ query: s("string", "注文番号、またはメール（orders:contact / orders:pii）・氏名（orders:contact / orders:address / orders:pii）の部分一致"), status: s("string", "pending（受付・未入金、0156）| paid | shipped | cancelled | refunded", { enum: ["pending", "paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,
     run: (api, a) => api.ordersList({ query: str(a, "query"), status: str(a, "status"), from: str(a, "from"), to: str(a, "to"), limit: num(a, "limit"), offset: num(a, "offset") }),
   },
@@ -385,7 +385,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "tryon_requests_list",
-    description: "お店で試着の申し込みの一覧（新しい順）。お客様の名前・メール・電話はトークンに orders:pii があるときだけ返る。スコープ orders:read。" + DATA_NOTE,
+    description: "お店で試着の申し込みの一覧（新しい順）。お客様の名前・メール・電話はトークンに orders:contact（名前だけなら orders:address）、自由記入（note）は orders:pii があるときだけ返る。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ status: s("string", "requested | sent | ready | purchased | not_purchased | expired | cancelled", { enum: ["requested", "sent", "ready", "purchased", "not_purchased", "expired", "cancelled"] }), store_id: s("string", "実店舗の id（stores_list）"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,
     run: (api, a) => api.tryonRequestsList({ status: str(a, "status"), storeId: str(a, "store_id"), limit: num(a, "limit"), offset: num(a, "offset") }),
@@ -434,7 +434,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "inquiries_list",
     description:
-      "お客様のお問い合わせの一覧（最後のやり取りが新しい順、本文なし）。status: waiting_shop（ショップの返事待ち）/ waiting_customer / closed。verified が false のものはメールアドレスの確認がまだ（送り主が本人とは限らない）。連絡先はトークンに orders:pii があるときだけ返る。スコープ inquiries:read。" +
+      "お客様のお問い合わせの一覧（最後のやり取りが新しい順、本文なし）。status: waiting_shop（ショップの返事待ち）/ waiting_customer / closed。verified が false のものはメールアドレスの確認がまだ（送り主が本人とは限らない）。連絡先（メール・名前）はトークンに orders:contact か orders:pii（名前だけなら orders:address）があるときだけ返る（添付のファイル名は orders:pii だけ）。スコープ inquiries:read。" +
       INQUIRY_NOTE,
     inputSchema: obj({ status: s("string", INQUIRY_API_STATUSES.join(" | "), { enum: [...INQUIRY_API_STATUSES] }), assignee: s("string", "担当者で絞る: none（未割り当て）か inquiry_assignees の user_id"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,

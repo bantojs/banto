@@ -3009,11 +3009,25 @@ export class FakeSupabase {
       images: this.tables.product_images.filter((i) => i["product_id"] === p["id"]).sort((a, b) => Number(a["sort_order"]) - Number(b["sort_order"])).map((i) => ({ id: i["id"], storage_key: i["storage_key"], thumb_key: i["thumb_key"] ?? null, width: i["width"] ?? null, height: i["height"] ?? null, sort_order: i["sort_order"], options: i["options"] ?? {} })),
       skus: this.tables.skus.filter((k) => k["product_id"] === p["id"]).map((k) => ({ id: k["id"], code: k["code"], name: k["name"] ?? null, price_jpy: k["price_jpy"], compare_at_price_jpy: k["compare_at_price_jpy"] ?? null, options: k["options"] ?? {}, gtin: k["gtin"] ?? null, available: this.tables.inventory.find((i) => i["sku_id"] === k["id"])?.["available"] ?? 0 })),
     });
-    const order = (o: Row, pii: boolean): Row => ({
+    // 0173: orders:contact（氏名・メール・電話）と orders:address（氏名・住所）。orders:pii は両方とメモ
+    const piiPart = (part: "contact" | "address"): boolean => need("orders:pii") || (this.appliedMigrations.includes("0173_orders_pii_split") && need(`orders:${part}`));
+    const customerView = (o: Row): Row => {
+      const c = piiPart("contact"), a = piiPart("address");
+      const addr = (o["shipping_address"] as Row | null) ?? null;
+      if (c && a) return { email: o["customer_email"] ?? null, name: o["customer_name"] ?? null, shipping_address: addr };
+      if (c) return { name: o["customer_name"] ?? null, email: o["customer_email"] ?? null, phone: addr?.["phone"] ?? null, prefecture: addr?.["state"] ?? null };
+      if (a) {
+        // 決まった鍵だけ（電話やほかの鍵は返さない）
+        const keep = addr ? Object.fromEntries(["name", "postal_code", "country", "state", "city", "line1", "line2"].filter((k) => addr[k] != null).map((k) => [k, addr[k]])) : null;
+        return { name: o["customer_name"] ?? null, shipping_address: keep };
+      }
+      return { masked: true, prefecture: addr?.["state"] ?? null };
+    };
+    const order = (o: Row): Row => ({
       id: o["id"], number: o["number"] ?? null, status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0, customer_id: o["customer_id"] ?? null, payment_provider: o["payment_provider"] ?? null, payment_ref: o["payment_ref"] ?? null, shipped_at: o["shipped_at"] ?? null, created_at: o["created_at"], updated_at: o["updated_at"],
       // 0172: お問い合わせ番号（運送会社の名前と URL は Worker が足す）
       ...(this.appliedMigrations.includes("0172_api_order_tracking") ? { tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"] ?? "other", number: o["tracking_number"] } : null } : {}),
-      customer: pii ? { email: o["customer_email"] ?? null, name: o["customer_name"] ?? null, shipping_address: o["shipping_address"] ?? null } : { masked: true, prefecture: (o["shipping_address"] as Row | null)?.["state"] ?? null },
+      customer: customerView(o),
       items: this.tables.order_items.filter((i) => i["order_id"] === o["id"]).map((i) => ({ sku_id: i["sku_id"], qty: i["qty"], unit_price_jpy: i["unit_price_jpy"] })),
     });
     const mine = (p: Row | undefined) => (p && p["shop_id"] === shopId ? p : undefined);
@@ -3354,12 +3368,17 @@ export class FakeSupabase {
       case "api_tryon_request_restock": {
         // 0026 の再現（遷移の中身は test/db/tryon-api.test.ts）
         if (!need(fn === "api_tryon_request_update" || fn === "api_tryon_request_restock" ? "orders:write" : "orders:read")) return unauthorized();
-        const pii = need("orders:pii");
+        const pii = piiPart("contact") && piiPart("address");
         const view = (r: Row): Row => ({
           id: r["id"], number: r["number"], status: r["status"], store_id: r["store_id"], store_name: this.tables.stores.find((x) => x["id"] === r["store_id"])?.["name"] ?? null,
           visit_date: r["visit_date"] ?? null, hold_until: r["hold_until"] ?? null, customer_id: r["customer_id"] ?? null, restocked: r["restocked"] ?? false, created_at: r["created_at"],
           items: this.tables.tryon_items.filter((i) => i["request_id"] === r["id"]).map((i) => ({ sku_id: i["sku_id"], qty: i["qty"], unit_price_jpy: i["unit_price_jpy"] })),
-          ...(pii ? { customer: { email: r["customer_email"] ?? null, name: r["customer_name"] ?? null, phone: r["customer_phone"] ?? null, note: r["note"] ?? null } } : {}),
+          // 0173: 連絡先 → name・email・phone、住所の側 → name、自由記入 → orders:pii だけ
+          ...(piiPart("contact") || piiPart("address") ? { customer: {
+            ...(piiPart("contact") ? { email: r["customer_email"] ?? null, phone: r["customer_phone"] ?? null } : {}),
+            name: r["customer_name"] ?? null,
+            ...(need("orders:pii") ? { note: r["note"] ?? null } : {}),
+          } } : {}),
         });
         const rows = this.tables.tryon_requests.filter((r) => r["shop_id"] === shopId);
         if (fn === "api_tryon_requests_list") {
@@ -3718,15 +3737,15 @@ export class FakeSupabase {
         if (!mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]))) return notFound();
         const r = this.cancelOrder(args["p_order_id"], shopId, args["p_refunded"] === true, args["p_reason"] ?? null);
         if (r.status !== 200) return r;
-        return json(order(this.tables.orders.find((x) => x["id"] === args["p_order_id"])!, need("orders:pii")));
+        return json(order(this.tables.orders.find((x) => x["id"] === args["p_order_id"])!));
       }
       case "api_orders_list": {
         if (!need("orders:read")) return unauthorized();
         // 0105 の引数（古い DB は知らない引数で関数を見つけられない）
         if (("p_customer_id" in args || "p_updated_since" in args || "p_after" in args) && !this.appliedMigrations.includes("0105_ma_ports")) return json({ code: "PGRST202", message: "Could not find the function public.api_orders_list" }, 404);
         const q = args["p_query"] as string | null;
-        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || (need("orders:pii") && (String(o["customer_email"] ?? "").includes(q) || String(o["customer_name"] ?? "").includes(q)))));
-        return json({ items: all.map((o) => order(o, need("orders:pii"))), total: all.length, limit: 50, offset: 0, pii: need("orders:pii") });
+        const all = this.tables.orders.filter((o) => o["shop_id"] === shopId && (args["p_status"] == null || o["status"] === args["p_status"]) && (args["p_customer_id"] == null || o["customer_id"] === args["p_customer_id"]) && (args["p_tag"] == null || (Array.isArray(o["tags"]) && (o["tags"] as string[]).includes(String(args["p_tag"])))) && (!q || String(o["number"]) === q || ((piiPart("contact") && String(o["customer_email"] ?? "").includes(q)) || ((piiPart("contact") || piiPart("address")) && String(o["customer_name"] ?? "").includes(q)))));
+        return json({ items: all.map((o) => order(o)), total: all.length, limit: 50, offset: 0, pii: piiPart("contact") && piiPart("address"), ...(this.appliedMigrations.includes("0173_orders_pii_split") ? { pii_parts: { contact: piiPart("contact"), address: piiPart("address"), note: need("orders:pii") } } : {}) });
       }
       // 0155: 会員へのお知らせ（本物の形の確かめ・連携の分け方は test/db/member-news.test.ts）
       case "api_member_news_list":
@@ -3790,7 +3809,7 @@ export class FakeSupabase {
         if (norm.length > 20 || norm.some((x) => x.length > 40 || x.includes(","))) return json({ code: "P0001", message: "invalid_tags" }, 400);
         o["tags"] = norm;
         if (args["p_note_set"]) o["note"] = typeof args["p_note"] === "string" && args["p_note"].trim() ? args["p_note"] : null;
-        return json({ ...order(o, need("orders:pii")), tags: norm, ...(need("orders:pii") ? { note: o["note"] ?? null } : {}) });
+        return json({ ...order(o), tags: norm, ...(need("orders:pii") ? { note: o["note"] ?? null } : {}) });
       }
       case "api_line_message_begin": {
         if (!need("line:send")) return unauthorized();
@@ -3828,7 +3847,7 @@ export class FakeSupabase {
       case "api_order_get": {
         if (!need("orders:read")) return unauthorized();
         const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]));
-        return o ? json(order(o, need("orders:pii"))) : notFound();
+        return o ? json(order(o)) : notFound();
       }
       case "api_order_payment_record": {
         // 0156（本物は test/db/order-payment-status.test.ts）
@@ -3837,7 +3856,7 @@ export class FakeSupabase {
         if (!o) return notFound();
         const r = this.recordPayment(o);
         if (r) return r;
-        return json(order(o, need("orders:pii")));
+        return json(order(o));
       }
       case "api_order_update_status": {
         if (!need("orders:write")) return unauthorized();
@@ -3847,7 +3866,7 @@ export class FakeSupabase {
         o["status"] = args["p_status"];
         if (args["p_status"] === "shipped") o["shipped_at"] = this.now();
         this.enqueue(shopId, `order.${String(args["p_status"])}`, { order_id: o["id"] });
-        return json(order(o, need("orders:pii")));
+        return json(order(o));
       }
       case "api_sales_summary": {
         if (!need("stats:read")) return unauthorized();

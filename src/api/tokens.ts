@@ -10,6 +10,8 @@ export const API_SCOPES = [
   "products:write",
   "orders:read",
   "orders:pii",
+  "orders:contact",
+  "orders:address",
   "orders:write",
   "shop:read",
   "shop:write",
@@ -46,6 +48,8 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "orders:read": "orders",
   "orders:write": "orders",
   "orders:pii": "customers",
+  "orders:contact": "customers",
+  "orders:address": "customers",
   "shop:read": "integrations",
   "shop:write": "settings",
   "stats:read": "reports",
@@ -71,6 +75,8 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
 export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = {
   "member_news:write": "0155_mod_member_news",
   "customers:links": "0167_customer_links",
+  "orders:contact": "0173_orders_pii_split",
+  "orders:address": "0173_orders_pii_split",
 };
 
 /** 発行できるスコープ（DB がまだ受け付けないものを除く。発行の画面・つなぐ画面） */
