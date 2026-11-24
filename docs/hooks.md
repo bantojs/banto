@@ -34,6 +34,8 @@ Banto のプラグインは「コアの hooks とヘッドレス API だけを�
 - 未入金の注文は `pending → shipped` と進み、発送の後に入金されることがあります（`shipped` かつ `unpaid`）。入金が記録されると `payment_status` が `paid` になり、`order.paid` が届きます。受付のまま入金されたときは `status` も `paid` になります。
 - 未入金の注文の取り消し（受付のあいだ・受け取り拒否）には返金がありません。
 
+**注文のメールを外部プラグインから送る**ときは、同梱の「メール通知」を ON のまま「注文のメールを送らない（外部プラグインに任せる）」に印を付けると、お客様に 2 通届きません（会員のログインなどのメールは送り続けます。[docs/plugins.md](plugins.md)「注文のメールを外部プラグインに任せる」）。
+
 **個人情報（氏名・住所・メール・電話）は送りません。** 必要なプラグインは注文 ID・会員 ID を使って AI 用トークンの API（`orders:pii` / `customers:read`、[docs/ai-access.md](ai-access.md)）から取得します。
 会員のイベントは、HubSpot などの CRM や自社の顧客マスタに Banto の会員を写すためのものです（向きは Banto → 外部。外部 → Banto は API の `POST /api/v1/customers/upsert`。[docs/knowledge/13-external-customer-master.md](knowledge/13-external-customer-master.md)、実例 [examples/plugin-hubspot](../examples/plugin-hubspot/)）。
 

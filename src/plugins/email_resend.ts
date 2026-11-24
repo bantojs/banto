@@ -105,17 +105,39 @@ export function buildOrderEmail(kind: "paid" | "shipped", c: Contact, publicBase
   return noticeMail(kind === "paid" ? "order_paid" : "order_shipped", texts, orderMailValues(kind, c, publicBaseUrl));
 }
 
+/** 「注文のメールを送らない（外部プラグインに任せる）」: 受付（代金引換の受付を含む）・入金・発送のメールと運営者への控え */
+export function skipOrders(settings: Record<string, unknown>): boolean {
+  return settings["skip_orders"] === true;
+}
+
+/** 「お店で試着のお知らせを送らない」: お客様と店舗あての受付・取り置き・取り消しの知らせ */
+export function skipTryon(settings: Record<string, unknown>): boolean {
+  return settings["skip_tryon"] === true;
+}
+
 export const emailResend: BundledPlugin = {
   id: "email_resend",
   manifest: {
     name: "メール通知",
-    version: "1.2.0",
+    version: "1.3.0",
     description: "注文確認と発送通知のメールを購入者に送ります（送り手は Resend / SMTP / SendGrid / Amazon SES から MAIL_TRANSPORT で選びます）。運営者にも控えを送れます。お店で試着の受付・取り置きのお知らせ（お客様と店舗）も送ります。会員のログインのメールもこの送信元から送ります。",
     // order.created は代金引換などの未入金の注文の受付のメールだけ（0157）。入金済みの注文の受付は order.paid で送る
     events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
     settings: [
       { key: "from", label: "送信元（例: マイショップ <order@example.com>）", type: "text", required: true, description: "送り手で認証済みのドメインのアドレスにしてください" },
       { key: "bcc_owner", label: "運営者にも控えを送る（ショップ設定の連絡先メールアドレス宛）", type: "boolean" },
+      {
+        key: "skip_orders",
+        label: "注文のメールを送らない（外部プラグインに任せる）",
+        type: "boolean",
+        description: "受付・入金・発送のメールと運営者への控えを送りません。注文の hooks（order.created・order.paid・order.shipped）は外部プラグインに今までどおり届きます。会員のログインなどのメールは、この送信元から送り続けます",
+      },
+      {
+        key: "skip_tryon",
+        label: "お店で試着のお知らせを送らない",
+        type: "boolean",
+        description: "お店で試着の受付・取り置き・取り消しのお知らせ（お客様と店舗あて）を送りません。hooks（tryon.requested・tryon.updated）は今までどおり届きます",
+      },
     ],
   },
   requiredSecrets: (config) => mailTransportMissing(config),
@@ -125,6 +147,9 @@ export const emailResend: BundledPlugin = {
     if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped" && event !== "tryon.requested" && event !== "tryon.updated") return;
     // 注文の受付: 入金済みの注文は order.paid で送る。order.created で送るのは未入金の注文（代金引換、0157）だけ
     if (event === "order.created" && data["payment_status"] !== "unpaid") return;
+    // 注文のメール・お店で試着の知らせを外部プラグインに任せる店は、ここでは送らない（hooks はほかの送信先に今までどおり届く）。
+    // 会員のログイン・招待などのメールの送信元（from、banto_member_mail_from）はこの設定と関係なく使う
+    if (event.startsWith("tryon.") ? skipTryon(ctx.settings) : skipOrders(ctx.settings)) return;
     const from = typeof ctx.settings["from"] === "string" ? ctx.settings["from"].trim() : "";
     if (!from) throw new Error("email_resend: 送信元が未設定");
     const mailer = createMailer({ config: ctx.config, socket: ctx.socket }, ctx.fetch);

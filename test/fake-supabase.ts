@@ -3011,6 +3011,8 @@ export class FakeSupabase {
     });
     const order = (o: Row, pii: boolean): Row => ({
       id: o["id"], number: o["number"] ?? null, status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0, customer_id: o["customer_id"] ?? null, payment_provider: o["payment_provider"] ?? null, payment_ref: o["payment_ref"] ?? null, shipped_at: o["shipped_at"] ?? null, created_at: o["created_at"], updated_at: o["updated_at"],
+      // 0172: お問い合わせ番号（運送会社の名前と URL は Worker が足す）
+      ...(this.appliedMigrations.includes("0172_api_order_tracking") ? { tracking: o["tracking_number"] ? { carrier: o["tracking_carrier"] ?? "other", number: o["tracking_number"] } : null } : {}),
       customer: pii ? { email: o["customer_email"] ?? null, name: o["customer_name"] ?? null, shipping_address: o["shipping_address"] ?? null } : { masked: true, prefecture: (o["shipping_address"] as Row | null)?.["state"] ?? null },
       items: this.tables.order_items.filter((i) => i["order_id"] === o["id"]).map((i) => ({ sku_id: i["sku_id"], qty: i["qty"], unit_price_jpy: i["unit_price_jpy"] })),
     });

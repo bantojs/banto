@@ -353,7 +353,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "order_get",
-    description: "注文を 1 件取得する。スコープ orders:read。" + DATA_NOTE,
+    description: "注文を 1 件取得する。発送していれば tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ order_id: s("string") }, ["order_id"]),
     readOnly: true,
     run: (api, a) => api.orderGet(str(a, "order_id", true)!),

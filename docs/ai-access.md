@@ -477,3 +477,16 @@ const lineLink = (uid, key) => createHmac("sha256", Buffer.from(key, "utf8")).up
 ```
 
 PHP なら `hash_hmac('sha256', $uid, $key)`、Python なら `hmac.new(key.encode(), uid.encode(), hashlib.sha256).hexdigest()` です。
+
+## 24. 注文の発送のお問い合わせ番号（0172、メンテナの決定 2026-11-24）
+
+注文の JSON（`GET /api/v1/orders`・`GET /api/v1/orders/{id}`・注文を変える口の応答、MCP の注文のツール）に `tracking` が入ります。外部プラグインが発送のメールを送るとき、本文に運送会社とお問い合わせ番号を書けます。
+
+```json
+"tracking": { "carrier": "yamato", "carrier_label": "ヤマト運輸", "number": "123456789012", "url": "https://toi.kuronekoyamato.co.jp/…" }
+```
+
+- 番号の無い注文は `"tracking": null` です。`carrier` は `yamato` / `sagawa` / `japanpost` / `other`、`url` は運送会社の照会ページ（`other` は `null`）。番号は区切り（`-` と空白）を外した英数字です。
+- **`orders:read` で返します**（`orders:pii` は求めません）。お問い合わせ番号は氏名・住所・メール・電話ではないためです。宛先（メールアドレス）が要る発送のメールのプラグインは、どのみち `orders:pii` を持っています。
+- hooks の `order.shipped` のペイロードには入れません（hooks は最小の中身のまま。番号は API で引きます）。
+- 0172 を当てる前は `tracking` が入りません。

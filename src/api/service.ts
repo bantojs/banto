@@ -12,6 +12,7 @@ import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, imageUrl, productImageKey,
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
+import { withTrackingInfo } from "../orders/tracking";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
@@ -404,7 +405,7 @@ export class ApiService {
   /** 入金を記録する（未入金の注文、0156。orders:write）。order.paid を出すのは DB */
   async orderPaymentRecord(id: string): Promise<Record<string, unknown>> {
     await this.requireMigration(PAYMENT_STATUS_MIGRATION);
-    return this.call<Record<string, unknown>>("api_order_payment_record", { p_order_id: id });
+    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_payment_record", { p_order_id: id }));
   }
 
   /** キャンセル: 決済事業者で返金してから cancel_order。返金に失敗したら注文は変えない */
@@ -414,7 +415,7 @@ export class ApiService {
     // 未入金の注文（0156）は返金せずに取り消す（受付のあいだと、発送の後の受け取り拒否）
     if (info.payment_status === "unpaid") {
       if (!cancellable({ status: info.status, payment_status: "unpaid" })) throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
-      return this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: false, ...(reason ? { p_reason: reason } : {}) });
+      return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: false, ...(reason ? { p_reason: reason } : {}) }));
     }
     if (reason) throw new ApiError("invalid", "reason refused is only for unpaid orders that were shipped", 400);
     if (info.status !== "paid") throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
@@ -427,7 +428,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("upstream", `refund failed: ${e instanceof CancelError || e instanceof Error ? e.message : String(e)}`, 502);
     }
-    return this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: refunded });
+    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: refunded }));
   }
 
   /**
@@ -568,7 +569,7 @@ export class ApiService {
     if (q.tag !== undefined) {
       extra["p_tag"] = q.tag.slice(0, 40);
     }
-    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
+    const r = await this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
       p_status: q.status ?? null,
       p_from: q.from ?? null,
       p_to: q.to ?? null,
@@ -577,6 +578,7 @@ export class ApiService {
       p_query: q.query ?? null,
       ...extra,
     });
+    return { ...r, items: (r.items ?? []).map(withTrackingInfo) };
   };
 
   // ---- お店の画面のダイアログ（0111。dialogs:write、モジュール dialogs が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
@@ -617,14 +619,14 @@ export class ApiService {
     };
     const note = body["note"];
     if (note !== undefined && note !== null && typeof note !== "string") throw new ApiError("invalid", "note must be a string or null", 400);
-    return this.call<Record<string, unknown>>("api_order_annotate", {
+    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_annotate", {
       p_order_id: uuidOr404(orderId),
       p_add: list("add_tags"),
       p_remove: list("remove_tags"),
       p_tags: list("tags"),
       p_note: typeof note === "string" ? note : null,
       p_note_set: note !== undefined,
-    });
+    }));
   };
 
   // ---- LINE で送る口（line:send、0105。docs/line.md §4）。LINE の利用者 ID は応答に載せない ----
@@ -663,9 +665,9 @@ export class ApiService {
   lineUsage = async () => {
     return this.call<{ month: string; count: number; limit: number }>("api_line_usage", {});
   };
-  orderGet = (id: string) => this.call<Record<string, unknown>>("api_order_get", { p_order_id: id });
+  orderGet = async (id: string) => withTrackingInfo(await this.call<Record<string, unknown>>("api_order_get", { p_order_id: id }));
   orderUpdateStatus = (id: string, status: "shipped" | "cancelled", reason?: "refused") =>
-    status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status });
+    status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status }).then(withTrackingInfo);
 
   // ---- お店で試着（0026。注文に準じて orders:read / orders:write、連絡先は orders:pii）----
   tryonRequestsList = (q: { status?: string; storeId?: string; limit?: number; offset?: number } = {}) =>

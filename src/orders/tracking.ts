@@ -36,3 +36,13 @@ export function trackingOf(v: unknown): { carrier: string; number: string } | nu
   const o = v as Record<string, unknown>;
   return typeof o["number"] === "string" && o["number"] ? { carrier: typeof o["carrier"] === "string" ? o["carrier"] : "other", number: o["number"] } : null;
 }
+
+/**
+ * AI 用 API の注文（api_order_json、0172）の tracking に、運送会社の名前と照会ページの URL を足す。
+ * DB は carrier と number だけを返す（名前は表示の言語、URL は運送会社の形で Worker が持つ）。番号の無い注文は tracking: null のまま
+ */
+export function withTrackingInfo<T extends Record<string, unknown>>(order: T): T {
+  const tr = trackingOf(order["tracking"]);
+  if (!tr) return order;
+  return { ...order, tracking: { carrier: tr.carrier, carrier_label: carrierLabel(tr.carrier), number: tr.number, url: trackingUrl(tr.carrier, tr.number) } };
+}
