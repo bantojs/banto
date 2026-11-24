@@ -53,6 +53,10 @@ export interface ShippingInfo {
   table: { prefecture: string; fee: number }[] | null;
   /** 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ（会員の条件の名前・中身は出さない） */
   memberFree?: { label: string; freeOver: number }[];
+  /** 見る人の送料無料の金額（0171、表示の目安）: ショップ全体と、ログイン中の会員が当てはまる会員の条件の低い方。無ければ null */
+  viewerFreeOver?: number | null;
+  /** viewerFreeOver が会員の条件のもの（会員特典）か */
+  viewerFreeMember?: boolean;
   taxRate: number;
 }
 

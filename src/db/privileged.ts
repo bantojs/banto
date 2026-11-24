@@ -413,7 +413,7 @@ export interface PrivilegedDb {
   /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page。ブログをまたぐ articles_member_multi は 0140） */
   contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page" | "articles_member_multi", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
-  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
+  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown; free_over_jpy?: number }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
   memberSessionRefresh(shopId: string, customerId: string, epoch: number, sessionId: string, gen: number): Promise<MemberSessionRefresh>;
   /** 取り消す（logout: 自分の端末 / revoked: 一覧から別の端末） */
@@ -741,7 +741,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     contentMemberRpc: (fn, args) => rpc<unknown>(fn, args),
     shopAudiencesRender: async (shopId) => {
       const r = await rpc<unknown>("shop_audiences_render", { p_shop_id: shopId });
-      return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown }[]) : [];
+      return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown; free_over_jpy?: number }[]) : [];
     },
     memberSessionRefresh: (shopId, customerId, epoch, sessionId, gen) =>
       rpc("member_session_refresh", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_gen: gen }),

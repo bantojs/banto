@@ -6,6 +6,8 @@
  * - 会員の条件ごとの送料無料の金額（0171、free_over_by_audience）: 当てはまる会員だけ、より低い金額で無料。
  *   会員が条件に合うかは DB（member_free_shipping_over、最新の独自項目と banto_audience_ok）が決め、ここは金額を受け取るだけ
  */
+import { audienceOk, type AudienceContext } from "../members/audience";
+
 /** 会員の条件ごとの送料無料の金額（0171） */
 export const AUDIENCE_FREE_SHIPPING_MIGRATION = "0171_audience_free_shipping";
 /** 決まりの数の上限（DB の banto_audience_free_rules も同じ読み方で先頭の 10 件だけを見る） */
@@ -138,6 +140,29 @@ export function shippingQuote(settings: ShippingSettings, subtotalJpy: number, p
   }
   if (fee > 0 && memberFreeOver !== null && subtotalJpy >= memberFreeOver) return { fee: 0, free_reason: "audience" };
   return { fee, free_reason: null };
+}
+
+/**
+ * カートの「あと○円で送料無料」の目安（0171、表示だけ）: 覚えた会員の条件の一覧（shop_audiences_render の free_over_jpy）と、
+ * 会員の Cookie・会員トークンに入れた独自項目（数分ごとに入れ直す）で、当てはまるいちばん低い金額。ゲスト・当てはまらなければ null。
+ * お金（確認画面の送料）は DB の member_free_shipping_over が決める
+ */
+export function memberFreeOverHint(list: readonly { condition: unknown; free_over_jpy?: number }[], viewer: AudienceContext): number | null {
+  if (!viewer.member) return null;
+  let min: number | null = null;
+  for (const a of list) {
+    if (typeof a.free_over_jpy !== "number" || !Number.isInteger(a.free_over_jpy) || a.free_over_jpy < 0) continue;
+    // URL のパラメータは見ない（表示用の条件は一覧の側で金額を付けていない）
+    if (!audienceOk(a.condition, { member: true, attrs: viewer.attrs })) continue;
+    min = min === null ? a.free_over_jpy : Math.min(min, a.free_over_jpy);
+  }
+  return min;
+}
+
+/** 見る人の送料無料の金額: ショップ全体と会員の目安の低い方。member は会員の目安のほうが低い（会員特典）か */
+export function freeShippingTarget(shopWide: number | null, memberOver: number | null): { over: number | null; member: boolean } {
+  if (memberOver !== null && (shopWide === null || memberOver < shopWide)) return { over: memberOver, member: true };
+  return { over: shopWide, member: false };
 }
 
 /** 送料を計算する。prefecture が不明なら flat_fee を使う */

@@ -4354,7 +4354,17 @@ export class FakeSupabase {
         const shop = this.tables.shops.find((x) => x["id"] === shopId);
         const mods = ((shop?.["settings"] as Record<string, unknown> | undefined)?.["modules"] ?? {}) as Record<string, unknown>;
         if (mods["audiences"] !== true) return json([]);
-        return json(this.tables.audiences.filter((a) => a["shop_id"] === shopId).map((a) => ({ id: a["id"], name: a["name"], condition: a["condition"] })));
+        // 0171: 条件ごとの送料無料の金額を添える（決まりが無い・表示用の条件なら付けない）
+        const rules = audienceFreeRules((((shop?.["settings"] as Row | undefined) ?? {})["shipping"] as Row | undefined)?.["free_over_by_audience"]);
+        return json(
+          this.tables.audiences
+            .filter((a) => a["shop_id"] === shopId)
+            .map((a) => {
+              const overs = rules.filter((r) => r.audience_id === String(a["id"]).toLowerCase()).map((r) => r.free_over_jpy);
+              const over = overs.length > 0 && !audienceDisplayOnly(a["condition"]) ? Math.min(...overs) : null;
+              return { id: a["id"], name: a["name"], condition: a["condition"], ...(over !== null ? { free_over_jpy: over } : {}) };
+            }),
+        );
       }
       case "member_session_start": {
         if (!findCustomer(args["p_customer_id"], args["p_epoch"])) return json(null);

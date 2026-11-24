@@ -164,7 +164,7 @@ GET /api/shops/<shop>/cart?cart=<トークン>
   "subtotal_jpy": 6000,
   "tax_rate": 10,
   "tax_included": true,
-  "shipping": { "summary": "全国一律 ¥500", "free_over_jpy": 10000, "remaining_for_free_jpy": 4000, "by_prefecture": null, "member_free": [] },
+  "shipping": { "summary": "全国一律 ¥500", "free_over_jpy": 10000, "viewer_free_over_jpy": 10000, "member_free_applies": false, "remaining_for_free_jpy": 4000, "by_prefecture": null, "member_free": [] },
   "payments": { "stripe": true, "komoju": false },
   "delivery": { "dates": [{ "value": "2026-10-20", "label": "10月20日（火）" }], "slots": [{ "value": "am", "label": "午前中" }] },
   "can_checkout": true,
@@ -527,7 +527,7 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 ## 代金引換（同梱モジュール cod）
 
-会員の条件ごとの送料無料（0171、docs/audiences.md「会員の条件ごとの送料無料」）: カートの `shipping.member_free`（`[{ label, free_over_jpy }]`）は、運営者が名前を付けた決まりだけです（会員の条件の名前・中身は出しません）。当てはまるかは会員トークンの会員のデータベースの最新の独自項目で、quote の `confirmation.shipping_free_reason` が `audience` なら会員の条件による送料無料、`threshold` ならショップ全体の金額による送料無料です。
+会員の条件ごとの送料無料（0171、docs/audiences.md「会員の条件ごとの送料無料」）: カートの `shipping.member_free`（`[{ label, free_over_jpy }]`）は、運営者が名前を付けた決まりだけです（会員の条件の名前・中身は出しません）。会員トークンを付けたカートは、その会員の「あと○円で送料無料」の目安を `shipping.viewer_free_over_jpy`・`member_free_applies`・`remaining_for_free_jpy` で返します（会員トークンに入っている独自項目で判定する目安。数分ずれることがあります）。当てはまるかは会員トークンの会員のデータベースの最新の独自項目で、quote の `confirmation.shipping_free_reason` が `audience` なら会員の条件による送料無料、`threshold` ならショップ全体の金額による送料無料です。
 
 支払い方法の手数料（0170、docs/plugins.md「KOMOJU」）を決めたショップでは、カートの `payments.komoju_methods`（`[{ type, name, fee }]`、`fee` は一律の手数料・段は `null`・手数料なしは `0`）に KOMOJU の種類が並びます。quote の `provider` には `komoju:<type>`（例 `komoju:konbini`）を送ります（`komoju` だけ・並んでいない種類は 409 `payment_method`）。quote の `confirmation.fee_jpy` と `fee_label`（「お支払い手数料」）、`confirmation.payment.type` が付き、決済ページは選んだ種類だけ・手数料込みです。
 

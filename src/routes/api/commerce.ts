@@ -1,5 +1,5 @@
 import { deliveryOptions } from "../../modules/delivery-time";
-import { withApiMember } from "../audience-render";
+import { memberFreeOverForCart, withApiMember } from "../audience-render";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { PublicShop, StorefrontData } from "../../storefront/data";
@@ -68,9 +68,10 @@ async function openCartToken(secret: string, token: unknown): Promise<Cart | nul
 }
 
 async function cartView(c: Ctx, s: Scope, cart: Cart) {
-  const [priced, setup] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
+  const [priced, setup, memberFreeOver] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config), memberFreeOverForCart(c, s.shop, s.member)]);
   const token = await sealCart(s.secret, { ...priced.cart, ...(cart.coupons ? { coupons: cart.coupons } : {}) });
-  const shipping = shippingSummary(s.shop);
+  // 送料無料までの目安（0171: 会員トークンなら会員の条件の金額も。表示だけ、送料は quote で決まる）
+  const shipping = shippingSummary(s.shop, memberFreeOver);
   // 購入手続きに進める行（店頭のみの行を外す、0149）で、在庫不足と「進めるか」を決める（同梱テーマのカート・startCheckout と同じ）
   const buyable = checkoutPart(priced).priced;
   const short = buyable.lines.some((l) => l.short);
@@ -113,7 +114,10 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
     shipping: {
       summary: shipping.summary,
       free_over_jpy: shipping.freeOver,
-      remaining_for_free_jpy: shipping.freeOver === null ? null : Math.max(0, shipping.freeOver - priced.subtotal),
+      // 見る人の送料無料の金額（0171: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ）と、あといくら
+      viewer_free_over_jpy: shipping.viewerFreeOver,
+      member_free_applies: shipping.viewerFreeMember,
+      remaining_for_free_jpy: shipping.viewerFreeOver === null ? null : Math.max(0, shipping.viewerFreeOver - priced.subtotal),
       by_prefecture: shipping.table,
       // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは quote の confirmation.shipping_free_reason
       member_free: shipping.memberFree.map((m) => ({ label: m.label, free_over_jpy: m.freeOver })),

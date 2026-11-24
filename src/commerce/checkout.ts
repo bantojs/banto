@@ -12,7 +12,7 @@ import type { Cart, CartItem } from "../cart/cart";
 import { normalizeCart } from "../cart/cart";
 import { openJson, randomToken, sealJson } from "../util/signed";
 import { ipHash, subjectHash } from "../members/auth";
-import { PREFECTURES, describeShipping, isPrefecture, parseShippingSettings, shippingQuote, taxRate, type ShippingFreeReason } from "./shipping";
+import { PREFECTURES, describeShipping, freeShippingTarget, isPrefecture, parseShippingSettings, shippingQuote, taxRate, type ShippingFreeReason } from "./shipping";
 import type { AddressFormValues, CartLine } from "../themes/types";
 import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db/privileged";
 import type { MigrationStateDeps } from "../db/migration-state";
@@ -1162,11 +1162,17 @@ function bantoKey(key: string): boolean {
 }
 
 /** 送料の案内（カート・確認画面・API で共通） */
-export function shippingSummary(shop: PublicShop): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; memberFree: { label: string; freeOver: number }[]; taxRate: number } {
+export function shippingSummary(
+  shop: PublicShop,
+  /** カートの目安（0171）: ログイン中の会員が当てはまる会員の条件のいちばん低い送料無料の金額（memberFreeOverHint）。表示だけ */
+  memberFreeOver: number | null = null,
+): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; memberFree: { label: string; freeOver: number }[]; taxRate: number; viewerFreeOver: number | null; viewerFreeMember: boolean } {
   const settings = shop.settings ?? {};
   const d = describeShipping(parseShippingSettings(settings["shipping"]));
   // 会員の条件ごとの送料無料（0171）は、会員の条件のモジュールが ON のときだけ案内する
-  return { ...d, memberFree: moduleEnabled(settings, AUDIENCES_MODULE) ? d.memberFree : [], taxRate: taxRate(settings) };
+  const on = moduleEnabled(settings, AUDIENCES_MODULE);
+  const viewer = freeShippingTarget(d.freeOver, on ? memberFreeOver : null);
+  return { ...d, memberFree: on ? d.memberFree : [], taxRate: taxRate(settings), viewerFreeOver: viewer.over, viewerFreeMember: viewer.member };
 }
 
 export { PREFECTURES };

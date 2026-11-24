@@ -818,6 +818,17 @@ export const defaultTheme: Theme = {
               {shipping.summary}
               {shipping.freeOver !== null ? `（${yen(shipping.freeOver)}以上で送料無料）` : ""} · <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_details")}</a>
             </p>
+            {(() => {
+              // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料が正）
+              const over = shipping.viewerFreeOver ?? shipping.freeOver;
+              if (over === null || buyable.length === 0) return null;
+              const left = over - total;
+              return (
+                <p class="free-shipping-hint">
+                  {left > 0 ? tf("store.free_shipping_remaining", { amount: yen(left) }) : shipping.viewerFreeMember ? t("store.free_shipping_reached_member") : t("store.free_shipping_reached")}
+                </p>
+              );
+            })()}
             {checkoutEnabled ? (
               <div>
                 {payments.stripe ? (
@@ -1011,7 +1022,7 @@ export const defaultTheme: Theme = {
         <p>{t("store.address_intro")}</p>
         <p class="muted">
           {t("store.subtotal_tax_included")}: {yen(subtotal)} · {shipping.summary}
-          {shipping.freeOver !== null && subtotal >= shipping.freeOver ? `（${t("store.free_shipping_applied")}）` : ""}
+          {(shipping.viewerFreeOver ?? shipping.freeOver) !== null && subtotal >= (shipping.viewerFreeOver ?? shipping.freeOver)! ? `（${t("store.free_shipping_applied")}）` : ""}
         </p>
         {error ? <p class="error">{error}</p> : null}
         <form method="post" action={`${ctx.shopPath}/checkout/${provider}`}>

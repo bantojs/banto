@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { FakeStripe } from "./fake-stripe";
 import { ADDRESS, BASE, Browser, appWith, externalHosts, memberLogin, memberMail, quoteFrom } from "./helpers";
-import { audienceFreeRules, parseShippingSettings, publicShipping, shippingQuote } from "../src/commerce/shipping";
+import { audienceFreeRules, freeShippingTarget, memberFreeOverHint, parseShippingSettings, publicShipping, shippingQuote } from "../src/commerce/shipping";
+import { freeShippingObject } from "../src/routes/storefront/liquid";
 import { publicShopSettings } from "../src/storefront/data";
 import { audienceFreeRulesFromForm } from "../src/routes/admin/shops";
 import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
@@ -60,6 +61,32 @@ describe("送料の計算（shipping.ts）", () => {
     // 決まりが無ければ member_free も無い
     expect(publicShipping({ mode: "flat", flat_fee_jpy: 800, free_over_by_audience: [{ audience_id: "nope", free_over_jpy: 0 }] })).toEqual({ mode: "flat", flat_fee_jpy: 800 });
     expect(parseShippingSettings({ mode: "flat", flat_fee_jpy: 800 }).has_member_free).toBe(false);
+  });
+  it("カートの目安: 当てはまる条件のいちばん低い金額（ゲスト・金額の無い条件・合わない条件は見ない）と、ショップ全体の低い方", () => {
+    const list = [
+      { condition: { attr: "rank", in: ["gold"] }, free_over_jpy: 0 },
+      { condition: { attr: "rank", in: ["gold", "silver"] }, free_over_jpy: 3000 },
+      { condition: { member: true } },
+    ];
+    expect(memberFreeOverHint(list, { member: true, attrs: { rank: "gold" } })).toBe(0);
+    expect(memberFreeOverHint(list, { member: true, attrs: { rank: "silver" } })).toBe(3000);
+    expect(memberFreeOverHint(list, { member: true, attrs: { rank: "regular" } })).toBeNull();
+    expect(memberFreeOverHint(list, { member: false, attrs: { rank: "gold" } })).toBeNull();
+    expect(freeShippingTarget(10000, 3000)).toEqual({ over: 3000, member: true });
+    expect(freeShippingTarget(10000, null)).toEqual({ over: 10000, member: false });
+    expect(freeShippingTarget(2000, 3000)).toEqual({ over: 2000, member: false });
+    expect(freeShippingTarget(null, 0)).toEqual({ over: 0, member: true });
+    expect(freeShippingTarget(null, null)).toEqual({ over: null, member: false });
+  });
+  it("Liquid の cart.banto_free_shipping: 金額・あといくら・届いたか・会員特典か（金額が無ければ null）", () => {
+    const info = (viewerFreeOver: number | null, member: boolean) => ({ summary: "", freeOver: 10000, table: null, taxRate: 0.1, viewerFreeOver, viewerFreeMember: member });
+    const silver = freeShippingObject(info(3000, true), 2000)!;
+    expect(silver).toMatchObject({ applied: false, member: true });
+    expect(JSON.stringify(silver.remaining)).toContain("1000");
+    expect(freeShippingObject(info(0, true), 2000)).toMatchObject({ applied: true, member: true });
+    expect(freeShippingObject(info(10000, false), 12000)).toMatchObject({ applied: true, member: false });
+    expect(freeShippingObject({ ...info(null, false), freeOver: null }, 2000)).toBeNull();
+    expect(freeShippingObject(undefined, 2000)).toBeNull();
   });
   it("管理画面のフォーム: 選べる条件だけ・外す・重ならない。欄が無い・条件が読めないなら今の決まりのまま", () => {
     const current = [{ audience_id: GOLD, free_over_jpy: 0, label: null }];
@@ -180,6 +207,45 @@ describe("会員の条件ごとの送料無料（お店の画面）", () => {
     const on = setup();
     await confirmAs(on.app, on.mail, on.teeM.id, 1, null);
     expect(on.sb.memberFreeShippingCalls ?? 0).toBe(0);
+  });
+
+  it("カートの「あと○円で送料無料」: ゴールドは会員特典で無料・シルバーは 3,000 円まで・ゲストはショップ全体。カートでは member_free_shipping_over を呼ばない", async () => {
+    const { app, mail, teeM, sb } = setup();
+    const cartAs = async (email: string | null) => {
+      const b = new Browser(app, BASE);
+      if (email) await memberLogin(b, mail, "/my-shop", email);
+      await b.post("/my-shop/cart/add", { sku_id: teeM.id, qty: "1" });
+      return (await b.get("/my-shop/cart")).text();
+    };
+    expect(await cartAs("gold@example.com")).toContain("会員特典で送料無料です");
+    expect(await cartAs("silver@example.com")).toContain("あと¥1,000で送料無料");
+    expect(await cartAs("regular@example.com")).toContain("あと¥8,000で送料無料");
+    expect(await cartAs(null)).toContain("あと¥8,000で送料無料");
+    expect(sb.memberFreeShippingCalls ?? 0).toBe(0);
+    // モジュールが OFF なら会員の条件を見ない
+    const off = setup({ modules: false });
+    const b = new Browser(off.app, BASE);
+    await memberLogin(b, off.mail, "/my-shop", "gold@example.com");
+    await b.post("/my-shop/cart/add", { sku_id: off.teeM.id, qty: "1" });
+    const html = await (await b.get("/my-shop/cart")).text();
+    expect(html).toContain("あと¥8,000で送料無料");
+    expect(html).not.toContain("会員特典で送料無料です");
+  });
+
+  it("ヘッドレスのカート: 会員トークンなら会員の条件の金額で「あといくら」（目安）。ゲストはショップ全体", async () => {
+    const { app, mail, teeM, sb } = setup();
+    const token = async (email: string) => {
+      const start = await app.request(`${BASE}/api/shops/my-shop/members/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
+      const { challenge_id } = (await start.json()) as { challenge_id: string };
+      const ver = await app.request(`${BASE}/api/shops/my-shop/members/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ challenge_id, code: mail.code(email) }) });
+      return ((await ver.json()) as { access_token: string }).access_token;
+    };
+    const cart = async (auth: string | null) =>
+      ((await (await app.request(`${BASE}/api/shops/my-shop/cart`, { method: "POST", headers: { "content-type": "application/json", ...(auth ? { authorization: `Bearer ${auth}` } : {}) }, body: JSON.stringify({ op: "add", sku_id: teeM.id, qty: 1 }) })).json()) as { shipping: Record<string, unknown> }).shipping;
+    expect(await cart(await token("silver@example.com"))).toMatchObject({ free_over_jpy: 10000, viewer_free_over_jpy: 3000, member_free_applies: true, remaining_for_free_jpy: 1000 });
+    expect(await cart(await token("gold@example.com"))).toMatchObject({ viewer_free_over_jpy: 0, member_free_applies: true, remaining_for_free_jpy: 0 });
+    expect(await cart(null)).toMatchObject({ viewer_free_over_jpy: 10000, member_free_applies: false, remaining_for_free_jpy: 8000 });
+    expect(sb.memberFreeShippingCalls ?? 0).toBe(0);
   });
 
   it("送料の案内は名前を付けた決まりだけ（会員の条件の名前は出さない）", async () => {

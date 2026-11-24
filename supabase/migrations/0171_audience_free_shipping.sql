@@ -117,4 +117,35 @@ $$;
 revoke execute on function member_free_shipping_over(uuid, uuid, integer, uuid) from public, anon, authenticated;
 grant execute on function member_free_shipping_over(uuid, uuid, integer, uuid) to service_role;
 
+-- お店の画面の会員の条件の一覧（0097 を差し替え）: 条件ごとの送料無料の金額 free_over_jpy を添える（決まりが無い・表示用の条件なら付けない）。
+-- カートの「あと○円で送料無料」の目安だけに使う（覚えた一覧と会員の Cookie・会員トークンの独自項目で判定。お金は member_free_shipping_over）
+create or replace function shop_audiences_render(p_shop_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare v_settings jsonb; v_rules jsonb;
+begin
+  if auth.role() is distinct from 'service_role' then
+    raise exception 'shop_audiences_render: service_role only' using errcode = '42501';
+  end if;
+  select s.settings into v_settings from shops s where s.id = p_shop_id;
+  if v_settings is null or coalesce(v_settings->'modules'->>'audiences', 'false') <> 'true' then
+    return '[]'::jsonb;
+  end if;
+  v_rules := banto_audience_free_rules(v_settings->'shipping'->'free_over_by_audience');
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name, 'condition', a.condition)
+             || case when f.over is not null and not banto_audience_display_only(a.condition) then jsonb_build_object('free_over_jpy', f.over) else '{}'::jsonb end
+           order by a.name)
+      from audiences a
+      left join lateral (select min((x->>'free_over_jpy')::integer) as over from jsonb_array_elements(v_rules) x where x->>'audience_id' = a.id::text) f on true
+     where a.shop_id = p_shop_id), '[]'::jsonb);
+end;
+$$;
+revoke execute on function shop_audiences_render(uuid) from public, anon, authenticated;
+grant execute on function shop_audiences_render(uuid) to service_role;
+
 insert into banto_migrations (version) values ('0171_audience_free_shipping');
