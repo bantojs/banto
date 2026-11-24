@@ -9,6 +9,7 @@
 | `PUBLIC_BASE_URL` | 変数 | 任意 | 独自ドメインを使うとき `https://shop.example.com`。未設定ならアクセスされた URL から自動 |
 | `SHOP_DOMAIN_TEMPLATE` | 変数 | 任意 | サブドメインモード。`{slug}.example-shop.jp` のように入れると、新しく作るショップにそのアドレスを付け、どのショップにも結ばれていないホストを 404 にする（docs/custom-domain.md §7）。ワイルドカードの DNS と Worker のルートを先に用意する |
 | `MEDIA_BASE_URL` | 変数 | 任意 | R2 のカスタムドメインから画像を配信するとき `https://media.example.com`（docs/setup.md §7） |
+| `STOREFRONT_CACHE_TTL_SECONDS` | 変数 | 任意 | お店の画面で、商品の一覧・ページ・記事・ブログなどの表示の材料を覚えておく秒数（5〜300、既定 30。Worker の isolate ごと）。商品が多く、更新が 1 日に数回のショップでは 60〜300 にすると DB への問い合わせが減る。長くすると、管理画面で変えた商品・ページ・記事がお店の画面に出るまで、最長でこの秒数かかる（一覧の売り切れの表示も同じ。在庫とカートの値段は買うときにいつも引き直す）。ショップ行（公開の状態・ドメイン・送料・税・連携サイトの戻り先・会員のログインの設定）・カテゴリー（クーポンの条件に使う）・実店舗（お店で試着の来店日に使う）はこの設定に関係なく 30 秒。範囲の外は 30 |
 | `BANTO_LOCALE` | 変数 | 任意 | `en` で英語 UI。既定は日本語 |
 | `BANTO_TIMEZONE` | 変数 | 任意 | 管理画面・CSV・メールの日時表示と、売上集計の日別・月別の区切りの時間帯（IANA 名、例 `Asia/Tokyo`、`America/Los_Angeles`）。既定 `Asia/Tokyo` |
 | `BANTO_ADMIN_NAME` | 変数 | 任意 | 管理画面の左上とタブの題名に出す名前（40 文字まで）。導入した会社の名前など。既定は「Banto（番頭）」。アイコンの画像が無いときは、名前の最初の 1 文字をアイコンにする。お店の画面には使わない（お店の画面はショップの名前） |
@@ -25,6 +26,7 @@
 | `KOMOJU_SECRET_KEY` / `KOMOJU_WEBHOOK_SECRET` | Secret | KOMOJU を使うなら | KOMOJU の管理画面 |
 | `AMAZON_PAY_PRIVATE_KEY` | Secret | Amazon Pay を使うなら | Amazon Pay の Seller Central → インテグレーションセントラルで作った秘密鍵（`.pem` の中身。docs/plugins.md「Amazon Pay」） |
 | `AMAZON_PAY_PUBLIC_KEY_ID` / `AMAZON_PAY_MERCHANT_ID` / `AMAZON_PAY_STORE_ID` | 変数 | Amazon Pay を使うなら | 同じ画面の公開鍵 ID・出品者 ID・ストア ID |
+| `AMAZON_PAY_IPN_TOPIC_ARNS` / `AMAZON_PAY_IPN_TOPIC_ACCOUNTS` | 変数 | Amazon Pay の IPN を受けるなら | IPN を送る SNS のトピックの ARN（カンマ区切り）か、その AWS のアカウント ID（12 桁、カンマ区切り）。このデプロイが使う環境（テスト環境か本番）のものだけ。無いと IPN は断られ、ログに届いたトピックの ARN が出る（isolate ごとに 1 分 5 行まで）（docs/plugins.md「IPN を受け付ける（トピックの許可）」） |
 | `AMAZON_PAY_SANDBOX` | 変数 | 任意 | 公開鍵 ID が `SANDBOX-` / `LIVE-` で始まらない鍵で、テスト環境を使うときだけ `true` |
 | `MAIL_TRANSPORT` | 変数 | 任意 | メールの送り手: `resend`（既定）/ `smtp` / `sendgrid` / `ses`（docs/email.md §1）。注文メール・会員のログインのコード・招待がすべてこれで送られる |
 | `RESEND_API_KEY` | Secret | `resend` のとき | Resend → API Keys（docs/email.md） |

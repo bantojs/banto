@@ -11,6 +11,9 @@ import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
 import { FAVORITES_MODULE } from "../../modules/favorites";
+import { migrated } from "../../db/migration-state";
+import { NOTICE_TEXTS_MIGRATION } from "../../notices/templates";
+import { RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION } from "../../products/fields";
 
 /**
  * バックアップ用の書き出し。GET /admin/shops/:shopId/export.json
@@ -72,7 +75,9 @@ exportRoute.get("/:shopId/export.json", requireOwner, async (c: AdminContext) =>
   const tables: Record<string, Row[]> = {};
   // お気に入り（0123）はモジュールが ON のショップだけ（ON にできるのは表がある DB だけ）。書き出すだけで、復元では戻さない（会員と商品の id を振り直すため）
   const favorites: typeof TABLES = moduleEnabled(shop.settings, FAVORITES_MODULE) ? [{ name: "customer_favorites", order: "created_at.asc" }] : [];
-  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...SIZE_CHART_TABLES, ...favorites]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
+  // お知らせの文面（0154）は当たっている DB だけ。書き出すだけで、復元では戻さない（管理画面で入れ直せる短い文）
+  const noticeTexts: typeof TABLES = (await migrated({ db, cache: c.get("adapters").cache }, NOTICE_TEXTS_MIGRATION)) ? [{ name: "shop_notice_texts", order: "kind.asc" }] : [];
+  for (const tbl of [...TABLES, ...INQUIRY_TABLES, ...PAGE_TABLES, ...BLOG_TABLES, ...SIZE_CHART_TABLES, ...favorites, ...noticeTexts]) tables[tbl.name] = await readAll(db, tbl.name, shopId, tbl.order, tbl.eq, tbl.columns);
   const body = {
     banto_export: 1,
     version: BANTO_VERSION,
@@ -176,6 +181,22 @@ exportRoute.post("/:shopId/restore", requireOwner, async (c: AdminContext) => {
           products: rows("products").map((r) => ({ slug: r["slug"], option_axes: r["option_axes"], option_axes_custom: r["option_axes_custom"] === true })),
         }),
       );
+    }
+    // 商品の発売日（0146。古いバックアップの JSON には無い）
+    {
+      const released = pick("products")
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && typeof (r as Record<string, unknown>)["released_at"] === "string")
+        .map((r) => ({ slug: r["slug"], released_at: r["released_at"] }));
+      if (released.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, RELEASED_AT_MIGRATION))) {
+        Object.assign(counts, await privileged.restoreProductReleasedAt(shopId, released));
+      }
+      // 公開日（予約公開、0148）
+      const scheduled = pick("products")
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && typeof (r as Record<string, unknown>)["publish_at"] === "string")
+        .map((r) => ({ slug: r["slug"], publish_at: r["publish_at"] }));
+      if (scheduled.length > 0 && (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, SALE_DATES_MIGRATION))) {
+        Object.assign(counts, await privileged.restoreProductPublishAt(shopId, scheduled));
+      }
     }
     const detail = Object.entries(counts)
       .map(([k, v]) => `${k}: ${v}`)

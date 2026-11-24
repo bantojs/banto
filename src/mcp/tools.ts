@@ -91,7 +91,7 @@ const COUPON_FIELDS: Record<string, unknown> = {
     exclude_tags: s("array", "除くタグ（どれか 1 つを持つ商品を除く）", { items: { type: "string" } }),
     brands: s("array", "対象のブランド（商品のブランドがどれかに合う商品。20 個まで）", { items: { type: "string" } }),
     exclude_brands: s("array", "除くブランド", { items: { type: "string" } }),
-    payment_methods: s("array", "使える支払い方法: stripe / komoju（すべて）/ komoju:<種類>（credit_card・paypay・konbini など）/ amazon_pay。空なら制限なし", { items: { type: "string" } }),
+    payment_methods: s("array", "使える支払い方法: stripe / komoju（すべて）/ komoju:<種類>（credit_card・paypay・konbini など）/ amazon_pay / cod（代金引換、0158）。空なら制限なし", { items: { type: "string" } }),
     attributes: { type: "object", description: "会員の独自項目の条件（0049）: { \"<鍵>\": [\"値\", ...] }。ログイン中の会員のその項目の値がどれかに合うときだけ使える（鍵が複数なら全部。ゲストには使えない）。鍵はショップの設定「会員の項目」にあるものだけ（10 個まで、値は 20 個まで）", additionalProperties: { type: "array", items: { type: ["string", "number"] }, maxItems: 20 } },
     exclude_sale: s("boolean", "セール品を除く"),
     min_subtotal_jpy: s("integer", "対象商品の合計の下限（円）"),
@@ -223,6 +223,34 @@ export const MCP_TOOLS: McpTool[] = [
     run: (api, a) => api.productGet({ id: str(a, "id"), slug: str(a, "slug") }),
   },
   {
+    name: "product_fields_get",
+    description: "商品の項目（カスタム項目）の定義を読む。値は商品の attributes に入る。スコープ products:read か products:write。" + DATA_NOTE,
+    inputSchema: obj({}),
+    readOnly: true,
+    run: (api) => api.fieldDefsGet("product"),
+  },
+  {
+    name: "product_fields_set",
+    description: "【書き込み】商品の項目の定義を丸ごと置き換える（送らなかった項目は消える。値は残る）。先に product_fields_get で今の定義を読み、足したり直したりしたものを送る。スコープ products:write。",
+    inputSchema: obj({ fields: s("array", "項目の定義（150 個まで）", { items: { type: "object", properties: { key: { type: "string", description: "保存キー（^[a-z][a-z0-9_]{0,39}$、重ならない）" }, label: { type: "string", description: "表示名（60 文字まで、無ければ key）" }, type: { type: "string", enum: ["text", "textarea", "number", "url", "select", "image"] }, options: { type: "array", items: { type: "string" }, description: "select の選択肢（50 個まで）" }, public: { type: "boolean", description: "お店の画面と公開 API に出すか（商品だけ、既定 true）" }, card: { type: "boolean", description: "一覧のカードにも出すか（商品の公開の項目だけ）" } }, required: ["key", "type"] } }) }, ["fields"]),
+    readOnly: false,
+    run: (api, a) => api.fieldDefsSet("product", { fields: a["fields"] }),
+  },
+  {
+    name: "customer_fields_get",
+    description: "会員の項目の定義を読む（ランク・担当者などのマーケティングの属性。値は会員の attributes）。スコープ customers:read・customers:write・customers:links のどれか。" + DATA_NOTE,
+    inputSchema: obj({}),
+    readOnly: true,
+    run: (api) => api.fieldDefsGet("customer"),
+  },
+  {
+    name: "customer_fields_set",
+    description: "【書き込み】会員の項目の定義を丸ごと置き換える（送らなかった項目は消える。値は残る）。種類に image は使えず、public / card は送らない（会員の項目はお客様の画面に出さない）。スコープ customers:write。",
+    inputSchema: obj({ fields: s("array", "項目の定義（150 個まで）", { items: { type: "object", properties: { key: { type: "string", description: "保存キー（^[a-z][a-z0-9_]{0,39}$、重ならない）" }, label: { type: "string", description: "表示名（60 文字まで、無ければ key）" }, type: { type: "string", enum: ["text", "textarea", "number", "url", "select"] }, options: { type: "array", items: { type: "string" }, description: "select の選択肢（50 個まで）" } }, required: ["key", "type"] } }) }, ["fields"]),
+    readOnly: false,
+    run: (api, a) => api.fieldDefsSet("customer", { fields: a["fields"] }),
+  },
+  {
     name: "audiences_list",
     description: "会員の条件（同梱モジュール audiences）の一覧。商品の audience に id か名前で使う。product_usable が false の条件（URL のパラメータを使う表示用の条件）は商品に付けられない。条件の中身は返さない。スコープ products:read。" + DATA_NOTE,
     inputSchema: obj({}),
@@ -232,16 +260,16 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "product_create",
     description: "【書き込み】商品を作成する（既定は非公開）。価格と在庫は SKU で持つので、作成後に sku_create を呼ぶ。スコープ products:write。",
-    inputSchema: obj({ slug: s("string", "URL 用の英小文字・数字・ハイフン"), name: s("string", "商品名"), description: s("string", "説明"), category: s("string", "主カテゴリーの slug（categories_list で確認、空文字で外す）"), extra_categories: s("array", "追加カテゴリーの slug（主カテゴリーのほかに並べるカテゴリー、20 個まで。更新時は丸ごと置き換え、空配列で外す）", { items: { type: "string" } }), brand: s("string", "ブランド"), attributes: s("object", "カスタム項目の値（キーはショップ設定で定義したもの。値は文字列か数値）"), tags: s("array", "タグ（文字列の配列、20 個まで・1 個 40 文字まで）。ストアフロントのタグ別一覧と公開 API の ?tag= に使う。更新時は丸ごと置き換え", { items: { type: "string" } }), published: s("boolean", "公開するか"), audience: s(["string", "null"], "会員限定にする会員の条件の id か名前（audiences_list で確認。null で外す。同梱モジュール audiences が ON のショップだけ、0144）"), audience_mode: s("string", "hide = 合わない人には見せない（既定）、buy = だれにでも見せるが買えるのは合う会員だけ", { enum: ["hide", "buy"] }), audience_hide: s("boolean", "hide のとき、ゲストにも「会員の方だけ」と出さず 404 にする（buy とは一緒に使えない）") }, ["slug", "name"]),
+    inputSchema: obj({ slug: s("string", "URL 用の英小文字・数字・ハイフン"), name: s("string", "商品名"), description: s("string", "説明"), category: s("string", "主カテゴリーの slug（categories_list で確認、空文字で外す）"), extra_categories: s("array", "追加カテゴリーの slug（主カテゴリーのほかに並べるカテゴリー、20 個まで。更新時は丸ごと置き換え、空配列で外す）", { items: { type: "string" } }), brand: s("string", "ブランド"), attributes: s("object", "カスタム項目の値（キーはショップ設定で定義したもの。値は文字列か数値）"), tags: s("array", "タグ（文字列の配列、20 個まで・1 個 40 文字まで）。ストアフロントのタグ別一覧と公開 API の ?tag= に使う。更新時は丸ごと置き換え", { items: { type: "string" } }), published: s("boolean", "公開するか"), audience: s(["string", "null"], "会員限定にする会員の条件の id か名前（audiences_list で確認。null で外す。同梱モジュール audiences が ON のショップだけ、0144）"), audience_mode: s("string", "hide = 合わない人には見せない（既定）、buy = だれにでも見せるが買えるのは合う会員だけ", { enum: ["hide", "buy"] }), audience_hide: s("boolean", "hide のとき、ゲストにも「会員の方だけ」と出さず 404 にする（buy とは一緒に使えない）"), released_at: s(["string", "null"], "発売日 = 販売開始日（時差つきの日時、例 2024-05-01T10:00:00+09:00。null で外す）。新着順と「新しい商品」はこの日、無ければ作成日（0146）。未来の日付なら発売日まで買えない（Coming Soon、0148）"), publish_at: s(["string", "null"], "公開日（非公開の商品をこの日時に公開する予約。null で取り消す。公開している商品には残らない。0148）"), store_only: s("boolean", "店頭のみ（ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める。0149）"), search_keywords: s(["string", "null"], "検索用のキーワード（お店の検索だけに使い、お客様には見せない。200 文字まで、null か空で外す。0163）") }, ["slug", "name"]),
     readOnly: false,
-    run: (api, a) => api.productCreate(pick(a, ["slug", "name", "description", "tags", "category", "extra_categories", "brand", "attributes", "published", "audience", "audience_mode", "audience_hide"])),
+    run: (api, a) => api.productCreate(pick(a, ["slug", "name", "description", "tags", "category", "extra_categories", "brand", "attributes", "published", "audience", "audience_mode", "audience_hide", "released_at", "publish_at", "store_only", "search_keywords"])),
   },
   {
     name: "product_update",
     description: "【書き込み】商品を更新する（名前・スラッグ・説明・タグ・カテゴリー・ブランド・カスタム項目・公開状態・会員限定）。渡した項目だけ変わる。スコープ products:write。",
-    inputSchema: obj({ id: s("string", "商品 ID"), slug: s("string"), name: s("string"), description: s("string"), category: s("string", "主カテゴリーの slug（categories_list で確認、空文字で外す）"), extra_categories: s("array", "追加カテゴリーの slug（主カテゴリーのほかに並べるカテゴリー、20 個まで。更新時は丸ごと置き換え、空配列で外す）", { items: { type: "string" } }), brand: s("string", "ブランド"), attributes: s("object", "カスタム項目の値（キーはショップ設定で定義したもの。値は文字列か数値）"), tags: s("array", "タグ（文字列の配列、20 個まで・1 個 40 文字まで）。ストアフロントのタグ別一覧と公開 API の ?tag= に使う。更新時は丸ごと置き換え", { items: { type: "string" } }), published: s("boolean"), audience: s(["string", "null"], "会員限定にする会員の条件の id か名前（audiences_list で確認。null で外す。同梱モジュール audiences が ON のショップだけ、0144）"), audience_mode: s("string", "hide = 合わない人には見せない（既定）、buy = だれにでも見せるが買えるのは合う会員だけ", { enum: ["hide", "buy"] }), audience_hide: s("boolean", "hide のとき、ゲストにも「会員の方だけ」と出さず 404 にする（buy とは一緒に使えない）") }, ["id"]),
+    inputSchema: obj({ id: s("string", "商品 ID"), slug: s("string"), name: s("string"), description: s("string"), category: s("string", "主カテゴリーの slug（categories_list で確認、空文字で外す）"), extra_categories: s("array", "追加カテゴリーの slug（主カテゴリーのほかに並べるカテゴリー、20 個まで。更新時は丸ごと置き換え、空配列で外す）", { items: { type: "string" } }), brand: s("string", "ブランド"), attributes: s("object", "カスタム項目の値（キーはショップ設定で定義したもの。値は文字列か数値）"), tags: s("array", "タグ（文字列の配列、20 個まで・1 個 40 文字まで）。ストアフロントのタグ別一覧と公開 API の ?tag= に使う。更新時は丸ごと置き換え", { items: { type: "string" } }), published: s("boolean"), audience: s(["string", "null"], "会員限定にする会員の条件の id か名前（audiences_list で確認。null で外す。同梱モジュール audiences が ON のショップだけ、0144）"), audience_mode: s("string", "hide = 合わない人には見せない（既定）、buy = だれにでも見せるが買えるのは合う会員だけ", { enum: ["hide", "buy"] }), audience_hide: s("boolean", "hide のとき、ゲストにも「会員の方だけ」と出さず 404 にする（buy とは一緒に使えない）"), released_at: s(["string", "null"], "発売日 = 販売開始日（時差つきの日時、例 2024-05-01T10:00:00+09:00。null で外す）。新着順と「新しい商品」はこの日、無ければ作成日（0146）。未来の日付なら発売日まで買えない（Coming Soon、0148）"), publish_at: s(["string", "null"], "公開日（非公開の商品をこの日時に公開する予約。null で取り消す。公開している商品には残らない。0148）"), store_only: s("boolean", "店頭のみ（ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める。0149）"), search_keywords: s(["string", "null"], "検索用のキーワード（お店の検索だけに使い、お客様には見せない。200 文字まで、null か空で外す。0163）") }, ["id"]),
     readOnly: false,
-    run: (api, a) => api.productUpdate(str(a, "id", true)!, pick(a, ["slug", "name", "description", "tags", "category", "extra_categories", "brand", "attributes", "published", "audience", "audience_mode", "audience_hide"])),
+    run: (api, a) => api.productUpdate(str(a, "id", true)!, pick(a, ["slug", "name", "description", "tags", "category", "extra_categories", "brand", "attributes", "published", "audience", "audience_mode", "audience_hide", "released_at", "publish_at", "store_only", "search_keywords"])),
   },
   {
     name: "sku_create",
@@ -318,21 +346,21 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "orders_list",
-    description: "注文の一覧。購入者の個人情報はトークンに orders:pii が無ければマスクされる。スコープ orders:read。" + DATA_NOTE,
-    inputSchema: obj({ query: s("string", "注文番号、または（orders:pii があれば）メール・氏名の部分一致"), status: s("string", "paid | shipped | cancelled | refunded", { enum: ["paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
+    description: "注文の一覧。購入者の個人情報は、トークンの orders:contact（氏名・メール・電話）・orders:address（氏名・住所）・orders:pii（両方と社内のメモ）の範囲だけ返り、無ければマスクされる。発送していれば各注文の tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
+    inputSchema: obj({ query: s("string", "注文番号、またはメール（orders:contact / orders:pii）・氏名（orders:contact / orders:address / orders:pii）の部分一致"), status: s("string", "pending（受付・未入金、0156）| paid | shipped | cancelled | refunded", { enum: ["pending", "paid", "shipped", "cancelled", "refunded"] }), from: s("string", "ISO 8601"), to: s("string", "ISO 8601"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,
     run: (api, a) => api.ordersList({ query: str(a, "query"), status: str(a, "status"), from: str(a, "from"), to: str(a, "to"), limit: num(a, "limit"), offset: num(a, "offset") }),
   },
   {
     name: "order_get",
-    description: "注文を 1 件取得する。スコープ orders:read。" + DATA_NOTE,
+    description: "注文を 1 件取得する。発送していれば tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ order_id: s("string") }, ["order_id"]),
     readOnly: true,
     run: (api, a) => api.orderGet(str(a, "order_id", true)!),
   },
   {
     name: "order_update_status",
-    description: "【書き込み】支払い済みの注文を発送済みまたはキャンセルにする。キャンセルすると決済事業者（Stripe / KOMOJU）で全額返金し、在庫を戻す。返金に失敗した場合は注文は変わらない。スコープ orders:write。",
+    description: "【書き込み】支払い済みの注文を発送済みまたはキャンセルにする。キャンセルすると決済事業者（Stripe / KOMOJU）で全額返金し、在庫を戻す。返金に失敗した場合は注文は変わらない。返る注文にも tracking（運送会社とお問い合わせ番号、0172）が入る。スコープ orders:write。",
     inputSchema: obj({ order_id: s("string"), status: s("string", "shipped | cancelled", { enum: ["shipped", "cancelled"] }) }, ["order_id", "status"]),
     readOnly: false,
     run: (api, a) => {
@@ -357,7 +385,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "tryon_requests_list",
-    description: "お店で試着の申し込みの一覧（新しい順）。お客様の名前・メール・電話はトークンに orders:pii があるときだけ返る。スコープ orders:read。" + DATA_NOTE,
+    description: "お店で試着の申し込みの一覧（新しい順）。お客様の名前・メール・電話はトークンに orders:contact（名前だけなら orders:address）、自由記入（note）は orders:pii があるときだけ返る。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ status: s("string", "requested | sent | ready | purchased | not_purchased | expired | cancelled", { enum: ["requested", "sent", "ready", "purchased", "not_purchased", "expired", "cancelled"] }), store_id: s("string", "実店舗の id（stores_list）"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,
     run: (api, a) => api.tryonRequestsList({ status: str(a, "status"), storeId: str(a, "store_id"), limit: num(a, "limit"), offset: num(a, "offset") }),
@@ -406,7 +434,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "inquiries_list",
     description:
-      "お客様のお問い合わせの一覧（最後のやり取りが新しい順、本文なし）。status: waiting_shop（ショップの返事待ち）/ waiting_customer / closed。verified が false のものはメールアドレスの確認がまだ（送り主が本人とは限らない）。連絡先はトークンに orders:pii があるときだけ返る。スコープ inquiries:read。" +
+      "お客様のお問い合わせの一覧（最後のやり取りが新しい順、本文なし）。status: waiting_shop（ショップの返事待ち）/ waiting_customer / closed。verified が false のものはメールアドレスの確認がまだ（送り主が本人とは限らない）。連絡先（メール・名前）はトークンに orders:contact か orders:pii（名前だけなら orders:address）があるときだけ返る（添付のファイル名は orders:pii だけ）。スコープ inquiries:read。" +
       INQUIRY_NOTE,
     inputSchema: obj({ status: s("string", INQUIRY_API_STATUSES.join(" | "), { enum: [...INQUIRY_API_STATUSES] }), assignee: s("string", "担当者で絞る: none（未割り当て）か inquiry_assignees の user_id"), limit: s("integer"), offset: s("integer") }),
     readOnly: true,

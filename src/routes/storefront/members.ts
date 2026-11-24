@@ -40,6 +40,7 @@ import {
   type MemberSession,
 } from "../../members/auth";
 import { peekLogin, startLogin, verifyLogin, type LoginDeps } from "../../members/login";
+import { EMAIL_CHANGE_MIGRATION, startEmailChange, verifyEmailChange } from "../../members/email-change";
 import { openJson, randomToken, sealJson } from "../../util/signed";
 import { moduleEnabled } from "../../modules/registry";
 import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, providerClientId, providerIdentity, providerModule, secretPurpose, type Provider } from "../../modules/social-login/providers";
@@ -48,6 +49,7 @@ import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
 import { afterResponse, clearScopedCookie, clientIpFor, csrfGuard, formFields, getScopedCookie, navigateOnly, publicBaseUrl, readBodyLimited, setScopedCookie, yen, type Ctx } from "../common";
 import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
+import { memberNewsEnabled } from "../../modules/member-news";
 import { memberReader } from "../audience-render";
 import { AUDIENCES_MODULE } from "../../members/audience";
 import type { ProductSummary } from "../../storefront/data";
@@ -60,11 +62,13 @@ import type { AccountPageProps, AddressFormValues } from "../../themes/types";
 import { liquidThemeFor, renderAccount, renderCustomerLogin, type CustomerLoginInput } from "./liquid";
 import { type PublicShop } from "../../storefront/data";
 import type { Theme } from "../../themes";
-import { MEMBER_CANCELLABLE, TRYON_MODULE, dateLabel } from "../../modules/store-tryon";
-import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, dateLabel, memberExtendLeft, memberExtendable, todayHere, tryonSettings, ymdOrNull } from "../../modules/store-tryon";
+import { RECEIPT_MODULE, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { PASSKEY_CLIENT_JS, PASSKEY_MODULE, sendPasskeyAddedNotice } from "../../modules/passkey";
 import { COSE_ALGS, WebAuthnError, b64urlEncode, newChallenge, readAssertion, sameUserHandle, userHandleOf, verifyAssertion, verifyRegistration, type Expected } from "../../members/webauthn";
 import { returnOrigins, safeReturnUrl, consentCollected, withQueryParam } from "../../commerce/checkout";
+import { safeShopPath } from "../../members/return-path";
 
 export type { MemberSession };
 
@@ -97,6 +101,16 @@ const shopCookiePath = (s: { shopPath: string }) => s.shopPath || "/";
  */
 export function rememberOrderAfterLogin(c: Ctx, s: { shop: { id: string }; shopPath: string }, number: number): void {
   setScopedCookie(c, orderAfterLoginCookieName(s.shop.id), String(number), { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
+}
+
+/**
+ * ログイン・LINE / Google を結んだ後に戻るお店の中のパス（テーマのリンクの ?return_to= やフォームの return_to）。
+ * 注文の番号と同じ Cookie に覚え、/account が 1 か所で戻す。受けるのは同じショップの中のパスだけ（src/members/return-path.ts）
+ */
+function rememberReturnPath(c: Ctx, s: { shop: { id: string }; shopPath: string }, raw: unknown): string | null {
+  const back = safeShopPath(raw, s.shopPath);
+  if (back) setScopedCookie(c, orderAfterLoginCookieName(s.shop.id), back, { path: shopCookiePath(s), maxAge: PENDING_SECONDS });
+  return back;
 }
 
 /** Cookie はショップのパス（独自ドメインの上ではドメイン全体）に置く */
@@ -165,16 +179,28 @@ async function verifySession(c: Ctx, shop: { id: string; slug: string; domain?: 
 
 /** 会員の既定住所でチェックアウトのフォームを埋める */
 export async function customerPrefill(c: Ctx, s: { shop: { id: string; slug: string; settings?: Record<string, unknown> } }): Promise<AddressFormValues> {
+  return (await checkoutMember(c, s))?.values ?? {};
+}
+
+/**
+ * レジの会員（ゲストなら null）: フォームの初期値と、既定の住所があるか（0159。無ければ注文の確定で保存される、あれば「次回も使う」の欄を出す）
+ */
+export async function checkoutMember(c: Ctx, s: { shop: { id: string; slug: string; settings?: Record<string, unknown> } }): Promise<{ values: AddressFormValues; hasAddress: boolean | null } | null> {
   const session = await customerSession(c, s);
   const db = privilegedFor(c);
-  if (!session || !db) return {};
+  if (!session || !db) return null;
   const rec = await db.memberGet(s.shop.id, session.cid, session.ep, false).catch(() => null);
-  const row = rec?.customer ?? null;
+  // 読めなかった（セッションが古いなど）: メールアドレスだけ埋め、保存の欄は出さない
+  if (!rec) return { values: prefillFrom(null, session.email), hasAddress: null };
+  return { values: prefillFrom(rec.customer, session.email), hasAddress: Boolean(rec.customer.default_address && Object.keys(rec.customer.default_address).length > 0) };
+}
+
+function prefillFrom(row: { name?: string | null; email?: string | null; default_address?: Record<string, unknown> | null } | null, sessionEmail: string): AddressFormValues {
   const a = (row?.default_address ?? {}) as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === "string" ? v : undefined);
   return {
     customer_name: str(row?.name) ?? str(a["name"]),
-    customer_email: str(row?.email) ?? (session.email || undefined),
+    customer_email: str(row?.email) ?? (sessionEmail || undefined),
     phone: str(a["phone"]),
     postal_code: str(a["postal_code"]),
     state: str(a["state"]),
@@ -257,6 +283,16 @@ const ACCOUNT_ERRORS: Record<string, MessageKey> = {
   other_linked: "member.oauth_other_linked",
   last_method: "member.oauth_last_method",
   tryon_not_cancellable: "member.tryon_not_cancellable",
+  tryon_not_extendable: "member.tryon_not_extendable",
+  // メールアドレスの変更（0166）
+  invalid_email: "member.invalid_email",
+  email_same: "member.email_same",
+  email_code_invalid: "member.email_code_invalid",
+  email_code_expired: "member.email_code_expired",
+  email_unavailable: "member.email_unavailable",
+  email_mail_unavailable: "member.email_mail_unavailable",
+  email_mail_failed: "member.mail_failed",
+  email_mail_limit: "member.email_mail_limit",
 };
 
 const LOGIN_ERRORS: Record<string, MessageKey> = {
@@ -282,6 +318,9 @@ members.get("/:shop/account", async (c: Ctx) => {
   if (afterLogin) {
     clearScopedCookie(c, orderAfterLoginCookieName(s.shop.id), { path: shopCookiePath(s) });
     if (/^[0-9]{1,9}$/.test(afterLogin)) return c.redirect(`${s.shopPath}/orders/lookup?banto_order=${afterLogin}&banto_member=1`);
+    // ログインの前に開いていたお店のページ（Cookie の値も読み直して確かめる）
+    const back = safeShopPath(afterLogin, s.shopPath);
+    if (back) return c.redirect(back);
   }
   const db = privilegedFor(c);
   // マイクーポン（同梱モジュール coupons、0019）。モジュールが OFF なら DB に問い合わせない
@@ -290,14 +329,17 @@ members.get("/:shop/account", async (c: Ctx) => {
   const withTryon = Boolean(db) && moduleEnabled(s.shop.settings, TRYON_MODULE);
   // お気に入り（同梱モジュール favorites、0123）。モジュールが OFF なら DB に問い合わせない
   const withFavorites = Boolean(db) && favoritesEnabled(s.shop);
-  const [rec, coupons, tryon, favorites] = db
+  // 会員へのお知らせ（同梱モジュール member_news、0155）。モジュールが OFF なら DB に問い合わせない
+  const withNews = Boolean(db) && memberNewsEnabled(s.shop) && Boolean(s.session.sid);
+  const [rec, coupons, tryon, favorites, news] = db
     ? await Promise.all([
         db.memberGet(s.shop.id, s.session.cid, s.session.ep, true),
         withCoupons ? db.memberCoupons(s.shop.id, s.session.cid, s.session.ep).catch(() => null) : Promise.resolve(null),
         withTryon ? db.memberTryonRequests(s.shop.id, s.session.cid, s.session.ep).catch(() => null) : Promise.resolve(null),
         withFavorites ? favoriteProducts(c, s, s.session).catch(() => null) : Promise.resolve(null),
+        withNews ? db.memberNewsList(s.shop.id, s.session.cid, s.session.ep, s.session.sid!).catch(() => null) : Promise.resolve(null),
       ])
-    : [null, null, null, null];
+    : [null, null, null, null, null];
   if (!rec) {
     // 退会済み・全端末からログアウトした後の古いセッション
     await writeSession(c, s, null);
@@ -309,16 +351,27 @@ members.get("/:shop/account", async (c: Ctx) => {
   const opts = await loginOptions(c, s.shop);
   const linked = rec.customer.providers ?? [];
   const security = { password: opts.password, hasPassword: rec.customer.has_password === true, providers: opts.providers.map((id) => ({ id, linked: linked.includes(id) })) };
-  const errorKey = ACCOUNT_ERRORS[c.req.query("error") ?? ""];
+  const errorCode = c.req.query("error") ?? "";
+  const errorKey = ACCOUNT_ERRORS[errorCode];
+  const flash = c.req.query("flash");
+  // メールアドレスの変更（0166）。当たるまで欄を出さない。コードを送った後とコードの誤りのときはコードの欄
+  const sfData = storefrontData(c);
+  const emailChange = sfData && Boolean(s.session.sid) && (await sfData.migratedTo(EMAIL_CHANGE_MIGRATION))
+    ? { step: flash === "email_code" || errorCode === "email_code_invalid" ? ("code" as const) : ("email" as const) }
+    : null;
+  const tryonConf = tryonSettings(s.shop.settings);
+  const today = todayHere();
   const props: AccountPageProps = {
       ctx: ctxOf(s, { email: rec.customer.email ?? s.session.email }),
       customer: rec.customer,
       orders: rec.orders,
       prefectures: PREFECTURES,
-      flash: c.req.query("flash"),
+      flash,
       security,
+      emailChange,
       error: errorKey ? t(errorKey) : undefined,
       favorites: withFavorites ? (favorites ?? []) : null,
+      news: withNews ? (news ?? { items: [], unread: 0 }) : null,
       sessions: Boolean(s.session.sid && s.theme.MemberSessionsPage),
       passkeys: opts.passkey && Boolean(s.theme.MemberPasskeysPage),
       receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE),
@@ -334,11 +387,15 @@ members.get("/:shop/account", async (c: Ctx) => {
             created_at: r.created_at,
             items: r.items,
             cancellable: MEMBER_CANCELLABLE.includes(r.status),
+            // 取り置きの延長（0151）。回数の上限と残りはショップの設定（判定の正は DB）
+            extendable: memberExtendable(r, tryonConf, today),
+            extend_left: memberExtendLeft(r, tryonConf),
+            hold_until: r.hold_until,
           }))
         : null,
   };
   // Liquid のテーマの会員ページ（templates/customers/account）。無ければ・描けなければ既定のテーマ
-  const sf = storefrontData(c);
+  const sf = sfData;
   const ls = sf ? { shop: s.shop, sf, ctx: props.ctx } : null;
   const lt = ls ? await liquidThemeFor(c, ls) : null;
   if (ls && lt) {
@@ -346,6 +403,22 @@ members.get("/:shop/account", async (c: Ctx) => {
     if (res) return res;
   }
   return c.html(s.theme.AccountPage(props));
+});
+
+/** 会員へのお知らせをすべて既読にする（0155）。今見えているものだけ */
+members.post("/:shop/account/news/read", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s || !memberNewsEnabled(s.shop)) return notFound(c);
+  if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
+  const db = privilegedFor(c);
+  if (db && s.session.sid) {
+    const n = await db.memberNewsRead(s.shop.id, s.session.cid, s.session.ep, s.session.sid, null);
+    if (n === null) {
+      await writeSession(c, s, null);
+      return c.redirect(`${s.shopPath}/account/login`);
+    }
+  }
+  return c.redirect(`${s.shopPath}/account#news`);
 });
 
 /** お店で試着の申し込みを取り消す（会員本人。取り置きが終わる前だけ、0026） */
@@ -358,6 +431,22 @@ members.post("/:shop/account/tryon/:number{[0-9]+}/cancel", async (c: Ctx) => {
   if (r.ok) return c.redirect(`${s.shopPath}/account?flash=tryon_cancelled`);
   if (r.reason === "session") return c.redirect(`${s.shopPath}/account/login`);
   return c.redirect(`${s.shopPath}/account?error=tryon_not_cancellable`);
+});
+
+/** お店で試着の取り置きの期限を延ばす（会員本人。回数・日数はショップの設定、0151） */
+members.post("/:shop/account/tryon/:number{[0-9]+}/extend", async (c: Ctx) => {
+  const s = await scope(c);
+  const db = privilegedFor(c);
+  if (!s || !db || !moduleEnabled(s.shop.settings, TRYON_MODULE)) return notFound(c);
+  if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
+  const sf = storefrontData(c);
+  if (tryonSettings(s.shop.settings).extend_max < 1 || !sf || !(await sf.migratedTo(TRYON_EXTEND_MIGRATION))) return c.redirect(`${s.shopPath}/account?error=tryon_not_extendable`);
+  // 画面に出していた期限（hold_until）を添える。二度押し・送り直しは changed（もう延ばしてある）
+  const f = await c.req.parseBody();
+  const r = await db.memberTryonExtend(s.shop.id, s.session.cid, s.session.ep, Number(c.req.param("number")), todayHere(), ymdOrNull(f["hold_until"]));
+  if (r.ok || r.reason === "changed") return c.redirect(`${s.shopPath}/account?flash=tryon_extended`);
+  if (r.reason === "session") return c.redirect(`${s.shopPath}/account/login`);
+  return c.redirect(`${s.shopPath}/account?error=tryon_not_extendable`);
 });
 
 // ---------- 先着のクーポン（同梱モジュール coupons、0020） ----------
@@ -403,7 +492,7 @@ members.get("/:shop/account/orders/:number{[0-9]+}/receipt", async (c: Ctx) => {
   if (!s.session || !db) return c.redirect(`${s.shopPath}/account/login`);
   const number = Number(c.req.param("number"));
   const order = (await db.memberOrder(s.shop.id, s.session.cid, s.session.ep, number).catch(() => null)) as ReceiptOrder | null;
-  if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
+  if (!order || !receiptAvailable(order)) return c.text(t("receipt.not_available"), 404);
   privatePage(c);
   const name = (c.req.query("name") ?? "").trim().slice(0, 100);
   return c.html(renderReceipt({ shopName: s.shop.name, settings: receiptSettings(s.shop), shopSettings: s.shop.settings, order, addressee: name, issuedAt: new Date(), nameForm: { action: `${s.shopPath}/account/orders/${number}/receipt`, method: "get", hidden: {} } }));
@@ -436,7 +525,8 @@ async function authPage(c: Ctx, s: Scope, props: Parameters<Scope["theme"]["Memb
 members.get("/:shop/account/login", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  if (s.session) return c.redirect(`${s.shopPath}/account`);
+  if (s.session) return c.redirect(safeShopPath(c.req.query("return_to"), s.shopPath) ?? `${s.shopPath}/account`);
+  rememberReturnPath(c, s, c.req.query("return_to"));
   const key = LOGIN_ERRORS[c.req.query("error") ?? ""];
   privatePage(c);
   return authPage(c, s, {
@@ -458,7 +548,10 @@ members.post("/:shop/account/login", async (c: Ctx) => {
   // Liquid のテーマの {% form 'customer_login' %} / 'create_customer' は customer[email] で送ってくる（パスワードの欄は使わない）
   const email = fields.email ?? fields["customer[email]"] ?? "";
   const base = `${shopHome(publicBaseUrl(c), s.shop)}/account/verify`;
-  const r = await startLogin(deps, s.shop, email, { ip: await clientIpFor(c, s.shop), returnTo: null, link: (id, token) => `${base}?c=${id}&t=${token}` });
+  // 戻る先（ログインの画面を開いたこのブラウザが覚えたもの）は、メールのリンクにも載せる（別の端末で開いても戻れるように）。
+  // フォームの return_to はここでは受けない: だれでも他人のアドレスにログインのメールを送れるので、送る人が選んだパスを本物のメールに載せない
+  const back = safeShopPath(getScopedCookie(c, orderAfterLoginCookieName(s.shop.id), shopCookiePath(s)), s.shopPath);
+  const r = await startLogin(deps, s.shop, email, { ip: await clientIpFor(c, s.shop), returnTo: null, link: (id, token) => `${base}?c=${id}&t=${token}${back ? `&r=${encodeURIComponent(back)}` : ""}` });
   if (!r.ok) {
     if (r.error === "disabled") return notFound(c);
     return c.redirect(`${s.shopPath}/account/login?error=${r.error === "limit" ? "mail_limit" : r.error}`);
@@ -548,6 +641,7 @@ members.get("/:shop/account/verify", async (c: Ctx) => {
   const token = c.req.query("t") ?? "";
   const email = deps ? await peekLogin(deps, s.shop.id, challenge, token) : null;
   if (!email) return c.redirect(`${s.shopPath}/account/login?error=link`);
+  rememberReturnPath(c, s, c.req.query("r"));
   privatePage(c);
   return authPage(c, s, { ctx: ctxOf(s), mode: "verify", email: maskEmail(email), challenge, token });
 });
@@ -1024,6 +1118,7 @@ members.post("/:shop/account/password-login", async (c: Ctx) => {
   const deps = loginDeps(c);
   if (!deps) return c.redirect(`${s.shopPath}/account/login?error=unavailable`);
   const f = await formFields(c);
+  rememberReturnPath(c, s, f.return_to);
   const email = (f.email ?? "").trim().toLowerCase();
   const ip = await clientIpFor(c, s.shop);
   const r = await deps.db.memberPasswordLogin(s.shop.id, email, f.password ?? "", ip ? await ipHash(deps.secret, ip) : null);
@@ -1062,6 +1157,61 @@ members.post("/:shop/account/password", navigateOnly, async (c: Ctx) => {
   return c.redirect(`${s.shopPath}/account?flash=password_saved`);
 });
 
+// ---------- メールアドレスの変更（0166、メンテナの決定 2026-11-23） ----------
+// フォームの送信だけ受ける。ログインしてから 15 分以内のセッションだけ（過ぎていればパスワードの設定と同じく入り直してもらう）
+const EMAIL_START_ERRORS: Record<string, string> = {
+  invalid_email: "invalid_email",
+  same_email: "email_same",
+  unavailable: "email_mail_unavailable",
+  disabled: "email_mail_unavailable",
+  limit: "email_mail_limit",
+};
+
+members.post("/:shop/account/email", navigateOnly, async (c: Ctx) => {
+  const s = await scope(c);
+  const sf = storefrontData(c);
+  if (!s || !sf || !(await sf.migratedTo(EMAIL_CHANGE_MIGRATION))) return notFound(c);
+  const ld = loginDeps(c);
+  if (!s.session || !s.session.sid || !ld) return c.redirect(`${s.shopPath}/account/login`);
+  const email = ((await formFields(c)).email ?? "").slice(0, 300);
+  const r = await startEmailChange(ld, s.shop, { id: s.session.cid, epoch: s.session.ep, sid: s.session.sid }, email, await clientIpFor(c, s.shop));
+  if (r.ok) {
+    // コードのメールは応答の後に送る（使われているアドレスかどうかで応答の時間を変えない。送れなくても答えは変えない）
+    await afterResponse(c, r.deliver());
+    return c.redirect(`${s.shopPath}/account?flash=email_code#email-change`);
+  }
+  if (r.error === "reauth") return reauthRedirect(c, s);
+  if (r.error === "session") {
+    await writeSession(c, s, null);
+    return c.redirect(`${s.shopPath}/account/login`);
+  }
+  return c.redirect(`${s.shopPath}/account?error=${EMAIL_START_ERRORS[r.error] ?? "email_mail_failed"}#email-change`);
+});
+
+members.post("/:shop/account/email/verify", navigateOnly, async (c: Ctx) => {
+  const s = await scope(c);
+  const sf = storefrontData(c);
+  if (!s || !sf || !(await sf.migratedTo(EMAIL_CHANGE_MIGRATION))) return notFound(c);
+  const ld = loginDeps(c);
+  if (!s.session || !s.session.sid || !ld) return c.redirect(`${s.shopPath}/account/login`);
+  const code = ((await formFields(c)).code ?? "").slice(0, 20);
+  const { result: r, notify } = await verifyEmailChange(ld, s.shop, { id: s.session.cid, epoch: s.session.ep, sid: s.session.sid }, code, memberAccountUrl(publicBaseUrl(c), s.shop));
+  if (!r.ok) {
+    if (r.reason === "reauth") return reauthRedirect(c, s);
+    if (r.reason === "session") {
+      await writeSession(c, s, null);
+      return c.redirect(`${s.shopPath}/account/login`);
+    }
+    const err = r.reason === "invalid" ? "email_code_invalid" : r.reason === "unavailable" ? "email_unavailable" : "email_code_expired";
+    return c.redirect(`${s.shopPath}/account?error=${err}#email-change`);
+  }
+  // ほかの端末はログアウト（世代を上げた）。この端末は同じセッションの行のまま新しい世代・新しいアドレスで続ける
+  await writeSession(c, s, { ...s.session, ep: r.epoch, email: r.new_email, chk: Math.floor(Date.now() / 1000) });
+  // 前後のアドレスに知らせる（盗まれたセッションから変えられても、前のアドレスの持ち主が気づけるように）
+  await afterResponse(c, notify());
+  return c.redirect(`${s.shopPath}/account?flash=email_changed`);
+});
+
 // ---------- LINE・Google でログイン（0014、同梱モジュール line_login・google_login） ----------
 
 const OAUTH_COOKIE = "banto_oauth";
@@ -1094,6 +1244,8 @@ interface OAuthState {
   /** 知らせのメールに出すショップ名（0057） */
   shop_name?: string;
   return_to?: string;
+  /** 結んだ（link）後に戻るお店の中のパス（safeShopPath を通したもの） */
+  next?: string;
   exp: number;
 }
 
@@ -1102,7 +1254,7 @@ const oauthSecret = (secret: string) => `${secret}|member-oauth`;
 const redirectUri = (origin: string, p: Provider) => `${origin}${callbackPath(p)}`;
 
 /** 提供元へ送り出す（state などを Cookie に持つ）。client_id はキャッシュ済みのショップ行から */
-export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OAuthState["mode"], extra: { cid?: string; ep?: number; sid?: string; return_to?: string } = {}): Promise<Response> {
+export async function startOAuth(c: Ctx, shop: PublicShop, p: Provider, mode: OAuthState["mode"], extra: { cid?: string; ep?: number; sid?: string; return_to?: string; next?: string } = {}): Promise<Response> {
   const clientId = providerClientId(shop.settings, p);
   const secret = c.get("sessionSecret");
   if (!clientId || !secret || !enabledProviders(shop).includes(p)) return c.text(t("store.not_found"), 404);
@@ -1139,7 +1291,8 @@ members.get("/:shop/account/oauth/:provider", async (c: Ctx) => {
   const s = await scope(c);
   const p = providerOf(c);
   if (!s || !p) return notFound(c);
-  if (s.session) return c.redirect(`${s.shopPath}/account`);
+  if (s.session) return c.redirect(safeShopPath(c.req.query("return_to"), s.shopPath) ?? `${s.shopPath}/account`);
+  rememberReturnPath(c, s, c.req.query("return_to"));
   return startOAuth(c, s.shop, p, "login");
 });
 
@@ -1148,7 +1301,9 @@ members.post("/:shop/account/oauth/:provider/link", navigateOnly, async (c: Ctx)
   const p = providerOf(c);
   if (!s || !p) return notFound(c);
   if (!s.session) return c.redirect(`${s.shopPath}/account/login`);
-  return startOAuth(c, s.shop, p, "link", { cid: s.session.cid, ep: s.session.ep, ...(s.session.sid ? { sid: s.session.sid } : {}) });
+  // 結んだ後に戻るお店の中のパス（フォームの return_to。署名した state に入れる）
+  const next = safeShopPath((await formFields(c)).return_to, s.shopPath);
+  return startOAuth(c, s.shop, p, "link", { cid: s.session.cid, ep: s.session.ep, ...(s.session.sid ? { sid: s.session.sid } : {}), ...(next ? { next } : {}) });
 });
 
 members.post("/:shop/account/oauth/:provider/unlink", async (c: Ctx) => {
@@ -1202,7 +1357,7 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
   if (!client || !clientSecret) return fail("oauth");
   let identity;
   try {
-    identity = await providerIdentity(p, c.get("deps").fetch, { clientId: client.client_id, clientSecret }, { code, redirectUri: redirectUri(st.origin, p), verifier: st.verifier, nonce: st.nonce });
+    identity = await providerIdentity(p, c.get("deps").fetch, { clientId: client.client_id, clientSecret }, { code, redirectUri: redirectUri(st.origin, p), verifier: st.verifier, nonce: st.nonce }, undefined, c.get("adapters").cache);
   } catch (e) {
     if (e instanceof OAuthError) return fail("oauth");
     throw e;
@@ -1215,7 +1370,9 @@ members.get("/_oauth/:provider/callback", async (c: Ctx) => {
     if (ld && r.linked && r.mail_from && r.email) {
       await afterResponse(c, sendAccountChangeNotice(ld, { name: st.shop_name ?? "" }, { kind: "oauth", provider: p, from: r.mail_from, to: r.email, accountUrl: `${st.origin}${shopPath}/account` }));
     }
-    return c.redirect(`${shopPath}/account?flash=oauth_linked`);
+    // 戻る先はもう一度確かめる（state は署名してあるが、ショップのパスが変わっていることもある）
+    const next = safeShopPath(st.next, shopPath);
+    return c.redirect(next ? withQueryParam(next, "banto_linked", p) : `${shopPath}/account?flash=oauth_linked`);
   }
   if (st.mode === "api" && st.return_to) {
     // ヘッドレス: 1 回限り・2 分の引き換え券を渡す（会員のトークンを URL に載せない）

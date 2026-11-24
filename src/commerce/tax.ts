@@ -88,6 +88,8 @@ export function orderTaxBreakdown(
   order: {
     shipping_jpy?: number | null;
     discount_jpy?: number | null;
+    /** 手数料（代引き 0157・KOMOJU の支払い方法 0170）。送料と同じ標準税率（注文の時点の shipping_tax_rate）、値引きの対象にしない */
+    fee_jpy?: number | null;
     shipping_tax_rate?: number | string | null;
     tax_rounding?: string | null;
     items: { qty: number; unit_price_jpy: number; tax_rate?: number | string | null; discount_jpy?: number | null }[];
@@ -106,6 +108,7 @@ export function orderTaxBreakdown(
     [
       ...order.items.map((i) => ({ amount_jpy: i.qty * i.unit_price_jpy, rate: num(i.tax_rate), discount_jpy: Math.max(0, i.discount_jpy ?? 0) })),
       { amount_jpy: shipping, rate: num(order.shipping_tax_rate), discount_jpy: shippingDiscount },
+      ...((order.fee_jpy ?? 0) > 0 ? [{ amount_jpy: order.fee_jpy!, rate: num(order.shipping_tax_rate), discount_jpy: 0 }] : []),
     ],
     unallocated,
     taxRoundingOf(order.tax_rounding ?? (shopSettings ?? {})["tax_rounding"]),

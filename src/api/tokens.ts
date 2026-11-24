@@ -10,6 +10,8 @@ export const API_SCOPES = [
   "products:write",
   "orders:read",
   "orders:pii",
+  "orders:contact",
+  "orders:address",
   "orders:write",
   "shop:read",
   "shop:write",
@@ -18,6 +20,7 @@ export const API_SCOPES = [
   "coupons:write",
   "customers:read",
   "customers:write",
+  "customers:links",
   "inquiries:read",
   "inquiries:write",
   "theme:write",
@@ -28,6 +31,7 @@ export const API_SCOPES = [
   "line:send",
   "dialogs:write",
   "stores:write",
+  "member_news:write",
 ] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
@@ -44,6 +48,8 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "orders:read": "orders",
   "orders:write": "orders",
   "orders:pii": "customers",
+  "orders:contact": "customers",
+  "orders:address": "customers",
   "shop:read": "integrations",
   "shop:write": "settings",
   "stats:read": "reports",
@@ -51,6 +57,7 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "coupons:write": "marketing",
   "customers:read": "customers",
   "customers:write": "customers",
+  "customers:links": "customers",
   "inquiries:read": "support",
   "inquiries:write": "support",
   "theme:write": "design",
@@ -61,10 +68,16 @@ export const SCOPE_PERM: Record<ApiScope, "catalog" | "orders" | "customers" | "
   "line:send": "marketing",
   "dialogs:write": "marketing",
   "stores:write": "stores",
+  "member_news:write": "marketing",
 };
 
 /** 当てるまで出さないスコープ（そのマイグレーションが DB の api_tokens_scopes_valid に足す） */
-export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = { "stores:write": "0126_store_fields" };
+export const SCOPE_MIGRATION: Partial<Record<ApiScope, string>> = {
+  "member_news:write": "0155_mod_member_news",
+  "customers:links": "0167_customer_links",
+  "orders:contact": "0173_orders_pii_split",
+  "orders:address": "0173_orders_pii_split",
+};
 
 /** 発行できるスコープ（DB がまだ受け付けないものを除く。発行の画面・つなぐ画面） */
 export async function issuableScopes(isMigrated: (version: string) => Promise<boolean>): Promise<ApiScope[]> {

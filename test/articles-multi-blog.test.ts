@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, memberLogin, memberMail } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { forgetThemes } from "../src/themes/liquid/cache";
 import { articleBlockBlogs, articleBlockSpansBlogs, articlesLine, parseArticlesLine } from "../src/pages/blocks";
 
@@ -112,12 +111,6 @@ describe("お店の画面", () => {
     const { page: page2, app: app2 } = setup({ fields: { news: [day], staff: [{ key: "day", label: "日", type: "text" }] } });
     page2("::: articles blog=news,staff sort=field:day limit=5\n\n::: articles blog=news,staff field:day=2026-12-01 limit=5");
     expect(titles(await (await new Browser(app2(), BASE).get("/my-shop/pages/p")).text())).toEqual([]);
-  });
-
-  it("0140 が当たるまでは、またいだブロックは何も並べない（1 つのブログのブロックは今までどおり）", async () => {
-    const { page, app } = setup({ applied: BUNDLED_MIGRATIONS.filter((v) => v < "0140") });
-    page("::: articles blog=news,staff limit=3\n\n::: articles blog=staff limit=1");
-    expect(titles(await (await new Browser(app(), BASE).get("/my-shop/pages/p")).text())).toEqual(["d スタッフ2"]);
   });
 
   it("Liquid: snippets/page-articles に blog は空、blogs にまたいだブログ、記事の url は記事ごとのブログ", async () => {

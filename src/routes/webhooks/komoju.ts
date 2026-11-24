@@ -3,7 +3,6 @@ import type { AppEnv } from "../../app";
 import { webhookBody } from "./body";
 import { createPrivilegedDb } from "../../db/privileged";
 import { confirmFromWebhook } from "../../payments/webhook-confirm";
-import { replayGuard } from "./stripe";
 import { createKomojuClient, verifyKomojuSignature, type KomojuEvent } from "../../plugins/komoju";
 import { type Ctx } from "../common";
 
@@ -47,8 +46,7 @@ komojuWebhook.post("/", async (c: Ctx) => {
 
   const db = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   // 処理が済んだ（記録済みの）イベントの再配信は何もしない（0128。KOMOJU の署名には時刻が無いので、捕まえた本文はいつでも再送できる）
-  const guard = await replayGuard(c, url);
-  if (guard && (await db.webhookEventSeen("komoju", event.id))) return c.json({ received: true, duplicate: true });
+  if ((await db.webhookEventSeen("komoju", event.id))) return c.json({ received: true, duplicate: true });
 
   if (RELEASE.has(event.type)) {
     // 決済ページの期限切れだけがカゴ落ち（会員の予約なら checkout.abandoned を積む、0105）。支払いの失敗・取り消しは数えない
@@ -64,6 +62,8 @@ komojuWebhook.post("/", async (c: Ctx) => {
     await createKomojuClient({ secretKey, fetch: c.get("deps").fetch }).refundPayment(payment.id, `refund-${event.id}`);
     return true;
   };
+  // 種類が届かないときも確定は止めない（決済ページは選んだ種類だけに絞ってある）。気づけるように残す（個人情報は出さない）
+  if (typeof payment.payment_details?.type !== "string") console.warn(`komoju webhook ${event.id}: payment_details.type missing; payment type not verified`);
   const order = {
     customer_email: payment.customer_email ?? null,
     payment_provider: "komoju",
@@ -72,6 +72,8 @@ komojuWebhook.post("/", async (c: Ctx) => {
     currency: typeof payment.currency === "string" ? payment.currency : null,
     // 決済した口座（0090）。KOMOJU は API キー方式だけ
     payment_account: "komoju",
+    // 使われた支払い方法の種類（0170）。確認画面で種類を選んだ予約は、違えば確定しない（返金）
+    ...(typeof payment.payment_details?.type === "string" ? { payment_type: payment.payment_details.type } : {}),
   };
-  return c.json(await confirmFromWebhook({ db, provider: "komoju", eventId: event.id, reservationId, shopId, order, refund, guard }));
+  return c.json(await confirmFromWebhook({ db, provider: "komoju", eventId: event.id, reservationId, shopId, order, refund }));
 });

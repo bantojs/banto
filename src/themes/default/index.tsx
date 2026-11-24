@@ -1,5 +1,7 @@
 import type { CategoryNode } from "../../products/categories";
+import { loginUrlFor } from "../../members/return-path";
 import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
+import { filterNoindex, priceFiltered } from "../../storefront/list-filter";
 import type { ProductSort } from "../../storefront/data";
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
@@ -8,8 +10,11 @@ import { optionSwatchesOf, swatchView } from "../../products/option-swatches";
 import type { AccountPageProps, StoreView, Theme, ThemeContext } from "../types";
 import { cardAttributes, productFields } from "../../products/fields";
 import { favoritesEnabled } from "../../modules/favorites";
+import { memberNewsHref } from "../../modules/member-news";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { shopImageSrc } from "../../pages/markdown";
 import { t, tf, type MessageKey, getLocale } from "../../i18n";
+import { feeLabelFor, komojuMethodButtonLabel } from "../../commerce/payment-fees";
 import { formatDateTime, isoToZonedDate } from "../../i18n/time";
 import { SKU_IMAGE_SCRIPT, imageOptionsOf, orderImagesForSku } from "../../products/images";
 import { OPTION_AXES_SCRIPT, displayOptionAxes } from "../../products/option-axes";
@@ -84,7 +89,7 @@ a.button{display:inline-block;padding:.6rem 1.25rem;background:var(--accent,#1f6
 .swatches{display:flex;flex-wrap:wrap;gap:.5rem;margin:.25rem 0 .75rem}.swatch{padding:2px;border:2px solid transparent;border-radius:999px;background:none;cursor:pointer;line-height:0}.swatch[aria-checked=true]{border-color:currentColor}.swatch:disabled{opacity:.35;cursor:not-allowed}.swatch__dot{display:inline-block;width:2rem;height:2rem;border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px color-mix(in srgb,CanvasText 20%,transparent)}.swatch__dot img{width:100%;height:100%;object-fit:cover}.swatch--text .swatch__dot{width:auto;height:auto;padding:.35rem .75rem;line-height:1.2;font-size:.9rem}
 .category-intro{margin:0 0 1rem}.category-image{display:block;width:100%;height:auto;max-height:22rem;object-fit:cover;border-radius:.5rem;margin:0 0 .75rem}.category-description{margin:0 0 1rem}
 table.attributes th{width:30%;font-weight:600}
-.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
+.price-filter{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .5rem;align-items:center;margin:.5rem 0}.price-filter input[type=number]{width:7rem}.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}.sort{font-size:.9rem;display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:center}.sort a{color:inherit}.sort a.active{font-weight:700;text-decoration:none}
 .card{position:relative}.banto-fav{background:none;border:0;padding:.25rem;cursor:pointer;font-size:1.25rem;line-height:1;color:color-mix(in srgb,currentColor 35%,transparent)}.banto-fav[aria-pressed="true"]{color:#d33}.card .banto-fav{position:absolute;top:.35rem;right:.35rem;z-index:1}
 .card-fields{list-style:none;margin:.25rem 0;padding:0;font-size:.85rem}.card-fields img{max-height:1.5rem;width:auto;vertical-align:middle}
 .badge{display:inline-block;font-size:.8rem;padding:0 .45rem;border:1px solid color-mix(in srgb,CanvasText 25%,transparent);border-radius:.6rem}
@@ -171,7 +176,7 @@ function Layout(props: { title: string; ctx?: ThemeContext; seo?: Seo; refreshSe
                 </a>
               ))}
               {ctx.membersEnabled ? (
-                <a href={`${ctx.shopPath}/account`} style="margin-right:1rem">
+                <a href={ctx.member ? `${ctx.shopPath}/account` : loginUrlFor(ctx.shopPath, ctx.currentPath)} style="margin-right:1rem">
                   {ctx.member ? t("member.account") : t("member.login")}
                 </a>
               ) : null}
@@ -275,7 +280,7 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
  */
 const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
-export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, receipt, coupons, tryon, favorites, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
+export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, emailChange, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
   const field = (name: string, label: string, value: string, type = "text", required = true) => (
@@ -291,11 +296,43 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "logged_out_all" ? <p class="notice">{t("member.logged_out_all")}</p> : null}
       {flash === "password_saved" ? <p class="notice">{t("member.password_saved")}</p> : null}
+      {flash === "email_code" ? <p class="notice">{t("member.email_code_sent")}</p> : null}
+      {flash === "email_changed" ? <p class="notice">{t("member.email_changed")}</p> : null}
       {flash === "oauth_linked" ? <p class="notice">{t("member.oauth_linked_done")}</p> : null}
       {flash === "oauth_unlinked" ? <p class="notice">{t("member.oauth_unlinked_done")}</p> : null}
       {flash === "coupon_claimed" ? <p class="notice">{t("claim.done")}</p> : null}
       {flash === "tryon_cancelled" ? <p class="notice">{t("member.tryon_cancelled")}</p> : null}
+      {flash === "tryon_extended" ? <p class="notice">{t("member.tryon_extended")}</p> : null}
       {error ? <p class="error">{error}</p> : null}
+      {news ? (
+        <section id="news">
+          <h2>
+            {t("member.news")}
+            {news.unread > 0 ? <span class="badge"> {tf("member.news_unread", { n: String(news.unread) })}</span> : null}
+          </h2>
+          {news.items.length === 0 ? <p>{t("member.news_none")}</p> : null}
+          {news.items.map((n) => {
+            const href = memberNewsHref(ctx.shopPath, n.url);
+            return (
+              <article style="margin:.75rem 0" data-read={n.read ? "true" : "false"}>
+                <div class="muted">
+                  {formatDateTime(n.starts_at, { dateOnly: true })}
+                  {n.read ? null : <strong> {t("member.news_new")}</strong>}
+                </div>
+                <strong>{href ? <a href={href}>{n.title}</a> : n.title}</strong>
+                {n.body ? <p style="white-space:pre-wrap;margin:.25rem 0">{n.body}</p> : null}
+              </article>
+            );
+          })}
+          {news.unread > 0 ? (
+            <form method="post" action={`${ctx.shopPath}/account/news/read`}>
+              <button type="submit" class="secondary">
+                {t("member.news_mark_read")}
+              </button>
+            </form>
+          ) : null}
+        </section>
+      ) : null}
       {coupons ? (
         <section>
           <h2>{t("member.coupons")}</h2>
@@ -371,6 +408,12 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
                     ) : null}
                   </td>
                   <td>
+                    {r.extendable ? (
+                      <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/extend`}>
+                        {r.hold_until ? <input type="hidden" name="hold_until" value={r.hold_until} /> : null}
+                        <button type="submit">{t("member.tryon_extend")}</button> <span class="muted">{tf("member.tryon_extend_left", { n: String(r.extend_left ?? 0) })}</span>
+                      </form>
+                    ) : null}
                     {r.cancellable ? (
                       <form method="post" action={`${ctx.shopPath}/account/tryon/${r.number}/cancel`}>
                         <button type="submit">{t("member.tryon_cancel")}</button>
@@ -413,7 +456,7 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
                 <td>{t(`order.status.${String(o["status"])}` as MessageKey)}</td>
                 {receipt ? (
                   <td>
-                    {o["status"] === "paid" || o["status"] === "shipped" ? (
+                    {receiptAvailable(o) ? (
                       <a href={`${ctx.shopPath}/account/orders/${String(o["number"])}/receipt`} target="_blank" rel="noopener">
                         {t("receipt.link")}
                       </a>
@@ -463,6 +506,29 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
             <button type="submit">{t("shop.save")}</button>
           </p>
         </form>
+      ) : null}
+      {emailChange ? (
+        <div id="email-change">
+          <h2>{t("member.email_change_title")}</h2>
+          <p class="muted">{t("member.email_change_help")}</p>
+          {emailChange.step === "code" ? (
+            <form method="post" action={`${ctx.shopPath}/account/email/verify`}>
+              <label for="email-change-code">{t("member.email_change_code")}</label>
+              <input id="email-change-code" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength={7} required autocomplete="one-time-code" style="width:100%;max-width:12rem;padding:.5rem;font:inherit;box-sizing:border-box" />
+              <p>
+                <button type="submit">{t("member.email_change_confirm")}</button> <a href={`${ctx.shopPath}/account#email-change`}>{t("member.email_change_restart")}</a>
+              </p>
+            </form>
+          ) : (
+            <form method="post" action={`${ctx.shopPath}/account/email`}>
+              <label for="email-change-new">{t("member.email_change_new")}</label>
+              <input id="email-change-new" type="email" name="email" required maxlength={254} autocomplete="email" style="width:100%;max-width:28rem;padding:.5rem;font:inherit;box-sizing:border-box" />
+              <p>
+                <button type="submit">{t("member.email_change_send")}</button>
+              </p>
+            </form>
+          )}
+        </div>
       ) : null}
       {security && (security.password || security.providers.length > 0) ? (
         <div>
@@ -539,21 +605,22 @@ export const defaultTheme: Theme = {
     );
   },
 
-  ShopHome({ ctx, products, tag, tags, categories, category, pagination, notice, layout, q, top, path, sort }) {
+  ShopHome({ ctx, products, tag, tags, filter, priceRange, optionFacets, vendors, categories, category, pagination, notice, layout, q, top, path, sort }) {
     const intro = themeSetting(ctx, "description");
     const home = ctx.shopPath || "/";
-    const heading = category ? category.name : tag ? tag : q ? tf("store.search_heading", { q }) : top ? undefined : t("store.all_products");
+    const chosen = filter?.tags.length ? filter.tags : tag ? [tag] : [];
+    const heading = category ? category.name : chosen.length > 0 ? chosen.join(" + ") : q ? tf("store.search_heading", { q }) : top ? undefined : t("store.all_products");
     const firstImage = products.find((p) => p.image)?.image;
     const seo = {
       path: path ?? home,
       description: categoryMetaDescription(category?.description) ?? intro,
       image: category?.image ? imageUrl(ctx.mediaBaseUrl, category.image.key) : firstImage ? imageUrl(ctx.mediaBaseUrl, firstImage.storage_key) : undefined,
-      ...(pagination?.first || q ? { noindex: true } : {}),
+      ...(pagination?.first || q || filterNoindex(filter) ? { noindex: true } : {}),
     };
     const title = heading ? `${heading} · ${t("store.products")}` : t("store.products");
     // 商品一覧のひな形（0103）: 部品を HTML にして渡し、並びはひな形が決める（SEO は同じ）
     if (layout) {
-      const parts = listParts({ ctx, products, tag, tags, categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
+      const parts = listParts({ ctx, products, tag, tags, ...(filter ? { filter } : {}), ...(priceRange ? { priceRange } : {}), ...(optionFacets ? { optionFacets } : {}), ...(vendors ? { vendors } : {}), categories, category, pagination, notice, ...(q ? { q } : {}), ...(sort ? { sort } : {}) });
       const html: Record<string, string> = {};
       for (const [k, node] of Object.entries(parts)) html[k] = node === null ? "" : String(node);
       return (
@@ -591,19 +658,8 @@ export const defaultTheme: Theme = {
         ) : null}
         {!top && heading ? <h1>{heading}</h1> : null}
         {category ? <CategoryIntro ctx={ctx} category={category} /> : null}
-        {tags && tags.length > 0 ? (
-          <p class="tags">
-            <a href={listUrl(ctx.shopPath, { category: category?.slug, sort })} class={tag ? "" : "active"}>
-              {t("store.all_products")}
-            </a>
-            {tags.map((x) => (
-              <a href={listUrl(ctx.shopPath, { category: category?.slug, tag: x.tag, sort })} class={x.tag === tag ? "active" : ""}>
-                {x.tag} <span class="muted">({x.count})</span>
-              </a>
-            ))}
-          </p>
-        ) : null}
-        {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} tag={tag} q={q} sort={sort} /> : null}
+        <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} optionFacets={optionFacets} vendors={vendors} category={category} q={q} sort={sort} />
+        {products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={q} sort={sort} /> : null}
         {notice ? <p class="notice">{notice}</p> : products.length === 0 ? <p>{t("store.no_products")}</p> : null}
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </Layout>
@@ -648,13 +704,20 @@ export const defaultTheme: Theme = {
     );
   },
 
-  CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon }) {
-    const checkoutEnabled = payments.stripe || payments.komoju || payments.amazon_pay;
-    const short = lines.some((l) => l.short);
+  CartPage({ ctx, lines, total, payments, shipping, coupons, error, tryon, loginRequired }) {
+    // 店頭のみの行（0149）だけのカートは購入手続きに進めない（お店で試着で申し込む）。在庫不足は購入手続きに進む行だけで見る
+    const buyable = lines.filter((l) => !l.storeOnly);
+    const checkoutEnabled = (payments.stripe || payments.komoju || payments.amazon_pay || payments.cod === true) && buyable.length > 0;
+    const short = buyable.some((l) => l.short);
     return (
       <Layout title={t("store.cart")} ctx={ctx} seo={{ noindex: true }}>
         <h1>{t("store.cart")}</h1>
         {error ? <p class="error">{error}</p> : null}
+        {loginRequired && lines.length > 0 ? (
+          <p class="notice">
+            {t("store.checkout_members_only")} <a href={loginRequired}>{t("store.checkout_login")}</a>
+          </p>
+        ) : null}
         {lines.length === 0 ? (
           <p>
             {t("store.cart_empty")} <a href={ctx.shopPath || "/"}>{t("store.continue")}</a>
@@ -676,6 +739,11 @@ export const defaultTheme: Theme = {
                     <td>
                       <a href={productUrl(ctx.shopPath, l.product.slug)}>{l.product.name}</a>
                       {l.sku.name ? <span class="muted"> / {l.sku.name}</span> : null}
+                      {l.storeOnly ? (
+                        <div class="muted" data-store-only="">
+                          {t("store.store_only_line")}
+                        </div>
+                      ) : null}
                       {l.short ? (
                         <div class="error">
                           {t("store.short_stock")} ({l.sku.available})
@@ -690,7 +758,7 @@ export const defaultTheme: Theme = {
                         <button type="submit">{t("store.update")}</button>
                       </form>
                     </td>
-                    <td>{yen(l.sku.price_jpy * l.qty)}</td>
+                    <td>{l.storeOnly ? "—" : yen(l.sku.price_jpy * l.qty)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -750,6 +818,18 @@ export const defaultTheme: Theme = {
               {shipping.summary}
               {shipping.freeOver !== null ? `（${yen(shipping.freeOver)}以上で送料無料）` : ""} · <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_details")}</a>
             </p>
+            {(() => {
+              // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料が正）
+              const over = shipping.viewerFreeOver ?? shipping.freeOver;
+              // 送料無料のクーポンが入っていれば出さない（クーポンの案内の文がある）
+              if (over === null || buyable.length === 0 || coupons?.applied.some((a) => a.free_shipping)) return null;
+              const left = over - total;
+              return (
+                <p class="free-shipping-hint">
+                  {left > 0 ? tf("store.free_shipping_remaining", { amount: yen(left) }) : shipping.viewerFreeMember ? t("store.free_shipping_reached_member") : t("store.free_shipping_reached")}
+                </p>
+              );
+            })()}
             {checkoutEnabled ? (
               <div>
                 {payments.stripe ? (
@@ -757,17 +837,40 @@ export const defaultTheme: Theme = {
                     <input type="hidden" name="provider" value="stripe" />
                     <p>
                       <button type="submit" disabled={short}>
-                        {payments.komoju || payments.amazon_pay ? t("store.pay_with_stripe") : t("store.checkout")}
+                        {payments.komoju || payments.amazon_pay || payments.cod ? t("store.pay_with_stripe") : t("store.checkout")}
                       </button>
                     </p>
                   </form>
                 ) : null}
-                {payments.komoju ? (
+                {payments.komoju && payments.komoju_methods
+                  ? // 支払い方法の手数料（0170）: KOMOJU を種類ごとに（決済ページはその種類だけ）
+                    payments.komoju_methods.map((m) => (
+                      <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
+                        <input type="hidden" name="provider" value={`komoju:${m.type}`} />
+                        <p>
+                          <button type="submit" disabled={short}>
+                            {komojuMethodButtonLabel(m)}
+                          </button>
+                        </p>
+                      </form>
+                    ))
+                  : null}
+                {payments.komoju && !payments.komoju_methods ? (
                   <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
                     <input type="hidden" name="provider" value="komoju" />
                     <p>
                       <button type="submit" disabled={short}>
                         {t("store.pay_with_komoju")}
+                      </button>
+                    </p>
+                  </form>
+                ) : null}
+                {payments.cod ? (
+                  <form method="post" action={`${ctx.shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
+                    <input type="hidden" name="provider" value="cod" />
+                    <p>
+                      <button type="submit" disabled={short}>
+                        {t("store.pay_with_cod")}
                       </button>
                     </p>
                   </form>
@@ -907,7 +1010,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  AddressPage({ ctx, provider, values, prefectures, shipping, subtotal, error, delivery, consent }) {
+  AddressPage({ ctx, provider, method, values, prefectures, shipping, subtotal, error, delivery, consent, saveAddress }) {
     const field = (name: keyof typeof values, label: string, type = "text", required = true, autocomplete?: string) => (
       <div>
         <label for={name}>{label}</label>
@@ -920,10 +1023,11 @@ export const defaultTheme: Theme = {
         <p>{t("store.address_intro")}</p>
         <p class="muted">
           {t("store.subtotal_tax_included")}: {yen(subtotal)} · {shipping.summary}
-          {shipping.freeOver !== null && subtotal >= shipping.freeOver ? `（${t("store.free_shipping_applied")}）` : ""}
+          {(shipping.viewerFreeOver ?? shipping.freeOver) !== null && subtotal >= (shipping.viewerFreeOver ?? shipping.freeOver)! ? `（${t("store.free_shipping_applied")}）` : ""}
         </p>
         {error ? <p class="error">{error}</p> : null}
         <form method="post" action={`${ctx.shopPath}/checkout/${provider}`}>
+          {method ? <input type="hidden" name="method" value={method} /> : null}
           {field("customer_name", t("store.address_name"), "text", true, "name")}
           {field("customer_email", t("store.address_email"), "email", true, "email")}
           {field("phone", t("store.address_phone"), "tel", true, "tel")}
@@ -971,6 +1075,15 @@ export const defaultTheme: Theme = {
             </div>
           ) : null}
           <p>
+            {saveAddress === "ask" ? (
+              <p>
+                <label>
+                  <input type="checkbox" name="save_address" value="1" checked={values.save_address === "1"} /> {t("store.save_address")}
+                </label>
+              </p>
+            ) : saveAddress === "auto" ? (
+              <p class="muted">{t("store.save_address_auto")}</p>
+            ) : null}
             {consent ? (
               <p>
                 <label>
@@ -1000,6 +1113,9 @@ export const defaultTheme: Theme = {
         <h1>{t("store.shipping_title")}</h1>
         <p>{shipping.summary}</p>
         {shipping.freeOver !== null ? <p>{`${yen(shipping.freeOver)}以上のご注文で送料無料`}</p> : null}
+        {(shipping.memberFree ?? []).map((m) => (
+          <p>{m.freeOver === 0 ? tf("store.member_free_shipping_always", { label: m.label }) : tf("store.member_free_shipping", { label: m.label, amount: yen(m.freeOver) })}</p>
+        ))}
         {shipping.table ? (
           <table>
             <tbody>
@@ -1018,7 +1134,8 @@ export const defaultTheme: Theme = {
           {payments.stripe ? <li>{t("store.pay_with_stripe")}</li> : null}
           {payments.komoju ? <li>{t("store.pay_with_komoju")}</li> : null}
           {payments.amazon_pay ? <li>{t("store.pay_with_amazon_pay")}</li> : null}
-          {!payments.stripe && !payments.komoju && !payments.amazon_pay ? <li>{t("store.checkout_unavailable")}</li> : null}
+          {payments.cod ? <li>{t("store.pay_with_cod")}</li> : null}
+          {!payments.stripe && !payments.komoju && !payments.amazon_pay && !payments.cod ? <li>{t("store.checkout_unavailable")}</li> : null}
         </ul>
       </Layout>
     );
@@ -1425,7 +1542,7 @@ export const defaultTheme: Theme = {
           </form>
         ) : (
           <p>
-            {t("claim.login_first")} <a href={`${ctx.shopPath}/account/login`}>{t("member.login")}</a>
+            {t("claim.login_first")} <a href={loginUrlFor(ctx.shopPath, ctx.currentPath)}>{t("member.login")}</a>
           </p>
         )}
       </Layout>
@@ -1735,6 +1852,13 @@ export const defaultTheme: Theme = {
                   <td></td>
                   <td>{yen(Number(r["shipping_jpy"] ?? 0))}</td>
                 </tr>
+                {Number(r["fee_jpy"] ?? 0) > 0 ? (
+                  <tr>
+                    <td>{feeLabelFor(r["payment_provider"])}</td>
+                    <td></td>
+                    <td>{yen(Number(r["fee_jpy"]))}</td>
+                  </tr>
+                ) : null}
                 {((r["discounts"] as { code: string; name: string; amount_jpy: number }[] | undefined) ?? []).map((d) => (
                   <tr>
                     <td>
@@ -1750,7 +1874,7 @@ export const defaultTheme: Theme = {
                 </tr>
               </tbody>
             </table>
-            {receipt && (r["status"] === "paid" || r["status"] === "shipped") ? (
+            {receipt && receiptAvailable(r) ? (
               <form method="post" action={`${ctx.shopPath}/orders/receipt`} target="_blank">
                 <input type="hidden" name="number" value={String(r["number"])} />
                 <input type="hidden" name="email" value={values.email ?? ""} />
@@ -1877,6 +2001,8 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
           skus,
           category: (categoryPath ?? []).map((cat) => cat.name),
           reviews,
+          block: detail.purchase_block ?? null,
+          releasedAt: product.released_at ?? null,
         })
       : undefined,
   };
@@ -1974,13 +2100,30 @@ export function productView({ ctx, detail, added, selectedSku, categoryPath, att
             {axesOn ? <p data-axes-price="" aria-live="polite"></p> : null}
             <label for="qty">{t("store.qty")}</label>
             <input id="qty" type="number" name="qty" value="1" min={1} max={99} />
-            {detail.purchasable === false ? (
+            {detail.purchase_block === "store_only" ? (
+              <>
+                <p class="notice" data-store-only="">
+                  {t(detail.cartable ? "store.store_only_tryon" : "store.store_only_buy")}
+                </p>
+                {detail.cartable ? (
+                  <p>
+                    <button type="submit" disabled={inStock.length === 0}>
+                      {inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart")}
+                    </button>
+                  </p>
+                ) : null}
+              </>
+            ) : detail.purchase_block === "coming_soon" ? (
+              <p class="notice" data-coming-soon="">
+                {detail.product.released_at ? tf("store.coming_soon_on", { date: formatDateTime(detail.product.released_at, { dateOnly: true }) }) : t("store.coming_soon_buy")}
+              </p>
+            ) : detail.purchasable === false ? (
               <p class="notice" data-members-only="">
                 {ctx.member ? (
                   t("store.members_only_buy")
                 ) : (
                   <>
-                    {t("store.members_only_login")} <a href={`${ctx.shopPath}/account/login`}>{t("store.members_login")}</a>
+                    {t("store.members_only_login")} <a href={loginUrlFor(ctx.shopPath, ctx.currentPath)}>{t("store.members_login")}</a>
                   </>
                 )}
               </p>
@@ -2161,14 +2304,16 @@ function CategoryIntro({ ctx, category }: { ctx: ShopHomeProps["ctx"]; category:
   );
 }
 
-/** 一覧の並べ替え（?sort=、src/storefront/list-sort.ts）。今のカテゴリー・タグ・検索の語はそのまま、ページ送りは最初に戻す */
-function SortLinks({ ctx, category, tag, q, sort }: { ctx: ThemeContext; category?: { slug: string } | undefined; tag?: string | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
+type ListFilterProp = ShopHomeProps["filter"];
+
+/** 一覧の並べ替え（?sort=、src/storefront/list-sort.ts）。今のカテゴリー・絞り込み・検索の語はそのまま、ページ送りは最初に戻す */
+function SortLinks({ ctx, category, chosen, filter, q, sort }: { ctx: ThemeContext; category?: { slug: string } | undefined; chosen: string[]; filter?: ListFilterProp; q?: string | undefined; sort?: ProductSort | undefined }) {
   const now = sort ?? "new";
   return (
     <p class="sort" aria-label={t("store.sort_label")}>
       <span class="muted">{t("store.sort_label")}:</span>{" "}
       {LIST_SORT_OPTIONS.map((o) => (
-        <a href={listUrl(ctx.shopPath, { category: category?.slug, tag, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
+        <a href={listUrl(ctx.shopPath, { category: category?.slug, tags: chosen, priceMin: filter?.priceMin, priceMax: filter?.priceMax, options: filter?.options, vendor: filter?.vendor, q, sort: o.value === "new" ? null : o.value })} class={o.value === now ? "active" : ""} aria-current={o.value === now ? "true" : undefined}>
           {t(o.label)}
         </a>
       ))}
@@ -2176,10 +2321,104 @@ function SortLinks({ ctx, category, tag, q, sort }: { ctx: ThemeContext; categor
   );
 }
 
-export function listParts({ ctx, products, tag, tags, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
+/**
+ * 一覧の絞り込み（タグの札と価格の欄、0150）。タグの札は押すとそのタグだけ、選んでいる札を押すと外す（ほかに選んだタグ・価格・検索の語・並べ方はそのまま）。
+ * 価格の欄は GET のフォーム（?filter.v.price.gte= / lte=、src/storefront/list-filter.ts）で、価格の上限が分かるとき（0150 の後）だけ
+ */
+function ListFilters({ ctx, tags, chosen, filter, priceRange, optionFacets, vendors, category, q, sort }: { ctx: ThemeContext; tags?: { tag: string; count: number }[] | undefined; chosen: string[]; filter?: ListFilterProp; priceRange?: ShopHomeProps["priceRange"]; optionFacets?: ShopHomeProps["optionFacets"]; vendors?: ShopHomeProps["vendors"]; category?: { slug: string } | undefined; q?: string | undefined; sort?: ProductSort | undefined }) {
+  const url = (o: { tags: string[]; price: boolean; options?: Record<string, string[]>; vendor?: string | null }) =>
+    listUrl(ctx.shopPath, { category: category?.slug, tags: o.tags, ...(o.price ? { priceMin: filter?.priceMin, priceMax: filter?.priceMax } : {}), options: o.options ?? filter?.options, vendor: o.vendor === undefined ? filter?.vendor : o.vendor, q, sort });
+  // ブランドの札（0162）: 押すとそのブランドだけ（1 つ）、選んでいる札を押すと外す
+  const vendorList = filter?.vendor && !(vendors ?? []).some((v) => v.brand === filter.vendor) ? [...(vendors ?? []), { brand: filter.vendor, count: 0 }] : (vendors ?? []);
+  // 選択肢の札: 押すと足す、選んでいる札を押すと外す（同じ鍵はどれか、0153）
+  const optionUrl = (key: string, value: string, on: boolean) => {
+    const cur = filter?.options?.[key] ?? [];
+    const next = { ...(filter?.options ?? {}) };
+    const vals = on ? cur.filter((x) => x !== value) : [...cur, value];
+    if (vals.length > 0) next[key] = vals;
+    else delete next[key];
+    return url({ tags: chosen, price: true, options: next });
+  };
+  const price = priceRange && priceRange.max !== null && priceRange.max > 0;
+  const priced = priceFiltered(filter);
+  return (
+    <>
+      {tags && tags.length > 0 ? (
+        <p class="tags">
+          <a href={url({ tags: [], price: true })} class={chosen.length > 0 ? "" : "active"}>
+            {t("store.all_products")}
+          </a>
+          {tags.map((x) => {
+            const on = chosen.includes(x.tag);
+            return (
+              <a href={url({ tags: on ? chosen.filter((y) => y !== x.tag) : [x.tag], price: true })} class={on ? "active" : ""} aria-pressed={on ? "true" : "false"}>
+                {x.tag} <span class="muted">({x.count})</span>
+              </a>
+            );
+          })}
+        </p>
+      ) : null}
+      {(optionFacets ?? []).map((g) => (
+        <p class="tags option-filter" data-option={g.key}>
+          <span class="muted">{g.label}:</span>
+          {g.values.map((v) => {
+            const on = (filter?.options?.[g.key] ?? []).includes(v.value);
+            return (
+              <a href={optionUrl(g.key, v.value, on)} class={on ? "active" : ""} aria-pressed={on ? "true" : "false"}>
+                {v.value} <span class="muted">({v.count})</span>
+              </a>
+            );
+          })}
+        </p>
+      ))}
+      {vendorList.length > 0 ? (
+        <p class="tags vendor-filter">
+          <span class="muted">{t("store.vendor_filter_label")}:</span>
+          {vendorList.map((v) => {
+            const on = filter?.vendor === v.brand;
+            return (
+              <a href={url({ tags: chosen, price: true, vendor: on ? null : v.brand })} class={on ? "active" : ""} aria-pressed={on ? "true" : "false"}>
+                {v.brand} <span class="muted">({v.count})</span>
+              </a>
+            );
+          })}
+        </p>
+      ) : null}
+      {price ? (
+        <form class="price-filter" method="get" action={listUrl(ctx.shopPath, { category: category?.slug })}>
+          {chosen.map((x) => (
+            <input type="hidden" name="tag" value={x} />
+          ))}
+          {Object.entries(filter?.options ?? {}).flatMap(([k, vals]) => vals.map((v) => <input type="hidden" name={`filter.v.option.${k}`} value={v} />))}
+          {filter?.vendor ? <input type="hidden" name="filter.p.vendor" value={filter.vendor} /> : null}
+          {q ? <input type="hidden" name="q" value={q} /> : null}
+          {sort ? <input type="hidden" name="sort" value={sort} /> : null}
+          <span class="muted">{t("store.price_filter_label")}:</span>{" "}
+          <label>
+            <span class="visually-hidden">{t("store.price_min")}</span>
+            <input type="number" name="filter.v.price.gte" min="0" step="1" inputmode="numeric" value={filter?.priceMin !== undefined ? String(filter.priceMin) : ""} placeholder="0" />
+          </label>
+          {" 〜 "}
+          <label>
+            <span class="visually-hidden">{t("store.price_max")}</span>
+            <input type="number" name="filter.v.price.lte" min="0" step="1" inputmode="numeric" value={filter?.priceMax !== undefined ? String(filter.priceMax) : ""} placeholder={String(priceRange.max)} />
+          </label>{" "}
+          <button type="submit">{t("store.price_apply")}</button>
+          {priced ? (
+            <>
+              {" "}
+              <a href={url({ tags: chosen, price: false })}>{t("store.price_clear")}</a>
+            </>
+          ) : null}
+        </form>
+      ) : null}
+    </>
+  );
+}
+
+export function listParts({ ctx, products, tag, tags, filter, priceRange, optionFacets, vendors, categories, category, pagination, notice, q: query, sort }: Omit<ShopHomeProps, "layout">) {
   const home = ctx.shopPath || "/";
-  // タグで絞る・外すときも、今のカテゴリーと検索の語はそのまま
-  const q = (extra: { tag?: string }) => listUrl(ctx.shopPath, { category: category?.slug, q: query, sort, ...extra });
+  const chosen = filter?.tags.length ? filter.tags : tag ? [tag] : [];
   const find = (nodes: CategoryNode[], slug: string): CategoryNode | null => {
     for (const n of nodes) {
       if (n.slug === slug) return n;
@@ -2208,20 +2447,8 @@ export function listParts({ ctx, products, tag, tags, categories, category, pagi
         <ProductGrid ctx={ctx} products={products} pagination={pagination} />
       </>
     ),
-    filters:
-      tags && tags.length > 0 ? (
-        <p class="tags">
-          <a href={q({})} class={tag ? "" : "active"}>
-            {t("store.all_products")}
-          </a>
-          {tags.map((x) => (
-            <a href={q({ tag: x.tag })} class={x.tag === tag ? "active" : ""}>
-              {x.tag} <span class="muted">({x.count})</span>
-            </a>
-          ))}
-        </p>
-      ) : null,
-    sort: products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} tag={tag} q={query} sort={sort} /> : null,
+    filters: (tags && tags.length > 0) || (priceRange && priceRange.max) || (optionFacets && optionFacets.length > 0) || (vendors && vendors.length > 0) || filter?.vendor ? <ListFilters ctx={ctx} tags={tags} chosen={chosen} filter={filter} priceRange={priceRange} optionFacets={optionFacets} vendors={vendors} category={category} q={query} sort={sort} /> : null,
+    sort: products.length > 1 || pagination?.next || pagination?.first ? <SortLinks ctx={ctx} category={category} chosen={chosen} filter={filter} q={query} sort={sort} /> : null,
     subcategories:
       children.length > 0 ? (
         <nav class="categories" aria-label={t("store.categories")}>

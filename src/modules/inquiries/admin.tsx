@@ -20,8 +20,7 @@ import { ATTACHMENT_ACCEPT, attachmentResponse, filesOf, removeAttachments } fro
 import { BODY_MAX, INQUIRIES_MODULE, sendAssignNotice, INQUIRY_STATUSES, MAX_TEMPLATES, TEMPLATE_BODY_MAX, TEMPLATE_TITLE_MAX, categoryLabel, fillTemplate, inquirySettings, inquiryTemplates, sendReplyNotice, statusLabel, storeFor } from "./index";
 import { failCode, updateShop } from "../../routes/admin/shop-save";
 import type { Filter } from "../../db/client";
-import { migrated } from "../../db/migration-state";
-import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "../../routes/admin/views";
+import { ViewTabs, viewsOf } from "../../routes/admin/views";
 import { SearchBar, searchChips, type SearchParams } from "../../routes/admin/search";
 
 /**
@@ -131,12 +130,11 @@ inquiriesAdmin.get("/", requireOwner, async (c: AdminContext) => {
     if (name === "assignee") return `${t("inq.assignee")}: ${t(`inq.assignee_filter_${value}` as MessageKey)}`;
     return null;
   });
-  const viewsOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("mod.inquiries.name")}`} nav crumbs={crumbs(shop)} shopTabs={tabs(c, shop)}>
       <PageHead title={t("mod.inquiries.name")} sub={t("inq.admin_intro")} />
       <Flash code={c.req.query("flash")} />
-      <ViewTabs shopId={shop.id} screen="inquiries" views={viewsOf(shop.settings, "inquiries")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
+      <ViewTabs shopId={shop.id} screen="inquiries" views={viewsOf(shop.settings, "inquiries")} current={params} error={c.req.query("view_error")} />
       <SearchBar action={base(shop)} q={q} placeholder={t("inq.search_placeholder")} chips={chips} clearHref={base(shop)}>
         <label>
           {t("inq.status")}

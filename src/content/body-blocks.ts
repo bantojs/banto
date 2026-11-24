@@ -31,8 +31,8 @@ import { ALL_BLOGS, PRODUCT_BLOCK_SLUGS_MAX, PRODUCT_TAG, appBlocksOf, articleBl
 import type { ProductRow } from "../db/types";
 import { customAppData, productReviews, type ProductReviews } from "../apps/app-data";
 import { reviewsListHtml, reviewsSummaryHtml } from "../apps/reviews-html";
-import { ARTICLES_MULTI_MIGRATION, BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
-import { BLOG_DATE_ORDER_MIGRATION, type ArticleFieldDef, type FieldSort, articleFieldDefs, articleFieldsReady, blogFieldSort, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
+import { BLOG_MODULE, articlePath, articleSortFor, articleSummary, type ArticleRow, type BlogRow } from "../blog";
+import { type ArticleFieldDef, type FieldSort, articleFieldDefs, articleFieldsReady, blogFieldSort, fieldContains, fieldSortOf, fieldValues } from "../blog/fields";
 import { moduleEnabled } from "../modules/registry";
 import { formatDateTime } from "../i18n/time";
 import { t } from "../i18n";
@@ -172,8 +172,8 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
           }
           // 日付の項目の順・今日以降だけ（0124）。日付・日時の項目でなければ何も並べない
           // ブロックに並べ方が無ければブログの並び順（日付の項目の順なら、その順と今日以降だけ）
-          // until（終了日、0125）は当たっている DB だけ（会員の経路の関数が受けるため）
-          const until = block.until && (await d.sf.migratedTo(BLOG_DATE_ORDER_MIGRATION)) ? block.until : null;
+          // until（終了日、0125）
+          const until = block.until ?? null;
           const fieldSort = block.fieldSort ? fieldSortOf(blog, block.fieldSort, block.from === "today", Date.now(), until) : block.sort ? null : blogFieldSort(blog);
           if (block.fieldSort && !fieldSort) return { block: { ...block, tag }, blog, items: [] as ArticleRow[] };
           const { items } = await d.sf.articlesPage(d.shop, blog.id, { offset: 0, limit: block.limit, tag, sort: articleSortFor(blog, block.sort), withFields: articleFieldsReady(blog), ...(fields ? { fields } : {}), ...(fieldSort ? { fieldSort } : {}) });
@@ -209,11 +209,9 @@ export async function bodyBlocks(d: BodyBlocksDeps, body: string, categories: Ca
 }
 
 /**
- * またぐブログ（0140）: すべて（"*"）ならショップのブログの一覧（キャッシュ済み、並びはブログの並び順）、名前ならその順に引く（無い名前は飛ばす）。
- * 0140 が当たるまでは何も並べない（会員の経路の関数が無いため。ゲストと会員で並ぶものを変えない）
+ * またぐブログ（0140）: すべて（"*"）ならショップのブログの一覧（キャッシュ済み、並びはブログの並び順）、名前ならその順に引く（無い名前は飛ばす）
  */
 async function resolveBlogs(d: BodyBlocksDeps, spec: string[] | typeof ALL_BLOGS): Promise<BlogRow[]> {
-  if (!(await d.sf.migratedTo(ARTICLES_MULTI_MIGRATION))) return [];
   if (spec === ALL_BLOGS) return await d.sf.blogsList(d.shop);
   const found = await Promise.all(spec.map((h) => d.sf.blogByHandle(d.shop, h)));
   return found.filter((b): b is BlogRow => b !== null);
@@ -236,7 +234,7 @@ async function multiBlogArticles(d: BodyBlocksDeps, blogs: BlogRow[], block: Art
   let fieldSort: FieldSort | null = null;
   if (block.fieldSort) {
     // 日付の項目の順・今日以降だけは、どのブログでも同じ答えになるときだけ（同じキーが同じ種類の日付・日時の項目）
-    const until = block.until && (await d.sf.migratedTo(BLOG_DATE_ORDER_MIGRATION)) ? block.until : null;
+    const until = block.until ?? null;
     const now = Date.now();
     const each = blogs.map((b) => fieldSortOf(b, block.fieldSort!, block.from === "today", now, until));
     if (!ready || each.some((x) => !x) || each.some((x) => JSON.stringify(x) !== JSON.stringify(each[0]))) return [];
@@ -386,12 +384,16 @@ async function shopBlockHtml(d: BodyBlocksDeps, b: ShopBlock, categories: Catego
     }
     const cart = parts.includes("cart"), buy = parts.includes("buy");
     if ((cart || buy) && detail.skus.length > 0) {
-      if (detail.purchasable === false) out.push(`<p class="banto-product__note">${esc(t("store.members_only_login"))}</p>`);
+      // 買えない理由で分ける（src/products/sale.ts）。店頭のみでカートに入れられる（お店で試着が ON）なら「カートに入れる」だけ（今すぐ買うは出さない）
+      const block = detail.purchase_block ?? (detail.purchasable === false ? "members_only" : null);
+      const cartOnly = block === "store_only" && detail.cartable === true;
+      if (block && !cartOnly) out.push(`<p class="banto-product__note">${esc(t(block === "coming_soon" ? "store.coming_soon_buy" : block === "store_only" ? "store.store_only_buy" : "store.members_only_login"))}</p>`);
       else {
         const inStock = detail.skus.filter((k) => k.available > 0);
         const select = detail.skus.length > 1 ? `<select name="sku_id" aria-label="${esc(t("store.variant"))}">${detail.skus.map((k) => `<option value="${esc(k.id)}"${k.available > 0 ? "" : " disabled"}>${esc(k.name || k.code)} — ${esc(yen(k.price_jpy))}</option>`).join("")}</select>` : `<input type="hidden" name="sku_id" value="${esc(detail.skus[0]!.id)}">`;
         const disabled = inStock.length === 0 ? " disabled" : "";
-        const buttons = `${cart ? `<button type="submit"${disabled}>${esc(inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart"))}</button>` : ""}${buy ? `<button type="submit" name="buy" value="1"${disabled}>${esc(t("blocks.buy_now"))}</button>` : ""}`;
+        const showCart = cart || cartOnly;
+        const buttons = `${cartOnly ? `<p class="banto-product__note">${esc(t("store.store_only_tryon"))}</p>` : ""}${showCart ? `<button type="submit"${disabled}>${esc(inStock.length === 0 ? t("store.sold_out") : t("store.add_to_cart"))}</button>` : ""}${buy && !cartOnly ? `<button type="submit" name="buy" value="1"${disabled}>${esc(t("blocks.buy_now"))}</button>` : ""}`;
         out.push(`<form method="post" action="${esc(`${d.shopPath}/cart/add`)}">${select}<input type="hidden" name="qty" value="1">${buttons}</form>`);
       }
     }

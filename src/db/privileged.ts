@@ -7,6 +7,8 @@
 import { AuthError } from "../auth/supabase";
 import { supabaseHeaders } from "./api-keys";
 import { ACTOR_HEADER } from "../audit";
+import { NOTICE_TEXTS_MIGRATION, type NoticeTextRow } from "../notices/templates";
+import type { MemberNewsList } from "../modules/member-news";
 
 export interface PrivilegedDbOptions {
   url: string;
@@ -52,6 +54,8 @@ export interface OrderInput {
   currency?: string | null;
   /** 決済の口座（0090。Stripe Connect の接続先のアカウント ID、API キー方式は "platform"、KOMOJU は "komoju"、Amazon Pay は "amazon_pay"）。返金はこの口座で行う */
   payment_account?: string | null;
+  /** 決済事業者が知らせた支払い方法の種類（0170。KOMOJU の payment_details.type）。確認画面で選んだ種類と違えば amount_mismatch */
+  payment_type?: string | null;
 }
 
 /** 在庫予約の上限の材料（0029）。quote は 1 回限り、同じ人・同じ IP の未確定の予約に上限 */
@@ -117,6 +121,13 @@ export type MemberLoginResult =
   | { ok: false; reason: "invalid" | "locked" | "disabled" | "already_linked" | "other_linked" | "session" | "expired" | "reauth" };
 
 /** パスワードの設定（0057）。reauth = ログインしてから 15 分を過ぎたセッション（確かめのコードで入り直す） */
+/** メールアドレスの変更を始める（0166）。send = false は回数の上限・使われているアドレス（応答は同じにする） */
+export type MemberEmailChangeStart = { ok: true; send: boolean; mail_from: string | null } | { ok: false; reason: "session" | "reauth" | "same" };
+/** メールアドレスの変更を確かめる（0166）。成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる） */
+export type MemberEmailChangeVerify =
+  | { ok: true; old_email: string | null; new_email: string; epoch: number; mail_from: string | null; authenticated_at: string | null }
+  | { ok: false; reason: "session" | "reauth" | "invalid" | "expired" | "unavailable" };
+
 export type MemberSetPasswordResult =
   /** authenticated_at: このセッションがログインを確かめた時刻（0090。セッションを作り直すときに引き継ぐ。0090 より前の DB では null） */
   | { ok: true; epoch: number; email: string | null; mail_from: string | null; authenticated_at: string | null }
@@ -184,6 +195,8 @@ export interface MemberTryonRequest {
   hold_until: string | null;
   created_at: string;
   items: { name: string | null; sku: string | null; qty: number }[];
+  /** 取り置きを延ばした回数（0151 から。それより前の DB では無い） */
+  extend_count?: number;
 }
 
 /** お問い合わせの注文の要約（0061。住所・連絡先は入らない） */
@@ -255,6 +268,10 @@ export interface PrivilegedDb {
   reserveStock(shopId: string, items: ReserveItem[], ttlSeconds: number, limits?: ReserveLimits | null, customerId?: string | null): Promise<string>;
   /** 予約を注文に変換（冪等）。戻り値は order id */
   confirmReservation(reservationId: string, shopId: string, order: OrderInput): Promise<string>;
+  /** 予約の支払い方法の手数料をショップの決まりで確かめる（0170。値引きを付けた後、決済ページを作る前）。違えば amount_mismatch */
+  reservationPaymentFeeCheck(reservationId: string, shopId: string): Promise<number>;
+  /** ログイン中の会員が当てはまる会員の条件のうち、いちばん低い送料無料の金額（0171）。無ければ null */
+  memberFreeShippingOver(shopId: string, member: { id: string; epoch: number; sid: string }): Promise<number | null>;
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
   attachReservationCustomer(reservationId: string, shopId: string, customer: ReservationCustomer): Promise<void>;
   /** クーポンのコードからキャンペーンを引く（0010）。subject があればその人の使用回数も返す */
@@ -288,8 +305,18 @@ export interface PrivilegedDb {
   memberTryonRequests(shopId: string, customerId: string, epoch: number): Promise<MemberTryonRequest[] | null>;
   /** 会員が自分の申し込みを取り消す（0026。取り置きが終わる前だけ） */
   memberTryonCancel(shopId: string, customerId: string, epoch: number, number: number): Promise<{ ok: true } | { ok: false; reason: "session" | "not_found" | "not_cancellable" }>;
+  /** 会員が取り置きの期限を延ばす（0151。today はショップの時間帯の今日、expected は画面に出していた今の期限。違えば changed） */
+  memberTryonExtend(shopId: string, customerId: string, epoch: number, number: number, today: string, expected: string | null): Promise<{ ok: true; hold_until: string; extend_count: number } | { ok: false; reason: "session" | "not_found" | "not_extendable" | "limit" | "changed" }>;
   /** 取り置きの期限切れ（Cron。today はショップの時間帯の日付） */
   tryonExpire(today: string): Promise<number>;
+  /** 来店期限の前日のお知らせを積む（0152。today・hour はショップの時間帯） */
+  tryonRemind(today: string, hour: number): Promise<number>;
+  /** 当たっているマイグレーションの版（banto_setup_state。Cron が新しい関数を呼ぶ前に確かめる） */
+  appliedMigrations(): Promise<string[]>;
+  /** ショップが直したお知らせの文面（0154。当てる前の DB・行が無ければ []）。その知らせのメールと LINE の行 */
+  shopNoticeTexts(shopId: string, kind: string): Promise<NoticeTextRow[]>;
+  /** 公開日を過ぎた非公開の商品を公開する（0148）。公開した数 */
+  publishScheduledProducts(): Promise<number>;
   /** 終わった試着の申し込みの個人情報を消す（Cron） */
   maskTryonRequests(days: number): Promise<number>;
   /** お問い合わせ（同梱モジュール inquiries、0061）。お客様の経路だけ（運営側は RLS と authenticated の関数） */
@@ -330,6 +357,10 @@ export interface PrivilegedDb {
   memberSaveAddress(shopId: string, customerId: string, epoch: number, name: string | null, address: Record<string, unknown>): Promise<boolean>;
   /** 「お得な情報やセールの案内を受け取る」を本人が変える（0050。世代を確かめる） */
   memberSetMarketingConsent(shopId: string, customerId: string, epoch: number, consent: boolean): Promise<boolean>;
+  /** 会員へのお知らせ（0155）。本人に見えるもの（新しい順、50 件）と未読の数。セッションが生きていなければ null */
+  memberNewsList(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<MemberNewsList | null>;
+  /** 既読にする（ids が null なら見えるものすべて）。既読にした数。セッションが生きていなければ null */
+  memberNewsRead(shopId: string, customerId: string, epoch: number, sessionId: string, ids: string[] | null): Promise<number | null>;
   /** 本人のお気に入り（0123、新しい順・見える商品だけ）。セッションが生きていなければ null */
   memberFavorites(shopId: string, customerId: string, epoch: number, sessionId: string): Promise<{ product_id: string; slug: string; created_at: string }[] | null>;
   /** お気に入りに足す・外す（0123）。セッションが生きていなければ null。見えない商品は product_not_found、上限は favorites_full */
@@ -350,6 +381,9 @@ export interface PrivilegedDb {
    * 成功すると今のセッションの行が新しい世代に付け替わる（ほかの端末は止まる）
    */
   memberSetPassword(shopId: string, customerId: string, epoch: number, password: string, sessionId?: string): Promise<MemberSetPasswordResult>;
+  /** 会員が自分でメールアドレスを変える（0166）。ログインしてから 15 分以内のセッションだけ。コードは HMAC の値だけを渡す */
+  memberEmailChangeStart(shopId: string, customerId: string, epoch: number, sessionId: string, newEmail: string, codeHash: string, ipHash: string | null): Promise<MemberEmailChangeStart>;
+  memberEmailChangeVerify(shopId: string, customerId: string, epoch: number, sessionId: string, codeHash: string): Promise<MemberEmailChangeVerify>;
   /** WordPress のパスワードの取り込み（0013、bcrypt の形式だけ）。呼び出し側が owner の所有を確かめてから呼ぶ */
   importMemberPasswords(shopId: string, rows: { email: string; hash: string }[]): Promise<Record<string, number>>;
   /** 外部のアカウントでログインする（0014）。link があればログイン中のその会員に結びつける */
@@ -379,7 +413,7 @@ export interface PrivilegedDb {
   /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page。ブログをまたぐ articles_member_multi は 0140） */
   contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page" | "articles_member_multi", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
-  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown }[]>;
+  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown; free_over_jpy?: number }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
   memberSessionRefresh(shopId: string, customerId: string, epoch: number, sessionId: string, gen: number): Promise<MemberSessionRefresh>;
   /** 取り消す（logout: 自分の端末 / revoked: 一覧から別の端末） */
@@ -409,11 +443,13 @@ export interface PrivilegedDb {
   /** 期限切れの challenge を消す（Cron） */
   memberPasskeyCleanup(): Promise<number>;
   /** 返金に必要な情報（キャンセル処理の前段） */
-  orderPaymentInfo(orderId: string, shopId: string): Promise<{ order_id: string; status: string; payment_provider: string | null; payment_ref: string | null; total_jpy: number } | null>;
+  /** payment_status は 0156 から（それより前の DB では無い = 入金済み） */
+  orderPaymentInfo(orderId: string, shopId: string): Promise<{ order_id: string; status: string; payment_provider: string | null; payment_ref: string | null; total_jpy: number; payment_status?: string } | null>;
   /** 注文の決済の口座（0090 の orders.payment_account。0090 が当たっている DB でだけ呼ぶ）。無ければ null */
   orderPaymentAccount(orderId: string, shopId: string): Promise<string | null>;
   /** キャンセル: 在庫を戻し cancelled / refunded にする（返金は呼び出し側が先に行う） */
-  cancelOrder(orderId: string, shopId: string, refunded: boolean): Promise<{ order_id: string; status: string; already: boolean }>;
+  /** reason は 0156 から（refused = 受け取り拒否。未入金の注文だけ） */
+  cancelOrder(orderId: string, shopId: string, refunded: boolean, reason?: "refused"): Promise<{ order_id: string; status: string; already: boolean }>;
   /** 取引メール用の連絡先と明細（同梱メールプラグイン専用） */
   orderContact(orderId: string, shopId: string): Promise<Record<string, unknown>>;
   /** 予約を解放（pending のときだけ）。戻り値: 解放したか */
@@ -457,6 +493,10 @@ export interface PrivilegedDb {
   enqueueHook(shopId: string, event: string, payload: Record<string, unknown>): Promise<number>;
   /** Cron の生存記録（/health が読む） */
   recordHeartbeat(name: string): Promise<void>;
+  /** Cron の通信の予算を決める設定（0160。workers_plan） */
+  cronSettings(): Promise<{ workers_plan: string }>;
+  /** 取り出したが送らなかった配信を返す（回数を戻し、すぐ取り出せるように。0160） */
+  releaseHookDeliveries(ids: string[]): Promise<void>;
   /**
    * バックアップ JSON（export.json の tables）を空のショップに復元する。id は振り直す。
    * 呼び出し側（管理画面）が owner JWT で shop の所有を確認してから呼ぶこと。戻り値はテーブルごとの件数。
@@ -480,6 +520,10 @@ export interface PrivilegedDb {
   restoreProductImageOptions(shopId: string, items: { storage_key: unknown; options: unknown }[]): Promise<Record<string, number>>;
   /** SKU を分ける軸（0065）。ショップ・カテゴリー・商品の軸を戻す（商品は SKU に合うものだけ）。{ shop: null } だけで呼ぶと既定を外す */
   restoreOptionAxes(shopId: string, data: { shop?: unknown; categories?: unknown[]; products?: unknown[]; option_names?: unknown }): Promise<Record<string, number>>;
+  /** 0146: 商品の発売日を URL の名前で戻す（restore_catalog の後） */
+  restoreProductReleasedAt(shopId: string, items: { slug: unknown; released_at: unknown }[]): Promise<Record<string, number>>;
+  /** 0148: 非公開の商品の公開日（予約公開）を URL の名前で戻す */
+  restoreProductPublishAt(shopId: string, items: { slug: unknown; publish_at: unknown }[]): Promise<Record<string, number>>;
   /**
    * AI 用トークン経由の操作（docs/ai-access.md）。呼べるのは api_* だけで、各 RPC が SQL 側で
    * トークン・スコープ・ショップ所有を検証する。p_token_hash は Worker で SHA-256 にした値。
@@ -495,7 +539,8 @@ export interface PrivilegedDb {
   adminLoginRecord(emailHash: string, ipHash: string | null, success: boolean): Promise<void>;
   apiRpc<T>(fn: `api_${string}`, args: Record<string, unknown>): Promise<T>;
   /** 画像を裏で取り込む（同梱モジュール woo_import、0039）。Cron が期限の来た分を取り出し、結果を書く */
-  imageImportClaim(): Promise<ImageImportJob[]>;
+  /** limit: その回に進められる数（0160。渡さなければ今までどおりプランの数） */
+  imageImportClaim(limit?: number): Promise<ImageImportJob[]>;
   imageImportFinish(results: ({ id: number; storage_key: string } | { id: number; error: string })[]): Promise<{ done: number; retry: number; failed: number }>;
 }
 
@@ -553,6 +598,11 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       }),
     confirmReservation: (reservationId, shopId, order) =>
       rpc<string>("confirm_reservation", { p_reservation_id: reservationId, p_shop_id: shopId, p_order: order }),
+    reservationPaymentFeeCheck: (reservationId, shopId) => rpc<number>("reservation_payment_fee_check", { p_reservation_id: reservationId, p_shop_id: shopId }),
+    memberFreeShippingOver: async (shopId, member) => {
+      const r = await rpc<unknown>("member_free_shipping_over", { p_shop_id: shopId, p_customer_id: member.id, p_epoch: member.epoch, p_session_id: member.sid });
+      return typeof r === "number" && Number.isInteger(r) && r >= 0 ? r : null;
+    },
     attachReservationCustomer: (reservationId, shopId, customer) =>
       rpc<void>("attach_reservation_customer", { p_reservation_id: reservationId, p_shop_id: shopId, p_customer: customer }),
     couponLookup: (shopId, codes, subject, customerId) => rpc("coupon_lookup", { p_shop_id: shopId, p_codes: codes, p_subject: subject, ...(customerId ? { p_customer_id: customerId } : {}) }),
@@ -569,9 +619,28 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     orgInvitationPeek: (tokenHash) => rpc("org_invitation_peek", { p_token_hash: tokenHash }),
     memberTryonRequests: (shopId, customerId, epoch) => rpc("member_tryon_requests", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
     memberTryonCancel: (shopId, customerId, epoch, number) => rpc("member_tryon_cancel", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),
+    memberTryonExtend: (shopId, customerId, epoch, number, today, expected) => rpc("member_tryon_extend", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number, p_today: today, p_expected: expected }),
     tryonContact: (requestId, shopId) => rpc("tryon_contact", { p_request_id: requestId, p_shop_id: shopId }),
     tryonLineRecipient: (requestId, shopId) => rpc("tryon_line_recipient", { p_request_id: requestId, p_shop_id: shopId }),
     tryonExpire: (today) => rpc("tryon_expire", { p_today: today }),
+    tryonRemind: (today, hour) => rpc("tryon_remind", { p_today: today, p_hour: hour }),
+    appliedMigrations: async () => {
+      const r = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
+      return Array.isArray(r?.migrations) ? r.migrations.filter((x): x is string => typeof x === "string") : [];
+    },
+    async shopNoticeTexts(shopId, kind) {
+      // 文面が読めない（DB の一時的な誤りなど）ときは既定の文面で送る。注文の知らせそのものを止めない（docs/notices.md「送るとき」）
+      try {
+        const state = await rpc<{ migrations?: unknown } | null>("banto_setup_state", {});
+        if (!(Array.isArray(state?.migrations) && state.migrations.includes(NOTICE_TEXTS_MIGRATION))) return [];
+        const res = await doFetch(`${base}/rest/v1/shop_notice_texts?select=kind,channel,subject,body&shop_id=eq.${encodeURIComponent(shopId)}&kind=eq.${encodeURIComponent(kind)}`, { headers });
+        if (!res.ok) return [];
+        return (await res.json()) as NoticeTextRow[];
+      } catch {
+        return [];
+      }
+    },
+    publishScheduledProducts: () => rpc<number>("publish_scheduled_products", {}),
     maskTryonRequests: (days) => rpc("mask_tryon_requests", { p_days: days }),
     inquiryOrderCheck: (shopId, number, email, ipHash, emailHash) => rpc("inquiry_order_check", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, p_email_hash: emailHash }),
     inquiryOrderRef: (shopId, ref) => rpc("inquiry_order_ref", { p_shop_id: shopId, p_ref: ref }),
@@ -596,6 +665,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       rpc("order_lookup", { p_shop_id: shopId, p_number: number, p_email: email, p_ip_hash: ipHash, ...(emailHash !== undefined ? { p_email_hash: emailHash } : {}) }),
     memberOrder: (shopId, customerId, epoch, number) => rpc("member_order", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_number: number }),
     memberSetMarketingConsent: (shopId, customerId, epoch, consent) => rpc<boolean>("member_set_marketing_consent", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_consent: consent }),
+    memberNewsList: (shopId, customerId, epoch, sessionId) => rpc("member_news_list", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
+    memberNewsRead: (shopId, customerId, epoch, sessionId, ids) => rpc("member_news_read", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_ids: ids }),
     memberFavorites: (shopId, customerId, epoch, sessionId) => rpc("member_favorites", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId }),
     memberFavoriteSet: (shopId, customerId, epoch, sessionId, productId, on) => rpc("member_favorite_set", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_product_id: productId, p_on: on }),
     memberFavoritesMerge: (shopId, customerId, epoch, sessionId, productIds) => rpc("member_favorites_merge", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_product_ids: [...productIds] }),
@@ -611,7 +682,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberLogoutAll: (shopId, customerId, epoch, sessionId) =>
       rpc("member_logout_all", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, ...(sessionId ? { p_session_id: sessionId } : {}) }),
     memberLoginCleanup: () => rpc<number>("member_login_cleanup", {}),
-    imageImportClaim: () => rpc<ImageImportJob[]>("image_import_claim", {}),
+    imageImportClaim: (limit) => rpc<ImageImportJob[]>("image_import_claim", limit !== undefined ? { p_limit: limit } : {}),
     imageImportFinish: (results) => rpc("image_import_finish", { p_results: results }),
     memberPasswordLogin: (shopId, email, password, ipHash) => rpc("member_password_login", { p_shop_id: shopId, p_email: email, p_password: password, p_ip_hash: ipHash }),
     memberSetPassword: async (shopId, customerId, epoch, password, sessionId) => {
@@ -623,6 +694,23 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
         return { ok: true, epoch: r.epoch, email: r.email ?? null, mail_from: r.mail_from ?? null, authenticated_at: typeof r.authenticated_at === "string" ? r.authenticated_at : null };
       }
       return { ok: false, reason: r.reason === "reauth" ? "reauth" : "session" };
+    },
+    memberEmailChangeStart: async (shopId, customerId, epoch, sessionId, newEmail, codeHash, ipHash) => {
+      const r = await rpc<{ ok: boolean; reason?: string; send?: boolean; mail_from?: string | null } | null>("member_email_change_start", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_new_email: newEmail, p_code_hash: codeHash, p_ip_hash: ipHash,
+      });
+      if (r?.ok) return { ok: true, send: r.send === true, mail_from: r.mail_from ?? null };
+      return { ok: false, reason: r?.reason === "reauth" ? "reauth" : r?.reason === "same" ? "same" : "session" };
+    },
+    memberEmailChangeVerify: async (shopId, customerId, epoch, sessionId, codeHash) => {
+      const r = await rpc<{ ok: boolean; reason?: string; old_email?: string | null; new_email?: string; epoch?: number; mail_from?: string | null; authenticated_at?: string | null } | null>("member_email_change_verify", {
+        p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_code_hash: codeHash,
+      });
+      if (r?.ok && typeof r.epoch === "number" && typeof r.new_email === "string") {
+        return { ok: true, old_email: r.old_email ?? null, new_email: r.new_email, epoch: r.epoch, mail_from: r.mail_from ?? null, authenticated_at: typeof r.authenticated_at === "string" ? r.authenticated_at : null };
+      }
+      const reason = r?.reason;
+      return { ok: false, reason: reason === "reauth" || reason === "invalid" || reason === "expired" || reason === "unavailable" ? reason : "session" };
     },
     importMemberPasswords: (shopId, rows) => rpc("import_member_passwords", { p_shop_id: shopId, p_rows: rows }),
     memberOauthLogin: (shopId, provider, subject, email, emailVerified, link) =>
@@ -653,7 +741,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     contentMemberRpc: (fn, args) => rpc<unknown>(fn, args),
     shopAudiencesRender: async (shopId) => {
       const r = await rpc<unknown>("shop_audiences_render", { p_shop_id: shopId });
-      return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown }[]) : [];
+      return Array.isArray(r) ? (r as { id: string; name: string; condition: unknown; free_over_jpy?: number }[]) : [];
     },
     memberSessionRefresh: (shopId, customerId, epoch, sessionId, gen) =>
       rpc("member_session_refresh", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_session_id: sessionId, p_gen: gen }),
@@ -709,7 +797,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       const v = rows[0]?.payment_account;
       return typeof v === "string" && v.trim() ? v.trim() : null;
     },
-    cancelOrder: (orderId, shopId, refunded) => rpc("cancel_order", { p_order_id: orderId, p_shop_id: shopId, p_refunded: refunded }),
+    cancelOrder: (orderId, shopId, refunded, reason) => rpc("cancel_order", { p_order_id: orderId, p_shop_id: shopId, p_refunded: refunded, ...(reason ? { p_reason: reason } : {}) }),
     orderContact: (orderId, shopId) => rpc("order_contact", { p_order_id: orderId, p_shop_id: shopId }),
     releaseReservation: (reservationId, shopId) => rpc<boolean>("release_reservation", { p_reservation_id: reservationId, p_shop_id: shopId }),
     releaseReservationAbandoned: (reservationId, shopId) => rpc<boolean>("release_reservation_abandoned", { p_reservation_id: reservationId, p_shop_id: shopId }),
@@ -744,6 +832,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       rpc<void>("finish_hook_delivery", { p_id: id, p_success: success, p_status: status, p_error: error }),
     enqueueHook: (shopId, event, payload) => rpc<number>("enqueue_hook", { p_shop_id: shopId, p_event: event, p_payload: payload }),
     recordHeartbeat: (name) => rpc<void>("record_heartbeat", { p_name: name }),
+    cronSettings: () => rpc<{ workers_plan: string }>("cron_settings", {}),
+    releaseHookDeliveries: (ids) => rpc<void>("release_hook_deliveries", { p_ids: ids }),
     restoreShopData: (shopId, tables) => rpc<Record<string, number>>("restore_shop_data", { p_shop_id: shopId, p_data: tables }),
     restoreProductTags: (shopId, products) => rpc<number>("restore_product_tags", { p_shop_id: shopId, p_products: products }),
     restoreCatalog: (shopId, data) => rpc<Record<string, number>>("restore_catalog", { p_shop_id: shopId, p_data: data }),
@@ -754,6 +844,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     restoreInquiries: (shopId, data) => rpc("restore_inquiries", { p_shop_id: shopId, p_data: data }),
     restoreProductImageOptions: (shopId, items) => rpc("restore_product_image_options", { p_shop_id: shopId, p_items: items }),
     restoreOptionAxes: (shopId, data) => rpc("restore_option_axes", { p_shop_id: shopId, p_data: data }),
+    restoreProductReleasedAt: (shopId, items) => rpc("restore_product_released_at", { p_shop_id: shopId, p_items: items }),
+    restoreProductPublishAt: (shopId, items) => rpc("restore_product_publish_at", { p_shop_id: shopId, p_items: items }),
     async shopStripeAccount(shopId) {
       // お客様の画面（anon）には渡さない列（0028）。決済ページを作るときだけ service_role で読む
       const res = await doFetch(`${base}/rest/v1/shops?select=stripe_account_id&id=eq.${encodeURIComponent(shopId)}`, { headers });

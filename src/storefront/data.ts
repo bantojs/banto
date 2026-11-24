@@ -2,6 +2,9 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
+import { publicShipping } from "../commerce/shipping";
+import { searchQueryForDb } from "./search-words";
+import { LIST_FILTERS_MIGRATION, LIST_OPTIONS_MIGRATION } from "./list-filter";
 import type { CareView } from "../care-labels/care";
 import type { CacheAdapter } from "../adapters/types";
 import type { DbClient } from "../db/client";
@@ -12,13 +15,37 @@ import { descendantIds } from "../products/categories";
 import { ISO_TIMESTAMP, UUID_RE, decodeCursor, encodeCursor } from "../util/cursor";
 import { selectIn } from "../db/select-in";
 import type { StoreRow } from "../modules/store-tryon";
-import { PAGE_PARTS_MIGRATION, PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
+import { PUBLIC_PAGE_COLUMNS, type PageNavItem, type PageRow } from "../pages";
 import type { IncludePart } from "../content/include";
 import { fieldSortQuery, type FieldSort } from "../blog/fields";
 import { ARTICLE_LIST_COLUMNS, ARTICLES_OFFSET_MAX, articleOrderParam, type ArticleOrder, type ArticleRow, type BlogNavItem, type BlogRow } from "../blog";
+import { cartableOf, comingSoon, purchaseBlockOf, type PurchaseBlock } from "../products/sale";
+/** 発売前は買えない（0148）。src/products/fields.ts の SALE_DATES_MIGRATION と同じ（循環を避けて文字で持つ） */
+const SALE_DATES_MIGRATION = "0148_product_sale_dates";
 
 
 export const STOREFRONT_CACHE_TTL = 30;
+/** デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS の範囲（短すぎると覚えが効かず、長すぎると管理画面の変更が見えるまで待つ） */
+export const STOREFRONT_CACHE_TTL_MIN = 5;
+export const STOREFRONT_CACHE_TTL_MAX = 300;
+/**
+ * ショップ行（shop: / domain: / hostslug:）・カテゴリー・実店舗の覚えは設定に関係なく 30 秒。ショップ行には連携サイトの戻り先の許可リスト・会員の
+ * ログインの設定・ドメインと、レジが使う送料・税・特商法の表示の設定が乗り、カテゴリーの木はクーポンのカテゴリーの条件、実店舗の営業日は
+ * お店で試着の来店日の確かめに使うので、長く覚えると変更が効くまで待たせる（STOREFRONT_CACHE_TTL_SECONDS は表示の材料だけ）
+ */
+export const SHOP_ROW_CACHE_TTL = STOREFRONT_CACHE_TTL;
+
+/**
+ * お店の画面の覚えておく時間（秒）。デプロイの設定 STOREFRONT_CACHE_TTL_SECONDS（5〜300 の整数）、無い・範囲の外なら 30。
+ * 覚えるのは商品の一覧・ページ・記事・ブログなど表示の材料（isolate ごと）。ショップ行・カテゴリー・実店舗は 30 秒のまま（SHOP_ROW_CACHE_TTL）、
+ * 在庫・カートはいつも引き直す（docs/env.md）
+ */
+export function storefrontCacheTtl(config: { get(name: string): string | undefined }): number {
+  const raw = config.get("STOREFRONT_CACHE_TTL_SECONDS")?.trim();
+  if (!raw || !/^\d{1,4}$/.test(raw)) return STOREFRONT_CACHE_TTL;
+  const n = Number(raw);
+  return n >= STOREFRONT_CACHE_TTL_MIN && n <= STOREFRONT_CACHE_TTL_MAX ? n : STOREFRONT_CACHE_TTL;
+}
 
 /** product_public_stock に 1 回で渡せる SKU の数（超えると too_many_skus） */
 const PUBLIC_STOCK_MAX_SKUS = 200;
@@ -65,7 +92,7 @@ export interface PublicShop {
 export const PUBLIC_PRODUCT_COLUMNS = "id,shop_id,slug,name,description,published,created_at,updated_at,tags,category_id,brand,tax_class,extra_category_ids";
 
 /** お客様の画面に渡す settings の鍵（0028 の banto_shop_public_settings と同じ。足すときは SQL と test/fake-supabase.ts も揃える） */
-export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent", "page_layouts"] as const;
+export const PUBLIC_SETTINGS_KEYS = ["theme", "theme_settings", "notice", "shipping", "modules", "members_enabled", "members_password", "checkout_terms", "delivery_time", "store_tryon", "receipt", "product_fields", "tax_rate", "tax_rate_reduced", "tax_rounding", "storefront", "analytics", "marketing_consent", "page_layouts", "cod", "checkout_members_only", "payment_fees"] as const;
 
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
@@ -73,6 +100,8 @@ export function publicShopSettings(settings: Record<string, unknown> | null | un
   const src = isObject(settings) ? settings : {};
   const out: Record<string, unknown> = {};
   for (const k of PUBLIC_SETTINGS_KEYS) if (k in src) out[k] = src[k];
+  // 会員の条件ごとの送料無料（0171）は名前を付けた決まりの名前と金額だけ（0171 の banto_public_shipping と同じ）
+  if ("shipping" in src) out["shipping"] = publicShipping(src["shipping"]);
   // 非公開の独自項目は定義（表示名）も見せない（0055 の banto_shop_public_settings と同じ）
   if (Array.isArray(src["product_fields"])) out["product_fields"] = src["product_fields"].filter((f) => isObject(f) && f["public"] !== false);
   // relay_ips（中継元の素の IP）は公開しない（0034）。Worker が service_role で読む
@@ -120,7 +149,7 @@ export interface CouponClaimInfo {
 }
 
 /** 一覧に出す商品の列（0058 の product_public_list が返すもの。説明・独自項目は含まない） */
-export type ProductListRow = Pick<ProductRow, "id" | "slug" | "name" | "tags" | "category_id" | "extra_category_ids" | "brand" | "created_at" | "updated_at">;
+export type ProductListRow = Pick<ProductRow, "id" | "slug" | "name" | "tags" | "category_id" | "extra_category_ids" | "brand" | "created_at" | "updated_at" | "released_at">;
 export type ProductListImage = Pick<ProductImageRow, "storage_key" | "thumb_key" | "width" | "height" | "variants" | "thumb_width">;
 
 export interface ProductSummary {
@@ -132,6 +161,8 @@ export interface ProductSummary {
   compareAt?: number | null;
   /** カードに出す独自項目の値（0121。定義で card を付けた公開の項目だけ。当てる前の DB では無い） */
   attributes?: Record<string, unknown>;
+  /** 発売日で買えなくする判定が効いているか（0148 が当たっていれば true）。カードの coming_soon はこれが true のときだけ */
+  saleDates?: boolean;
 }
 
 export interface SkuWithStock extends SkuRow {
@@ -148,8 +179,22 @@ export interface ProductDetail {
   skus: SkuWithStock[];
   /** 見る人が買えるか（会員限定の商品、0098。会員は DB が判定、ゲストは会員の条件の付いた商品は買えない）。省略は買える */
   purchasable?: boolean;
+  /** 買えない理由（0148。src/products/sale.ts、買えれば省く） */
+  purchase_block?: PurchaseBlock | null;
+  /** カートに入れられるか（0149。買える商品と、お店で試着が ON のショップの店頭のみの商品）。省略は purchasable と同じ */
+  cartable?: boolean;
   /** 洗濯表示（同梱モジュール care_labels、0127）。商品ページのルートがカテゴリーまでたどって決めたもの。無ければ出さない */
   care?: CareView | null;
+}
+
+/** カートの SKU の行（買えるか・買えない理由つき） */
+export interface CartSkuHit {
+  sku: SkuWithStock;
+  product: ProductRow;
+  purchasable: boolean;
+  purchase_block?: PurchaseBlock;
+  /** カートに入れられるか（店頭のみの商品はお店で試着が ON なら入る。src/products/sale.ts の cartableOf） */
+  cartable: boolean;
 }
 
 /** 会員の読み取りの経路（service_role の product_member_* / page_member_get など。会員のセッションを DB が確かめ、DB の最新の独自項目で合う条件の行を足す） */
@@ -167,19 +212,28 @@ export interface MemberReader {
   articlesMulti(blogIds: string[], limit: number, tag: string | null, sort?: ArticleOrder, fields?: Record<string, unknown> | null, fieldSort?: FieldSort | null): Promise<unknown>;
 }
 
-/** ゲストが買えるか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
-const guestPurchasable = (p: ProductRow) => !p.audience_id;
+/** ゲストが会員の条件で弾かれないか（会員の条件の付いた商品は買えない。0098 の前の行は列が無いので買える） */
+const guestAudienceOk = (p: ProductRow) => !p.audience_id;
+/** 買えるか・買えない理由（会員の条件と発売日。src/products/sale.ts） */
+const saleOf = (shop: PublicShop, p: ProductRow, audienceOk: boolean, saleDates: boolean) => {
+  const block = purchaseBlockOf(p, audienceOk, { saleDates });
+  // お店で試着（同梱モジュール store_tryon）が ON か。キャッシュ済みのショップ行で判定する（DB に問い合わせない）
+  const tryonOn = ((shop.settings?.["modules"] ?? {}) as Record<string, unknown>)["store_tryon"] === true;
+  return { purchasable: block === null, cartable: cartableOf(block, tryonOn), ...(block ? { purchase_block: block } : {}) };
+};
 
 export class StorefrontData {
   constructor(
     private db: DbClient,
     private cache: CacheAdapter,
     private reader: MemberReader | null = null,
+    /** 覚えておく時間（秒、storefrontCacheTtl） */
+    private ttl: number = STOREFRONT_CACHE_TTL,
   ) {}
 
   /** ログイン中の会員として読む（一覧・詳細・カートが会員限定の商品を含む。キャッシュしない） */
   withMember(reader: MemberReader): StorefrontData {
-    return new StorefrontData(this.db, this.cache, reader);
+    return new StorefrontData(this.db, this.cache, reader, this.ttl);
   }
 
   /** ゲストが会員限定のページ・記事の URL で来たとき「会員の方だけ」と出してよいか（0100。存在も隠すもの・無いものは false） */
@@ -194,6 +248,15 @@ export class StorefrontData {
 
   /** 適用済みの版の一覧（このインスタンスでは 1 回だけ引く。並列の判定が同時にキャッシュを外して二重に問い合わせないように） */
   private applied?: Promise<ReadonlySet<string>>;
+
+  /**
+   * 発売前は買えない判定（0148）を効かせるか。発売日が未来の商品が無ければ問い合わせずに false（判定に関わらないので、
+   * 主要ページの DB の往復を増やさない）。あれば 0148 が当たっているか
+   */
+  async saleDatesFor(products: readonly { released_at?: string | null }[]): Promise<boolean> {
+    if (!products.some((p) => comingSoon(p))) return false;
+    return this.migratedTo(SALE_DATES_MIGRATION);
+  }
 
   /** その版のマイグレーションが当たっていれば true（isolate ごとに 60 秒覚える。docs/upgrade.md「適用するまでのあいだ」） */
   async migratedTo(version: string): Promise<boolean> {
@@ -217,7 +280,7 @@ export class StorefrontData {
     const hit = await this.cache.get<PublicShop>(key);
     if (hit) return hit;
     const shop = await this.fetchShop({ slug });
-    if (shop) await this.cache.set(key, shop, STOREFRONT_CACHE_TTL);
+    if (shop) await this.cache.set(key, shop, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -233,8 +296,8 @@ export class StorefrontData {
     const miss = await this.cache.get<{ shop: null }>(key);
     if (miss) return null;
     const shop = await this.fetchShop({ slug });
-    if (shop) await this.cache.set(`shop:${slug}`, shop, STOREFRONT_CACHE_TTL);
-    else await this.cache.set(key, { shop: null }, STOREFRONT_CACHE_TTL);
+    if (shop) await this.cache.set(`shop:${slug}`, shop, SHOP_ROW_CACHE_TTL);
+    else await this.cache.set(key, { shop: null }, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -247,8 +310,8 @@ export class StorefrontData {
     const hit = await this.cache.get<{ shop: PublicShop | null }>(key);
     if (hit) return hit.shop;
     const shop = await this.fetchShop({ domain: host });
-    await this.cache.set(key, { shop }, STOREFRONT_CACHE_TTL);
-    if (shop) await this.cache.set(`shop:${shop.slug}`, shop, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { shop }, SHOP_ROW_CACHE_TTL);
+    if (shop) await this.cache.set(`shop:${shop.slug}`, shop, SHOP_ROW_CACHE_TTL);
     return shop;
   }
 
@@ -266,30 +329,42 @@ export class StorefrontData {
     // 検索の語があるときの offset は 1,000 まで（深い位置まで読ませて DB を重くさせない。先は cursor で）
     if (offset > (query.q?.trim() ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return null;
     const cat = query.category ? categories.find((c) => c.slug === query.category) : undefined;
+    // タグ 2 つ以上・価格は 0150 から。当たる前は最初のタグだけで絞る（filtersIgnored。お店の画面は絞らないまま描き、公開 API は 409）
+    const tags = [...new Set([...(query.tag ? [query.tag] : []), ...(query.tags ?? [])])];
+    const wantsOptions = Boolean(query.options && Object.keys(query.options).length > 0);
+    const wants = tags.length > 1 || query.priceMin !== undefined || query.priceMax !== undefined || wantsOptions;
+    // 選択肢は 0153 から（0150 の上に足した引数）。0153 があれば 0150 もある
+    const optionsOk = wantsOptions && (await this.migratedTo(LIST_OPTIONS_MIGRATION));
+    const filters = wants && (optionsOk || (await this.migratedTo(LIST_FILTERS_MIGRATION)));
     const args = {
       p_shop_id: shop.id,
       p_sort: sort,
       p_limit: limit,
       p_after: cursor ? { k: cursor.k, id: cursor.id } : null,
       p_offset: offset,
-      p_tag: query.tag ?? null,
+      p_tag: filters ? null : (tags[0] ?? null),
+      ...(filters ? { p_tags: tags, p_price_min: query.priceMin ?? null, p_price_max: query.priceMax ?? null } : {}),
+      ...(optionsOk ? { p_options: query.options } : {}),
       // 無いカテゴリーなら 0 件（全件を返さない）
       p_category_ids: query.category ? (cat ? [...descendantIds(categories, cat.id)] : []) : null,
       p_brand: query.brand ?? null,
-      p_q: query.q?.trim() ? query.q.trim().slice(0, 100) : null,
+      // 分けた語をつないだ形で渡す（Worker の「短すぎる」の判定と DB の分け方をずらさない。0161）
+      p_q: searchQueryForDb(query.q),
       p_updated_since: query.updatedSince?.toISOString() ?? null,
       p_count: opts.count ?? false,
     };
     // キャッシュするのは、よく見られる最初のページだけ（検索の語・ページの位置・時刻を変えたリクエストでキャッシュを埋められないように）
     // 会員は会員限定の商品を含むのでキャッシュしない（会員の読み取りの経路は 0098 から）
     const reader = this.reader;
-    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since;
+    // 絞り込み（タグ 2 つ以上・価格）を求めた一覧はキャッシュしない（0150 の前は最初のタグだけの一覧と同じ引数になり、filtersIgnored の有無が混ざるため）
+    const cacheable = !reader && !cursor && offset === 0 && !args.p_q && !args.p_updated_since && !wants;
     const key = `plist:${JSON.stringify(args)}`;
     const hit = cacheable ? await this.cache.get<ProductListPage>(key) : null;
     if (hit) return hit;
     type ListResult = { items: ListItem[]; next: { k: string | number; id: string } | null; total?: number; total_capped?: boolean };
     const r = reader ? ((await reader.list(args)) as ListResult) : await this.db.rpc<ListResult>("product_public_list", args);
-    const items = r.items.map(summaryOf);
+    const saleDates = await this.saleDatesFor(r.items);
+    const items = r.items.map((x) => ({ ...summaryOf(x), ...(saleDates ? { saleDates } : {}) }));
     const out: ProductListPage = {
       items,
       total: r.total ?? null,
@@ -298,8 +373,10 @@ export class StorefrontData {
       offset,
       nextOffset: !cursor && r.next && offset + limit <= PRODUCT_OFFSET_MAX ? offset + limit : null,
       nextCursor: r.next ? encodeCursor({ s: sort, k: r.next.k, id: r.next.id }) : null,
+      ...(wants && !filters ? { filtersIgnored: true } : {}),
+      ...(wantsOptions && !optionsOk ? { optionsIgnored: true } : {}),
     };
-    if (cacheable) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    if (cacheable) await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -315,8 +392,10 @@ export class StorefrontData {
     const hit = reader ? null : await this.cache.get<ProductSummary[]>(key);
     if (hit) return hit;
     const r = (reader ? await reader.pick(list) : await this.db.rpc<unknown>("product_public_pick", { p_shop_id: shop.id, p_slugs: list })) as { items?: ListItem[] } | null;
-    const out = (Array.isArray(r?.items) ? r.items : []).map(summaryOf);
-    if (!reader) await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    const rows = Array.isArray(r?.items) ? r.items : [];
+    const saleDates = await this.saleDatesFor(rows);
+    const out = rows.map((x) => ({ ...summaryOf(x), ...(saleDates ? { saleDates } : {}) }));
+    if (!reader) await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -329,7 +408,7 @@ export class StorefrontData {
     const hit = await this.cache.get<ProductFacets>(key);
     if (hit) return hit;
     const out = await this.db.rpc<ProductFacets>("product_public_facets", { p_shop_id: shop.id, p_tag_limit: PRODUCT_FACET_TAGS });
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -371,7 +450,7 @@ export class StorefrontData {
     const hit = await this.cache.get<ProductImageRow[]>(key);
     if (hit) return hit;
     const rows = (await selectIn<ProductImageRow>(this.db, "product_images", "*", shop.id, "product_id", ids)).sort((a, b) => a.sort_order - b.sort_order);
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -396,7 +475,7 @@ export class StorefrontData {
     const hit = await this.cache.get<CategoryRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<CategoryRow>("categories").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc" });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, SHOP_ROW_CACHE_TTL);
     return rows;
   }
 
@@ -408,7 +487,7 @@ export class StorefrontData {
     const hit = await this.cache.get<StoreRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.rpc<StoreRow[]>("shop_store_list", { p_shop_id: shop.id });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, SHOP_ROW_CACHE_TTL);
     return rows;
   }
 
@@ -424,7 +503,7 @@ export class StorefrontData {
     if (hit) return hit.page;
     const rows = await this.db.from<PageRow>("pages").select(PUBLIC_PAGE_COLUMNS, { eq: { shop_id: shop.id, handle, published: true }, limit: 1 });
     const page = rows[0] ?? null;
-    await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { page }, this.ttl);
     return page;
   }
 
@@ -438,7 +517,7 @@ export class StorefrontData {
     if (hit) return hit.page;
     const rows = await this.db.from<PageRow>("pages").select(PUBLIC_PAGE_COLUMNS, { eq: { shop_id: shop.id, id, published: true }, limit: 1 });
     const page = rows[0] ?? null;
-    await this.cache.set(key, { page }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { page }, this.ttl);
     return page;
   }
 
@@ -453,7 +532,7 @@ export class StorefrontData {
     const hit = await this.cache.get<IncludePart[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<IncludePart>("pages").select("id,handle,body,updated_at", { eq: { shop_id: shop.id, published: true }, in: { handle: list }, limit: list.length });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -476,7 +555,7 @@ export class StorefrontData {
       this.db.from<ArticleRow>("articles").select("handle,title", { ...base, where: [{ col: "published_at", op: "gt", value: article.published_at }], order: "published_at.asc" }),
     ]);
     const out = { prev: older[0] ?? null, next: newer[0] ?? null };
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -489,9 +568,8 @@ export class StorefrontData {
     if (hit) return hit;
     const cols = "id,shop_id,handle,title,seo_title,seo_description,template_suffix,nav,sort_order,published,created_at,updated_at,published_at,image_url";
     // 部品のページ（0122）は一覧に出さない
-    const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
-    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc,id.asc", limit: 100 });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    const rows = await this.db.from<Omit<PageRow, "body">>("pages").select(cols, { eq: { shop_id: shop.id, published: true, is_part: false }, order: "sort_order.asc,id.asc", limit: 100 });
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -501,15 +579,14 @@ export class StorefrontData {
     const hit = await this.cache.get<BlogRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id }, order: "sort_order.asc,id.asc", limit: 20 });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
   /** サイトマップに載せるページ（公開中のものの handle と更新日時） */
   async pageHandles(shop: PublicShop): Promise<{ handle: string; updated_at: string }[]> {
     // 部品のページ（0122）は載せない
-    const parts = await this.migratedTo(PAGE_PARTS_MIGRATION);
-    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true, ...(parts ? { is_part: false } : {}) }, order: "sort_order.asc", limit: 1000 });
+    return this.db.from<{ handle: string; updated_at: string }>("pages").select("handle,updated_at", { eq: { shop_id: shop.id, published: true, is_part: false }, order: "sort_order.asc", limit: 1000 });
   }
 
   /** ブログ（同梱モジュール blog、0081）。公開中のショップのものだけ（RLS）。短時間キャッシュ */
@@ -519,7 +596,7 @@ export class StorefrontData {
     if (hit) return hit.blog;
     const rows = await this.db.from<BlogRow>("blogs").select("*", { eq: { shop_id: shop.id, handle }, limit: 1 });
     const blog = rows[0] ?? null;
-    await this.cache.set(key, { blog }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { blog }, this.ttl);
     return blog;
   }
 
@@ -550,7 +627,7 @@ export class StorefrontData {
       offset,
     });
     const out = { items: rows.slice(0, opts.limit), hasNext: rows.length > opts.limit };
-    await this.cache.set(key, out, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, out, this.ttl);
     return out;
   }
 
@@ -578,7 +655,7 @@ export class StorefrontData {
       order: fs ? fs.order : articleOrderParam(opts.sort),
       limit: opts.limit,
     });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -590,7 +667,7 @@ export class StorefrontData {
     const hit = await this.cache.get<ArticleRow[]>(key);
     if (hit) return hit;
     const rows = await this.db.from<ArticleRow>("articles").select(ARTICLE_LIST_COLUMNS, { eq: { shop_id: shop.id, blog_id: blogId, published: true }, in: { handle: list }, limit: list.length });
-    await this.cache.set(key, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, rows, this.ttl);
     return rows;
   }
 
@@ -612,7 +689,7 @@ export class StorefrontData {
       order: fs ? fs.order : articleOrderParam(sort),
       limit: STORE_ARTICLES_MAX,
     });
-    await this.cache.set(cacheKey, rows, STOREFRONT_CACHE_TTL);
+    await this.cache.set(cacheKey, rows, this.ttl);
     return rows;
   }
 
@@ -627,7 +704,7 @@ export class StorefrontData {
     if (hit) return hit.article;
     const rows = await this.db.from<ArticleRow>("articles").select("*", { eq: { shop_id: shop.id, blog_id: blogId, handle, published: true }, limit: 1 });
     const article = rows[0] ?? null;
-    await this.cache.set(key, { article }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { article }, this.ttl);
     return article;
   }
 
@@ -649,7 +726,7 @@ export class StorefrontData {
     if (hit) return hit.product;
     const raw = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
     const product = raw && typeof raw === "object" ? raw : null;
-    await this.cache.set(key, { product }, STOREFRONT_CACHE_TTL);
+    await this.cache.set(key, { product }, this.ttl);
     return product;
   }
 
@@ -658,26 +735,37 @@ export class StorefrontData {
     if (this.reader) {
       const r = (await this.reader.get(slug)) as { product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[]; purchasable?: boolean } | null;
       if (!r || !r.product) return null;
-      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], purchasable: r.purchasable !== false };
+      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(shop, r.product, r.purchasable !== false, await this.saleDatesFor([r.product])) };
     }
-    // product_public_get（0055。attributes は公開の項目だけ）
+    // 0164 から: 商品・画像・SKU と在庫・ゲストに見せる会員価格を 1 回で（product_public_page。会員の経路と同じ形）
+    if (await this.migratedTo(PRODUCT_PAGE_MIGRATION)) {
+      const r = await this.db.rpc<{ product?: ProductRow; images?: ProductImageRow[]; skus?: SkuWithStock[] } | null>("product_public_page", { p_shop_id: shop.id, p_slug: slug });
+      if (!r || typeof r !== "object" || !r.product) return null;
+      return { product: r.product, images: r.images ?? [], skus: r.skus ?? [], ...saleOf(shop, r.product, guestAudienceOk(r.product), await this.saleDatesFor([r.product])) };
+    }
+    // 0164 の前: product_public_get（0055。attributes は公開の項目だけ）→ 画像・SKU → 在庫・会員価格
     const product = await this.db.rpc<ProductRow | null>("product_public_get", { p_shop_id: shop.id, p_slug: slug });
     if (!product || typeof product !== "object") return null;
-    // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）
-    const [images, [skus, inventory]] = await Promise.all([
+    // 在庫はこの商品の SKU の分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた SKU が在庫 0 に見える）。
+    // 在庫とゲストに見せる会員価格は SKU がそろった時点で並べて、発売前の判定（版の確認）は商品行だけで決まるので最初から並べて引く
+    const [images, [skus, inventory, member], saleDates] = await Promise.all([
       this.db.from<ProductImageRow>("product_images").select("*", { eq: { product_id: product.id }, order: "sort_order.asc" }),
       this.db
         .from<SkuRow>("skus")
         .select("*", { eq: { product_id: product.id }, order: "created_at.asc" })
-        .then(async (skus) => [skus, await this.inventoryOf(shop, skus.map((s) => s.id))] as const),
+        .then(async (skus) => {
+          const ids = skus.map((s) => s.id);
+          const [inventory, member] = await Promise.all([this.inventoryOf(shop, ids), this.memberPricesFor(shop, ids)]);
+          return [skus, inventory, member] as const;
+        }),
+      this.saleDatesFor([product]),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
-    const member = await this.memberPricesFor(shop, skus.map((s) => s.id));
     return {
       product,
       images,
       skus: skus.map((s) => ({ ...s, available: stock.get(s.id) ?? 0, ...(member.has(s.id) ? { member_price_jpy: member.get(s.id)! } : {}) })),
-      purchasable: guestPurchasable(product),
+      ...saleOf(shop, product, guestAudienceOk(product), saleDates),
     };
   }
 
@@ -719,8 +807,8 @@ export class StorefrontData {
   }
 
   /** カート表示用: SKU 行 + 商品 + 在庫（公開中のものだけ返る） */
-  async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, { sku: SkuWithStock; product: ProductRow; purchasable: boolean }>> {
-    const out = new Map<string, { sku: SkuWithStock; product: ProductRow; purchasable: boolean }>();
+  async skusForCart(shop: PublicShop, skuIds: string[]): Promise<Map<string, CartSkuHit>> {
+    const out = new Map<string, CartSkuHit>();
     if (skuIds.length === 0) return out;
     // カートの分だけ引く（ショップ全体を読むと 1,000 行の上限で外れた商品がカートから消える）
     const ids = [...new Set(skuIds)].filter((id) => UUID_RE.test(id)).slice(0, 100);
@@ -729,19 +817,27 @@ export class StorefrontData {
     // 会員: SKU・商品・在庫・買えるかを 1 回で（0098）
     if (this.reader) {
       const rows = (await this.reader.skus(ids)) as { sku: SkuWithStock; product: ProductRow; purchasable: boolean }[] | null;
-      for (const r of Array.isArray(rows) ? rows : []) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, purchasable: r.purchasable !== false });
+      const list = Array.isArray(rows) ? rows : [];
+      const saleDates = await this.saleDatesFor(list.map((r) => r.product));
+      for (const r of list) if (wanted.has(r.sku.id)) out.set(r.sku.id, { sku: r.sku, product: r.product, ...saleOf(shop, r.product, r.purchasable !== false, saleDates) });
       return out;
     }
-    const skus = await this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } });
+    const [skus, released, storeOnly] = await Promise.all([
+      this.db.from<SkuRow>("skus").select("*", { eq: { shop_id: shop.id }, in: { id: ids } }),
+      // 発売日（0146）・店頭のみ（0149）は当たっていれば読む（発売前は買えない判定は 0148 から。saleDatesFor）
+      this.migratedTo("0146_product_released_at"),
+      this.migratedTo("0149_product_store_only"),
+    ]);
     const [inventory, products] = await Promise.all([
       this.inventoryOf(shop, skus.map((s) => s.id)),
-      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(`${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode`, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
+      skus.length === 0 ? [] : this.db.from<ProductRow>("products").select(`${PUBLIC_PRODUCT_COLUMNS},audience_id,audience_mode${released ? ",released_at" : ""}${storeOnly ? ",store_only" : ""}`, { eq: { shop_id: shop.id, published: true }, in: { id: [...new Set(skus.map((s) => s.product_id))] } }),
     ]);
     const stock = new Map(inventory.map((i) => [i.sku_id, i.available]));
     const byProduct = new Map(products.map((p) => [p.id, p]));
+    const saleDates = await this.saleDatesFor(products);
     for (const s of skus) {
       const product = byProduct.get(s.product_id);
-      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, purchasable: guestPurchasable(product) });
+      if (wanted.has(s.id) && product) out.set(s.id, { sku: { ...s, available: stock.get(s.id) ?? 0 }, product, ...saleOf(shop, product, guestAudienceOk(product), saleDates) });
     }
     return out;
   }
@@ -756,6 +852,13 @@ export const PRODUCT_PAGE_MAX = 100;
 export interface ProductQuery {
   /** このタグを持つ商品だけ（完全一致） */
   tag?: string;
+  /** これらのタグをすべて持つ商品だけ（tag と合わせる、5 つまで。0150、src/storefront/list-filter.ts） */
+  tags?: readonly string[];
+  /** 一覧の価格（いちばん安い SKU の価格、円）の下限・上限（0150） */
+  priceMin?: number;
+  priceMax?: number;
+  /** 在庫のある SKU の選択肢（鍵 → 値。同じ鍵はどれか、鍵どうしはすべて。0153） */
+  options?: Readonly<Record<string, readonly string[]>>;
   /** このカテゴリー（slug）と、その子孫のカテゴリーの商品だけ。categories を渡すこと */
   category?: string;
   /** このブランドの商品だけ（完全一致） */
@@ -780,8 +883,6 @@ export interface FeedCatalogRows {
 
 /** offset で辿れる上限（それより先は cursor）。product_public_list と同じ */
 export const PRODUCT_OFFSET_MAX = 10000;
-/** 絞り込み（タグ・カテゴリー・ブランド）無しで受け付ける検索の語の文字数の下限（pg_trgm のインデックスが効く長さ） */
-export const PRODUCT_SEARCH_MIN_CHARS = 3;
 /** 検索の語があるときの offset の上限 */
 export const PRODUCT_SEARCH_OFFSET_MAX = 1000;
 /** 一覧と一緒に返すタグの数（多い順） */
@@ -798,13 +899,26 @@ export interface ProductListPage {
   nextOffset: number | null;
   /** 次のページの cursor。最後のページなら null */
   nextCursor: string | null;
+  /** 0150 が当たる前で、タグ 2 つ以上・価格の絞り込みを使えなかった（最初のタグだけで絞った） */
+  filtersIgnored?: boolean;
+  /** 0153 が当たる前で、選択肢の絞り込みを使えなかった */
+  optionsIgnored?: boolean;
 }
 
 export interface ProductFacets {
   tags: { tag: string; count: number }[];
   /** カテゴリーの id → 公開中の商品の数（子孫を含む） */
   categories: Record<string, number>;
+  /** 公開の一覧に出る商品のいちばん高い一覧の価格（価格の欄の上限）。0150 から。無い（undefined）なら 0150 の前 */
+  price_max?: number | null;
+  /** 選択肢の鍵 × 値ごとの在庫のある公開の商品の数（0153 から。無ければ 0153 の前） */
+  options?: { key: string; value: string; count: number }[];
+  /** ブランドごとの公開の商品の数（多い順に 100 まで。0162 から。無ければ 0162 の前） */
+  brands?: { brand: string; count: number }[];
 }
+
+/** ゲストの商品ページを 1 回で読む関数（product_public_page） */
+export const PRODUCT_PAGE_MIGRATION = "0164_product_public_page";
 
 /** 本文の「商品を並べる」で選べる商品の数（1 ページの全部のブロックの合計。0112 の product_public_pick と同じ） */
 export const PRODUCT_PICK_MAX = 100;
@@ -812,7 +926,7 @@ export const PRODUCT_PICK_MAX = 100;
 export const STORE_ARTICLES_MAX = 300;
 
 const summaryOf = (x: ListItem): ProductSummary => ({
-  product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at },
+  product: { id: x.id, slug: x.slug, name: x.name, tags: x.tags ?? [], category_id: x.category_id, extra_category_ids: x.extra_category_ids ?? [], brand: x.brand, created_at: x.created_at, updated_at: x.updated_at, released_at: x.released_at ?? null },
   image: x.image,
   minPrice: x.min_price_jpy,
   compareAt: x.compare_at_price_jpy,

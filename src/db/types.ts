@@ -58,6 +58,14 @@ export interface ProductRow {
   /** 0098。会員の条件（null = だれでも）と扱い（hide 見せない / buy 見せるが買えない）、存在も隠すか */
   audience_id?: string | null;
   audience_mode?: "hide" | "buy";
+  /** 0146。発売日（任意）。新着順とテーマの「新しい商品」はこの日、無ければ created_at */
+  released_at?: string | null;
+  /** 0148。公開日（非公開の商品をこの日時に公開する予約。公開している商品には残らない） */
+  publish_at?: string | null;
+  /** 0149。店頭のみ（ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める） */
+  store_only?: boolean;
+  /** 検索用のキーワード（0163。お客様には見せない） */
+  search_keywords?: string | null;
   audience_hide?: boolean;
   published: boolean;
   created_at: string;
@@ -134,7 +142,13 @@ export interface OrderRow {
   id: string;
   shop_id: string;
   reservation_id: string | null;
-  status: "paid" | "shipped" | "cancelled" | "refunded";
+  /** pending（受付・未入金、0156）→ shipped。paid は「お支払い済みで受付」 */
+  status: "pending" | "paid" | "shipped" | "cancelled" | "refunded";
+  /** お支払いの状態（0156。それより前の DB の行には無い = 入金済み） */
+  payment_status?: "paid" | "unpaid";
+  paid_at?: string | null;
+  /** 取り消しの理由（refused = 受け取り拒否、0156） */
+  cancel_reason?: string | null;
   total_jpy: number;
   customer_email: string | null;
   customer_name: string | null;

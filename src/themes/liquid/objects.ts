@@ -5,6 +5,7 @@
  * - 作るのはただのオブジェクト（テーマは自前のプロパティだけを読める）。テーマに渡すのは公開してよい値だけ
  *   （在庫の数・原価・非公開の独自項目は渡さない。在庫は「あるか」だけ）
  */
+import { loginUrlFor } from "../../members/return-path";
 import { moduleEnabled } from "../../modules/registry";
 import type { ProductField } from "../../products/fields";
 import { LIST_SORT_OPTIONS } from "../../storefront/list-sort";
@@ -24,7 +25,9 @@ import { Drop } from "liquidjs/dist/liquid.browser.mjs";
 import { swatchView, type OptionSwatches } from "../../products/option-swatches";
 import { displayOptionAxes } from "../../products/option-axes";
 import { categoryDescriptionHtml } from "../../products/category-media";
+import { comingSoon } from "../../products/sale";
 import { categoryUrl, productUrl, productsUrl } from "../../storefront/urls";
+import { komojuMethodButtonLabel } from "../../commerce/payment-fees";
 
 export const money = (jpy: number | null | undefined) => (jpy === null || jpy === undefined ? null : Math.round(jpy) * 100);
 
@@ -124,6 +127,10 @@ export function productFromSummary(u: UrlBase, p: ProductSummary) {
     options_with_values: [],
     created_at: p.product.created_at,
     updated_at: p.product.updated_at,
+    // 発売日（0146、無ければ null）と、Shopify の名前の published_at（発売日、無ければ作成日。「NEW」の札はこれで）
+    released_at: p.product.released_at ?? null,
+    published_at: p.product.released_at ?? p.product.created_at,
+    coming_soon: p.saleDates === true && comingSoon(p.product),
     // 一覧のカードの独自項目（0121。定義で card を付けた公開の項目だけが一覧に来る）
     ...productFieldsLiquid(u, p.attributes),
   };
@@ -152,7 +159,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
       // 会員価格（0099）: member_price はこの見る人に効く会員価格（会員）か、ゲストに見せる会員価格。regular_price は通常の価格
       member_price: s.regular_price_jpy !== undefined && s.regular_price_jpy > s.price_jpy ? money(s.price_jpy) : s.member_price_jpy !== undefined && s.member_price_jpy < s.price_jpy ? money(s.member_price_jpy) : null,
       regular_price: money(s.regular_price_jpy ?? s.price_jpy),
-      available: s.available > 0,
+      // カートに入れられない商品（会員限定・発売前など、src/products/sale.ts）は、在庫があっても false（テーマの「カートに入れる」を出さない）
+      available: s.available > 0 && (d.cartable ?? d.purchasable !== false),
       options: opts.filter((x): x is string => x !== null),
       option1: opts[0] ?? null,
       option2: opts[1] ?? null,
@@ -179,9 +187,14 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     compare_at_price_min: compare.length ? Math.min(...compare) : null,
     compare_at_price_max: compare.length ? Math.max(...compare) : null,
     // 会員限定で買えない商品（0098）は売り切れと同じに見せ、members_only でテーマが「会員の方だけ」を出せる
-    available: available.length > 0 && d.purchasable !== false,
+    // カートに入れられるか（店頭のみの商品はお店で試着が ON なら入る。0149）
+    available: available.length > 0 && (d.cartable ?? d.purchasable !== false),
     members_only: Boolean(p.audience_id),
     purchasable: d.purchasable !== false,
+    // 発売日の前（0148）。お店には見えるが買えない。「11月20日 発売」の文言はテーマが released_at で
+    coming_soon: d.purchase_block === "coming_soon",
+    // 店頭のみ（0149）。ネットでは買えない。お店で試着が ON ならカートに入れて試着を申し込める（available が true）
+    store_only: d.purchase_block === "store_only",
     vendor: p.brand ?? "",
     type: "",
     tags: p.tags ?? [],
@@ -215,6 +228,8 @@ export function productFromDetail(u: UrlBase, d: ProductDetail, selectedSku?: st
     first_available_variant: available[0] ?? null,
     created_at: p.created_at,
     updated_at: p.updated_at,
+    released_at: p.released_at ?? null,
+    published_at: p.released_at ?? p.created_at,
     // 商品の独自項目（公開のものだけ。値は product_public_get が公開の項目だけを返す）。{{ product.fields.material }}・
     // 定義の順に並べた field_list（key・label・type・value）
     ...productFieldsLiquid(u, p.attributes),
@@ -260,7 +275,32 @@ export function reviewsLiquid(r: ProductReviews | null) {
   };
 }
 
-export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; currentTags?: string[]; sortBy?: string }) {
+/**
+ * 価格の絞り込み（0150）の Liquid の形。Shopify の collection.filters の price_range と同じ名前。
+ * 値（min_value.value・max_value.value・range_max）はほかの金額と同じく最小の単位の 100 倍（`| money_without_currency` で円に）、URL の値は円。
+ * url_to_remove は価格だけを外した今の一覧の URL
+ */
+export function priceRangeFilter(p: { min?: number | undefined; max?: number | undefined; rangeMax: number | null; urlToRemove: string }) {
+  const active = p.min !== undefined || p.max !== undefined;
+  return {
+    label: t("store.price_filter_label"),
+    param_name: "filter.v.price",
+    type: "price_range",
+    presentation: null,
+    active_values: [],
+    inactive_values: [],
+    values: [],
+    false_value: null,
+    true_value: null,
+    min_value: { param_name: "filter.v.price.gte", value: money(p.min), active: p.min !== undefined, label: t("store.price_min") },
+    max_value: { param_name: "filter.v.price.lte", value: money(p.max), active: p.max !== undefined, label: t("store.price_max") },
+    range_max: money(p.rangeMax) ?? 0,
+    active,
+    url_to_remove: p.urlToRemove,
+  };
+}
+
+export function collectionObject(u: UrlBase, c: { handle: string; title: string; description?: string | null; image?: CategoryImage | null; products: unknown[]; count: number | null; allTags: string[]; allVendors?: string[]; currentTags?: string[]; sortBy?: string; filters?: unknown[] }) {
   const url = c.handle === "all" ? productsUrl(u.shopPath) : categoryUrl(u.shopPath, c.handle);
   return {
     id: c.handle,
@@ -277,11 +317,14 @@ export function collectionObject(u: UrlBase, c: { handle: string; title: string;
     all_tags: c.allTags,
     tags: c.allTags,
     current_tags: c.currentTags ?? [],
+    // ブランドの一覧（0162 から。公開の商品の多い順に 100 まで）
+    all_vendors: c.allVendors ?? [],
     // 並べ方（?sort_by= の Shopify の名前。src/storefront/list-sort.ts）。sort_options は Dawn などの並べ替えの選択肢
     sort_by: c.sortBy ?? "created-descending",
     default_sort_by: "created-descending",
     sort_options: LIST_SORT_OPTIONS.map((o) => ({ name: t(o.label), value: o.shopify })),
-    filters: [],
+    // 絞り込み（0150 から価格の price_range、0153 から選択肢、0162 からブランド。タグは current_tags と ?tag= のくり返し）
+    filters: c.filters ?? [],
   };
 }
 
@@ -320,7 +363,8 @@ export function shopObject(shop: PublicShop, home: string, intro: string | undef
 }
 
 /** coupons: 同梱モジュール coupons が ON か（ON のときだけ cart_coupon_url を渡す。Banto の名前で、Shopify には無い） */
-export function routesObject(shopPath: string, opts: { coupons?: boolean } = {}) {
+/** currentPath: 開いているページ（account_login_url はそこへ戻す ?return_to= を付ける。src/members/return-path.ts） */
+export function routesObject(shopPath: string, opts: { coupons?: boolean; currentPath?: string | undefined } = {}) {
   const root = shopPath || "/";
   return {
     ...(opts.coupons ? { cart_coupon_url: `${shopPath}/cart/coupon` } : {}),
@@ -335,9 +379,9 @@ export function routesObject(shopPath: string, opts: { coupons?: boolean } = {})
     search_url: productsUrl(shopPath),
     predictive_search_url: productsUrl(shopPath),
     account_url: `${shopPath}/account`,
-    account_login_url: `${shopPath}/account/login`,
+    account_login_url: loginUrlFor(shopPath, opts.currentPath),
     account_logout_url: `${shopPath}/account/logout`,
-    account_register_url: `${shopPath}/account/login`,
+    account_register_url: loginUrlFor(shopPath, opts.currentPath),
   };
 }
 
@@ -350,8 +394,16 @@ export interface CartDiscounts {
 }
 
 /** カートの決済手段の選択肢（cart.banto_payment_methods。{% form 'cart' %} の provider の欄に入れる id） */
-export function paymentMethodsObject(options: { stripe: boolean; komoju: boolean; amazon_pay: boolean }, label: (provider: "stripe" | "komoju" | "amazon_pay") => string): { id: string; name: string }[] {
-  return (["stripe", "komoju", "amazon_pay"] as const).filter((p) => options[p]).map((p) => ({ id: p, name: label(p) }));
+export function paymentMethodsObject(
+  options: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean; komoju_methods?: { type: string; name: string; fee: number | null }[] },
+  label: (provider: "stripe" | "komoju" | "amazon_pay" | "cod") => string,
+): { id: string; name: string; fee?: number | null }[] {
+  return (["stripe", "komoju", "amazon_pay", "cod"] as const)
+    .filter((p) => options[p] === true)
+    .flatMap((p): { id: string; name: string; fee?: number | null }[] =>
+      // 支払い方法の手数料（0170）: KOMOJU は種類ごと（id は komoju:<type>、fee は一律の手数料・段なら null）
+      p === "komoju" && options.komoju_methods ? options.komoju_methods.map((m) => ({ id: `komoju:${m.type}`, name: komojuMethodButtonLabel(m), fee: m.fee })) : [{ id: p, name: label(p) }],
+    );
 }
 
 /**
@@ -399,9 +451,12 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
       requires_shipping: true,
       // 在庫が足りない行（Banto の判定。確認画面へは進めない）
       available: !l.short,
+      // 店頭のみの商品（0149）。購入手続きには含めず、合計にも入れない（お店で試着で申し込む）
+      store_only: l.storeOnly === true,
     };
   });
-  const subtotal = items.reduce((n, x) => n + x.line_price, 0);
+  // 合計は購入手続きに進める行だけ（店頭のみの行は item_count には数えるが金額に入れない）
+  const subtotal = items.reduce((n, x) => n + (x.store_only ? 0 : x.line_price), 0);
   const discount = money(discounts?.discount ?? 0)!;
   return {
     item_count: items.reduce((n, x) => n + x.quantity, 0),
@@ -412,7 +467,9 @@ export function cartObject(u: UrlBase, lines: CartLine[], discounts: CartDiscoun
     total_price: Math.max(0, subtotal - discount),
     cart_level_discount_applications: (discounts?.applied ?? []).map((a) => ({ title: a.name, code: a.code, total_allocated_amount: money(a.amount_jpy), type: "discount_code", value_type: a.free_shipping ? "shipping" : "fixed_amount" })),
     discount_codes: [...(discounts?.applied ?? []).map((a) => ({ code: a.code, applicable: true })), ...(discounts?.rejected ?? []).map((r) => ({ code: r.code, applicable: false, banto_message: r.message }))],
-    requires_shipping: items.length > 0,
+    requires_shipping: items.some((x) => !x.store_only),
+    // 店頭のみの行があるか（0149。「この商品はお店で試着だけ」の知らせに）
+    has_store_only_items: items.some((x) => x.store_only),
     currency: { iso_code: "JPY" },
     note: null,
     attributes: {},

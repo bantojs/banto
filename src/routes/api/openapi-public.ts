@@ -37,8 +37,8 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       coupons: { type: ["object", "null"], description: "同梱モジュール coupons が OFF なら null。applied・rejected・discount_jpy・subtotal_after_discount_jpy" },
       tax_rate: int,
       tax_included: bool,
-      shipping: obj({ summary: str, free_over_jpy: nInt, remaining_for_free_jpy: nInt, by_prefecture: { type: ["object", "null"] } }),
-      payments: obj({ stripe: bool, komoju: bool, amazon_pay: bool }),
+      shipping: obj({ summary: str, free_over_jpy: nInt, viewer_free_over_jpy: { ...nInt, description: "見る人の送料無料の金額（0171）: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ。表示の目安（送料は quote で決まる）" }, member_free_applies: { type: "boolean", description: "viewer_free_over_jpy が会員特典の金額か（0171）" }, remaining_for_free_jpy: { ...nInt, description: "viewer_free_over_jpy まであといくら" }, by_prefecture: { type: ["object", "null"] }, member_free: { type: "array", description: "会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ: [{ label, free_over_jpy }]" } }),
+      payments: obj({ stripe: bool, komoju: bool, amazon_pay: bool, cod: { ...bool, description: "代金引換（同梱モジュール cod）。金額・会員だけの判定は quote で" } }),
       delivery: { type: ["object", "null"], description: "配送日時の選択肢（同梱モジュール delivery_time）。dates[].value・slots[].value を配送先の delivery_date / delivery_slot に" },
       can_checkout: bool,
       member: { type: ["object", "null"], description: "会員トークンが有効なら { id }" },
@@ -56,18 +56,20 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
     },
     ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1"],
   );
-  const quoted = obj({ quote: { ...str, description: "購入者に見せた内容の署名。POST /checkout にそのまま渡す（1 回限り）" }, expires_at: str, confirmation: any("最終確認画面に表示する内容（特商法）。申込みボタンの直前に全部表示する。項目は docs/headless.md「2. 最終確認画面を表示する」") }, ["quote", "expires_at", "confirmation"]);
+  const quoted = obj({ quote: { ...str, description: "購入者に見せた内容の署名。POST /checkout にそのまま渡す（1 回限り）" }, expires_at: str, confirmation: any("最終確認画面に表示する内容（特商法）。申込みボタンの直前に全部表示する。項目は docs/headless.md「2. 最終確認画面を表示する」。shipping_free_reason（0171）: audience = 会員の条件による送料無料（会員特典）、threshold = ショップ全体の金額による送料無料、null = 送料がかかる（もともと 0 円を含む）") }, ["quote", "expires_at", "confirmation"]);
   const tokens = obj({ access_token: { ...str, description: "bm1. で始まる（15 分）。Authorization: Bearer に付ける" }, refresh_token: { ...str, description: "30 日。1 回使うごとに新しいものに置き換わる（使い回すとその端末のセッションが止まる）" }, expires_in: int }, ["access_token", "refresh_token", "expires_in"]);
   const loggedIn = { allOf: [tokens, obj({ member: obj({ id: str, email: str, created: bool }) })] };
   const store = any("実店舗。id・name・住所・hours（曜日ごと）・special_days・today・visit_dates（来店日を選ぶとき）など");
   const orderView = obj(
     {
       number: int,
-      status: { type: "string", enum: ["paid", "shipped", "cancelled", "refunded"] },
+      status: { type: "string", enum: ["pending", "paid", "shipped", "cancelled", "refunded"] },
+      payment_status: { type: "string", enum: ["paid", "unpaid"], description: "0156。未入金（代金引換など）なら unpaid" },
       created_at: str,
       shipped_at: nStr,
       total_jpy: int,
       shipping_jpy: int,
+      fee_jpy: { ...int, description: "代引き手数料（0157）" },
       discount_jpy: int,
       shipping_tax_rate: { type: ["number", "string", "null"] },
       tax_rounding: nStr,
@@ -90,6 +92,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       order_date: str,
       items: arr(obj({ name: str, sku: nStr, qty: int, unit_price_jpy: int, line_total_jpy: int, reduced: { ...bool, description: "軽減税率の対象（表示に ※ を付ける）" } })),
       shipping_jpy: int,
+      fee_jpy: { ...int, description: "代引き手数料（0157）" },
       discounts: arr(obj({ code: str, name: str, amount_jpy: int })),
       total_jpy: int,
       tax: arr(obj({ rate: { type: "number", description: "%。0 は非課税・不課税" }, amount_jpy: { ...int, description: "税込の対象額" }, tax_jpy: { ...int, description: "うち消費税額" } })),
@@ -159,10 +162,14 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           summary: "商品の一覧（公開中のものだけ）",
           parameters: [
             shopPath,
-            { name: "tag", in: "query", schema: str },
+            { name: "tag", in: "query", schema: { type: "array", items: str, maxItems: 5 }, style: "form", explode: true, description: "くり返すとすべてのタグを持つ商品（5 つまで。0150 から 2 つ以上）" },
+            { name: "filter.v.price.gte", in: "query", schema: { type: "integer", minimum: 0 }, description: "一覧の価格（いちばん安い SKU、円）の下限。0150 から" },
+            { name: "filter.v.price.lte", in: "query", schema: { type: "integer", minimum: 0 }, description: "一覧の価格の上限。0150 から" },
+            { name: "filter.v.option.color", in: "query", schema: { type: "array", items: str, maxItems: 10 }, style: "form", explode: true, description: "在庫のある SKU の選択肢（例は鍵 color。名前は filter.v.option.<英字の鍵> で、どの鍵でも同じ形。くり返すと同じ鍵はどれか、鍵どうしはすべて、鍵は 3 つまで）。0153 から" },
             { name: "category", in: "query", schema: str, description: "カテゴリーのスラッグ。子孫のカテゴリーと追加カテゴリーも含む" },
-            { name: "brand", in: "query", schema: str },
-            { name: "q", in: "query", schema: str, description: "3 文字から（2 文字以下は tag・category・brand と一緒のときだけ）" },
+            { name: "brand", in: "query", schema: str, description: "ちょうど同じ名前のブランドの商品だけ" },
+            { name: "filter.p.vendor", in: "query", schema: str, description: "brand と同じ（お店の画面・Shopify のテーマと同じ名前。brand があれば brand）" },
+            { name: "q", in: "query", schema: str, description: "空白で区切った語をすべて含む商品（5 語まで）。3 文字以上の語が無ければ tag・category・brand と一緒のときだけ" },
             { name: "updated_since", in: "query", schema: { type: "string", format: "date-time" } },
             { name: "sort", in: "query", schema: { type: "string", enum: ["new", "updated", "price_asc", "price_desc", "name"] } },
             { name: "limit", in: "query", schema: { type: "integer", minimum: 1, maximum: 100 } },
@@ -180,9 +187,13 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
                 next_offset: nInt,
                 next_cursor: nStr,
                 tags: arr(obj({ tag: str, count: int }), "ショップ全体のタグと件数（多い順に 200 件まで）"),
+                price_max: { ...nInt, description: "公開の一覧のいちばん高い一覧の価格（価格の絞り込みの欄の上限。0150 から）" },
+                options: arr(obj({ key: str, value: str, count: int }), "選択肢の鍵 × 値ごとの在庫のある商品の数（0153 から）"),
+                brands: arr(obj({ brand: str, count: int }), "ブランドごとの公開の商品の数（多い順に 100 まで、0162 から）"),
               }),
             ),
-            400: err("invalid_request（field: sort・updated_since・limit・offset・q・cursor）"),
+            400: err("invalid_request（field: tag・filter.v.price.gte・filter.v.price.lte・filter.v.option・filter.p.vendor・sort・updated_since・limit・offset・q・cursor）"),
+            409: err("migration_required（タグ 2 つ以上・価格の絞り込みは 0150 から、選択肢は 0153 から）"),
             ...common,
           },
         },
@@ -255,8 +266,8 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           summary: "カート + 配送先 → 最終確認の内容（confirmation）と quote",
           security: memberOptional,
           parameters: [shopPath],
-          requestBody: body(obj({ cart: str, provider: { type: "string", enum: ["stripe", "komoju", "amazon_pay"] }, address }, ["cart", "address"])),
-          responses: { 200: ok(quoted), 400: err("invalid_address（fields に不備の項目）・invalid_cart・invalid_request"), 401: err("invalid_member_token"), 409: err("empty_cart・stock・payment_unavailable・minimum_amount"), ...common },
+          requestBody: body(obj({ cart: str, provider: { type: "string", pattern: "^(stripe|komoju|amazon_pay|cod|komoju:[a-z_]{1,40})$", description: "決済手段。支払い方法の手数料を決めたショップ（0170、payments.komoju_methods がある）では KOMOJU は種類つき（komoju:konbini など）だけ" }, address }, ["cart", "address"])),
+          responses: { 200: ok(quoted), 400: err("invalid_address（fields に不備の項目）・invalid_cart・invalid_request"), 401: err("invalid_member_token"), 409: err("empty_cart・stock・payment_unavailable・minimum_amount・cod_unavailable（reason: fee・max_total・members_only）・payment_method（KOMOJU の種類が要る・使えない、0170）"), ...common },
         },
       },
       "/shops/{shop}/checkout": {
@@ -266,7 +277,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
           parameters: [shopPath],
           requestBody: body(obj({ quote: str, success_url: { ...str, description: "許可リスト（return_origins）のオリジンだけ" }, cancel_url: str }, ["quote"])),
           responses: {
-            200: ok(obj({ payment_url: str, free: { ...bool, description: "0 円の注文（その場で確定）" }, order_id: str, status_token: str, status_url: str }, ["payment_url"])),
+            200: ok(obj({ payment_url: str, free: { ...bool, description: "0 円の注文（その場で確定）" }, cod: { ...bool, description: "代金引換（受付・未入金でその場で確定。支払いは配達のとき）" }, order_id: str, status_token: str, status_url: str }, ["payment_url"])),
             400: err("invalid_quote（作り直す）"),
             401: err("invalid_member_token"),
             409: err("changed（新しい quote と confirmation つき。表示し直して押し直してもらう）・stock・coupon_unavailable・payment_unavailable"),
@@ -317,7 +328,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       "/shops/{shop}/members/logout-all": { post: { summary: "すべての端末からログアウト", security: member, parameters: [shopPath], responses: { 200: ok(obj({ ok: bool })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/sessions": { get: { summary: "ログイン中の端末の一覧", security: member, parameters: [shopPath], responses: { 200: ok(obj({ sessions: arr(any("id・端末の名前・作った時刻・最後に使った時刻・current")) })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/sessions/{id}/revoke": { post: { summary: "端末を 1 つ取り消す", security: member, parameters: [shopPath, { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } }], responses: { 200: ok(obj({ ok: bool })), 401: err("invalid_member_token"), 404: err("not_found"), 409: err("members_disabled"), 503: common[503] } } },
-      "/shops/{shop}/members/me": { get: { summary: "会員（名前・既定の住所・案内メールの同意）と注文の一覧（注文の住所は返さない）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ id: str, email: str, name: nStr, address: { type: ["object", "null"], description: "既定の住所（name・phone・postal_code・state・city・line1・line2・country）" }, marketing_consent: { type: ["boolean", "null"], description: "ショップが案内メールの欄を使うときだけ（null = 未回答）" }, orders: arr(obj({ number: int, status: str, total_jpy: int, shipping_jpy: int, discount_jpy: int, created_at: str, shipped_at: nStr })) })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
+      "/shops/{shop}/members/me": { get: { summary: "会員（名前・既定の住所・案内メールの同意）と注文の一覧（注文の住所は返さない）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ id: str, email: str, name: nStr, address: { type: ["object", "null"], description: "既定の住所（name・phone・postal_code・state・city・line1・line2・country）" }, marketing_consent: { type: ["boolean", "null"], description: "ショップが案内メールの欄を使うときだけ（null = 未回答）" }, orders: arr(obj({ number: int, status: str, total_jpy: int, shipping_jpy: int, fee_jpy: int, discount_jpy: int, created_at: str, shipped_at: nStr })) })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/address": { post: { summary: "既定の住所を保存する（会員ページと同じ。チェックアウトの欄の初期値）", security: member, parameters: [shopPath], requestBody: body(obj({ customer_name: str, phone: str, postal_code: str, state: { ...str, description: "都道府県（それ以外は null として保存）" }, city: str, line1: str, line2: str })), responses: { 200: ok(obj({ ok: bool, name: nStr, address: any("保存した住所") })), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/marketing-consent": { post: { summary: "案内メールを受け取る・受け取らない（会員本人の操作。ショップが欄を使うときだけ）", security: member, parameters: [shopPath], requestBody: body(obj({ consent: bool }, ["consent"])), responses: { 200: ok(obj({ ok: bool, marketing_consent: bool })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("consent_disabled・not_found") } } },
       "/shops/{shop}/members/favorites": {
@@ -325,12 +336,22 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
         post: { summary: "お気に入りに足す（on: true）・外す（on: false）。商品の id。200 個まで", security: member, parameters: [shopPath], requestBody: body(obj({ product_id: str, on: bool }, ["product_id", "on"])), responses: { 200: ok(obj({ ok: bool, product_id: str, favorite: bool })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), 409: err("favorites_full"), ...common, 404: err("not_found・module_disabled") } },
       },
       "/shops/{shop}/members/favorites/merge": { post: { summary: "連携サイトのブラウザに覚えたゲストのお気に入りを、ログインした会員へ移す（50 まで。見えない・重なる商品は捨てる）", security: member, parameters: [shopPath], requestBody: body(obj({ product_ids: { type: "array", items: str, maxItems: 50 } }, ["product_ids"])), responses: { 200: ok(obj({ ok: bool, merged: int })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } } },
+      "/shops/{shop}/members/news": {
+        get: { summary: "本人に見える会員へのお知らせ（同梱モジュール member_news、0155。新しい順・50 件まで）と未読の数。url は https か、/ で始まるお店の中のパス", security: member, parameters: [shopPath], responses: { 200: ok(obj({ items: { type: "array", items: obj({ id: str, title: str, body: str, url: { type: "string", nullable: true }, starts_at: str, read: bool }) }, unread: int })), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } },
+      },
+      "/shops/{shop}/members/news/read": { post: { summary: "お知らせを既読にする（ids は 50 件まで。無ければ今見えるものすべて）", security: member, parameters: [shopPath], requestBody: body(obj({ ids: { type: "array", items: str, maxItems: 50 } })), responses: { 200: ok(obj({ ok: bool, read: int })), 400: err("invalid_request"), 401: err("invalid_member_token・member_token_required"), ...common, 404: err("module_disabled・not_found") } } },
       "/shops/{shop}/members/withdraw": { post: { summary: "退会する（会員の行を消す。注文は残る。取り消せない）", security: member, parameters: [shopPath], requestBody: body(obj({ confirm: { type: "boolean", enum: [true] } }, ["confirm"])), responses: { 200: ok(obj({ ok: bool })), 400: err("confirm_required"), 401: err("invalid_member_token・member_token_required"), 409: err("members_disabled"), ...common } } },
       "/shops/{shop}/members/password-login": {
         post: { summary: "パスワードでログイン（ショップがパスワードを使うときだけ）", parameters: [shopPath], requestBody: body(obj({ email: str, password: str }, ["email", "password"])), responses: { 200: ok(loggedIn), 401: err("invalid_password"), 409: err("password_disabled"), 429: err("locked"), ...common } },
       },
       "/shops/{shop}/members/password": {
         post: { summary: "パスワードを決める・変える（ログインしてから 15 分以内。ほかの端末はログアウト）", security: member, parameters: [shopPath], requestBody: body(obj({ password: { type: "string", minLength: 8, maxLength: 200 } }, ["password"])), responses: { 200: ok(tokens, "この端末の新しいトークン"), 400: err("weak_password"), 401: err("invalid_member_token"), 403: err("reauth（ログインし直してから）"), 409: err("password_disabled"), ...common } },
+      },
+      "/shops/{shop}/members/email": {
+        post: { summary: "メールアドレスの変更を始める（ログインしてから 15 分以内。新しいアドレスに 6 桁のコード。使われているアドレス・回数の上限でも同じ応答。0166）", security: member, parameters: [shopPath], requestBody: body(obj({ email: str }, ["email"])), responses: { 202: ok(obj({ ok: bool })), 400: err("invalid_email・same_email"), 401: err("invalid_member_token・member_token_required"), 403: err("reauth_required（ログインし直してから）"), 409: err("members_disabled・migration_required"), 429: err("plan_limit_exceeded"), ...common } },
+      },
+      "/shops/{shop}/members/email/verify": {
+        post: { summary: "届いたコードでメールアドレスを変える（ほかの端末はログアウト。前後のアドレスに知らせる。0166）", security: member, parameters: [shopPath], requestBody: body(obj({ code: str }, ["code"])), responses: { 200: ok(obj({ ...tokens.properties, member: obj({ id: str, email: str }) }), "この端末の新しいトークン"), 400: err("invalid_code・expired"), 401: err("invalid_member_token・member_token_required"), 403: err("reauth_required（ログインし直してから）"), 409: err("unavailable（ほかの会員が使っている）・members_disabled・migration_required"), ...common } },
       },
       "/shops/{shop}/members/oauth/{provider}": {
         get: { summary: "LINE / Google のログインを始める（リダイレクト。戻ると return_to に引き換え券）", parameters: [shopPath, { name: "provider", in: "path", required: true, schema: { type: "string", enum: ["line", "google"] } }, { name: "return_to", in: "query", required: true, schema: str }], responses: { 302: { description: "提供元の同意画面へ" }, 400: err("invalid_return_to"), 409: err("provider_disabled"), 404: common[404] } },
@@ -343,8 +364,9 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       },
       "/shops/{shop}/members/orders/{number}": { get: { summary: "会員の注文 1 件（注文照会のページ。lookup_order と同じ形）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ order: orderView, receipt_available: bool })), 401: err("invalid_member_token・member_token_required"), 404: err("not_found（この会員の注文ではない）"), 409: err("members_disabled"), 503: common[503] } } },
       "/shops/{shop}/members/orders/{number}/receipt": { get: { summary: "会員の注文の領収書のデータ（同梱モジュール receipt）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ receipt })), 401: err("invalid_member_token・member_token_required"), 404: err("not_found・receipt_disabled"), 409: err("receipt_not_available（支払い済みでない）・members_disabled"), 503: common[503] } } },
-      "/shops/{shop}/members/tryon": { get: { summary: "会員の試着の申し込みの一覧（同梱モジュール「お店で試着」）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ requests: arr(any("number・status・店舗・来店日・商品・cancellable")) })), 401: err("invalid_member_token"), 404: err("tryon_disabled"), 409: err("members_disabled"), 503: common[503] } } },
+      "/shops/{shop}/members/tryon": { get: { summary: "会員の試着の申し込みの一覧（同梱モジュール「お店で試着」）", security: member, parameters: [shopPath], responses: { 200: ok(obj({ requests: arr(any("number・status・店舗・来店日・商品・cancellable・extendable・extend_left・extend_count（0151）")) })), 401: err("invalid_member_token"), 404: err("tryon_disabled"), 409: err("members_disabled"), 503: common[503] } } },
       "/shops/{shop}/members/tryon/{number}/cancel": { post: { summary: "試着の申し込みを取り消す", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ ok: bool })), 401: err("invalid_member_token"), 404: err("not_found・tryon_disabled"), 409: err("取り消せない状態"), 503: common[503] } } },
+      "/shops/{shop}/members/tryon/{number}/extend": { post: { summary: "取り置きの期限を延ばす（回数・日数はショップの設定、休みの日は次の営業日へ。0151）", security: member, parameters: [shopPath, { name: "number", in: "path", required: true, schema: int }], responses: { 200: ok(obj({ ok: bool, hold_until: str, extend_count: int })), 401: err("invalid_member_token"), 404: err("not_found・tryon_disabled"), 409: err("limit・not_extendable・changed（本文の hold_until と今の期限が違う）・migration_required"), 503: common[503] } } },
 
       "/shops/{shop}/stores": { get: { summary: "実店舗と試着の設定（同梱モジュール「お店で試着」）", security: memberOptional, parameters: [shopPath], responses: { 200: ok(obj({ stores: arr(store), tryon: obj({ mode: str, hold_days: int, max_items: int, notice: nStr }), today: str })), ...common } } },
       "/shops/{shop}/tryon": {
@@ -465,9 +487,13 @@ const OPERATION_IDS: Record<string, string> = {
   "get /shops/{shop}/members/favorites": "listMemberFavorites",
   "post /shops/{shop}/members/favorites": "setMemberFavorite",
   "post /shops/{shop}/members/favorites/merge": "mergeMemberFavorites",
+  "get /shops/{shop}/members/news": "listMemberNews",
+  "post /shops/{shop}/members/news/read": "readMemberNews",
   "post /shops/{shop}/members/withdraw": "withdrawMember",
   "post /shops/{shop}/members/password-login": "loginMemberWithPassword",
   "post /shops/{shop}/members/password": "setMemberPassword",
+  "post /shops/{shop}/members/email": "startMemberEmailChange",
+  "post /shops/{shop}/members/email/verify": "verifyMemberEmailChange",
   "get /shops/{shop}/members/oauth/{provider}": "startMemberOAuth",
   "get /shops/{shop}/members/passkey": "startMemberPasskey",
   "post /shops/{shop}/members/passkey/add": "startMemberPasskeyAdd",
@@ -475,6 +501,7 @@ const OPERATION_IDS: Record<string, string> = {
   "get /shops/{shop}/members/orders/{number}/receipt": "getMemberOrderReceipt",
   "get /shops/{shop}/members/tryon": "listMemberTryonRequests",
   "post /shops/{shop}/members/tryon/{number}/cancel": "cancelMemberTryonRequest",
+  "post /shops/{shop}/members/tryon/{number}/extend": "extendMemberTryonRequest",
   "get /shops/{shop}/stores": "listStores",
   "post /shops/{shop}/tryon": "createTryonRequest",
   "get /shops/{shop}/inquiries/config": "getInquiryConfig",

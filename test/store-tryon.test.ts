@@ -356,6 +356,24 @@ describe("お店で試着（お知らせの文）", () => {
     const full = buildTryonMails("tryon.updated", { ...contact, shop: { ...contact.shop, storefront: { mode: "full", site_url: "https://wp.example.com/" } } }, BASE)[0]!;
     expect(full.text).toContain(`${BASE}/my-shop`);
   });
+  it("品目: SKU の選択肢を表示名で（0147、品番つき）。選択肢の無い SKU と古い DB の形は今までどおり", () => {
+    const withOpts = {
+      ...contact,
+      shop: { ...contact.shop, option_names: { color: "カラー", size: "サイズ" } },
+      items: [
+        // DB の jsonb は鍵を短い順に返す（size が先）。商品の軸の順（color → size）に並べ直す
+        { name: "Tシャツ", sku: "ネイビー / M", code: "TEE-NV-M", options: { size: "M", color: "ネイビー" }, axes: [{ key: "color" }, { key: "size" }], qty: 1, unit_price_jpy: 3000 },
+        // 名前に選択肢に無い情報があれば添える。null・オブジェクトの値は出さない
+        { name: "パーカー", sku: "限定カラー", code: "HD-1", options: { color: "赤", size: null, x: { a: 1 } }, axes: null, qty: 1, unit_price_jpy: 5000 },
+        { name: "トート", sku: "TOTE-1", code: "TOTE-1", options: {}, qty: 2, unit_price_jpy: 2000 },
+      ],
+    };
+    const text = buildTryonMails("tryon.updated", withOpts, BASE)[0]!.text;
+    expect(text).toContain("・Tシャツ / カラー: ネイビー・サイズ: M（品番 TEE-NV-M） × 1");
+    expect(text).toContain("・トート / TOTE-1 × 2");
+    expect(text).toContain("・パーカー / 限定カラー カラー: 赤（品番 HD-1） × 1");
+    expect(buildTryonMails("tryon.updated", contact, BASE)[0]!.text).toContain("・Tシャツ / M × 1");
+  });
   it("LINE: 受付・取り置き開始・取り消しだけ", () => {
     const r = { number: 7, status: "ready", hold_until: "2026-10-24", store_name: "渋谷店", shop_name: "マイショップ" };
     expect(tryonLineMessage("tryon.updated", r)).toContain("10月24日まで");

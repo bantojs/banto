@@ -124,6 +124,11 @@ describe.skipIf(!dbAvailable)("お店で試着（0025_store_tryon）", () => {
     expect(await asService(async (c) => (await c.query<{ n: number }>("select tryon_expire('2026-10-21') as n")).rows[0]!.n)).toBe(1);
     const ct = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select tryon_contact($1, $2) as r", [r.id, f.shopId])).rows[0]!.r);
     expect(ct).toMatchObject({ number: 2, status: "expired", customer_email: "buyer@example.com", store: { name: "渋谷店", email: "shibuya@example.com", notify_email: true }, items: [{ qty: 1 }] });
+    // 0147: 品目に品番と SKU の選択肢、ショップに選択肢の表示名
+    const code = (await getPool().query<{ code: string }>("select code from skus where id = $1", [f.skuId])).rows[0]!.code;
+    expect((ct["items"] as Record<string, unknown>[])[0]).toMatchObject({ code, options: expect.any(Object) });
+    expect((ct["items"] as Record<string, unknown>[])[0]).toHaveProperty("axes");
+    expect(ct["shop"]).toHaveProperty("option_names");
     expect(await expectDbError(() => asAnon((c) => c.query("select tryon_contact($1, $2)", [r.id, f.shopId])))).toMatch(/permission denied/);
     await getPool().query("update tryon_requests set closed_at = now() - interval '200 days' where id = $1", [r.id]);
     expect(await asService(async (c) => (await c.query<{ n: number }>("select mask_tryon_requests(180) as n")).rows[0]!.n)).toBe(1);
@@ -138,5 +143,17 @@ describe.skipIf(!dbAvailable)("お店で試着（0025_store_tryon）", () => {
     await pool.query(update);
     const events = (await pool.query<{ events: string[] }>("select events from hook_endpoints where shop_id = $1", [other.shopId])).rows[0]!.events;
     expect(events.sort()).toEqual(["order.paid", "order.shipped", "tryon.requested", "tryon.updated"]);
+  });
+
+  it("店頭のみの商品（0149）は申し込める。発売前の商品（0148）は申し込めない", async () => {
+    const pool = getPool();
+    await pool.query("update products set store_only = true where id = $1", [f.productId]);
+    const r = await request([{ sku_id: f.skuId, qty: 1 }]);
+    expect(r.number).toBeGreaterThan(0);
+    await pool.query("update tryon_requests set status = 'cancelled', closed_at = now() where id = $1", [r.id]);
+    await pool.query("update inventory set available = available + 1 where sku_id = $1", [f.skuId]);
+    await pool.query("update products set store_only = false, released_at = now() + interval '1 day' where id = $1", [f.productId]);
+    expect(await expectDbError(() => request([{ sku_id: f.skuId, qty: 1 }]))).toMatch(/not_available|invalid_items|sku/);
+    await pool.query("update products set released_at = null where id = $1", [f.productId]);
   });
 });

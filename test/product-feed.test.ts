@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, MemoryStorage, appWith, memoryAdapters } from "./helpers";
 import { buildFeed, feedXml, type FeedCatalog } from "../src/modules/product-feed/feed";
+import { JobRegistry, runScheduledJobs } from "../src/adapters/scheduler";
 import { registerJobs } from "../src/jobs";
 import { jsonLdText, productJsonLd } from "../src/storefront/structured-data";
 import type { ProductRow, SkuRow } from "../src/db/types";
@@ -122,6 +123,18 @@ describe("商品フィードのモジュール（product_feed）", () => {
     expect(await (await admin.get(`/admin/shops/${shop.id}/modules/product-feed`)).text()).toContain("載せた商品 1 件");
   });
 
+  it("Cron（Workers の Free、通信の上限 50）でも作る（その回の通信の予算の見積もりで止まらない）", async () => {
+    const { sb, shop, storage } = setup({ product_feed: true });
+    const adapters = memoryAdapters({ SUPABASE_URL: sb.url, SUPABASE_ANON_KEY: sb.anonKey, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, PUBLIC_BASE_URL: BASE, SESSION_SECRET: "test-session-secret" }, storage);
+    adapters.cronSubrequestLimits = { free: 50, paid: 1000 };
+    const reg = new JobRegistry();
+    adapters.scheduler = { register: (n, j, o) => reg.register(n, j, o), runAll: async () => void (await runScheduledJobs(reg.list(), () => undefined)) };
+    registerJobs(adapters, { fetch: sb.fetch });
+    await adapters.scheduler.runAll();
+    expect(storage.objects.has(`feeds/${shop.id}/meta.json`)).toBe(true);
+    expect(sb.heartbeats.has("cron")).toBe(true);
+  });
+
   it("Cron: モジュールが ON のショップだけ作る。1 時間以内なら作り直さない", async () => {
     const { sb, shop, storage } = setup({ product_feed: true });
     const off = sb.addShop(sb.tables.shops[0]!["owner_id"] as string, { slug: "off", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
@@ -184,5 +197,17 @@ describe("商品フィードのモジュール（product_feed）", () => {
     expect((await new Browser(app).get("/my-shop/feed/products.xml")).status).toBe(404);
     const admin = await Browser.loggedIn(app, "o@example.com", "password-123");
     expect((await admin.get(`/admin/shops/${shop.id}/modules/product-feed`)).status).toBe(404);
+  });
+
+  it("発売前の商品（0148）は在庫があっても out_of_stock。0148 を当てる前は在庫のとおり", () => {
+    const cat: FeedCatalog = {
+      products: [product({ released_at: "2999-01-01T00:00:00Z" })],
+      skus: [sku({})],
+      inventory: [{ sku_id: "k1", available: 3 }] as FeedCatalog["inventory"],
+      images: [{ id: "i1", shop_id: "s", product_id: "p1", storage_key: "a.webp", thumb_key: null, width: null, height: null, sort_order: 0, created_at: now }],
+      categories: [],
+    };
+    expect(buildFeed({ ...cat, saleDates: true }, target).items[0]!.availability).toBe("out_of_stock");
+    expect(buildFeed(cat, target).items[0]!.availability).toBe("in_stock");
   });
 });

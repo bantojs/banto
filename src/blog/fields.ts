@@ -9,8 +9,6 @@ import { getTimeZone, zonedInputToIso } from "../i18n/time";
 import type { Filter } from "../db/client";
 
 export const ARTICLE_FIELDS_MAX = 20;
-/** 日付・日時の種類と、その順での並べ替え・今日以降だけ（0124、メンテナの決定 2026-11-07）。当てるまで定義に書かせない */
-export const ARTICLE_FIELD_DATES_MIGRATION = "0124_article_field_dates";
 export const ARTICLE_FIELD_TYPES = ["text", "number", "select", "store", "product", "article", "image", "date", "datetime"] as const;
 export type ArticleFieldType = (typeof ARTICLE_FIELD_TYPES)[number];
 
@@ -62,14 +60,14 @@ export function articleFieldDefs(blog: { article_fields?: unknown }): ArticleFie
  *       author | 書いた人 | article | staff
  *       items | 着用アイテム | products
  */
-export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[], opts: { dates?: boolean } = {}): { defs: ArticleFieldDef[]; error: string | null } {
+export function parseArticleFieldRows(input: string, blogs: { id: string; handle: string }[]): { defs: ArticleFieldDef[]; error: string | null } {
   const defs: ArticleFieldDef[] = [];
   for (const line of input.replace(/\r\n?/g, "\n").split("\n")) {
     if (!line.trim()) continue;
     const [key = "", label = "", typeRaw = "", extra = ""] = line.split("|").map((x) => x.trim());
     const plural = typeRaw === "products" || typeRaw === "articles";
     const type = (plural ? typeRaw.slice(0, -1) : typeRaw) as ArticleFieldType;
-    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key) || ((type === "date" || type === "datetime") && opts.dates !== true)) return { defs, error: line };
+    if (!KEY.test(key) || !ARTICLE_FIELD_TYPES.includes(type) || defs.some((f) => f.key === key)) return { defs, error: line };
     const def: ArticleFieldDef = { key, label: (label || key).slice(0, 60), type };
     if (type === "select") {
       def.options = extra.split("/").map((x) => x.trim()).filter(Boolean).slice(0, 50);
@@ -147,8 +145,6 @@ export interface FieldSort {
   /** いつまで出すかの項目（終了日、0125）。値のある記事はこの項目で、無い記事は key で「今日以降」を決める（from があるときだけ） */
   until?: { key: string; from: string } | null;
 }
-/** ブログの並び順を日付の項目の順に・いつまで出すかの項目（0125）。当てるまで出さない */
-export const BLOG_DATE_ORDER_MIGRATION = "0125_blog_date_order";
 
 /** ブログの定義に日付・日時の項目 key があれば並べ方を作る（無ければ null = 何も並べない）。今日はデプロイの時間帯で決める */
 export function fieldSortOf(blog: { article_fields?: unknown }, key: string, fromToday: boolean, now: number = Date.now(), untilKey: string | null = null): FieldSort | null {

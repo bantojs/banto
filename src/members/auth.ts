@@ -36,6 +36,8 @@ async function hmacHex(secret: string, purpose: string, value: string): Promise<
 /** コード・トークン・IP の HMAC（用途ごとに鍵を分ける） */
 export const codeHash = (secret: string, code: string) => hmacHex(secret, "code", code);
 export const linkHash = (secret: string, token: string) => hmacHex(secret, "link", token);
+/** メールアドレスの変更の確かめのコード（0166。ログインのコードとは別の用途の鍵で HMAC） */
+export const emailChangeCodeHash = (secret: string, code: string) => hmacHex(secret, "email-change", code);
 export const ipHash = (secret: string, ip: string) => hmacHex(secret, "ip", ipBucket(ip));
 
 /**

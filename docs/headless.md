@@ -32,7 +32,7 @@ A と B では、特定商取引法の最終確認画面は Banto の画面が�
 ## 商品を読む（公開読み取り API）
 
 ```
-GET /api/shops/<shop>/products?category=<カテゴリーの slug>&brand=<ブランド>&tag=<タグ>&q=<語>&updated_since=<ISO 8601>&sort=<並び>&limit=<件数>&cursor=<次の位置>
+GET /api/shops/<shop>/products?category=<カテゴリーの slug>&brand=<ブランド>&tag=<タグ>&filter.v.price.gte=<円>&filter.v.price.lte=<円>&q=<語>&updated_since=<ISO 8601>&sort=<並び>&limit=<件数>&cursor=<次の位置>
 GET /api/shops/<shop>/products/<product_slug>
 GET /api/shops/<shop>/categories
 ```
@@ -41,8 +41,11 @@ GET /api/shops/<shop>/categories
 | --- | --- |
 | `category` | このカテゴリーと、その子孫のカテゴリーの商品だけ（主カテゴリーか追加カテゴリーのどれかが合えば出る）。存在しない slug なら 0 件 |
 | `brand` | このブランドの商品だけ（完全一致） |
-| `tag` | このタグを持つ商品だけ（完全一致）。タグは管理画面の商品編集、または AI 用 API で付ける |
-| `q` | 名前・ブランド・タグ・説明（先頭 300 文字）の部分一致（大文字小文字を区別しない、3〜100 文字）。2 文字以下の語（「帽子」など）は `tag`・`category`・`brand` のどれかと一緒のときだけ受け付けます（それ以外は 400、`field: "q"`, `reason: "too_short"`） |
+| `filter.p.vendor` | `brand` と同じ（お店の画面・Shopify のテーマと同じ名前。両方あれば `brand`。100 文字を超えたら 400、`field: "filter.p.vendor"`） |
+| `tag` | このタグを持つ商品だけ（完全一致）。くり返すと **すべてのタグを持つ商品**（`?tag=夏物&tag=セール`、5 つまで。6 つ以上は 400 `field: "tag"`）。タグは管理画面の商品編集、または AI 用 API で付ける |
+| `filter.v.option.<鍵>` | 在庫のある SKU の選択肢がこの値の商品だけ（0153。鍵は英字の鍵、くり返すと同じ鍵はどれか・鍵どうしはすべて、鍵は 3 つまで・値は 10 まで。超えたり読めない鍵は 400 `field: "filter.v.option"`）。名前は Shopify のテーマの絞り込みと同じです |
+| `filter.v.price.gte` / `filter.v.price.lte` | 一覧の価格（いちばん安い SKU の価格、税込の円。`min_price_jpy` と同じ）がこの値以上 / 以下の商品だけ。価格の無い商品は出ません。数でなければ 400（`field` はその名前）。名前は Shopify のテーマの絞り込みと同じです |
+| `q` | 名前・ブランド・タグ・説明（先頭 300 文字）の部分一致（大文字小文字を区別しない、100 文字まで）。空白（半角・全角）で語に分け、**すべての語を含む商品**を返します（5 語まで、6 語目からは使いません。0161）。3 文字以上の語が 1 つも無いとき（「帽子」「麻 黒」など）は `tag`・`category`・`brand` のどれかと一緒のときだけ受け付けます（それ以外は 400、`field: "q"`, `reason: "too_short"`）。3 文字以上の語があれば、短い語も一緒に使えます（「麻 シャツ」） |
 | `updated_since` | この時刻より後に更新された商品だけ。連携側でキャッシュを差分更新するときに使う |
 | `sort` | `new`（既定、登録の新しい順）/ `updated` / `price_asc` / `price_desc` / `name` |
 | `limit` | 1 ページの件数。既定・上限とも 100 |
@@ -67,6 +70,10 @@ GET /api/shops/<shop>/categories
 - `next_cursor` が `null` なら最後のページです。商品が多いショップでも速さが変わらないので、ページ送りは `cursor` を使ってください。`next_offset` は `offset` で辿っているときだけ（10,000 件まで）返ります。
 - `total` は絞り込み後の件数で、最初のページ（`cursor` も `offset` も無いとき）だけ 10,000 件まで数えます。超えたら `10000` と `total_capped: true` を返します。2 ページ目からは `null` です。
 - `tags` はショップ全体（絞り込み前、公開中の商品だけ）のタグと件数です（多い順に 200 件まで）。絞り込みボタンを並べるのに使えます。
+- `options` は選択肢の鍵 × 値ごとの在庫のある商品の数です（`[{ "key": "color", "value": "ネイビー", "count": 3 }]`、鍵ごとに多い順に 50 まで。0153 から。鍵の表示名はショップの `option_names`）。
+- `brands` はブランドごとの公開の商品の数です（`[{ "brand": "ACME", "count": 12 }]`、多い順に 100 まで。0162 から。当てる前は返しません）。
+- `price_max` は公開の一覧のいちばん高い一覧の価格です（価格の絞り込みの欄の上限に使えます。0150 から。商品が無ければ `null`）。
+- タグ 2 つ以上と価格の絞り込みは 0150 から、選択肢は 0153 から使えます。当てる前の DB では 409（`{"error": "migration_required"}`）を返し、絞らずに返すことはしません（タグ 1 つは今までどおり）。
 - `compare_at_price_jpy` は最安 SKU の通常価格です。`min_price_jpy` より高ければセール中として表示できます。
 - 詳細（`/products/<slug>`）は説明・画像（幅と高さつき）に加え、次を返します。
   - `brand`、`category`、`category_path`（最上位から主カテゴリーまで。パンくず用）、`extra_categories`（追加カテゴリー。主カテゴリーのほかに並ぶ棚）、`tags`、`updated_at`
@@ -84,6 +91,16 @@ GET /api/shops/<shop>/categories
 同梱テーマ（Banto のお店の画面）では、すべての商品が `/<shop>/products`、カテゴリーの一覧が `/<shop>/categories/<slug>` で、どちらにも `?tag=<タグ>`・`?q=<語>` を付けられます（docs/storefront.md「URL」）。商品ページにパンくず・ブランド・公開項目・タグのリンクが出ます。
 
 ---
+
+
+### 発売前の商品（Coming Soon、0148）
+
+商品の詳細と一覧に `coming_soon`（発売日の前か）と `released_at`（発売日）が入ります。発売前の商品は `purchasable` も false で、カートに入れると 403 `coming_soon` です（会員限定の 403 `members_only` と同じ形）。「11月20日 発売」のような文言は連携側で出してください。docs/storefront.md「発売日と公開日」。
+
+
+### 店頭のみの商品（0149）
+
+商品の詳細に `store_only`（店頭のみか）と `cartable`（カートに入れられるか。お店で試着が ON のショップの店頭のみの商品は true）が入ります。`purchasable` は false です。カートの行（`items`）には `store_only` が付き、`subtotal_jpy` には入りません。`can_checkout` と在庫不足の判定も、購入手続きに進める行だけで決めます（店頭のみの行だけなら `can_checkout` は false）。quote（`POST /api/shops/<ショップ>/checkout/quote`）は店頭のみの行を外し、外した SKU を `excluded` で返します（カートのトークンには残っています）。店頭のみの行だけなら 409 `store_only`。お店で試着が OFF のショップでカートに入れると 403 `store_only`。docs/storefront.md「店頭のみの商品」。
 
 ## A. 購入リンク
 
@@ -147,7 +164,7 @@ GET /api/shops/<shop>/cart?cart=<トークン>
   "subtotal_jpy": 6000,
   "tax_rate": 10,
   "tax_included": true,
-  "shipping": { "summary": "全国一律 ¥500", "free_over_jpy": 10000, "remaining_for_free_jpy": 4000, "by_prefecture": null },
+  "shipping": { "summary": "全国一律 ¥500", "free_over_jpy": 10000, "viewer_free_over_jpy": 10000, "member_free_applies": false, "remaining_for_free_jpy": 4000, "by_prefecture": null, "member_free": [] },
   "payments": { "stripe": true, "komoju": false },
   "delivery": { "dates": [{ "value": "2026-10-20", "label": "10月20日（火）" }], "slots": [{ "value": "am", "label": "午前中" }] },
   "can_checkout": true,
@@ -217,6 +234,7 @@ POST /api/shops/<shop>/checkout/quote
     "lines": [ { "sku_id": "…", "code": "TEE-M", "product_name": "Tシャツ", "sku_name": "M", "unit_price_jpy": 3000, "qty": 2, "line_total_jpy": 6000, "tax_rate": 10, "reduced": false } ],
     "subtotal_jpy": 6000,
     "shipping_jpy": 500,
+    "shipping_free_reason": null,
     "discounts": [{ "code": "TEN", "name": "10% オフ", "amount_jpy": 600 }],
     "discount_jpy": 600,
     "total_jpy": 5900,
@@ -243,7 +261,7 @@ POST /api/shops/<shop>/checkout/quote
 
 `total_jpy` が 0 のとき（クーポンで全額値引き・0 円の商品）は `payment.free: true` になり、`submit_label` は「注文を確定する」です。3 で決済ページへは行かずに注文が確定します。
 
-エラー: 400 `invalid_address`（`fields` に不備のある項目名）、400 `invalid_cart`、409 `empty_cart`、409 `stock`、409 `payment_unavailable`、409 `minimum_amount`（値引き後の支払額が 1〜49 円。決済の最低額は 50 円）。
+エラー: 400 `invalid_address`（`fields` に不備のある項目名）、400 `invalid_cart`、403 `member_required`（注文は会員だけのショップで会員トークンが無い。0165）、409 `empty_cart`、409 `stock`、409 `payment_unavailable`、409 `minimum_amount`（値引き後の支払額が 1〜49 円。決済の最低額は 50 円）。
 
 ### 2. 最終確認画面を表示する（連携側の責任）
 
@@ -294,6 +312,7 @@ Banto は確定の直前に、価格・送料・在庫・クーポンを **引�
 | status | `error` | 意味 |
 | --- | --- | --- |
 | 400 | `invalid_quote` | 署名が合わない・期限切れ（1 時間）・別ショップ。quote から作り直す |
+| 403 | `member_required` | 注文は会員だけのショップ（0165）で、会員トークンが無い。ログイン（その場で会員登録）に回す |
 | 409 | `changed` | 確認後に内容が変わった（上記） |
 | 409 | `stock` | 在庫が確保できなかった |
 | 409 | `coupon_unavailable` | 確定の瞬間にクーポンの枠が無くなった・回数の上限に達した（在庫も戻してある）。quote から作り直す |
@@ -358,6 +377,12 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 ほかのログインの方法（ショップの設定で有効なときだけ。`/members/config` の `login` に出ます）:
 
 - **パスワード**（`password`）: `POST /api/shops/<shop>/members/password-login` `{ "email", "password" }` → verify と同じ形のトークン。間違いが続くと 429 `locked`（コードでは入れる）。パスワードを決める・変えるのは `POST /api/shops/<shop>/members/password` `{ "password" }`（Bearer）→ 新しいトークンの組（ほかの端末はログアウト）。password-login に成功すると、会員に「パスワードでログインしました」のメールが毎回届きます（同梱テーマの画面では、初めての端末のときだけ。docs/members.md 3-2）。
+
+**メールアドレスの変更**（0166、どのログインの方法でも。docs/members.md「メールアドレスの変更」）: どちらも Bearer の会員トークンで、ログインしてから 15 分以内だけ。
+
+- `POST /api/shops/<shop>/members/email` `{ "email" }` → 202 `{ "ok": true }`。新しいアドレスに 6 桁のコードを送ります。ほかの会員が使っているアドレス・回数の上限のときも同じ応答です（送りません）。メールは応答の後に送るので、送れなかったときも 202 です（エラーにはなりません。届かなければもう一度呼んでもらいます）。コードは同じ会員トークンの組（同じセッション）からだけ使えます。
+- `POST /api/shops/<shop>/members/email/verify` `{ "code" }` → 新しいトークンの組と `member`（`{ id, email }`）。アドレスが変わり、ほかの端末はログアウトします（前のトークンも使えなくなるので、受け取った組で置き換えてください）。前後のアドレスに知らせのメールが届きます。
+- エラー: 403 `reauth_required`（15 分を過ぎた。ログインし直させる）・400 `invalid_email`・400 `same_email`・400 `invalid_code`（間違い。あと何回か試せる）・400 `expired`（期限切れ・5 回間違えた・送っていない。`/members/email` からやり直す）・409 `unavailable`（ほかの会員が使い始めた）・409 `migration_required`（データベースの更新 `0166_member_email_change` の前）・429 `plan_limit_exceeded`（1 日のメールの上限）・401 `invalid_member_token`。
 - **パスキー**（`passkey`。同梱モジュール passkey、ショップに独自ドメインがあるときだけ）: ブラウザで `GET /api/shops/<shop>/members/passkey?return_to=<許可リストの URL>` を開くと、**ショップのドメインの** パスキーの画面へ進み、ログインすると `<return_to>?banto_handoff=<券>` に戻ります。あとは LINE・Google と同じく `verify` `{ "handoff" }` でトークンに引き換えます。パスキーはショップのドメインに結びつくので、連携サイトの画面の上では使いません。
   - **パスキーの追加**（0070）: `POST /api/shops/<shop>/members/passkey/add` `{ "return_to": "<許可リストの URL>" }`（Bearer）→ `{ "url", "expires_in": 120 }`。会員のブラウザを `url`（ショップのドメインの追加の画面）へ送ると、ボタンを 2 回（続ける → この端末のパスキーを追加）押して、`<return_to>?banto_passkey=added` に戻ります。券は 2 分・1 回限りです。
   - 追加できるのは **ログインしてから 15 分以内の会員トークン** だけです（盗まれたトークンからパスキーを足して居座れないように。会員ページと同じ決まり）。過ぎていたら 403 `reauth`。login からやり直してもらってから呼んでください。追加すると、会員に「パスキーを追加しました」のメールが届きます。
@@ -380,6 +405,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 | 409 | `plan_limit_exceeded` | 初めての方の登録が、この Banto のプランの会員数の上限（0052）に達した（verify）。お店に知らせる |
 | 429 | `plan_limit_exceeded` | この Banto のプランの 1 日のメール（ログインのコード・招待）の上限（0053）に達した（login）。しばらくしてからやり直す |
 | 401 | `invalid_member_token` | トークンが確かめられない（期限切れ・改ざん・他店のトークン・全端末からログアウトした後）。refresh して呼び直す。黙ってゲスト扱いにはしない |
+| 403 | `member_required` | 注文は会員だけのショップ（0165）で、会員トークンを付けずに購入手続き（`/checkout/quote`・`/checkout`）を呼んだ。ログイン（初めてならその場で会員登録）に回す。ショップがそうかは `GET /api/shops/<ショップ>` の `shop.checkout_members_only` で分かる |
 | 401 | `invalid_refresh_token` | refresh できない（期限切れ・退会・ログアウト・全端末からログアウトした後・`0045` より前に発行した refresh）。login からやり直す |
 | 401 | `refresh_token_reused` | 前の refresh を使い回した。その端末のログインを取り消した。login からやり直す |
 | 502 | `mail_failed` | メールを送れなかった |
@@ -388,6 +414,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 - quote を作ったときと確定のときで会員が違う・トークンを外した場合は、判定し直して 409 `changed` で出し直します（会員限定の値引きは付きません）。
 - `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレス・名前・既定の住所（`address`）・案内メールの同意（`marketing_consent`。ショップが欄を使うときだけ、`null` は未回答）と、このショップでの注文の一覧（番号・状態・金額・日時。注文の住所は返さない）を返します。
 - **会員本人の操作**（会員ページと同じ。お店の画面を使わないショップでも、会員が自分で直せるように）:
+  - 会員トークンを付けた注文は、確定したときにお届け先を既定の住所に保存します（既定の住所がまだ無いとき。0159）。連携サイトのレジに、そのことを会員に知らせる文を出してください。既定の住所がある会員は、quote の `address.save_address` に true か `"1"` を渡したときだけ上書きします（`confirmation.save_address` が true）。
   - `POST /api/shops/<shop>/members/address` `{ "customer_name", "phone", "postal_code", "state", "city", "line1", "line2" }` で既定の住所を保存します（チェックアウトの欄の初期値になります。都道府県でない `state` は `null`）。
   - `POST /api/shops/<shop>/members/marketing-consent` `{ "consent": true | false }` で案内メールを受け取る・受け取らないを選びます。会員がログインして自分で選ぶので、受け取る（`true`）も本人の行為として記録します。ショップがこの欄を使っていなければ 404 `consent_disabled`。
   - `POST /api/shops/<shop>/members/withdraw` `{ "confirm": true }` で退会します（会員の行を消し、注文は残ります。取り消せません）。そのトークンはすぐ使えなくなります。注文 1 件の中身と領収書は `/members/orders/<番号>`（下の「注文照会・領収書」）。
@@ -410,7 +437,7 @@ POST /api/shops/<shop>/tryon   { "cart": "<カートのトークン>", "store": 
   - `tryon: false` の店舗は案内だけ（試着は受けません）。
   - 来店日を選ぶ形（`mode: "visit"`）のときは、試着を受ける店舗ごとに選べる日（`visit_dates`。定休日・臨時休業を除く）が付きます。
 - `/tryon` はカート API のトークンの中身を申し込みます。在庫はこの時点で減ります。応答は `201 { "number": 受付番号, "store": {…}, "visit_date", "cart": "<商品を外したトークン>", "member" }`。クーポンはカートに残します。
-- `Authorization: Bearer <会員トークン>` を付けると会員の申し込みになり、`GET /api/shops/<shop>/members/tryon` で一覧（`cancellable` つき）、`POST /api/shops/<shop>/members/tryon/<受付番号>/cancel` で取り消せます（取り置きが終わる前だけ。取り消しても在庫はショップの担当者が戻すまで戻りません）。
+- `Authorization: Bearer <会員トークン>` を付けると会員の申し込みになり、`GET /api/shops/<shop>/members/tryon` で一覧（`cancellable` つき）、`POST /api/shops/<shop>/members/tryon/<受付番号>/cancel` で取り消せます（取り置きが終わる前だけ。取り消しても在庫はショップの担当者が戻すまで戻りません）。取り置きの延長（0151、docs/store-tryon.md「取り置きの延長」）は一覧の `extendable`・`extend_left`・`extend_count` を見て `POST /api/shops/<shop>/members/tryon/<受付番号>/extend`（本文に一覧の今の期限 `{"hold_until": "2026-11-20"}` を添えると、すでに延びていたときは 409 `changed` で何もしません。送り直しで 2 回延ばさないために添えてください。返り値は `{ ok, hold_until, extend_count }`。回数を使い切った・延ばせる設定でない `limit`、取り置き中でない・期限を過ぎた `not_extendable` は 409、0151 を当てる前は 409 `migration_required`）。
 - 申し込みのお知らせ（お客様・店舗へのメール、LINE、hooks の `tryon.requested`）は、同梱テーマから申し込んだときと同じです。
 
 | status | `error` | 意味 |
@@ -436,7 +463,7 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 - **ゲストの注文**は、注文番号と注文時のメールアドレスで開きます（同梱テーマの注文照会と同じ）。合わなければ `404 not_found`（番号とアドレスのどちらが違ったかは返しません）。`order_token`（24 時間）は領収書と、この注文についてのお問い合わせ（`/inquiries` の `order_token`）にそのまま渡せます。
 - **会員の注文**は会員トークンで開きます（その会員の注文だけ。別の会員の注文・ゲストで買った注文は `404 not_found`）。ゲストで買った注文は会員に結びつけません（番号とメールアドレスで開いてください）。逆に、**会員として買った注文は番号とメールアドレスでは開けません**（`404 not_found`。0089。注文メールのリンクに `banto_member=1` が付くのはこのためです）。
 - `order` は `number` `status`（`paid` / `shipped` / `cancelled` / `refunded`）`created_at` `shipped_at` `total_jpy` `shipping_jpy` `discount_jpy` `discounts` `tracking`（`carrier` `number`）`items`（`name` `sku` `qty` `unit_price_jpy` `tax_rate`）など。**住所・メールアドレスは返しません。**
-- `receipt`（同梱モジュール receipt が ON で、支払い済み・発送済みの注文だけ。ほかは `409 receipt_not_available`、モジュールが OFF なら `404 receipt_disabled`）は、領収書（適格簡易請求書）の記載事項と計算結果です: `kind`（登録番号があれば `qualified_simplified_invoice`、無ければ `receipt`）`issuer` `invoice_number` `proviso`（但し書き）`issued_at` `number` `order_date` `items`（`line_total_jpy`、軽減税率の対象は `reduced: true`。表示に ※ を付けて凡例を添える）`shipping_jpy` `discounts` `total_jpy` `tax`（税率ごとの `rate` `amount_jpy`（税込の対象額）`tax_jpy`（うち消費税額））。**税の計算は Banto の結果をそのまま表示してください**（連携側で計算し直すと端数が合わなくなります）。宛名は購入者が連携側の画面で入れるものとして、Banto は受け取りません。
+- `receipt`（同梱モジュール receipt が ON で、支払い済み・発送済みの注文だけ。ほかは `409 receipt_not_available`、モジュールが OFF なら `404 receipt_disabled`）は、領収書（適格簡易請求書）の記載事項と計算結果です: `kind`（登録番号があれば `qualified_simplified_invoice`、無ければ `receipt`）`issuer` `invoice_number` `proviso`（但し書き）`issued_at` `number` `order_date` `items`（`line_total_jpy`、軽減税率の対象は `reduced: true`。表示に ※ を付けて凡例を添える）`shipping_jpy` `fee_jpy`（手数料。無ければ 0）`fee_label`（手数料の見出し。代金引換は「代引き手数料」、KOMOJU の支払い方法の手数料は「お支払い手数料」、手数料が無ければ `null`）`payment_provider`（`stripe` / `komoju` / `amazon_pay` / `cod` など）`discounts` `total_jpy` `tax`（税率ごとの `rate` `amount_jpy`（税込の対象額）`tax_jpy`（うち消費税額））。**税の計算は Banto の結果をそのまま表示してください**（連携側で計算し直すと端数が合わなくなります）。宛名は購入者が連携側の画面で入れるものとして、Banto は受け取りません。
 - 応答はキャッシュさせません（`Cache-Control: no-store`）。メールアドレスを URL に載せないため、ゲストの呼び出しは POST です。
 
 ### 会員ページを連携サイトに向ける
@@ -493,6 +520,24 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 - 外のページの中身が古い・違うこと、200 を返すエラー画面は見分けられません。外のページは 1 のやり方（API の本文を表示する）で作ることをおすすめします。
 
 ---
+
+## 注文のお支払いの状態（0156）
+
+注文照会（ゲストの `/orders/lookup`・会員の `/members/orders/:number`）の注文には `payment_status`（`paid` / `unpaid`）と `paid_at` が付きます。未入金（代金引換など）の注文は `status` が `pending`（受付）か `shipped` で、領収書は入金の後に出ます（docs/hooks.md「注文の状態とお支払いの状態」）。
+
+## 会員の条件ごとの送料無料（0171）
+
+詳しくは docs/audiences.md「会員の条件ごとの送料無料」。カートの `shipping.member_free`（`[{ label, free_over_jpy }]`）は、運営者が名前を付けた決まりだけです（会員の条件の名前・中身は出しません）。会員トークンを付けたカートは、その会員の「あと○円で送料無料」の目安を `shipping.viewer_free_over_jpy`・`member_free_applies`・`remaining_for_free_jpy` で返します（会員トークンに入っている独自項目で判定する目安。数分ずれることがあります）。当てはまるかは会員トークンの会員のデータベースの最新の独自項目で、quote の `confirmation.shipping_free_reason` が `audience` なら会員の条件による送料無料、`threshold` ならショップ全体の金額による送料無料です。会員トークンのカートでは `remaining_for_free_jpy` が `viewer_free_over_jpy`（見る人の金額）までの残りです（0171 から。`free_over_jpy` はショップ全体の金額のまま）。送料無料のクーポンが入っているかは `coupons.applied[].kind` の `free_shipping` で分かります（`remaining_for_free_jpy` はクーポンを見ません）。
+
+## 代金引換（同梱モジュール cod）
+
+支払い方法の手数料（0170、docs/plugins.md「KOMOJU」）を決めたショップでは、カートの `payments.komoju_methods`（`[{ type, name, fee }]`、`fee` は一律の手数料・段は `null`・手数料なしは `0`）に KOMOJU の種類が並びます。quote の `provider` には `komoju:<type>`（例 `komoju:konbini`）を送ります（`komoju` だけ・並んでいない種類は 409 `payment_method`）。quote の `confirmation.fee_jpy` と `fee_label`（「お支払い手数料」）、`confirmation.payment.type` が付き、決済ページは選んだ種類だけ・手数料込みです。
+
+`provider: "cod"` で quote を作ると、`confirmation.fee_jpy`（代引き手数料）と `confirmation.payment.cod: true` が付きます。確定（`POST /checkout`）は決済ページへ行かず、受付（未入金）の注文をその場で作って `{ payment_url（完了画面）, cod: true, order_id, … }` を返します。選べないときは quote が 409 `cod_unavailable`（`reason`: `fee` / `max_total` / `members_only`）。詳しくは docs/cod.md「ヘッドレス」。
+
+## 会員へのお知らせ（同梱モジュール member_news）
+
+会員トークンで、本人に見えるお知らせと未読の数を読み（`GET /api/shops/:shop/members/news`）、既読にできます（`POST …/members/news/read`、`{ ids?: [...] }`）。詳しくは docs/member-news.md「ヘッドレス」。
 
 ## お気に入り（同梱モジュール favorites）
 

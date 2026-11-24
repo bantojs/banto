@@ -111,9 +111,8 @@ describe("ブログの並び順を日付の項目の順に（article_order = fie
 });
 
 describe("部品", () => {
-  it("定義は当たるまで date / datetime を受けない。今日の下限はデプロイの時間帯", () => {
-    expect(parseArticleFieldRows("starts | 開催日 | date", []).error).toBe("starts | 開催日 | date");
-    expect(parseArticleFieldRows("starts | 開催日 | date\nopens | 開場 | datetime", [], { dates: true }).defs.map((d) => d.type)).toEqual(["date", "datetime"]);
+  it("定義は date / datetime を受ける。今日の下限はデプロイの時間帯", () => {
+    expect(parseArticleFieldRows("starts | 開催日 | date\nopens | 開場 | datetime", []).defs.map((d) => d.type)).toEqual(["date", "datetime"]);
     const blog = { article_fields: [{ key: "starts", label: "s", type: "date" }, { key: "opens", label: "o", type: "datetime" }, { key: "t", label: "t", type: "text" }] };
     const at = Date.UTC(2026, 10, 7, 16, 30); // 東京では 11/8 1:30
     expect(fieldSortOf(blog, "starts", true, at)).toEqual({ key: "starts", from: "2026-11-08" });

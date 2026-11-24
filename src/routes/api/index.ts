@@ -1,4 +1,5 @@
 import { eventsApi } from "../../modules/event-relay/routes";
+import { checkoutMembersOnly } from "../../commerce/checkout";
 import { CARE_MODULE, productCareView } from "../../care-labels/care";
 import { moduleEnabled } from "../../modules/registry";
 import { dialogsApi } from "../../modules/dialogs/api";
@@ -10,7 +11,9 @@ import { appDataOf, productReviews } from "../../apps/app-data";
 import { sizeChartJson, sizeChartOf } from "../../size-charts/chart";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
-import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_MIN_CHARS, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { searchTooShort } from "../../storefront/search-words";
+import { PRODUCT_OFFSET_MAX, PRODUCT_SEARCH_OFFSET_MAX, PRODUCT_SORTS, StorefrontData, storefrontCacheTtl, type ProductQuery, type ProductSort } from "../../storefront/data";
+import { LIST_TAGS_MAX, PRICE_GTE_PARAM, PRICE_LTE_PARAM, VENDOR_PARAM, listOptionsOf, listTagsOf, optionsTooMany, priceParamOf, vendorParamOf } from "../../storefront/list-filter";
 import { tagsOf } from "../../products/tags";
 import { categoryPath, categoryTree, type CategoryNode } from "../../products/categories";
 import { cardAttributes, productFields, publicAttributes } from "../../products/fields";
@@ -29,6 +32,7 @@ import { contentApi } from "./content";
 import { imageOptionsOf } from "../../products/images";
 import { displayOptionAxes } from "../../products/option-axes";
 import { publicOpenapiDocument } from "./openapi-public";
+import { comingSoon } from "../../products/sale";
 import { embedScript } from "../../modules/embed/script";
 
 /**
@@ -62,7 +66,7 @@ function data(c: Ctx): { sf: StorefrontData; mediaBaseUrl: string } | null {
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   if (!url || !anonKey) return null;
   return {
-    sf: new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache),
+    sf: new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache, null, storefrontCacheTtl(c.get("adapters").config)),
     mediaBaseUrl: mediaBaseUrl(c),
   };
 }
@@ -91,16 +95,20 @@ api.get("/shops/:shop", async (c: Ctx) => {
   const shop = await d.sf.shopBySlug(param(c, "shop"));
   if (!shop) return c.json({ error: "not_found" }, 404);
   // legal_links: 法務のページを連携サイトに向けていて、最後の確認で生きていた外の URL（0062。無ければ空）
-  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy, legal_links: shop.legal_links ?? {} } });
+  // checkout_members_only: 注文に会員トークンが要るショップか（0165。連携側はカートの段階でログイン・会員登録に回せる）
+  return c.json({ shop: { id: shop.id, slug: shop.slug, name: shop.name, legal_notice: shop.legal_notice, privacy_policy: shop.privacy_policy, return_policy: shop.return_policy, legal_links: shop.legal_links ?? {}, checkout_members_only: checkoutMembersOnly(shop.settings) } });
 });
 
 /**
  * 商品一覧。?tag=&category=&brand=&q=&updated_since=&sort=new|updated|price_asc|price_desc|name&limit=&offset=&cursor=
  * （limit は既定・上限 100）。category は子孫のカテゴリーを含む。
+ * tag はくり返すとすべてを持つ商品（5 つまで）、価格は ?filter.v.price.gte= / lte=（円、一覧の価格 = いちばん安い SKU。0150、
+ * 当たる前の DB では 409 migration_required。src/storefront/list-filter.ts）。
  * ページ送りは cursor（前の応答の next_cursor）。offset は 10,000 まで（docs/headless.md）。
- * q は 3 文字から（2 文字以下はタグ・カテゴリー・ブランドの絞り込みと一緒のときだけ）。
+ * q は空白で語に分けて、すべての語を含む商品（5 語まで、0161）。3 文字以上の語が 1 つも無ければタグ・カテゴリー・ブランドの絞り込みと一緒のときだけ。
  * total は最初のページ（cursor も offset も無いとき）だけ、10,000 まで数える（超えたら total_capped: true、2 ページ目からは null）。検索の語があるときの offset は 1,000 まで。
- * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）で、連携側の絞り込み UI に使う。
+ * tags はショップ全体（絞り込み前）のタグと件数（多い順に 200 件まで）、price_max はいちばん高い一覧の価格（0150 から）、brands はブランドと件数（0162 から）で、連携側の絞り込み UI に使う。
+ * ブランドは brand か filter.p.vendor（お店の画面と同じ名前）。
  */
 api.get("/shops/:shop/products", async (c: Ctx) => {
   const d = data(c);
@@ -111,8 +119,8 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   if (typeof query === "string") return c.json({ error: "invalid_request", field: query }, 400);
   const cursor = c.req.query("cursor") || undefined;
   if ((query.offset ?? 0) > (query.q ? PRODUCT_SEARCH_OFFSET_MAX : PRODUCT_OFFSET_MAX)) return c.json({ error: "invalid_request", field: "offset" }, 400);
-  // 2 文字以下の語はタグ・カテゴリー・ブランドで絞っているときだけ（product_public_list と同じ。全件を見る検索をさせない）
-  if (query.q && [...query.q].length < PRODUCT_SEARCH_MIN_CHARS && !query.tag && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
+  // 3 文字以上の語が無ければタグ・カテゴリー・ブランドで絞っているときだけ（banto_product_list と同じ。全件を見る検索をさせない）
+  if (searchTooShort(query.q) && !query.tags?.length && !query.category && !query.brand) return c.json({ error: "invalid_request", field: "q", reason: "too_short" }, 400);
   const categories = await d.sf.listCategories(shop);
   // 会員トークンの会員には会員限定の商品も（0098）
   const sf = await apiViewerData(c, d.sf, shop);
@@ -121,10 +129,12 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
   const first = !cursor && !query.offset;
   const [page, facets] = await Promise.all([sf.productPage(shop, query, categories, { cursor, count: first }), d.sf.productFacets(shop, categories)]);
   if (!page) return c.json({ error: "invalid_request", field: "cursor" }, 400);
+  // タグ 2 つ以上・価格は 0150 から（黙って絞らずに返さない）
+  if (page.filtersIgnored || page.optionsIgnored) return c.json({ error: "migration_required" }, 409);
   const catById = new Map(categories.map((x) => [x.id, x]));
   const cardFields = productFields(shop.settings).filter((f) => f.card);
   return c.json({
-    products: page.items.map(({ product, image, minPrice, compareAt, attributes }) => ({
+    products: page.items.map(({ product, image, minPrice, compareAt, attributes, saleDates }) => ({
       id: product.id,
       slug: product.slug,
       name: product.name,
@@ -140,6 +150,9 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
       attributes: cardAttributes(cardFields, attributes),
       created_at: product.created_at,
       updated_at: product.updated_at,
+      /** 発売日（0146、無ければ null）。新着順（sort=new）はこの日、無ければ created_at */
+      released_at: product.released_at ?? null,
+      coming_soon: saleDates === true && comingSoon(product),
     })),
     total: page.total,
     total_capped: page.totalCapped,
@@ -148,20 +161,44 @@ api.get("/shops/:shop/products", async (c: Ctx) => {
     next_offset: page.nextOffset,
     next_cursor: page.nextCursor,
     tags: facets.tags,
+    // 公開の一覧のいちばん高い一覧の価格（価格の絞り込みの欄の上限。0150 から）
+    ...(facets.price_max !== undefined ? { price_max: facets.price_max } : {}),
+    // 選択肢の鍵 × 値ごとの在庫のある商品の数（0153 から。key は英字の鍵、表示名はショップの option_names）
+    ...(facets.options !== undefined ? { options: facets.options } : {}),
+    // ブランドごとの公開の商品の数（多い順に 100 まで。0162 から）
+    ...(facets.brands !== undefined ? { brands: facets.brands } : {}),
   });
 });
 
 /** クエリ文字列 → ProductQuery。形が違う項目があればその名前を返す */
 function productQuery(c: Ctx): ProductQuery | string {
   const out: ProductQuery = {};
-  const tag = c.req.query("tag");
-  if (tag) out.tag = tag;
+  const rawTags = (c.req.queries("tag") ?? []).filter((x) => x.trim() !== "");
+  const tags = listTagsOf(rawTags);
+  if (new Set(rawTags.map((x) => x.trim())).size > LIST_TAGS_MAX) return "tag";
+  if (tags.length > 0) out.tags = tags;
+  for (const [k, name] of [["priceMin", PRICE_GTE_PARAM], ["priceMax", PRICE_LTE_PARAM]] as const) {
+    const v = c.req.query(name);
+    if (v === undefined || v === "") continue;
+    const n = priceParamOf(v);
+    if (n === undefined) return name;
+    out[k] = n;
+  }
+  // 選択肢（filter.v.option.<key>、0153）。鍵は 3 つまで・値は 10 まで、読めない鍵は 400
+  const all = c.req.queries();
+  if (optionsTooMany(all)) return "filter.v.option";
+  const options = listOptionsOf(all);
+  if (options) out.options = options;
   const category = c.req.query("category");
   if (category) out.category = category;
-  const brand = c.req.query("brand");
+  // ブランド（brand か、お店の画面と同じ filter.p.vendor。両方あれば brand）。長すぎる filter.p.vendor は黙って絞らずに返さず 400
+  const vendor = vendorParamOf(all[VENDOR_PARAM]);
+  if (!vendor && (all[VENDOR_PARAM] ?? []).some((v) => v.trim() !== "")) return VENDOR_PARAM;
+  const brand = c.req.query("brand") || vendor;
   if (brand) out.brand = brand;
   const q = c.req.query("q")?.trim();
-  if (q) out.q = q.slice(0, 100);
+  // 100 文字（コードポイント）で切る（絵文字を半分に割らない。お店の画面・src/storefront/search-words.ts と同じ数え方）
+  if (q) out.q = [...q].slice(0, 100).join("");
   const sort = c.req.query("sort");
   if (sort) {
     if (!(PRODUCT_SORTS as readonly string[]).includes(sort)) return "sort";
@@ -213,9 +250,16 @@ api.get("/shops/:shop/products/:product", async (c: Ctx) => {
       /** 会員限定の商品か（0098）と、この見る人（会員トークンの会員かゲスト）が買えるか。買えなければカートに入れると 403 members_only */
       members_only: Boolean(p.audience_id),
       purchasable: detail.purchasable !== false,
+      /** 発売日の前（0148）。見えるが買えない（カートに入れると 403 coming_soon） */
+      coming_soon: detail.purchase_block === "coming_soon",
+      /** 店頭のみ（0149）。ネットでは買えない。cartable が true ならカートに入れてお店で試着を申し込める（quote では外す） */
+      store_only: detail.purchase_block === "store_only",
+      cartable: detail.cartable ?? detail.purchasable !== false,
       /** カスタム項目のうち公開するもの（表示名つき） */
       attributes: publicAttributes(productFields(shop.settings), p.attributes),
       updated_at: p.updated_at,
+      /** 発売日（0146、無ければ null） */
+      released_at: p.released_at ?? null,
       images: detail.images.map((i) => imageUrl(d.mediaBaseUrl, i.storage_key)),
       image_variants: detail.images.map((i) => ({ url: imageUrl(d.mediaBaseUrl, i.storage_key), thumb: imageUrl(d.mediaBaseUrl, i.thumb_key ?? i.storage_key), width: i.width, height: i.height, options: imageOptionsOf(i.options) })),
       // price_jpy はこの見る人の単価（会員トークンの会員なら会員価格。0099）、regular_price_jpy は通常の価格、

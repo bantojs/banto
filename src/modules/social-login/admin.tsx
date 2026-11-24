@@ -13,10 +13,7 @@ import { moduleEnabled } from "../registry";
 import { PROVIDER_NAMES, callbackPath, providerClientId, providerModule, secretPurpose, type Provider } from "./providers";
 import { NotSavedNotice, failCode, updateShop } from "../../routes/admin/shop-save";
 import { can } from "../../routes/admin/access";
-import { migrated } from "../../db/migration-state";
 
-/** 提供元の保存し直しで、ほかの設定（友だち追加）を DB が残す */
-const OAUTH_KEEP_SETTINGS_MIGRATION = "0131_oauth_client_keep_settings";
 
 /**
  * 同梱モジュール「LINE でログイン」「Google でログイン」の設定画面（ショップごと）。
@@ -115,16 +112,8 @@ export function socialLoginAdmin(p: Provider): Hono<AppEnv> {
     if (!siteSecret || !clientId || clientId.length > 200 || /\s/.test(clientId) || clientSecret.length > 500) return c.redirect(`${base}?error=invalid`);
     const box = clientSecret ? await sealSecret(siteSecret, shop.id, secretPurpose(p), clientSecret) : null;
     try {
+      // ほかの設定（友だち追加）は DB が残す（0131）
       await owner(c).db.rpc("shop_oauth_client_save", { p_shop_id: shop.id, p_provider: p, p_client_id: clientId, p_secret_box: box });
-      // 0131 より前の shop_oauth_client_save は settings.oauth.<provider> を { client_id } で置き換えるので、友だち追加の設定を戻す
-      // （0131 からは DB が残す）。戻すのは shops の行の更新なので settings の項目も要る（RLS、0024）
-      const bot = p === "line" && can(c.get("shopAccess"), "settings") ? botPrompt(shop) : "";
-      if (bot && !(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, OAUTH_KEEP_SETTINGS_MIGRATION))) {
-        const fresh = await loadShop(c, shop.id, "integrations");
-        const settings = fresh?.settings ?? {};
-        const oauth = (settings["oauth"] ?? {}) as Record<string, Record<string, unknown>>;
-        await updateShop(c, shop.id, { settings: { ...settings, oauth: { ...oauth, line: { ...(oauth["line"] ?? {}), bot_prompt: bot } } } });
-      }
     } catch (e) {
       if (e instanceof DbError) return c.redirect(`${base}?error=invalid`);
       throw e;

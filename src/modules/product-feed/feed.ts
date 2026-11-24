@@ -8,6 +8,7 @@ import type { CategoryRow, InventoryRow, ProductImageRow, ProductRow, SkuRow } f
 import { categoryPath } from "../../products/categories";
 import { imageUrl } from "../../media/images";
 import { imageOptionsOf, orderImagesForSku } from "../../products/images";
+import { comingSoon } from "../../products/sale";
 
 export interface FeedCatalog {
   products: ProductRow[];
@@ -16,6 +17,8 @@ export interface FeedCatalog {
   inventory: Pick<InventoryRow, "sku_id" | "available">[];
   images: ProductImageRow[];
   categories: CategoryRow[];
+  /** 発売前は買えない判定（0148）が当たっているか。当たっていれば発売前の商品は out_of_stock（ネットでまだ買えないため） */
+  saleDates?: boolean;
 }
 
 export interface FeedTarget {
@@ -80,6 +83,8 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
   const items: FeedItem[] = [];
   const skipped = { no_image: 0, no_price: 0 };
   for (const p of cat.products) {
+    // 店頭のみの商品（0149）はネットでは買えないので、フィード（ネットで買える商品の一覧）に載せない
+    if (p.store_only === true) continue;
     const skus = skusBy.get(p.id) ?? [];
     const productImages = imagesBy.get(p.id) ?? [];
     const path = p.category_id ? categoryPath(cat.categories, p.category_id).map((c) => c.name) : [];
@@ -104,7 +109,7 @@ export function buildFeed(cat: FeedCatalog, target: FeedTarget): FeedResult {
         link: skuLink(target.productLink?.(p.slug) ?? `${target.home}/products/${encodeURIComponent(p.slug)}`, skus.length > 1 && productImages.some((i) => Object.keys(imageOptionsOf(i.options)).length > 0) ? s.code : null),
         image_link: imgs[0]!,
         additional_image_link: imgs.slice(1, 11),
-        availability: (stock.get(s.id) ?? 0) > 0 ? "in_stock" : "out_of_stock",
+        availability: (stock.get(s.id) ?? 0) > 0 && !(cat.saleDates && comingSoon(p)) ? "in_stock" : "out_of_stock",
         price: yen(sale ?? s.price_jpy),
         ...(sale ? { sale_price: yen(s.price_jpy) } : {}),
         condition: "new",

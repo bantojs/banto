@@ -5,6 +5,7 @@
  */
 import type { Confirmation } from "../../commerce/checkout";
 import { t, tf } from "../../i18n";
+import { feeLabelFor } from "../../commerce/payment-fees";
 import { yen } from "../../routes/common";
 
 export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: { shopPath: string; confirmation: Confirmation; quote: string; error?: string }) {
@@ -12,7 +13,7 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
   const secondary = "background:transparent;color:inherit;border:1px solid color-mix(in srgb,CanvasText 30%,transparent)";
   return (
     <div class="banto-confirmation">
-      <p>{cf.payment.free ? t("confirm.intro_free") : t("confirm.intro")}</p>
+      <p>{cf.payment.free ? t("confirm.intro_free") : cf.payment.cod ? t("confirm.intro_cod") : t("confirm.intro")}</p>
       {error ? <p class="error">{error}</p> : null}
 
       <h2>{t("confirm.items")}</h2>
@@ -45,9 +46,18 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
             <td>{yen(cf.subtotal_jpy)}</td>
           </tr>
           <tr>
-            <td colspan={3}>{t("confirm.shipping")}</td>
+            <td colspan={3}>
+              {t("confirm.shipping")}
+              {cf.shipping_free_reason === "audience" ? `（${t("confirm.shipping_member_free")}）` : ""}
+            </td>
             <td>{yen(cf.shipping_jpy)}</td>
           </tr>
+          {cf.fee_jpy > 0 ? (
+            <tr>
+              <td colspan={3}>{cf.fee_label ?? feeLabelFor(cf.payment.provider)}</td>
+              <td>{yen(cf.fee_jpy)}</td>
+            </tr>
+          ) : null}
           {cf.discounts.map((d) => (
             <tr>
               <td colspan={3}>
@@ -139,7 +149,7 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
         </p>
       </form>
       <form method="post" action={`${shopPath}/checkout`} style="display:inline-block;margin-right:.5rem">
-        <input type="hidden" name="provider" value={cf.payment.provider} />
+        <input type="hidden" name="provider" value={cf.payment.choice ?? cf.payment.provider} />
         <input type="hidden" name="customer_name" value={a.name} />
         <input type="hidden" name="customer_email" value={a.email} />
         <input type="hidden" name="phone" value={a.phone} />
@@ -151,6 +161,7 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
         {cf.delivery_request?.date ? <input type="hidden" name="delivery_date" value={cf.delivery_request.date} /> : null}
         {cf.delivery_request?.slot ? <input type="hidden" name="delivery_slot" value={cf.delivery_request.slot} /> : null}
         {cf.marketing_consent ? <input type="hidden" name="marketing_consent" value="1" /> : null}
+        {cf.save_address ? <input type="hidden" name="save_address" value="1" /> : null}
         <button type="submit" style={secondary}>
           {t("confirm.edit")}
         </button>

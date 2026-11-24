@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith, externalHosts } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * 一覧のビュー（メンテナの決定 2026-11-08、src/routes/admin/views.tsx）と、お問い合わせの一覧の検索の形。
@@ -67,13 +66,6 @@ describe("一覧のビュー", () => {
     expect(await (await b.get(`/admin/shops/${shop.id}/orders?status=paid&view_error=invalid`)).text()).toContain("ビューを保存できませんでした");
   });
 
-  it("0135 を当てる前の DB: ビューのタブと保存の欄を出さない", async () => {
-    const { shop, app } = setup({ migrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0135_admin_views") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await b.get(`/admin/shops/${shop.id}/orders?status=paid`)).text();
-    expect(html).not.toContain('class="viewtabs"');
-    expect(html).not.toContain("ビューに保存");
-  });
 });
 
 describe("お問い合わせの一覧の検索", () => {

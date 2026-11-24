@@ -8,10 +8,9 @@ import { requireOwner } from "../../routes/admin/auth";
 import { myOrgs, type MyOrg } from "../../routes/admin/access";
 import { formatRanges, parseRanges, parseSpecialDays, specialDays, todayHere, weekdayLabel, weeklyHours, type OrgStore, type SpecialDay, type StorePerm, type TimeRange } from "./index";
 import { Flash, RequestList, RequestPage, TRYON_STATUSES, loadRequest, postStatus, statusLabel, type RequestRow } from "./requests";
-import { migrated } from "../../db/migration-state";
 import { mediaBaseUrl } from "../../routes/common";
 import type { ProductField } from "../../products/fields";
-import { STORE_FIELDS_MIGRATION, formatStoreFieldRows, parseStoreFieldRows, storeFieldDefs, storeFieldsForDb, storeFieldsFromForm } from "../../stores/fields";
+import { formatStoreFieldRows, parseStoreFieldRows, storeFieldDefs, storeFieldsForDb, storeFieldsFromForm } from "../../stores/fields";
 
 /**
  * 組織の実店舗（0025 の stores。正本）と、実店舗のスタッフの画面（docs/store-tryon.md、docs/knowledge/11-organizations.md）。
@@ -51,10 +50,9 @@ async function storeAccess(c: AdminContext, storeId: string): Promise<{ store: O
   return mine ? { store, admin: false, perms: mine.perms } : null;
 }
 
-/** 組織の実店舗の独自項目の定義（0126。当たる前は null = 欄を出さない） */
+/** 組織の実店舗の独自項目の定義（0126） */
 async function orgStoreFields(c: AdminContext, orgId: string): Promise<ProductField[] | null> {
   const { db } = owner(c);
-  if (!(await migrated({ db, cache: c.get("adapters").cache }, STORE_FIELDS_MIGRATION).catch(() => false))) return null;
   const row = await db.from<{ store_fields: unknown }>("organizations").selectOne("store_fields", { eq: { id: orgId } }).catch(() => null);
   return storeFieldDefs(row?.store_fields);
 }

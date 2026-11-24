@@ -10,7 +10,8 @@ import { shopHome } from "../storefront/urls";
 import { orderTaxBreakdown } from "../commerce/tax";
 import { trackingOf, trackingUrl } from "../orders/tracking";
 import { orderLink } from "../orders/lookup";
-import { buildTryonMails, type TryonContact } from "../modules/store-tryon/mail";
+import { buildTryonMails, tryonNoticeKind, type TryonContact } from "../modules/store-tryon/mail";
+import { noticeMail, type NoticeTextRow } from "../notices/templates";
 
 interface Contact {
   order_id: string;
@@ -19,6 +20,10 @@ interface Contact {
   created_at: string;
   total_jpy: number;
   shipping_jpy: number;
+  /** 手数料（代引き 0157・支払い方法 0170） */
+  fee_jpy?: number;
+  /** お支払いの状態（0156。0157 から載る） */
+  payment_status?: string;
   /** 値引き（0010_coupons） */
   discount_jpy?: number;
   discounts?: { code: string; name: string; amount_jpy: number }[];
@@ -63,54 +68,102 @@ function orderPageLink(c: Contact, publicBaseUrl: string | undefined): string | 
   return URL.canParse(banto) ? orderLink(banto, c.number, c.member === true) : banto;
 }
 
-export function buildOrderEmail(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined): { subject: string; text: string } {
+/** 注文のメールの差し込みの値（src/notices/templates.ts。かたまりは前後の改行なし） */
+export function orderMailValues(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined): Record<string, string> {
   const lines = c.items.map((i) => `・${i.name ?? ""}${i.sku ? ` / ${i.sku}` : ""} × ${i.qty}  ${yen(i.unit_price_jpy * i.qty)}`).join("\n");
   const discount = c.discount_jpy ?? 0;
-  const subtotal = c.total_jpy - c.shipping_jpy + discount;
+  const fee = c.fee_jpy ?? 0;
+  const subtotal = c.total_jpy - c.shipping_jpy - fee + discount;
+  // 手数料: 代金引換は代引き手数料（0157）、KOMOJU の種類はお支払い手数料（0170）
+  const feeLine = fee > 0 ? `${c.payment_provider === "cod" ? "代引き手数料" : "お支払い手数料"}: ${yen(fee)}\n` : "";
+  // 代金引換（0157）: 支払いは配達のとき
+  const codLine = c.payment_provider === "cod" ? `\nお支払い方法: 代金引換（商品のお届けのときに ${yen(c.total_jpy)} をお支払いください）\n` : "";
   const discountLines = discount > 0 ? `${(c.discounts ?? []).map((d) => `値引き（${d.code}）: -${yen(d.amount_jpy)}`).join("\n") || `値引き: -${yen(discount)}`}\n` : "";
   const lookup = orderPageLink(c, publicBaseUrl);
-  const head = `${c.customer_name ?? "お客"} 様\n\n`;
   // 税率ごとの対象額と消費税額（計算は src/commerce/tax.ts だけ）
   const tax = orderTaxBreakdown(c, c.shop.tax ?? {})
     .map((g) => (g.rate > 0 ? `（${g.rate}%対象 ${yen(g.amount_jpy)}　内消費税 ${yen(g.tax_jpy)}）` : `（非課税・不課税 ${yen(g.amount_jpy)}）`))
     .join("\n");
-  const tr = trackingOf(c.tracking);
+  const tr = kind === "shipped" ? trackingOf(c.tracking) : null;
   const trUrl = tr ? trackingUrl(tr.carrier, tr.number) : null;
-  const tracking = tr ? `\nお問い合わせ番号: ${CARRIER_NAMES[tr.carrier] ?? ""}${CARRIER_NAMES[tr.carrier] ? " " : ""}${tr.number}\n${trUrl ? `配送状況: ${trUrl}\n` : ""}` : "";
-  const detail = `注文番号: ${c.number}\n\n${lines}\n\n商品合計: ${yen(subtotal)}\n送料: ${yen(c.shipping_jpy)}\n${discountLines}合計（税込）: ${yen(c.total_jpy)}\n${tax ? `${tax}\n` : ""}\nお届け先:\n${addressLines(c.shipping_address)}\n`;
-  const foot = `${lookup ? `\nご注文の状況はこちらで確認できます: ${lookup}\n` : ""}${c.shop.contact_email ? `\nお問い合わせ: ${c.shop.contact_email}\n` : ""}\n${c.shop.name}`;
-  if (kind === "shipped") {
-    return { subject: `【${c.shop.name}】商品を発送しました（注文番号 ${c.number}）`, text: `${head}ご注文の商品を発送しました。到着までしばらくお待ちください。\n${tracking}\n${detail}${foot}` };
-  }
-  return { subject: `【${c.shop.name}】ご注文ありがとうございます（注文番号 ${c.number}）`, text: `${head}ご注文を承りました。内容をご確認ください。\n\n${detail}${c.shop.return_policy ? `\n返品について:\n${c.shop.return_policy}\n` : ""}${foot}` };
+  const carrier = tr ? (CARRIER_NAMES[tr.carrier] ?? "") : "";
+  return {
+    shop_name: c.shop.name,
+    customer_name: c.customer_name ?? "お客",
+    number: String(c.number),
+    total: yen(c.total_jpy),
+    order_details: `注文番号: ${c.number}\n\n${lines}\n\n商品合計: ${yen(subtotal)}\n送料: ${yen(c.shipping_jpy)}\n${feeLine}${discountLines}合計（税込）: ${yen(c.total_jpy)}\n${tax ? `${tax}\n` : ""}${codLine}\nお届け先:\n${addressLines(c.shipping_address)}`.replace(/\s+$/, ""),
+    tracking: tr ? `お問い合わせ番号: ${carrier}${carrier ? " " : ""}${tr.number}${trUrl ? `\n配送状況: ${trUrl}` : ""}` : "",
+    return_policy: c.shop.return_policy ? `返品について:\n${c.shop.return_policy}` : "",
+    order_link: lookup ? `ご注文の状況はこちらで確認できます: ${lookup}` : "",
+    contact: c.shop.contact_email ? `お問い合わせ: ${c.shop.contact_email}` : "",
+  };
+}
+
+/** 注文のメール。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
+export function buildOrderEmail(kind: "paid" | "shipped", c: Contact, publicBaseUrl: string | undefined, texts?: readonly NoticeTextRow[] | null): { subject: string; text: string } {
+  return noticeMail(kind === "paid" ? "order_paid" : "order_shipped", texts, orderMailValues(kind, c, publicBaseUrl));
+}
+
+/** 「注文のメールを送らない（外部プラグインに任せる）」: 受付（代金引換の受付を含む）・入金・発送のメールと運営者への控え */
+export function skipOrders(settings: Record<string, unknown>): boolean {
+  return settings["skip_orders"] === true;
+}
+
+/** 「お店で試着のお客様あてのお知らせを送らない」: お客様あての受付・取り置き・取り消しの知らせ（と運営者への控え）だけ。店舗あては送る */
+export function skipTryon(settings: Record<string, unknown>): boolean {
+  return settings["skip_tryon"] === true;
 }
 
 export const emailResend: BundledPlugin = {
   id: "email_resend",
   manifest: {
     name: "メール通知",
-    version: "1.1.0",
+    version: "1.3.0",
     description: "注文確認と発送通知のメールを購入者に送ります（送り手は Resend / SMTP / SendGrid / Amazon SES から MAIL_TRANSPORT で選びます）。運営者にも控えを送れます。お店で試着の受付・取り置きのお知らせ（お客様と店舗）も送ります。会員のログインのメールもこの送信元から送ります。",
-    events: ["order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
+    // order.created は代金引換などの未入金の注文の受付のメールだけ（0157）。入金済みの注文の受付は order.paid で送る
+    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
     settings: [
       { key: "from", label: "送信元（例: マイショップ <order@example.com>）", type: "text", required: true, description: "送り手で認証済みのドメインのアドレスにしてください" },
-      { key: "bcc_owner", label: "運営者にも控えを送る（ショップ設定の連絡先メールアドレス宛）", type: "boolean" },
+      { key: "bcc_owner", label: "運営者にも控えを送る（ショップ設定の連絡先メールアドレス宛）", type: "boolean", description: "注文のメールを送らない設定のときは、注文の控えも送りません（試着はお客様あてを送らない設定のとき、その控えも送りません）" },
+      {
+        key: "skip_orders",
+        label: "注文のメールを送らない（外部プラグインに任せる。運営者への控えも止まります）",
+        type: "boolean",
+        description: "受付・入金・発送のメールと運営者への控えを送りません。注文の hooks（order.created・order.paid・order.shipped）は外部プラグインに今までどおり届きます。会員のログインなどのメールは、この送信元から送り続けます",
+      },
+      {
+        key: "skip_tryon",
+        label: "お店で試着のお客様あてのお知らせを送らない（店舗あては送ります）",
+        type: "boolean",
+        description: "お店で試着の受付・取り置き・取り消しのお客様あてのお知らせ（と運営者への控え）を送りません。店舗あてのお知らせは送ります（店舗のアドレスは外部プラグインに渡らないため）。hooks（tryon.requested・tryon.updated）は今までどおり届きます",
+      },
     ],
   },
   requiredSecrets: (config) => mailTransportMissing(config),
   secretFormats: { RESEND_API_KEY: { pattern: /^re_/, hint: "re_ で始まる API キー（Resend → API Keys）" }, SENDGRID_API_KEY: { pattern: /^SG\./, hint: "SG. で始まる API キー（SendGrid → Settings → API Keys）" } },
   async handle(ctx: PluginContext) {
     const { event, data } = ctx.envelope;
-    if (event !== "order.paid" && event !== "order.shipped" && event !== "tryon.requested" && event !== "tryon.updated") return;
+    if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped" && event !== "tryon.requested" && event !== "tryon.updated") return;
+    // 注文の受付: 入金済みの注文は order.paid で送る。order.created で送るのは未入金の注文（代金引換、0157）だけ
+    if (event === "order.created" && data["payment_status"] !== "unpaid") return;
+    // 注文のメールを外部プラグインに任せる店は、ここでは送らない（hooks はほかの送信先に今までどおり届く）。
+    // 試着はお客様あてだけを止め、店舗あては送る（店舗のアドレスは外部プラグインには渡らないため）。sendTryon で分ける。
+    // 会員のログイン・招待などのメールの送信元（from、banto_member_mail_from）はこの設定と関係なく使う
+    if (!event.startsWith("tryon.") && skipOrders(ctx.settings)) return;
     const from = typeof ctx.settings["from"] === "string" ? ctx.settings["from"].trim() : "";
     if (!from) throw new Error("email_resend: 送信元が未設定");
     const mailer = createMailer({ config: ctx.config, socket: ctx.socket }, ctx.fetch);
     if (!mailer) throw new Error(`email_resend: メールの送り手の設定が足りません（${mailTransportMissing(ctx.config).join(", ") || "SMTP はこのランタイムで使えません"}）`);
     if (event.startsWith("tryon.")) return sendTryon(ctx, mailer, from);
+    // 未入金の注文の入金の記録（0156）で出た order.paid には、受付のメールを重ねて送らない（受付のメールは注文のときに送る）
+    if (event === "order.paid" && data["recorded_payment"] === true) return;
     const orderId = String(data["order_id"] ?? "");
     const contact = (await ctx.privileged.orderContact(orderId, ctx.envelope.shop_id)) as unknown as Contact;
     if (!contact.customer_email) return; // 連絡先が無い（マスク済み等）注文には送らない
-    const mail = buildOrderEmail(event === "order.paid" ? "paid" : "shipped", contact, ctx.config.get("PUBLIC_BASE_URL"));
+    const received = event === "order.paid" || event === "order.created";
+    const kind = received ? "order_paid" : "order_shipped";
+    const mail = buildOrderEmail(received ? "paid" : "shipped", contact, ctx.config.get("PUBLIC_BASE_URL"), await ctx.privileged.shopNoticeTexts(ctx.envelope.shop_id, kind));
     const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
     await sendMail(mailer, {
       from,
@@ -132,7 +185,14 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
   if (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"]))) return;
   const contact = (await ctx.privileged.tryonContact(requestId, shop_id)) as unknown as TryonContact;
   const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
-  for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"))) {
+  const opts = data["reminder"] === true ? { reminder: true } : data["extended"] === true ? { extended: true, previousHoldUntil: typeof data["previous_hold_until"] === "string" ? data["previous_hold_until"] : null } : {};
+  // お客様あての知らせがあるときだけ文面（0154）を読む
+  const skipCustomer = skipTryon(ctx.settings);
+  const kind = contact.customer_email && !skipCustomer ? tryonNoticeKind(event, contact.status, opts) : null;
+  const texts = kind ? await ctx.privileged.shopNoticeTexts(shop_id, kind) : [];
+  for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"), opts, texts)) {
+    // お客様あて（と控え）は外部プラグインに任せる店では送らない。店舗あては送る
+    if (skipCustomer && m.key === "customer") continue;
     await sendMail(mailer, {
       from,
       to: m.to,

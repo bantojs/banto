@@ -102,7 +102,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
   it("ショップを消しても件数の表で止まらない。他人と非公開のショップの件数・一覧は見えない", async () => {
     const c = await category(b, "b-cat");
     await addProduct(b, "b-1", { tags: ["x"], category_id: c });
-    expect(await facets(b.shopId)).toEqual({ tags: [], categories: {} });
+    expect(await facets(b.shopId)).toEqual({ tags: [], categories: {}, price_max: null, options: [], brands: [] });
     expect((await list(b.shopId)).items).toEqual([]);
     const own = await asUser(b.ownerId, async (cl) => (await cl.query("select count(*)::int as n from product_facets where shop_id = $1", [b.shopId])).rows[0]!.n);
     expect(own).toBeGreaterThan(0);
@@ -168,9 +168,13 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
     expect(await slugs({ q: "wool" })).toEqual(["d-2"]);
     expect(await slugs({ q: "セール" })).toEqual(["d-3"]);
     expect(await slugs({ q: "100%" })).toEqual(["d-1"]);
-    expect(await slugs({ q: "0% 綿" })).toEqual(["d-1"]);
+    // 空白で語に分けて、すべての語を含む商品（0161）。3 文字以上の語が 1 つあれば短い語も足せる
+    expect(await slugs({ q: "00% 綿" })).toEqual(["d-1"]);
+    expect(await slugs({ q: "綿 麦わら" })).toEqual(["d-1"]);
+    expect(await slugs({ q: "ニット 夏" })).toEqual([]);
     expect(await slugs({ q: "_x_" })).toEqual([]);
-    // 2 文字以下は、タグ・カテゴリー・ブランドで絞っているときだけ（インデックスが効かず全件を見るため）
+    // 3 文字以上の語が無ければ、タグ・カテゴリー・ブランドで絞っているときだけ（インデックスが効かず全件を見るため）
+    expect(await expectDbError(() => slugs({ q: "0% 綿" }))).toMatch(/q_too_short/);
     expect(await expectDbError(() => slugs({ q: "帽子" }))).toMatch(/q_too_short/);
     expect(await expectDbError(() => slugs({ q: "%" }))).toMatch(/q_too_short/);
     expect(await slugs({ q: "帽", categories: [c1, c2] })).toEqual(["d-1", "d-3"]);
@@ -238,7 +242,7 @@ describe.skipIf(!dbAvailable)("商品の一覧の DB 化（0058）", () => {
       expect(text, sort).toMatch(/Index Scan|Index Only Scan/);
       expect(text, sort).not.toMatch(/Seq Scan/);
     }
-    const search = await plan("select p.id from products p where p.shop_id = $1 and p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description) like $2", [shop.shopId, "%麦わら帽子%"]);
+    const search = await plan("select p.id from products p where p.shop_id = $1 and p.published and banto_product_search_text(p.name, p.brand, p.tags, p.description, p.search_keywords) like $2", [shop.shopId, "%麦わら帽子%"]);
     expect(search).toMatch(/products_search_trgm/);
     const hits = await list(shop.shopId, { q: "麦わら帽子", limit: 100, count: true });
     expect(hits.total).toBe(Math.floor(20000 / 97));

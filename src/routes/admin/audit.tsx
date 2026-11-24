@@ -20,7 +20,9 @@ const PAGE = 100;
 const ACTION_LABEL: Record<string, MessageKey> = {
   "customer.email_changed": "audit.action.customer.email_changed",
   "customer.deleted": "audit.action.customer.deleted",
+  "customer.identity_imported": "audit.action.customer.identity_imported",
   "order.status_changed": "audit.action.order.status_changed",
+  "order.payment_recorded": "audit.action.order.payment_recorded",
   "org_member.added": "audit.action.org_member.added",
   "org_member.role_changed": "audit.action.org_member.role_changed",
   "org_member.removed": "audit.action.org_member.removed",
@@ -78,6 +80,10 @@ function describe(r: AuditRow): string {
       return `${label}（${short(String(d["old_email_hash"] ?? "")) || t("audit.none")} → ${short(String(d["new_email_hash"] ?? "")) || t("audit.none")}）`;
     case "order.status_changed":
       return `${label}: ${status(d["from"])} → ${status(d["to"])}`;
+    case "customer.identity_imported":
+      return `${label}（${d["provider"] === "line" ? "LINE" : d["provider"] === "google" ? "Google" : str(d["provider"])}）`;
+    case "order.payment_recorded":
+      return `${label}（${status(d["status"])}）`;
     case "org_member.added":
     case "org_member.removed":
       return `${label}（${str(d["role"])}）`;

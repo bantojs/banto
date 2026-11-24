@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith, externalHosts, memberLogin, memberMail } from "./helpers";
 import { wooImporter } from "../src/modules/woo-import/client";
+import { fakeGoogleKey, serveGoogleJwks } from "./fake-google-jwt";
 
 const WP68 = "$wp$2y$04$LbPQKS0GYZkujhJfiXGPYuVhBv.W.pfX642dRDefV8RHGhyAgUzP6";
 const PLAIN_2Y = "$2y$04$yVrPNwUYByYeSfH7HyRxgeP3sZIfYq.3l7L5FunvOXnyan3vxnaJC";
@@ -13,7 +14,11 @@ afterEach(() => {
 });
 
 /** 偽の LINE と Google（トークン・検証の API）。code → 利用者。クライアントの ID とシークレットはショップごと */
-function fakeProviders(users: Record<string, { sub: string; email?: string; verified?: boolean }>, clients: Record<string, string>) {
+async function fakeProviders(users: Record<string, { sub: string; email?: string; verified?: boolean }>, clients: Record<string, string>) {
+  // Google の ID トークンは本物と同じく RS256 で署名し、JWKS を出す（2026-11-22 から署名を確かめる）
+  const key = await fakeGoogleKey();
+  const jwks = serveGoogleJwks(() => [key]);
+  disposers.push(jwks.dispose);
   const calls: { url: string; form: Record<string, string> }[] = [];
   const nonces = new Map<string, string>();
   const ok = (form: Record<string, string>) => clients[form["client_id"]!] === form["client_secret"] && Boolean(form["code_verifier"]) && Boolean(users[form["code"]!]);
@@ -31,9 +36,9 @@ function fakeProviders(users: Record<string, { sub: string; email?: string; veri
     calls.push({ url: req.url, form });
     if (!ok(form)) return new Response("{}", { status: 400 });
     const u = users[form["code"]!]!;
-    const payload = { iss: "https://accounts.google.com", aud: form["client_id"], sub: u.sub, nonce: nonces.get(form["code"]!), exp: Math.floor(Date.now() / 1000) + 3600, ...(u.email ? { email: u.email, email_verified: u.verified ?? true } : {}) };
-    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
-    return Response.json({ id_token: `${b64({ alg: "RS256" })}.${b64(payload)}.sig` });
+    const now = Math.floor(Date.now() / 1000);
+    const payload = { iss: "https://accounts.google.com", aud: form["client_id"], sub: u.sub, nonce: nonces.get(form["code"]!), iat: now, exp: now + 3600, ...(u.email ? { email: u.email, email_verified: u.verified ?? true } : {}) };
+    return Response.json({ id_token: await key.sign(payload) });
   });
   disposers.push(() => {
     externalHosts.delete("https://api.line.me/");
@@ -264,7 +269,7 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
   it("LINE でログイン（初回は会員登録、2 回目は同じ会員）。ショップのシークレットで LINE と話す。state が合わなければ何もしない", async () => {
     const { sb, shop, app } = setup();
     await configure(app, shop.id, "line", "line-channel", "line-secret");
-    const fake = fakeProviders({ good: { sub: "U1" } }, { "line-channel": "line-secret" });
+    const fake = await fakeProviders({ good: { sub: "U1" } }, { "line-channel": "line-secret" });
     const b = new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }));
     expect(await (await b.get("/my-shop/account/login")).text()).toContain('href="/my-shop/account/oauth/line"');
     let start = await b.get("/my-shop/account/oauth/line");
@@ -304,7 +309,7 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
   it("Google: 確認済みのアドレスなら既存の会員に結びつく。未確認なら結びつけない。ログイン中の会員は自分で連携・解除できる", async () => {
     const { sb, shop, mail, app } = setup();
     await configure(app, shop.id, "google", "shop-a.apps.googleusercontent.com", "google-secret-a");
-    const fake = fakeProviders({ verified: { sub: "G1", email: "member@example.com" }, unverified: { sub: "G2", email: "member@example.com", verified: false } }, { "shop-a.apps.googleusercontent.com": "google-secret-a" });
+    const fake = await fakeProviders({ verified: { sub: "G1", email: "member@example.com" }, unverified: { sub: "G2", email: "member@example.com", verified: false } }, { "shop-a.apps.googleusercontent.com": "google-secret-a" });
     const fresh = () => new Browser(appWith(sb, { RESEND_API_KEY: "re_test" }));
     const b = fresh();
     await memberLogin(b, mail, "/my-shop", "member@example.com");
@@ -326,12 +331,25 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     expect((await oauthCallback(b, start, "unverified", fake)).headers.get("location")).toBe("/my-shop/account?error=already_linked");
     start = await b.post("/my-shop/account/oauth/google/link", {});
     expect((await oauthCallback(b, start, "verified", fake)).headers.get("location")).toBe("/my-shop/account?flash=oauth_linked");
+
+    // 戻る先（お店の中のパスだけ）: 結んだ後はそのページへ（banto_linked に提供元）。外のサイトは受けず会員ページへ
+    await b.post("/my-shop/account/oauth/google/unlink", {});
+    start = await b.post("/my-shop/account/oauth/google/link", { return_to: "/my-shop/products/tee?color=red" });
+    expect((await oauthCallback(b, start, "verified", fake)).headers.get("location")).toBe("/my-shop/products/tee?color=red&banto_linked=google");
+    await b.post("/my-shop/account/oauth/google/unlink", {});
+    start = await b.post("/my-shop/account/oauth/google/link", { return_to: "https://evil.example/" });
+    expect((await oauthCallback(b, start, "verified", fake)).headers.get("location")).toBe("/my-shop/account?flash=oauth_linked");
+    // ログイン: 始めたときの ?return_to= を覚え、会員ページがそこへ戻す
+    const back = fresh();
+    start = await back.get("/my-shop/account/oauth/google?return_to=%2Fmy-shop%2Fcart");
+    expect((await oauthCallback(back, start, "verified", fake)).headers.get("location")).toBe("/my-shop/account");
+    expect((await back.get("/my-shop/account")).headers.get("location")).toBe("/my-shop/cart");
   });
 
   it("シークレットが違う（サイトの秘密が変わった・別のショップの暗号文）ならログインしない", async () => {
     const { sb, shop, app } = setup();
     await configure(app, shop.id, "line", "line-channel", "line-secret");
-    const fake = fakeProviders({ good: { sub: "U1" } }, { "line-channel": "line-secret" });
+    const fake = await fakeProviders({ good: { sub: "U1" } }, { "line-channel": "line-secret" });
     const changed = new Browser(appWith(sb, { RESEND_API_KEY: "re_test", SESSION_SECRET: "another-site-secret" }));
     const res = await oauthCallback(changed, await changed.get("/my-shop/account/oauth/line"), "good", fake);
     expect(res.headers.get("location")).toBe("/my-shop/account/login?error=oauth");
@@ -341,7 +359,7 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
   it("ヘッドレス: 許可リストの戻り先に引き換え券を付けて戻し、/members/verify でトークンにする（1 回限り）", async () => {
     const { sb, shop, app } = setup();
     await configure(app, shop.id, "line", "line-channel", "line-secret");
-    const fake = fakeProviders({ good: { sub: "U9" } }, { "line-channel": "line-secret" });
+    const fake = await fakeProviders({ good: { sub: "U9" } }, { "line-channel": "line-secret" });
     const app2 = appWith(sb, { RESEND_API_KEY: "re_test" });
     const b = new Browser(app2);
     expect((await b.get("/api/shops/my-shop/members/oauth/line?return_to=https://evil.example/cb")).status).toBe(400);
@@ -365,7 +383,7 @@ describe("LINE・Google でログイン（ショップごとの設定、0014）"
     const admin = await configure(app, shop.id, "google", "g-client", "g-secret");
     // 管理画面に出すコールバック URL もショップのドメイン
     expect(await (await admin.get(`/admin/shops/${shop.id}/modules/google-login`)).text()).toContain(`${DOMAIN}/_oauth/google/callback`);
-    const fake = fakeProviders({ good: { sub: "G1", email: "d@example.com" } }, { "g-client": "g-secret" });
+    const fake = await fakeProviders({ good: { sub: "G1", email: "d@example.com" } }, { "g-client": "g-secret" });
     const app2 = appWith(sb, { RESEND_API_KEY: "re_test" });
 
     // Banto の URL のログインの入口・ヘッドレスの入口は、ドメインの同じ入口へ

@@ -36,11 +36,21 @@ describe("REST /api/v1", () => {
     expect(await list.json()).toEqual({ items: [{ id: expect.any(String), name: "LP", product_usable: false }, { id: s.vip.id, name: "VIP", product_usable: true }] });
   });
 
+  it("形の違いは欄ごとの文言で返す（invalid_audience に吸われない）", async () => {
+    const s = await setup();
+    const mode = await s.rest("PATCH", `/products/${s.product.id}`, { audience_mode: "show" });
+    expect(mode.status).toBe(400);
+    expect(((await mode.json()) as { error: { message: string } }).error.message).toMatch(/^invalid_audience_mode:/);
+    const hide = await s.rest("PATCH", `/products/${s.product.id}`, { audience_hide: "yes" });
+    expect(hide.status).toBe(400);
+    expect(((await hide.json()) as { error: { message: string } }).error.message).toMatch(/^invalid_audience_hide:/);
+  });
+
   it("モジュールが OFF なら GET /audiences は 409 module_disabled", async () => {
     const s = await setup({ on: false });
     const r = await s.rest("GET", "/audiences");
     expect(r.status).toBe(409);
-    expect(JSON.stringify(await r.json())).toMatch(/module_disabled/);
+    expect(JSON.stringify(await r.json())).toMatch(/module_disabled: .*audience: null/);
   });
 
   it("0144 が当たるまでは会員の条件の欄と GET /audiences を 409 migration_required（黙って捨てない）。ほかの欄の更新はそのまま", async () => {

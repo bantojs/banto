@@ -7,10 +7,13 @@
  *   認可の URL に使う。公開してよい値）、シークレットは暗号化して shop_oauth_clients（src/members/secret-box.ts）。
  * - 戻り先は提供元ごとに 1 つ（`<PUBLIC_BASE_URL>/_oauth/<provider>/callback`）。どのショップかは Cookie の中身で分かる。
  * - ID トークン: LINE は検証 API（/oauth2/v2.1/verify）で確かめる。Google はトークンのエンドポイントから HTTPS で直接受け取り、
- *   クライアントシークレットで認証しているので、署名の検証は省いてよい（OpenID Connect Core 3.1.3.7、Google の案内）。
- *   どちらも iss・aud・nonce・期限は自分でも見る。
+ *   クライアントシークレットで認証している（OpenID Connect Core 3.1.3.7 では署名の検証を省いてもよい）が、多層防御として
+ *   Google の公開鍵（JWKS）で RS256 の署名も確かめる（google-jwt.ts、2026-11-22）。
+ *   どちらも iss・aud・nonce・期限は自分でも見る。Google は発行時刻（iat）も見る。
  */
-import { b64url, fromB64url, randomToken } from "../../util/signed";
+import type { CacheAdapter } from "../../adapters/types";
+import { b64url, randomToken } from "../../util/signed";
+import { IdTokenError, verifyGoogleIdToken } from "./google-jwt";
 
 export type Provider = "line" | "google";
 export const PROVIDERS: readonly Provider[] = ["line", "google"];
@@ -91,27 +94,30 @@ export async function providerIdentity(
   client: { clientId: string; clientSecret: string },
   o: { code: string; redirectUri: string; verifier: string; nonce: string },
   now = Math.floor(Date.now() / 1000),
+  /** Google の公開鍵を覚えておく先（無ければ毎回取る） */
+  cache?: CacheAdapter,
 ): Promise<ProviderIdentity> {
   const tokenRes = await doFetch(ENDPOINTS[p].token, form({ grant_type: "authorization_code", code: o.code, redirect_uri: o.redirectUri, client_id: client.clientId, client_secret: client.clientSecret, code_verifier: o.verifier }));
   if (!tokenRes.ok) throw new OAuthError("token", `HTTP ${tokenRes.status}`);
   const token = (await tokenRes.json()) as { id_token?: unknown };
   if (typeof token.id_token !== "string") throw new OAuthError("token", "no id_token");
 
-  let claims: { iss?: unknown; sub?: unknown; aud?: unknown; nonce?: unknown; exp?: unknown; email?: unknown; email_verified?: unknown };
+  let claims: { iss?: unknown; sub?: unknown; aud?: unknown; nonce?: unknown; exp?: unknown; iat?: unknown; email?: unknown; email_verified?: unknown };
   if (p === "line") {
     const verifyRes = await doFetch(ENDPOINTS.line.verify, form({ id_token: token.id_token, client_id: client.clientId, nonce: o.nonce }));
     if (!verifyRes.ok) throw new OAuthError("verify", `HTTP ${verifyRes.status}`);
     claims = (await verifyRes.json()) as typeof claims;
   } else {
-    const part = token.id_token.split(".")[1];
     try {
-      claims = JSON.parse(new TextDecoder().decode(fromB64url(part ?? ""))) as typeof claims;
-    } catch {
-      throw new OAuthError("verify", "bad id_token");
+      claims = (await verifyGoogleIdToken(token.id_token, doFetch, cache)) as typeof claims;
+    } catch (e) {
+      if (e instanceof IdTokenError) throw new OAuthError("verify", `id_token ${e.message}`);
+      throw e;
     }
   }
   const issOk = p === "line" ? claims.iss === "https://access.line.me" : claims.iss === "https://accounts.google.com" || claims.iss === "accounts.google.com";
-  const expOk = p === "line" || (typeof claims.exp === "number" && claims.exp > now);
+  // Google: 期限の前で、発行時刻が今より先（時計のずれ 5 分まで）でないこと
+  const expOk = p === "line" || (typeof claims.exp === "number" && claims.exp > now && typeof claims.iat === "number" && claims.iat <= now + 300 && claims.iat < claims.exp);
   if (!issOk || !expOk || claims.aud !== client.clientId || claims.nonce !== o.nonce || typeof claims.sub !== "string" || claims.sub.length === 0) {
     throw new OAuthError("verify", "claims mismatch");
   }

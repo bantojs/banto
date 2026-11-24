@@ -59,6 +59,8 @@ export interface KomojuPayment {
   metadata?: Record<string, string> | null;
   session?: string | null;
   customer_email?: string | null;
+  /** 支払い方法の詳細（type は konbini・bank_transfer など。0170 で選んだ種類と比べる） */
+  payment_details?: { type?: string | null } | null;
 }
 
 export interface KomojuEvent {

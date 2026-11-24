@@ -107,12 +107,6 @@ describe("管理画面", () => {
     expect((await admin.post(url, { notes: "あ".repeat(41) })).headers.get("location")).toBe(`${url}?flash=notes`);
   });
 
-  it("0127 が当たるまではモジュールの一覧に出さない", async () => {
-    const s = setup({ on: false });
-    s.sb.appliedMigrations = s.sb.appliedMigrations.filter((m) => m !== "0127_mod_care_labels");
-    const admin = await Browser.loggedIn(s.app, "owner@example.com", "password-123");
-    expect(await (await admin.get(`/admin/shops/${s.shop.id}/modules`)).text()).not.toContain("洗濯表示");
-  });
 });
 
 describe("AI 用 API（products:write）", () => {

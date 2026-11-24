@@ -150,13 +150,18 @@ async function applyFromForm(c: Context<AppEnv>, applied: readonly string[]): Pr
   const raw = typeof body["connection_string"] === "string" ? body["connection_string"].trim() : "";
   if (!raw) return { ok: false, message: t("migrate.error_invalid") };
   try {
-    const result = await applyMigrations(raw, files, migrationHosts(c.get("adapters").config.get("DB_MIGRATION_HOSTS")), { budgetMs: MIGRATION_STEP_BUDGET_MS });
+    const result = await applyMigrations(raw, files, migrationHosts(c.get("adapters").config.get("DB_MIGRATION_HOSTS")), {
+      budgetMs: MIGRATION_STEP_BUDGET_MS,
+      ...((r) => (r ? { systemRoots: r } : {}))(c.get("adapters").tlsRootCertificates),
+    });
     return { ok: true, applied: result.applied, remaining: result.remaining };
   } catch (e) {
     if (e instanceof MigrationError) {
       if (e.stage === "connect") {
         if (e.message === "host_not_allowed") return { ok: false, message: t("migrate.error_host") };
         if (e.message === "invalid") return { ok: false, message: t("migrate.error_invalid") };
+        if (e.message === "ssl_required") return { ok: false, message: t("migrate.error_ssl_required") };
+        if (e.message.endsWith("[tls]")) return { ok: false, message: `${t("migrate.error_tls")} ${e.message.replace(" [tls]", "")}` };
         if (e.message.endsWith("[direct_connection]")) return { ok: false, message: `${t("migrate.error_direct")} ${e.message.replace(" [direct_connection]", "")}` };
         return { ok: false, message: `${t("migrate.error_connect")} ${e.message}` };
       }

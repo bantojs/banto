@@ -20,6 +20,8 @@ export interface LabelOrder {
   /** 品名に使う（最初の商品名。設定の品名があればそちら） */
   first_item?: string | null;
   item_count?: number;
+  /** 代金引換で未入金（0157）なら、配達で受け取る額（税込）と内消費税。B2 はコレクト（送り状種類 2）で出す */
+  collect?: { amount_jpy: number; tax_jpy: number } | null;
 }
 
 export interface LabelSettings {
@@ -109,6 +111,11 @@ export function buildLabelsCsv(carrier: Carrier, orders: LabelOrder[], s: LabelS
     const item = s.item_name || [o.first_item ?? "", (o.item_count ?? 1) > 1 ? "ほか" : ""].join("").trim();
     const date = o.delivery?.date ?? "";
     const slot = (o.delivery?.slot ?? "") as DeliverySlot | "";
+    // 佐川（e飛伝）の CSV には代引きの額の欄を持たせていないので、代金引換の注文は載せない（発払いで送られて代金を受け取れなくならないように）
+    if (o.collect && carrier !== "yamato") {
+      warnings.push({ number: o.number, field: "cod_unsupported" });
+      continue;
+    }
     if (!phone) warnings.push({ number: o.number, field: "phone" });
     if (!postal) warnings.push({ number: o.number, field: "postal_code" });
     if (carrier === "yamato") {
@@ -117,7 +124,12 @@ export function buildLabelsCsv(carrier: Carrier, orders: LabelOrder[], s: LabelS
       if (sjisWidth(name) > 32) warnings.push({ number: o.number, field: "name_long" });
       const r = new Array<string>(B2_HEADER.length).fill("");
       r[0] = String(o.number);
-      r[1] = s.yamato_type;
+      // 代金引換はコレクト（2）。額は税込の合計と、その内消費税
+      r[1] = o.collect ? "2" : s.yamato_type;
+      if (o.collect) {
+        r[33] = String(o.collect.amount_jpy);
+        r[34] = String(o.collect.tax_jpy);
+      }
       r[4] = ymd;
       r[5] = date ? date.replace(/-/g, "/") : "";
       r[6] = slot ? YAMATO_SLOTS[slot] : "";

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { CARE_MODULE, productCareView } from "../../care-labels/care";
 import { optionSwatchesOf } from "../../products/option-swatches";
-import { optionNamesOf } from "../../products/option-names";
+import { optionLabel, optionNamesOf } from "../../products/option-names";
 import { blockedTarget, storefrontSettings } from "../../storefront/mode";
 import { recordShopEvent, type ShopEvent, type ShopEventItem } from "../../storefront/events";
 import { injectHead, renderHeadTags } from "../../storefront/head";
@@ -12,7 +12,8 @@ import { DIALOGS_MODULE } from "../../modules/dialogs/dialogs";
 import { acceptRelay } from "../../modules/event-relay/routes";
 import { openSession as openMemberSession } from "../../members/auth";
 import type { AppEnv } from "../../app";
-import { PRODUCT_SEARCH_MIN_CHARS, type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, type ProductSort } from "../../storefront/data";
+import { searchTooShort } from "../../storefront/search-words";
+import { type StorefrontData, type PublicShop, type ProductDetail, type ProductListPage, type ProductSort } from "../../storefront/data";
 import type { CategoryRow } from "../../db/types";
 import { categoryUrl, listUrl, productUrl, productsUrl, shopHome, shopOrigin } from "../../storefront/urls";
 import { hostShop, onShopDomain, redirectToShopDomain, storefrontData } from "./domain";
@@ -25,23 +26,26 @@ import { productFields, publicAttributes } from "../../products/fields";
 import { resolveTheme } from "../../themes";
 import type { CartLine, ThemeContext } from "../../themes/types";
 import { t, tf, type MessageKey } from "../../i18n";
-import { clientIpFor, csrfGuard, formFields, getScopedCookie, mediaBaseUrl, param, publicBaseUrl, readBodyLimited, setScopedCookie, type Ctx } from "../common";
+import { clientIpFor, csrfGuard, formFields, getScopedCookie, mediaBaseUrl, migrationStateFor, param, publicBaseUrl, readBodyLimited, setScopedCookie, type Ctx } from "../common";
+import { migrated } from "../../db/migration-state";
 import { fillAppBlocks, fillArticleBlocks, fillProductBlocks } from "../../pages/blocks";
 import { bodyBlocks, type BodyBlocksDeps } from "../../content/body-blocks";
 import { ARTICLE_FIELDS_CSS, articleFieldParts, usedFieldParts } from "../../content/article-fields";
 import { articleFieldsReady, blogFieldSort } from "../../blog/fields";
 import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
-import { memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
+import { memberFreeOverForCart, memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
-import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { amazonPayCancel, amazonPayRelayScript, amazonPayReturn, amazonPayStart } from "./amazon-pay";
 import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
 import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
-import { ADDRESS_FIELDS, PROVIDERS, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected } from "../../commerce/checkout";
-import { bindScope, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
+import type { CodBlock } from "../../modules/cod";
+import { loginUrlFor } from "../../members/return-path";
+import { ADDRESS_FIELDS, PROVIDERS, checkoutMembersOnly, choiceAvailable, komojuTypesOf, parsePaymentChoice, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
+import { bindScope, checkoutMember, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
 import { liveLegalUrl, type LegalKind } from "../../storefront/legal-links";
@@ -56,12 +60,14 @@ import { BLOG_LIST_PARTS, COLLECTION_PARTS, LEGAL_PARTS, PRODUCT_LAYOUT_PARTS } 
 import { blogListParts, listParts, productView } from "../../themes/default";
 import { escapeHtml } from "../../mail/html";
 import { bindInquiryScope, inquiries } from "./inquiries";
-import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon } from "./liquid";
+import { cartImagesFor, cartSections, blogPartValues, collectionPartValues, liquidProductJsonLd, liquidThemeFor, productPartValues, themeLayoutParts, registerThemeAssets, renderCart, renderCheckoutAddress, renderCheckoutConfirm, renderCheckoutDone, renderArticlePage, renderBlogPage, renderContentPage, renderLegalPage, renderListing, renderNotFound, renderProduct, renderTryon, renderOrderLookup } from "./liquid";
 import { listSortOf } from "../../storefront/list-sort";
+import { filterNoindex, listFilterOf, optionFacetsOf, type ListFilter } from "../../storefront/list-filter";
 import { INQUIRIES_MODULE, inquiriesReady, sealOrderToken } from "../../modules/inquiries";
 import { moduleEnabled } from "../../modules/registry";
 import { FEED_MODULE, readFeed } from "../../modules/product-feed/job";
-import { RECEIPT_MODULE, RECEIPT_STATUSES, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { RECEIPT_MODULE, receiptSettings, renderReceipt, type ReceiptOrder } from "../../modules/receipt/render";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { dateLabel, deliveryOptions } from "../../modules/delivery-time";
 import { TRYON_MODULE, checkTryon, storeView, todayHere, tryonSettings, visitDates } from "../../modules/store-tryon";
 import { PrivilegedRpcError } from "../../db/privileged";
@@ -146,6 +152,15 @@ interface ShopScope {
   query: Pick<AudienceContext, "params" | "remembered">;
 }
 
+/** 開いているページのお店の中のパス（ブラウザから見た形。GET だけ。ログインのリンクの戻る先、src/members/return-path.ts） */
+function currentPathOf(c: Ctx, slug: string, onDomain: boolean): string | undefined {
+  if (c.req.method !== "GET") return undefined;
+  const u = new URL(c.req.url);
+  const prefix = `/${slug}`;
+  const p = onDomain && (u.pathname === prefix || u.pathname.startsWith(`${prefix}/`)) ? u.pathname.slice(prefix.length) || "/" : u.pathname;
+  return `${p}${u.search}`;
+}
+
 async function scope(c: Ctx): Promise<ShopScope | null> {
   const sf = data(c);
   if (!sf) return null;
@@ -155,15 +170,15 @@ async function scope(c: Ctx): Promise<ShopScope | null> {
   const secret = c.get("sessionSecret");
   // 独自ドメインの上ではショップがドメインのトップ（パスにスラッグを付けない）
   const onDomain = onShopDomain(c, shop);
-  // カートは、`__Host-` の名前に移す前の Cookie も読む（中身は品物の一覧だけ。差し込まれても買う前の確認画面で見える）
-  // 古い名前の Cookie（__Host- の前）を読むのはカートだけ。v0.13.0 で読むのをやめる（docs/knowledge/02-decisions.md 2026-11-15）
-  const cart = secret ? await openCart(secret, getScopedCookie(c, cartCookieName(shop.id), onDomain ? "/" : `/${shop.slug}`, { legacy: true })) : { items: [] };
+  // カートも `__Host-` の名前だけを読む（古い名前を読むのは v0.12 系まで。docs/knowledge/02-decisions.md 2026-11-15）
+  const cart = secret ? await openCart(secret, getScopedCookie(c, cartCookieName(shop.id), onDomain ? "/" : `/${shop.slug}`)) : { items: [] };
   const ctx: ThemeContext = {
     shop,
     shopPath: onDomain ? "" : `/${shop.slug}`,
     mediaBaseUrl: mediaBaseUrl(c),
     cartCount: cart.items.reduce((n, i) => n + i.qty, 0),
     membersEnabled: membersEnabled(shop),
+    currentPath: currentPathOf(c, shop.slug, onDomain),
     publicBaseUrl: onDomain ? shopOrigin(publicBaseUrl(c), shop) : publicBaseUrl(c),
     themeSettings: (shop.settings ?? {})["theme_settings"] && typeof (shop.settings ?? {})["theme_settings"] === "object" ? ((shop.settings ?? {})["theme_settings"] as Record<string, unknown>) : {},
   };
@@ -226,7 +241,7 @@ storefront.post("/:shop/_preview/content", async (c: Ctx) => {
     if (sample?.kind === "blog") return blogListResponse(c, s, sample.blog, { tag: null, pageNo: 1 }, categories, { prefix: note(sample.blog.title), preview: true, layout: draft.page });
     if (sample?.kind === "legal") return legalResponse(c, s, sample.legal, { prefix: note(legalPages[sample.legal]!.title()), preview: true, layout: draft.page });
     if (sample?.kind === "collection") {
-      const list = await listingData(s, { categories, ...(sample.category ? { category: sample.category } : {}), top: false, count: Boolean(await liquidThemeFor(c, s)) });
+      const list = await listingData(s, { categories, ...(sample.category ? { category: sample.category } : {}), filter: { tags: [] }, top: false, count: Boolean(await liquidThemeFor(c, s)) });
       if (list) return collectionResponse(c, s, list, { prefix: note(sample.category ? sample.category.name : t("store.all_products")), preview: true, layout: draft.page });
     }
     const body = (await previewBody(s.sf, s.shop, draft.page.body)).body;
@@ -436,9 +451,9 @@ storefront.get("/:shop", async (c: Ctx) => {
   if (!s) return notFound(c);
   // お店のトップのひな形（0101）。見えないページ（非公開・会員限定）なら、すべての商品の一覧をトップとして出す
   const homeId = moduleEnabled(s.shop.settings, PAGES_MODULE) ? pageLayoutsOf(s.shop.settings).home : null;
-  const home = homeId ? await s.sf.layoutPage(s.shop, homeId) : null;
-  if (home) {
-    const categories = await s.sf.listCategories(s.shop);
+  // ひな形のページとカテゴリー（ヘッダーのメニュー）は並べて引く（ひな形が見えないときも、一覧がカテゴリーを使う）
+  const [home, categories] = homeId ? await Promise.all([s.sf.layoutPage(s.shop, homeId), s.sf.listCategories(s.shop)]) : [null, null];
+  if (home && categories) {
     const view = await viewerBody(c, s.sf, s.shop, home.body, viewerOf(s));
     const raw = pageBodyHtml({ ...home, body: view.body }, s.ctx.mediaBaseUrl, undefined, view.key);
     return contentPageResponse(c, s, { ...home, seo_title: home.seo_title || s.shop.name }, view.body, raw, categories, { layoutPath: "" });
@@ -460,30 +475,42 @@ storefront.get("/:shop/categories/:category", async (c: Ctx) => {
   return listResponse(c, s, { ...listQueryOf(c), category: param(c, "category") });
 });
 
-/** 一覧の条件（タグは 50 文字まで、検索の語は 100 文字まで。文字で数える。UTF-16 の単位で切ると絵文字の途中で切れる） */
-function listQueryOf(c: Ctx): { tag?: string; q?: string; after?: string; sort?: ProductSort } {
-  const tag = (c.req.query("tag") ?? "").trim().slice(0, 50);
+/**
+ * 一覧の条件（タグは 50 文字まで・5 つまで、検索の語は 100 文字まで。文字で数える。UTF-16 の単位で切ると絵文字の途中で切れる）。
+ * タグをくり返すとすべてを持つ商品、価格は ?filter.v.price.gte= / lte=（0150、src/storefront/list-filter.ts）
+ */
+function listQueryOf(c: Ctx): ListOpts {
+  const filter = listFilterOf(c.req.queries());
   const q = [...(c.req.query("q") ?? "").trim()].slice(0, 100).join("");
   const after = c.req.query("after") || "";
   // 並べ方（?sort=、Shopify のテーマの ?sort_by= も読む）。既定の新しい順は持たない
   const sort = listSortOf(c.req.query("sort"), c.req.query("sort_by"));
-  return { ...(tag ? { tag } : {}), ...(q ? { q } : {}), ...(after ? { after } : {}), ...(sort ? { sort } : {}) };
+  return { filter, ...(q ? { q } : {}), ...(after ? { after } : {}), ...(sort ? { sort } : {}) };
+}
+
+/** 一覧の条件（お店のトップ・すべての商品・カテゴリーの一覧） */
+interface ListOpts {
+  top?: boolean;
+  category?: string;
+  filter?: ListFilter;
+  q?: string;
+  after?: string;
+  sort?: ProductSort;
 }
 
 /**
  * 商品の一覧を描く（お店のトップ・すべての商品・カテゴリーの一覧、タグ・検索の語・ページ送り付き）。
  * 商品一覧のひな形（0103）はカテゴリーの一覧（近い割り当て、無ければ共通）・すべての商品・トップ（トップのひな形が無いとき）に効く。検索の語があれば今までの画面
  */
-async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?: string; tag?: string; q?: string; after?: string; sort?: ProductSort }): Promise<Response> {
+async function listResponse(c: Ctx, s: ShopScope, o: ListOpts): Promise<Response> {
   // カテゴリーで絞るときは、子孫まで広げるためにカテゴリーを先に読む（キャッシュ済みなら往復なし）
   const categories = await s.sf.listCategories(s.shop);
   const category = o.category ? categories.find((x) => x.slug === o.category) : undefined;
   if (o.category && !category) return notFoundPage(c, s);
   const colId = !o.q && moduleEnabled(s.shop.settings, PAGES_MODULE) ? collectionLayoutId(pageLayoutsOf(s.shop.settings), categories, category?.id) : null;
-  const colLayout = colId ? await s.sf.layoutPage(s.shop, colId) : null;
-  // Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
-  const lt = await liquidThemeFor(c, s);
-  const list = await listingData(s, { categories, ...(category ? { category } : {}), ...(o.tag ? { tag: o.tag } : {}), ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), ...(o.sort ? { sort: o.sort } : {}), top: Boolean(o.top), count: Boolean(lt) });
+  // 一覧のひな形と Liquid のテーマ（カートの値付けを含む）は並べて引く。Liquid のテーマはページの数（paginate.pages）を使うので、全体の数も数える
+  const [colLayout, lt] = await Promise.all([colId ? s.sf.layoutPage(s.shop, colId) : null, liquidThemeFor(c, s)]);
+  const list = await listingData(s, { categories, ...(category ? { category } : {}), filter: o.filter ?? { tags: [] }, ...(o.q ? { q: o.q } : {}), ...(o.after ? { after: o.after } : {}), ...(o.sort ? { sort: o.sort } : {}), top: Boolean(o.top), count: Boolean(lt) });
   if (!list) return notFoundPage(c, s);
   if (colLayout) return collectionResponse(c, s, list, { layout: colLayout });
   const { page, facets, link } = list;
@@ -492,7 +519,10 @@ async function listResponse(c: Ctx, s: ShopScope, o: { top?: boolean; category?:
       page,
       categories,
       ...(category ? { category } : {}),
-      ...(o.tag ? { tag: o.tag } : {}),
+      filter: list.filter,
+      ...(list.priceRange !== undefined ? { priceRange: list.priceRange } : {}),
+      optionFacets: list.optionFacets,
+      vendors: list.vendors,
       ...(o.q ? { search: { q: o.q, performed: list.searchable } } : {}),
       top: Boolean(o.top),
       tags: facets.tags,
@@ -511,7 +541,16 @@ interface ListingData {
   facets: Awaited<ReturnType<StorefrontData["productFacets"]>>;
   categories: CategoryRow[];
   category?: CategoryRow;
+  /** 最初に選んだタグ（今までのテーマの見出し・タグの札） */
   tag?: string;
+  /** 選んでいる絞り込み（タグ・価格。0150。当たる前は使えた分だけ） */
+  filter: ListFilter;
+  /** 価格の欄の上限（公開の一覧のいちばん高い一覧の価格）。0150 の前は undefined（価格の欄を出さない） */
+  priceRange?: { max: number | null };
+  /** 選択肢の絞り込みの候補（0153 の後。鍵ごと、表示名つき） */
+  optionFacets: { key: string; label: string; values: { value: string; count: number }[] }[];
+  /** ブランドの絞り込みの候補（0162 の後。ブランドと商品の数、多い順） */
+  vendors: { brand: string; count: number }[];
   q?: string;
   after?: string;
   /** 並べ方（既定の new は持たない） */
@@ -527,18 +566,41 @@ interface ListingData {
 }
 
 /** 商品の一覧の材料（お店のトップ・すべての商品・カテゴリーの一覧・商品一覧のひな形のプレビューで同じ） */
-async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; tag?: string; q?: string; after?: string; sort?: ProductSort; top: boolean; count: boolean }): Promise<ListingData | null> {
-  // 2 文字以下の語は、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0058 の q_too_short）
-  const searchable = !q.q || [...q.q].length >= PRODUCT_SEARCH_MIN_CHARS || Boolean(q.tag || q.category);
-  const query = { tag: q.tag, category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), ...(q.sort ? { sort: q.sort } : {}), limit: STORE_PAGE_SIZE };
+async function listingData(s: ShopScope, q: { categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; q?: string; after?: string; sort?: ProductSort; top: boolean; count: boolean }): Promise<ListingData | null> {
+  const f = q.filter;
+  // 3 文字以上の語が無ければ、カテゴリー・タグでも絞っていなければ探さない（インデックスが効かず全件を見るため。0161 の q_too_short）
+  const searchable = !searchTooShort(q.q) || Boolean(f.tags.length > 0 || q.category || f.vendor);
+  const query = { tags: f.tags, ...(f.vendor ? { brand: f.vendor } : {}), ...(f.priceMin !== undefined ? { priceMin: f.priceMin } : {}), ...(f.priceMax !== undefined ? { priceMax: f.priceMax } : {}), ...(f.options ? { options: f.options } : {}), category: q.category?.slug, ...(q.q && searchable ? { q: q.q } : {}), ...(q.sort ? { sort: q.sort } : {}), limit: STORE_PAGE_SIZE };
   const empty: ProductListPage = { items: [], total: 0, totalCapped: false, limit: STORE_PAGE_SIZE, offset: 0, nextOffset: null, nextCursor: null };
   const [page, facets] = await Promise.all([searchable ? s.sf.productPage(s.shop, query, q.categories, { cursor: q.after, ...(q.count ? { count: true } : {}) }) : Promise.resolve(empty), s.sf.productFacets(s.shop, q.categories)]);
   if (!page) return null;
-  const cond = { category: q.category?.slug, tag: q.tag, q: q.q };
+  // 0150 の前は、使えた絞り込み（最初のタグ）だけを選んでいることにする（画面と URL を一覧の中身と合わせる）
+  // ブランドは 0058 からの p_brand なので、どの DB でも効く
+  const base: ListFilter = page.filtersIgnored ? { tags: f.tags.slice(0, 1), ...(f.vendor ? { vendor: f.vendor } : {}) } : f;
+  const used: ListFilter = page.optionsIgnored ? { ...base, options: undefined } : base;
+  const cond = { category: q.category?.slug, tags: used.tags, priceMin: used.priceMin, priceMax: used.priceMax, options: used.options, vendor: used.vendor, q: q.q };
   // ページ送りは並べ方を保つ。canonical（path）は並べ方を外す（並べ替えただけの同じ一覧を別のページにしない）
   const link = (cursor: string | null) => listUrl(s.ctx.shopPath, { ...cond, sort: q.sort, after: cursor });
   const path = q.top && !q.after ? "" : listUrl("", cond);
-  return { page, facets, categories: q.categories, ...(q.category ? { category: q.category } : {}), ...(q.tag ? { tag: q.tag } : {}), ...(q.q ? { q: q.q } : {}), ...(q.after ? { after: q.after } : {}), ...(q.sort ? { sort: q.sort } : {}), top: q.top, searchable, path, link };
+  const tag = used.tags[0];
+  return {
+    page,
+    facets,
+    categories: q.categories,
+    ...(q.category ? { category: q.category } : {}),
+    ...(tag ? { tag } : {}),
+    filter: used,
+    ...(facets.price_max !== undefined ? { priceRange: { max: facets.price_max } } : {}),
+    optionFacets: optionFacetsOf(facets.options, (k) => optionLabel(optionNamesOf(s.shop.option_names), k)),
+    vendors: facets.brands ?? [],
+    ...(q.q ? { q: q.q } : {}),
+    ...(q.after ? { after: q.after } : {}),
+    ...(q.sort ? { sort: q.sort } : {}),
+    top: q.top,
+    searchable,
+    path,
+    link,
+  };
 }
 
 /** 既定のテーマの一覧に渡すもの（一覧と商品一覧のひな形で同じ） */
@@ -547,6 +609,10 @@ function listProps(s: ShopScope, d: ListingData) {
     ctx: s.ctx,
     products: d.page.items,
     ...(d.tag ? { tag: d.tag } : {}),
+    filter: d.filter,
+    ...(d.priceRange ? { priceRange: d.priceRange } : {}),
+    ...(d.optionFacets.length > 0 ? { optionFacets: d.optionFacets } : {}),
+    ...(d.vendors.length > 0 ? { vendors: d.vendors } : {}),
     ...(d.q ? { q: d.q } : {}),
     ...(d.top ? { top: true } : {}),
     tags: d.facets.tags,
@@ -577,9 +643,9 @@ async function collectionResponse(c: Ctx, s: ShopScope, d: ListingData, o: Rende
     for (const [k, node] of Object.entries(listParts(props))) parts[k] = node === null ? "" : String(node);
     const page: PageRow = { ...layout, title: d.category ? d.category.name : t("store.all_products"), seo_title: null, seo_description: d.category ? categoryMetaDescription(d.category.description) : null, image_url: null };
     // テーマに snippets/part-<部品> があれば、その部品はテーマの見た目で（無ければ既定のまま）
-    const values = collectionPartValues(c, s, { page: d.page, ...(d.category ? { category: d.category } : {}), ...(d.tag ? { tag: d.tag } : {}), tags: d.facets.tags, link: d.link, ...(d.after ? { after: d.after } : {}) });
+    const values = collectionPartValues(c, s, { page: d.page, ...(d.category ? { category: d.category } : {}), filter: d.filter, ...(d.priceRange ? { priceRange: d.priceRange } : {}), optionFacets: d.optionFacets, vendors: d.vendors, tags: d.facets.tags, link: d.link, ...(d.after ? { after: d.after } : {}), ...(d.q ? { q: d.q } : {}), ...(d.sort ? { sort: d.sort } : {}) });
     const themed = themeLayoutParts(c, s, lt, { body: view.body, names: COLLECTION_PARTS, defaults: only(parts), values, title: page.title, path: d.path, categories: d.categories });
-    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: d.path, lead: true, ...(d.after || d.q ? { noindex: true } : {}) });
+    const res = renderContentPage(c, s, lt, { page, html: `<style>${CURRENT_CSS}</style>` + fillCurrent(doc, themed), categories: d.categories, blocks, cards, ablocks, acards, apps, appCards, path: d.path, lead: true, ...(d.after || d.q || filterNoindex(d.filter) ? { noindex: true } : {}) });
     if (res) return res;
   }
   const html = fillAppBlocks(fillArticleBlocks(fillProductBlocks(doc, cards), acards), appCards);
@@ -963,6 +1029,8 @@ async function cartLines(s: ShopScope): Promise<{ lines: CartLine[]; total: numb
 
 /** カート画面のクーポン欄（モジュールが OFF なら null。コードが無ければ DB に問い合わせない） */
 async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: number) {
+  // 店頭のみの行（0149）は購入手続きに進まないので、値引きの判定に入れない（subtotal はもともと入れていない）
+  lines = lines.filter((l) => !l.storeOnly);
   const source = couponSource(c, s.shop);
   if (!source) return null;
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
@@ -973,6 +1041,11 @@ async function cartCoupons(c: Ctx, s: ShopScope, lines: CartLine[], subtotal: nu
     rejected: d.rejected.map((r) => couponNotice(buyerRejected(r))),
     discount: d.itemDiscount,
   };
+}
+
+/** 代金引換で買えない理由 → カートの知らせ */
+function codCartError(reason: CodBlock | undefined): string {
+  return reason === "max_total" ? "cod_max_total" : reason === "members_only" ? "cod_members_only" : "cod_unavailable";
 }
 
 function paymentOptions(c: Ctx, s: ShopScope): Promise<PaymentSetup> {
@@ -988,8 +1061,15 @@ const CART_ERRORS: Record<string, MessageKey> = {
   quote_used: "confirm.expired",
   price: "confirm.changed",
   limit: "store.checkout_error_limit",
+  store_only: "store.checkout_error_store_only",
   coupon: "store.checkout_error_coupon",
   minimum: "store.checkout_error_minimum",
+  // KOMOJU の種類を選んでいない・使えない（0170）
+  payment_method: "store.checkout_error_payment_method",
+  // 代金引換（0157）で買えない理由
+  cod_max_total: "cod.error_max_total",
+  cod_members_only: "cod.error_members_only",
+  cod_unavailable: "cod.error_unavailable",
   coupon_invalid: "store.coupon_invalid",
 };
 
@@ -1002,18 +1082,23 @@ storefront.get("/:shop/cart", async (c: Ctx) => {
     await writeCart(c, s, addCoupon(s.cart, linked));
     return c.redirect(`${s.ctx.shopPath}/cart`);
   }
-  const [{ lines, total }, { options }] = await Promise.all([cartLines(s), paymentOptions(c, s)]);
+  const [{ lines, total }, { options }, memberFreeOver] = await Promise.all([cartLines(s), paymentOptions(c, s), memberFreeOverForCart(c, s.shop, s.ctx.member)]);
   const coupons = await cartCoupons(c, s, lines, total);
+  // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料は DB が決める）
+  const shipping = shippingSummary(s.shop, memberFreeOver);
   const errorKey = CART_ERRORS[c.req.query("error") ?? ""];
   const tryon = moduleEnabled(s.shop.settings, TRYON_MODULE) && !!s.theme.TryonPage;
-  if (lines.length > 0) track(c, "cart_view", total, cartItems(lines));
+  // 注文は会員だけのショップ（0165）でゲストのとき: ログイン（その場で会員登録）してカートへ戻るリンク
+  const loginRequired = checkoutMembersOnly(s.shop.settings) && !s.ctx.member ? loginUrlFor(s.ctx.shopPath, `${s.ctx.shopPath}/cart`) : undefined;
+  // 金額（小計）に入れない店頭のみの行（0149）は、品目からも外す
+  if (lines.length > 0) track(c, "cart_view", total, cartItems(lines.filter((l) => !l.storeOnly)));
   // Liquid のテーマの templates/cart（無ければ既定のテーマ）
   const lt = await liquidThemeFor(c, s, { cartLines: lines });
   if (lt) {
-    const res = renderCart(c, s, lt, { lines, discounts: coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null, payments: options, ...(errorKey ? { error: t(errorKey) } : {}), categories: await s.sf.listCategories(s.shop) });
+    const res = renderCart(c, s, lt, { lines, subtotal: total, shipping, discounts: coupons ? { applied: coupons.applied, rejected: coupons.rejected, discount: coupons.discount } : null, payments: options, ...(errorKey ? { error: t(errorKey) } : {}), ...(loginRequired ? { loginRequired } : {}), categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
-  return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping: shippingSummary(s.shop), coupons, error: errorKey ? t(errorKey) : undefined, tryon }));
+  return c.html(s.theme.CartPage({ ctx: s.ctx, lines, total, payments: options, shipping, coupons, error: errorKey ? t(errorKey) : undefined, tryon, ...(loginRequired ? { loginRequired } : {}) }));
 });
 
 // ---------- お店で試着（同梱モジュール store_tryon、決済なし。docs/store-tryon.md） ----------
@@ -1211,12 +1296,14 @@ storefront.post("/:shop/cart/add", async (c: Ctx) => {
   const found = await s.sf.skusForCart(s.shop, [skuId]);
   const hit = found.get(skuId);
   if (!hit) return notFound(c, s);
-  // 会員限定で買えない商品（0098）は入れない（商品のページが「会員の方だけ購入できます」を出している）
-  if (!hit.purchasable) return c.redirect(productUrl(s.ctx.shopPath, hit.product.slug));
+  // カートに入れられない商品（会員限定 0098・発売前 0148・お店で試着が OFF のショップの店頭のみ 0149）は入れない
+  // （商品のページが理由を出している。src/products/sale.ts）
+  if (!hit.cartable) return c.redirect(productUrl(s.ctx.shopPath, hit.product.slug));
   const next = addItem(s.cart, skuId, qty);
   await writeCart(c, s, next);
   // 本文の「今すぐ買う」（src/pages/shop-blocks.ts）: カートに入れて、そのまま購入手続き（配送先 → 最終確認）へ
-  if (f.buy === "1") return startCheckout(c, { ...s, cart: next }, {});
+  // 店頭のみの商品（0149）は購入手続きに進めないので、「今すぐ買う」でもカートに入れるだけ
+  if (f.buy === "1" && hit.purchasable) return startCheckout(c, { ...s, cart: next }, {});
   // sku と qty は「カートに入れた」の出来事用（どの SKU を何点入れたか。src/storefront/events.ts）
   return c.redirect(productUrl(s.ctx.shopPath, hit.product.slug, { added: "1", sku: hit.sku.code, qty: String(qty) }));
 });
@@ -1345,7 +1432,8 @@ async function cartAddJs(c: Ctx): Promise<Response> {
   if (adds.length === 0) return c.json({ status: 422, message: "invalid", description: "id and quantity are required" }, 422);
   const found = await s.sf.skusForCart(s.shop, adds.map((a) => a.skuId));
   if (adds.some((a) => !found.has(a.skuId))) return c.json({ status: 404, message: "not found", description: "this variant is not available" }, 404);
-  if (adds.some((a) => found.get(a.skuId)?.purchasable === false)) return c.json({ status: 422, message: "Cart Error", description: t("store.members_only_buy") }, 422);
+  const blocked = adds.map((a) => found.get(a.skuId)).find((h) => h && !h.cartable);
+  if (blocked) return c.json({ status: 422, message: "Cart Error", description: t(blocked.purchase_block === "coming_soon" ? "store.coming_soon_buy" : blocked.purchase_block === "store_only" ? "store.store_only_buy" : "store.members_only_buy") }, 422);
   const cart = adds.reduce((cart, a) => addItem(cart, a.skuId, a.qty), s.cart);
   // 在庫を超えるなら入れない（Shopify と同じく 422）
   const { lines } = await priceCart(s.sf, s.shop, cart);
@@ -1449,19 +1537,43 @@ storefront.post("/:shop/checkout", async (c: Ctx) => {
 /** 配送先の画面を出す。決済手段は provider（無ければ使える最初のもの。Liquid のテーマのカートは選ばずに送ってくる） */
 async function startCheckout(c: Ctx, s: ShopScope, f: Record<string, string>): Promise<Response> {
   const cartUrl = `${s.ctx.shopPath}/cart`;
+  // 注文は会員だけのショップ（0165）: ゲストはログイン（その場で会員登録）へ回し、済んだらカートへ戻す
+  if (checkoutMembersOnly(s.shop.settings) && !s.ctx.member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
   const setup = await paymentOptions(c, s);
-  const provider = f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe";
-  if (!isProvider(provider) || !providerAvailable(setup, provider)) return c.redirect(cartUrl);
-  const { lines, total } = await cartLines(s);
+  // KOMOJU は種類つき（komoju:konbini、0170 の支払い方法の手数料）でも受ける。「修正する」は method で送ってくる
+  const choice = parsePaymentChoice(f.provider ?? PROVIDERS.find((p) => providerAvailable(setup, p)) ?? "stripe");
+  const method = choice?.provider === "komoju" && choice.method === null && f.method ? f.method : (choice?.method ?? null);
+  if (!choice || !providerAvailable(setup, choice.provider)) return c.redirect(cartUrl);
+  if (!choiceAvailable(setup, { provider: choice.provider, method })) return c.redirect(`${cartUrl}?error=payment_method`);
+  const provider = choice.provider;
+  const { lines: all, total } = await cartLines(s);
+  // 店頭のみの商品（0149）は購入手続きに含めない（カートには残る）。それしか無ければカートに戻して知らせる
+  const lines = all.filter((l) => !l.storeOnly);
+  if (lines.length === 0 && all.length > 0 && all.every((l) => l.storeOnly)) return c.redirect(`${cartUrl}?error=store_only`);
   if (lines.length === 0 || lines.some((l) => l.short)) return c.redirect(`${cartUrl}?error=stock`);
   const edited = addressValues(f);
-  const values = Object.keys(edited).length > 0 ? edited : await customerPrefill(c, s);
-  return addressPage(c, s, { provider, values, subtotal: total, lines });
+  const member = s.ctx.membersEnabled ? await checkoutMember(c, s) : null;
+  const values = Object.keys(edited).length > 0 ? edited : (member?.values ?? {});
+  return addressPage(c, s, { provider, method, values, subtotal: total, lines, member });
+}
+
+/**
+ * 会員の住所の保存（0159）: 既定の住所が無ければ「保存します」のお知らせ、あれば「次回も使う」の欄。ゲスト・当てる前の DB は出さない。
+ * member を渡さなければ（入力の誤りで描き直すとき）ここで引く
+ */
+async function saveAddressMode(c: Ctx, s: ShopScope, member?: { hasAddress: boolean | null } | null): Promise<"auto" | "ask" | null> {
+  if (!s.ctx.membersEnabled || !s.ctx.member) return null;
+  const m = member === undefined ? await checkoutMember(c, s) : member;
+  if (!m || m.hasAddress === null) return null;
+  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  if (!state || !(await migrated(state, MEMBER_ADDRESS_MIGRATION))) return null;
+  return m.hasAddress ? "ask" : "auto";
 }
 
 /** 配送先の画面（Liquid のテーマの templates/checkout、無ければ既定のテーマ） */
-async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400 }): Promise<Response> {
-  const props = { provider: p.provider, values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), ...(p.error ? { error: p.error } : {}) };
+async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; method?: string | null; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400; member?: { hasAddress: boolean | null } | null }): Promise<Response> {
+  const saveAddress = await saveAddressMode(c, s, p.member);
+  const props = { provider: p.provider, ...(p.method ? { method: p.method } : {}), values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop, await memberFreeOverForCart(c, s.shop, s.ctx.member)), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), saveAddress, ...(p.error ? { error: p.error } : {}) };
   const lt = await liquidThemeFor(c, s, { cartLines: p.lines });
   if (lt) {
     const res = renderCheckoutAddress(c, s, lt, { ...props, categories: await s.sf.listCategories(s.shop), ...(p.status ? { status: p.status } : {}) });
@@ -1486,7 +1598,7 @@ async function confirmPage(c: Ctx, s: ShopScope, p: { confirmation: Confirmation
  *   配送先（住所の項目）を受け取ったら → 最終確認画面（署名付きの quote を埋め込む）
  *   quote を受け取ったら → 内容を引き直して一致すれば在庫を予約し、決済ページへ転送する
  */
-storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c: Ctx) => {
+storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay|cod}", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
   const cartUrl = `${s.ctx.shopPath}/cart`;
@@ -1497,21 +1609,30 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
   if (!secret) return c.redirect(`${cartUrl}?error=config`);
   const base = publicBaseUrl(c);
   const member = s.ctx.membersEnabled ? await customerSession(c, s) : null;
-  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop) };
+  // 注文は会員だけのショップ（0165）: 配送先・確定のどちらの段でも、ゲストはログインへ回す
+  if (checkoutMembersOnly(s.shop.settings) && !member) return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
+  const memberFreeOver = memberFreeOverSource(c, s.shop, member ? { id: member.cid, epoch: member.ep, sid: member.sid } : null);
+  const qctx = { sf: s.sf, shop: s.shop, secret, baseUrl: base, coupons: couponSource(c, s.shop), member: member ? { id: member.cid } : null, consent: consentCollected(s.shop), komojuTypes: komojuTypesOf(setup), ...(memberFreeOver ? { memberFreeOver } : {}) };
   const f = await formFields(c);
+  // KOMOJU の種類（0170、配送先の画面が隠しの値 method で送る）
+  const method = provider === "komoju" && f.method ? f.method : null;
 
   // 1. 配送先 → 最終確認画面
   if (f.quote === undefined) {
-    const r = await createQuote(qctx, s.cart, provider, f);
+    const r = await createQuote(qctx, s.cart, provider, f, method);
     if (!r.ok && r.error === "invalid_address") {
-      const { total: subtotal, lines } = await cartLines(s);
+      const { total: subtotal, lines: all } = await cartLines(s);
+      // 最初の配送先の画面と同じく、店頭のみの行（0149）は出さない
+      const lines = all.filter((l) => !l.storeOnly);
       const deliveryError = (r.invalid ?? []).some((k) => k.startsWith("delivery_"));
-      return addressPage(c, s, { provider, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
+      return addressPage(c, s, { provider, method, values: addressValues(f), subtotal, lines, error: t(deliveryError ? "delivery.invalid" : "store.address_invalid"), status: 400 });
     }
-    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : "stock"}`);
+    if (!r.ok) return c.redirect(`${cartUrl}?error=${r.error === "minimum_amount" ? "minimum" : r.error === "store_only" ? "store_only" : r.error === "cod_unavailable" ? codCartError(r.cod) : r.error === "payment_method" ? "payment_method" : "stock"}`);
     const conf = r.confirmation;
     track(c, "checkout_start", conf.total_jpy, conf.lines.map((l) => ({ sku: l.code, name: l.product_name, ...(l.sku_name ? { variant: l.sku_name } : {}), price: l.unit_price_jpy, quantity: l.qty })));
-    return confirmPage(c, s, { confirmation: conf, quote: r.token, lines: r.lines });
+    // 店頭のみの商品（0149）を外したときは、確認画面で知らせる（カートには残っている）
+    const excludedNote = r.excluded?.length ? tf("confirm.store_only_excluded", { items: r.excluded.map((l) => l.product.name).join("、") }) : undefined;
+    return confirmPage(c, s, { confirmation: conf, quote: r.token, lines: r.lines, ...(excludedNote ? { error: excludedNote } : {}) });
   }
 
   // 2. 確認済みの quote → 確定
@@ -1520,7 +1641,9 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
   const check = await recheckQuote(qctx, quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return confirmPage(c, s, { confirmation: check.fresh.confirmation, quote: check.fresh.token, lines: check.fresh.lines, error: t("confirm.changed"), status: 409 });
-    return c.redirect(`${cartUrl}?error=stock`);
+    // 作り直しが支払い方法で断られた（手数料の決まりができた後の古い確認・種類を外した）ときは在庫ではなく支払い方法の誤り
+    if (check.error === "changed" && !check.fresh.ok && check.fresh.error === "payment_method") return c.redirect(`${cartUrl}?error=payment_method`);
+    return c.redirect(`${cartUrl}?error=${check.error === "store_only" ? "store_only" : "stock"}`);
   }
   const deps = placeOrderDeps(c, setup);
   if (!deps) return c.redirect(`${cartUrl}?error=config`);
@@ -1540,8 +1663,9 @@ storefront.post("/:shop/checkout/:provider{stripe|komoju|amazon_pay}", async (c:
   });
   // 全端末からログアウトした後の古いセッション: ログインし直してもらう
   if (!placed.ok && placed.error === "member") return c.redirect(`${s.ctx.shopPath}/account/login`);
+  if (!placed.ok && placed.error === "member_required") return c.redirect(loginUrlFor(s.ctx.shopPath, cartUrl));
   if (!placed.ok) return c.redirect(`${cartUrl}?error=${placed.error}`);
-  // 0 円の注文はこの時点で確定している
+  // 0 円の注文・代金引換の注文はこの時点で確定している（完了画面は照会トークンで注文番号を出す）
   return c.redirect(placed.free ? withQueryParam(placed.url, "free", "1") : placed.url, 303);
 });
 
@@ -1598,13 +1722,13 @@ storefront.get("/:shop/orders/lookup", async (c: Ctx) => {
     const result = db ? await db.memberOrder(s.shop.id, session.cid, session.ep, number).catch(() => null) : null;
     if (result) {
       c.header("Cache-Control", "no-store");
-      const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && RECEIPT_STATUSES.includes(String(result["status"]));
+      const receipt = moduleEnabled(s.shop.settings, RECEIPT_MODULE) && receiptAvailable(result);
       const links = { receiptUrl: receipt ? `${s.ctx.shopPath}/account/orders/${number}/receipt` : null, inquiryUrl: s.ctx.inquiries ? `${s.ctx.shopPath}/inquiries/new?order=${number}` : null };
-      return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, member: links }));
+      return lookupRender(c, s, { values, result, member: links });
     }
     // 別の会員の注文・ゲストで買った注文: 番号とメールアドレスで開く画面に戻す
   }
-  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values }));
+  return lookupRender(c, s, { values });
 });
 
 storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
@@ -1614,16 +1738,28 @@ storefront.post("/:shop/orders/lookup", async (c: Ctx) => {
   const number = Number.parseInt((f.number ?? "").trim(), 10);
   const email = (f.email ?? "").trim();
   const values = { number: f.number ?? "", email };
-  if (!Number.isInteger(number) || !email) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 400);
+  if (!Number.isInteger(number) || !email) return lookupRender(c, s, { values, error: t("store.lookup_not_found") }, 400);
   const r = await guestOrderLookup(c, s.shop, number, email);
-  if (!r.ok) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_too_many") }), 429);
+  if (!r.ok) return lookupRender(c, s, { values, error: t("store.lookup_too_many") }, 429);
   const result = r.order;
-  if (!result) return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, error: t("store.lookup_not_found") }), 404);
+  if (!result) return lookupRender(c, s, { values, error: t("store.lookup_not_found") }, 404);
   // この注文について問い合わせる（同梱モジュール inquiries）: 番号とメールアドレスが合った組を署名して、フォームに POST で渡す
   const secret = c.get("sessionSecret");
   const inquiry = secret && s.ctx.inquiries ? { token: await sealOrderToken(secret, s.shop.id, number, email) } : null;
-  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE), inquiry }));
+  return lookupRender(c, s, { values, result, receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE), inquiry });
 });
+
+type LookupProps = Omit<Parameters<ShopScope["theme"]["OrderLookupPage"]>[0], "ctx">;
+
+/** 注文照会の画面: Liquid のテーマに templates/order_lookup があればそれ（メンテナの決定 2026-11-17）、無ければ・描けなければ既定のテーマ */
+async function lookupRender(c: Ctx, s: ShopScope, props: LookupProps, status: 200 | 400 | 404 | 429 = 200): Promise<Response> {
+  const lt = await liquidThemeFor(c, s);
+  if (lt) {
+    const res = await renderOrderLookup(c, s, lt, { ...props, status });
+    if (res) return res;
+  }
+  return c.html(s.theme.OrderLookupPage({ ctx: s.ctx, ...props }), status);
+}
 
 /** 領収書（同梱モジュール receipt）。注文照会と同じく注文番号とメールアドレスで引く（GET の URL にメールアドレスを載せない） */
 storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
@@ -1635,13 +1771,23 @@ storefront.post("/:shop/orders/receipt", async (c: Ctx) => {
   const r = Number.isInteger(number) && email ? await guestOrderLookup(c, s.shop, number, email) : null;
   if (r && !r.ok) return c.text(t("store.lookup_too_many"), 429);
   const order = (r?.order ?? null) as ReceiptOrder | null;
-  if (!order || !RECEIPT_STATUSES.includes(order.status)) return c.text(t("receipt.not_available"), 404);
+  if (!order || !receiptAvailable(order)) return c.text(t("receipt.not_available"), 404);
   c.header("Cache-Control", "no-store");
   // no-referrer にすると、宛名のフォームの POST に Origin: null が付いて csrfGuard に拒まれる（src/routes/storefront/members.ts の privatePage）
   c.header("Referrer-Policy", "same-origin");
   const name = (f.name ?? "").trim().slice(0, 100);
   return c.html(renderReceipt({ shopName: s.shop.name, settings: receiptSettings(s.shop), shopSettings: s.shop.settings, order, addressee: name, issuedAt: new Date(), nameForm: { action: `${s.ctx.shopPath}/orders/receipt`, method: "post", hidden: { number: String(number), email } } }));
 });
+
+/**
+ * 購入手続きのあとでカートに残す行: 店頭のみの商品（0149。購入手続きに含めていないので、お店で試着で申し込めるよう残す）。
+ * お店で試着が OFF なら店頭のみの商品はカートに入らないので、DB に問い合わせずに空にする
+ */
+async function storeOnlyItems(s: ShopScope): Promise<Cart["items"]> {
+  if (s.cart.items.length === 0 || !moduleEnabled(s.shop.settings, TRYON_MODULE)) return [];
+  const keep = new Set((await priceCart(s.sf, s.shop, s.cart)).lines.filter((l) => l.storeOnly).map((l) => l.sku.id));
+  return s.cart.items.filter((i) => keep.has(i.sku_id));
+}
 
 /** 「確認中」の自動更新を続ける時間。これを過ぎたら「受付済み。メールでお知らせ」の表示に戻す（Webhook が遅れている・届いていない） */
 const DONE_REFRESH_WINDOW_SECONDS = 10 * 60;
@@ -1653,7 +1799,8 @@ const DONE_REFRESH_WINDOW_SECONDS = 10 * 60;
 storefront.get("/:shop/checkout/done", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
-  await writeCart(c, s, { items: [] });
+  // 自動の再読み込み（r=1）では、最初に開いたときに整えたカートのまま（店頭のみの行を引き直さない）
+  if (c.req.query("r") !== "1") await writeCart(c, s, { items: await storeOnlyItems(s) });
   const free = c.req.query("free") === "1";
   const secret = c.get("sessionSecret");
   const token = secret ? await openStatusToken(secret, c.req.query("s"), s.shop.id) : null;
@@ -1669,7 +1816,7 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     c.header("cache-control", "no-store");
     // 読み込み直す先は # の無い URL で明示する。決済事業者が戻り先に # を付けると（KOMOJU の #credit_card など）、
     // URL を書かない refresh は「同じ文書の中の移動」になり、ブラウザが読み込み直さない
-    const refreshUrl = refresh ? withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? "") : null;
+    const refreshUrl = refresh ? withQueryParam(withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? ""), "r", "1") : null;
     return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, refreshUrl, inquiryUrl });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);

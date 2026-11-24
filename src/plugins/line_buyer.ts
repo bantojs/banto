@@ -8,32 +8,39 @@
 import type { BundledPlugin, PluginContext } from "./types";
 import { LINE_PUSH_URL } from "./line_notify";
 import { lineToken } from "./line_token";
+import { noticeLine, type NoticeTextRow } from "../notices/templates";
+import { tryonNoticeKind } from "../modules/store-tryon/mail";
 
-export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }): string | null {
-  const yen = `¥${Number(r.total_jpy).toLocaleString("ja-JP")}`;
-  if (event === "order.paid") return `【${r.shop_name}】ご注文ありがとうございます。\n注文番号 ${r.number}\n合計 ${yen}\n発送の準備ができしだい、お知らせします。`;
-  if (event === "order.shipped") return `【${r.shop_name}】ご注文の商品を発送しました。\n注文番号 ${r.number}\n到着までしばらくお待ちください。`;
-  return null;
+/** 注文の知らせ。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
+export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }, texts?: readonly NoticeTextRow[] | null): string | null {
+  // order.created は未入金の注文（代金引換、0157）の受付。呼び出し側が payment_status で選ぶ
+  const kind = event === "order.paid" || event === "order.created" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
+  if (!kind) return null;
+  return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}` });
 }
 
-/** お店で試着（0025）: 受付・取り置き開始・取り消しだけ知らせる */
-export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }): string | null {
-  if (event === "tryon.requested") return `【${r.shop_name}】お店で試着のお申し込みを承りました。\n受付番号 ${r.number}\n店舗 ${r.store_name}\n店舗でご用意ができしだい、お知らせします。`;
-  if (event === "tryon.updated" && r.status === "ready") {
-    const until = r.hold_until ? `\n${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日までお取り置きします。` : "";
-    return `【${r.shop_name}】${r.store_name}でご試着いただけます。\n受付番号 ${r.number}${until}`;
-  }
-  if (event === "tryon.updated" && r.status === "cancelled") return `【${r.shop_name}】お店で試着のお申し込み（受付番号 ${r.number}）を取り消しました。`;
-  return null;
+/**
+ * お店で試着（0025）: 受付・取り置き開始・取り置きの延長（0151）・前日のお知らせ（0152）・取り消しだけ知らせる。
+ * ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面
+ */
+export function tryonLineMessage(event: string, r: { number: number; status: string; hold_until: string | null; store_name: string; shop_name: string }, opts: { extended?: boolean; reminder?: boolean } = {}, texts?: readonly NoticeTextRow[] | null): string | null {
+  // 前日のお知らせ・延長の知らせが届く前に状態が変わっていたら送らない
+  if ((opts.reminder || opts.extended) && r.status !== "ready") return null;
+  const kind = tryonNoticeKind(event, r.status, opts);
+  if (!kind) return null;
+  // 期限が無いとき（今の DB では起きない）、前日のお知らせは今までどおり「明日」
+  const until = r.hold_until ? `${Number(r.hold_until.slice(5, 7))}月${Number(r.hold_until.slice(8, 10))}日` : kind === "tryon_reminder" ? "明日" : "";
+  return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), store_name: r.store_name, hold_until: until });
 }
 
 export const lineBuyerNotify: BundledPlugin = {
   id: "line_buyer_notify",
   manifest: {
     name: "LINE で購入者に知らせる",
-    version: "1.0.0",
+    version: "1.1.0",
     description: "LINE でログインした会員に、ショップの LINE 公式アカウントから注文の受付・発送（お店で試着の受付・取り置き）を知らせます。チャネルアクセストークンは管理画面の「LINE 公式アカウント」で入れます。",
-    events: ["order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
+    // order.created は代金引換などの未入金の注文の受付だけ（0157）
+    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
     settings: [],
   },
   requiredSecrets: [],
@@ -60,12 +67,21 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
     const id = typeof data["request_id"] === "string" ? data["request_id"] : "";
     if (!id || (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"])))) return null;
     const r = await ctx.privileged.tryonLineRecipient(id, shop_id);
-    const text = r ? tryonLineMessage(event, r) : null;
+    const opts = { extended: data["extended"] === true, reminder: data["reminder"] === true };
+    const kind = r ? tryonNoticeKind(event, r.status, opts) : null;
+    const text = r && kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
     return r && text ? { to: r.line_user_id, text } : null;
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
+  // 未入金の注文の入金の記録（0156）で出た order.paid には、受付の知らせを重ねて送らない
+  if (event === "order.paid" && data["recorded_payment"] === true) return null;
+  // 注文の受付: 入金済みの注文は order.paid、未入金の注文（代金引換、0157）は order.created で知らせる
+  if (event === "order.created" && data["payment_status"] !== "unpaid") return null;
+  if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped") return null;
   const r = await ctx.privileged.orderLineRecipient(orderId, shop_id);
-  const text = r ? buyerMessage(event, r) : null;
+  // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
+  const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
+  const text = r ? buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
   return r && text ? { to: r.line_user_id, text } : null;
 }

@@ -94,6 +94,10 @@ v1.get("/products", async (c) =>
 );
 v1.get("/categories", async (c) => api(c).categoriesList().then((r) => c.json({ categories: r })).catch((e) => errorJson(c, e)));
 v1.post("/categories", async (c) => body(c).then((b) => api(c).categorySave(b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/product-fields", async (c) => api(c).fieldDefsGet("product").then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.put("/product-fields", async (c) => body(c).then((b) => api(c).fieldDefsSet("product", b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.get("/customer-fields", async (c) => api(c).fieldDefsGet("customer").then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.put("/customer-fields", async (c) => body(c).then((b) => api(c).fieldDefsSet("customer", b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.get("/audiences", async (c) => api(c).audiencesList().then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.post("/products", async (c) => body(c).then((b) => api(c).productCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
 v1.get("/products/:id", async (c) => api(c).productGet({ id: c.req.param("id") }).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
@@ -234,12 +238,17 @@ v1.get("/orders", async (c) =>
 v1.get("/orders/:id", async (c) => api(c).orderGet(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 // 印とメモ（0106。orders:write、メモは orders:pii も）
 v1.patch("/orders/:id", async (c) => body(c).then((b) => api(c).orderAnnotate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+// 入金を記録する（未入金の注文、0156。orders:write）
+v1.post("/orders/:id/payment", async (c) => api(c).orderPaymentRecord(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.post("/orders/:id/status", async (c) =>
   body(c)
     .then((b) => {
       const s = b["status"];
       if (s !== "shipped" && s !== "cancelled") throw new ApiError("invalid", "status must be shipped or cancelled", 400);
-      return api(c).orderUpdateStatus(c.req.param("id"), s);
+      // 受け取り拒否（0156。未入金で発送した注文の取り消しだけ）
+      const reason = b["reason"];
+      if (reason !== undefined && !(s === "cancelled" && reason === "refused")) throw new ApiError("invalid", "reason must be refused (with status cancelled)", 400);
+      return api(c).orderUpdateStatus(c.req.param("id"), s, reason === "refused" ? "refused" : undefined);
     })
     .then((r) => c.json(r))
     .catch((e) => errorJson(c, e)),
@@ -392,6 +401,11 @@ v1.post("/dialogs", async (c) => body(c).then((b) => api(c).dialogCreate(b)).the
 v1.patch("/dialogs/:id", async (c) => body(c).then((b) => api(c).dialogUpdate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 v1.delete("/dialogs/:id", async (c) => api(c).dialogDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 
+// 会員へのお知らせ（0155。member_news:write）。連携に結んだトークンは自分の連携のものだけ。customer_id があれば 1 人あて、無ければ全員向け
+v1.get("/member-news", async (c) => api(c).memberNewsList(c.req.query("customer_id") || undefined).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+v1.post("/member-news", async (c) => body(c).then((b) => api(c).memberNewsCreate(b)).then((r) => c.json(r, 201)).catch((e) => errorJson(c, e)));
+v1.delete("/member-news/:id", async (c) => api(c).memberNewsDelete(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+
 // クーポン（0036。coupons:read / coupons:write）。:ref は id（UUID）かコード
 v1.get("/coupons", async (c) =>
   api(c)
@@ -436,6 +450,13 @@ v1.get("/customers", async (c) =>
       updatedSince: c.req.query("updated_since") || undefined,
       marketingConsent: c.req.query("marketing_consent") === "true" ? true : c.req.query("marketing_consent") === "false" ? false : undefined,
     })
+    .then((r) => c.json(r, 200, { "cache-control": "no-store" }))
+    .catch((e) => errorJson(c, e)),
+);
+// 会員の結びつけの一覧（0167。customers:links。個人情報なし、LINE の UID は鍵付きハッシュだけ。鍵は X-Banto-Link-Key）
+v1.get("/customers/links", async (c) =>
+  api(c)
+    .customersLinks({ linkKey: c.req.header("x-banto-link-key"), limit: int(c.req.query("limit"), 100), offset: int(c.req.query("offset"), 0) })
     .then((r) => c.json(r, 200, { "cache-control": "no-store" }))
     .catch((e) => errorJson(c, e)),
 );

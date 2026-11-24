@@ -13,6 +13,8 @@ export const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "products:write": "tokens.scope.products_write",
   "orders:read": "tokens.scope.orders_read",
   "orders:pii": "tokens.scope.orders_pii",
+  "orders:contact": "tokens.scope.orders_contact",
+  "orders:address": "tokens.scope.orders_address",
   "orders:write": "tokens.scope.orders_write",
   "shop:read": "tokens.scope.shop_read",
   "shop:write": "tokens.scope.shop_write",
@@ -21,6 +23,7 @@ export const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "coupons:write": "tokens.scope.coupons_write",
   "customers:read": "tokens.scope.customers_read",
   "customers:write": "tokens.scope.customers_write",
+  "customers:links": "tokens.scope.customers_links",
   "inquiries:read": "tokens.scope.inquiries_read",
   "inquiries:write": "tokens.scope.inquiries_write",
   "theme:write": "tokens.scope.theme_write",
@@ -31,21 +34,22 @@ export const SCOPE_LABEL: Record<ApiScope, MessageKey> = {
   "line:send": "tokens.scope.line_send",
   "dialogs:write": "tokens.scope.dialogs_write",
   "stores:write": "tokens.scope.stores_write",
+  "member_news:write": "tokens.scope.member_news_write",
 };
 
 /** 目的ごとのまとまり（どのスコープもちょうど 1 つに入る。test/admin-purposes.test.ts） */
 export const SCOPE_GROUPS: { label: MessageKey; scopes: ApiScope[] }[] = [
   { label: "purpose.products", scopes: ["products:read", "products:write", "app_data:write"] },
-  { label: "purpose.orders", scopes: ["orders:read", "orders:write", "orders:pii"] },
-  { label: "purpose.customers", scopes: ["customers:read", "customers:write"] },
-  { label: "purpose.marketing", scopes: ["coupons:read", "coupons:write", "line:send", "dialogs:write"] },
+  { label: "purpose.orders", scopes: ["orders:read", "orders:write", "orders:contact", "orders:address", "orders:pii"] },
+  { label: "purpose.customers", scopes: ["customers:read", "customers:write", "customers:links"] },
+  { label: "purpose.marketing", scopes: ["coupons:read", "coupons:write", "line:send", "dialogs:write", "member_news:write"] },
   { label: "purpose.support", scopes: ["inquiries:read", "inquiries:write"] },
   { label: "purpose.content", scopes: ["content:read", "content:write", "theme:write", "theme:publish"] },
   { label: "purpose.shop", scopes: ["shop:read", "shop:write", "stats:read", "stores:write"] },
 ];
 
 /** 購入者・会員の個人情報に触れるスコープ（印を付ける） */
-export const PII_SCOPES: readonly ApiScope[] = ["orders:pii", "customers:read", "customers:write"];
+export const PII_SCOPES: readonly ApiScope[] = ["orders:pii", "orders:contact", "orders:address", "customers:read", "customers:write"];
 
 /** AI 用トークンの目的のひな形（そこから細かく直せる）。custom は今までの既定（読み取りだけ・個人情報なし） */
 export const TOKEN_PRESETS = {

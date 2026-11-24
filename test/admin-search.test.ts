@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * 管理画面の一覧の検索（メンテナの決定 2026-11-08「検索は同じ形」、src/routes/admin/search.tsx）:
@@ -63,15 +62,6 @@ describe("注文の一覧の検索", () => {
     expect(numbers(await (await b.get(next)).text())).toEqual([2047, 2048, 2049, 2050, 2051, 2052, 2053, 2054]);
   });
 
-  it("0132 を当てる前の DB: 並び・支払い方法・日付・金額の欄を出さず、URL で送られても使わない", async () => {
-    const { shop, app } = setup({ migrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0132_admin_search") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    const html = await (await b.get(`/admin/shops/${shop.id}/orders?payment=komoju&sort=old`)).text();
-    expect(html).not.toContain('name="sort"');
-    expect(html).not.toContain('name="payment"');
-    expect(numbers(html)).toEqual([1003, 1002, 1001]);
-    expect(html).toContain('placeholder="注文番号・メール・氏名"');
-  });
 });
 
 describe("商品の一覧の検索", () => {

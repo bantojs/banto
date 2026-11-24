@@ -23,6 +23,8 @@ export interface ThemeContext {
   member?: { email: string; attrs?: Record<string, unknown> } | null;
   /** 会員機能が有効か（ヘッダにログイン導線を出す） */
   membersEnabled?: boolean;
+  /** 開いているページのお店の中のパス（GET のときだけ）。ログインのリンクに ?return_to= で付ける（loginUrlFor、src/members/return-path.ts） */
+  currentPath?: string;
   /** 外から見た URL（canonical / OG 用） */
   publicBaseUrl?: string;
   /** テーマ設定（shops.settings.theme_settings）。テーマが解釈する */
@@ -36,12 +38,25 @@ export interface PaymentOptions {
   komoju: boolean;
   /** 同梱プラグイン Amazon Pay（0130） */
   amazon_pay: boolean;
+  /** 同梱モジュール 代金引換（0157） */
+  cod?: boolean;
+  /**
+   * KOMOJU を種類ごとに並べる（0170、支払い方法の手数料）。あれば「KOMOJU」1 つの代わりに種類ごとのボタンを置き、
+   * provider に komoju:<type> を送る。fee は一律の手数料（段は null、手数料なしは 0）
+   */
+  komoju_methods?: { type: string; name: string; fee: number | null }[];
 }
 
 export interface ShippingInfo {
   summary: string;
   freeOver: number | null;
   table: { prefecture: string; fee: number }[] | null;
+  /** 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ（会員の条件の名前・中身は出さない） */
+  memberFree?: { label: string; freeOver: number }[];
+  /** 見る人の送料無料の金額（0171、表示の目安）: ショップ全体と、ログイン中の会員が当てはまる会員の条件の低い方。無ければ null */
+  viewerFreeOver?: number | null;
+  /** viewerFreeOver が会員の条件のもの（会員特典）か */
+  viewerFreeMember?: boolean;
   taxRate: number;
 }
 
@@ -59,6 +74,8 @@ export interface AddressFormValues {
   delivery_slot?: string;
   /** 「お得な情報やセールの案内を受け取る」（0050。チェックされていれば "1"、それ以外は ""。欄を出すショップだけ） */
   marketing_consent?: string;
+  /** 会員の「この住所を次回も使う」（0159）。"1" なら既定の住所を上書きする */
+  save_address?: string;
 }
 
 export interface CartLine {
@@ -67,6 +84,8 @@ export interface CartLine {
   qty: number;
   /** 在庫不足 */
   short: boolean;
+  /** 店頭のみの商品（0149）。カートには入るが購入手続きには進めない（小計に入れない、お店で試着で申し込む） */
+  storeOnly?: boolean;
 }
 
 /** カート画面のクーポン欄（同梱モジュール coupons が ON のときだけ渡る）。discount は商品の値引き（送料無料は確認画面で反映） */
@@ -84,6 +103,14 @@ export interface Theme {
     products: ProductSummary[];
     tag?: string;
     tags?: { tag: string; count: number }[];
+    /** 選んでいる絞り込み（0150。タグはすべてを持つ商品、価格は一覧の価格の円）。tag は tags[0] */
+    filter?: { tags: string[]; priceMin?: number; priceMax?: number; options?: Record<string, string[]>; vendor?: string };
+    /** 選択肢の絞り込みの候補（0153。鍵ごとに在庫のある値と商品の数、label は表示名）。無ければ欄を出さない */
+    optionFacets?: { key: string; label: string; values: { value: string; count: number }[] }[];
+    /** ブランドの絞り込みの候補（0162。ブランドと公開の商品の数、多い順）。無ければ欄を出さない */
+    vendors?: { brand: string; count: number }[];
+    /** 価格の欄の上限（公開の一覧のいちばん高い一覧の価格）。無ければ価格の欄を出さない（0150 の前） */
+    priceRange?: { max: number | null };
     /** カテゴリーの木（ナビゲーション用）と、カテゴリーの一覧（/categories/<カテゴリー>）のときのカテゴリー */
     categories?: CategoryNode[];
     /** description・image は 0113（カテゴリーの説明と画像）。無ければ出さない */
@@ -114,12 +141,12 @@ export interface Theme {
   MembersOnlyPage?(props: { ctx: ThemeContext; loginUrl: string }): Rendered;
   /** coupons が null / 省略なら、クーポン欄を出さない。入力は `${ctx.shopPath}/cart/coupon` に code、外すときは remove を POST する */
   /** tryon が true なら（同梱モジュール store_tryon）、GET `${ctx.shopPath}/tryon` への「お店で試着を申し込む」を出す */
-  CartPage(props: { ctx: ThemeContext; lines: CartLine[]; total: number; payments: PaymentOptions; shipping: ShippingInfo; coupons?: CartCoupons | null; error?: string; tryon?: boolean }): Rendered;
+  CartPage(props: { ctx: ThemeContext; lines: CartLine[]; total: number; payments: PaymentOptions; shipping: ShippingInfo; coupons?: CartCoupons | null; error?: string; tryon?: boolean; /** 注文は会員だけのショップでゲストのとき、ログイン（その場で会員登録）の URL（0165） */ loginRequired?: string }): Rendered;
   /** 決済ページへ行く前の配送先入力（全決済手段で共通）。prefectures は都道府県の選択肢 */
   /**
    * delivery があれば（同梱モジュール delivery_time）、delivery_date・delivery_slot の選択欄を出す（value が "" なら指定なし）
    */
-  AddressPage(props: { ctx: ThemeContext; provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; /** 「お得な情報やセールの案内を受け取る」の欄を出す（ショップの設定、0050） */ consent?: boolean }): Rendered;
+  AddressPage(props: { ctx: ThemeContext; provider: string; /** KOMOJU の種類（0170。隠しの値 method で次の段へ送る） */ method?: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; /** 「お得な情報やセールの案内を受け取る」の欄を出す（ショップの設定、0050） */ consent?: boolean; /** ログイン中の会員（0159）: "auto" = 既定の住所が無いので注文の住所を保存する（お知らせだけ）、"ask" = 既定の住所があるので「この住所を次回も使う」の欄を出す。ゲストは null */ saveAddress?: "auto" | "ask" | null }): Rendered;
   /**
    * 最終確認画面（特商法の「申込みの最終確認画面」）。confirmation の全項目を表示し、
    * quote を hidden で `${ctx.shopPath}/checkout/${confirmation.payment.provider}` に POST するボタンを置く。
@@ -177,6 +204,12 @@ export interface Theme {
      * providers は外部のアカウント。未連携は POST `${shopPath}/account/oauth/<id>/link`、連携済みは POST `${shopPath}/account/oauth/<id>/unlink`
      */
     security?: { password: boolean; hasPassword: boolean; providers: { id: "line" | "google"; linked: boolean }[] };
+    /**
+     * メールアドレスの変更（0166）。null・省略なら欄を出さない。
+     * step が "email" なら POST `${shopPath}/account/email`（email）で新しいアドレスにコードを送る。
+     * "code" なら POST `${shopPath}/account/email/verify`（code）でコードを確かめて変える（入れ直しは "email" のフォームをもう一度出す）
+     */
+    emailChange?: { step: "email" | "code" } | null;
     /** 領収書を出せる（同梱モジュール receipt）。支払い済みの注文に GET `${shopPath}/account/orders/<番号>/receipt` へのリンクを出す */
     receipt?: boolean;
     /**
@@ -188,12 +221,32 @@ export interface Theme {
      * お店で試着の申し込み（同梱モジュール store_tryon、0026）。null なら欄を出さない。
      * cancellable なら「取り消す」は POST `${shopPath}/account/tryon/<番号>/cancel`
      */
-    tryon?: { number: number; status: string; store_name: string; /** 表示用の日付（「10月24日（土）」） */ visit_label: string | null; hold_label: string | null; created_at: string; items: { name: string | null; sku: string | null; qty: number }[]; cancellable: boolean }[] | null;
+    tryon?: {
+      number: number;
+      status: string;
+      store_name: string;
+      /** 表示用の日付（「10月24日（土）」） */
+      visit_label: string | null;
+      hold_label: string | null;
+      created_at: string;
+      items: { name: string | null; sku: string | null; qty: number }[];
+      cancellable: boolean;
+      /** 取り置きを延ばせる（0151）なら「延長する」は POST `${shopPath}/account/tryon/<番号>/extend`。extend_left は残りの回数 */
+      extendable?: boolean;
+      extend_left?: number;
+      /** 今の取り置きの期限（YYYY-MM-DD）。延長のフォームに hold_until として添えると、二度押しで 2 回延ばさない */
+      hold_until?: string | null;
+    }[] | null;
     /**
      * お気に入り（同梱モジュール favorites、0123）。null なら欄を出さない。新しい順。
      * 「外す」は POST `${shopPath}/account/favorites/remove`（product_id）
      */
     favorites?: ProductSummary[] | null;
+    /**
+     * 会員へのお知らせ（同梱モジュール member_news、0155）。null なら欄を出さない。新しい順・50 件まで。
+     * 「すべて既読にする」は POST `${shopPath}/account/news/read`。url は https か、お店の中のパス（memberNewsHref で組む）
+     */
+    news?: { items: { id: string; title: string; body: string; url: string | null; starts_at: string; read: boolean }[]; unread: number } | null;
     /** ログイン中の端末の画面がある（0045）。true なら GET `${shopPath}/account/sessions` へのリンクを出す */
     sessions?: boolean;
     /** パスキーの画面がある（同梱モジュール passkey、0046）。true なら GET `${shopPath}/account/passkeys` へのリンクを出す */

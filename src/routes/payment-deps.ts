@@ -6,6 +6,9 @@ import { amazonPayFromConfig } from "../plugins/amazon_pay";
 import type { CouponSource, PaymentSetup, PlaceOrderDeps } from "../commerce/checkout";
 import type { PublicShop } from "../storefront/data";
 import { moduleEnabled } from "../modules/registry";
+import { AUDIENCES_MODULE } from "../members/audience";
+import { AUDIENCE_FREE_SHIPPING_MIGRATION, parseShippingSettings } from "../commerce/shipping";
+import { migrated } from "../db/migration-state";
 
 /** 決済まわりのクライアント。ストアフロント（同梱テーマのレジ）とヘッドレス API で共通 */
 function stripeFor(c: Ctx): StripeClient | null {
@@ -40,6 +43,31 @@ export function placeOrderDeps(c: Ctx, setup: PaymentSetup): PlaceOrderDeps | nu
 /** Amazon Pay のクライアント（中継ページ・戻り・IPN）。設定が足りなければ null */
 export function amazonPayFor(c: Ctx): ReturnType<typeof amazonPayFromConfig> {
   return amazonPayFromConfig(c.get("adapters").config, c.get("deps").fetch);
+}
+
+/**
+ * 会員の条件ごとの送料無料の金額（0171）を DB に聞く関数（QuoteContext.memberFreeOver）。
+ * ゲスト・会員の条件のモジュールが OFF・決まりが無い・0171 の前は undefined（DB の往復を足さない）。1 リクエストで 1 回だけ聞く。
+ * DB はセッション（世代・行）も確かめる。セッションの行の無い古い Cookie・トークンは聞かない（送料がかかる）。
+ * DB のエラーは送料がかかる側に倒す（null。確定の前の引き直しで確認画面を出し直す）
+ */
+export function memberFreeOverSource(c: Ctx, shop: PublicShop, member: { id: string; epoch: number; sid?: string | undefined } | null | undefined): (() => Promise<number | null>) | undefined {
+  if (!member?.id || !member.sid || !moduleEnabled(shop.settings, AUDIENCES_MODULE)) return undefined;
+  if (!parseShippingSettings((shop.settings ?? {})["shipping"]).has_member_free) return undefined;
+  const who = { id: member.id, epoch: member.epoch, sid: member.sid };
+  const privileged = privilegedFor(c);
+  if (!privileged) return undefined;
+  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  let once: Promise<number | null> | null = null;
+  return () =>
+    (once ??= (async () => {
+      if (!state || !(await migrated(state, AUDIENCE_FREE_SHIPPING_MIGRATION))) return null;
+      return privileged.memberFreeShippingOver(shop.id, who).catch((e: unknown) => {
+        // 会員の判定ができないときは送料がかかる側（個人情報は出さない）
+        console.warn(`member_free_shipping_over failed (shop ${shop.id}): ${e instanceof Error ? e.name : "error"}`);
+        return null;
+      });
+    })());
 }
 
 /**

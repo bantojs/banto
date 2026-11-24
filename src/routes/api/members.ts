@@ -1,10 +1,12 @@
 import { Hono } from "hono";
+import { memberNewsEnabled, parseNewsReadBody } from "../../modules/member-news";
 import type { AppEnv } from "../../app";
 import { createDbClient } from "../../db/client";
 import { SESSION_ABSOLUTE_SECONDS, deviceLabel, ipHash, issueTokens, linkHash, openToken } from "../../members/auth";
 import { startLogin, verifyLogin } from "../../members/login";
+import { EMAIL_CHANGE_MIGRATION, startEmailChange, verifyEmailChange } from "../../members/email-change";
 import { consentCollected, returnOrigins, safeReturnUrl, withQueryParam } from "../../commerce/checkout";
-import { StorefrontData, type PublicShop } from "../../storefront/data";
+import { StorefrontData, storefrontCacheTtl, type PublicShop } from "../../storefront/data";
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
@@ -14,7 +16,8 @@ import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
 import { memberAccountUrl, shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../../modules/registry";
-import { MEMBER_CANCELLABLE, TRYON_MODULE } from "../../modules/store-tryon";
+import { MEMBER_CANCELLABLE, TRYON_EXTEND_MIGRATION, TRYON_MODULE, memberExtendLeft, memberExtendable, todayHere, tryonSettings, ymdOrNull } from "../../modules/store-tryon";
+import { storefrontData } from "../storefront/domain";
 import { PrivilegedRpcError, type PrivilegedDb } from "../../db/privileged";
 import { PASSKEY_MODULE } from "../../modules/passkey";
 import { RECEIPT_MODULE, type ReceiptOrder } from "../../modules/receipt/render";
@@ -43,8 +46,11 @@ import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../module
  *   POST /api/shops/:shop/members/logout-all  全端末からログアウト（世代を上げる）
  *   GET  /api/shops/:shop/members/tryon       自分のお店で試着の申し込み（同梱モジュール store_tryon、0026）
  *   POST /api/shops/:shop/members/tryon/:number/cancel  申し込みを取り消す（取り置きが終わる前だけ）
+ *   POST /api/shops/:shop/members/tryon/:number/extend  取り置きの期限を延ばす（回数・日数はショップの設定、0151）
  *   POST /api/shops/:shop/members/password-login { email, password } → トークン（店の設定 members_password がオンのとき、0013）
  *   POST /api/shops/:shop/members/password    { password }（Bearer）パスワードを決める・変える → 新しいトークン（ほかの端末はログアウト）
+ *   POST /api/shops/:shop/members/email       { email }（Bearer、ログインしてから 15 分以内）→ 202 { ok: true }: 新しいアドレスに確かめのコードを送る（0166）
+ *   POST /api/shops/:shop/members/email/verify { code }（Bearer）→ 新しいトークン（アドレスが変わり、ほかの端末はログアウト）
  *   GET  /api/shops/:shop/members/oauth/:provider?return_to=…  LINE・Google へ送り出す（ブラウザで開く。0014）。戻ってきたら
  *        `<return_to>?banto_handoff=<券>` に戻すので、/members/verify に { handoff } で渡す（2 分・1 回限り）
  *   POST /api/shops/:shop/members/passkey/add { return_to }（Bearer、ログインしてから 15 分以内）→ { url }: パスキーを追加する画面へ送る券（0070）
@@ -136,7 +142,7 @@ async function shopFor(c: Ctx, slug: string = param(c, "shop")): Promise<PublicS
   const url = cfg.get("SUPABASE_URL");
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
   if (!url || !anonKey) return null;
-  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache);
+  const sf = new StorefrontData(createDbClient({ url, anonKey, fetch: c.get("deps").fetch }), c.get("adapters").cache, null, storefrontCacheTtl(c.get("adapters").config));
   return sf.shopBySlug(slug);
 }
 
@@ -277,7 +283,7 @@ membersApi.get("/shops/:shop/members/me", async (c: Ctx) => {
   const rec = await db.memberGet(s.shop.id, s.member.id, s.member.epoch, true);
   if (!rec) return c.json({ error: "invalid_member_token" }, 401);
   // 注文の住所は返さない（連携側の画面に要るのは注文の状態と金額）。会員本人の既定の住所と案内メールの同意は、マイページのために返す
-  const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
+  const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], fee_jpy: o["fee_jpy"] ?? 0, discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
   const consent = consentCollected(s.shop) ? { marketing_consent: rec.customer.marketing_consent ?? null } : {};
   return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, orders }, 200, { "cache-control": "no-store" });
 });
@@ -365,6 +371,34 @@ membersApi.post("/shops/:shop/members/favorites/merge", async (c: Ctx) => {
   }
 });
 
+// ---------- 会員へのお知らせ（同梱モジュール member_news、0155、docs/member-news.md） ----------
+
+/** 本人に見えるお知らせ（新しい順・50 件まで）と未読の数。url は https か、お店の中のパス（/ で始まる） */
+membersApi.get("/shops/:shop/members/news", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!memberNewsEnabled(s.shop)) return c.json({ error: "module_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  if (!s.member.sid) return c.json({ error: "invalid_member_token" }, 401);
+  const list = await db.memberNewsList(s.shop.id, s.member.id, s.member.epoch, s.member.sid);
+  return list ? c.json(list) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+/** 既読にする（{ ids?: string[] }、50 件まで。ids が無ければ見えるものすべて） */
+membersApi.post("/shops/:shop/members/news/read", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!memberNewsEnabled(s.shop)) return c.json({ error: "module_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  if (!s.member.sid) return c.json({ error: "invalid_member_token" }, 401);
+  const parsed = parseNewsReadBody(await body(c));
+  if (!parsed) return c.json({ error: "invalid_request", field: "ids" }, 400);
+  const n = await db.memberNewsRead(s.shop.id, s.member.id, s.member.epoch, s.member.sid, parsed.ids);
+  return n === null ? c.json({ error: "invalid_member_token" }, 401) : c.json({ ok: true, read: n });
+});
+
 /** 退会（会員ページの「退会する」と同じ: 会員の行を消す。注文は残る）。取り消せないので { confirm: true } が要る */
 membersApi.post("/shops/:shop/members/withdraw", async (c: Ctx) => {
   const s = await bearerMember(c);
@@ -419,7 +453,9 @@ membersApi.get("/shops/:shop/members/tryon", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   const rows = await db.memberTryonRequests(s.shop.id, s.member.id, s.member.epoch);
   if (!rows) return c.json({ error: "invalid_member_token" }, 401);
-  return c.json({ requests: rows.map((r) => ({ ...r, cancellable: MEMBER_CANCELLABLE.includes(r.status) })) });
+  const conf = tryonSettings(s.shop.settings);
+  const today = todayHere();
+  return c.json({ requests: rows.map((r) => ({ ...r, cancellable: MEMBER_CANCELLABLE.includes(r.status), extendable: memberExtendable(r, conf, today), extend_left: memberExtendLeft(r, conf) })) });
 });
 
 membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/cancel", async (c: Ctx) => {
@@ -430,6 +466,23 @@ membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/cancel", async (c: C
   if (!db) return c.json({ error: "not_configured" }, 503);
   const r = await db.memberTryonCancel(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")));
   if (r.ok) return c.json({ ok: true });
+  if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
+  return c.json({ error: r.reason }, r.reason === "not_found" ? 404 : 409);
+});
+
+membersApi.post("/shops/:shop/members/tryon/:number{[0-9]+}/extend", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  if (!moduleEnabled(s.shop.settings, TRYON_MODULE)) return c.json({ error: "tryon_disabled" }, 404);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const sf = storefrontData(c);
+  if (!sf || !(await sf.migratedTo(TRYON_EXTEND_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  if (tryonSettings(s.shop.settings).extend_max < 1) return c.json({ error: "limit" }, 409);
+  // 本文の hold_until（一覧で受け取った今の期限、任意）があれば、違うときは 409 changed（送り直しで 2 回延ばさない）
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const r = await db.memberTryonExtend(s.shop.id, s.member.id, s.member.epoch, Number(c.req.param("number")), todayHere(), ymdOrNull(body?.["hold_until"]));
+  if (r.ok) return c.json({ ok: true, hold_until: r.hold_until, extend_count: r.extend_count });
   if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
   return c.json({ error: r.reason }, r.reason === "not_found" ? 404 : 409);
 });
@@ -482,6 +535,67 @@ membersApi.post("/shops/:shop/members/password", async (c: Ctx) => {
   // 0090: 新しいセッションの行にも「ログインを確かめた時刻」を引き継ぐ（作り直しで 15 分の起点が若返らない）
   const tokens = await grant(c, deps.db, deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
   return tokens ? c.json(tokens) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+// ---------- メールアドレスの変更（0166、メンテナの決定 2026-11-23） ----------
+// どちらもログインしてから 15 分以内のセッションだけ（過ぎていれば 403 reauth_required。連携側はログインし直させる）
+/** 0166 が当たるまで 409 migration_required。トークンの無い会員・世代の古い会員は bearerMember / DB が断る */
+async function emailChangeScope(c: Ctx): Promise<{ shop: PublicShop; member: ApiMember & { sid: string }; deps: NonNullable<ReturnType<typeof loginDeps>> } | Response> {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  const sf = storefrontData(c);
+  if (!sf || !(await sf.migratedTo(EMAIL_CHANGE_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  const deps = loginDeps(c);
+  if (!deps) return c.json({ error: "not_configured" }, 503);
+  // セッションの行の無い（0045 より前の）トークンでは変えさせない
+  if (!s.member.sid) return c.json({ error: "reauth_required" }, 403);
+  return { shop: s.shop, member: { ...s.member, sid: s.member.sid }, deps };
+}
+
+/** { email } → 202 { ok: true }。新しいアドレスにコードを送る（使われているアドレス・回数の上限でも同じ応答） */
+membersApi.post("/shops/:shop/members/email", async (c: Ctx) => {
+  const s = await emailChangeScope(c);
+  if (s instanceof Response) return s;
+  const r = await startEmailChange(s.deps, s.shop, { id: s.member.id, epoch: s.member.epoch, sid: s.member.sid }, str((await body(c))["email"]).slice(0, 300), await clientIpFor(c, s.shop));
+  if (r.ok) {
+    // コードのメールは応答の後に送る（使われているアドレスかどうかで応答の時間を変えない）
+    await afterResponse(c, r.deliver());
+    return c.json({ ok: true }, 202, NO_STORE);
+  }
+  switch (r.error) {
+    case "invalid_email":
+      return c.json({ error: "invalid_email" }, 400);
+    case "same_email":
+      return c.json({ error: "same_email" }, 400);
+    case "reauth":
+      return c.json({ error: "reauth_required" }, 403);
+    case "session":
+      return c.json({ error: "invalid_member_token" }, 401);
+    case "disabled":
+      return c.json({ error: "members_disabled" }, 409);
+    case "limit":
+      return c.json({ error: "plan_limit_exceeded" }, 429); // 1 日のメールの上限（0053）
+    default:
+      return c.json({ error: "unavailable" }, 503); // メールの送信元が無い
+  }
+});
+
+/** { code } → 新しいトークンの組（ほかの端末はログアウト）。前後のアドレスに知らせる */
+membersApi.post("/shops/:shop/members/email/verify", async (c: Ctx) => {
+  const s = await emailChangeScope(c);
+  if (s instanceof Response) return s;
+  const { result: r, notify } = await verifyEmailChange(s.deps, s.shop, { id: s.member.id, epoch: s.member.epoch, sid: s.member.sid }, str((await body(c))["code"]).slice(0, 20), memberAccountUrl(publicBaseUrl(c), s.shop));
+  if (!r.ok) {
+    if (r.reason === "reauth") return c.json({ error: "reauth_required" }, 403);
+    if (r.reason === "session") return c.json({ error: "invalid_member_token" }, 401);
+    // invalid: 間違い（あと何回か試せる）/ expired: 期限切れ・使用済み・5 回間違えた（email からやり直す）/ unavailable: ほかの会員が使っている
+    if (r.reason === "unavailable") return c.json({ error: "unavailable" }, 409);
+    return c.json({ error: r.reason === "invalid" ? "invalid_code" : "expired" }, 400);
+  }
+  await afterResponse(c, notify());
+  // パスワードの設定と同じく、新しい世代のセッションの行を作ってトークンを渡す（ログインを確かめた時刻は引き継ぐ。0090）
+  const tokens = await grant(c, s.deps.db, s.deps.secret, s.shop.id, s.member.id, r.epoch, r.authenticated_at);
+  return tokens ? c.json({ ...tokens, member: { id: s.member.id, email: r.new_email } }, 200, NO_STORE) : c.json({ error: "invalid_member_token" }, 401);
 });
 
 membersApi.get("/shops/:shop/members/oauth/:provider", async (c: Ctx) => {

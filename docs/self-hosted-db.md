@@ -66,6 +66,11 @@ postgres://postgres:<POSTGRES_PASSWORD>@db:5432/banto?sslmode=disable
 ```
 
 compose の中の通信なので TLS は使いません（`sslmode=disable`）。接続先 `db` は compose が `DB_MIGRATION_HOSTS=db` で許可しています。
+
+compose の外の PostgreSQL（別のサーバー・クラウドの DB）に接続文字列で当てるときは、既定で証明書を確かめます（`sslmode` を書かなければ `verify-full` と同じで、発行元とホスト名を Node の既定の信頼する発行元で確かめます）。
+信頼する発行元の証明書を使っていない（自己署名など）DB では、接続文字列に `sslmode=require` を足すと、証明書を確かめずに暗号化だけで接続します。`sslmode=verify-ca` は発行元だけを確かめます（ホスト名は見ません）。`sslmode=disable`（暗号化しない）は、同じサーバーの中や compose の中のように、通り道に他人がいないときだけにしてください。
+Supabase のホストは、同梱の Supabase のルート証明書と公の発行元でいつも確かめます（`sslmode=disable` は受け付けません）。
+これらの証明書の確かめは、マイグレーションを Node から当てるとき（compose の `migrate`・`node dist/node/migrate.js`・Node で動かしている管理画面）に効きます。Cloudflare Workers では、TLS は Workers の実行環境が受け持ち、いつも公の発行元で証明書を確かめます（`sslmode=require` でも確かめずに済ませることはできません）。自己署名の証明書の DB には Workers の管理画面からは当てられないので、Node のコマンド（`migrate`）を使うか、公の発行元の証明書（Let's Encrypt など）を使ってください。
 アップデートのあとも `/admin/update` から同じ接続文字列で当てます。
 
 ## 2-B. `api`: Banto は Cloudflare Workers

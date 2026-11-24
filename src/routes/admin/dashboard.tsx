@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { CRON_LIMIT_HEARTBEAT } from "../../jobs/budget";
+
 import type { AppEnv } from "../../app";
 import { pendingMigrations } from "../../db/migrations";
 import { t } from "../../i18n";
@@ -13,16 +15,21 @@ import { isOrgAdmin, myShops, requireOrgAdmin } from "./access";
 import { fetchLatestRelease, isNewer } from "../../updates/releases";
 import { migrationList } from "./migrate";
 
+/** Cron が通信の上限に当たったと知らせる期間（最後に当たってから 1 日） */
+const CRON_LIMIT_NOTICE_SECONDS = 86400;
+
 export const dashboard = new Hono<AppEnv>();
 
 dashboard.get("/", requireOwner, async (c) => {
   const { db, session } = owner(c);
-  const [shops, admin, stores, migrations, latest] = await Promise.all([
+  const [shops, admin, stores, migrations, latest, limitAge] = await Promise.all([
     myShops(c),
     isOrgAdmin(c),
     db.rpc<{ id: string; name: string; perms: string[] }[]>("banto_my_stores", {}),
     db.from<{ version: string }>("banto_migrations").select("version"),
     fetchLatestRelease({ fetch: c.get("deps").fetch, cache: c.get("adapters").cache }),
+    // Cron が Workers の通信の上限に当たった印（src/jobs/budget.ts）。経過秒数だけ（無ければ null）
+    db.rpc<number | null>("heartbeat_age_seconds", { p_name: CRON_LIMIT_HEARTBEAT }).catch(() => null),
   ]);
   // 店舗のスタッフだけの人（ショップが無く、実店舗が 1 つ）は、店舗のホームを開く（メンテナの決定 2026-11-08）
   if (!admin && shops.length === 0 && stores.length === 1) return c.redirect(`/admin/stores/${stores[0]!.id}/home`);
@@ -70,6 +77,7 @@ dashboard.get("/", requireOwner, async (c) => {
           {t("dashboard.pending_migrations")} ({migrationList(pending)}) <a href="/admin/update">{t("update.title")}</a>
         </p>
       ) : null}
+      {admin && typeof limitAge === "number" && limitAge < CRON_LIMIT_NOTICE_SECONDS ? <p class="notice">{t("dashboard.cron_subrequest_limit")}</p> : null}
       {admin && updateAvailable ? (
         <p class="notice">
           {t("dashboard.update_available")} v{updateAvailable.version} — <a href={updateAvailable.url} target="_blank" rel="noopener">{t("dashboard.release_notes")}</a>

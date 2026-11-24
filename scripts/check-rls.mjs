@@ -38,7 +38,7 @@ const ANON_FUNCTIONS = new Set([
   // 0055: 商品詳細（公開中の商品だけ。attributes は公開の項目だけ）
   "product_public_get",
   // 0058: 商品の一覧（公開中のショップの公開中の商品だけ。attributes・説明は返さない）とタグ・カテゴリーの件数。検索の式インデックスの関数
-  "product_public_list", "product_public_facets", "banto_product_search_text",
+  "product_public_list", "product_public_facets", "product_public_page", "banto_product_search_text",
   // 0060: サイトマップ（公開中の商品の数と slug）・商品フィードの 1 ページ・Workers のプラン（free / paid、裏の処理の量）
   "product_public_count", "product_public_slugs", "product_feed_page", "banto_site_plan",
   // 0074: お店の画面が Liquid のテーマを描いてよいか（Workers のプランと plan_limits.theme_versions が 0 でないか。秘密ではない）
@@ -62,7 +62,7 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   ...ANON_FUNCTIONS,
   "banto_admin_shop", "banto_my_shops", "banto_my_stores", "banto_admin_me", "admin_session_bump",
   "coupon_grant_revoke", "coupon_grants_for_emails", "coupon_grants_issue", "coupon_stats", "coupon_stats_for", "coupon_grant_counts", "admin_search_ids",
-  "enqueue_hook", "import_catalog", "import_coupon_usage", "import_coupons", "import_orders", "import_tax_classes", "mask_customer", "member_set_email", "member_passkeys_reset", "customer_set_attributes", "customer_set_note", "views_add", "views_remove", "stock_adjust", "stock_count", "inventory_list", "catalog_bulk_update", "product_images_order", "shop_home", "customer_marketing_consent_withdraw",
+  "enqueue_hook", "import_catalog", "import_coupon_usage", "import_coupons", "import_orders", "import_tax_classes", "mask_customer", "member_set_email", "member_identities_import", "customer_login_providers", "member_passkeys_reset", "customer_set_attributes", "customer_set_note", "views_add", "views_remove", "stock_adjust", "stock_count", "inventory_list", "catalog_bulk_update", "product_images_order", "shop_home", "customer_marketing_consent_withdraw",
   "org_invitation_accept", "org_invitation_revoke", "org_invite", "org_member_remove", "org_member_set", "org_members_list",
   "image_import_cancel", "image_import_enqueue", "image_import_resolve", "image_import_retry", "image_import_summary", "site_settings_set",
   "org_set_require_mfa", "org_members_mfa", "org_member_mfa_reset_authorize", // 0054: 中で組織の owner / admin を確かめる
@@ -78,6 +78,10 @@ const AUTHENTICATED_FUNCTIONS = new Set([
   "option_axes_apply", // 0065: 上の段の SKU の軸を商品に当てる（中で catalog の項目を確かめる）
   "banto_option_names_ok", // 0094: shops.option_names の CHECK（値の形を見るだけ）
   "option_names_set", // 0094: SKU の選択肢の表示名を変える（中で catalog の項目を確かめる）
+  "notice_text_set", // 0154: お知らせの文面を保存する（中で settings の項目と差し込みの決まりを確かめる）
+  "member_news_save", // 0155: 全員向けの会員へのお知らせを書く（中で marketing の項目を確かめる）
+  "member_news_delete", // 0155: 会員へのお知らせを消す（中で marketing の項目を確かめる）
+  "order_payment_record", // 0156: 未入金の注文の入金を記録する（中で orders の項目を確かめる）
   "banto_care_codes", // 0127: 洗濯表示の記号番号の表（定数を返すだけ）
   "banto_care_ok", // 0127: products.care / categories.care の CHECK（値の形を見るだけ）
   "banto_care_symbols_ok", // 0127: shops.care_symbols の CHECK（値の形を見るだけ）

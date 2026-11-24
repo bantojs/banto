@@ -6,6 +6,7 @@ import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, ty
 import { selectIn } from "../../db/select-in";
 import type { OrderItemRow, OrderRow, SkuRow } from "../../db/types";
 import { t, tf, type MessageKey } from "../../i18n";
+import { feeLabelFor } from "../../commerce/payment-fees";
 import { formatDateTime } from "../../i18n/time";
 import { yen } from "../common";
 import { AdminLayout, PageHead } from "./layout";
@@ -18,13 +19,14 @@ import { loadShop } from "./shops";
 import { orderTaxBreakdown } from "../../commerce/tax";
 import { moduleEnabled } from "../../modules/registry";
 import { RECEIPT_MODULE, adminReceipt } from "../../modules/receipt/admin";
-import { RECEIPT_STATUSES } from "../../modules/receipt/render";
+import { receiptAvailable } from "../../modules/receipt/data";
+import { PAYMENT_STATUS_MIGRATION, cancellable, payable, shippable, unpaid } from "../../orders/payment";
 import { deliveryText } from "../../modules/delivery-time";
 import { TRACKING_CARRIERS, carrierLabel, isTrackingCarrier, normalizeTracking, trackingUrl } from "../../orders/tracking";
 import { ORDER_NOTE_MAX_CHARS, orderTagsOf, parseOrderTags } from "../../orders/tags";
 import { SearchBar, readSort, searchChips, searchHref, type SearchParams } from "./search";
 import { migrated } from "../../db/migration-state";
-import { VIEWS_MIGRATION, ViewTabs, viewsOf } from "./views";
+import { ViewTabs, viewsOf } from "./views";
 import { can } from "./access";
 import { CsvExportPanel, csvBody, csvHeaders, csvName, csvTruncatedLine, readCsvChoice, stripConditions, type CsvColumn, type CsvPreset } from "./csv-export";
 import { permLabel } from "./denied";
@@ -32,6 +34,7 @@ import { permLabel } from "./denied";
 export const orders = new Hono<AppEnv>();
 
 const STATUS_KEY: Record<OrderRow["status"], MessageKey> = {
+  pending: "order.status.pending",
   paid: "order.status.paid",
   shipped: "order.status.shipped",
   cancelled: "order.status.cancelled",
@@ -45,10 +48,10 @@ function statusLabel(s: OrderRow["status"]): string {
 const fmtDate = (iso: string): string => formatDateTime(iso);
 
 /** 一覧と詳細の状態の点: 発送済み=緑、支払い済み（発送待ち）=青、ほか=灰 */
-const statusDot = (s: OrderRow["status"]): string => (s === "shipped" ? "on" : s === "paid" ? "info" : "off");
+const statusDot = (s: OrderRow["status"]): string => (s === "shipped" ? "on" : s === "paid" || s === "pending" ? "info" : "off");
 
 function flash(code: string | undefined): { kind: "ok" | "error"; text: string } | null {
-  const map: Record<string, MessageKey> = { saved: "shop.saved", tags_invalid: "order.tags_invalid", masked: "order.mask_done", cancelled: "order.cancelled_ok", refunded: "order.refunded_ok", refund_failed: "order.refund_failed", not_cancellable: "order.not_cancellable", generic: "error.generic", tracking_invalid: "tracking.invalid" };
+  const map: Record<string, MessageKey> = { saved: "shop.saved", tags_invalid: "order.tags_invalid", masked: "order.mask_done", cancelled: "order.cancelled_ok", refunded: "order.refunded_ok", payment_recorded: "order.payment_recorded", refund_failed: "order.refund_failed", not_cancellable: "order.not_cancellable", generic: "error.generic", tracking_invalid: "tracking.invalid" };
   const key = code ? map[code] : undefined;
   if (!key) return null;
   return { kind: ["refund_failed", "not_cancellable", "generic", "tracking_invalid", "tags_invalid"].includes(code ?? "") ? "error" : "ok", text: t(key) };
@@ -57,6 +60,8 @@ function flash(code: string | undefined): { kind: "ok" | "error"; text: string }
 interface OrderListRow extends OrderRow {
   number: number;
   shipping_jpy: number;
+  /** 代引き手数料（0157） */
+  fee_jpy?: number | null;
   /** 0017_tax */
   shipping_tax_rate?: number | string | null;
   tax_rounding?: string | null;
@@ -96,6 +101,9 @@ const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
   { key: "total", label: "合計", group: "csvx.g_amounts", value: (r) => r.o.total_jpy },
   { key: "shipping", label: "送料", group: "csvx.g_amounts", value: (r) => r.o.shipping_jpy },
   { key: "discount", label: "値引き", group: "csvx.g_amounts", value: (r) => r.o.discount_jpy ?? 0 },
+  // 代引き手数料（0157）と入金の状態（0156。列が無い古い行は入金済み）
+  { key: "fee", label: "手数料", group: "csvx.g_amounts", value: (r) => r.o.fee_jpy ?? 0 },
+  { key: "payment_status", label: "入金", group: "csvx.g_amounts", value: (r) => (unpaid(r.o) ? "unpaid" : "paid") },
   { key: "coupon", label: "クーポン", group: "csvx.g_amounts", value: (r) => (r.o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" ") },
   { key: "name", label: "氏名", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_name },
   { key: "email", label: "メール", group: "csvx.g_customer", pii: true, value: (r) => r.o.customer_email },
@@ -117,25 +125,24 @@ const ORDER_CSV_COLUMNS: CsvColumn<OrderCsvRow>[] = [
   { key: "note", label: "メモ", group: "csvx.g_notes", pii: true, value: (r) => r.o.note ?? "" },
 ];
 const ORDER_CSV_PRESETS: Record<string, CsvPreset> = {
-  accounting: { label: "csvx.p_accounting", cols: ["number", "date", "status", "payment", "payment_ref", "total", "shipping", "discount", "coupon"], unit: "order" },
+  accounting: { label: "csvx.p_accounting", cols: ["number", "date", "status", "payment", "payment_ref", "total", "shipping", "discount", "fee", "payment_status", "coupon"], unit: "order" },
   shipping: { label: "csvx.p_shipping", cols: ["number", "name", "phone", "postal_code", "state", "city", "line1", "line2", "sku", "qty", "tracking_number"], unit: "order" },
   sold: { label: "csvx.p_sold", cols: ["number", "date", "sku", "product", "qty", "unit_price", "subtotal"], unit: "item" },
 };
 /** 一覧の条件の名前（「すべて」で外すもの） */
-const ORDER_CONDITIONS = ["q", "status", "tag", "payment", "from", "to", "min", "max", "sort"] as const;
+const ORDER_CONDITIONS = ["q", "status", "tag", "payment", "paid", "from", "to", "min", "max", "sort"] as const;
 
-/** 一覧の検索を広げる版（電話・送り状番号・支払い方法・日付・金額・並び。0132） */
-const ADMIN_SEARCH_MIGRATION = "0132_admin_search";
-const ORDER_STATUSES = ["paid", "shipped", "cancelled", "refunded"] as const;
+/** 状態の選択肢。受付（pending）は 0156 から（それより前の DB では知らない値なので出さない） */
+const ORDER_STATUSES = ["pending", "paid", "shipped", "cancelled", "refunded"] as const;
+const statusesFor = (paymentStatusOn: boolean) => ORDER_STATUSES.filter((s) => paymentStatusOn || s !== "pending");
 const ORDER_PAYMENTS = ["stripe", "komoju", "amazon_pay", "free"] as const;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const YEN_RE = /^\d{1,9}$/;
 
 /**
- * 一覧と CSV で共通の条件（URL の値）。形の違う値は捨てる（DB も無視する）。
- * 0132 の前の DB では、今までどおりキーワード・状態・印だけ
+ * 一覧と CSV で共通の条件（URL の値）。形の違う値は捨てる（DB も無視する）
  */
-function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
+function orderSearchParams(c: AdminContext): SearchParams {
   const v = (name: string) => (c.req.query(name) ?? "").trim();
   const status = v("status");
   const out: SearchParams = {
@@ -143,9 +150,10 @@ function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
     status: (ORDER_STATUSES as readonly string[]).includes(status) ? status : "",
     tag: v("tag").slice(0, 40),
   };
-  if (!extended) return out;
   const payment = v("payment");
   out["payment"] = (ORDER_PAYMENTS as readonly string[]).includes(payment) ? payment : "";
+  // 未入金（0156。それより前の DB では admin_search_ids が知らない条件として無視する）
+  out["paid"] = v("paid") === "unpaid" ? "unpaid" : "";
   out["from"] = DATE_RE.test(v("from")) ? v("from") : "";
   out["to"] = DATE_RE.test(v("to")) ? v("to") : "";
   out["min"] = YEN_RE.test(v("min")) ? v("min") : "";
@@ -156,38 +164,32 @@ function orderSearchParams(c: AdminContext, extended: boolean): SearchParams {
 
 /**
  * 一覧と CSV で共通: 条件で DB で絞り、limit 件（after より後ろ）を読む。
- * 0132 からは、キーワードか条件があれば検索の関数（admin_search_ids）がすべて絞る（キーワードは番号・メール・氏名・電話・送り状番号・決済の参照）。
+ * キーワードか条件があれば検索の関数（admin_search_ids）がすべて絞る（キーワードは番号・メール・氏名・電話・送り状番号・決済の参照）。
  * 条件が無ければ、新しい順に RLS 越しに読む
  */
-async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; params: SearchParams; extended: boolean }> {
+async function listOrders(c: AdminContext, shopId: string, opts: { limit: number; after?: PagePosition }): Promise<{ rows: OrderListRow[]; params: SearchParams }> {
   const { db } = owner(c);
-  const extended = await migrated({ db, cache: c.get("adapters").cache }, ADMIN_SEARCH_MIGRATION);
-  const params = orderSearchParams(c, extended);
-  const { q, status, tag } = params as { q: string; status: string; tag: string };
+  const params = orderSearchParams(c);
+  // 受付（pending）は 0156 から。当てる前の DB では知らない値なので絞らない
+  if (params["status"] === "pending" && !(await migrated({ db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION))) params["status"] = "";
+  const { q } = params as { q: string };
   const filters = Object.fromEntries(Object.entries(params).filter(([k, v]) => k !== "q" && v !== ""));
-  if (extended && (q || Object.keys(filters).length > 0)) {
+  if (q || Object.keys(filters).length > 0) {
     const rows = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
-    return { rows, params, extended };
+    return { rows, params };
   }
-  // 0132 の前: 印で絞る（0106）のは、検索と一緒のときは検索の結果をここで絞る
-  const contains = tag ? { arrayContains: { tags: [tag] } } : {};
   const eq: Record<string, string> = { shop_id: shopId };
-  if (status) eq["status"] = status;
-  if (q) {
-    const found = await searchRows<OrderListRow>(c, { kind: "orders", shopId, q, filters: status ? { status } : {}, ...(opts.after ? { after: opts.after } : {}), limit: opts.limit, columns: "*" });
-    return { rows: tag ? found.filter((o) => orderTagsOf(o).includes(tag)) : found, params, extended };
-  }
   const rows: OrderListRow[] = [];
   // PostgREST は 1 回 1,000 行まで。CSV のときだけ何回かに分けて読む
   for (let after = opts.after; rows.length < opts.limit; ) {
     const n = Math.min(1000, opts.limit - rows.length);
-    const page = await db.from<OrderListRow>("orders").select("*", { eq, ...contains, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: n });
+    const page = await db.from<OrderListRow>("orders").select("*", { eq, where: after ? [olderThan(after)] : [], order: "created_at.desc,id.desc", limit: n });
     rows.push(...page);
     if (page.length < n) break;
     const last = page[page.length - 1]!;
     after = { k: last.created_at, id: last.id };
   }
-  return { rows, params, extended };
+  return { rows, params };
 }
 
 const PAYMENT_LABEL: Record<(typeof ORDER_PAYMENTS)[number], MessageKey> = { stripe: "search.payment_stripe", komoju: "search.payment_komoju", amazon_pay: "search.payment_amazon_pay", free: "search.payment_free" };
@@ -195,6 +197,7 @@ const PAYMENT_LABEL: Record<(typeof ORDER_PAYMENTS)[number], MessageKey> = { str
 /** 条件のチップの文字（キーワードと既定の並びはチップにしない） */
 function orderChipLabel(name: string, value: string): string | null {
   if (name === "status") return `${t("order.status")}: ${statusLabel(value as OrderRow["status"])}`;
+  if (name === "paid") return t("order.unpaid");
   if (name === "payment") return `${t("order.payment")}: ${t(PAYMENT_LABEL[value as (typeof ORDER_PAYMENTS)[number]] ?? "search.payment_stripe")}`;
   if (name === "from") return tf("search.chip_from", { date: value });
   if (name === "to") return tf("search.chip_to", { date: value });
@@ -212,7 +215,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const after = readAfter(c.req.query("after"));
   if (after === null) return c.text(t("error.generic"), 400);
   const list = await listOrders(c, shopId, { limit: ADMIN_PAGE_SIZE + 1, ...(after ? { after } : {}) });
-  const { params, extended } = list;
+  const { params } = list;
   const page = splitPage(list.rows, (o) => o.created_at);
   const rows = page.rows;
   const base = `/admin/shops/${shop.id}/orders`;
@@ -220,8 +223,8 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
   const query = listHref.slice(base.length);
   const tagHref = (v: string) => searchHref(base, { ...params, q: "", tag: v });
   const chips = searchChips(base, params, orderChipLabel);
-  // 保存したビュー（0135）
-  const viewsOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, VIEWS_MIGRATION);
+  // 未入金で絞る（0156）
+  const paymentStatusOn = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_STATUS_MIGRATION);
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("order.list")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("order.list") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "orders" }}>
       <PageHead title={t("order.list")}>
@@ -229,21 +232,20 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
           {chips.length > 0 || params["q"] ? t("search.csv_filtered") : t("order.csv")}
         </a>
       </PageHead>
-      <ViewTabs shopId={shop.id} screen="orders" views={viewsOf(shop.settings, "orders")} current={params} enabled={viewsOn} error={c.req.query("view_error")} />
-      <SearchBar action={base} q={params["q"] ?? ""} placeholder={t(extended ? "search.orders_placeholder" : "order.search_placeholder")} sortable={extended} sort={readSort(params["sort"])} chips={chips} clearHref={base}>
+      <ViewTabs shopId={shop.id} screen="orders" views={viewsOf(shop.settings, "orders")} current={params} error={c.req.query("view_error")} />
+      <SearchBar action={base} q={params["q"] ?? ""} placeholder={t("search.orders_placeholder")} sortable sort={readSort(params["sort"])} chips={chips} clearHref={base}>
         <label>
           {t("order.status")}
           <select name="status">
             <option value="">{t("product.state_all")}</option>
-            {ORDER_STATUSES.map((st) => (
+            {statusesFor(paymentStatusOn).map((st) => (
               <option value={st} selected={params["status"] === st}>
                 {statusLabel(st)}
               </option>
             ))}
           </select>
         </label>
-        {extended ? (
-          <>
+        <>
             <label>
               {t("order.payment")}
               <select name="payment">
@@ -255,6 +257,17 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
                 ))}
               </select>
             </label>
+            {paymentStatusOn ? (
+              <label>
+                {t("order.payment_status")}
+                <select name="paid">
+                  <option value="">{t("search.any")}</option>
+                  <option value="unpaid" selected={params["paid"] === "unpaid"}>
+                    {t("order.unpaid")}
+                  </option>
+                </select>
+              </label>
+            ) : null}
             <label>
               {t("search.from")}
               <input type="date" name="from" value={params["from"] ?? ""} />
@@ -271,8 +284,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
               {t("search.max")}
               <input type="number" name="max" min={0} step={1} value={params["max"] ?? ""} inputmode="numeric" />
             </label>
-          </>
-        ) : null}
+        </>
         <label>
           {t("order.tag_filter")}
           <input type="text" name="tag" value={params["tag"] ?? ""} maxlength={40} />
@@ -314,6 +326,7 @@ orders.get("/:shopId/orders", requireOwner, async (c: AdminContext) => {
                 <td>
                   {/* 支払い済み（これから発送）= 青、発送済み = 緑、キャンセル・返金 = 灰 */}
                   <span class={`status ${statusDot(o.status)}`}>{statusLabel(o.status)}</span>
+                  {unpaid(o) && (o.status === "pending" || o.status === "shipped") ? <span class="status warn">{t("order.unpaid")}</span> : null}
                 </td>
               </tr>
             ))}
@@ -361,13 +374,13 @@ orders.get("/:shopId/orders.csv", requireOwner, async (c: AdminContext) => {
         : rows.map((o) => ({ o, items: itemsByOrder.get(o.id) ?? [], item: null, ctx }));
     return c.body(csvBody(choice.cols, csvRows, choice.format, truncated), 200, csvHeaders(csvName(`orders-${shop.slug}${choice.preset ? `-${choice.preset}` : ""}`, truncated)));
   }
-  const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ"];
+  const header = ["注文番号", "日時", "状態", "合計", "送料", "氏名", "メール", "電話", "郵便番号", "都道府県", "市区町村", "番地", "建物", "明細", "決済", "決済参照", "発送日時", "値引き", "クーポン", "印", "メモ", "代引き手数料", "入金"];
   const lines = rows.map((o) => {
     const a = (o.shipping_address ?? {}) as Record<string, unknown>;
     const detail = (itemsByOrder.get(o.id) ?? [])
       .map((i) => `${(i.sku_id ? skuById.get(i.sku_id)?.code : undefined) ?? i.item_name ?? i.sku_id ?? ""} x${i.qty}`)
       .join(" / ");
-    return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? ""].map(csvCell).join(",");
+    return [o.number, formatDateTime(o.created_at), o.status, o.total_jpy, o.shipping_jpy, o.customer_name, o.customer_email, a["phone"], a["postal_code"], a["state"], a["city"], a["line1"], a["line2"], detail, o.payment_provider, o.payment_ref, o.shipped_at ? formatDateTime(o.shipped_at) : "", o.discount_jpy ?? 0, (o.discounts ?? []).map((d) => d.code).filter(Boolean).join(" "), orderTagsOf(o).join(", "), o.note ?? "", o.fee_jpy ?? 0, unpaid(o) ? "unpaid" : "paid"].map(csvCell).join(",");
   });
   const body = "\ufeff" + [header.join(","), ...lines].join("\r\n") + "\r\n" + (truncated === null ? "" : csvTruncatedLine(truncated));
   return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${csvName(`orders-${shop.slug}`, truncated)}.csv"`, "Cache-Control": "no-store" });
@@ -398,12 +411,13 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
           <>
             #{order.number} <span class={`status ${statusDot(order.status)}`}>{statusLabel(order.status)}</span>
             {/* 支払いと発送を分けて見せる（状態は 1 つのまま、見せ方だけ） */}
-            {order.status === "paid" ? <span class="status off">{t("order.unshipped")}</span> : null}
+            {shippable(order) ? <span class="status off">{t("order.unshipped")}</span> : null}
+            {payable(order) ? <span class="status warn">{t("order.unpaid")}</span> : null}
           </>
         }
         sub={`${t("order.detail")} · ${fmtDate(order.created_at)}`}
       >
-        {moduleEnabled(shop.settings, RECEIPT_MODULE) && RECEIPT_STATUSES.includes(order.status) ? (
+        {moduleEnabled(shop.settings, RECEIPT_MODULE) && receiptAvailable(order) ? (
           <a class="btn secondary" href={`${base}/receipt`} target="_blank" rel="noopener">
             {t("receipt.get")}
           </a>
@@ -447,6 +461,12 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
               <dd>{yen(items.reduce((s, it) => s + it.unit_price_jpy * it.qty, 0))}</dd>
               <dt>{t("store.shipping")}</dt>
               <dd>{yen(order.shipping_jpy)}</dd>
+              {order.fee_jpy ? (
+                <>
+                  <dt>{feeLabelFor(order.payment_provider)}</dt>
+                  <dd>{yen(order.fee_jpy)}</dd>
+                </>
+              ) : null}
               {order.discount_jpy ? (
                 <>
                   <dt>
@@ -465,11 +485,11 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
             </ul>
           </section>
 
-          {order.status === "paid" || order.status === "shipped" ? (
+          {shippable(order) || order.status === "shipped" ? (
             <section class="card">
-              <h2>{order.status === "paid" ? t("order.mark_shipped") : t("tracking.number")}</h2>
+              <h2>{shippable(order) ? t("order.mark_shipped") : t("tracking.number")}</h2>
               <form method="post" action={`${base}/status`}>
-                <input type="hidden" name="status" value={order.status === "paid" ? "shipped" : "tracking"} />
+                <input type="hidden" name="status" value={shippable(order) ? "shipped" : "tracking"} />
                 <label for="tracking_carrier">{t("tracking.carrier")}</label>
                 <select id="tracking_carrier" name="tracking_carrier">
                   {TRACKING_CARRIERS.map((k) => (
@@ -480,8 +500,8 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
                 </select>
                 <label for="tracking_number">{t("tracking.number")}</label>
                 <input id="tracking_number" name="tracking_number" value={order.tracking_number ?? ""} maxlength={60} inputmode="numeric" />
-                <p class="muted">{order.status === "paid" ? t("tracking.hint_paid") : t("tracking.hint_shipped")}</p>
-                <button type="submit">{order.status === "paid" ? t("order.mark_shipped") : t("tracking.save")}</button>
+                <p class="muted">{shippable(order) ? t("tracking.hint_paid") : t("tracking.hint_shipped")}</p>
+                <button type="submit">{shippable(order) ? t("order.mark_shipped") : t("tracking.save")}</button>
               </form>
             </section>
           ) : null}
@@ -528,8 +548,16 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
                   <span class="muted">{fmtDate(order.shipped_at)}</span> {t("order.history_shipped")}
                 </li>
               ) : null}
+              {order.paid_at && order.paid_at !== order.created_at ? (
+                <li>
+                  <span class="muted">{fmtDate(order.paid_at)}</span> {t("order.history_paid")}
+                </li>
+              ) : null}
               {order.status === "cancelled" || order.status === "refunded" ? (
-                <li>{statusLabel(order.status)}</li>
+                <li>
+                  {statusLabel(order.status)}
+                  {order.cancel_reason === "refused" ? `（${t("order.refused")}）` : null}
+                </li>
               ) : null}
             </ol>
           </section>
@@ -575,25 +603,48 @@ orders.get("/:shopId/orders/:orderId", requireOwner, async (c: AdminContext) => 
               <dd>
                 {order.payment_provider ?? "-"} <code>{order.payment_ref ?? ""}</code>
               </dd>
+              {order.payment_status ? (
+                <>
+                  <dt>{t("order.payment_status")}</dt>
+                  <dd>{unpaid(order) ? t("order.unpaid") : order.paid_at ? `${t("order.paid")}（${fmtDate(order.paid_at)}）` : t("order.paid")}</dd>
+                </>
+              ) : null}
               <dt>{t("order.id")}</dt>
               <dd>
                 #{order.number} <code class="muted">{order.id}</code>
               </dd>
             </dl>
+            {payable(order) ? (
+              <form method="post" action={`${base}/payment`}>
+                <p class="muted">{t("order.record_payment_note")}</p>
+                <button type="submit">{t("order.record_payment")}</button>
+              </form>
+            ) : null}
           </section>
-          {order.status === "paid" || order.customer_email ? (
+          {cancellable(order) || order.customer_email ? (
             <section class="card danger-zone">
               <h2>{t("order.danger")}</h2>
-              {order.status === "paid" ? (
+              {cancellable(order) ? (
                 can(access, "orders_cancel") ? (
                   <>
-                    <form method="post" action={`${base}/status`}>
-                      <input type="hidden" name="status" value="cancelled" />
-                      <button type="submit" class="danger">
-                        {t("order.mark_cancelled")}
-                      </button>
-                    </form>
-                    <p class="muted">{t("order.cancel_note")}</p>
+                    {shippable(order) ? (
+                      <form method="post" action={`${base}/status`}>
+                        <input type="hidden" name="status" value="cancelled" />
+                        <button type="submit" class="danger">
+                          {t("order.mark_cancelled")}
+                        </button>
+                      </form>
+                    ) : null}
+                    {unpaid(order) && order.status === "shipped" ? (
+                      <form method="post" action={`${base}/status`}>
+                        <input type="hidden" name="status" value="cancelled" />
+                        <input type="hidden" name="reason" value="refused" />
+                        <button type="submit" class="danger">
+                          {t("order.mark_refused")}
+                        </button>
+                      </form>
+                    ) : null}
+                    <p class="muted">{unpaid(order) ? t("order.cancel_note_unpaid") : order.payment_provider === "cod" ? t("order.cancel_note_cod_paid") : t("order.cancel_note")}</p>
                   </>
                 ) : (
                   <Locked perm="orders_cancel" />
@@ -636,7 +687,7 @@ orders.post("/:shopId/orders/:orderId/status", requireOwner, async (c: AdminCont
     try {
       // 監査ログ（0051）に「誰がキャンセルしたか」を残すため、特権経路でも運営者を名乗る
       const privileged = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch, actor: actorHeader("user", session.user_id) });
-      const r = await cancelOrderWithRefund(privileged, orderId, shopId, { config: cfg, fetch: c.get("deps").fetch, stripeAccountId: shop.stripe_account_id });
+      const r = await cancelOrderWithRefund(privileged, orderId, shopId, { config: cfg, fetch: c.get("deps").fetch, stripeAccountId: shop.stripe_account_id, ...(f.reason === "refused" ? { reason: "refused" as const } : {}) });
       return c.redirect(`${back}?flash=${r.refunded ? "refunded" : "cancelled"}`);
     } catch (e) {
       if (e instanceof CancelError) return c.redirect(`${back}?flash=${e.code === "refund_failed" ? "refund_failed" : e.code === "not_cancellable" ? "not_cancellable" : "generic"}`);
@@ -661,19 +712,37 @@ orders.post("/:shopId/orders/:orderId/status", requireOwner, async (c: AdminCont
     }
   }
   try {
-    const rows = await db.from<OrderListRow>("orders").update({ status: "shipped", shipped_at: new Date().toISOString() }, { id: orderId, shop_id: shopId, status: "paid" });
+    // 受付のまま（お支払い済みの paid か、未入金の pending、0156）の注文だけ。今の状態のまま変わっていなければ発送にする
+    const cur = await db.from<OrderListRow>("orders").selectOne("status", { eq: { id: orderId, shop_id: shopId } });
+    if (!cur || !shippable(cur)) return c.redirect(`${back}?flash=generic`);
+    const rows = await db.from<OrderListRow>("orders").update({ status: "shipped", shipped_at: new Date().toISOString() }, { id: orderId, shop_id: shopId, status: cur.status });
     if (rows.length === 0) return c.redirect(`${back}?flash=generic`);
     const o = rows[0]!;
     await db.rpc("enqueue_hook", {
       p_shop_id: shopId,
       p_event: "order.shipped",
-      p_payload: { order_id: o.id, order_number: o.number, shop_id: shopId, total_jpy: o.total_jpy, status: o.status, shipped_at: o.shipped_at ?? null, customer_id: o.customer_id ?? null },
+      p_payload: { order_id: o.id, order_number: o.number, shop_id: shopId, total_jpy: o.total_jpy, status: o.status, shipped_at: o.shipped_at ?? null, customer_id: o.customer_id ?? null, ...(o.payment_status ? { payment_status: o.payment_status } : {}) },
     });
   } catch (e) {
     if (e instanceof DbError) return c.redirect(`${back}?flash=generic`);
     throw e;
   }
   return c.redirect(`${back}?flash=saved`);
+});
+
+/** 入金を記録する（未入金の注文、0156。項目 orders。order.paid を出すのは DB の order_payment_record） */
+orders.post("/:shopId/orders/:orderId/payment", requireOwner, async (c: AdminContext) => {
+  const { db } = owner(c);
+  const shopId = param(c, "shopId");
+  const orderId = param(c, "orderId");
+  const back = `/admin/shops/${shopId}/orders/${orderId}`;
+  try {
+    await db.rpc("order_payment_record", { p_shop_id: shopId, p_order_id: orderId });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${back}?flash=generic`);
+    throw e;
+  }
+  return c.redirect(`${back}?flash=payment_recorded`);
 });
 
 /** 印とメモを保存（0106、項目 orders。判定と形の検査は DB の order_annotate） */

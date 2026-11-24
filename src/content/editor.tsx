@@ -33,11 +33,10 @@ import { pageEditorClient } from "./editor-client";
 import { PAGE_BLOCKS_SCRIPT, PAGE_MEDIA_SCRIPT } from "./blocks-script";
 import { LAYOUT_ATTRS, LAYOUT_CSS, LAYOUT_DEPTH_MAX, TABS_MAX, layoutDefault } from "../pages/layout";
 import { CURRENT_PARTS, PRODUCT_PARTS, PRODUCT_PARTS_DEFAULT, SHOP_BLOCKS_CSS, type ShopBlock } from "../pages/shop-blocks";
-import { migrated } from "../db/migration-state";
 import { escapeHtml } from "../mail/html";
 import { productFields } from "../products/fields";
 import { FIELD_IMAGE_SCRIPT, FieldImageInput } from "../routes/admin/field-image";
-import { ARTICLES_MULTI_MIGRATION, ARTICLE_ORDERS } from "../blog";
+import { ARTICLE_ORDERS } from "../blog";
 import { fieldValues, type ArticleFieldDef } from "../blog/fields";
 import { ICONS, ICON_NAMES } from "../pages/icons";
 
@@ -116,8 +115,6 @@ export function productsLabel(b: ProductBlock): string {
 export interface EditorExtras {
   /** 記事を並べるブロックで選ぶブログ（0081 が当たっていれば） */
   blogs: { handle: string; title: string }[];
-  /** 記事を並べるブロックでブログをまたげるか（0140 が当たっていれば。選ぶ欄をチェックボックスにする） */
-  blogsMulti?: boolean;
   /** ブロックの一覧の「パターン」（公開中のテーマのものと Banto の既定。本文は選んだときに …/pattern で受け取る） */
   patterns: EditorPattern[];
   /** 公開中のテーマのブロックのスタイル */
@@ -155,19 +152,17 @@ async function editorAppBlocks(c: AdminContext, shop: ShopRow): Promise<EditorAp
 
 export async function editorCatalog(c: AdminContext, shop: ShopRow): Promise<{ categories: Pick<CategoryRow, "slug" | "name">[]; tags: { tag: string; count: number }[] } & EditorExtras> {
   const db = owner(c).db;
-  const deps = { db, cache: c.get("adapters").cache };
-  const [categories, rows, blogs, theme, apps, audiences, blogsMulti] = await Promise.all([
+  const [categories, rows, blogs, theme, apps, audiences] = await Promise.all([
     db.from<CategoryRow>("categories").select("slug,name", { eq: { shop_id: shop.id }, order: "sort_order.asc,name.asc" }).catch(() => [] as CategoryRow[]),
     db.from<{ tags: string[] | null }>("products").select("tags", { eq: { shop_id: shop.id, published: true }, limit: 5000 }).catch(() => [] as { tags: string[] | null }[]),
     db.from<{ handle: string; title: string }>("blogs").select("handle,title", { eq: { shop_id: shop.id }, order: "sort_order.asc,title.asc" }).catch(() => []),
     editorTheme(c, shop),
     editorAppBlocks(c, shop),
     editorAudiences(c, shop),
-    migrated(deps, ARTICLES_MULTI_MIGRATION).catch(() => false),
   ]);
   const patterns = [...theme.patterns, ...bantoPatterns()].map(({ name, title, description, source }) => ({ name, title, description, source }));
   const gate = moduleEnabled(shop.settings, AUDIENCES_MODULE) ? audiences.filter((a) => !audienceDisplayOnly(a.condition)).map(({ id, name }) => ({ id, name })) : null;
-  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, blogsMulti, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
+  return { categories, tags: tagCounts(rows).slice(0, 300), blogs, patterns, styles: theme.styles, apps, audiences: audiences.map(({ id, name }) => ({ id, name })), ...(gate ? { gateAudiences: gate } : {}) };
 }
 
 /** 見せる相手の囲みで選べる会員の条件（モジュールが OFF なら空。読めるのは項目 content を持つ人も） */
@@ -359,7 +354,7 @@ export const PAGE_EDITOR_SCRIPT = `
 
 /** 見たままの編集のスクリプト（関数の toString() と設定。</script> を閉じさせないよう < を逃がす） */
 export function visualEditorScript(base: string): string {
-  const cfg = { render: `${base}/render`, t: { cell: t("pages.tool_table_cell") } };
+  const cfg = { render: `${base}/render`, t: { cell: t("pages.tool_table_cell"), image_link: t("pages.tool_image_link_ask") } };
   return `${CLIENT_PRELUDE}(${pageEditorClient.toString()})().mount(${JSON.stringify(cfg).replace(/</g, "\\u003c")});`;
 }
 
@@ -374,6 +369,8 @@ export const EDITOR_CSS = `
 #page-form .pe-title:focus{outline:none;box-shadow:none;border-bottom-color:var(--border-strong)}
 #body-visual{min-height:24rem;padding:.5rem 2.5rem 3rem;overflow:visible;border:0;border-radius:0}
 #body-visual:focus{outline:none}
+#body-visual img{cursor:pointer}
+#body-visual img[data-picked]{outline:2px solid var(--link);outline-offset:2px}
 #body-visual>*,#body-visual [data-slot]>*,#body-visual .banto-accordion__title{position:relative;border-radius:3px;transition:box-shadow .1s}
 #body-visual>*:hover,#body-visual [data-slot]>*:hover{box-shadow:0 0 0 1px var(--border)}
 #body-visual .is-sel,#body-visual .is-sel:hover{box-shadow:0 0 0 1.5px var(--link)}
@@ -1157,7 +1154,7 @@ export function ContentForm(props: { kind: EditorKind; shop: ShopRow; action: st
         <dialog id="blk-articles" aria-labelledby="blk-articles-title">
           <form method="dialog">
             <h2 id="blk-articles-title">{t("pages.block_articles")}</h2>
-            {props.extras.blogsMulti && props.extras.blogs.length > 1 ? (
+            {props.extras.blogs.length > 1 ? (
               // ブログをまたぐ（0140）: いくつでも選べる。「すべてのブログ」はこれから作るブログも含む
               <fieldset class="ba-blogs">
                 <legend>{t("pages.articles_blogs")}</legend>

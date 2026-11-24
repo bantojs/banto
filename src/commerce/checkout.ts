@@ -12,26 +12,49 @@ import type { Cart, CartItem } from "../cart/cart";
 import { normalizeCart } from "../cart/cart";
 import { openJson, randomToken, sealJson } from "../util/signed";
 import { ipHash, subjectHash } from "../members/auth";
-import { PREFECTURES, describeShipping, isPrefecture, parseShippingSettings, shippingFee, taxRate } from "./shipping";
+import { PREFECTURES, describeShipping, freeShippingTarget, isPrefecture, parseShippingSettings, shippingQuote, taxRate, type ShippingFreeReason } from "./shipping";
 import type { AddressFormValues, CartLine } from "../themes/types";
 import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db/privileged";
-import { migrated, type MigrationStateDeps } from "../db/migration-state";
+import type { MigrationStateDeps } from "../db/migration-state";
 import { StripeError, type StripeClient } from "../payments/stripe";
 import { KomojuError, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
 import { amazonPayConfigured } from "../plugins/amazon_pay";
 import { AMAZON_PAY_URL_MAX, sealAmazonPayTicket } from "../payments/amazon-pay";
-import { t, type MessageKey } from "../i18n";
+import { t, tf, type MessageKey } from "../i18n";
 import { EMPTY_DISCOUNT, couponSubject, customerAttributesOf, evaluateDiscounts, parseCampaigns, type DiscountLine, type DiscountResult, type RejectedCoupon } from "./discounts";
 import { marketingConsentEnabled } from "../customers/fields";
 import { shopHome } from "../storefront/urls";
 import { checkDelivery, deliveryText, isDeliverySlot } from "../modules/delivery-time";
+import { COD_PROVIDER, codNote, codQuote, codSettings, type CodBlock } from "../modules/cod";
+import { KOMOJU_TYPE_RE, flatFee, komojuFee, komojuMethods } from "./payment-fees";
+import { moduleEnabled } from "../modules/registry";
+import { AUDIENCES_MODULE } from "../members/audience";
 import { rateFor, shopTaxRates, taxBreakdown, taxClassOf, taxRoundingOf, type TaxGroup } from "./tax";
 
-export type Provider = "stripe" | "komoju" | "amazon_pay";
-export const PROVIDERS: readonly Provider[] = ["stripe", "komoju", "amazon_pay"];
+/** cod: 代金引換（同梱モジュール cod、0157）。決済ページへ行かず、受付（未入金）で確定する */
+export type Provider = "stripe" | "komoju" | "amazon_pay" | "cod";
+export const PROVIDERS: readonly Provider[] = ["stripe", "komoju", "amazon_pay", "cod"];
+
+/**
+ * 決済手段の選び方（フォーム・ヘッドレスの provider）。KOMOJU は種類つき（komoju:konbini）でも受ける（0170、支払い方法の手数料）。
+ * 形が合わなければ null
+ */
+export function parsePaymentChoice(v: unknown): { provider: Provider; method: string | null } | null {
+  if (typeof v !== "string") return null;
+  const m = /^komoju:([a-z_]{1,40})$/.exec(v);
+  if (m) return { provider: "komoju", method: m[1]! };
+  return isProvider(v) ? { provider: v, method: null } : null;
+}
+
+/** KOMOJU の種類の表示名（知らない種類は種類の名前のまま） */
+export function komojuTypeLabel(type: string): string {
+  const key = `komoju.type.${type}` as MessageKey;
+  const v = t(key);
+  return v === key ? type : v;
+}
 
 export function isProvider(s: unknown): s is Provider {
-  return s === "stripe" || s === "komoju" || s === "amazon_pay";
+  return s === "stripe" || s === "komoju" || s === "amazon_pay" || s === "cod";
 }
 
 /**
@@ -91,7 +114,9 @@ export const FREE_PROVIDER = "free";
 // ---------- カートの値付け ----------
 
 export interface PricedCart {
+  /** カートの行。店頭のみの商品（0149）は storeOnly の印つきで入る（購入手続きでは外す） */
   lines: CartLine[];
+  /** 購入手続きに進める行の小計（店頭のみの行は入れない） */
   subtotal: number;
   /** 非公開になった・削除された SKU と、見る人が買えない会員限定の商品の SKU（カートから外す） */
   dropped: string[];
@@ -116,8 +141,13 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
       dropped.push(item.sku_id);
       continue;
     }
-    // 会員限定の商品（0098）: 買えるかは会員なら DB が判定した値、ゲストは条件のある商品は買えない。確定もこの値付けを通る
+    // 買えない商品（src/products/sale.ts）: 会員限定（0098。会員なら DB が判定した値、ゲストは条件のある商品は買えない）・発売前（0148）は
+    // カートから外す。店頭のみ（0149）は、お店で試着が ON ならカートに残すが購入手続きには進めない（storeOnly）。確定もこの値付けを通る
     if (!hit.purchasable) {
+      if (hit.cartable && hit.purchase_block === "store_only") {
+        lines.push({ sku: hit.sku, product: hit.product, qty: item.qty, short: hit.sku.available < item.qty, storeOnly: true });
+        continue;
+      }
       dropped.push(item.sku_id);
       restricted.push(item.sku_id);
       continue;
@@ -126,7 +156,7 @@ export async function priceCart(sf: StorefrontData, shop: PublicShop, cart: Cart
   }
   return {
     lines,
-    subtotal: lines.reduce((n, l) => n + l.sku.price_jpy * l.qty, 0),
+    subtotal: lines.reduce((n, l) => n + (l.storeOnly ? 0 : l.sku.price_jpy * l.qty), 0),
     dropped,
     ...(restricted.length > 0 ? { restricted } : {}),
     cart: { items: lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })) },
@@ -154,7 +184,7 @@ interface DiscountContext {
 
 /** カートの値引き。コードが無い・モジュールが OFF なら DB に触らず「値引きなし」 */
 /** provider: 選んだ支払い方法（確認画面と確定）。カートでは無し（支払い方法の条件は仮に通す） */
-export async function discountCart(ctx: DiscountContext, priced: PricedCart, codes: string[] | undefined, shipping: number, email: string | null, provider?: Provider): Promise<DiscountResult> {
+export async function discountCart(ctx: DiscountContext, priced: PricedCart, codes: string[] | undefined, shipping: number, email: string | null, provider?: Provider, method?: string | null): Promise<DiscountResult> {
   if (!ctx.coupons || !codes || codes.length === 0 || priced.lines.length === 0) return EMPTY_DISCOUNT;
   const subject = await couponSubject(ctx.member, email);
   // 会員の独自項目の条件（0049）: ログイン中の会員の id を渡して、判定の材料に attributes を載せてもらう（往復は増やさない）
@@ -177,7 +207,7 @@ export async function discountCart(ctx: DiscountContext, priced: PricedCart, cod
     member: Boolean(ctx.member),
     memberId: ctx.member?.id ?? null,
     attributes: customerAttributesOf(rows),
-    ...(provider ? { payment: { provider } } : {}),
+    ...(provider ? { payment: { provider, ...(provider === "komoju" && method ? { type: method } : {}) } } : {}),
     ancestors: (id) => {
       const out: string[] = [];
       for (let cur: string | null = id, n = 0; cur && n < 5; cur = parent.get(cur) ?? null, n++) out.push(cur);
@@ -193,7 +223,7 @@ export function couponNotice(r: RejectedCoupon): { code: string; reason: string;
 
 // ---------- 配送先 ----------
 
-export const ADDRESS_FIELDS = ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1", "line2", "delivery_date", "delivery_slot", "marketing_consent"] as const;
+export const ADDRESS_FIELDS = ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1", "line2", "delivery_date", "delivery_slot", "marketing_consent", "save_address"] as const;
 export const REQUIRED_ADDRESS_FIELDS = ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1"] as const;
 export type Address = Required<AddressFormValues>;
 
@@ -207,6 +237,9 @@ export function validateAddress(input: Record<string, unknown>): { address: Addr
   // 「お得な情報やセールの案内を受け取る」（0050）。画面は "1"、ヘッドレスは true も受ける。それ以外は空（未チェック）
   const consent = input["marketing_consent"];
   v.marketing_consent = consent === true || consent === "1" || consent === "on" || consent === "true" ? "1" : "";
+  // 会員の「この住所を次回も使う」（0159）。既定の住所がある会員だけが上書きに使う（無い会員は確定のときにいつも保存される）
+  const save = input["save_address"];
+  v.save_address = save === true || save === "1" || save === "on" || save === "true" ? "1" : "";
   // お届け希望（同梱モジュール delivery_time）。ショップの設定での確認は createQuote（checkDelivery）
   if (v.delivery_date && !/^\d{4}-\d{2}-\d{2}$/.test(v.delivery_date)) v.delivery_date = "";
   if (v.delivery_slot && !isDeliverySlot(v.delivery_slot)) v.delivery_slot = "";
@@ -264,11 +297,17 @@ export interface Confirmation {
   lines: ConfirmationLine[];
   subtotal_jpy: number;
   shipping_jpy: number;
+  /** 送料が 0 円になった理由（0171）: threshold = ○円以上で送料無料・audience = 会員の条件の送料無料（会員特典）。送料がかかるなら null */
+  shipping_free_reason: ShippingFreeReason;
+  /** 手数料: 代引き手数料（同梱モジュール cod、0157）か支払い方法の手数料（KOMOJU の種類、0170）。無ければ 0 */
+  fee_jpy: number;
+  /** 手数料の見出し（「代引き手数料」「お支払い手数料」）。手数料が無ければ null */
+  fee_label?: string | null;
   /** 適用したクーポン（額はその値引きの分。送料無料なら送料の額） */
   discounts: { code: string; name: string; amount_jpy: number }[];
   /** 値引きの合計（商品 + 送料） */
   discount_jpy: number;
-  /** 値引き後の合計（購入者が支払う額） */
+  /** 値引き後の合計（購入者が支払う額。代引き手数料を含む） */
   total_jpy: number;
   /** 入力されたが使えなかったクーポンと理由 */
   coupon_notices: { code: string; reason: string; message: string }[];
@@ -279,7 +318,16 @@ export interface Confirmation {
   /** 価格はすべて税込 */
   tax_included: true;
   /** free: true なら支払いが無い（0 円）。申込みボタンで注文が確定し、決済ページへは行かない */
-  payment: { provider: Provider; method: string; timing: string; note: string | null; free?: true };
+  payment: {
+    provider: Provider;
+    method: string;
+    timing: string;
+    note: string | null;
+    free?: true;
+    /** 代金引換（その場で受付として確定し、支払いは配達のとき） */ cod?: true;
+    /** KOMOJU の種類（0170。確認画面で選んだもの。決済ページはこの種類だけ） */ type?: string;
+    /** 選び直し（「修正する」）に送る provider の値（KOMOJU の種類つきは komoju:<種類>） */ choice?: string;
+  };
   /** 引渡時期。未設定なら null（特商法表記のページを案内する） */
   delivery: string | null;
   /** お届け希望日時（同梱モジュール delivery_time）。指定なしなら null */
@@ -289,15 +337,19 @@ export interface Confirmation {
   ship_to: { name: string; email: string; phone: string; postal_code: string; state: string; city: string; line1: string; line2: string };
   /** 「お得な情報やセールの案内を受け取る」（0050）。欄を出さないショップでは null（未回答） */
   marketing_consent: boolean | null;
+  /** 会員が「この住所を次回も使う」を選んだ（0159）。選んでいなければ無い */
+  save_address?: true;
   /** 法務ページ（絶対 URL） */
   links: { legal: string; privacy: string; returns: string };
   /** 申込みボタンの文言（「注文を確定する」等、押すと申込みになることが分かるもの） */
   submit_label: string;
 }
 
-export function paymentDescription(provider: Provider): { method: string; timing: string } {
+export function paymentDescription(provider: Provider, type?: string | null): { method: string; timing: string } {
+  if (provider === "komoju" && type) return { method: tf("confirm.method_komoju_type", { method: komojuTypeLabel(type) }), timing: t("confirm.timing_komoju") };
   if (provider === "stripe") return { method: t("confirm.method_stripe"), timing: t("confirm.timing_stripe") };
   if (provider === "amazon_pay") return { method: t("confirm.method_amazon_pay"), timing: t("confirm.timing_amazon_pay") };
+  if (provider === "cod") return { method: t("confirm.method_cod"), timing: t("confirm.timing_cod") };
   return { method: t("confirm.method_komoju"), timing: t("confirm.timing_komoju") };
 }
 
@@ -314,6 +366,10 @@ interface QuotePayload {
   prices: Record<string, number>;
   address: Address;
   shipping: number;
+  /** 手数料（代引き 0157・支払い方法 0170。0 でないときだけ） */
+  f?: number;
+  /** KOMOJU の種類（0170。選んだときだけ） */
+  m?: string;
   /** 適用したクーポンのコードと値引きの合計 */
   c?: string[];
   d?: number;
@@ -328,11 +384,17 @@ export interface Quote {
   prices: Record<string, number>;
   address: Address;
   shipping: number;
+  /** 送料が 0 円になった理由（0171。確認画面の「会員特典」）。署名には入れない（確定の前に引き直す） */
+  shippingReason?: ShippingFreeReason;
+  /** 手数料（代引き 0157・支払い方法 0170）。無ければ 0 */
+  fee: number;
+  /** KOMOJU の種類（0170）。選んでいなければ null */
+  method: string | null;
   /** 適用したクーポンのコード（確定時に同じ判定になるか確かめる） */
   coupons: string[];
   /** 値引きの合計 */
   discount: number;
-  /** 値引き後の合計 */
+  /** 値引き後の合計（代引き手数料を含む） */
   total: number;
   expiresAt: number;
   /** quote の識別子（1 回限りの予約に使う、0029）。古い quote には無い */
@@ -340,8 +402,24 @@ export interface Quote {
 }
 
 export type QuoteResult =
-  | { ok: true; quote: Quote; token: string; confirmation: Confirmation; lines: CartLine[]; discount: DiscountResult }
-  | { ok: false; error: "empty_cart" | "stock" | "invalid_address" | "minimum_amount"; invalid?: string[]; dropped?: string[] };
+  | { ok: true; quote: Quote; token: string; confirmation: Confirmation; lines: CartLine[]; discount: DiscountResult; /** 購入手続きから外した店頭のみの行（0149。カートには残る） */ excluded?: CartLine[] }
+  | {
+      ok: false;
+      /** payment_method: KOMOJU の種類を選んでいない・使えない種類・手数料の段に当たらない（0170） */
+      error: "empty_cart" | "stock" | "invalid_address" | "minimum_amount" | "store_only" | "cod_unavailable" | "payment_method";
+      invalid?: string[];
+      dropped?: string[];
+      /** cod_unavailable の理由 */ cod?: CodBlock;
+    };
+
+/** 購入手続きに進める行だけの値付け（店頭のみの行を外す。0149） */
+export function checkoutPart(priced: PricedCart): { priced: PricedCart; excluded: CartLine[] } {
+  const excluded = priced.lines.filter((l) => l.storeOnly);
+  if (excluded.length === 0) return { priced, excluded };
+  const lines = priced.lines.filter((l) => !l.storeOnly);
+  const keep = new Set(lines.map((l) => l.sku.id));
+  return { priced: { ...priced, lines, cart: { ...priced.cart, items: priced.cart.items.filter((i) => keep.has(i.sku_id)) } }, excluded };
+}
 
 export interface QuoteContext {
   sf: StorefrontData;
@@ -356,13 +434,52 @@ export interface QuoteContext {
   member?: { id: string } | null;
   /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定。呼び出し側が consentCollected() で決める） */
   consent?: boolean;
+  /** KOMOJU の受け付ける種類（プラグインの設定 payment_types。0170 の種類の選び方に使う）。無ければ [] */
+  komojuTypes?: string[];
+  /**
+   * ログイン中の会員が当てはまる会員の条件のうち、いちばん低い送料無料の金額（0171。DB の member_free_shipping_over、最新の独自項目で判定）。
+   * 決まりの無いショップ・ゲスト・モジュールが OFF では呼ばない（DB の往復を足さない）。無ければ null
+   */
+  memberFreeOver?: () => Promise<number | null>;
+}
+
+/**
+ * 送料（0171 の会員の条件ごとの送料無料を含む）。計算は shipping.ts、会員の判定の材料は DB。
+ * ゲスト・会員の条件のモジュールが OFF・決まりが無いときは DB に問い合わせない
+ */
+async function shippingFor(ctx: QuoteContext, subtotal: number, state: string): Promise<{ fee: number; free_reason: ShippingFreeReason }> {
+  const settings = ctx.shop.settings ?? {};
+  const cfg = parseShippingSettings(settings["shipping"]);
+  const needsMember = Boolean(ctx.member?.id) && cfg.has_member_free && moduleEnabled(settings, AUDIENCES_MODULE) && ctx.memberFreeOver !== undefined;
+  // ショップ全体の金額で無料なら、会員の判定は要らない
+  const plain = shippingQuote(cfg, subtotal, state, null);
+  if (!needsMember || plain.fee === 0) return plain;
+  return shippingQuote(cfg, subtotal, state, await ctx.memberFreeOver!());
+}
+
+/**
+ * KOMOJU の種類と手数料（0170）。手数料の決まりの無いショップは種類を見ない（今までどおり）。
+ * 決まりのあるショップは種類が要り、並べる種類（komojuMethods）のどれかで、手数料の段に当たること
+ */
+function komojuChoice(ctx: QuoteContext, provider: Provider, method: string | null | undefined, base: number): { ok: true; fee: number; method: string | null } | { ok: false } {
+  if (provider !== "komoju") return { ok: true, fee: 0, method: null };
+  const settings = ctx.shop.settings ?? {};
+  const methods = komojuMethods(settings, ctx.komojuTypes ?? []);
+  if (!methods) return { ok: true, fee: 0, method: null };
+  if (!method || !KOMOJU_TYPE_RE.test(method) || !methods.some((m) => m.type === method)) return { ok: false };
+  // 0 円の注文は支払いが無いので手数料も無い（決済なしで確定する）
+  if (base === 0) return { ok: true, fee: 0, method };
+  const fee = komojuFee(settings, method, base);
+  return fee === null ? { ok: false } : { ok: true, fee, method };
 }
 
 /** カート + 配送先から最終確認の内容を作り、署名付きの quote を発行する */
-export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provider, rawAddress: Record<string, unknown>): Promise<QuoteResult> {
+export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provider, rawAddress: Record<string, unknown>, method?: string | null): Promise<QuoteResult> {
   const normalized = normalizeCart(cart);
-  const priced = await priceCart(ctx.sf, ctx.shop, normalized);
-  if (priced.lines.length === 0) return { ok: false, error: "empty_cart", dropped: priced.dropped };
+  const all = await priceCart(ctx.sf, ctx.shop, normalized);
+  // 店頭のみの商品（0149）は購入手続きから外して知らせる（カートには残す）。それしか無ければ進めない
+  const { priced, excluded } = checkoutPart(all);
+  if (priced.lines.length === 0) return { ok: false, error: excluded.length > 0 ? "store_only" : "empty_cart", dropped: priced.dropped };
   const { address, invalid } = validateAddress(rawAddress);
   if (invalid.length > 0) return { ok: false, error: "invalid_address", invalid };
   const dl = checkDelivery(ctx.shop.settings, address.delivery_date, address.delivery_slot, (ctx.now ?? Date.now)());
@@ -371,11 +488,25 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
   address.delivery_slot = dl.request?.slot ?? "";
   if (priced.lines.some((l) => l.short)) return { ok: false, error: "stock", dropped: priced.dropped };
   const settings = ctx.shop.settings ?? {};
-  // 送料無料のラインは値引き前の小計で判定する（WooCommerce の既定と同じ）
-  const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, address.state);
-  const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider);
-  const total = priced.subtotal + shipping - discount.total;
-  if (total > 0 && total < MIN_PAYMENT_JPY) return { ok: false, error: "minimum_amount" };
+  // 送料無料のラインは値引き前の小計で判定する（WooCommerce の既定と同じ）。会員の条件ごとの金額（0171）も
+  const ship = await shippingFor(ctx, priced.subtotal, address.state);
+  const shipping = ship.fee;
+  const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider, method);
+  const base = priced.subtotal + shipping - discount.total;
+  // 決済事業者の下限（50 円）。代金引換は決済事業者を通らないので当てない
+  if (provider !== "cod" && base > 0 && base < MIN_PAYMENT_JPY) return { ok: false, error: "minimum_amount" };
+  // 代金引換（0157）: 手数料の決まり・上限金額・会員だけを確かめる（確定のとき DB も同じ決まりで引き直す）
+  let fee = 0;
+  if (provider === "cod") {
+    const cod = codQuote(settings, base, Boolean(ctx.member?.id));
+    if (!cod.ok) return { ok: false, error: "cod_unavailable", cod: cod.reason };
+    fee = cod.fee;
+  }
+  // KOMOJU の種類と手数料（0170）。確定の前に DB も同じ決まりで確かめる（reservation_payment_fee_check）
+  const km = komojuChoice(ctx, provider, method, base);
+  if (!km.ok) return { ok: false, error: "payment_method" };
+  fee += km.fee;
+  const total = base + fee;
   const now = (ctx.now ?? Date.now)();
   const quote: Quote = {
     shopId: ctx.shop.id,
@@ -384,6 +515,9 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     prices: Object.fromEntries(priced.lines.map((l) => [l.sku.id, l.sku.price_jpy])),
     address,
     shipping,
+    shippingReason: ship.free_reason,
+    fee,
+    method: km.method,
     coupons: discount.applied.map((a) => a.code),
     discount: discount.total,
     total,
@@ -399,11 +533,13 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
     prices: quote.prices,
     address,
     shipping,
+    ...(fee > 0 ? { f: fee } : {}),
+    ...(km.method ? { m: km.method } : {}),
     ...(quote.coupons.length > 0 ? { c: quote.coupons, d: quote.discount } : {}),
     total: quote.total,
     exp: quote.expiresAt,
   };
-  return { ok: true, quote, token: await sealJson(ctx.secret, payload), confirmation: confirmationOf(ctx, priced.lines, priced.subtotal, quote, discount), lines: priced.lines, discount };
+  return { ok: true, quote, token: await sealJson(ctx.secret, payload), confirmation: confirmationOf(ctx, priced.lines, priced.subtotal, quote, discount), lines: priced.lines, discount, ...(excluded.length > 0 ? { excluded } : {}) };
 }
 
 /** 同意の欄を出すか: ショップの設定（settings.marketing_consent）が ON */
@@ -424,6 +560,8 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     [
       ...lines.map((l) => ({ amount_jpy: l.sku.price_jpy * l.qty, rate: lineRate(l), discount_jpy: discount.lines[l.sku.id] ?? 0 })),
       { amount_jpy: quote.shipping, rate: rates.standard, discount_jpy: discount.shippingDiscount },
+      // 手数料（代引き・支払い方法）は標準税率（値引きの対象にしない）
+      ...(quote.fee > 0 ? [{ amount_jpy: quote.fee, rate: rates.standard, discount_jpy: 0 }] : []),
     ],
     Math.max(0, discount.total - discount.itemDiscount - discount.shippingDiscount),
     taxRoundingOf(settings["tax_rounding"]),
@@ -443,6 +581,9 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     })),
     subtotal_jpy: subtotal,
     shipping_jpy: quote.shipping,
+    shipping_free_reason: quote.shippingReason ?? null,
+    fee_jpy: quote.fee,
+    fee_label: quote.fee > 0 ? t(quote.provider === "cod" ? "confirm.cod_fee" : "confirm.payment_fee") : null,
     discounts: discount.applied.map((a) => ({ code: a.code, name: a.name, amount_jpy: a.amount_jpy })),
     discount_jpy: discount.total,
     total_jpy: quote.total,
@@ -451,14 +592,25 @@ function confirmationOf(ctx: QuoteContext, lines: CartLine[], subtotal: number, 
     tax,
     tax_included: true,
     // 0 円の注文は決済なしで確定する（決済ページへ行かない）
-    payment: quote.total === 0 ? { provider: quote.provider, method: t("confirm.method_free"), timing: t("confirm.timing_free"), note: null, free: true } : { provider: quote.provider, ...paymentDescription(quote.provider), note: terms.payment_note },
+    payment:
+      quote.total === 0
+        ? { provider: quote.provider, method: t("confirm.method_free"), timing: t("confirm.timing_free"), note: null, free: true, ...(quote.method ? { type: quote.method, choice: `komoju:${quote.method}` } : {}) }
+        : {
+            provider: quote.provider,
+            ...paymentDescription(quote.provider, quote.method),
+            note: quote.provider === "cod" ? (codNote(settings) ?? terms.payment_note) : terms.payment_note,
+            ...(quote.provider === "cod" ? { cod: true as const } : {}),
+            ...(quote.method ? { type: quote.method, choice: `komoju:${quote.method}` } : {}),
+          },
     delivery: terms.delivery,
     delivery_request: a.delivery_date || a.delivery_slot ? { date: a.delivery_date || null, slot: a.delivery_slot || null, text: deliveryText({ date: a.delivery_date, slot: a.delivery_slot })! } : null,
     cancellation: terms.cancellation,
     ship_to: { name: a.customer_name, email: a.customer_email, phone: a.phone, postal_code: a.postal_code, state: a.state, city: a.city, line1: a.line1, line2: a.line2 },
     marketing_consent: consent ? a.marketing_consent === "1" : null,
+    // 会員だけ（ゲストの save_address は使わない）
+    ...(a.save_address === "1" && ctx.member?.id ? { save_address: true as const } : {}),
     links: { legal: `${base}/legal`, privacy: `${base}/privacy`, returns: `${base}/returns` },
-    submit_label: quote.total === 0 ? t("confirm.submit_free") : t("confirm.submit"),
+    submit_label: quote.total === 0 ? t("confirm.submit_free") : quote.provider === "cod" ? t("confirm.submit_cod") : t("confirm.submit"),
   };
 }
 
@@ -474,8 +626,10 @@ export async function openQuote(secret: string, token: string | undefined, shopI
   if (cart.items.length === 0) return null;
   const coupons = Array.isArray(raw.c) ? raw.c.filter((x): x is string => typeof x === "string") : [];
   const discount = typeof raw.d === "number" ? raw.d : 0;
+  const fee = typeof raw.f === "number" && Number.isInteger(raw.f) && raw.f >= 0 ? raw.f : 0;
   const id = typeof raw.j === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(raw.j) ? raw.j : null;
-  return { shopId, provider: raw.provider, cart, prices: raw.prices, address, shipping: raw.shipping, coupons, discount, total: raw.total, expiresAt: raw.exp, id };
+  const method = raw.provider === "komoju" && typeof raw.m === "string" && KOMOJU_TYPE_RE.test(raw.m) ? raw.m : null;
+  return { shopId, provider: raw.provider, cart, prices: raw.prices, address, shipping: raw.shipping, fee, method, coupons, discount, total: raw.total, expiresAt: raw.exp, id };
 }
 
 /**
@@ -485,20 +639,35 @@ export async function openQuote(secret: string, token: string | undefined, shopI
 export async function recheckQuote(
   ctx: QuoteContext,
   quote: Quote,
-): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" }> {
-  const priced = await priceCart(ctx.sf, ctx.shop, quote.cart);
-  const again = (cart: Cart) => createQuote(ctx, { ...cart, coupons: quote.coupons }, quote.provider, quote.address);
+): Promise<{ ok: true; lines: CartLine[]; subtotal: number; discount: DiscountResult } | { ok: false; error: "changed"; fresh: QuoteResult } | { ok: false; error: "stock" | "store_only" }> {
+  const all = await priceCart(ctx.sf, ctx.shop, quote.cart);
+  const again = (cart: Cart) => createQuote(ctx, { ...cart, coupons: quote.coupons }, quote.provider, quote.address, quote.method);
+  // 確認のあとで店頭のみになった商品（0149）は、外して確認画面を出し直す
+  const { priced, excluded } = checkoutPart(all);
+  if (excluded.length > 0) return priced.lines.length === 0 ? { ok: false, error: "store_only" } : { ok: false, error: "changed", fresh: await again(priced.cart) };
   if (priced.dropped.length > 0 || priced.lines.some((l) => l.short)) {
     if (priced.lines.length === 0 || priced.lines.some((l) => l.short)) return { ok: false, error: "stock" };
     return { ok: false, error: "changed", fresh: await again(priced.cart) };
   }
   const settings = ctx.shop.settings ?? {};
-  const shipping = shippingFee(parseShippingSettings(settings["shipping"]), priced.subtotal, quote.address.state);
+  const shipping = (await shippingFor(ctx, priced.subtotal, quote.address.state)).fee;
   const samePrices = priced.lines.every((l) => quote.prices[l.sku.id] === l.sku.price_jpy);
   // クーポンも判定し直す（期間が終わった・上限に達した・条件を満たさなくなったら、確認画面を出し直す）
-  const discount = await discountCart(ctx, priced, quote.coupons, shipping, quote.address.customer_email, quote.provider);
+  const discount = await discountCart(ctx, priced, quote.coupons, shipping, quote.address.customer_email, quote.provider, quote.method);
   const sameCoupons = discount.applied.length === quote.coupons.length && discount.applied.every((a) => quote.coupons.includes(a.code));
-  if (!samePrices || shipping !== quote.shipping || !sameCoupons || discount.total !== quote.discount || priced.subtotal + shipping - discount.total !== quote.total) {
+  // 代引き手数料も引き直す（決まり・上限・会員だけ。0157）
+  const base = priced.subtotal + shipping - discount.total;
+  let fee = 0;
+  if (quote.provider === "cod") {
+    const cod = codQuote(settings, base, Boolean(ctx.member?.id));
+    if (!cod.ok) return { ok: false, error: "changed", fresh: await again(priced.cart) };
+    fee = cod.fee;
+  }
+  // KOMOJU の種類の手数料も引き直す（0170）。種類が使えなくなったら確認画面を出し直す
+  const km = komojuChoice(ctx, quote.provider, quote.method, base);
+  if (!km.ok) return { ok: false, error: "changed", fresh: await again(priced.cart) };
+  fee += km.fee;
+  if (!samePrices || shipping !== quote.shipping || !sameCoupons || discount.total !== quote.discount || fee !== quote.fee || base + fee !== quote.total) {
     return { ok: false, error: "changed", fresh: await again(priced.cart) };
   }
   return { ok: true, lines: priced.lines, subtotal: priced.subtotal, discount };
@@ -529,7 +698,17 @@ export function stripeMode(shop: PublicShop, bundled: BundledOption[], cfg: Conf
 }
 
 export interface PaymentSetup {
-  options: { stripe: boolean; komoju: boolean; amazon_pay: boolean };
+  options: {
+    stripe: boolean;
+    komoju: boolean;
+    amazon_pay: boolean;
+    /** 代金引換（同梱モジュール cod が ON。金額・会員だけの判定は確認画面で） */ cod: boolean;
+    /**
+     * KOMOJU を種類ごとに並べる（0170、支払い方法の手数料の決まりがあるショップだけ）。provider には komoju:<type> を送る。
+     * fee: 一律の手数料（段は金額で変わるので null、決まりの無い種類は 0）
+     */
+    komoju_methods?: { type: string; name: string; fee: number | null }[];
+  };
   komoju: BundledOption | null;
   stripe: StripeMode;
   /** 同梱プラグイン「Amazon Pay」が有効 + 設定が揃っている（0130） */
@@ -549,18 +728,43 @@ export async function paymentSetup(sf: StorefrontData, shop: PublicShop, cfg: Co
   const stripe = cfg.get("SUPABASE_SERVICE_ROLE_KEY") ? stripeMode(shop, bundled, cfg) : null;
   const amazon = bundled.find((o) => o.id === "amazon_pay") ?? null;
   const amazonReady = amazon !== null && amazonPayConfigured(cfg) && Boolean(cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
-  return { options: { stripe: stripe !== null, komoju: komojuReady, amazon_pay: amazonReady }, komoju: komojuReady ? komoju : null, stripe, amazonPay: amazonReady ? amazon : null };
+  // 代金引換（0157）: モジュールが ON（ON にできるのは 0157 が当たってから）。確定は service_role の confirm_reservation
+  const cod = codSettings(shop.settings) !== null && Boolean(cfg.get("SUPABASE_SERVICE_ROLE_KEY"));
+  // 支払い方法の手数料（0170）: 決まりのあるショップは KOMOJU を種類ごとに並べる
+  const methods = komojuReady ? komojuMethods(shop.settings, parsePaymentTypes(komoju.settings)) : null;
+  const komojuMethodsOption = methods ? { komoju_methods: methods.map((m) => ({ type: m.type, name: komojuTypeLabel(m.type), fee: flatFee(m.rule) })) } : {};
+  return {
+    options: { stripe: stripe !== null, komoju: komojuReady, amazon_pay: amazonReady, cod, ...komojuMethodsOption },
+    komoju: komojuReady ? komoju : null,
+    stripe,
+    amazonPay: amazonReady ? amazon : null,
+  };
+}
+
+/** KOMOJU の受け付ける種類（プラグインの設定）。quote の文脈（QuoteContext.komojuTypes）に渡す */
+export function komojuTypesOf(setup: PaymentSetup): string[] {
+  return setup.komoju ? parsePaymentTypes(setup.komoju.settings) : [];
+}
+
+/** 種類つきの選び方が使えるか（0170）。種類を並べるショップは種類が要り、並べていないショップは種類を受けない */
+export function choiceAvailable(setup: PaymentSetup, choice: { provider: Provider; method: string | null }): boolean {
+  if (!providerAvailable(setup, choice.provider)) return false;
+  if (choice.provider !== "komoju") return choice.method === null;
+  const methods = setup.options.komoju_methods;
+  if (!methods) return choice.method === null;
+  return choice.method !== null && methods.some((m) => m.type === choice.method);
 }
 
 export function providerAvailable(setup: PaymentSetup, provider: Provider): boolean {
   if (provider === "stripe") return setup.stripe !== null;
   if (provider === "amazon_pay") return setup.amazonPay !== null;
+  if (provider === "cod") return setup.options.cod;
   return setup.komoju !== null;
 }
 
 /** どれか 1 つでも決済手段が使えるか */
 export function anyProvider(options: PaymentSetup["options"]): boolean {
-  return options.stripe || options.komoju || options.amazon_pay;
+  return options.stripe || options.komoju || options.amazon_pay || options.cod;
 }
 
 // ---------- 注文の確定（在庫予約 → 決済ページ） ----------
@@ -576,8 +780,19 @@ export interface PlaceOrderDeps {
   migrationState?: MigrationStateDeps | null;
 }
 
-/** reserve_stock が会員 id を受け取り、会員限定の商品を確かめる版 */
-export const RESERVE_AUDIENCE_MIGRATION = "0129_security_hardening_5";
+/** 注文は会員だけ（0165、ショップの設定 checkout_members_only）。DB の reserve_stock も会員でない予約を断る */
+export const CHECKOUT_MEMBERS_ONLY_MIGRATION = "0165_checkout_members_only";
+
+/**
+ * 購入手続きにログイン（会員）が要るショップか。会員機能が ON で checkout_members_only が true のとき（DB の banto_checkout_members_only と同じ）。
+ * 会員の登録はログインのときにその場で作るので、「会員登録が必須」と同じ
+ */
+export function checkoutMembersOnly(settings: Record<string, unknown> | null | undefined): boolean {
+  return settings?.["members_enabled"] === true && settings?.["checkout_members_only"] === true;
+}
+
+/** 会員の注文のお届け先を既定の住所に写す（0159）。レジの「保存します」「次回も使う」は当ててから出す */
+export const MEMBER_ADDRESS_MIGRATION = "0159_member_address_from_order";
 
 export interface PlaceOrderInput {
   shop: PublicShop;
@@ -597,8 +812,8 @@ export interface PlaceOrderInput {
   shopUrl?: string;
 }
 
-/** free: 0 円の注文で、決済なしで確定した（url は完了画面、orderId は確定した注文） */
-export type PlaceOrderResult = { ok: true; url: string; reservationId: string; free?: { orderId: string } } | { ok: false; error: "stock" | "payment" | "coupon" | "member" | "limit" | "quote_used" | "price" };
+/** free: 0 円の注文で、決済なしで確定した（url は完了画面、orderId は確定した注文）。cod: 代金引換で受付（未入金）として確定した */
+export type PlaceOrderResult = { ok: true; url: string; reservationId: string; free?: { orderId: string }; cod?: { orderId: string } } | { ok: false; error: "stock" | "payment" | "coupon" | "member" | "member_required" | "limit" | "quote_used" | "price" };
 
 /** Stripe の決済ページと領収メールに出す値引きの名前（例: クーポン SUMMER10 + FREESHIP） */
 export function discountLabel(discount: DiscountResult): string {
@@ -615,33 +830,43 @@ export async function reserveLimits(secret: string, quote: Quote, ip: string | n
 export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): Promise<PlaceOrderResult> {
   const { shop, quote, lines } = input;
   const a = quote.address;
+  // 注文は会員だけのショップ（0165）: ゲストは予約の前に断る（DB の reserve_stock も断る）
+  if (checkoutMembersOnly(shop.settings) && !input.customerId) return { ok: false, error: "member_required" };
   let reservationId: string;
   try {
-    // 会員 id は 0129 が当たっている DB にだけ渡す（それまでの reserve_stock は受け取らない。買えるかは priceCart が確かめている）
-    const memberCheck = input.customerId && deps.migrationState ? await migrated(deps.migrationState, RESERVE_AUDIENCE_MIGRATION) : false;
+    // 会員 id を渡すと reserve_stock が会員限定の商品を確かめる（0129）
     reservationId = await deps.privileged.reserveStock(
       shop.id,
       lines.map((l) => ({ sku_id: l.sku.id, qty: l.qty })),
       quote.provider === "komoju" ? reservationSeconds(deps.setup.komoju?.settings ?? {}) : CHECKOUT_TTL_SECONDS,
       input.limits ?? null,
-      memberCheck ? input.customerId : null,
+      input.customerId ?? null,
     );
     await deps.privileged.attachReservationCustomer(reservationId, shop.id, {
       customer_email: a.customer_email,
       customer_name: a.customer_name,
       shipping_address: { name: a.customer_name, phone: a.phone, postal_code: a.postal_code, country: "JP", state: a.state, city: a.city, line1: a.line1, line2: a.line2 || null },
       shipping_jpy: quote.shipping,
+      // 0157: 代引き手数料（確定のとき DB がショップの決まりで引き直す）。0170: KOMOJU の種類の手数料（値引きの後に DB が確かめる）
+      ...(quote.fee > 0 ? { fee_jpy: quote.fee } : {}),
+      // 0170: 選んだ KOMOJU の種類（決済ページはこの種類だけ。確定のとき KOMOJU が知らせた種類と比べる）
+      ...(quote.provider === "komoju" && quote.method ? { payment_method: `komoju:${quote.method}` } : {}),
       // 0018: 注文の orders.delivery にトリガーで写る
       ...(a.delivery_date || a.delivery_slot ? { delivery: { date: a.delivery_date || null, slot: a.delivery_slot || null } } : {}),
       ...(input.customerId ? { customer_id: input.customerId, customer_epoch: input.customerEpoch ?? -1 } : {}),
       // 0050: 「お得な情報やセールの案内を受け取る」。欄を出すショップだけ（出さないショップは未回答のまま）。注文の行と会員にトリガーで写る
       ...(marketingConsentEnabled(shop.settings) ? { marketing_consent: a.marketing_consent === "1" } : {}),
+      // 0159: 会員が「この住所を次回も使う」を選んだ（既定の住所を上書きする）。既定の住所が無い会員はこれが無くても保存される
+      ...(input.customerId && a.save_address === "1" ? { save_address: true } : {}),
+      // 0159: 住所を写すのは、予約したときのログインの世代が確定のときも同じ会員だけ（すべての端末からログアウトした後の確定では写さない）
+      ...(input.customerId ? { address_epoch: input.customerEpoch ?? -1 } : {}),
     });
   } catch (e) {
     if (e instanceof PrivilegedRpcError && (e.is("insufficient_stock") || e.is("sku_not_available"))) return { ok: false, error: "stock" };
     // 0029: 同じ quote で 2 回目 / 同じ人・同じ IP の未確定の予約が上限（決済せずに在庫を押さえ続けられない）
     if (e instanceof PrivilegedRpcError && e.is("quote_already_used")) return { ok: false, error: "quote_used" };
     if (e instanceof PrivilegedRpcError && e.is("too_many_reservations")) return { ok: false, error: "limit" };
+    if (e instanceof PrivilegedRpcError && e.is("member_required")) return { ok: false, error: "member_required" };
     // 全端末からログアウトした後の古いセッション。予約を戻して、ログインし直してもらう
     if (e instanceof PrivilegedRpcError && e.is("member_session_invalid")) {
       await deps.privileged.releaseReservation(reservationId!, shop.id).catch(() => false);
@@ -684,6 +909,18 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     }
   }
 
+  // 支払い方法の手数料（0170）: 値引きを付けた後の金額で、DB がショップの決まりで確かめる（違えば確定しない）。
+  // 手数料が 0 でも確かめる（Worker が覚えている設定が古く 0 と計算したあいだに、運営者が手数料を足したとき）
+  if (quote.provider === "komoju" && quote.method) {
+    try {
+      await deps.privileged.reservationPaymentFeeCheck(reservationId, shop.id);
+    } catch (e) {
+      await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
+      if (e instanceof PrivilegedRpcError && e.is("amount_mismatch")) return { ok: false, error: "price" };
+      throw e;
+    }
+  }
+
   // 0 円: 決済ページを作らずにこの場で確定する。待つべき支払いが無いので、Webhook での確定の例外（02-decisions.md）。
   // 金額は recheckQuote で引き直したもの（購入者の入力は信じない）
   if (input.subtotal + quote.shipping - discount.total === 0) {
@@ -692,6 +929,21 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       return { ok: true, url: input.successUrl, reservationId, free: { orderId } };
     } catch (e) {
       await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  // 代金引換（0157）: 決済ページを作らず、その場で受付（未入金）として確定する。「Webhook のみ」の例外（02-decisions.md）。
+  // 手数料・上限・会員だけは confirm_reservation が引き直す。受け取る額は 0（お金は配達のときに集める）
+  if (quote.provider === "cod") {
+    try {
+      const orderId = await deps.privileged.confirmReservation(reservationId, shop.id, { payment_provider: COD_PROVIDER, payment_ref: `cod-${reservationId}`, amount_paid_jpy: 0, currency: "jpy" });
+      return { ok: true, url: input.successUrl, reservationId, cod: { orderId } };
+    } catch (e) {
+      await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
+      if (e instanceof PrivilegedRpcError && (e.is("cod_unavailable") || e.is("amount_mismatch"))) return { ok: false, error: "price" };
+      // 未入金の代金引換の注文が多すぎる（同じ人・同じ IP、0157）
+      if (e instanceof PrivilegedRpcError && e.is("too_many_reservations")) return { ok: false, error: "limit" };
       throw e;
     }
   }
@@ -738,13 +990,16 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
     if (!deps.komoju) throw new Error("komoju not configured");
     // クーポンが支払い方法を絞っていれば、決済ページに出す種類もそれだけにする（設定の種類と重ねる）
     const configured = parsePaymentTypes(deps.setup.komoju?.settings ?? {});
-    const paymentTypes = discount.paymentTypes ? (configured.length > 0 ? configured.filter((x) => discount.paymentTypes!.includes(x)) : discount.paymentTypes) : configured;
+    // 確認画面で種類を選んだ（0170）: 決済ページはその種類だけ（選び直して手数料を外せないように）
+    const offered = quote.method ? [quote.method] : configured;
+    const paymentTypes = discount.paymentTypes ? (offered.length > 0 ? offered.filter((x) => discount.paymentTypes!.includes(x)) : discount.paymentTypes) : offered;
     if (discount.paymentTypes && paymentTypes.length === 0) {
       await deps.privileged.releaseReservation(reservationId, shop.id).catch(() => undefined);
       return { ok: false, error: "coupon" };
     }
     const session = await deps.komoju.createSession({
-      amountJpy: input.subtotal + quote.shipping - discount.total,
+      // 支払い方法の手数料（0170）を含む
+      amountJpy: input.subtotal + quote.shipping - discount.total + quote.fee,
       returnUrl: input.successUrl,
       reservationId,
       shopId: shop.id,
@@ -907,9 +1162,17 @@ function bantoKey(key: string): boolean {
 }
 
 /** 送料の案内（カート・確認画面・API で共通） */
-export function shippingSummary(shop: PublicShop): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; taxRate: number } {
+export function shippingSummary(
+  shop: PublicShop,
+  /** カートの目安（0171）: ログイン中の会員が当てはまる会員の条件のいちばん低い送料無料の金額（memberFreeOverHint）。表示だけ */
+  memberFreeOver: number | null = null,
+): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; memberFree: { label: string; freeOver: number }[]; taxRate: number; viewerFreeOver: number | null; viewerFreeMember: boolean } {
   const settings = shop.settings ?? {};
-  return { ...describeShipping(parseShippingSettings(settings["shipping"])), taxRate: taxRate(settings) };
+  const d = describeShipping(parseShippingSettings(settings["shipping"]));
+  // 会員の条件ごとの送料無料（0171）は、会員の条件のモジュールが ON のときだけ案内する
+  const on = moduleEnabled(settings, AUDIENCES_MODULE);
+  const viewer = freeShippingTarget(d.freeOver, on ? memberFreeOver : null);
+  return { ...d, memberFree: on ? d.memberFree : [], taxRate: taxRate(settings), viewerFreeOver: viewer.over, viewerFreeMember: viewer.member };
 }
 
 export { PREFECTURES };

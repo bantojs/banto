@@ -71,8 +71,8 @@ Banto には用途の違う 4 つの API があります。まずこの表で自
 ### 3-1. 認証とスコープ
 
 - `Authorization: Bearer banto_...`。Cookie は見ません。
-- スコープは発行時に選び、**発行する人がそのショップで持つ権限の項目まで**しか付けられません（`products:*` は catalog、`orders:read` / `orders:write` は orders、`orders:pii` は customers、`shop:write` は settings、`stats:read` は reports、`coupons:*` は marketing、`customers:*` は customers）。発行者が項目を失うと、そのスコープだけ `unauthorized` になります。
-- 購入者の個人情報（氏名・住所・メール・電話）は `orders:pii` があるときだけ返ります。会員の一覧・取得（`customers:read`）は個人情報そのものなので、必要なトークンにだけ付けてください。
+- スコープは発行時に選び、**発行する人がそのショップで持つ権限の項目まで**しか付けられません（`products:*` は catalog、`orders:read` / `orders:write` は orders、`orders:pii`・`orders:contact`・`orders:address` は customers、`shop:write` は settings、`stats:read` は reports、`coupons:*` は marketing、`customers:*` は customers）。発行者が項目を失うと、そのスコープだけ `unauthorized` になります。
+- 購入者の個人情報（氏名・住所・メール・電話）は `orders:pii`（すべて）、または `orders:contact`（氏名・メール・電話）・`orders:address`（氏名と住所）があるとき、その分だけ返ります（0173、docs/ai-access.md §2）。会員の一覧・取得（`customers:read`）は個人情報そのものなので、必要なトークンにだけ付けてください。
 - 返金・キャンセル（`POST /api/v1/orders/{id}/status` の `cancelled`）は、発行者が `orders_cancel` の項目も持っているときだけ通ります。
 - 失敗は `{"error": {"code": "...", "message": "..."}}`。`unauthorized`（401。トークンが無い・失効・期限切れ・スコープ不足・発行者の権限が無い、のどれでも同じ）、`invalid`（400）、`not_found`（404）、`conflict`（409）、`migration_required`（409。その項目を使うには DB の更新が要る。管理画面 →「アップデート」で適用する）、`upstream`（502 / 503）。
 
@@ -97,10 +97,10 @@ SDK なしのステートレスな Streamable HTTP（プロトコル版 `2025-06
 | `product_set_option_axes`【書き込み】 | products:write | `PUT /products/{id}/option-axes`（SKU を分ける軸。0065） |
 | `care_set`【書き込み】 | products:write | `PUT /products/{ref}/care`・`PUT /categories/{ref}/care`（洗濯表示。0127） |
 | `size_chart_get` / `size_chart_set`【書き込み】 | products:read / products:write | `GET /size-chart`、`PUT /size-chart`（採寸表。0095） |
-| `orders_list` / `order_get` | orders:read（個人情報は orders:pii） | `GET /orders`、`GET /orders/{id}` |
+| `orders_list` / `order_get` | orders:read（個人情報は orders:pii、連絡先だけ orders:contact・住所だけ orders:address） | `GET /orders`、`GET /orders/{id}` |
 | `order_update_status`【書き込み】 | orders:write（キャンセルは発行者の orders_cancel も） | `POST /orders/{id}/status` |
 | `stores_list` | shop:read | `GET /stores` |
-| `tryon_requests_list` / `tryon_request_get` | orders:read（連絡先は orders:pii） | `GET /tryon-requests`、`GET /tryon-requests/{number}` |
+| `tryon_requests_list` / `tryon_request_get` | orders:read（名前・メール・電話は orders:contact、名前だけなら orders:address、自由記入は orders:pii） | `GET /tryon-requests`、`GET /tryon-requests/{number}` |
 | `tryon_request_update_status` / `tryon_request_restock`【書き込み】 | orders:write | `POST /tryon-requests/{number}/status`、`POST /tryon-requests/{number}/restock` |
 | `sales_summary` / `inventory_low` | stats:read | `GET /stats/sales`、`GET /stats/inventory-low` |
 | `dialogs_list` / `dialog_create` / `dialog_update` / `dialog_delete`【書き込み】 | dialogs:write | `GET /dialogs`、`POST /dialogs`、`PATCH /dialogs/{id}`、`DELETE /dialogs/{id}`（docs/dialogs.md） |
@@ -199,7 +199,7 @@ curl -X POST -H "Authorization: Bearer banto_..." -F image=@red.webp -F 'options
 ```
 
 クーポン（`/coupons`）はモジュール「クーポン」が ON のショップだけ使えます（OFF なら 409、`module_disabled`）。値引きの判定は今までどおりコア（docs/coupons.md）で、API は条件を登録するだけです。
-`conditions` の鍵は `product_ids` `exclude_product_ids` `category_ids` `exclude_category_ids`（このショップの id だけ。主カテゴリーか追加カテゴリーのどれかが合えば対象・除外）`tags` `exclude_tags`（商品のタグ、20 個まで。0042）`brands` `exclude_brands`（商品のブランド、20 個まで）`payment_methods`（`stripe` / `komoju` / `komoju:<種類>` / `amazon_pay`。0044・0130、docs/coupons.md）`attributes`（会員の独自項目の条件 `{ "rank": ["gold", "silver"] }`。鍵はショップの設定「会員の項目」にあるものだけ、10 個まで・値は 20 個まで。ログイン中の会員の値がどれかに合うときだけ。0049）`exclude_sale` `min_subtotal_jpy` `max_subtotal_jpy` `min_qty`。知らない鍵は 400 です。
+`conditions` の鍵は `product_ids` `exclude_product_ids` `category_ids` `exclude_category_ids`（このショップの id だけ。主カテゴリーか追加カテゴリーのどれかが合えば対象・除外）`tags` `exclude_tags`（商品のタグ、20 個まで。0042）`brands` `exclude_brands`（商品のブランド、20 個まで）`payment_methods`（`stripe` / `komoju` / `komoju:<種類>` / `amazon_pay` / `cod`。0044・0130・0158、docs/coupons.md）`attributes`（会員の独自項目の条件 `{ "rank": ["gold", "silver"] }`。鍵はショップの設定「会員の項目」にあるものだけ、10 個まで・値は 20 個まで。ログイン中の会員の値がどれかに合うときだけ。0049）`exclude_sale` `min_subtotal_jpy` `max_subtotal_jpy` `min_qty`。知らない鍵は 400 です。
 会員（`/customers`）は Banto がショップごとに持つ会員です（docs/members.md）。作っても Banto からは知らせず、会員は初回もメールのコードかリンクでログインします。
 **会員のメールアドレスは API では変えられません**（会員はメールでログインするので、アドレスを変えられるとトークンが漏れたときに会員のアカウントを乗っ取れてしまうため）。変えるときは管理画面の「会員」から（前後のアドレスに知らせ、全端末からログアウトします）。パスワードのハッシュは返しません。
 `external_ref` は外部の顧客マスタ（HubSpot など）でのその会員の ID `{ "provider": "hubspot", "id": "..." }`（provider は英小文字・数字・_、ショップ × provider × id で一意）、`attributes` は管理画面 → ショップ設定 →「会員の項目」で定義した鍵の値だけです（知らない鍵は 400 `invalid_attribute_<鍵>`、select は選択肢の中だけ）。どちらも 0047 から（それより前の DB では 409 `migration_required`）。設計は [docs/knowledge/13-external-customer-master.md](knowledge/13-external-customer-master.md)、使い方は [docs/ai-access.md](ai-access.md) §7。

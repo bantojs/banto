@@ -102,11 +102,11 @@ describe.skipIf(!dbAvailable)("商品の会員限定の AI 用 API（0144）", (
     const id = (await create(write, { slug: "off", name: "off", audience: gold }))["id"] as string;
     await setModule(f.shopId, false);
     try {
-      expect(await expectDbError(() => update(write, id, { audience_mode: "buy" }))).toMatch(/module_disabled/);
-      expect(await expectDbError(() => create(write, { slug: "off2", name: "off2", audience: gold }))).toMatch(/module_disabled/);
+      expect(await expectDbError(() => update(write, id, { audience_mode: "buy" }))).toMatch(/module_disabled:audiences/);
+      expect(await expectDbError(() => create(write, { slug: "off2", name: "off2", audience: gold }))).toMatch(/module_disabled:audiences/);
       expect((await update(write, id, { name: "off-renamed" }))["name"]).toBe("off-renamed");
       expect((await update(write, id, { audience: null }))["audience"]).toBeNull();
-      expect(await expectDbError(() => asService((c) => c.query("select api_audiences_list($1)", [hash(read)])))).toMatch(/module_disabled/);
+      expect(await expectDbError(() => asService((c) => c.query("select api_audiences_list($1)", [hash(read)])))).toMatch(/module_disabled:audiences/);
     } finally {
       await setModule(f.shopId, true);
     }

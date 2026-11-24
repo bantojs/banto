@@ -7,8 +7,10 @@
  *   - CPU の上限を気にしなくてよい（Workers の有料プラン = サイトの設定 workers_plan が paid、か Node）
  * テーマが壊れている・上限を超えた・その種類のテンプレートが無いときも既定のテーマで描く（お店を止めない）。
  */
+import { memberNewsHref } from "../../modules/member-news";
 import { productFields } from "../../products/fields";
 import { shopifySortName } from "../../storefront/list-sort";
+import { VENDOR_PARAM, filterNoindex, type ListFilter } from "../../storefront/list-filter";
 import { articleFieldDefs, fieldValues } from "../../blog/fields";
 import { optionSwatchesOf } from "../../products/option-swatches";
 import { optionNamesOf } from "../../products/option-names";
@@ -16,6 +18,8 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { CategoryRow, ProductImageRow } from "../../db/types";
 import { getLocale, t, tf, type MessageKey } from "../../i18n";
+import { carrierLabel, trackingOf, trackingUrl } from "../../orders/tracking";
+import { receiptAvailable } from "../../modules/receipt/data";
 import { isoToZonedDate } from "../../i18n/time";
 import { promoteLeadImage } from "../../pages/lead-image";
 import { categoryTree, type CategoryNode } from "../../products/categories";
@@ -23,10 +27,11 @@ import { productJsonLd, jsonLdText } from "../../storefront/structured-data";
 import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSort, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
-import { productUrl, shopHome, shopOrigin } from "../../storefront/urls";
-import type { AccountPageProps, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
+import { listUrl, productUrl, shopHome, shopOrigin } from "../../storefront/urls";
+import type { AccountPageProps, Theme, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
-import { ADDRESS_FIELDS, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, checkoutMembersOnly, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
+import { loginUrlFor } from "../../members/return-path";
 import { escapeHtml, SafeHtml, ThemeError } from "../../themes/liquid/engine";
 import { ConfirmationBlock } from "../../themes/default/confirmation";
 import { AccountBody } from "../../themes/default";
@@ -41,7 +46,7 @@ import { fillAppBlocks, fillArticleBlocks, fillProductBlocks, type ProductBlock 
 import { articleBlogOf, type AppBlockData, type ArticleBlockData } from "../../content/body-blocks";
 import { articlePath, articleSummary, blogPath, blogsNav, type ArticleRow, type BlogRow } from "../../blog";
 import { sectionLayoutsOf, sectionOverridesOf } from "../../themes/liquid/editor";
-import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
+import { cartObject, type CartImages, collectionObject, footerMenu, menuFromCategories, money, paymentMethodsObject, priceRangeFilter, productFromDetail, productFromSummary, reviewsLiquid, routesObject, shopObject, type CartDiscounts } from "../../themes/liquid/objects";
 import { clearScopedCookie, getScopedCookie, mediaBaseUrl, publicBaseUrl, setScopedCookie, type Ctx } from "../common";
 import { openThemePreview, PREVIEW_COOKIE, THEME_PREVIEW_SECONDS, type ThemePreview } from "../../themes/liquid/preview";
 import { onShopDomain } from "./domain";
@@ -90,8 +95,25 @@ async function previewVersion(c: Ctx, s: LiquidScope): Promise<ThemePreview | nu
   return openThemePreview(secret, getScopedCookie(c, PREVIEW_COOKIE, "/"), s.shop.id);
 }
 
-/** 描くテーマ（公開中の版か、プレビューの版）。描けないなら null */
-export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
+/** 1 回のリクエストの中で選んだテーマ（scope ごと。scope はリクエストごとに作る） */
+const choiceOfScope = new WeakMap<LiquidScope, Promise<LiquidChoice | null>>();
+
+/**
+ * 描くテーマ（公開中の版か、プレビューの版）。描けないなら null。
+ * 1 回のリクエストの中では覚えたものを使う（一覧の画面は一覧の組み立てとひな形の描画の両方から呼ぶので、カートの値付けを 2 回しない）。
+ * カートの行を渡す呼び出し（カート・レジ）は渡された行で作り直す
+ */
+export function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
+  if (known) return loadLiquidChoice(c, s, known);
+  let p = choiceOfScope.get(s);
+  if (!p) {
+    p = loadLiquidChoice(c, s);
+    choiceOfScope.set(s, p);
+  }
+  return p;
+}
+
+async function loadLiquidChoice(c: Ctx, s: LiquidScope, known?: { cartLines: CartLine[] }): Promise<LiquidChoice | null> {
   if (!onShopDomain(c, s.shop)) return null;
   const preview = await previewVersion(c, s);
   if (!preview && !s.shop.theme) return null;
@@ -105,12 +127,16 @@ export async function liquidThemeFor(c: Ctx, s: LiquidScope, known?: { cartLines
       : s.shop.theme!;
     const lt = await loadTheme(themeStorage(adapters), theme, { extend: extendShopify, timezone: adapters.config.get("BANTO_TIMEZONE") ?? "Asia/Tokyo" });
     if (!lt) return null;
-    // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）
-    const cartLines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
-    const cartImages = await cartImagesFor(s.sf, s.shop, cartLines);
-    // 会員が合う条件の名前（モジュールが OFF・ゲストなら引かない）
+    // カートに品物があるときだけ引く（ヘッダーのカートの一覧。空のカートでは往復を増やさない）。会員が合う条件の名前（モジュールが OFF・
+    // ゲストなら引かない）はカートと関係ないので並べて引く
     const member = s.ctx.member;
-    const audiences = member ? matchedAudienceNames(await shopAudiences(c, s.shop), { member: true, attrs: member.attrs ?? {} }) : [];
+    const [[cartLines, cartImages], audiences] = await Promise.all([
+      (async () => {
+        const lines = known ? known.cartLines : s.cart && s.cart.items.length > 0 ? (await priceCart(s.sf, s.shop, s.cart)).lines : [];
+        return [lines, await cartImagesFor(s.sf, s.shop, lines)] as const;
+      })(),
+      member ? shopAudiences(c, s.shop).then((list) => matchedAudienceNames(list, { member: true, attrs: member.attrs ?? {} })) : Promise.resolve([] as string[]),
+    ]);
     return { lt, settings: theme.settings ?? {}, preview: Boolean(preview), cartLines, sandboxed: Boolean(preview?.sandboxed), cartImages, audiences };
   } catch (e) {
     console.error("[banto] theme load:", e instanceof Error ? e.message : e);
@@ -147,12 +173,12 @@ interface PageParts {
   categories: CategoryRow[];
   currentCategory?: string;
   paginate?: Paginate | null;
-  status?: 200 | 400 | 404 | 409;
+  status?: 200 | 400 | 404 | 409 | 429;
   /**
    * 住所・連絡先が載る画面（レジの配送先・最終確認、会員ページ）: 外のスクリプトを止め（CSP）、覚えさせず、切り離したプレビューではテーマで描かない。
    * confirm は {% banto_confirmation %} を描いたときだけ
    */
-  checkout?: "address" | "confirm" | "account" | "login" | "tryon";
+  checkout?: "address" | "confirm" | "account" | "login" | "tryon" | "order" | "inquiry";
   /** 最終確認画面: Banto が描いた表示（特商法の項目と確定のボタン）。{% banto_confirmation %} の印の場所に、描き終えてから入れる */
   confirmation?: string;
   /** content_for_header に足すもの（決まった形だけ。完了画面の読み込み直し） */
@@ -210,7 +236,7 @@ function pageInput(c: Ctx, s: LiquidScope, choice: LiquidChoice, page: PageParts
   const globals: Record<string, unknown> = {
     shop: shopObject(s.shop, home, intro),
     settings: themeSettings(lt, choice.settings),
-    routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null }),
+    routes: routesObject(shopPath, { coupons: couponSource(c, s.shop) !== null, currentPath: s.ctx.currentPath }),
     request: { host: new URL(origin).host, path, page_type: page.template.split(".")[0]!, locale: { iso_code: getLocale(), primary: true, root_url: shopPath || "/" }, design_mode: false },
     cart: cartObject(u, choice.cartLines, null, choice.cartImages),
     // attributes は会員の条件で使っている独自項目の値だけ（Cookie に入れたもの、0097）。audiences は合う条件の名前
@@ -269,7 +295,9 @@ export async function cartSections(c: Ctx, s: LiquidScope, raw: unknown, lines: 
   if (!choice) return null;
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const [categories, setup] = await Promise.all([s.sf.listCategories(s.shop), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
-  const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel) };
+  // カートの引き出しにも、注文は会員だけのショップ（0165）のゲストにはログインの URL を渡す（カートのページと同じ）
+  const loginRequired = checkoutMembersOnly(s.shop.settings) && !s.ctx.member ? loginUrlFor(s.ctx.shopPath, `${s.ctx.shopPath}/cart`) : null;
+  const cart = { ...cartObject(u, lines, discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(setup.options, paymentLabel), banto_login_required: loginRequired };
   const input = pageInput(c, s, choice, { template: "cart", values: { cart }, title: t("store.cart"), path: "/cart", noindex: true, categories });
   try {
     return renderThemeSections(choice.lt, input, ids);
@@ -383,7 +411,7 @@ export function productPartValues(c: Ctx, s: LiquidScope, detail: ProductDetail,
 export function collectionPartValues(
   c: Ctx,
   s: LiquidScope,
-  p: { page: ProductListPage; category?: CategoryRow; tag?: string; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string },
+  p: { page: ProductListPage; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; vendors?: VendorFacet[]; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; q?: string; sort?: ProductSort },
 ): Record<string, unknown> {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
@@ -395,9 +423,62 @@ export function collectionPartValues(
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
-    ...(p.tag ? { currentTags: [p.tag] } : {}),
+    allVendors: (p.vendors ?? []).map((x) => x.brand),
+    currentTags: p.filter.tags,
+    filters: listFilters(u.shopPath, p),
   });
-  return { collection, products, current_tags: p.tag ? [p.tag] : [], paginate: paginateOf(p.page, p.after, p.link) };
+  return { collection, products, current_tags: p.filter.tags, paginate: paginateOf(p.page, p.after, p.link) };
+}
+
+type OptionFacet = { key: string; label: string; values: { value: string; count: number }[] };
+type VendorFacet = { brand: string; count: number };
+
+/**
+ * collection.filters: 0153 が当たっていれば選択肢ごとの list（Shopify の形。値ごとに url_to_add / url_to_remove）、
+ * 0150 が当たっていれば価格の price_range。当たる前は空
+ */
+function listFilters(shopPath: string, p: { category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; vendors?: VendorFacet[]; q?: string; sort?: ProductSort }) {
+  const cur = p.filter;
+  const urlWith = (o: { options?: Record<string, string[]>; price?: boolean; vendor?: string | null }) =>
+    listUrl(shopPath, { category: p.category?.slug, tags: cur.tags, ...(o.price === false ? {} : { priceMin: cur.priceMin, priceMax: cur.priceMax }), options: o.options ?? cur.options, vendor: o.vendor === undefined ? cur.vendor : o.vendor, q: p.q, sort: p.sort });
+  const out: unknown[] = [];
+  for (const g of p.optionFacets ?? []) {
+    const chosen = cur.options?.[g.key] ?? [];
+    const withValues = (vals: string[]) => {
+      const next = { ...(cur.options ?? {}) };
+      if (vals.length > 0) next[g.key] = vals;
+      else delete next[g.key];
+      return urlWith({ options: next });
+    };
+    const param = `filter.v.option.${g.key}`;
+    const values = g.values.map((v) => ({
+      label: v.value,
+      value: v.value,
+      count: v.count,
+      active: chosen.includes(v.value),
+      param_name: param,
+      url_to_add: withValues([...chosen.filter((x) => x !== v.value), v.value]),
+      url_to_remove: withValues(chosen.filter((x) => x !== v.value)),
+    }));
+    out.push({ label: g.label, param_name: param, type: "list", presentation: "text", values, active_values: values.filter((v) => v.active), inactive_values: values.filter((v) => !v.active), url_to_remove: withValues([]) });
+  }
+  // ブランド（0162）: 1 つだけ選べる（選ぶと置き換え）。選んでいるブランドが件数に無くても（100 位より下など）、外せるように出す
+  const vendors = p.vendors ?? [];
+  if (vendors.length > 0 || cur.vendor) {
+    const list = cur.vendor && !vendors.some((v) => v.brand === cur.vendor) ? [...vendors, { brand: cur.vendor, count: 0 }] : vendors;
+    const values = list.map((v) => ({
+      label: v.brand,
+      value: v.brand,
+      count: v.count,
+      active: v.brand === cur.vendor,
+      param_name: VENDOR_PARAM,
+      url_to_add: urlWith({ vendor: v.brand }),
+      url_to_remove: urlWith({ vendor: null }),
+    }));
+    out.push({ label: t("store.vendor_filter_label"), param_name: VENDOR_PARAM, type: "list", presentation: "text", values, active_values: values.filter((v) => v.active), inactive_values: values.filter((v) => !v.active), url_to_remove: urlWith({ vendor: null }) });
+  }
+  if (p.priceRange) out.push(priceRangeFilter({ min: cur.priceMin, max: cur.priceMax, rangeMax: p.priceRange.max, urlToRemove: urlWith({ price: false }) }));
+  return out;
 }
 
 /**
@@ -409,34 +490,37 @@ export function renderListing(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; tag?: string; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
+  p: { page: ProductListPage; categories: CategoryRow[]; category?: CategoryRow; filter: ListFilter; priceRange?: { max: number | null }; optionFacets?: OptionFacet[]; vendors?: VendorFacet[]; search?: { q: string; performed: boolean }; top: boolean; tags: { tag: string; count: number }[]; link: (cursor: string | null) => string; after?: string; sort?: ProductSort; path: string },
 ): Response | null {
+  const tag = p.filter.tags[0];
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
   const products = p.page.items.map((x) => productFromSummary(u, x));
   const collection = collectionObject(u, {
     handle: p.category?.slug ?? "all",
-    title: p.category?.name ?? (p.tag ? `#${p.tag}` : p.top ? s.shop.name : t("store.all_products")),
+    title: p.category?.name ?? (tag ? p.filter.tags.map((x) => `#${x}`).join(" ") : p.top ? s.shop.name : t("store.all_products")),
     description: p.category?.description ?? null,
     image: p.category ? categoryImageOf(p.category) : null,
     products,
     count: p.page.total,
     allTags: p.tags.map((x) => x.tag),
-    ...(p.tag ? { currentTags: [p.tag] } : {}),
+    allVendors: (p.vendors ?? []).map((x) => x.brand),
+    currentTags: p.filter.tags,
     sortBy: shopifySortName(p.sort),
+    filters: listFilters(s.ctx.shopPath, { ...p, ...(p.search ? { q: p.search.q } : {}) }),
   });
   const paginate = paginateOf(p.page, p.after, p.link);
-  // 短すぎる語（3 文字未満で、カテゴリー・タグでも絞っていない）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
+  // 短すぎる語（3 文字以上の語が無く、カテゴリー・タグでも絞っていない。0161）は探さない。performed は false にし、too_short（Banto の名前）で案内を出せるように
   const search = p.search
     ? { performed: p.search.performed, terms: p.search.q, too_short: !p.search.performed, results: products.map((x) => ({ ...x, object_type: "product" })), results_count: p.page.total ?? products.length, types: ["product"], filters: [], sort_by: null, sort_options: [] }
     : null;
-  const template: ThemeTemplate = search && themeHasTemplate(choice.lt, "search") ? "search" : p.top && !p.tag && !search && themeHasTemplate(choice.lt, "index") ? "index" : "collection";
+  const template: ThemeTemplate = search && themeHasTemplate(choice.lt, "search") ? "search" : p.top && !tag && !search && themeHasTemplate(choice.lt, "index") ? "index" : "collection";
   return render(c, s, choice, {
     template,
-    values: { collection, products, current_tags: p.tag ? [p.tag] : [], ...(search ? { search } : {}) },
+    values: { collection, products, current_tags: p.filter.tags, ...(search ? { search } : {}) },
     title: search ? (search.terms ? `${t("store.search")}: ${search.terms}` : t("store.search")) : p.top ? s.shop.name : collection.title,
     ...(p.category && categoryMetaDescription(p.category.description) ? { description: categoryMetaDescription(p.category.description)! } : {}),
     path: p.path,
-    noindex: Boolean(p.after || search),
+    noindex: Boolean(p.after || search || filterNoindex(p.filter)),
     categories: p.categories,
     ...(p.category ? { currentCategory: p.category.slug } : {}),
     paginate,
@@ -456,6 +540,8 @@ export function liquidProductJsonLd(c: Ctx, s: LiquidScope, p: { detail: Product
     skus: p.detail.skus,
     category: p.categoryNames,
     reviews: productReviews(p.detail.product),
+    block: p.detail.purchase_block ?? null,
+    releasedAt: p.detail.product.released_at ?? null,
   });
   return { jsonLd, path };
 }
@@ -476,13 +562,26 @@ export function renderProduct(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: {
 }
 
 /** 決済手段の表示名（既定のテーマのカートのボタンと同じ文言） */
-const paymentLabel = (p: "stripe" | "komoju" | "amazon_pay"): string => t(p === "stripe" ? "store.pay_with_stripe" : p === "amazon_pay" ? "store.pay_with_amazon_pay" : "store.pay_with_komoju");
+const paymentLabel = (p: "stripe" | "komoju" | "amazon_pay" | "cod"): string => t(p === "stripe" ? "store.pay_with_stripe" : p === "amazon_pay" ? "store.pay_with_amazon_pay" : p === "cod" ? "store.pay_with_cod" : "store.pay_with_komoju");
 
 /** カートのページ（templates/cart）。テーマに無ければ null（既定のテーマで描く）。payments は使える決済手段（cart.banto_payment_methods） */
-export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean; amazon_pay: boolean }; error?: string; categories: CategoryRow[] }): Response | null {
+export function renderCart(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { lines: CartLine[]; subtotal?: number; shipping?: ShippingInfo; discounts: CartDiscounts | null; payments: { stripe: boolean; komoju: boolean; amazon_pay: boolean; cod?: boolean; komoju_methods?: { type: string; name: string; fee: number | null }[] }; error?: string; categories: CategoryRow[]; loginRequired?: string }): Response | null {
   const u = { shopPath: s.ctx.shopPath, mediaBaseUrl: mediaBaseUrl(c), optionNames: optionNamesOf(s.shop.option_names), optionSwatches: optionSwatchesOf(s.shop.option_swatches), productFields: productFields(s.shop.settings) };
-  const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel) };
+  // banto_login_required: 注文は会員だけのショップでゲストのとき、ログイン（その場で会員登録）の URL（0165。無ければ null）
+  const cart = { ...cartObject(u, p.lines, p.discounts, choice.cartImages), banto_payment_methods: paymentMethodsObject(p.payments, paymentLabel), banto_login_required: p.loginRequired ?? null, banto_free_shipping: freeShippingObject(p.shipping, p.subtotal, { empty: p.lines.every((l) => l.storeOnly === true), coupon: p.discounts?.applied.some((a) => a.free_shipping) === true }) };
   return render(c, s, choice, { template: "cart", values: { cart, cart_error: p.error ?? null }, title: t("store.cart"), path: "/cart", noindex: true, categories: p.categories });
+}
+
+/**
+ * cart.banto_free_shipping（0171）: 送料無料までの目安。over = 見る人の送料無料の金額（ショップ全体と、ログイン中の会員が当てはまる会員の条件の低い方）、
+ * remaining = あといくら（届いていれば 0）、applied = 届いたか、member = 会員特典の金額か、coupon = 送料無料のクーポンが入っているか
+ * （そのときは applied = true・remaining = 0）。送料無料の金額が無い・カートに買える商品が無ければ null。表示だけ（確認画面の送料が正）
+ */
+export function freeShippingObject(shipping: ShippingInfo | undefined, subtotal: number | undefined, opts: { empty?: boolean; coupon?: boolean } = {}) {
+  const over = shipping?.viewerFreeOver ?? shipping?.freeOver ?? null;
+  if (!shipping || over === null || subtotal === undefined || opts.empty === true) return null;
+  const coupon = opts.coupon === true;
+  return { over: money(over), remaining: money(coupon ? 0 : Math.max(0, over - subtotal)), applied: coupon || subtotal >= over, member: !coupon && shipping.viewerFreeMember === true, coupon };
 }
 
 /** 配送先の画面（templates/checkout）。checkout に値・都道府県・お届け日時・誤りを渡し、{% form 'checkout_address' %} で送らせる */
@@ -490,23 +589,31 @@ export function renderCheckoutAddress(
   c: Ctx,
   s: LiquidScope,
   choice: LiquidChoice,
-  p: { provider: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; categories: CategoryRow[]; status?: 200 | 400 },
+  p: { provider: string; method?: string; values: AddressFormValues; prefectures: readonly string[]; shipping: ShippingInfo; subtotal: number; error?: string; delivery?: { dates: { value: string; label: string }[]; slots: { value: string; label: string }[] } | null; consent?: boolean; saveAddress?: "auto" | "ask" | null; categories: CategoryRow[]; status?: 200 | 400 },
 ): Response | null {
   const fee = (pref: string) => p.shipping.table?.find((x) => x.prefecture === pref)?.fee;
   const checkout = {
     provider: p.provider,
     values: Object.fromEntries(ADDRESS_FIELDS.map((k) => [k, p.values[k] ?? ""]).concat([["marketing_consent", p.values.marketing_consent ?? ""]])),
+    // 会員の住所の保存（0159）: "auto" = 注文の住所を保存する（お知らせだけ）、"ask" = 欄 save_address（"1" で上書き）を出す、null = 出さない
+    save_address: p.saveAddress ?? null,
     error: p.error ?? null,
     subtotal_price: money(p.subtotal),
     shipping_summary: p.shipping.summary,
+    // ショップ全体の送料無料の金額（会員の条件の金額は含まない）。見る人の金額は banto_free_shipping（0171）
     free_shipping_over: p.shipping.freeOver === null ? null : money(p.shipping.freeOver),
-    free_shipping_applied: p.shipping.freeOver !== null && p.subtotal >= p.shipping.freeOver,
+    banto_free_shipping: freeShippingObject(p.shipping, p.subtotal),
+    // 見る人の送料無料の金額（0171: ログイン中の会員は会員の条件の金額も）で判定する。表示だけ
+    free_shipping_applied: (p.shipping.viewerFreeOver ?? p.shipping.freeOver) !== null && p.subtotal >= (p.shipping.viewerFreeOver ?? p.shipping.freeOver)!,
+    // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは確認画面で決まる
+    member_free_shipping: (p.shipping.memberFree ?? []).map((m) => ({ label: m.label, free_shipping_over: money(m.freeOver) })),
     prefectures: p.prefectures.map((name) => ({ name, shipping_price: fee(name) === undefined ? null : money(fee(name)) })),
     delivery: p.delivery ? { dates: p.delivery.dates, slots: p.delivery.slots, note: t("delivery.note") } : null,
     marketing_consent: Boolean(p.consent),
     cart_url: `${s.ctx.shopPath}/cart`,
   };
-  return render(c, s, choice, { template: "checkout", values: { checkout }, title: t("store.address_title"), path: "/checkout", noindex: true, categories: p.categories, checkout: "address", ...(p.status ? { status: p.status } : {}) });
+  // KOMOJU の種類（0170）は {% form 'checkout_address' %} に Banto が隠しの値 method で入れる
+  return render(c, s, choice, { template: "checkout", values: { checkout, ...(p.method ? { __banto_forms: { checkout_address: { method: p.method } } } : {}) }, title: t("store.address_title"), path: "/checkout", noindex: true, categories: p.categories, checkout: "address", ...(p.status ? { status: p.status } : {}) });
 }
 
 /**
@@ -523,9 +630,15 @@ export async function renderCheckoutConfirm(c: Ctx, s: LiquidScope, choice: Liqu
       lines: cf.lines.map((l) => ({ title: l.product_name, variant_title: l.sku_name, sku: l.code, quantity: l.qty, price: money(l.unit_price_jpy), line_price: money(l.line_total_jpy), reduced_tax: l.reduced })),
       subtotal_price: money(cf.subtotal_jpy),
       shipping_price: money(cf.shipping_jpy),
+      // 送料が 0 円になった理由（0171）: "audience" は会員の条件の送料無料（会員特典）、"threshold" は ○円以上で送料無料
+      shipping_free_reason: cf.shipping_free_reason ?? null,
       total_discount: money(cf.discount_jpy),
+      fee_price: money(cf.fee_jpy),
+      fee_label: cf.fee_label ?? null,
       total_price: money(cf.total_jpy),
       payment_method: cf.payment.method,
+      payment_type: cf.payment.type ?? null,
+      cod: Boolean(cf.payment.cod),
       free: Boolean(cf.payment.free),
     },
     cart_url: `${s.ctx.shopPath}/cart`,
@@ -597,10 +710,40 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         items: r.items,
         cancellable: r.cancellable,
         cancel_url: r.cancellable ? `${s.ctx.shopPath}/account/tryon/${r.number}/cancel` : null,
+        // 取り置きの延長（0151）: POST で送る。extend_left は残りの回数
+        extendable: r.extendable === true,
+        extend_left: r.extend_left ?? 0,
+        extend_url: r.extendable ? `${s.ctx.shopPath}/account/tryon/${r.number}/extend` : null,
+        // 延長のフォームに hold_until として添える今の期限（二度押しで 2 回延ばさない）
+        hold_until: r.hold_until ?? null,
       }))
     : null;
+  // 会員へのお知らせ（0155）: 新しい順・50 件まで。url はそのままリンクにできる形（お店の中のパスは shopPath を足す）。
+  // すべて既読にするのは POST news_read_url。モジュールが OFF なら news は null
+  const news = props.news
+    ? props.news.items.map((n) => ({ id: n.id, title: n.title, body: n.body, url: memberNewsHref(s.ctx.shopPath, n.url), date: n.starts_at, date_on: isoToZonedDate(n.starts_at), read: n.read }))
+    : null;
   const customer = props.customer
-    ? { email: props.customer.email, name: props.customer.name, first_name: props.customer.name, default_address: props.customer.default_address, accepts_marketing: props.customer.marketing_consent === true, orders, orders_count: orders.length, has_account: true, favorites, favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`, tryon_requests: tryonRequests }
+    ? {
+        email: props.customer.email,
+        name: props.customer.name,
+        first_name: props.customer.name,
+        default_address: props.customer.default_address,
+        accepts_marketing: props.customer.marketing_consent === true,
+        orders,
+        orders_count: orders.length,
+        has_account: true,
+        favorites,
+        favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`,
+        tryon_requests: tryonRequests,
+        news,
+        news_unread_count: props.news?.unread ?? 0,
+        news_read_url: props.news ? `${s.ctx.shopPath}/account/news/read` : null,
+        // メールアドレスの変更（0166）: 当たるまで null。step が email なら POST email_change_url（email）、code なら POST email_verify_url（code）
+        email_change: props.emailChange
+          ? { step: props.emailChange.step, email_change_url: `${s.ctx.shopPath}/account/email`, email_verify_url: `${s.ctx.shopPath}/account/email/verify` }
+          : null,
+      }
     : null;
   return render(c, s, choice, { template: "customers/account", values: { customer, __banto_account: new SafeHtml(block) }, title: t("member.account"), path: "/account", noindex: true, categories: await s.sf.listCategories(s.shop), checkout: "account" });
 }
@@ -703,6 +846,145 @@ export async function renderTryon(c: Ctx, s: LiquidScope, choice: LiquidChoice, 
     noindex: true,
     categories: await s.sf.listCategories(s.shop),
     checkout: "tryon",
+    ...(p.status ? { status: p.status } : {}),
+  });
+}
+
+/** 注文照会（templates/order_lookup）の材料。OrderLookupPage と同じ（src/themes/types.ts） */
+export interface OrderLookupInput {
+  result?: Record<string, unknown> | null;
+  error?: string;
+  values: { number?: string; email?: string };
+  receipt?: boolean;
+  inquiry?: { token: string } | null;
+  member?: { receiptUrl: string | null; inquiryUrl: string | null };
+  status?: 200 | 400 | 404 | 429;
+}
+
+/**
+ * 注文照会（templates/order_lookup、メンテナの決定 2026-11-17）。注文は番号とメールアドレスで開く（{% form 'order_lookup' %}、number・email）か、
+ * ログイン中の会員の自分の注文（注文メールのリンクから）。領収書は {% form 'order_receipt' %}（name だけをテーマが置く。番号とアドレスは Banto が隠しの値で入れる）、
+ * この注文について問い合わせるのは {% form 'order_inquiry' %}（注文の券は Banto が隠しの値で入れる）。会員の注文は receipt_url・inquiry_url のリンク。
+ * 注文の中身が載るので、レジと同じく外のスクリプトを止める（CSP）。テーマに無ければ既定のテーマ
+ */
+export async function renderOrderLookup(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: OrderLookupInput): Promise<Response | null> {
+  const r = p.result ?? null;
+  const items = r && Array.isArray(r["items"]) ? (r["items"] as { name?: string; sku?: string; qty?: number; unit_price_jpy?: number }[]) : [];
+  const discounts = r && Array.isArray(r["discounts"]) ? (r["discounts"] as { code?: string; name?: string; amount_jpy?: number }[]) : [];
+  const tr = r ? trackingOf(r["tracking"]) : null;
+  const status = r ? String(r["status"] ?? "") : "";
+  const order = r
+    ? {
+        number: Number(r["number"]),
+        name: `#${String(r["number"])}`,
+        status,
+        status_label: t(`order.status.${status}` as MessageKey),
+        created_at: typeof r["created_at"] === "string" ? r["created_at"] : null,
+        shipped_at: typeof r["shipped_at"] === "string" ? r["shipped_at"] : null,
+        tracking: tr ? { carrier: tr.carrier, carrier_label: carrierLabel(tr.carrier), number: tr.number, url: trackingUrl(tr.carrier, tr.number) } : null,
+        line_items: items.map((i) => ({ title: i.name ?? "", variant_title: i.sku ?? "", quantity: Number(i.qty ?? 0), price: money(Number(i.unit_price_jpy ?? 0)), line_price: money(Number(i.unit_price_jpy ?? 0) * Number(i.qty ?? 0)) })),
+        discounts: discounts.map((d) => ({ code: d.code ?? "", title: d.name ?? d.code ?? "", amount: money(Number(d.amount_jpy ?? 0)) })),
+        shipping_price: money(Number(r["shipping_jpy"] ?? 0)),
+        fee_price: money(Number(r["fee_jpy"] ?? 0)),
+        total_price: money(Number(r["total_jpy"] ?? 0)),
+      }
+    : null;
+  // 領収書は入金の後だけ（未入金の注文、0156）
+  const receiptForm = Boolean(r && p.receipt && receiptAvailable(r) && !p.member);
+  const lookup = {
+    member: Boolean(p.member),
+    error: p.error ?? null,
+    values: { number: p.values.number ?? "", email: p.values.email ?? "" },
+    order,
+    // 番号とアドレスで開いた注文の領収書（{% form 'order_receipt' %}）・問い合わせ（{% form 'order_inquiry' %}）を出せるか
+    receipt: receiptForm,
+    inquiry: Boolean(r && p.inquiry),
+    // 会員の自分の注文のリンク
+    receipt_url: p.member?.receiptUrl ?? null,
+    inquiry_url: p.member?.inquiryUrl ?? null,
+  };
+  const forms = {
+    ...(receiptForm && r ? { order_receipt: { number: String(r["number"]), email: p.values.email ?? "" } } : {}),
+    ...(r && p.inquiry ? { order_inquiry: { o: p.inquiry.token } } : {}),
+  };
+  return render(c, s, choice, {
+    template: "order_lookup",
+    values: { lookup, __banto_forms: forms },
+    title: t("store.lookup_title"),
+    path: "/orders/lookup",
+    noindex: true,
+    categories: await s.sf.listCategories(s.shop),
+    checkout: "order",
+    ...(p.status ? { status: p.status } : {}),
+  });
+}
+
+/** お問い合わせ（templates/inquiry）の材料。InquiryPage と同じ（src/themes/types.ts） */
+export type InquiryInput = Omit<Parameters<NonNullable<Theme["InquiryPage"]>>[0], "ctx"> & { status?: 200 | 400 | 404 | 409 | 429 };
+
+/**
+ * お問い合わせ（同梱モジュール inquiries、templates/inquiry、メンテナの決定 2026-11-17）。段は inquiry.step（InquiryPage と同じ）。
+ * フォームは {% form 'inquiry_details' %}（category・body・name・email・order_number）→ {% form 'inquiry_submit' %}（確かめた値はすべて Banto が隠しの値で入れる）、
+ * 直すのは {% form 'inquiry_edit' %}、メールのリンクを開くのは {% form 'inquiry_open' %}（券を隠しの値で）、返事は {% form 'inquiry_reply' %}（body と files。
+ * いつも multipart、会員の受付番号は隠しの値で）、リンクの送り直しは {% form 'inquiry_resend' %}（number・email）。
+ * 本文はテキスト（body）と、エスケープして改行を <br> にした HTML（body_html、そのまま出してよい）。連絡先とやり取りが載るので、レジと同じく外のスクリプトを止める（CSP）。テーマに無ければ既定のテーマ
+ */
+export async function renderInquiry(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: InquiryInput): Promise<Response | null> {
+  const shopPath = s.ctx.shopPath;
+  const v = p.values;
+  const o = p.order ?? null;
+  const th = p.inquiry ?? null;
+  const textHtml = (text: string) => new SafeHtml(escapeHtml(text).replace(/\r?\n/g, "<br>"));
+  const inquiry = {
+    step: p.step,
+    error: p.error ?? null,
+    info: p.info ?? null,
+    categories: p.categories,
+    values: { category: v.category ?? "", body: v.body ?? "", body_html: textHtml(v.body ?? ""), name: v.name ?? "", email: v.email ?? "", order_number: v.order_number ?? "" },
+    ask_email: Boolean(p.askEmail),
+    // 結ぶ注文の要約（住所・連絡先は入らない）
+    order: o ? { number: o.number, name: `#${o.number}`, status: o.status, status_label: t(`order.status.${o.status}` as MessageKey), created_at: o.created_at, total_price: money(o.total_jpy), items: o.items.map((i) => ({ title: i.name ?? "", quantity: i.qty })) } : null,
+    orders: p.orders ?? null,
+    order_unmatched: Boolean(p.orderUnmatched),
+    sent: p.sent ? { number: p.sent.number, verified: p.sent.verified, mail_sent: p.sent.mailSent } : null,
+    thread: th
+      ? {
+          number: th.number,
+          status: th.status,
+          status_label: th.statusLabel,
+          category_label: th.categoryLabel,
+          created_at: th.created_at,
+          order_number: th.order?.number ?? null,
+          claimed_order_number: th.claimed_order_number,
+          messages: th.messages.map((m) => ({ author: m.author, body: m.body, body_html: textHtml(m.body), created_at: m.created_at, attachments: m.attachments.map((a) => ({ url: a.href, filename: a.filename, content_type: a.content_type, size: a.size })) })),
+          can_reply: th.canReply,
+          can_attach: th.canAttach,
+          attach_accept: th.attachAccept,
+        }
+      : null,
+    list: p.list ? p.list.map((r) => ({ number: r.number, status: r.status, status_label: r.statusLabel, category_label: r.categoryLabel, created_at: r.created_at, last_message_at: r.last_message_at, order_number: r.order_number, url: `${shopPath}/inquiries/thread?n=${r.number}` })) : null,
+    new_url: `${shopPath}/inquiries/new`,
+    list_url: `${shopPath}/inquiries`,
+    resend_url: `${shopPath}/inquiries/resend`,
+  };
+  const hidden = p.hidden ?? {};
+  // 書く欄のフォームには注文の券（s・o）だけ。確かめた値は送る・直すのフォームに
+  const orderTokens = Object.fromEntries(Object.entries(hidden).filter(([k]) => k === "s" || k === "o"));
+  const forms = {
+    inquiry_details: orderTokens,
+    inquiry_submit: hidden,
+    inquiry_edit: hidden,
+    ...(p.token ? { inquiry_open: { t: p.token } } : {}),
+    ...(th ? { inquiry_reply: th.replyHidden } : {}),
+  };
+  return render(c, s, choice, {
+    template: "inquiry",
+    values: { inquiry, __banto_forms: forms },
+    title: t("inq.title"),
+    path: "/inquiries",
+    noindex: true,
+    categories: await s.sf.listCategories(s.shop),
+    checkout: "inquiry",
     ...(p.status ? { status: p.status } : {}),
   });
 }

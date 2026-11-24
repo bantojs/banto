@@ -6,6 +6,7 @@
  */
 import { raw } from "hono/html";
 import { t, tf } from "../../i18n";
+import { feeLabelFor } from "../../commerce/payment-fees";
 import { formatDateTime } from "../../i18n/time";
 import { orderTaxBreakdown } from "../../commerce/tax";
 import { yen } from "../../routes/common";
@@ -16,6 +17,10 @@ export interface ReceiptOrder {
   created_at: string;
   total_jpy: number;
   shipping_jpy?: number | null;
+  /** 手数料（代引き 0157・支払い方法 0170） */
+  fee_jpy?: number | null;
+  /** 支払い方法（手数料の見出しに使う） */
+  payment_provider?: string | null;
   discount_jpy?: number | null;
   shipping_tax_rate?: number | string | null;
   tax_rounding?: string | null;
@@ -123,6 +128,12 @@ export function renderReceipt(p: { shopName: string; settings: ReceiptSettings; 
                 <tr>
                   <td colspan={3}>{t("receipt.shipping")}</td>
                   <td class="n">{yen(order.shipping_jpy)}</td>
+                </tr>
+              ) : null}
+              {order.fee_jpy ? (
+                <tr>
+                  <td colspan={3}>{feeLabelFor(order.payment_provider)}</td>
+                  <td class="n">{yen(order.fee_jpy)}</td>
                 </tr>
               ) : null}
               {(order.discounts ?? []).map((d) => (

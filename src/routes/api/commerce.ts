@@ -1,13 +1,13 @@
 import { deliveryOptions } from "../../modules/delivery-time";
-import { withApiMember } from "../audience-render";
+import { memberFreeOverForCart, withApiMember } from "../audience-render";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
-import { anyProvider, STATUS_QUERY_PARAM, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, isProvider, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
-import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { anyProvider, choiceAvailable, komojuTypesOf, parsePaymentChoice, type PaymentSetup, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
+import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
 import { clientIpFor, publicBaseUrl, publicJsonBody, publicShop, type Ctx } from "../common";
@@ -38,6 +38,8 @@ interface Scope {
   member: ApiMember | null;
   /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定 × 0050） */
   consent: boolean;
+  /** 会員の条件ごとの送料無料の金額（0171）を DB に聞く関数。ゲスト・決まりの無いショップでは無し */
+  memberFreeOver?: () => Promise<number | null>;
 }
 
 async function scope(c: Ctx): Promise<Scope | Response> {
@@ -50,7 +52,8 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   // トークンが付いているのに確かめられない: 連携側はトークンを更新して呼び直す（黙ってゲスト扱いにすると、会員の値引きが消えて見える）
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
   // 会員限定の商品（0098）: 会員トークンの会員はカートの値付けも会員の読み取りの経路で（買えるかは DB が判定）
-  return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop) };
+  const memberFreeOver = memberFreeOverSource(c, shop, m.member);
+  return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop), ...(memberFreeOver ? { memberFreeOver } : {}) };
 }
 
 /** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば null */
@@ -65,13 +68,17 @@ async function openCartToken(secret: string, token: unknown): Promise<Cart | nul
 }
 
 async function cartView(c: Ctx, s: Scope, cart: Cart) {
-  const [priced, setup] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
+  const [priced, setup, memberFreeOver] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config), memberFreeOverForCart(c, s.shop, s.member)]);
   const token = await sealCart(s.secret, { ...priced.cart, ...(cart.coupons ? { coupons: cart.coupons } : {}) });
-  const shipping = shippingSummary(s.shop);
-  const short = priced.lines.some((l) => l.short);
+  // 送料無料までの目安（0171: 会員トークンなら会員の条件の金額も。表示だけ、送料は quote で決まる）
+  const shipping = shippingSummary(s.shop, memberFreeOver);
+  // 購入手続きに進める行（店頭のみの行を外す、0149）で、在庫不足と「進めるか」を決める（同梱テーマのカート・startCheckout と同じ）
+  const buyable = checkoutPart(priced).priced;
+  const short = buyable.lines.some((l) => l.short);
   // 送料は配送先が決まるまで分からないので 0 で判定する（送料無料のクーポンは quote で額が決まる）。
   // 会員（Bearer トークン）なら会員限定のクーポンと、会員 ID での 1 人あたりの回数も判定する
-  const discount = s.coupons ? await discountCart({ sf: s.sf, shop: s.shop, coupons: s.coupons, member: s.member }, priced, cart.coupons, 0, null) : null;
+  // 店頭のみの行（0149）は購入手続きに進まないので、値引きの判定に入れない
+  const discount = s.coupons ? await discountCart({ sf: s.sf, shop: s.shop, coupons: s.coupons, member: s.member }, buyable, cart.coupons, 0, null) : null;
   return {
     cart: token,
     items: priced.lines.map((l) => ({
@@ -86,6 +93,8 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
       line_total_jpy: l.sku.price_jpy * l.qty,
       in_stock: l.sku.available > 0,
       short: l.short,
+      /** 店頭のみの商品（0149）。購入手続きには進めない（subtotal_jpy に入れない、quote でも外す）。お店で試着で申し込む */
+      store_only: l.storeOnly === true,
     })),
     /** 非公開になった・削除された SKU（返したトークンからは外してある） */
     removed: priced.dropped,
@@ -105,13 +114,18 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
     shipping: {
       summary: shipping.summary,
       free_over_jpy: shipping.freeOver,
-      remaining_for_free_jpy: shipping.freeOver === null ? null : Math.max(0, shipping.freeOver - priced.subtotal),
+      // 見る人の送料無料の金額（0171: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ）と、あといくら
+      viewer_free_over_jpy: shipping.viewerFreeOver,
+      member_free_applies: shipping.viewerFreeMember,
+      remaining_for_free_jpy: shipping.viewerFreeOver === null ? null : Math.max(0, shipping.viewerFreeOver - priced.subtotal),
       by_prefecture: shipping.table,
+      // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは quote の confirmation.shipping_free_reason
+      member_free: shipping.memberFree.map((m) => ({ label: m.label, free_over_jpy: m.freeOver })),
     },
     payments: setup.options,
     /** 配送日時の選択肢（同梱モジュール delivery_time が OFF なら null）。チェックアウトの配送先の delivery_date / delivery_slot に value を渡す */
     delivery: deliveryOptions(s.shop.settings),
-    can_checkout: priced.lines.length > 0 && !short && anyProvider(setup.options),
+    can_checkout: buyable.lines.length > 0 && !short && anyProvider(setup.options),
     /** 会員として判定したか（Authorization: Bearer が有効なら会員 ID） */
     member: s.member ? { id: s.member.id } : null,
     /** 同梱テーマのレジ（配送先 → 最終確認 → 決済）で続けるときの URL */
@@ -152,8 +166,10 @@ commerceApi.post("/shops/:shop/cart", async (c: Ctx) => {
       // 公開中の SKU だけ受け付ける
       const found = await s.sf.skusForCart(s.shop, [skuId]);
       if (!found.has(skuId) && !(op === "set" && qty === 0)) return c.json({ error: "sku_not_available", sku_id: skuId }, 404);
-      // 会員限定で買えない商品（0098。会員トークンの会員なら DB が判定、ゲストは条件のある商品は買えない）
-      if (found.get(skuId)?.purchasable === false && !(op === "set" && qty === 0)) return c.json({ error: "members_only", sku_id: skuId }, 403);
+      // カートに入れられない商品（src/products/sale.ts）: 会員限定（0098。会員トークンの会員なら DB が判定、ゲストは条件のある商品は買えない）は
+      // members_only、発売日の前（0148）は coming_soon、お店で試着が OFF のショップの店頭のみ（0149）は store_only
+      const hit = found.get(skuId);
+      if (hit && !hit.cartable && !(op === "set" && qty === 0)) return c.json({ error: hit.purchase_block ?? "members_only", sku_id: skuId }, 403);
     }
     cart = op === "add" ? addItem(cart, skuId, qty) : setQty(cart, skuId, op === "remove" ? 0 : qty);
   } else {
@@ -170,18 +186,28 @@ commerceApi.post("/shops/:shop/checkout/quote", async (c: Ctx) => {
   if (!body) return c.json({ error: "invalid_request" }, 400);
   const cart = await openCartToken(s.secret, body.cart);
   if (!cart) return c.json({ error: "invalid_cart" }, 400);
-  const provider = body.provider ?? "stripe";
-  if (!isProvider(provider)) return c.json({ error: "invalid_request", field: "provider" }, 400);
+  // KOMOJU は種類つき（komoju:konbini、0170 の支払い方法の手数料）でも受ける。種類を並べるショップは種類が要る
+  const choice = parsePaymentChoice(body.provider ?? "stripe");
+  if (!choice) return c.json({ error: "invalid_request", field: "provider" }, 400);
+  const provider = choice.provider;
   const setup = await paymentSetup(s.sf, s.shop, c.get("adapters").config);
   if (!providerAvailable(setup, provider)) return c.json({ error: "payment_unavailable", payments: setup.options }, 409);
+  if (!choiceAvailable(setup, choice)) return c.json({ error: "payment_method", payments: setup.options }, 409);
+  // 注文は会員だけのショップ（0165）: 会員トークンが無ければ断る（連携側はログイン・会員登録に回す）
+  if (checkoutMembersOnly(s.shop.settings) && !s.member) return c.json({ error: "member_required" }, 403);
   const address = body.address && typeof body.address === "object" ? (body.address as Record<string, unknown>) : {};
-  const r = await createQuote(quoteContext(s), cart, provider, address);
+  const r = await createQuote(quoteContext(s, setup), cart, provider, address, choice.method);
   if (!r.ok) {
     if (r.error === "invalid_address") return c.json({ error: "invalid_address", fields: r.invalid }, 400);
     // minimum_amount: 値引き後の支払い額が決済の最低額（50 円）未満
+    // cod_unavailable: 代金引換を選べない（reason: fee = 手数料の段に当たらない / max_total = 上限を超える / members_only = 会員だけ。0157）
+    if (r.error === "cod_unavailable") return c.json({ error: r.error, reason: r.cod ?? "module" }, 409);
+    // payment_method: KOMOJU の種類が使えない（手数料の段に当たらない・並べていない種類。0170）
+    if (r.error === "payment_method") return c.json({ error: r.error, payments: setup.options }, 409);
     return c.json({ error: r.error }, 409);
   }
-  return c.json({ quote: r.token, expires_at: new Date(r.quote.expiresAt * 1000).toISOString(), confirmation: r.confirmation });
+  // excluded: 購入手続きから外した店頭のみの商品の SKU（0149。カートのトークンには残っている）
+  return c.json({ quote: r.token, expires_at: new Date(r.quote.expiresAt * 1000).toISOString(), confirmation: r.confirmation, excluded: (r.excluded ?? []).map((l) => l.sku.id) });
 });
 
 /** quote（購入者が確認した内容）で注文を確定し、決済ページの URL を返す。内容が変わっていれば 409 で出し直す */
@@ -194,10 +220,11 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   if (!quote) return c.json({ error: "invalid_quote" }, 400);
   const setup = await paymentSetup(s.sf, s.shop, c.get("adapters").config);
   if (!providerAvailable(setup, quote.provider)) return c.json({ error: "payment_unavailable", payments: setup.options }, 409);
-  const check = await recheckQuote(quoteContext(s), quote);
+  const check = await recheckQuote(quoteContext(s, setup), quote);
   if (!check.ok) {
     if (check.error === "changed" && check.fresh.ok) return c.json({ error: "changed", quote: check.fresh.token, expires_at: new Date(check.fresh.quote.expiresAt * 1000).toISOString(), confirmation: check.fresh.confirmation }, 409);
-    return c.json({ error: "stock" }, 409);
+    if (check.error === "changed" && !check.fresh.ok && check.fresh.error === "payment_method") return c.json({ error: "payment_method", payments: setup.options }, 409);
+    return c.json({ error: check.error === "store_only" ? "store_only" : "stock" }, 409);
   }
   const deps = placeOrderDeps(c, setup);
   if (!deps) return c.json({ error: "not_configured" }, 503);
@@ -229,6 +256,7 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
     if (placed.error === "coupon") return c.json({ error: "coupon_unavailable" }, 409);
     // 会員のトークンが古い（全端末からログアウトした後）。連携側はログインし直す
     if (placed.error === "member") return c.json({ error: "invalid_member_token" }, 401);
+    if (placed.error === "member_required") return c.json({ error: "member_required" }, 403);
     // 0099: 会員価格が最終確認のあとで変わった（決まりやランクが変わった）。quote を作り直して見せ直す
     if (placed.error === "price") return c.json({ error: "price_changed" }, 409);
     return c.json({ error: "payment_failed" }, 502);
@@ -236,6 +264,8 @@ commerceApi.post("/shops/:shop/checkout", async (c: Ctx) => {
   const status = statusToken ? { status_token: statusToken, status_url: `${s.base}/api/shops/${s.shop.slug}/checkout/status?token=${encodeURIComponent(statusToken)}` } : {};
   // 0 円の注文は決済なしでこの時点で確定している。payment_url は完了画面（success_url）
   if (placed.free) return c.json({ payment_url: withQueryParam(placed.url, "free", "1"), free: true, order_id: placed.free.orderId, ...status });
+  // 代金引換（0157）は受付（未入金）としてこの時点で確定している。payment_url は完了画面（success_url）
+  if (placed.cod) return c.json({ payment_url: placed.url, cod: true, order_id: placed.cod.orderId, ...status });
   return c.json({ payment_url: placed.url, ...status });
 });
 
@@ -254,6 +284,6 @@ commerceApi.get("/shops/:shop/checkout/status", async (c: Ctx) => {
   return c.json(r, 200, { "cache-control": "no-store" });
 });
 
-function quoteContext(s: Scope): QuoteContext {
-  return { sf: s.sf, shop: s.shop, secret: s.secret, baseUrl: s.base, coupons: s.coupons, member: s.member, consent: s.consent };
+function quoteContext(s: Scope, setup: PaymentSetup): QuoteContext {
+  return { sf: s.sf, shop: s.shop, secret: s.secret, baseUrl: s.base, coupons: s.coupons, member: s.member, consent: s.consent, komojuTypes: komojuTypesOf(setup), ...(s.memberFreeOver ? { memberFreeOver: s.memberFreeOver } : {}) };
 }

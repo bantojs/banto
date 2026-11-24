@@ -9,6 +9,18 @@ export type FieldType = "text" | "textarea" | "number" | "url" | "select" | "ima
 export const FIELD_TYPES: readonly FieldType[] = ["text", "textarea", "number", "url", "select", "image"];
 /** WooCommerce のメタ（洗濯表示のフラグ・サイズ寸法など）を受け止められる数。管理画面の商品フォームが長くなるので、まとめ方は今後の課題 */
 export const MAX_FIELDS = 150;
+/** 項目の定義を AI 用 API で読み書きする（0145、docs/ai-access.md §19）。当たるまで口を出さない */
+export const FIELD_DEFS_MIGRATION = "0145_api_field_definitions";
+/** 商品の発売日（0146、products.released_at）。当たるまで欄を出さない・受け付けない */
+export const RELEASED_AT_MIGRATION = "0146_product_released_at";
+/** 発売日の前は買えない（Coming Soon）と商品の公開日（0148、publish_at・publish_scheduled_products） */
+export const SALE_DATES_MIGRATION = "0148_product_sale_dates";
+/** 店頭のみ（ネットでは買えない）商品の印（0149、products.store_only） */
+export const STORE_ONLY_MIGRATION = "0149_product_store_only";
+/** 検索用のキーワード（products.search_keywords、0163） */
+export const SEARCH_KEYWORDS_MIGRATION = "0163_product_search_keywords";
+/** 検索用のキーワードの長さの上限（文字。DB の制約と同じ） */
+export const SEARCH_KEYWORDS_MAX = 200;
 
 export interface ProductField {
   /** 値の保存キー（英小文字・数字・アンダースコア、1〜40 文字） */
@@ -24,6 +36,8 @@ export interface ProductField {
 }
 
 const KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
+/** 前後の空白を落として n 文字（コードポイント）まで。DB の banto_field_defs_norm（0145）と同じ数え方（サロゲートの組を割らない） */
+const clip = (s: string, n: number) => Array.from(s.trim()).slice(0, n).join("");
 
 export function productFields(settings: Record<string, unknown> | null | undefined): ProductField[] {
   return fieldDefinitions((settings ?? {})["product_fields"]);
@@ -42,8 +56,8 @@ export function fieldDefinitions(raw: unknown, opts: { publicDefault?: boolean }
     const key = typeof o["key"] === "string" ? o["key"] : "";
     const type = o["type"] as FieldType;
     if (!KEY_RE.test(key) || !FIELD_TYPES.includes(type) || out.some((f) => f.key === key)) continue;
-    const label = typeof o["label"] === "string" && o["label"].trim() ? o["label"].trim().slice(0, 60) : key;
-    const options = type === "select" && Array.isArray(o["options"]) ? o["options"].filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim().slice(0, 60)).slice(0, 50) : undefined;
+    const label = typeof o["label"] === "string" && o["label"].trim() ? clip(o["label"], 60) : key;
+    const options = type === "select" && Array.isArray(o["options"]) ? o["options"].filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => clip(x, 60)).slice(0, 50) : undefined;
     const pub = opts.publicDefault === false ? o["public"] === true : o["public"] !== false;
     out.push({ key, label, type, ...(options ? { options } : {}), public: pub, ...(pub && o["card"] === true ? { card: true } : {}) });
     if (out.length >= MAX_FIELDS) break;

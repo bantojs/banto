@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { Browser, appWith } from "./helpers";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 
 /**
  * 商品のまとめて編集（src/routes/admin/bulk.tsx、0137）。変えたマスだけを開いたときの値と一緒に送り、誤りがあれば何も変えずに描き直す。
@@ -104,10 +103,4 @@ describe("商品のまとめて編集", () => {
     expect(await (await b.get(`${base}/bulk?id=${foreign.id}`)).text()).toContain("編集する商品が選ばれていません");
   });
 
-  it("0137 を当てる前の DB: 一覧に選ぶ欄を出さず、まとめて編集はアップデートを案内する", async () => {
-    const { app, tee, base } = setup({ migrations: BUNDLED_MIGRATIONS.filter((v) => v !== "0137_catalog_bulk") });
-    const b = await Browser.loggedIn(app, "owner@example.com", "password-123");
-    expect(await (await b.get(base)).text()).not.toContain('type="checkbox" name="id"');
-    expect(await (await b.get(`${base}/bulk?id=${tee.id}`)).text()).toContain("データベースのアップデートを適用すると使えます");
-  });
 });

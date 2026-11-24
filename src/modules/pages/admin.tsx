@@ -14,11 +14,10 @@ import { mediaBaseUrl, publicBaseUrl } from "../../routes/common";
 import { planLimitOf } from "../../plan/limits";
 import { shopHome } from "../../storefront/urls";
 import { moduleEnabled } from "../registry";
-import { PAGE_LIMITS, PAGE_NAVS, PAGE_PARTS_MIGRATION, PAGES_MODULE, PAGES_TRASH_DAYS, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
+import { PAGE_LIMITS, PAGE_NAVS, PAGES_MODULE, PAGES_TRASH_DAYS, handleFromTitle, pageHandleOk, randomPageHandle, type PageNav, type PageRow } from "../../pages";
 import { formatDateTime, zonedInputToIso } from "../../i18n/time";
 import type { CategoryRow } from "../../db/types";
 import { pageLayoutsOf } from "../../content/layouts";
-import { migrated } from "../../db/migration-state";
 import { categoryTree, type CategoryNode } from "../../products/categories";
 import { BLOG_MODULE, type BlogRow } from "../../blog";
 import { ContentForm, contentState, editorCatalog, editorHtml, featuredImageUrl, mountEditorEndpoints, type RevisionRow, contentAudienceValues } from "../../content/editor";
@@ -113,8 +112,7 @@ function layout(c: AdminContext, shop: ShopRow, title: string, crumbs: { label: 
 pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
   const shop = await scope(c);
   if (!shop) return c.notFound();
-  const parts = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAGE_PARTS_MIGRATION);
-  const cols = `id,handle,title,nav,sort_order,published,published_at,deleted_at,updated_at${parts ? ",is_part" : ""}`;
+  const cols = "id,handle,title,nav,sort_order,published,published_at,deleted_at,updated_at,is_part";
   const all = await owner(c).db.from<PageRow>("pages").select(cols, { eq: { shop_id: shop.id }, order: "sort_order.asc,created_at.asc" });
   const home = shopHome(publicBaseUrl(c), shop);
   const flash = c.req.query("flash");
@@ -225,7 +223,7 @@ pagesAdmin.get("/", requireOwner, async (c: AdminContext) => {
 async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string; values: PageValues; error?: MessageKey | null; status?: 200 | 400 | 409 }) {
   // 商品を並べるブロックで選ぶカテゴリーとタグ
   const db = owner(c).db;
-  const [catalog, parts] = await Promise.all([editorCatalog(c, shop), migrated({ db, cache: c.get("adapters").cache }, PAGE_PARTS_MIGRATION)]);
+  const catalog = await editorCatalog(c, shop);
   // リビジョン（0080。新しい順に 20 まで）
   const revisions = opts.pageId ? await db.from<RevisionRow>("page_revisions").select("id,title,created_at", { eq: { page_id: opts.pageId, shop_id: shop.id }, order: "created_at.desc", limit: 20 }) : [];
   const title = opts.pageId ? opts.values.title || t("pages.edit") : t("pages.new");
@@ -243,7 +241,7 @@ async function editPage(c: AdminContext, shop: ShopRow, opts: { pageId?: string;
       <PageHead title={title} />
       {flash === "saved" ? <p class="notice">{t("shop.saved")}</p> : null}
       {flash === "reverted" ? <p class="notice">{t("pages.reverted")}</p> : null}
-      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true, part: parts }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} extras={catalog} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
+      <ContentForm kind={{ base: base(shop.id), urlPrefix: "/pages/", nav: true, part: true }} selfUrl={opts.pageId ? `${base(shop.id)}/${opts.pageId}` : `${base(shop.id)}/new`} revisions={revisions} shop={shop} action={action} values={opts.values} visual={editorHtml(c, opts.values.body)} categories={catalog.categories} tags={catalog.tags} extras={catalog} {...(opts.pageId ? { pageId: opts.pageId } : {})} viewUrl={viewUrl} error={opts.error ?? null} image={image && image.startsWith(mediaBaseUrl(c)) ? image : null} />
     </>,
     opts.status ?? 200,
   );

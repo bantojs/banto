@@ -2,6 +2,7 @@
  * AI 用トークンでの操作をまとめる層（docs/ai-access.md）。REST（/api/v1）と MCP（/mcp）の両方がここを使う。
  * 権限の判定は SQL（api_*）側。ここはトークンのハッシュ化、エラーの分類、画像の取り込みだけを担う。
  */
+import { PAYMENT_STATUS_MIGRATION, cancellable } from "../orders/payment";
 import { VARIANT_SIZES, imageKeys, readVariantFiles, thumbWidthOf, variantKey } from "../media/variants";
 import type { PrivilegedDb } from "../db/privileged";
 import { PrivilegedRpcError } from "../db/privileged";
@@ -11,6 +12,7 @@ import { MAX_IMAGE_BYTES, MAX_THUMB_BYTES, imageSize, imageUrl, productImageKey,
 import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
+import { withTrackingInfo } from "../orders/tracking";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
@@ -27,10 +29,9 @@ import { getLocale } from "../i18n";
 import { APP_DATA_KEY_RE, isAppDataKind } from "../apps/app-data";
 import { shopImageUrl } from "../pages/markdown";
 import { articleFieldDefs } from "../blog/fields";
-import { FAVORITES_MIGRATION } from "../modules/registry";
 import { AUDIENCE_API_MIGRATION } from "../members/audience";
-import { CARE_MIGRATION } from "../care-labels/care";
-import { STORE_FIELDS_MIGRATION } from "../stores/fields";
+import { FIELD_DEFS_MIGRATION, RELEASED_AT_MIGRATION, SALE_DATES_MIGRATION, SEARCH_KEYWORDS_MIGRATION, STORE_ONLY_MIGRATION, productFields } from "../products/fields";
+import { customerFields } from "../customers/fields";
 
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
@@ -57,6 +58,11 @@ export type InquiryApiStatus = (typeof INQUIRY_API_STATUSES)[number];
 export const isInquiryApiStatus = (v: unknown): v is InquiryApiStatus => typeof v === "string" && (INQUIRY_API_STATUSES as readonly string[]).includes(v);
 
 export type ApiErrorCode = "unauthorized" | "forbidden" | "not_found" | "invalid" | "conflict" | "migration_required" | "upstream";
+
+/** 会員の結びつけの一覧の鍵の長さ（0167 の api_customers_links と同じ） */
+export const LINK_KEY_MIN = 32;
+export const LINK_KEY_MAX = 256;
+const LINK_KEY_RE = new RegExp(`^[\\x21-\\x7e]{${LINK_KEY_MIN},${LINK_KEY_MAX}}$`);
 
 export class ApiError extends Error {
   constructor(
@@ -90,17 +96,34 @@ function mapRpcError(e: unknown): never {
   if (e instanceof PrivilegedRpcError) {
     if (e.is("unauthorized") || e.status === 401 || e.status === 403) throw new ApiError("unauthorized", "invalid, expired or insufficiently scoped token", 401);
     if (e.is("not_found")) throw new ApiError("not_found", "not found", 404);
+    if (e.is("invalid_link_key")) throw new ApiError("invalid", "invalid_link_key: send X-Banto-Link-Key with 32 to 256 characters", 400);
+    // お支払いの状態（0156）
+    if (e.is("invalid_cancel_reason")) throw new ApiError("invalid", "invalid_cancel_reason: reason refused is only for unpaid orders that were shipped", 400);
+    if (e.is("not_payable")) throw new ApiError("invalid", "not_payable: only unpaid orders that are pending or shipped can be marked as paid", 400);
     // 公開の切り替えと回数の上限は、発行者が owner / admin のときだけ（0129）
     if (e.is("admin_required")) throw new ApiError("forbidden", "admin_required: only an organization owner or admin can change this", 403);
     // クーポンと会員（0036）
-    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences) in the admin screen", 409);
+    // 会員の条件（0144）: OFF でも外す（audience: null）ことはできると伝える
+    if (e.is("module_disabled:audiences")) throw new ApiError("conflict", "module_disabled: turn on the module audiences in the admin screen to set an audience; removing it (audience: null) works even while it is off", 409);
+    if (e.is("module_disabled")) throw new ApiError("conflict", "module_disabled: turn on the module (coupons / inquiries / pages / blog / audiences / dialogs / member_news) in the admin screen", 409);
     // 商品の会員限定（0144）
     if (e.is("audience_not_found")) throw new ApiError("invalid", "audience_not_found: no audience with this id or name in this shop (GET /audiences lists them)", 400);
     if (e.is("audience_display_only")) throw new ApiError("invalid", "audience_display_only: this audience uses URL parameters and cannot be put on products (product_usable is false in GET /audiences)", 400);
-    if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
+    // is() は前方一致なので、長い名前（invalid_audience_mode / _hide）を invalid_audience より先に見る
     if (e.is("invalid_audience_mode")) throw new ApiError("invalid", "invalid_audience_mode: hide or buy", 400);
     if (e.is("invalid_audience_hide")) throw new ApiError("invalid", "invalid_audience_hide: true or false", 400);
+    if (e.is("invalid_audience")) throw new ApiError("invalid", "invalid_audience: an audience id or name (string), or null to remove it", 400);
     if (e.is("audience_hide_requires_hide")) throw new ApiError("invalid", "audience_hide_requires_hide: audience_hide can be true only with audience_mode hide", 400);
+    if (e.is("invalid_store_only")) throw new ApiError("invalid", "invalid_store_only: true or false", 400);
+    if (e.is("invalid_search_keywords")) throw new ApiError("invalid", "invalid_search_keywords: string or null", 400);
+    if (e.is("search_keywords_too_long")) throw new ApiError("invalid", "search_keywords_too_long: up to 200 characters", 400);
+    if (e.is("invalid_publish_at")) throw new ApiError("invalid", "invalid_publish_at: a date-time string with an offset (e.g. 2024-12-01T10:00:00+09:00) up to 10 years from now, or null to cancel; the product is published by the next scheduled run after it", 400);
+    if (e.is("invalid_released_at")) throw new ApiError("invalid", "invalid_released_at: a date-time string with an offset (e.g. 2024-05-01T10:00:00+09:00; a date alone is 00:00 UTC) between 1990 and 10 years from now, or null to remove it", 400);
+    // 項目の定義（0145）: invalid_fields:<番号>:<理由>
+    if (/invalid_fields:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_fields:[a-z_0-9:]+).*$/s, "$1") + ": send an array of up to 150 { key: ^[a-z][a-z0-9_]{0,39}$ (unique), label (1-60 chars), type: text | textarea | number | url | select | image, options (select only, up to 50 of 1-60 chars), public, card (public only) }; customer fields cannot use image, and public / card cannot be true (see docs/ai-access.md §19)", 400);
+    // 会員へのお知らせ（0155）
+    if (e.is("member_news_full")) throw new ApiError("conflict", "member_news_full: a shop can have up to 100 news for all members (news for one member have no limit; the oldest beyond 200 per member are removed)", 409);
+    if (/invalid_member_news:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_member_news:[a-z_:]+).*$/s, "$1") + " (see docs/member-news.md for the fields)", 400);
     // お店の画面のダイアログ（0111）
     if (e.is("dialogs_limit")) throw new ApiError("conflict", "dialogs_limit: a shop can have up to 50 dialogs", 409);
     if (/invalid_dialog:/.test(e.dbMessage)) throw new ApiError("invalid", e.dbMessage.replace(/^.*?(invalid_dialog:[a-z_:.0-9]+).*$/s, "$1") + " (see docs/dialogs.md for the fields)", 400);
@@ -209,7 +232,7 @@ export interface ListQuery {
 
 export interface OrdersQuery {
   status?: string;
-  /** 注文番号、または（orders:pii があれば）メール・氏名の部分一致 */
+  /** 注文番号、またはメール（orders:contact / orders:pii）・氏名（orders:contact / orders:address / orders:pii）の部分一致（0173） */
   query?: string;
   from?: string;
   to?: string;
@@ -296,6 +319,23 @@ export class ApiService {
     await this.requireAudienceFields(values);
     return this.call<Record<string, unknown>>("api_product_update", { p_product_id: id, p_values: values });
   };
+  /**
+   * 項目の定義（0145）。product = 商品の項目（products:read / write）、customer = 会員の項目（customers:read / write）。
+   * 読み取りは 0169 から書き込みのスコープでも、会員は customers:links でも（DB の api_field_defs_get）。
+   * 読み取りは管理画面と同じ読み手（fieldDefinitions）を通す。書き込みは丸ごと置き換えで、形の検査は DB
+   */
+  fieldDefsGet = async (kind: "product" | "customer") => {
+    await this.requireMigration(FIELD_DEFS_MIGRATION);
+    const r = await this.call<{ fields: unknown }>("api_field_defs_get", { p_kind: kind });
+    return { fields: kind === "product" ? productFields({ product_fields: r.fields }) : customerFields({ customer_fields: r.fields }) };
+  };
+  fieldDefsSet = async (kind: "product" | "customer", body: unknown) => {
+    await this.requireMigration(FIELD_DEFS_MIGRATION);
+    const fields = body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>)["fields"] : body;
+    const r = await this.call<{ fields: unknown }>("api_field_defs_set", { p_kind: kind, p_fields: fields ?? null });
+    // 応答も読み取りと同じ読み手を通す（PUT と GET で形を揃える）
+    return { fields: kind === "product" ? productFields({ product_fields: r.fields }) : customerFields({ customer_fields: r.fields }) };
+  };
   /** 会員の条件の一覧（products:read、0144。モジュール audiences が ON のショップだけ） */
   audiencesList = async () => {
     await this.requireMigration(AUDIENCE_API_MIGRATION);
@@ -304,6 +344,10 @@ export class ApiService {
   /** 会員の条件の欄（0144）は、当てていない DB では黙って捨てられるので先に断る */
   private async requireAudienceFields(values: Record<string, unknown>): Promise<void> {
     if (["audience", "audience_mode", "audience_hide"].some((k) => k in values)) await this.requireMigration(AUDIENCE_API_MIGRATION);
+    if ("released_at" in values) await this.requireMigration(RELEASED_AT_MIGRATION);
+    if ("publish_at" in values) await this.requireMigration(SALE_DATES_MIGRATION);
+    if ("store_only" in values) await this.requireMigration(STORE_ONLY_MIGRATION);
+    if ("search_keywords" in values) await this.requireMigration(SEARCH_KEYWORDS_MIGRATION);
   }
   skuCreate = (productId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_create", { p_product_id: productId, p_values: values });
   skuUpdate = (skuId: string, values: Record<string, unknown>) => this.call<Record<string, unknown>>("api_sku_update", { p_sku_id: skuId, p_values: values });
@@ -358,10 +402,22 @@ export class ApiService {
     return r.shop_id;
   }
 
+  /** 入金を記録する（未入金の注文、0156。orders:write）。order.paid を出すのは DB */
+  async orderPaymentRecord(id: string): Promise<Record<string, unknown>> {
+    await this.requireMigration(PAYMENT_STATUS_MIGRATION);
+    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_payment_record", { p_order_id: id }));
+  }
+
   /** キャンセル: 決済事業者で返金してから cancel_order。返金に失敗したら注文は変えない */
-  async orderCancel(id: string): Promise<Record<string, unknown>> {
-    const info = await this.call<{ status: string; payment_provider: string | null; payment_ref: string | null }>("api_order_payment_info", { p_order_id: id });
+  async orderCancel(id: string, reason?: "refused"): Promise<Record<string, unknown>> {
+    const info = await this.call<{ status: string; payment_provider: string | null; payment_ref: string | null; payment_status?: string }>("api_order_payment_info", { p_order_id: id });
     if (info.status === "cancelled" || info.status === "refunded") return this.orderGet(id);
+    // 未入金の注文（0156）は返金せずに取り消す（受付のあいだと、発送の後の受け取り拒否）
+    if (info.payment_status === "unpaid") {
+      if (!cancellable({ status: info.status, payment_status: "unpaid" })) throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
+      return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: false, ...(reason ? { p_reason: reason } : {}) }));
+    }
+    if (reason) throw new ApiError("invalid", "reason refused is only for unpaid orders that were shipped", 400);
     if (info.status !== "paid") throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
     const shop = await this.call<{ shop_id: string; stripe_account_id?: string | null }>("api_token_shop", {});
     // 0090: 決済した口座で返金する（列は 0090 から）
@@ -372,7 +428,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("upstream", `refund failed: ${e instanceof CancelError || e instanceof Error ? e.message : String(e)}`, 502);
     }
-    return this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: refunded });
+    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: refunded }));
   }
 
   /**
@@ -513,7 +569,7 @@ export class ApiService {
     if (q.tag !== undefined) {
       extra["p_tag"] = q.tag.slice(0, 40);
     }
-    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
+    const r = await this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean; cursor?: { updated_since: string; after: string } | null; has_more?: boolean }>("api_orders_list", {
       p_status: q.status ?? null,
       p_from: q.from ?? null,
       p_to: q.to ?? null,
@@ -522,6 +578,7 @@ export class ApiService {
       p_query: q.query ?? null,
       ...extra,
     });
+    return { ...r, items: (r.items ?? []).map(withTrackingInfo) };
   };
 
   // ---- お店の画面のダイアログ（0111。dialogs:write、モジュール dialogs が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
@@ -539,6 +596,17 @@ export class ApiService {
     return { deleted: true };
   };
 
+  // ---- 会員へのお知らせ（0155。member_news:write、モジュール member_news が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
+  memberNewsList = async (customerId?: string) => {
+    return this.call<Record<string, unknown>>("api_member_news_list", { p_customer_id: customerId ? uuidOr404(customerId) : null });
+  };
+  memberNewsCreate = async (values: Record<string, unknown>) => {
+    return this.call<Record<string, unknown>>("api_member_news_create", { p_values: values });
+  };
+  memberNewsDelete = async (id: string) => {
+    return this.call<Record<string, unknown>>("api_member_news_delete", { p_id: uuidOr404(id) });
+  };
+
   // ---- 注文の印とメモ（0106。orders:write、メモは orders:pii も）----
   /** body: { tags?: string[]（置き換え）, add_tags?: string[], remove_tags?: string[], note?: string | null } */
   orderAnnotate = async (orderId: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
@@ -551,14 +619,14 @@ export class ApiService {
     };
     const note = body["note"];
     if (note !== undefined && note !== null && typeof note !== "string") throw new ApiError("invalid", "note must be a string or null", 400);
-    return this.call<Record<string, unknown>>("api_order_annotate", {
+    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_annotate", {
       p_order_id: uuidOr404(orderId),
       p_add: list("add_tags"),
       p_remove: list("remove_tags"),
       p_tags: list("tags"),
       p_note: typeof note === "string" ? note : null,
       p_note_set: note !== undefined,
-    });
+    }));
   };
 
   // ---- LINE で送る口（line:send、0105。docs/line.md §4）。LINE の利用者 ID は応答に載せない ----
@@ -597,11 +665,11 @@ export class ApiService {
   lineUsage = async () => {
     return this.call<{ month: string; count: number; limit: number }>("api_line_usage", {});
   };
-  orderGet = (id: string) => this.call<Record<string, unknown>>("api_order_get", { p_order_id: id });
-  orderUpdateStatus = (id: string, status: "shipped" | "cancelled") =>
-    status === "cancelled" ? this.orderCancel(id) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status });
+  orderGet = async (id: string) => withTrackingInfo(await this.call<Record<string, unknown>>("api_order_get", { p_order_id: id }));
+  orderUpdateStatus = (id: string, status: "shipped" | "cancelled", reason?: "refused") =>
+    status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status }).then(withTrackingInfo);
 
-  // ---- お店で試着（0026。注文に準じて orders:read / orders:write、連絡先は orders:pii）----
+  // ---- お店で試着（0026。注文に準じて orders:read / orders:write、名前・メール・電話は orders:contact、名前だけ orders:address、自由記入は orders:pii）----
   tryonRequestsList = (q: { status?: string; storeId?: string; limit?: number; offset?: number } = {}) =>
     this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number; pii: boolean }>("api_tryon_requests_list", {
       p_status: q.status ?? null,
@@ -616,7 +684,6 @@ export class ApiService {
   tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
   /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
   careSet = async (target: "product" | "category", ref: string, care: unknown) => {
-    await this.requireMigration(CARE_MIGRATION);
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
     if (care !== null && (typeof care !== "object" || Array.isArray(care))) throw new ApiError("invalid", "invalid_care: send an object { symbols, notes } or null", 400);
     // 記号も付記も無いもの（{} や空の配列）は外すのと同じ（null = 上の段を使う）。「何も無い」を段に残さない
@@ -628,7 +695,6 @@ export class ApiService {
   storesList = () => this.call<Record<string, unknown>[]>("api_stores_list", {});
   /** 実店舗の独自項目の値と外部コード（0126、stores:write）。店舗は id か ext:<外部コード> */
   storeUpdate = async (ref: string, values: Record<string, unknown>) => {
-    await this.requireMigration(STORE_FIELDS_MIGRATION);
     // id（uuid）か ext:<外部コード>。外部コードは大文字・小文字を区別する
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
     if (!uuid && !/^ext:[A-Za-z0-9._:-]{1,64}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
@@ -760,14 +826,27 @@ export class ApiService {
     });
   };
   customerGet = async (id: string) => this.call<Record<string, unknown>>("api_customer_get", { p_customer_id: uuidOr404(id) });
+  /**
+   * 会員の結びつけの一覧（0167、customers:links）。個人情報なし。LINE の UID は HMAC-SHA256(鍵 = linkKey, 本文 = UID) の 16 進だけ。
+   * 鍵は呼ぶたびに受け取り、保存しない（docs/ai-access.md「会員の結びつけの一覧」）
+   */
+  customersLinks = async (q: { linkKey: string | undefined; limit?: number; offset?: number }) => {
+    await this.requireMigration("0167_customer_links");
+    const key = q.linkKey ?? "";
+    // 見出しの値は ASCII の見える文字だけ（空白・ASCII の外は、見出しの読み方で前後が削られたり別のバイトになったりして、黙って違うハッシュになるため）
+    if (!LINK_KEY_RE.test(key)) throw new ApiError("invalid", `invalid_link_key: send X-Banto-Link-Key with ${LINK_KEY_MIN} to ${LINK_KEY_MAX} visible ASCII characters`, 400);
+    return this.call<{ items: Record<string, unknown>[]; total: number; limit: number; offset: number }>("api_customers_links", {
+      p_link_key: key,
+      p_limit: Math.min(q.limit ?? 100, 100),
+      p_offset: Math.min(q.offset ?? 0, 1_000_000_000),
+    });
+  };
   /** 会員のお気に入り（0123、新しい順）。customers:read */
   customerFavorites = async (id: string) => {
-    await this.requireMigration(FAVORITES_MIGRATION);
     return this.call<{ items: Record<string, unknown>[] }>("api_customer_favorites", { p_customer_id: uuidOr404(id) });
   };
   /** お気に入りを足した順にたどる（0123）。商品で絞れる。続きは前の応答の cursor（since と after） */
   async favoritesList(q: { product?: string | undefined; since?: string | undefined; after?: string | undefined; limit?: number | undefined } = {}) {
-    await this.requireMigration(FAVORITES_MIGRATION);
     const [afterCustomer, afterProduct] = q.after ? q.after.split(":") : [undefined, undefined];
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (q.after !== undefined && (!q.since || !afterCustomer || !afterProduct || !uuid.test(afterCustomer) || !uuid.test(afterProduct))) {

@@ -96,13 +96,13 @@ export async function generateFeed(sf: StorefrontData, storage: StorageAdapter, 
     run = { run: now.getTime().toString(36), started_at: now.toISOString(), after: null, parts: 1, items: 0, skipped: { no_image: 0, no_price: 0 } };
     await putText(storage, partKey(shop.id, run.run, 0), feedHead(target), "application/xml; charset=utf-8");
   }
-  const [categories, plan] = await Promise.all([sf.listCategories(shop), sf.sitePlan()]);
+  const [categories, plan, saleDates] = await Promise.all([sf.listCategories(shop), sf.sitePlan(), sf.migratedTo("0148_product_sale_dates")]);
   const budget = PAGES_PER_RUN[plan];
   let xml = "";
   let done = false;
   for (let i = 0; i < budget && xml.length < PART_CHARS; i++) {
     const page = await sf.feedPage(shop, run.after, FEED_PAGE);
-    const result = buildFeed({ ...page, categories }, target);
+    const result = buildFeed({ ...page, categories, saleDates }, target);
     xml += feedItemsXml(result);
     run.items += result.items.length;
     run.skipped.no_image += result.skipped.no_image;
@@ -157,7 +157,8 @@ export async function readFeed(storage: StorageAdapter, shopId: string): Promise
 }
 
 /** jobs/index.ts から登録する。モジュールが ON の公開中のショップだけ、1 時間ごとに作り直す（作りかけの回があれば続き） */
-export function registerFeedJob(adapters: Adapters, doFetch: typeof fetch): void {
+/** canRun: 次のショップを作り直してよいか（Cron の通信の予算、src/jobs/budget.ts。足りなければ次の回へ） */
+export function registerFeedJob(adapters: Adapters, doFetch: typeof fetch, canRun?: () => boolean): void {
   const cfg = adapters.config;
   const url = cfg.get("SUPABASE_URL");
   const anonKey = cfg.get("SUPABASE_ANON_KEY");
@@ -167,6 +168,7 @@ export function registerFeedJob(adapters: Adapters, doFetch: typeof fetch): void
     const bases = { publicBaseUrl: cfg.get("PUBLIC_BASE_URL"), mediaBaseUrl: cfg.get("MEDIA_BASE_URL") };
     for (const shop of await sf.listShops()) {
       if (!moduleEnabled(shop.settings, FEED_MODULE)) continue;
+      if (canRun && !canRun()) break;
       const running = (await adapters.storage.get(runKey(shop.id))) !== null;
       const meta = running ? null : await readFeedMeta(adapters.storage, shop.id);
       if (meta && Date.now() - Date.parse(meta.generated_at) < FEED_INTERVAL_MS - 60_000) continue;

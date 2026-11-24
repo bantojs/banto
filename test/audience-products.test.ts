@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { BASE, Browser, appWith, checkout, memberLogin, memberMail } from "./helpers";
 import { FakeStripe } from "./fake-stripe";
-import { BUNDLED_MIGRATIONS } from "../src/db/migrations";
 import { issueTokens } from "../src/members/auth";
 
 /** 会員限定の商品（0098、docs/audiences.md「会員限定の商品」）: お店の画面・カート・ヘッドレス・管理画面 */
@@ -37,19 +36,17 @@ function setup(opts: { applied?: string[]; modules?: Record<string, boolean>; st
 }
 
 describe("会員限定の商品の予約（reserve_stock の会員 id）", () => {
-  it("合う会員は予約でも会員 id を渡して確かめる。0129 が当たるまでの DB には渡さない（会員の注文が止まらない）", async () => {
-    for (const applied of [undefined, BUNDLED_MIGRATIONS.filter((m) => m !== "0129_security_hardening_5")]) {
-      const stripe = new FakeStripe();
-      const { app, mail, sb, vip } = setup({ stripe, ...(applied ? { applied } : {}) });
-      const gold = new Browser(app, BASE);
-      await memberLogin(gold, mail, "/my-shop", "gold@example.com");
-      await gold.post("/my-shop/cart/add", { sku_id: vip.k.id, qty: "1" });
-      const res = await checkout(gold, "/my-shop");
-      expect(res.status, applied ? "0129 の前" : "0129 の後").toBe(303);
-      expect(res.headers.get("location")).toMatch(/^https:\/\/checkout\.stripe\.com\//);
-      expect(sb.tables.reservations).toHaveLength(1);
-      expect(sb.tables.reservations[0]!["customer_id"]).toBeTruthy();
-    }
+  it("合う会員は予約でも会員 id を渡して確かめる", async () => {
+    const stripe = new FakeStripe();
+    const { app, mail, sb, vip } = setup({ stripe });
+    const gold = new Browser(app, BASE);
+    await memberLogin(gold, mail, "/my-shop", "gold@example.com");
+    await gold.post("/my-shop/cart/add", { sku_id: vip.k.id, qty: "1" });
+    const res = await checkout(gold, "/my-shop");
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toMatch(/^https:\/\/checkout\.stripe\.com\//);
+    expect(sb.tables.reservations).toHaveLength(1);
+    expect(sb.tables.reservations[0]!["customer_id"]).toBeTruthy();
   });
 });
 
@@ -70,7 +67,7 @@ describe("お店の画面", () => {
     expect((await b.get("/my-shop/products/secret")).status).toBe(404);
     const eh = await (await b.get("/my-shop/products/early")).text();
     expect(eh).toContain("data-members-only");
-    expect(eh).toContain('href="/my-shop/account/login"');
+    expect(eh).toContain('href="/my-shop/account/login?return_to=%2Fmy-shop%2Fproducts%2Fearly"');
     // カートに入れようとしても入らない
     const r = await b.post("/my-shop/cart/add", { sku_id: early.k.id, qty: "1" });
     expect(r.headers.get("location")).toBe("/my-shop/products/early");
