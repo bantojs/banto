@@ -164,7 +164,7 @@ GET /api/shops/<shop>/cart?cart=<トークン>
   "subtotal_jpy": 6000,
   "tax_rate": 10,
   "tax_included": true,
-  "shipping": { "summary": "全国一律 ¥500", "free_over_jpy": 10000, "remaining_for_free_jpy": 4000, "by_prefecture": null },
+  "shipping": { "summary": "全国一律 ¥500", "free_over_jpy": 10000, "viewer_free_over_jpy": 10000, "member_free_applies": false, "remaining_for_free_jpy": 4000, "by_prefecture": null, "member_free": [] },
   "payments": { "stripe": true, "komoju": false },
   "delivery": { "dates": [{ "value": "2026-10-20", "label": "10月20日（火）" }], "slots": [{ "value": "am", "label": "午前中" }] },
   "can_checkout": true,
@@ -234,6 +234,7 @@ POST /api/shops/<shop>/checkout/quote
     "lines": [ { "sku_id": "…", "code": "TEE-M", "product_name": "Tシャツ", "sku_name": "M", "unit_price_jpy": 3000, "qty": 2, "line_total_jpy": 6000, "tax_rate": 10, "reduced": false } ],
     "subtotal_jpy": 6000,
     "shipping_jpy": 500,
+    "shipping_free_reason": null,
     "discounts": [{ "code": "TEN", "name": "10% オフ", "amount_jpy": 600 }],
     "discount_jpy": 600,
     "total_jpy": 5900,
@@ -523,6 +524,10 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 ## 注文のお支払いの状態（0156）
 
 注文照会（ゲストの `/orders/lookup`・会員の `/members/orders/:number`）の注文には `payment_status`（`paid` / `unpaid`）と `paid_at` が付きます。未入金（代金引換など）の注文は `status` が `pending`（受付）か `shipped` で、領収書は入金の後に出ます（docs/hooks.md「注文の状態とお支払いの状態」）。
+
+## 会員の条件ごとの送料無料（0171）
+
+詳しくは docs/audiences.md「会員の条件ごとの送料無料」。カートの `shipping.member_free`（`[{ label, free_over_jpy }]`）は、運営者が名前を付けた決まりだけです（会員の条件の名前・中身は出しません）。会員トークンを付けたカートは、その会員の「あと○円で送料無料」の目安を `shipping.viewer_free_over_jpy`・`member_free_applies`・`remaining_for_free_jpy` で返します（会員トークンに入っている独自項目で判定する目安。数分ずれることがあります）。当てはまるかは会員トークンの会員のデータベースの最新の独自項目で、quote の `confirmation.shipping_free_reason` が `audience` なら会員の条件による送料無料、`threshold` ならショップ全体の金額による送料無料です。会員トークンのカートでは `remaining_for_free_jpy` が `viewer_free_over_jpy`（見る人の金額）までの残りです（0171 から。`free_over_jpy` はショップ全体の金額のまま）。送料無料のクーポンが入っているかは `coupons.applied[].kind` の `free_shipping` で分かります（`remaining_for_free_jpy` はクーポンを見ません）。
 
 ## 代金引換（同梱モジュール cod）
 

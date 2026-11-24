@@ -46,7 +46,10 @@ export function ConfirmationBlock({ shopPath, confirmation: cf, quote, error }: 
             <td>{yen(cf.subtotal_jpy)}</td>
           </tr>
           <tr>
-            <td colspan={3}>{t("confirm.shipping")}</td>
+            <td colspan={3}>
+              {t("confirm.shipping")}
+              {cf.shipping_free_reason === "audience" ? `（${t("confirm.shipping_member_free")}）` : ""}
+            </td>
             <td>{yen(cf.shipping_jpy)}</td>
           </tr>
           {cf.fee_jpy > 0 ? (

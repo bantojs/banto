@@ -2,6 +2,7 @@
  * ストアフロントのデータ取得（anon キー、RLS により published のものだけ見える）。
  * ショップ行と商品一覧は CacheAdapter で短時間キャッシュする（在庫は常に最新を読む）。
  */
+import { publicShipping } from "../commerce/shipping";
 import { searchQueryForDb } from "./search-words";
 import { LIST_FILTERS_MIGRATION, LIST_OPTIONS_MIGRATION } from "./list-filter";
 import type { CareView } from "../care-labels/care";
@@ -99,6 +100,8 @@ export function publicShopSettings(settings: Record<string, unknown> | null | un
   const src = isObject(settings) ? settings : {};
   const out: Record<string, unknown> = {};
   for (const k of PUBLIC_SETTINGS_KEYS) if (k in src) out[k] = src[k];
+  // 会員の条件ごとの送料無料（0171）は名前を付けた決まりの名前と金額だけ（0171 の banto_public_shipping と同じ）
+  if ("shipping" in src) out["shipping"] = publicShipping(src["shipping"]);
   // 非公開の独自項目は定義（表示名）も見せない（0055 の banto_shop_public_settings と同じ）
   if (Array.isArray(src["product_fields"])) out["product_fields"] = src["product_fields"].filter((f) => isObject(f) && f["public"] !== false);
   // relay_ips（中継元の素の IP）は公開しない（0034）。Worker が service_role で読む

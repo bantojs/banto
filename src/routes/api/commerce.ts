@@ -1,5 +1,5 @@
 import { deliveryOptions } from "../../modules/delivery-time";
-import { withApiMember } from "../audience-render";
+import { memberFreeOverForCart, withApiMember } from "../audience-render";
 import { Hono } from "hono";
 import type { AppEnv } from "../../app";
 import type { PublicShop, StorefrontData } from "../../storefront/data";
@@ -7,7 +7,7 @@ import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, nor
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
 import { anyProvider, choiceAvailable, komojuTypesOf, parsePaymentChoice, type PaymentSetup, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
-import { couponSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor } from "../payment-deps";
 import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
 import { clientIpFor, publicBaseUrl, publicJsonBody, publicShop, type Ctx } from "../common";
@@ -38,6 +38,8 @@ interface Scope {
   member: ApiMember | null;
   /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定 × 0050） */
   consent: boolean;
+  /** 会員の条件ごとの送料無料の金額（0171）を DB に聞く関数。ゲスト・決まりの無いショップでは無し */
+  memberFreeOver?: () => Promise<number | null>;
 }
 
 async function scope(c: Ctx): Promise<Scope | Response> {
@@ -50,7 +52,8 @@ async function scope(c: Ctx): Promise<Scope | Response> {
   // トークンが付いているのに確かめられない: 連携側はトークンを更新して呼び直す（黙ってゲスト扱いにすると、会員の値引きが消えて見える）
   if (!m.ok) return c.json({ error: "invalid_member_token" }, 401);
   // 会員限定の商品（0098）: 会員トークンの会員はカートの値付けも会員の読み取りの経路で（買えるかは DB が判定）
-  return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop) };
+  const memberFreeOver = memberFreeOverSource(c, shop, m.member);
+  return { sf: withApiMember(c, sf, shop, m.member), shop, secret, base: publicBaseUrl(c), coupons: couponSource(c, shop), member: m.member, consent: consentCollected(shop), ...(memberFreeOver ? { memberFreeOver } : {}) };
 }
 
 /** JSON の本文（上限は公開 API 共通。超えたら 413）。形が違えば null */
@@ -65,9 +68,10 @@ async function openCartToken(secret: string, token: unknown): Promise<Cart | nul
 }
 
 async function cartView(c: Ctx, s: Scope, cart: Cart) {
-  const [priced, setup] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config)]);
+  const [priced, setup, memberFreeOver] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config), memberFreeOverForCart(c, s.shop, s.member)]);
   const token = await sealCart(s.secret, { ...priced.cart, ...(cart.coupons ? { coupons: cart.coupons } : {}) });
-  const shipping = shippingSummary(s.shop);
+  // 送料無料までの目安（0171: 会員トークンなら会員の条件の金額も。表示だけ、送料は quote で決まる）
+  const shipping = shippingSummary(s.shop, memberFreeOver);
   // 購入手続きに進める行（店頭のみの行を外す、0149）で、在庫不足と「進めるか」を決める（同梱テーマのカート・startCheckout と同じ）
   const buyable = checkoutPart(priced).priced;
   const short = buyable.lines.some((l) => l.short);
@@ -110,8 +114,13 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
     shipping: {
       summary: shipping.summary,
       free_over_jpy: shipping.freeOver,
-      remaining_for_free_jpy: shipping.freeOver === null ? null : Math.max(0, shipping.freeOver - priced.subtotal),
+      // 見る人の送料無料の金額（0171: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ）と、あといくら
+      viewer_free_over_jpy: shipping.viewerFreeOver,
+      member_free_applies: shipping.viewerFreeMember,
+      remaining_for_free_jpy: shipping.viewerFreeOver === null ? null : Math.max(0, shipping.viewerFreeOver - priced.subtotal),
       by_prefecture: shipping.table,
+      // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは quote の confirmation.shipping_free_reason
+      member_free: shipping.memberFree.map((m) => ({ label: m.label, free_over_jpy: m.freeOver })),
     },
     payments: setup.options,
     /** 配送日時の選択肢（同梱モジュール delivery_time が OFF なら null）。チェックアウトの配送先の delivery_date / delivery_slot に value を渡す */
@@ -276,5 +285,5 @@ commerceApi.get("/shops/:shop/checkout/status", async (c: Ctx) => {
 });
 
 function quoteContext(s: Scope, setup: PaymentSetup): QuoteContext {
-  return { sf: s.sf, shop: s.shop, secret: s.secret, baseUrl: s.base, coupons: s.coupons, member: s.member, consent: s.consent, komojuTypes: komojuTypesOf(setup) };
+  return { sf: s.sf, shop: s.shop, secret: s.secret, baseUrl: s.base, coupons: s.coupons, member: s.member, consent: s.consent, komojuTypes: komojuTypesOf(setup), ...(s.memberFreeOver ? { memberFreeOver: s.memberFreeOver } : {}) };
 }

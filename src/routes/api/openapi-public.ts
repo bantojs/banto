@@ -37,7 +37,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       coupons: { type: ["object", "null"], description: "同梱モジュール coupons が OFF なら null。applied・rejected・discount_jpy・subtotal_after_discount_jpy" },
       tax_rate: int,
       tax_included: bool,
-      shipping: obj({ summary: str, free_over_jpy: nInt, remaining_for_free_jpy: nInt, by_prefecture: { type: ["object", "null"] } }),
+      shipping: obj({ summary: str, free_over_jpy: nInt, viewer_free_over_jpy: { ...nInt, description: "見る人の送料無料の金額（0171）: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ。表示の目安（送料は quote で決まる）" }, member_free_applies: { type: "boolean", description: "viewer_free_over_jpy が会員特典の金額か（0171）" }, remaining_for_free_jpy: { ...nInt, description: "viewer_free_over_jpy まであといくら" }, by_prefecture: { type: ["object", "null"] }, member_free: { type: "array", description: "会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ: [{ label, free_over_jpy }]" } }),
       payments: obj({ stripe: bool, komoju: bool, amazon_pay: bool, cod: { ...bool, description: "代金引換（同梱モジュール cod）。金額・会員だけの判定は quote で" } }),
       delivery: { type: ["object", "null"], description: "配送日時の選択肢（同梱モジュール delivery_time）。dates[].value・slots[].value を配送先の delivery_date / delivery_slot に" },
       can_checkout: bool,
@@ -56,7 +56,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
     },
     ["customer_name", "customer_email", "phone", "postal_code", "state", "city", "line1"],
   );
-  const quoted = obj({ quote: { ...str, description: "購入者に見せた内容の署名。POST /checkout にそのまま渡す（1 回限り）" }, expires_at: str, confirmation: any("最終確認画面に表示する内容（特商法）。申込みボタンの直前に全部表示する。項目は docs/headless.md「2. 最終確認画面を表示する」") }, ["quote", "expires_at", "confirmation"]);
+  const quoted = obj({ quote: { ...str, description: "購入者に見せた内容の署名。POST /checkout にそのまま渡す（1 回限り）" }, expires_at: str, confirmation: any("最終確認画面に表示する内容（特商法）。申込みボタンの直前に全部表示する。項目は docs/headless.md「2. 最終確認画面を表示する」。shipping_free_reason（0171）: audience = 会員の条件による送料無料（会員特典）、threshold = ショップ全体の金額による送料無料、null = 送料がかかる（もともと 0 円を含む）") }, ["quote", "expires_at", "confirmation"]);
   const tokens = obj({ access_token: { ...str, description: "bm1. で始まる（15 分）。Authorization: Bearer に付ける" }, refresh_token: { ...str, description: "30 日。1 回使うごとに新しいものに置き換わる（使い回すとその端末のセッションが止まる）" }, expires_in: int }, ["access_token", "refresh_token", "expires_in"]);
   const loggedIn = { allOf: [tokens, obj({ member: obj({ id: str, email: str, created: bool }) })] };
   const store = any("実店舗。id・name・住所・hours（曜日ごと）・special_days・today・visit_dates（来店日を選ぶとき）など");
