@@ -48,6 +48,25 @@ Claude や ChatGPT に、導入の付き添いをさせる方法です。AI は�
 
 ## コマンドが使える AI（Claude Code など）に任せる場合
 
-リポジトリの `.claude/skills/install/SKILL.md` に、wrangler と Supabase CLI で導入する手順があります。
-AI に渡すもの: Cloudflare の API トークン（Workers Scripts と R2 の編集権限）、Supabase の接続文字列、各キー。
-渡したトークンは導入後に Cloudflare / Supabase の画面で失効してください。
+リポジトリの `.claude/skills/install/SKILL.md` に、wrangler で導入する手順があります。この場合も、**秘密の値は AI に渡しません**。
+
+AI に渡すもの（これだけ）:
+
+- Cloudflare の API トークン。権限は **Workers Scripts:Edit・Workers R2 Storage:Edit・Account Settings:Read** の 3 つだけにし、
+  作るときに **TTL（有効期間）の終了日を今日か明日** にします（Cloudflare の My Profile → API Tokens → Create Token）。
+- Supabase の Project URL と Publishable key（`sb_publishable_…`）。どちらも公開してよい値です。
+
+AI に渡さないもの: Supabase の Secret key（`sb_secret_…`）、データベースの接続文字列、Supabase のアクセストークン（`sbp_…`）、
+`SESSION_SECRET`、Stripe などの決済の秘密。これらは AI が示す場所に **あなたが直接** 入れます。
+
+- Secret（`SUPABASE_SERVICE_ROLE_KEY`・`SESSION_SECRET`・`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`）は、Cloudflare の
+  **Workers & Pages → banto → 設定 → 変数とシークレット** で追加するか、あなた自身のターミナル（AI が動いているものとは別）で
+  `npx wrangler secret put <名前>` を打って貼ります（[setup.md の手順 3](setup.md#3-cloudflare-の画面で値を貼る)）。
+- マイグレーションは、セットアップ画面（`/admin/setup`）に Supabase のアクセストークンを貼って当てます（[setup.md の手順 4](setup.md#4-セットアップ画面)）。
+  AI は接続文字列を使いません。
+
+導入が終わったら、**必ず** 次を行ってください。
+
+1. Cloudflare の API トークンを削除する（My Profile → API Tokens）。
+2. マイグレーションに使った Supabase のアクセストークンを削除する（Account preferences → Access Tokens）。
+3. 秘密の値をチャットに貼ってしまった場合は、その値を作り直す（Supabase の Secret key は Supabase の画面で、Stripe のキーは Stripe の画面で）。
