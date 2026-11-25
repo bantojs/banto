@@ -1943,6 +1943,8 @@ export const ja = {
   "linemsg.event.order.shipped": "発送",
   "linemsg.event.tryon.requested": "お店で試着の受付",
   "linemsg.event.tryon.updated": "お店で試着の状態",
+  "linemsg.test_ok_env": "送りました（このショップのトークンが無いので、デプロイの変数 LINE_CHANNEL_ACCESS_TOKEN のチャネルから送りました）。LINE で届いた文を確かめてください。",
+  "linemsg.test_needs_settings": "テスト送信は、ショップの設定の項目も持つ人が使えます（送る文面がショップの設定のお知らせの文面のため）。",
   "linemsg.title": "LINE 公式アカウント",
   "linemsg.link_hint": "（LINE 通知・LINE で購入者に知らせるプラグインが使うチャネルアクセストークンと、外部プラグインからの宣伝のメッセージの月の上限）",
   "linemsg.card_link": "LINE 公式アカウントの設定（チャネルアクセストークン・宣伝のメッセージの月の上限）",

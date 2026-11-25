@@ -220,5 +220,55 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     // 「LINE 通知」の送り先がテスト送信の宛先の初期値
     expect(page).toContain(`value="${to}"`);
   });
+
+  it("管理画面のテスト送信: settings の無い人は使えない・LINE の応答ごとの知らせ・開けないトークン・デプロイの変数のトークン", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const org = String(sb.tables.shops.find((x) => x["id"] === shop.id)!["org_id"]);
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const to = `U${"b".repeat(32)}`;
+    let status = 200;
+    let calls = 0;
+    externalHosts.set("https://api.line.me/", () => {
+      calls++;
+      return new Response("{}", { status });
+    });
+    try {
+      // デプロイの変数のトークン（ショップのトークンは無い）: 送れて、そのことを知らせる
+      const appEnv = appWith(sb, { LINE_CHANNEL_ACCESS_TOKEN: "env-token-1234567890abcdef" });
+      const ownerB = await Browser.loggedIn(appEnv, "owner@example.com", "password-123");
+      expect((await ownerB.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_ok_env");
+      for (const [st, code] of [[403, "test_not_friend"], [429, "test_limit"], [500, "test_failed"]] as const) {
+        status = st;
+        expect((await ownerB.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain(`flash=${code}`);
+      }
+      status = 200;
+      // integrations だけの人: 画面に欄が出ず、送れない（404）。integrations も無い人も 404
+      const app = appWith(sb);
+      const member = async (email: string, perms: string[]) => {
+        const u = sb.addUser(email, "password-123");
+        sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+        sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms });
+        return Browser.loggedIn(app, email, "password-123");
+      };
+      const before = calls;
+      const integ = await member("integ@example.com", ["integrations"]);
+      const page = await (await integ.get(base)).text();
+      expect(page).not.toContain(`action="${base}/test"`);
+      expect((await integ.post(`${base}/test`, { kind: "order_paid", to })).status).toBe(404);
+      const none = await member("none@example.com", ["catalog"]);
+      expect((await none.post(`${base}/test`, { kind: "order_paid", to })).status).toBe(404);
+      expect(calls).toBe(before);
+      // 開けないトークン（別のショップの鍵で閉じた暗号文）
+      sb.tables.shop_secret_boxes.push({ shop_id: shop.id, purpose: "line_messaging", secret_box: await sealSecret("test-session-secret", "other-shop", "line_messaging", "x".repeat(30)), updated_at: new Date().toISOString() });
+      const ownerA = await Browser.loggedIn(app, "owner@example.com", "password-123");
+      expect((await ownerA.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_token_broken");
+      // 決まった知らせ以外の flash は出さない
+      expect(await (await ownerA.get(`${base}?flash=test_prefix`)).text()).not.toContain('class="error">【テスト送信】');
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+  });
 });
 

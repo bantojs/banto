@@ -50,6 +50,9 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
   const recent = buyerEndpoint ? await recentLineDeliveries(c, shop.id, buyerEndpoint, mailEndpoint) : [];
   const kinds = kindsFor(shop.settings);
   const sentTo = c.req.query("to") ?? "";
+  // テスト送信は文面（項目 settings でしか読めない shop_notice_texts）を使うので、settings も持つ人だけ
+  const canTest = can(c.get("shopAccess"), "settings");
+  const testFlash = (TEST_FLASHES as readonly string[]).includes(flash ?? "") ? (flash as TestFlash) : null;
   return c.html(
     <AdminLayout title={`${shop.name} · ${t("linemsg.title")}`} nav crumbs={[{ label: shop.name, href: `/admin/shops/${shop.id}` }, { label: t("plugins.title"), href: `/admin/shops/${shop.id}/plugins` }, { label: t("linemsg.title") }]} shopTabs={{ shop: { id: shop.id, name: shop.name, settings: shop.settings }, access: c.get("shopAccess"), active: "plugins", here: "line-messaging" }}>
       <PageHead title={t("linemsg.title")} />
@@ -94,7 +97,8 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
       <section class="card" id="test">
         <h2>{t("linemsg.test_title")}</h2>
         <p class="muted">{t("linemsg.test_intro")}</p>
-        {flash?.startsWith("test_") ? <p class={flash === "test_ok" ? "notice" : "error"}>{t(`linemsg.${flash}` as MessageKey)}</p> : null}
+        {testFlash ? <p class={testFlash === "test_ok" || testFlash === "test_ok_env" ? "notice" : "error"}>{t(`linemsg.${testFlash}`)}</p> : null}
+        {!canTest ? <p class="muted">{t("linemsg.test_needs_settings")}</p> : (
         <form method="post" action={`${base}/test`}>
           <label for="kind">{t("linemsg.test_kind")}</label>
           <select id="kind" name="kind">
@@ -111,6 +115,7 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
             <button type="submit">{t("linemsg.test_send")}</button>
           </p>
         </form>
+        )}
         <p>
           <a href={`/admin/shops/${shop.id}/notices`}>{t("linemsg.edit_texts")}</a>
         </p>
@@ -201,6 +206,10 @@ lineMessaging.post("/:shopId/line-messaging/limit", requireOwner, async (c: Admi
   return c.redirect(`${base}?flash=limit_saved`);
 });
 
+/** テスト送信の結果（画面に出すのはこの決まった知らせだけ） */
+const TEST_FLASHES = ["test_ok", "test_ok_env", "test_invalid", "test_no_token", "test_token_broken", "test_bad_token", "test_not_friend", "test_limit", "test_failed"] as const;
+type TestFlash = (typeof TEST_FLASHES)[number];
+
 /** LINE の利用者 ID（Messaging API の送り先、U と 32 桁の 16 進） */
 const LINE_USER_ID_RE = /^U[0-9a-f]{32}$/;
 
@@ -239,8 +248,10 @@ async function recentLineDeliveries(c: AdminContext, shopId: string, endpointId:
   const rows = await owner(c).db.from<Row>("hook_deliveries").select("id,event,status,attempts,last_error,created_at,payload", { eq: { shop_id: shopId, endpoint_id: endpointId }, order: "created_at.desc", limit: 50 });
   // メールへの配り直し（0176）: メール通知の配信のうち fallback_of がこの一覧の配信を指すもの
   const fellBack = new Set<string>();
-  if (mailEndpointId && rows.some((r) => r.payload?.["notice_line_only"] === true)) {
-    const mails = await owner(c).db.from<{ payload: Record<string, unknown> | null }>("hook_deliveries").select("payload", { eq: { shop_id: shopId, endpoint_id: mailEndpointId }, order: "created_at.desc", limit: 200 });
+  const oldest = rows.at(-1)?.created_at;
+  if (mailEndpointId && oldest && rows.some((r) => r.payload?.["notice_line_only"] === true)) {
+    // 配り直しは元の配信より後にできる。一覧のいちばん古い配信より後のメール通知の配信だけを見る
+    const mails = await owner(c).db.from<{ payload: Record<string, unknown> | null }>("hook_deliveries").select("payload", { eq: { shop_id: shopId, endpoint_id: mailEndpointId }, where: [{ col: "created_at", op: "gte", value: oldest }], order: "created_at.desc", limit: 500 });
     for (const m of mails) if (typeof m.payload?.["fallback_of"] === "string") fellBack.add(m.payload["fallback_of"]);
   }
   return rows.map((r) => ({
@@ -257,7 +268,7 @@ async function recentLineDeliveries(c: AdminContext, shopId: string, endpointId:
 }
 
 /** テスト送信の結果（LINE の応答 → 画面の知らせ） */
-export function lineTestResult(status: number): "test_ok" | "test_not_friend" | "test_bad_token" | "test_limit" | "test_failed" {
+export function lineTestResult(status: number): TestFlash {
   if (status >= 200 && status < 300) return "test_ok";
   if (status === 400 || status === 403) return "test_not_friend";
   if (status === 401) return "test_bad_token";
@@ -267,7 +278,8 @@ export function lineTestResult(status: number): "test_ok" | "test_not_friend" | 
 
 lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "integrations");
-  if (!shop) return c.text(t("shop.not_found"), 404);
+  // 文面（項目 settings でしか読めない）を使うので、settings も要る
+  if (!shop || !can(c.get("shopAccess"), "settings")) return c.text(t("shop.not_found"), 404);
   const base = `/admin/shops/${shop.id}/line-messaging`;
   const f = await formFields(c);
   const to = (f.to ?? "").trim();
@@ -281,7 +293,10 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   // 権限は上の loadShop（項目 integrations）で確かめた。トークンの暗号文は運営者には読ませないので service_role で読み、Worker で開く（connect.tsx と同じ）
   const privileged = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch });
   let token: string | null;
+  let fromShop: boolean;
   try {
+    // ショップのトークンが無ければ、プラグインと同じくデプロイの変数（LINE_CHANNEL_ACCESS_TOKEN）。どちらで送ったかを知らせる
+    fromShop = Boolean(await privileged.shopSecret(shop.id, LINE_SECRET_PURPOSE));
     token = await lineTokenFor({ db: privileged, secret: c.get("sessionSecret") ?? null, config: cfg }, shop.id);
   } catch {
     return back("test_token_broken");
@@ -294,9 +309,10 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
     const res = await c.get("deps").fetch(LINE_PUSH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": crypto.randomUUID() },
-      body: JSON.stringify({ to, messages: [{ type: "text", text: text.slice(0, 5000) }] }),
+      body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
     });
-    return back(lineTestResult(res.status));
+    const result = lineTestResult(res.status);
+    return back(result === "test_ok" && !fromShop ? "test_ok_env" : result);
   } catch {
     return back("test_failed");
   }

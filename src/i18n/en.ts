@@ -1936,6 +1936,8 @@ export const en: Record<MessageKey, string> = {
   "linemsg.event.order.shipped": "Shipped",
   "linemsg.event.tryon.requested": "Try-on request received",
   "linemsg.event.tryon.updated": "Try-on status",
+  "linemsg.test_ok_env": "Sent (this shop has no token, so it was sent through the deployment's LINE_CHANNEL_ACCESS_TOKEN channel). Check the message in LINE.",
+  "linemsg.test_needs_settings": "Test send needs the shop settings permission too (the text comes from the shop's notification texts).",
   "linemsg.title": "LINE Official Account",
   "linemsg.link_hint": "(the channel access token used by the LINE notification plugins, and the monthly limit for promotional messages from external plugins)",
   "linemsg.card_link": "LINE Official Account settings (channel access token, monthly limit for promotional messages)",
