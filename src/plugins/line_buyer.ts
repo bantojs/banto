@@ -3,7 +3,7 @@
  * LINE でログインした会員の注文だけ、ショップの LINE 公式アカウント（Messaging API）から「受け付けました」「発送しました」を送る。
  * 送り先は会員の LINE の利用者 ID（LINE ログインのチャネルと Messaging API のチャネルが同じプロバイダーのとき同じ値）。
  * 公式アカウントを友だちに追加していない人には届かない（LINE ログインの画面で友だち追加を促せる）。
- * 文に載せるのは注文番号・合計・ショップ名だけ（住所・氏名は載せない）。
+ * 文に載せるのは注文番号・合計・ショップ名と、注文の状況・配送状況のリンク（0179）だけ（住所・氏名は載せない）。
  * お客様が「LINE だけ」を選んでいる知らせ（0176、payload の notice_line_only）で届けられなかったら（友だちでない・ブロック・
  * トークンが無い・開けない・効かない・結びつきが外れた）、同じ知らせを「メール通知」にだけ配り直す（notice_line_fallback）。
  * 再送の末の失敗は DB のトリガーが配り直す。何も届かない状態を作らない
@@ -13,13 +13,33 @@ import { LINE_PUSH_URL } from "./line_notify";
 import { lineToken } from "./line_token";
 import { noticeLine, type NoticeTextRow } from "../notices/templates";
 import { tryonNoticeKind } from "../modules/store-tryon/mail";
+import { orderLinkText, trackingText, type OrderLinkParts } from "./email_resend";
 
-/** 注文の知らせ。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面 */
-export function buyerMessage(event: string, r: { number: number; total_jpy: number; shop_name: string }, texts?: readonly NoticeTextRow[] | null): string | null {
+/** 注文の LINE の知らせの材料（order_line_recipient）。tracking・shop は 0179 から */
+export interface OrderLineFacts {
+  number: number;
+  total_jpy: number;
+  shop_name: string;
+  tracking?: unknown;
+  shop?: OrderLinkParts["shop"] | null;
+}
+
+/**
+ * 注文の知らせ。ショップが直した文面（0154）があればそれ、無い・今の決まりに合わなければ既定の文面。
+ * リンク（0179）: {{order_link}} はご注文の状況（LINE の知らせは会員の注文だけなので会員の印つき）、{{tracking}} は発送のお問い合わせ番号と配送状況。
+ * 組めなければ空（その行ごと消える）。氏名・住所は載せない
+ */
+export function buyerMessage(event: string, r: OrderLineFacts, texts?: readonly NoticeTextRow[] | null, publicBaseUrl?: string): string | null {
   // order.created は未入金の注文（代金引換、0157）の受付。呼び出し側が payment_status で選ぶ
   const kind = event === "order.paid" || event === "order.created" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
   if (!kind) return null;
-  return noticeLine(kind, texts, { shop_name: r.shop_name, number: String(r.number), total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}` });
+  return noticeLine(kind, texts, {
+    shop_name: r.shop_name,
+    number: String(r.number),
+    total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}`,
+    tracking: kind === "order_shipped" ? trackingText(r.tracking) : "",
+    order_link: r.shop ? orderLinkText({ number: r.number, member: true, shop: r.shop }, publicBaseUrl) : "",
+  });
 }
 
 /**
@@ -119,6 +139,6 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   if (!r) return NO_RECIPIENT;
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
   const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
-  const text = buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind));
+  const text = buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind), ctx.config.get("PUBLIC_BASE_URL"));
   return text ? { to: r.line_user_id, text } : null;
 }

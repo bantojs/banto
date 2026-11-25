@@ -8,6 +8,8 @@ import {
   NOTICE_KINDS,
   NOTICE_SUBJECT_MAX,
   NOTICE_TEXTS_MIGRATION,
+  LINE_NOTICE_LINKS_MIGRATION,
+  defaultLineText,
   checkNoticeText,
   fillNotice,
   noticeBodyMax,
@@ -93,17 +95,19 @@ interface Draft {
 async function renderPage(c: AdminContext, shop: { id: string; name: string; settings: Record<string, unknown> | null }, draft: Draft | null, status: 200 | 400 = 200) {
   const db = owner(c).db;
   const enabled = await migrated({ db, cache: c.get("adapters").cache }, NOTICE_TEXTS_MIGRATION);
+  // LINE の注文の知らせのリンク（0179）。当てるまで差し込みの一覧・既定の文面に出さない
+  const lineLinks = enabled && (await migrated({ db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION));
   const rows = enabled ? await db.from<NoticeTextRow>("shop_notice_texts").select("kind,channel,subject,body", { eq: { shop_id: shop.id } }) : [];
   const stale = staleNoticeTexts(rows);
   const flash = c.req.query("flash");
   const base = `/admin/shops/${shop.id}/notices`;
   const section = (kind: NoticeKind, channel: NoticeChannel) => {
-    const spec = noticeSpec(kind, channel);
+    const spec = noticeSpec(kind, channel, lineLinks);
     const row = rows.find((r) => r.kind === kind && r.channel === channel);
     const def = DEFAULT_NOTICE_TEXTS[kind];
     const mine = draft && draft.kind === kind && draft.channel === channel ? draft : null;
     const subject = mine ? (mine.subject ?? "") : channel === "mail" ? (row?.subject ?? def.mail.subject) : "";
-    const body = mine ? mine.body : (row?.body ?? (channel === "mail" ? def.mail.body : def.line));
+    const body = mine ? mine.body : (row?.body ?? (channel === "mail" ? def.mail.body : defaultLineText(kind, lineLinks)));
     const preview = fillNotice(body, sampleValues(kind, shop.name));
     const id = `${kind}-${channel}`;
     return (
@@ -197,7 +201,8 @@ notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const subject = channel === "mail" ? (f.subject ?? "") : null;
   const body = f.body ?? "";
   // 画面でも同じ決まりで確かめて、書いた文を残したまま理由を出す（DB も同じ決まりで断る）
-  const err = checkNoticeText(kind, channel, subject, body);
+  const lineLinks = await migrated({ db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION);
+  const err = checkNoticeText(kind, channel, subject, body, lineLinks);
   if (err) return renderPage(c, shop, { kind, channel, subject, body, error: err }, 400);
   try {
     await db.rpc("notice_text_set", { p_shop_id: shop.id, p_kind: kind, p_channel: channel, p_subject: subject, p_body: body });

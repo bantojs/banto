@@ -9,7 +9,7 @@ import type { PluginContext } from "../src/plugins/types";
 import type { PrivilegedDb } from "../src/db/privileged";
 import type { ConfigAdapter } from "../src/adapters/types";
 import { buildTryonMails, tryonNoticeKind } from "../src/modules/store-tryon/mail";
-import { DEFAULT_NOTICE_TEXTS, NOTICE_KINDS, NOTICE_TEXTS_MIGRATION, checkNoticeText, fillNotice, noticeMail, noticeTextErrorOf, staleNoticeTexts } from "../src/notices/templates";
+import { DEFAULT_NOTICE_TEXTS, NOTICE_KINDS, NOTICE_TEXTS_MIGRATION, checkNoticeText, defaultLineText, fillNotice, noticeMail, noticeTextErrorOf, staleNoticeTexts } from "../src/notices/templates";
 
 /** お知らせの文面（0154）。DB の決まり・権限は test/db/notice-texts.test.ts */
 
@@ -87,11 +87,37 @@ describe("注文のメールと LINE", () => {
     expect(noticeMail("order_shipped", rows, { number: "1", shop_name: "S" }).subject).toBe("【S】商品を発送しました（注文番号 1）");
   });
 
-  it("LINE: 既定は今までの文、直した文面は合計・番号を差し込む", () => {
+  it("LINE: 既定の文（リンクを組めなければ行ごと消える）、直した文面は合計・番号を差し込む", () => {
     const r = { number: 1001, total_jpy: 3300, shop_name: "マイショップ" };
     expect(buyerMessage("order.paid", r)).toBe("【マイショップ】ご注文ありがとうございます。\n注文番号 1001\n合計 ¥3,300\n発送の準備ができしだい、お知らせします。");
     expect(buyerMessage("order.paid", r, [{ kind: "order_paid", channel: "line", subject: null, body: "{{shop_name}}: 注文 {{number}}（{{total}}）を承りました" }])).toBe("マイショップ: 注文 1001（¥3,300）を承りました");
     expect(buyerMessage("order.cancelled", r)).toBeNull();
+  });
+
+  it("LINE のリンク（0179）: ご注文の状況（会員の印つき）と、発送のお問い合わせ番号・配送状況。氏名・住所は差し込めない", () => {
+    const shop = { slug: "my-shop", domain: null, order_page_url: null, return_origins: [] };
+    const r = { number: 1001, total_jpy: 3300, shop_name: "マイショップ", shop, tracking: { carrier: "yamato", number: "123456789012" } };
+    expect(buyerMessage("order.paid", r, null, "https://banto.example")).toBe(
+      "【マイショップ】ご注文ありがとうございます。\n注文番号 1001\n合計 ¥3,300\n発送の準備ができしだい、お知らせします。\n\nご注文の状況はこちらで確認できます: https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1",
+    );
+    const shipped = buyerMessage("order.shipped", r, null, "https://banto.example")!;
+    expect(shipped).toContain("\n\nお問い合わせ番号: ヤマト運輸 123456789012\n配送状況: https://");
+    expect(shipped).toContain("\n\nご注文の状況はこちらで確認できます: https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1");
+    // 番号がまだ無い発送・リンクを組めない（公開の URL もドメインも無い）ときは、その行ごと消える
+    expect(buyerMessage("order.shipped", { ...r, tracking: null })).toBe("【マイショップ】ご注文の商品を発送しました。\n注文番号 1001\n到着までしばらくお待ちください。");
+    // 注文照会のページを連携サイトに向けていればそこへ
+    const headless = { ...shop, order_page_url: "https://shop.example/order", return_origins: ["https://shop.example"] };
+    expect(buyerMessage("order.paid", { ...r, shop: headless })).toContain("https://shop.example/order?banto_order=1001&banto_member=1");
+    // 直した文面: 受付で {{order_link}}、発送で {{tracking}}（1 回だけ）。受付で {{tracking}} は使えない
+    expect(checkNoticeText("order_paid", "line", null, "{{number}} {{order_link}}")).toBeNull();
+    expect(checkNoticeText("order_shipped", "line", null, "{{number}} {{tracking}} {{order_link}}")).toBeNull();
+    expect(checkNoticeText("order_paid", "line", null, "{{number}} {{tracking}}")).toEqual({ code: "body_unknown_tag", tag: "tracking" });
+    expect(checkNoticeText("order_shipped", "line", null, "{{number}} {{tracking}} {{tracking}}")).toEqual({ code: "body_repeated_tag", tag: "tracking" });
+    expect(checkNoticeText("order_shipped", "line", null, "{{number}} {{order_details}}")).toEqual({ code: "body_unknown_tag", tag: "order_details" });
+    // 0179 を当てる前の DB: 管理画面はリンクの差し込みを出さず、既定の文面からもリンクの行を外す
+    expect(checkNoticeText("order_paid", "line", null, "{{number}} {{order_link}}", false)).toEqual({ code: "body_unknown_tag", tag: "order_link" });
+    expect(defaultLineText("order_shipped", false)).toBe("【{{shop_name}}】ご注文の商品を発送しました。\n注文番号 {{number}}\n到着までしばらくお待ちください。");
+    expect(checkNoticeText("order_shipped", "line", null, defaultLineText("order_shipped", false), false)).toBeNull();
   });
 
   it("送るときの読み取り: 0154 を当てる前の DB は読まない（[]）", async () => {

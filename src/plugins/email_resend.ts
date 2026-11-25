@@ -55,17 +55,40 @@ function addressLines(a: Record<string, unknown> | null): string {
     .join("\n");
 }
 
+/** 注文のリンクの材料（注文のメールの order_contact と、LINE の order_line_recipient（0179）が同じ形で返す） */
+export interface OrderLinkParts {
+  number: number;
+  member?: boolean;
+  shop: { slug: string; domain?: string | null; order_page_url?: string | null; return_origins?: string[] | null };
+}
+
 /**
  * 「ご注文の状況」のリンク（0066）。注文照会のページを連携サイトに向けていればそこへ、無ければ Banto の注文照会の画面へ。
- * どちらも ?banto_order=<番号>（会員の注文なら &banto_member=1）を付ける。秘密は載せない（会員はログイン、ゲストはメールアドレスで開く）
+ * どちらも ?banto_order=<番号>（会員の注文なら &banto_member=1）を付ける。秘密は載せない（会員はログイン、ゲストはメールアドレスで開く）。
+ * LINE の注文の知らせ（0179）も使う
  */
-function orderPageLink(c: Contact, publicBaseUrl: string | undefined): string | null {
+export function orderPageLink(c: OrderLinkParts, publicBaseUrl: string | undefined): string | null {
   const page = c.shop.order_page_url;
   // 保存のときに確かめているが、許可リストから外れたサイトには向けない
   if (typeof page === "string" && page.startsWith("https://") && URL.canParse(page) && (c.shop.return_origins ?? []).includes(new URL(page).origin)) return orderLink(page, c.number, c.member === true);
   if (!publicBaseUrl && !c.shop.domain) return null;
   const banto = `${shopHome(publicBaseUrl ?? "", c.shop)}/orders/lookup`;
   return URL.canParse(banto) ? orderLink(banto, c.number, c.member === true) : banto;
+}
+
+/** 差し込みの {{tracking}}: お問い合わせ番号と運送会社の配送状況のリンク（番号が無ければ空）。メールと LINE（0179）で同じ */
+export function trackingText(tracking: unknown): string {
+  const tr = trackingOf(tracking);
+  if (!tr) return "";
+  const url = trackingUrl(tr.carrier, tr.number);
+  const carrier = CARRIER_NAMES[tr.carrier] ?? "";
+  return `お問い合わせ番号: ${carrier}${carrier ? " " : ""}${tr.number}${url ? `\n配送状況: ${url}` : ""}`;
+}
+
+/** 差し込みの {{order_link}}（リンクを組めなければ空）。メールと LINE（0179）で同じ */
+export function orderLinkText(c: OrderLinkParts, publicBaseUrl: string | undefined): string {
+  const lookup = orderPageLink(c, publicBaseUrl);
+  return lookup ? `ご注文の状況はこちらで確認できます: ${lookup}` : "";
 }
 
 /** 注文のメールの差し込みの値（src/notices/templates.ts。かたまりは前後の改行なし） */
@@ -79,23 +102,19 @@ export function orderMailValues(kind: "paid" | "shipped", c: Contact, publicBase
   // 代金引換（0157）: 支払いは配達のとき
   const codLine = c.payment_provider === "cod" ? `\nお支払い方法: 代金引換（商品のお届けのときに ${yen(c.total_jpy)} をお支払いください）\n` : "";
   const discountLines = discount > 0 ? `${(c.discounts ?? []).map((d) => `値引き（${d.code}）: -${yen(d.amount_jpy)}`).join("\n") || `値引き: -${yen(discount)}`}\n` : "";
-  const lookup = orderPageLink(c, publicBaseUrl);
   // 税率ごとの対象額と消費税額（計算は src/commerce/tax.ts だけ）
   const tax = orderTaxBreakdown(c, c.shop.tax ?? {})
     .map((g) => (g.rate > 0 ? `（${g.rate}%対象 ${yen(g.amount_jpy)}　内消費税 ${yen(g.tax_jpy)}）` : `（非課税・不課税 ${yen(g.amount_jpy)}）`))
     .join("\n");
-  const tr = kind === "shipped" ? trackingOf(c.tracking) : null;
-  const trUrl = tr ? trackingUrl(tr.carrier, tr.number) : null;
-  const carrier = tr ? (CARRIER_NAMES[tr.carrier] ?? "") : "";
   return {
     shop_name: c.shop.name,
     customer_name: c.customer_name ?? "お客",
     number: String(c.number),
     total: yen(c.total_jpy),
     order_details: `注文番号: ${c.number}\n\n${lines}\n\n商品合計: ${yen(subtotal)}\n送料: ${yen(c.shipping_jpy)}\n${feeLine}${discountLines}合計（税込）: ${yen(c.total_jpy)}\n${tax ? `${tax}\n` : ""}${codLine}\nお届け先:\n${addressLines(c.shipping_address)}`.replace(/\s+$/, ""),
-    tracking: tr ? `お問い合わせ番号: ${carrier}${carrier ? " " : ""}${tr.number}${trUrl ? `\n配送状況: ${trUrl}` : ""}` : "",
+    tracking: kind === "shipped" ? trackingText(c.tracking) : "",
     return_policy: c.shop.return_policy ? `返品について:\n${c.shop.return_policy}` : "",
-    order_link: lookup ? `ご注文の状況はこちらで確認できます: ${lookup}` : "",
+    order_link: orderLinkText(c, publicBaseUrl),
     contact: c.shop.contact_email ? `お問い合わせ: ${c.shop.contact_email}` : "",
   };
 }
