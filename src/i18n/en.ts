@@ -1944,6 +1944,8 @@ export const en: Record<MessageKey, string> = {
   "linemsg.test_member_not_found": "No member with that email address, or the member is not linked to LINE (only members who logged in with LINE can receive it).",
   "linemsg.test_member_needs_customers": "Sending to a member's email address also needs the customers permission.",
   "audit.action.line.test_recipient": "Choose a member as a LINE test recipient",
+  "linemsg.member_test_title": "Send a LINE test to this member",
+  "linemsg.member_test_intro": "Pick a notification type to send one message to this member's LINE, using the current text filled with sample values and starting with [Test] (works for members without an email address; the LINE user ID is never shown). Use it for test members; pressing it on a real customer sends to them. Choosing a member as the recipient is recorded in the audit log.",
   "linemsg.title": "LINE Official Account",
   "linemsg.link_hint": "(the channel access token used by the LINE notification plugins, and the monthly limit for promotional messages from external plugins)",
   "linemsg.card_link": "LINE Official Account settings (channel access token, monthly limit for promotional messages)",

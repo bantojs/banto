@@ -208,7 +208,7 @@ Node 向けの実行ファイルは esbuild で `dist/node/server.js` に束ね�
 - Cron は最後に `record_heartbeat('cron')` を書き、`/health` が `heartbeat_age_seconds`（anon 可、秒数だけ返す）で 15 分超を `stale`（503）にする（docs/monitoring.md）。ジョブは 1 つが落ちても残りを走らせ（`src/adapters/scheduler.ts` の `runScheduledJobs`、Workers と Node で共通）、ハートビートはその回のジョブがすべて成功したときだけ（`afterAllSucceeded`）。Workers の通信の上限（Free 50・Paid 1,000、`adapters.cronSubrequestLimits`）は Cron のジョブの fetch を数えて守り、hooks の配信は残りから取り出す数を決める（`src/jobs/budget.ts`、上限に当たったら isolate で覚えて絞り、ダッシュボードに知らせる。0160 で取り出したまま終わらなかった配信は回数で `failed`）。
 - 既定はゲスト購入のみ。会員機能は運営者がオプトイン。
 - 管理画面に顧客単位の削除機能を用意する。
-- **監査ログ**（`0051_audit_log`、メンテナの決定 2026-10-23）: 会員のメールの変更と削除・注文の状態・組織のメンバーと項目・AI 用トークン・ショップのドメイン / Stripe / 公開・連携の送信先の変更と削除・ブログの削除・ひな形の割り当て・実店舗の独自項目の定義（0129）を **DB のトリガーだけ**が `audit_log` に書く（Worker からは insert しない。LINE のテスト送信の宛先に会員を選んだこと（0177）は、書き込みの無い操作なので service_role の `line_test_recipient` の中で書く）。誰がは `banto_audit_actor()`（`api_require` の `banto.actor` → service_role の `X-Banto-Actor` ヘッダ → `auth.uid()` → system）。**ログに個人情報を入れない**（メールはハッシュの先頭 16 桁）。読めるのは組織の owner / admin、画面は `/admin/org/audit`、保持は `prune_audit_log`（`AUDIT_LOG_KEEP_DAYS`、既定 365）。
+- **監査ログ**（`0051_audit_log`、メンテナの決定 2026-10-23）: 会員のメールの変更と削除・注文の状態・組織のメンバーと項目・AI 用トークン・ショップのドメイン / Stripe / 公開・連携の送信先の変更と削除・ブログの削除・ひな形の割り当て・実店舗の独自項目の定義（0129）を **DB のトリガーだけ**が `audit_log` に書く（Worker からは insert しない。LINE のテスト送信の宛先に会員を選んだこと（0177・0178）は、書き込みの無い操作なので service_role の `line_test_recipient`・`line_test_recipient_member` の中で書く）。誰がは `banto_audit_actor()`（`api_require` の `banto.actor` → service_role の `X-Banto-Actor` ヘッダ → `auth.uid()` → system）。**ログに個人情報を入れない**（メールはハッシュの先頭 16 桁）。読めるのは組織の owner / admin、画面は `/admin/org/audit`、保持は `prune_audit_log`（`AUDIT_LOG_KEEP_DAYS`、既定 365）。
 
 ---
 
