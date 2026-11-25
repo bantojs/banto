@@ -146,6 +146,11 @@ describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => 
     expect(got).toMatchObject({ order_id: memberOrder, notice_line_only: true });
     expect(got).not.toHaveProperty("line_fallback");
     expect(got).not.toHaveProperty("fallback_of");
+    // ゲストの注文に偽の印を付けても外れる（お客様あてのメールを止めさせない）
+    await asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'order.shipped', $2)", [f.shopId, { order_id: guestOrder, notice_line_only: true }]));
+    const guest = (await getPool().query<{ payload: Record<string, unknown> }>(
+      "select payload from hook_deliveries where shop_id = $1 and event = 'order.shipped' order by created_at desc, id desc limit 1", [f.shopId])).rows[0]!.payload;
+    expect(guest).toEqual({ order_id: guestOrder });
     expect((await mark("order.created", { order_id: memberOrder, payment_status: "paid" }))["notice_line_only"]).toBeUndefined();
     expect(await mark("order.created", { order_id: memberOrder, payment_status: "unpaid" })).toMatchObject({ notice_line_only: true });
   });
@@ -168,6 +173,19 @@ describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => 
     await pool.query("insert into hook_endpoints (shop_id, name, url, events) values ($1, 'メール', $2, '{order.paid}'), ($1, 'LINE', $3, '{order.paid}')", [g.shopId, MAIL_URL, LINE_URL]);
     await svc("select enqueue_hook($1, 'order.paid', $2) as r", [g.shopId, { order_id: o }]);
     expect((await pool.query<{ n: string }>("select count(*) as n from hook_deliveries where shop_id = $1 and payload->>'notice_line_only' = 'true'", [g.shopId])).rows[0]!.n).toBe("2");
+    // 守りそのもの: ショップの行が無いと配り直さない（消すときの連なりの順に頼らずに確かめる）
+    const lineD = (await pool.query<{ id: string }>("select d.id from hook_deliveries d join hook_endpoints e on e.id = d.endpoint_id where d.shop_id = $1 and e.url = $2", [g.shopId, LINE_URL])).rows[0]!.id;
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      await c.query("set session_replication_role = replica");
+      await c.query("delete from shops where id = $1", [g.shopId]);
+      await c.query("set session_replication_role = origin");
+      expect((await c.query<{ n: number }>("select banto_notice_line_fallback($1) as n", [lineD])).rows[0]!.n).toBe(0);
+      await c.query("rollback");
+    } finally {
+      c.release();
+    }
     await pool.query("delete from shops where id = $1", [g.shopId]);
     expect((await pool.query<{ n: string }>("select count(*) as n from hook_deliveries where shop_id = $1", [g.shopId])).rows[0]!.n).toBe("0");
   });

@@ -104,9 +104,9 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
     const r = await ctx.privileged.tryonLineRecipient(id, shop_id);
     if (!r) return NO_RECIPIENT;
     const opts = { extended: data["extended"] === true, reminder: data["reminder"] === true };
-    const kind = r ? tryonNoticeKind(event, r.status, opts) : null;
-    const text = r && kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
-    return r && text ? { to: r.line_user_id, text } : null;
+    const kind = tryonNoticeKind(event, r.status, opts);
+    const text = kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
+    return text ? { to: r.line_user_id, text } : null;
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
@@ -119,6 +119,6 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   if (!r) return NO_RECIPIENT;
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
   const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
-  const text = r ? buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
-  return r && text ? { to: r.line_user_id, text } : null;
+  const text = buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind));
+  return text ? { to: r.line_user_id, text } : null;
 }
