@@ -247,6 +247,7 @@ export const ja = {
   "notice_channel.title": "ご注文のお知らせの受け取り方",
   "customers.notice_line_hint": "お客様が会員ページで選びました。「LINE で購入者に知らせる」が有効で LINE と結びついている間は、注文・お店で試着のお知らせのメールを送りません（運営者への控えは送ります。LINE で届かなければメールで送ります）。",
   "notice_channel.all": "メールと LINE で受け取る",
+  "notice_channel.unavailable": "LINE だけで受け取る設定は、LINE でログインできるようにしてから選べます。",
   "notice_channel.line": "LINE だけで受け取る",
   "notice_channel.note": "LINE だけにしても、LINE で届けられなかったとき（友だち追加を外した・ブロックしたときなど）はメールでお送りします。",
   "shop.marketing_consent": "レジと会員ページに「お得な情報やセールの案内をメールで受け取る」の欄を出す",

@@ -279,6 +279,7 @@ function privatePage(c: Ctx): void {
 
 const ACCOUNT_ERRORS: Record<string, MessageKey> = {
   weak: "member.password_weak",
+  notice_line_unavailable: "notice_channel.unavailable",
   oauth: "member.oauth_failed",
   reauth: "member.reauth_required",
   already_linked: "member.oauth_already_linked",
@@ -806,7 +807,7 @@ members.post("/:shop/account/notice-channel", async (c: Ctx) => {
     return result.r !== "invalid";
   });
   if (!ok) return c.redirect(`${s.shopPath}/account/login`);
-  return c.redirect(result.r === "ok" ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account`);
+  return c.redirect(result.r === "ok" ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account?error=notice_line_unavailable`);
 });
 
 /** 「お得な情報やセールの案内を受け取る」（0050）。本人の行為なので会員ページからだけ付けられる。外すのもここから */

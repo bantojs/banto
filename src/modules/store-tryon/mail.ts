@@ -22,8 +22,6 @@ export interface TryonContact {
   customer_name: string | null;
   customer_phone: string | null;
   note: string | null;
-  /** お客様が「LINE だけ」を選んでいて効いている（0176。当てる前の DB には無い） */
-  notice_line_only?: boolean;
   store: Pick<StoreRow, "name" | "postal_code" | "address" | "phone" | "hours" | "special_days"> & { email: string | null; notify_email: boolean };
   /** storefront は 0069 から（お店の画面を使わないショップは、メールの「お店」のリンクを外のサイトへ） */
   shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; settings?: Record<string, unknown> | null; storefront?: { mode?: string | null; site_url?: string | null } | null; /** 0147。SKU の options の key → 表示名 */ option_names?: unknown };

@@ -38,8 +38,6 @@ interface Contact {
   tracking?: { carrier: string; number: string } | null;
   /** 会員の注文か（0066） */
   member?: boolean;
-  /** お客様が「LINE だけ」を選んでいて効いている（0176。当てる前の DB には無い = メールも送る） */
-  notice_line_only?: boolean;
   /** order_page_url・return_origins は 0066 から（注文照会のページを連携サイトに向けたとき） */
   shop: { name: string; slug: string; domain?: string | null; contact_email: string | null; return_policy: string | null; tax?: Record<string, unknown> | null; order_page_url?: string | null; return_origins?: string[] | null };
   items: { name: string | null; sku: string | null; qty: number; unit_price_jpy: number; tax_rate?: number | string | null; discount_jpy?: number | null }[];
@@ -167,7 +165,7 @@ export const emailResend: BundledPlugin = {
     const kind = received ? "order_paid" : "order_shipped";
     const mail = buildOrderEmail(received ? "paid" : "shipped", contact, ctx.config.get("PUBLIC_BASE_URL"), await ctx.privileged.shopNoticeTexts(ctx.envelope.shop_id, kind));
     const owner = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? contact.shop.contact_email : null;
-    const route = noticeRoute(contact.notice_line_only, data);
+    const route = noticeRoute(data);
     if (route === "owner_only") {
       // 「LINE だけ」のお客様（0176）: お客様あては送らず、運営者への控えだけ（お客様の知らせは LINE。届かなければ LINE のプラグインが配り直す）
       if (owner) await sendMail(mailer, { from, to: owner, subject: mail.subject, text: mail.text, idempotencyKey: `banto-${ctx.envelope.id}-owner` });
@@ -188,14 +186,14 @@ export const emailResend: BundledPlugin = {
 };
 
 /**
- * お客様が「LINE だけ」（0176）のときの送り分け。
- *   - all: 今までどおり（お客様あてと控え）
+ * お客様が「LINE だけ」（0176）のときの送り分け。決めるのは hooks を積んだときの DB（payload の notice_line_only）で、ここは読むだけ
+ *   - all: 今までどおり（お客様あてと控え）。当てる前の DB の知らせには印が無い
  *   - owner_only: お客様あては送らず、控え（と試着の店舗あて）だけ。お客様の知らせは LINE
- *   - customer_only: LINE で送れなかったので配り直された知らせ（line_fallback）。お客様あてだけ（控え・店舗あては最初の配信で送ってある）
+ *   - customer_only: LINE で届けられなかったので配り直された知らせ（line_fallback）。お客様あてだけ（控え・店舗あては最初の配信で送ってある）
  */
-export function noticeRoute(lineOnly: unknown, data: Record<string, unknown>): "all" | "owner_only" | "customer_only" {
+export function noticeRoute(data: Record<string, unknown>): "all" | "owner_only" | "customer_only" {
   if (data["line_fallback"] === true) return "customer_only";
-  return lineOnly === true ? "owner_only" : "all";
+  return data["notice_line_only"] === true ? "owner_only" : "all";
 }
 
 /** お店で試着（0025）: お客様と店舗へ。宛先ごとに Idempotency-Key を分ける */
@@ -206,7 +204,7 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
   if (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"]))) return;
   const contact = (await ctx.privileged.tryonContact(requestId, shop_id)) as unknown as TryonContact;
   const owner = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? contact.shop.contact_email : null;
-  const route = noticeRoute(contact.notice_line_only, data);
+  const route = noticeRoute(data);
   const bcc = route === "all" && owner ? [owner] : [];
   const opts = data["reminder"] === true ? { reminder: true } : data["extended"] === true ? { extended: true, previousHoldUntil: typeof data["previous_hold_until"] === "string" ? data["previous_hold_until"] : null } : {};
   // お客様あての知らせがあるときだけ文面（0154）を読む

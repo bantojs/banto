@@ -297,7 +297,7 @@ export interface PrivilegedDb {
   /** ショップごとの秘密の暗号文（0021。今は line_messaging だけ）。無ければ null */
   shopSecret(shopId: string, purpose: "line_messaging"): Promise<string | null>;
   /** 注文を LINE で知らせる相手（0021）。会員の注文で LINE と結びついているときだけ */
-  orderLineRecipient(orderId: string, shopId: string): Promise<{ line_user_id: string; number: number; total_jpy: number; shop_name: string; status: string; line_only?: boolean } | null>;
+  orderLineRecipient(orderId: string, shopId: string): Promise<{ line_user_id: string; number: number; total_jpy: number; shop_name: string; status: string } | null>;
   /** 0176: LINE で送れなかった知らせを「メール通知」にだけ配り直す（元の配信 1 つにつき 1 回）。配り直した数 */
   noticeLineFallback(deliveryId: string): Promise<number>;
   /** 0176: 会員本人がお知らせの受け取り方を選ぶ（all = メールと LINE、line = LINE だけ） */
@@ -307,7 +307,7 @@ export interface PrivilegedDb {
   /** 試着の申し込みのお知らせ用（メール通知プラグイン） */
   tryonContact(requestId: string, shopId: string): Promise<Record<string, unknown>>;
   /** 試着の申し込みの LINE の送り先（LINE でログインした会員のときだけ） */
-  tryonLineRecipient(requestId: string, shopId: string): Promise<{ line_user_id: string; number: number; status: string; hold_until: string | null; store_name: string; shop_name: string; line_only?: boolean } | null>;
+  tryonLineRecipient(requestId: string, shopId: string): Promise<{ line_user_id: string; number: number; status: string; hold_until: string | null; store_name: string; shop_name: string } | null>;
   /** 会員の試着の申し込み（0026、新しい順に 50 件）。世代が合わなければ null */
   memberTryonRequests(shopId: string, customerId: string, epoch: number): Promise<MemberTryonRequest[] | null>;
   /** 会員が自分の申し込みを取り消す（0026。取り置きが終わる前だけ） */

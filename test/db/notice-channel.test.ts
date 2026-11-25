@@ -5,7 +5,7 @@ import { asService, asUser, closePool, createShopFixture, dbAvailable, getPool, 
 /**
  * 0176_notice_channel: 注文・お店で試着のお知らせを「LINE だけ」で受け取る。
  * 選ぶのは本人だけ（member_set_notice_channel）。効くのは LINE と結びつき、ショップが「LINE で購入者に知らせる」を使っているときだけ。
- * メール通知は order_contact・tryon_contact の notice_line_only を見て、LINE のプラグインは送れなければ notice_line_fallback で配り直す
+ * 決めるのは hooks を積むとき（payload の notice_line_only）。届けられなければメール通知に配り直す（プラグインか DB のトリガー）
  */
 describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => {
   let f: Fixture;
@@ -19,7 +19,6 @@ describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => 
   const MAIL_URL = "https://banto.invalid/plugins/email_resend";
   const svc = <T>(sql: string, args: unknown[]) => asService(async (c) => (await c.query<{ r: T }>(sql, args)).rows[0]!.r);
   const setChannel = (ch: string, epoch = 0) => svc<string>("select member_set_notice_channel($1, $2, $3, $4) as r", [f.shopId, member, epoch, ch]);
-  const contact = (orderId: string) => svc<Record<string, unknown>>("select order_contact($1, $2) as r", [orderId, f.shopId]);
 
   beforeAll(async () => {
     await resetDatabase();
@@ -41,49 +40,80 @@ describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => 
   });
   afterAll(closePool);
 
+  const mark = async (event: string, payload: Record<string, unknown>) => {
+    await svc<number>("select enqueue_hook($1, $2, $3) as r", [f.shopId, event, payload]);
+    const r = await getPool().query<{ endpoint_id: string; payload: Record<string, unknown> }>(
+      "select endpoint_id, payload from hook_deliveries where shop_id = $1 and event = $2 order by created_at desc, id desc limit 1", [f.shopId, event]);
+    return r.rows[0]!.payload;
+  };
+  const lineDelivery = async (event: string) =>
+    (await getPool().query<{ id: string }>("select id from hook_deliveries where endpoint_id = $1 and event = $2 order by created_at desc, id desc limit 1", [lineEp, event])).rows[0]!.id;
+  const fallbacksOf = async (id: string) =>
+    (await getPool().query<{ endpoint_id: string; payload: Record<string, unknown> }>("select endpoint_id, payload from hook_deliveries where payload->>'fallback_of' = $1", [id])).rows;
+
   it("LINE と結びついていない会員は LINE だけを選べない。世代が違えば invalid", async () => {
     expect(await setChannel("line")).toBe("line_unavailable");
     expect(await setChannel("all", 9)).toBe("invalid");
     await expect(setChannel("sms")).rejects.toThrow(/invalid_notice_channel/);
-    expect((await contact(memberOrder))["notice_line_only"]).toBe(false);
   });
 
-  it("LINE と結びつき、ショップが LINE で知らせていれば選べて効く。ゲストの注文には効かない", async () => {
+  it("選べれば、積むときに印を付ける（ゲスト・受け取らない出来事には付けない）。member_get にも出る", async () => {
     await getPool().query("insert into member_identities (shop_id, provider, subject, customer_id) values ($1, 'line', 'U123', $2)", [f.shopId, member]);
     const rec = await svc<{ customer: Record<string, unknown> }>("select member_get($1, $2, 0) as r", [f.shopId, member]);
     expect(rec.customer).toMatchObject({ notice_channel: "all", notice_line_available: true });
+    expect((await mark("order.paid", { order_id: memberOrder }))["notice_line_only"]).toBeUndefined();
     expect(await setChannel("line")).toBe("ok");
-    expect((await contact(memberOrder))["notice_line_only"]).toBe(true);
-    expect((await contact(guestOrder))["notice_line_only"]).toBe(false);
-    expect((await svc<Record<string, unknown>>("select tryon_contact($1, $2) as r", [request, f.shopId]))["notice_line_only"]).toBe(true);
-    expect((await svc<Record<string, unknown>>("select order_line_recipient($1, $2) as r", [memberOrder, f.shopId]))["line_only"]).toBe(true);
-    expect((await svc<Record<string, unknown>>("select tryon_line_recipient($1, $2) as r", [request, f.shopId]))["line_only"]).toBe(true);
+    expect(await mark("order.paid", { order_id: memberOrder })).toMatchObject({ notice_line_only: true });
+    expect((await mark("order.paid", { order_id: guestOrder }))["notice_line_only"]).toBeUndefined();
+    expect(await mark("tryon.requested", { request_id: request })).toMatchObject({ notice_line_only: true });
+    // LINE のプラグインがその出来事を受け取らないなら付けない（メールで送る）
+    await getPool().query("update hook_endpoints set events = '{order.paid,tryon.requested,tryon.updated,order.created}' where id = $1", [lineEp]);
+    expect((await mark("order.shipped", { order_id: memberOrder }))["notice_line_only"]).toBeUndefined();
+    await getPool().query("update hook_endpoints set events = '{order.paid,order.shipped,tryon.requested,tryon.updated,order.created}' where id = $1", [lineEp]);
   });
 
-  it("LINE のプラグインを止めたら効かない（メールも送る）。戻せばまた効く", async () => {
+  it("配り直し: 印のある LINE の配信をメール通知にだけ 1 回（受け取らない出来事・LINE 以外・印の無い配信は 0）", async () => {
+    await mark("order.paid", { order_id: memberOrder });
+    const d = await lineDelivery("order.paid");
+    expect(await svc<number>("select notice_line_fallback($1) as r", [d])).toBe(1);
+    expect(await svc<number>("select notice_line_fallback($1) as r", [d])).toBe(0);
+    const re = await fallbacksOf(d);
+    expect(re).toHaveLength(1);
+    expect(re[0]).toMatchObject({ endpoint_id: mailEp, payload: { order_id: memberOrder, notice_line_only: true, line_fallback: true, fallback_of: d } });
+    // 同じ元の配信の行は索引で 1 つだけ
+    await expect(getPool().query("insert into hook_deliveries (shop_id, endpoint_id, event, payload) values ($1, $2, 'order.paid', $3)", [f.shopId, mailEp, { fallback_of: d }])).rejects.toThrow(/duplicate/);
+    // メール通知がその出来事を受け取らない（tryon.requested）
+    await mark("tryon.requested", { request_id: request });
+    expect(await svc<number>("select notice_line_fallback($1) as r", [await lineDelivery("tryon.requested")])).toBe(0);
+    // 印の無い（ゲストの）配信
+    await mark("order.paid", { order_id: guestOrder });
+    expect(await svc<number>("select notice_line_fallback($1) as r", [await lineDelivery("order.paid")])).toBe(0);
+  });
+
+  it("再送の末に failed になった印のある LINE の配信は、DB がメールへ配り直す", async () => {
+    await mark("order.shipped", { order_id: memberOrder });
+    const d = await lineDelivery("order.shipped");
+    await getPool().query("update hook_deliveries set status = 'failed' where id = $1", [d]);
+    expect(await fallbacksOf(d)).toHaveLength(1);
+  });
+
+  it("LINE のプラグインを止めたら、まだ送っていない印のある配信を failed にしてメールへ。消したときも", async () => {
     const pool = getPool();
+    await mark("order.shipped", { order_id: memberOrder });
+    const d1 = await lineDelivery("order.shipped");
     await pool.query("update hook_endpoints set enabled = false where id = $1", [lineEp]);
-    expect((await contact(memberOrder))["notice_line_only"]).toBe(false);
+    expect((await pool.query<{ status: string }>("select status from hook_deliveries where id = $1", [d1])).rows[0]!.status).toBe("failed");
+    expect(await fallbacksOf(d1)).toHaveLength(1);
+    // 止めているあいだは印を付けない
+    expect((await mark("order.paid", { order_id: memberOrder }))["notice_line_only"]).toBeUndefined();
     const rec = await svc<{ customer: Record<string, unknown> }>("select member_get($1, $2, 0) as r", [f.shopId, member]);
     expect(rec.customer).toMatchObject({ notice_channel: "line", notice_line_available: false });
     await pool.query("update hook_endpoints set enabled = true where id = $1", [lineEp]);
-    expect((await contact(memberOrder))["notice_line_only"]).toBe(true);
-  });
-
-  it("LINE で送れなかった知らせは、メール通知にだけ 1 回配り直す（受け取らない出来事・LINE 以外の配信は 0）", async () => {
-    const pool = getPool();
-    const delivery = async (ep: string, event: string) =>
-      (await pool.query<{ id: string }>("insert into hook_deliveries (shop_id, endpoint_id, event, payload) values ($1, $2, $3, $4) returning id", [f.shopId, ep, event, { order_id: memberOrder }])).rows[0]!.id;
-    const d = await delivery(lineEp, "order.paid");
-    expect(await svc<number>("select notice_line_fallback($1) as r", [d])).toBe(1);
-    expect(await svc<number>("select notice_line_fallback($1) as r", [d])).toBe(0);
-    const re = await pool.query<{ endpoint_id: string; event: string; payload: Record<string, unknown> }>("select endpoint_id, event, payload from hook_deliveries where payload->>'fallback_of' = $1", [d]);
-    expect(re.rows).toHaveLength(1);
-    expect(re.rows[0]).toMatchObject({ endpoint_id: mailEp, event: "order.paid", payload: { order_id: memberOrder, line_fallback: true, fallback_of: d } });
-    // メール通知がその出来事を受け取らない
-    expect(await svc<number>("select notice_line_fallback($1) as r", [await delivery(lineEp, "tryon.requested")])).toBe(0);
-    // LINE の送信先の配信でなければ何もしない
-    expect(await svc<number>("select notice_line_fallback($1) as r", [await delivery(mailEp, "order.shipped")])).toBe(0);
+    await mark("order.shipped", { order_id: memberOrder });
+    const d2 = await lineDelivery("order.shipped");
+    await pool.query("delete from hook_endpoints where id = $1", [lineEp]);
+    expect(await fallbacksOf(d2)).toHaveLength(1);
+    lineEp = (await pool.query<{ id: string }>("insert into hook_endpoints (shop_id, name, url, events) values ($1, 'LINE', $2, '{order.paid,order.shipped,tryon.requested,tryon.updated,order.created}') returning id", [f.shopId, LINE_URL])).rows[0]!.id;
   });
 
   it("運営者は見られるが書けない。AI 用 API の会員にも出る。関数は anon・authenticated から呼べない", async () => {
@@ -97,18 +127,17 @@ describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => 
     const raw = `banto_${randomBytes(32).toString("base64url")}`;
     const sha = createHash("sha256").update(raw).digest("hex");
     await asUser(f.ownerId, (c) => c.query("insert into api_tokens (shop_id, owner_id, name, token_hash, prefix, scopes) values ($1, $2, 't', $3, $4, '{customers:read}')", [f.shopId, f.ownerId, sha, raw.slice(0, 12)]));
-    const got = await svc<Record<string, unknown>>("select api_customer_get($1, $2) as r", [sha, member]);
-    expect(got["notice_channel"]).toBe("line");
+    expect((await svc<Record<string, unknown>>("select api_customer_get($1, $2) as r", [sha, member]))["notice_channel"]).toBe("line");
     for (const role of ["anon", "authenticated"]) {
-      for (const fn of ["member_set_notice_channel(uuid, uuid, integer, text)", "notice_line_fallback(uuid)", "banto_notice_line_only(uuid, uuid)", "banto_notice_line_ready(uuid, uuid)"]) {
+      for (const fn of ["member_set_notice_channel(uuid, uuid, integer, text)", "notice_line_fallback(uuid)", "banto_notice_line_fallback(uuid)", "banto_notice_line_only(uuid, uuid, text)", "banto_notice_line_ready(uuid, uuid, text)"]) {
         const r = await pool.query<{ ok: boolean }>(`select has_function_privilege($1, '${fn}', 'execute') as ok`, [role]);
         expect(r.rows[0]!.ok, `${role} ${fn}`).toBe(false);
       }
     }
   });
 
-  it("LINE だけから戻せる", async () => {
+  it("LINE だけから戻せる（戻した後は印を付けない）", async () => {
     expect(await setChannel("all")).toBe("ok");
-    expect((await contact(memberOrder))["notice_line_only"]).toBe(false);
+    expect((await mark("order.paid", { order_id: memberOrder }))["notice_line_only"]).toBeUndefined();
   });
 });

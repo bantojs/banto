@@ -248,6 +248,7 @@ export const en: Record<MessageKey, string> = {
   "notice_channel.title": "How to receive order updates",
   "customers.notice_line_hint": "Chosen by the customer on their account page. While the LINE buyer notifications plugin is on and their LINE account is linked, order and try-on notification emails are not sent to them (the operator copy is still sent, and email is used when LINE cannot deliver).",
   "notice_channel.all": "By email and LINE",
+  "notice_channel.unavailable": "To receive updates by LINE only, link your LINE account first.",
   "notice_channel.line": "By LINE only",
   "notice_channel.note": "Even with LINE only, we email you when a LINE message cannot be delivered (for example, if you unfriended or blocked our account).",
   "shop.marketing_consent": "Show \"Receive deals and sale announcements by email\" at checkout and on the account page",
