@@ -41,6 +41,7 @@ apiV1.use("*", async (c, next) => {
     migrationState: migrationStateFor(c, url),
     inquiryMail: inquiryMailFor(c),
     privateStorage: c.get("adapters").privateStorage ?? null,
+    publicBase: publicBaseUrl(c),
     theme: { secret: c.get("sessionSecret") ?? null, publicBase: publicBaseUrl(c), cpuUnlimited: Boolean(c.get("adapters").cpuUnlimited) },
   });
   c.set("api", api);
