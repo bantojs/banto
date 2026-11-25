@@ -296,7 +296,7 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
       expect(ok.headers.get("location")).not.toContain(uid);
       expect(ok.headers.get("location")).not.toContain("tester");
       expect(sent).toEqual([uid]);
-      expect(sb.tables.audit_log.some((r) => r["action"] === "line.test_sent" && r["target_id"] === "cust-line")).toBe(true);
+      expect(sb.tables.audit_log.some((r) => r["action"] === "line.test_recipient" && r["target_id"] === "cust-line")).toBe(true);
       // LINE と結びついていない会員・いないアドレス
       expect((await admin.post(`${base}/test`, { kind: "order_paid", email: "mailonly@example.com" })).headers.get("location")).toContain("flash=test_member_not_found");
       expect((await admin.post(`${base}/test`, { kind: "order_paid", email: "nobody@example.com" })).headers.get("location")).toContain("flash=test_member_not_found");

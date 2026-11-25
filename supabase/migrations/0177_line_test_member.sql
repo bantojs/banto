@@ -2,7 +2,7 @@
 -- テスト用の LINE アカウントで一度ショップに LINE でログインして会員になっておけば、その会員のメールアドレスで宛先を選べる。
 --   - LINE の利用者 ID（UID）は Worker の中だけで使い、画面・API には出さない（「LINE の利用者 ID は外へ出さない」）
 --   - service_role だけ。Worker が管理画面の項目（integrations・settings・customers）を確かめてから呼ぶ
---   - 宛先を引いたことを監査ログに残す（会員の id だけ、メール・UID は入れない）。誰がは X-Banto-Actor（banto_audit_actor）
+--   - 宛先に会員を選んだことを監査ログ line.test_recipient に残す（送れたかどうかは問わない）（会員の id だけ、メール・UID は入れない）。誰がは X-Banto-Actor（banto_audit_actor）
 --   - 本物のお客様にも送れてしまうので、画面に注意を書く
 
 create or replace function line_test_recipient(p_shop_id uuid, p_email text)
@@ -22,7 +22,7 @@ begin
    where c.shop_id = p_shop_id and c.email is not null and lower(c.email) = lower(btrim(p_email))
    limit 1;
   if v_uid is null then return null; end if;
-  perform banto_audit(banto_shop_org(p_shop_id), p_shop_id, 'line.test_sent', 'customer', v_customer::text, '{}'::jsonb);
+  perform banto_audit(banto_shop_org(p_shop_id), p_shop_id, 'line.test_recipient', 'customer', v_customer::text, '{}'::jsonb);
   return jsonb_build_object('line_user_id', v_uid, 'customer_id', v_customer);
 end;
 $$;

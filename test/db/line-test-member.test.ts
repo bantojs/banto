@@ -29,7 +29,7 @@ describe.skipIf(!dbAvailable)("LINE のテスト送信の宛先（0177）", () =
     const r = await recipient(" tester@example.com ", `user:${f.ownerId}`);
     expect(r).toEqual({ line_user_id: UID, customer_id: lineMember });
     const log = (await getPool().query<{ actor_kind: string; actor_id: string; target_id: string; detail: Record<string, unknown> }>(
-      "select actor_kind, actor_id, target_id, detail from audit_log where action = 'line.test_sent' and shop_id = $1", [f.shopId])).rows;
+      "select actor_kind, actor_id, target_id, detail from audit_log where action = 'line.test_recipient' and shop_id = $1", [f.shopId])).rows;
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({ actor_kind: "user", actor_id: f.ownerId, target_id: lineMember, detail: {} });
     expect(JSON.stringify(log)).not.toContain(UID);
@@ -37,14 +37,14 @@ describe.skipIf(!dbAvailable)("LINE のテスト送信の宛先（0177）", () =
   });
 
   it("LINE と結びついていない会員・いないアドレス・別のショップは null（監査ログも書かない）", async () => {
-    const before = (await getPool().query<{ n: string }>("select count(*) as n from audit_log where action = 'line.test_sent'")).rows[0]!.n;
+    const before = (await getPool().query<{ n: string }>("select count(*) as n from audit_log where action = 'line.test_recipient'")).rows[0]!.n;
     expect(await recipient("mailonly@example.com")).toBeNull();
     expect(await recipient("nobody@example.com")).toBeNull();
     expect(await recipient("")).toBeNull();
     const other = await createShopFixture({ email: "lt-other@example.com", slug: "lt-other", publish: true });
     const r = await asService(async (c) => (await c.query<{ r: unknown }>("select line_test_recipient($1, 'tester@example.com') as r", [other.shopId])).rows[0]!.r);
     expect(r).toBeNull();
-    expect((await getPool().query<{ n: string }>("select count(*) as n from audit_log where action = 'line.test_sent'")).rows[0]!.n).toBe(before);
+    expect((await getPool().query<{ n: string }>("select count(*) as n from audit_log where action = 'line.test_recipient'")).rows[0]!.n).toBe(before);
   });
 
   it("anon・authenticated からは呼べない", async () => {

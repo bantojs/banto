@@ -315,7 +315,12 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
     if (!can(c.get("shopAccess"), "customers")) return back("test_member_needs_customers");
     const state = { db: owner(c).db, cache: c.get("adapters").cache };
     if (!(await migrated(state, LINE_TEST_MEMBER_MIGRATION))) return back("test_failed");
-    const r = await privileged.lineTestRecipient(shop.id, email);
+    let r: Awaited<ReturnType<typeof privileged.lineTestRecipient>>;
+    try {
+      r = await privileged.lineTestRecipient(shop.id, email);
+    } catch {
+      return back("test_failed");
+    }
     if (!r) return back("test_member_not_found");
     to = r.line_user_id;
   }

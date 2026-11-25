@@ -5148,7 +5148,7 @@ export class FakeSupabase {
       const c = this.tables.customers.find((x) => x["shop_id"] === shopId && String(x["email"] ?? "").toLowerCase() === email);
       const ident = c ? this.memberIdentities.find((i) => i["shop_id"] === shopId && i["customer_id"] === c["id"] && i["provider"] === "line") : undefined;
       if (!c || !ident) return json(null);
-      this.tables.audit_log.push({ id: ++this.seq, org_id: this.tables.shops.find((x) => x["id"] === shopId)?.["org_id"], shop_id: shopId, actor_kind: "user", actor_id: null, action: "line.test_sent", target_type: "customer", target_id: String(c["id"]), detail: {}, created_at: new Date().toISOString() });
+      this.tables.audit_log.push({ id: ++this.seq, org_id: this.tables.shops.find((x) => x["id"] === shopId)?.["org_id"], shop_id: shopId, actor_kind: "user", actor_id: null, action: "line.test_recipient", target_type: "customer", target_id: String(c["id"]), detail: {}, created_at: new Date().toISOString() });
       return json({ line_user_id: ident["subject"], customer_id: c["id"] });
     }
     if (fn === "shop_secret") return json(this.tables.shop_secret_boxes.find((r) => r["shop_id"] === args["p_shop_id"] && r["purpose"] === args["p_purpose"])?.["secret_box"] ?? null); // 受け口だけ（中身は test/db/tax.test.ts・woo-history.test.ts）
