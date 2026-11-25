@@ -1,6 +1,6 @@
 /**
- * AI 用 API の注文の明細の画像（0174、メンテナの決定 2026-11-25。docs/ai-access.md §25）。
- * DB（api_order_json）は 1 件の注文の応答の明細に、その商品の画像の候補 image_candidates（並べ順のまま、options と置き場の鍵）を付ける。
+ * AI 用 API の注文（0174）とお店で試着（0175）の明細の画像（メンテナの決定 2026-11-25。docs/ai-access.md §25）。
+ * DB（api_order_json・api_tryon_json）は 1 件の注文・申し込みの応答の明細に、その商品の画像の候補 image_candidates（並べ順のまま、options と置き場の鍵）を付ける。
  * ここで SKU の 1 枚目を firstImageForSku（お店の画面・商品フィードと同じ一本道）で選び、MEDIA_BASE_URL の URL に直して image にする。
  * 候補は外へ返さない。候補の無い明細（注文の一覧・当てる前の DB）はそのまま（image を足さない）
  */

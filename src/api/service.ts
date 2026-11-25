@@ -293,7 +293,12 @@ export class ApiService {
 
   /** 注文の JSON（api_order_json）の仕上げ: お問い合わせ番号の名前と URL（0172）、明細の画像（0174） */
   private orderOut<T extends Record<string, unknown>>(order: T): T {
-    return withOrderItemMedia(withTrackingInfo(order), this.mediaBase());
+    return this.itemsOut(withTrackingInfo(order));
+  }
+
+  /** 明細の画像の候補（image_candidates）を image に直す（注文 0174・お店で試着 0175） */
+  private itemsOut<T extends Record<string, unknown>>(r: T): T {
+    return withOrderItemMedia(r, this.mediaBase());
   }
 
   private migratedTo(version: string): Promise<boolean> {
@@ -692,11 +697,12 @@ export class ApiService {
       p_limit: q.limit ?? 50,
       p_offset: q.offset ?? 0,
     });
-  tryonRequestGet = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_get", { p_number: number });
+  // 1 件の申し込みの応答は明細の画像の候補を image に直す（0175、注文と同じ withOrderItemMedia）
+  tryonRequestGet = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_get", { p_number: number }).then((r) => this.itemsOut(r));
   tryonRequestUpdate = (number: number, status: TryonApiStatus, holdUntil?: string) =>
-    this.call<Record<string, unknown>>("api_tryon_request_update", { p_number: number, p_status: status, p_hold_until: holdUntil ?? null });
+    this.call<Record<string, unknown>>("api_tryon_request_update", { p_number: number, p_status: status, p_hold_until: holdUntil ?? null }).then((r) => this.itemsOut(r));
   /** 終わった申し込み（購入なし・期限切れ・取り消し）の在庫を EC に戻す。2 回目は何もしない */
-  tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
+  tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number }).then((r) => this.itemsOut(r));
   /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
   careSet = async (target: "product" | "category", ref: string, care: unknown) => {
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
