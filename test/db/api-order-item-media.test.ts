@@ -5,6 +5,7 @@ import { asService, asUser, closePool, createShopFixture, dbAvailable, getPool, 
 /**
  * 0174_api_order_item_media: AI 用 API の注文の明細に SKU の選択肢（軸の順・ショップの表示名）と画像の候補。
  * 候補は 1 件の注文の応答だけ（一覧には付けない）。1 枚目を選んで URL にするのは Worker（test/order-item-media.test.ts）
+ * 0175_api_tryon_item_media: お店で試着の明細にも同じ作りで足す
  */
 describe.skipIf(!dbAvailable)("AI 用 API の注文の明細の選択肢と画像（0174）", () => {
   let f: Fixture;
@@ -89,6 +90,33 @@ describe.skipIf(!dbAvailable)("AI 用 API の注文の明細の選択肢と画�
     }
     const r = await pool.query<{ j: { items: Record<string, unknown>[] } }>("select api_order_json(o, false, false, false) as j from orders o where o.id = $1", [orderId]);
     expect(r.rows[0]!.j.items.every((i) => !("image_candidates" in i) && Array.isArray(i["options"]))).toBe(true);
+  });
+
+  it("お店で試着（0175）: 明細に options、1 件の申し込み（取得・状態の変更）だけ画像の候補。一覧は options だけ。旗の無い形は候補なし", async () => {
+    const pool = getPool();
+    const orgId = (await pool.query<{ org_id: string }>("select org_id from shops where id = $1", [f.shopId])).rows[0]!.org_id;
+    const store = (await pool.query<{ id: string }>("insert into stores (org_id, name) values ($1, '本店') returning id", [orgId])).rows[0]!.id;
+    const req = (await pool.query<{ id: string }>(
+      "insert into tryon_requests (shop_id, store_id, number, customer_email, customer_name) values ($1, $2, 7, 't@example.com', '試着') returning id",
+      [f.shopId, store],
+    )).rows[0]!.id;
+    await pool.query("insert into tryon_items (shop_id, request_id, sku_id, qty, unit_price_jpy) values ($1, $2, $3, 1, 5000), ($1, $2, $4, 1, 3000)", [f.shopId, req, skuRed, f.skuId]);
+    const tok = await issue(["orders:read", "orders:write"]);
+    const one = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select api_tryon_request_get($1, 7) as r", [tok])).rows[0]!.r);
+    const red = itemsOf(one).find((i) => i["sku_id"] === skuRed)!;
+    expect(red["options"]).toEqual([{ key: "size", name: "size", value: "M" }, { key: "color", name: "カラー", value: "赤" }]);
+    expect((red["image_candidates"] as Record<string, unknown>[]).map((x) => x["options"])).toEqual([{}, { color: "赤" }, { color: "青" }]);
+    expect(itemsOf(one).find((i) => i["sku_id"] === f.skuId)!["options"]).toEqual([]);
+    const upd = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select api_tryon_request_update($1, 7, 'sent') as r", [tok])).rows[0]!.r);
+    expect(itemsOf(upd).find((i) => i["sku_id"] === skuRed)).toHaveProperty("image_candidates");
+    const lst = await asService(async (c) => (await c.query<{ r: { items: Record<string, unknown>[] } }>("select api_tryon_requests_list($1) as r", [tok])).rows[0]!.r);
+    const lred = itemsOf(lst.items[0]!).find((i) => i["sku_id"] === skuRed)!;
+    expect(lred["options"]).toHaveLength(2);
+    expect(lred).not.toHaveProperty("image_candidates");
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const r = await pool.query<{ ok: boolean }>("select has_function_privilege($1, 'api_tryon_json(tryon_requests, boolean, boolean, boolean, boolean)', 'execute') as ok", [role]);
+      expect(r.rows[0]!.ok).toBe(false);
+    }
   });
 
   it("商品を非公開にしても、画像を消しても崩れない", async () => {

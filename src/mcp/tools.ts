@@ -392,7 +392,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "tryon_request_get",
-    description: "お店で試着の申し込みを受付番号で 1 件取得する。スコープ orders:read。" + DATA_NOTE,
+    description: "お店で試着の申し込みを受付番号で 1 件取得する。明細に options（カラー・サイズなど）と image（その SKU の 1 枚目の画像の URL、0175）。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ number: s("integer", "受付番号") }, ["number"]),
     readOnly: true,
     run: (api, a) => {
