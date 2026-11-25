@@ -47,7 +47,9 @@ import { OAuthError, PROVIDERS, authorizeUrl, callbackPath, isProvider, pkce, pr
 import { openSecret } from "../../members/secret-box";
 import { ipHash, linkHash } from "../../members/auth";
 import { privilegedFor } from "../payment-deps";
-import { afterResponse, clearScopedCookie, clientIpFor, csrfGuard, formFields, getScopedCookie, navigateOnly, publicBaseUrl, readBodyLimited, setScopedCookie, yen, type Ctx } from "../common";
+import { afterResponse, clearScopedCookie, clientIpFor, csrfGuard, formFields, getScopedCookie, migrationStateFor, navigateOnly, publicBaseUrl, readBodyLimited, setScopedCookie, yen, type Ctx } from "../common";
+import { migrated } from "../../db/migration-state";
+import { NOTICE_CHANNEL_MIGRATION } from "../../members/notice-channel";
 import { FAVORITES_MAX, favoritesEnabled, parseFavoriteBody } from "../../modules/favorites";
 import { memberNewsEnabled } from "../../modules/member-news";
 import { memberReader } from "../audience-render";
@@ -277,6 +279,7 @@ function privatePage(c: Ctx): void {
 
 const ACCOUNT_ERRORS: Record<string, MessageKey> = {
   weak: "member.password_weak",
+  notice_line_unavailable: "notice_channel.unavailable",
   oauth: "member.oauth_failed",
   reauth: "member.reauth_required",
   already_linked: "member.oauth_already_linked",
@@ -376,6 +379,8 @@ members.get("/:shop/account", async (c: Ctx) => {
       passkeys: opts.passkey && Boolean(s.theme.MemberPasskeysPage),
       receipt: moduleEnabled(s.shop.settings, RECEIPT_MODULE),
       consent: consentCollected(s.shop),
+      // お知らせの受け取り方（0176）: LINE と結びつき、ショップが LINE で知らせているときだけ選べる（当てる前の DB には無い = 出さない）
+      noticeChannel: rec.customer.notice_line_available === true ? (rec.customer.notice_channel === "line" ? "line" : "all") : null,
       coupons: withCoupons ? (coupons ?? []) : null,
       tryon: withTryon
         ? (tryon ?? []).map((r) => ({
@@ -784,6 +789,25 @@ members.post("/:shop/account/address", async (c: Ctx) => {
   const { name, address } = memberAddressFrom(await formFields(c));
   const ok = await withMember(c, s, (db, m) => db.memberSaveAddress(s.shop.id, m.cid, m.ep, name || null, address));
   return c.redirect(ok ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account/login`);
+});
+
+/** お知らせの受け取り方（0176）: メールと LINE（all）か LINE だけ（line）。本人だけが選ぶ。LINE だけは選べるときだけ（DB が確かめる） */
+members.post("/:shop/account/notice-channel", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const f = await formFields(c);
+  const channel = f.channel === "line" ? "line" : f.channel === "all" ? "all" : null;
+  if (!channel) return c.redirect(`${s.shopPath}/account`);
+  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  if (!state || !(await migrated(state, NOTICE_CHANNEL_MIGRATION))) return notFound(c);
+  const result: { r: "ok" | "invalid" | "line_unavailable" } = { r: "invalid" };
+  // 世代が合わなければ（withMember と同じく）セッションを消してログインへ
+  const ok = await withMember(c, s, async (db, m) => {
+    result.r = await db.memberSetNoticeChannel(s.shop.id, m.cid, m.ep, channel);
+    return result.r !== "invalid";
+  });
+  if (!ok) return c.redirect(`${s.shopPath}/account/login`);
+  return c.redirect(result.r === "ok" ? `${s.shopPath}/account?flash=saved` : `${s.shopPath}/account?error=notice_line_unavailable`);
 });
 
 /** 「お得な情報やセールの案内を受け取る」（0050）。本人の行為なので会員ページからだけ付けられる。外すのもここから */

@@ -280,7 +280,7 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
  */
 const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
-export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, emailChange, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, strict }: AccountPageProps & { strict?: boolean }) {
+export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, emailChange, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, noticeChannel, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
   const field = (name: string, label: string, value: string, type = "text", required = true) => (
@@ -502,6 +502,25 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
           <label>
             <input type="checkbox" name="marketing_consent" value="1" checked={customer?.marketing_consent === true} /> {t("consent.checkbox")}
           </label>
+          <p>
+            <button type="submit">{t("shop.save")}</button>
+          </p>
+        </form>
+      ) : null}
+      {noticeChannel ? (
+        <form method="post" action={`${ctx.shopPath}/account/notice-channel`} id="notice-channel">
+          <h2>{t("notice_channel.title")}</h2>
+          <p>
+            <label>
+              <input type="radio" name="channel" value="all" checked={noticeChannel === "all"} /> {t("notice_channel.all")}
+            </label>
+          </p>
+          <p>
+            <label>
+              <input type="radio" name="channel" value="line" checked={noticeChannel === "line"} /> {t("notice_channel.line")}
+            </label>
+          </p>
+          <p class="muted">{t("notice_channel.note")}</p>
           <p>
             <button type="submit">{t("shop.save")}</button>
           </p>

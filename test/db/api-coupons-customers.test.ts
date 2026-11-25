@@ -159,7 +159,7 @@ describe.skipIf(!dbAvailable)("クーポンと会員の API（0036_api_coupons_c
       const list = await rpc<{ total: number; items: Record<string, unknown>[] }>("api_customers_list", [readOnly, null, "member@example.com", 50, 0]);
       expect(list.total).toBe(1);
       const m = list.items[0]!;
-      expect(Object.keys(m).sort()).toEqual(["attributes", "created_at", "default_address", "email", "external_ref", "id", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "name", "orders", "updated_at"]);
+      expect(Object.keys(m).sort()).toEqual(["attributes", "created_at", "default_address", "email", "external_ref", "id", "last_login_at", "marketing_consent", "marketing_consent_at", "marketing_consent_source", "name", "notice_channel", "orders", "updated_at"]);
       expect(JSON.stringify(list)).not.toMatch(/\$2a\$|password|session_epoch/);
       expect((await rpc<{ total: number }>("api_customers_list", [readOnly, "_", null, 50, 0])).total).toBe(0);
       expect(await expectDbError(() => rpc("api_customer_get", [bToken, memberId]))).toMatch(/not_found/);

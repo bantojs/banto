@@ -164,7 +164,15 @@ export const emailResend: BundledPlugin = {
     const received = event === "order.paid" || event === "order.created";
     const kind = received ? "order_paid" : "order_shipped";
     const mail = buildOrderEmail(received ? "paid" : "shipped", contact, ctx.config.get("PUBLIC_BASE_URL"), await ctx.privileged.shopNoticeTexts(ctx.envelope.shop_id, kind));
-    const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
+    const owner = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? contact.shop.contact_email : null;
+    const route = noticeRoute(data);
+    if (route === "owner_only") {
+      // 「LINE だけ」のお客様（0176）: お客様あては送らず、運営者への控えだけ（お客様の知らせは LINE。届かなければ LINE のプラグインが配り直す）
+      if (owner) await sendMail(mailer, { from, to: owner, subject: mail.subject, text: mail.text, idempotencyKey: `banto-${ctx.envelope.id}-owner` });
+      return;
+    }
+    // LINE から配り直された知らせ（route = "customer_only"）は、控えを最初の配信で送ってあるので付けない
+    const bcc = route === "all" && owner ? [owner] : [];
     await sendMail(mailer, {
       from,
       to: contact.customer_email,
@@ -177,6 +185,17 @@ export const emailResend: BundledPlugin = {
   },
 };
 
+/**
+ * お客様が「LINE だけ」（0176）のときの送り分け。決めるのは hooks を積んだときの DB（payload の notice_line_only）で、ここは読むだけ
+ *   - all: 今までどおり（お客様あてと控え）。当てる前の DB の知らせには印が無い
+ *   - owner_only: お客様あては送らず、控え（と試着の店舗あて）だけ。お客様の知らせは LINE
+ *   - customer_only: LINE で届けられなかったので配り直された知らせ（line_fallback）。お客様あてだけ（控え・店舗あては最初の配信で送ってある）
+ */
+export function noticeRoute(data: Record<string, unknown>): "all" | "owner_only" | "customer_only" {
+  if (data["line_fallback"] === true) return "customer_only";
+  return data["notice_line_only"] === true ? "owner_only" : "all";
+}
+
 /** お店で試着（0025）: お客様と店舗へ。宛先ごとに Idempotency-Key を分ける */
 async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Promise<void> {
   const { event, data, shop_id, id } = ctx.envelope;
@@ -184,7 +203,9 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
   if (!requestId) return;
   if (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"]))) return;
   const contact = (await ctx.privileged.tryonContact(requestId, shop_id)) as unknown as TryonContact;
-  const bcc = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? [contact.shop.contact_email] : [];
+  const owner = ctx.settings["bcc_owner"] === true && contact.shop.contact_email ? contact.shop.contact_email : null;
+  const route = noticeRoute(data);
+  const bcc = route === "all" && owner ? [owner] : [];
   const opts = data["reminder"] === true ? { reminder: true } : data["extended"] === true ? { extended: true, previousHoldUntil: typeof data["previous_hold_until"] === "string" ? data["previous_hold_until"] : null } : {};
   // お客様あての知らせがあるときだけ文面（0154）を読む
   const skipCustomer = skipTryon(ctx.settings);
@@ -193,6 +214,13 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
   for (const m of buildTryonMails(event, contact, ctx.config.get("PUBLIC_BASE_URL"), opts, texts)) {
     // お客様あて（と控え）は外部プラグインに任せる店では送らない。店舗あては送る
     if (skipCustomer && m.key === "customer") continue;
+    // LINE から配り直された知らせはお客様あてだけ（店舗あては最初の配信で送ってある）
+    if (route === "customer_only" && m.key !== "customer") continue;
+    if (route === "owner_only" && m.key === "customer") {
+      // 「LINE だけ」のお客様（0176）: お客様あては送らず、控えだけ
+      if (owner) await sendMail(mailer, { from, to: owner, subject: m.subject, text: m.text, idempotencyKey: `banto-${id}-owner` });
+      continue;
+    }
     await sendMail(mailer, {
       from,
       to: m.to,
