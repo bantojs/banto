@@ -28,6 +28,7 @@ function skuOptionsOf(v: unknown): Record<string, string> {
   if (!Array.isArray(v)) return out;
   for (const o of v) {
     if (o && typeof o === "object" && typeof (o as Record<string, unknown>)["key"] === "string") {
+      // null（値の無い鍵）は空の文字にする。imageMatchesSku も無い値を "" と比べる
       const val = (o as Record<string, unknown>)["value"];
       out[(o as Record<string, string>)["key"]!] = val === null || val === undefined ? "" : String(val);
     }
