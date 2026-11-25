@@ -113,6 +113,13 @@ describe.skipIf(!dbAvailable)("AI 用 API の注文の明細の選択肢と画�
     const lred = itemsOf(lst.items[0]!).find((i) => i["sku_id"] === skuRed)!;
     expect(lred["options"]).toHaveLength(2);
     expect(lred).not.toHaveProperty("image_candidates");
+    // 取り消してから在庫を戻す応答にも候補が付く
+    await asService((c) => c.query("select api_tryon_request_update($1, 7, 'cancelled')", [tok]));
+    const rst = await asService(async (c) => (await c.query<{ r: Record<string, unknown> }>("select api_tryon_request_restock($1, 7) as r", [tok])).rows[0]!.r);
+    expect(itemsOf(rst).find((i) => i["sku_id"] === skuRed)).toHaveProperty("image_candidates");
+    // 旗の無い形（4 つの引数）は候補を付けない
+    const plain = (await pool.query<{ j: Record<string, unknown> }>("select api_tryon_json(r, false, false, false) as j from tryon_requests r where r.id = $1", [req])).rows[0]!.j;
+    expect(itemsOf(plain).every((i) => !("image_candidates" in i) && Array.isArray(i["options"]))).toBe(true);
     for (const role of ["anon", "authenticated", "service_role"]) {
       const r = await pool.query<{ ok: boolean }>("select has_function_privilege($1, 'api_tryon_json(tryon_requests, boolean, boolean, boolean, boolean)', 'execute') as ok", [role]);
       expect(r.rows[0]!.ok).toBe(false);
