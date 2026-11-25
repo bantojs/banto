@@ -15,7 +15,10 @@ import { createPrivilegedDb } from "../../db/privileged";
 import { lineTokenFor } from "../../plugins/line_token";
 import { LINE_PUSH_URL } from "../../plugins/line_notify";
 import { bundledPluginUrl } from "../../plugins/types";
-import { noticeLine, type NoticeKind } from "../../notices/templates";
+import { LINE_NOTICE_LINKS_MIGRATION, noticeLine, type NoticeKind, type NoticeTextRow } from "../../notices/templates";
+import { lineMessageShapeError, type LineMessage } from "../../notices/line-card";
+import type { ShopRow } from "../../db/types";
+import { buyerLineMessage } from "../../plugins/line_buyer";
 import { kindsFor, sampleValues } from "./notices";
 import type { MessageKey } from "../../i18n";
 import { actorHeader } from "../../audit";
@@ -224,7 +227,7 @@ lineMessaging.post("/:shopId/line-messaging/limit", requireOwner, async (c: Admi
 });
 
 /** テスト送信の結果（画面に出すのはこの決まった知らせだけ） */
-const TEST_FLASHES = ["test_ok", "test_ok_env", "test_invalid", "test_member_not_found", "test_member_needs_customers", "test_no_token", "test_token_broken", "test_bad_token", "test_not_friend", "test_limit", "test_failed"] as const;
+const TEST_FLASHES = ["test_ok", "test_ok_env", "test_invalid", "test_member_not_found", "test_member_needs_customers", "test_no_token", "test_token_broken", "test_bad_token", "test_not_friend", "test_bad_message", "test_limit", "test_failed"] as const;
 type TestFlash = (typeof TEST_FLASHES)[number];
 
 /** LINE の利用者 ID（Messaging API の送り先、U と 32 桁の 16 進） */
@@ -284,9 +287,57 @@ async function recentLineDeliveries(c: AdminContext, shopId: string, endpointId:
   }));
 }
 
+/**
+ * テスト送信のメッセージ。見本の値（注文番号 1001・合計 ¥3,300）を差し込み、先頭に【テスト送信】。
+ * 0179 から注文の知らせは本番と同じ組み立て（リンクは見本の注文番号でこのショップの注文照会へ、発送はヤマト運輸の見本の番号、
+ * 見た目がカードならカード）。0179 を当てる前の DB では本番の知らせにリンクが載らないので、テストにも載せない
+ */
+async function testMessage(c: AdminContext, shop: ShopRow, kind: NoticeKind, texts: readonly NoticeTextRow[] | null): Promise<LineMessage> {
+  const prefix = t("linemsg.test_prefix");
+  const links = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION);
+  if (links && (kind === "order_paid" || kind === "order_shipped")) {
+    const headless = shop.settings?.["headless"];
+    const h = headless && typeof headless === "object" ? (headless as Record<string, unknown>) : {};
+    const m = buyerLineMessage(
+      kind === "order_paid" ? "order.paid" : "order.shipped",
+      {
+        number: 1001,
+        total_jpy: 3300,
+        shop_name: shop.name,
+        tracking: kind === "order_shipped" ? { carrier: "yamato", number: "123456789012" } : null,
+        shop: {
+          slug: shop.slug,
+          domain: shop.domain ?? null,
+          order_page_url: typeof h["order_page_url"] === "string" ? h["order_page_url"] : null,
+          return_origins: Array.isArray(h["return_origins"]) ? h["return_origins"].filter((x): x is string => typeof x === "string") : [],
+        },
+        line_style: typeof shop.settings?.["line_notice_style"] === "string" ? shop.settings["line_notice_style"] : null,
+      },
+      texts,
+      c.get("adapters").config.get("PUBLIC_BASE_URL"),
+    )!;
+    return withTestPrefix(m, prefix);
+  }
+  const sample = links ? sampleValues(kind, shop.name) : { ...sampleValues(kind, shop.name), order_link: "", tracking: "" };
+  return { type: "text", text: `${prefix}\n${noticeLine(kind, texts, sample)}` };
+}
+
+/** 【テスト送信】の印（文字なら頭に、カードなら代わりの文と本文の頭に） */
+export function withTestPrefix(m: LineMessage, prefix: string): LineMessage {
+  if (m.type === "text") return { type: "text", text: `${prefix}\n${m.text}` };
+  const body = m.contents["body"] as { contents: unknown[] } & Record<string, unknown>;
+  return {
+    type: "flex",
+    altText: [...`${prefix}\n${m.altText}`].slice(0, 400).join(""),
+    contents: { ...m.contents, body: { ...body, contents: [{ type: "text", text: prefix, size: "xs", color: "#888888" }, ...body.contents] } },
+  };
+}
+
 /** テスト送信の結果（LINE の応答 → 画面の知らせ） */
-export function lineTestResult(status: number): TestFlash {
+export function lineTestResult(status: number, body = ""): TestFlash {
   if (status >= 200 && status < 300) return "test_ok";
+  // メッセージの形の誤り（友だちでない 400 と分ける）
+  if (lineMessageShapeError(status, body)) return "test_bad_message";
   if (status === 400 || status === 403) return "test_not_friend";
   if (status === 401) return "test_bad_token";
   if (status === 429) return "test_limit";
@@ -343,15 +394,14 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   }
   if (!token) return back("test_no_token");
   // 今の文面（直していなければ既定）に見本の値を差し込む。テストと分かるように頭に印
-  const body = noticeLine(kind, await privileged.shopNoticeTexts(shop.id, kind), sampleValues(kind, shop.name));
-  const text = `${t("linemsg.test_prefix")}\n${body}`;
+  const message = await testMessage(c, shop, kind, await privileged.shopNoticeTexts(shop.id, kind));
   try {
     const res = await c.get("deps").fetch(LINE_PUSH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": crypto.randomUUID() },
-      body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
+      body: JSON.stringify({ to, messages: [message] }),
     });
-    const result = lineTestResult(res.status);
+    const result = lineTestResult(res.status, res.status === 400 ? await res.text() : "");
     return back(result === "test_ok" && !fromShop ? "test_ok_env" : result);
   } catch {
     return back("test_failed");

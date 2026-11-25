@@ -158,6 +158,7 @@ const DETAIL_FLASH: Record<string, [MessageKey, "notice" | "error"]> = {
   line_test_token_broken: ["linemsg.test_token_broken", "error"],
   line_test_bad_token: ["linemsg.test_bad_token", "error"],
   line_test_not_friend: ["linemsg.test_not_friend", "error"],
+  line_test_bad_message: ["linemsg.test_bad_message", "error"],
   line_test_limit: ["linemsg.test_limit", "error"],
   line_test_failed: ["linemsg.test_failed", "error"],
 };
