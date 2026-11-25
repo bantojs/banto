@@ -4,6 +4,8 @@
 --   - order_line_recipient: リンクを組むのに要る値（お問い合わせ番号、ショップのスラッグ・ドメイン・注文照会のページ）も返す。
 --     氏名・住所・メールアドレスは今までどおり返さない（LINE には載せない）
 --   - 既定の文面（Worker の src/notices/templates.ts）にも入れる。値が無い（番号が無い・リンクを組めない）ときは行ごと消える
+--   - LINE の見た目（shops.settings.line_notice_style = text / card）も返す。card なら Worker がボタン付きのカード（Flex Message）で送る
+--     （型は Banto の 1 つだけ、src/notices/line-card.ts）。設定の鍵は項目 settings（banto_shop_settings_perm の既定）
 
 create or replace function banto_notice_spec(p_kind text, p_channel text)
 returns jsonb
@@ -66,7 +68,9 @@ begin
              'tracking', case when o.tracking_number is not null then jsonb_build_object('carrier', o.tracking_carrier, 'number', o.tracking_number) end,
              'shop', jsonb_build_object('name', s.name, 'slug', s.slug, 'domain', s.domain,
                                         'order_page_url', s.settings->'headless'->>'order_page_url',
-                                        'return_origins', coalesce(s.settings->'headless'->'return_origins', '[]'::jsonb)))
+                                        'return_origins', coalesce(s.settings->'headless'->'return_origins', '[]'::jsonb)),
+             -- LINE の見た目（文字だけ / カード）。ショップの設定 line_notice_style（項目 settings、無ければ文字だけ）
+             'line_style', s.settings->>'line_notice_style')
       from orders o join shops s on s.id = o.shop_id
       join member_identities i on i.shop_id = o.shop_id and i.customer_id = o.customer_id and i.provider = 'line'
      where o.id = p_order_id and o.shop_id = p_shop_id and o.customer_id is not null

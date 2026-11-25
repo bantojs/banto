@@ -41,5 +41,9 @@ describe.skipIf(!dbAvailable)("LINE の Messaging API（0021_line_messaging）",
     const shipped = await get(o1);
     expect(shipped).toMatchObject({ tracking: { carrier: "yamato", number: "123456789012" } });
     expect(JSON.stringify(shipped)).not.toMatch(/山田|b@example\.com|一丁目/);
+    // LINE の見た目（ショップの設定 line_notice_style、無ければ null = 文字だけ）
+    expect(shipped).toMatchObject({ line_style: null });
+    await pool.query("update shops set settings = coalesce(settings, '{}'::jsonb) || '{\"line_notice_style\":\"card\"}' where id = $1", [f.shopId]);
+    expect(await get(o1)).toMatchObject({ line_style: "card" });
   });
 });

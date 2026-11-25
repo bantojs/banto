@@ -26,6 +26,8 @@ import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
+import { LINE_NOTICE_STYLES, lineNoticeStyle } from "../../notices/line-card";
+import { NotSavedNotice, failCode, updateShop } from "./shop-save";
 
 /**
  * お知らせの文面（0154、docs/notices.md）。項目 settings。注文の知らせと、お店で試着のお客様あての知らせ（モジュールが ON のとき）
@@ -159,19 +161,36 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
       <PageHead title={t("notices.title")} />
       {flash === "saved" ? <p class="notice">{t("notices.saved")}</p> : null}
       {flash === "reset" ? <p class="notice">{t("notices.reset_done")}</p> : null}
+      <NotSavedNotice flash={flash} />
       <p>{t("notices.intro")}</p>
       {!enabled ? (
         <p class="notice">
           {t("notices.needs_update")} <a href="/admin/update">{t("inventory.open_update")}</a>
         </p>
       ) : (
-        kindsFor(shop.settings, rows).map((kind) => (
+        <>
+        {lineLinks ? (
+          <form method="post" action={`${base}/line-style`} class="card" id="line-style">
+            <h2>{t("notices.line_style_title")}</h2>
+            <p class="muted">{t("notices.line_style_intro")}</p>
+            {LINE_NOTICE_STYLES.map((v) => (
+              <label>
+                <input type="radio" name="line_style" value={v} checked={lineNoticeStyle(shop.settings?.["line_notice_style"]) === v} /> {t(`notices.line_style_${v}` as MessageKey)}
+              </label>
+            ))}
+            <p>
+              <button type="submit">{t("notices.save")}</button>
+            </p>
+          </form>
+        ) : null}
+        {kindsFor(shop.settings, rows).map((kind) => (
           <section>
             <h2>{t(`notices.kind.${kind}` as MessageKey)}</h2>
             {section(kind, "mail")}
             {section(kind, "line")}
           </section>
-        ))
+        ))}
+        </>
       )}
     </AdminLayout>,
     status,
@@ -182,6 +201,23 @@ notices.get("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
   return renderPage(c, shop, null);
+});
+
+// LINE の注文の知らせの見た目（0179、文字だけ / カード）。鍵 line_notice_style は項目 settings（banto_shop_settings_perm の既定）
+notices.post("/:shopId/notices/line-style", requireOwner, async (c: AdminContext) => {
+  const shop = await loadShop(c, param(c, "shopId"), "settings");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const base = `/admin/shops/${shop.id}/notices`;
+  const f = await formFields(c);
+  const style = LINE_NOTICE_STYLES.find((v) => v === f.line_style);
+  if (!style || !(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION))) return c.text(t("error.generic"), 400);
+  try {
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), line_notice_style: style } });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${failCode(e, "not_saved")}`);
+    throw e;
+  }
+  return c.redirect(`${base}?flash=saved#line-style`);
 });
 
 notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {

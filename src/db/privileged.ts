@@ -297,7 +297,7 @@ export interface PrivilegedDb {
   /** ショップごとの秘密の暗号文（0021。今は line_messaging だけ）。無ければ null */
   shopSecret(shopId: string, purpose: "line_messaging"): Promise<string | null>;
   /** 注文を LINE で知らせる相手（0021）。会員の注文で LINE と結びついているときだけ */
-  /** tracking・shop は 0179 から（リンクの材料。当てる前の DB では無い） */
+  /** tracking・shop・line_style は 0179 から（リンクの材料と LINE の見た目。当てる前の DB では無い） */
   orderLineRecipient(
     orderId: string,
     shopId: string,
@@ -309,6 +309,7 @@ export interface PrivilegedDb {
     status: string;
     tracking?: { carrier: string; number: string } | null;
     shop?: { slug: string; domain?: string | null; order_page_url?: string | null; return_origins?: string[] | null } | null;
+    line_style?: string | null;
   } | null>;
   /** 0176: LINE で送れなかった知らせを「メール通知」にだけ配り直す（元の配信 1 つにつき 1 回）。配り直した数 */
   noticeLineFallback(deliveryId: string): Promise<number>;

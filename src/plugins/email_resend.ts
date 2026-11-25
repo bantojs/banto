@@ -76,11 +76,11 @@ export function orderPageLink(c: OrderLinkParts, publicBaseUrl: string | undefin
   return URL.canParse(banto) ? orderLink(banto, c.number, c.member === true) : banto;
 }
 
-/** 差し込みの {{tracking}}: お問い合わせ番号と運送会社の配送状況のリンク（番号が無ければ空）。メールと LINE（0179）で同じ */
-export function trackingText(tracking: unknown): string {
+/** 差し込みの {{tracking}}: お問い合わせ番号と運送会社の配送状況のリンク（番号が無ければ空）。メールと LINE（0179）で同じ。withUrl = false は LINE のカードの本文（リンクはボタン） */
+export function trackingText(tracking: unknown, withUrl = true): string {
   const tr = trackingOf(tracking);
   if (!tr) return "";
-  const url = trackingUrl(tr.carrier, tr.number);
+  const url = withUrl ? trackingUrl(tr.carrier, tr.number) : null;
   const carrier = CARRIER_NAMES[tr.carrier] ?? "";
   return `お問い合わせ番号: ${carrier}${carrier ? " " : ""}${tr.number}${url ? `\n配送状況: ${url}` : ""}`;
 }

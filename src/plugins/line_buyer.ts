@@ -13,15 +13,35 @@ import { LINE_PUSH_URL } from "./line_notify";
 import { lineToken } from "./line_token";
 import { noticeLine, type NoticeTextRow } from "../notices/templates";
 import { tryonNoticeKind } from "../modules/store-tryon/mail";
-import { orderLinkText, trackingText, type OrderLinkParts } from "./email_resend";
+import { orderLinkText, orderPageLink, trackingText, type OrderLinkParts } from "./email_resend";
+import { lineNoticeStyle, orderCard, type LineMessage } from "../notices/line-card";
+import { trackingOf, trackingUrl } from "../orders/tracking";
+import { t } from "../i18n";
 
-/** 注文の LINE の知らせの材料（order_line_recipient）。tracking・shop は 0179 から */
+/** 注文の LINE の知らせの材料（order_line_recipient）。tracking・shop・line_style は 0179 から */
 export interface OrderLineFacts {
   number: number;
   total_jpy: number;
   shop_name: string;
   tracking?: unknown;
   shop?: OrderLinkParts["shop"] | null;
+  line_style?: string | null;
+}
+
+function orderKind(event: string): "order_paid" | "order_shipped" | null {
+  // order.created は未入金の注文（代金引換、0157）の受付。呼び出し側が payment_status で選ぶ
+  return event === "order.paid" || event === "order.created" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
+}
+
+function orderValues(kind: "order_paid" | "order_shipped", r: OrderLineFacts, publicBaseUrl: string | undefined, card: boolean): Record<string, string> {
+  return {
+    shop_name: r.shop_name,
+    number: String(r.number),
+    total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}`,
+    // カードの本文ではリンクを外す（ボタンに出す）
+    tracking: kind === "order_shipped" ? trackingText(r.tracking, !card) : "",
+    order_link: !card && r.shop ? orderLinkText({ number: r.number, member: true, shop: r.shop }, publicBaseUrl) : "",
+  };
 }
 
 /**
@@ -30,16 +50,31 @@ export interface OrderLineFacts {
  * 組めなければ空（その行ごと消える）。氏名・住所は載せない
  */
 export function buyerMessage(event: string, r: OrderLineFacts, texts?: readonly NoticeTextRow[] | null, publicBaseUrl?: string): string | null {
-  // order.created は未入金の注文（代金引換、0157）の受付。呼び出し側が payment_status で選ぶ
-  const kind = event === "order.paid" || event === "order.created" ? "order_paid" : event === "order.shipped" ? "order_shipped" : null;
+  const kind = orderKind(event);
+  return kind ? noticeLine(kind, texts, orderValues(kind, r, publicBaseUrl, false)) : null;
+}
+
+/**
+ * 注文の知らせのメッセージ。ショップの見た目がカード（0179、line_style = card）ならボタン付きのカード、
+ * 組めなければ（本文が空など）文字だけ
+ */
+export function buyerLineMessage(event: string, r: OrderLineFacts, texts?: readonly NoticeTextRow[] | null, publicBaseUrl?: string): LineMessage | null {
+  const kind = orderKind(event);
   if (!kind) return null;
-  return noticeLine(kind, texts, {
-    shop_name: r.shop_name,
-    number: String(r.number),
-    total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}`,
-    tracking: kind === "order_shipped" ? trackingText(r.tracking) : "",
-    order_link: r.shop ? orderLinkText({ number: r.number, member: true, shop: r.shop }, publicBaseUrl) : "",
-  });
+  const plain = noticeLine(kind, texts, orderValues(kind, r, publicBaseUrl, false));
+  if (lineNoticeStyle(r.line_style) === "card") {
+    const tr = kind === "order_shipped" ? trackingOf(r.tracking) : null;
+    const card = orderCard({
+      shopName: r.shop_name,
+      body: noticeLine(kind, texts, orderValues(kind, r, publicBaseUrl, true)),
+      plain,
+      orderUrl: r.shop ? orderPageLink({ number: r.number, member: true, shop: r.shop }, publicBaseUrl) : null,
+      trackingUrl: tr ? trackingUrl(tr.carrier, tr.number) : null,
+      labels: { order: t("linemsg.card_order"), tracking: t("linemsg.card_tracking") },
+    });
+    if (card) return card;
+  }
+  return { type: "text", text: plain };
 }
 
 /**
@@ -97,7 +132,7 @@ export const lineBuyerNotify: BundledPlugin = {
     const res = await ctx.fetch(LINE_PUSH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": ctx.envelope.id },
-      body: JSON.stringify({ to: text.to, messages: [{ type: "text", text: text.text }] }),
+      body: JSON.stringify({ to: text.to, messages: [text.message] }),
     });
     // 409: 同じ再送キーの送信を LINE がもう受け付けている（前の回で届いている）
     if (res.status === 409) return;
@@ -115,8 +150,8 @@ export const lineBuyerNotify: BundledPlugin = {
 /** 知らせる出来事だが、LINE の送り先が無い（会員の LINE の結びつきが外れた・ゲスト） */
 const NO_RECIPIENT = "no_recipient" as const;
 
-/** 送り先と文。知らせない出来事・状態なら null、知らせるが送り先が無いなら NO_RECIPIENT */
-async function messageFor(ctx: PluginContext): Promise<{ to: string; text: string } | typeof NO_RECIPIENT | null> {
+/** 送り先とメッセージ。知らせない出来事・状態なら null、知らせるが送り先が無いなら NO_RECIPIENT */
+async function messageFor(ctx: PluginContext): Promise<{ to: string; message: LineMessage } | typeof NO_RECIPIENT | null> {
   const { event, data, shop_id } = ctx.envelope;
   if (event.startsWith("tryon.")) {
     const id = typeof data["request_id"] === "string" ? data["request_id"] : "";
@@ -126,7 +161,7 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
     const opts = { extended: data["extended"] === true, reminder: data["reminder"] === true };
     const kind = tryonNoticeKind(event, r.status, opts);
     const text = kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
-    return text ? { to: r.line_user_id, text } : null;
+    return text ? { to: r.line_user_id, message: { type: "text", text } } : null;
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
@@ -139,6 +174,6 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   if (!r) return NO_RECIPIENT;
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
   const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
-  const text = buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind), ctx.config.get("PUBLIC_BASE_URL"));
-  return text ? { to: r.line_user_id, text } : null;
+  const message = buyerLineMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind), ctx.config.get("PUBLIC_BASE_URL"));
+  return message ? { to: r.line_user_id, message } : null;
 }

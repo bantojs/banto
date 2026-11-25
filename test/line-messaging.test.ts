@@ -221,6 +221,44 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     expect(page).toContain(`value="${to}"`);
   });
 
+  it("お知らせの文面の画面で LINE の見た目をカードに（0179）。テスト送信もカードで、本番と同じリンク", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const app = appWith(sb, { PUBLIC_BASE_URL: "https://banto.example" });
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const notices = `/admin/shops/${shop.id}/notices`;
+    expect(await (await admin.get(notices)).text()).toContain("LINE の注文の知らせの見た目");
+    expect((await admin.post(`${notices}/line-style`, { line_style: "fancy" })).status).toBe(400);
+    expect((await admin.post(`${notices}/line-style`, { line_style: "card" })).headers.get("location")).toContain("flash=saved");
+    expect((sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, unknown>)["line_notice_style"]).toBe("card");
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const to = `U${"c".repeat(32)}`;
+    const sent: { messages: Record<string, unknown>[] }[] = [];
+    externalHosts.set("https://api.line.me/", async (req) => {
+      sent.push((await req.json()) as { messages: Record<string, unknown>[] });
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      await admin.post(base, { token: "AbCdEf0123456789+/=AbCdEf0123456789" });
+      expect((await admin.post(`${base}/test`, { kind: "order_shipped", to })).headers.get("location")).toContain("flash=test_ok");
+      const m = sent[0]!.messages[0]!;
+      expect(m["type"]).toBe("flex");
+      expect(String(m["altText"]).startsWith("【テスト送信】\n【マイショップ】")).toBe(true);
+      const json = JSON.stringify(m["contents"]);
+      expect(json).toContain("【テスト送信】");
+      expect(json).toContain("https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1");
+      expect(json).toContain("配送状況");
+      // 文字だけに戻すと、リンクは本文に
+      await admin.post(`${notices}/line-style`, { line_style: "text" });
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_ok");
+      expect(sent[1]!.messages[0]!["type"]).toBe("text");
+      expect(String(sent[1]!.messages[0]!["text"])).toContain("ご注文の状況はこちらで確認できます: https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1");
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+  });
+
   it("管理画面のテスト送信: settings の無い人は使えない・LINE の応答ごとの知らせ・開けないトークン・デプロイの変数のトークン", async () => {
     const sb = new FakeSupabase();
     const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
