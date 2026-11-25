@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
-import { Browser, appWith } from "./helpers";
+import { Browser, appWith, externalHosts } from "./helpers";
 import { buyerMessage, lineBuyerNotify } from "../src/plugins/line_buyer";
 import { lineToken } from "../src/plugins/line_token";
 import { LINE_LOW_STOCK_LIST_MAX, LINE_PUSH_URL, batchRetryKey, lineLowStockSummary, lineNotify } from "../src/plugins/line_notify";
@@ -169,4 +169,149 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 0, failed: 3 });
     expect(sb.tables.hook_deliveries.map((d) => [d["status"], d["attempts"], String(d["last_error"]).slice(0, 12)])).toEqual(Array(3).fill(["pending", 1, "LINE API 429"]));
   });
+
+  it("管理画面: テスト送信（今の文面に見本の値、先頭に【テスト送信】）。送り先の形・トークンの無いとき・友だちでないときを知らせる。最近の送信の一覧", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const app = appWith(sb);
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const to = `U${"a".repeat(32)}`;
+    const sent: { auth: string | null; body: { to: string; messages: { text: string }[] } }[] = [];
+    let status = 200;
+    externalHosts.set("https://api.line.me/", async (req) => {
+      sent.push({ auth: req.headers.get("Authorization"), body: (await req.json()) as { to: string; messages: { text: string }[] } });
+      return new Response("{}", { status });
+    });
+    try {
+      // 送り先の形が違う・トークンが無い
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to: "Uxyz" })).headers.get("location")).toContain("flash=test_invalid");
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_no_token");
+      expect(sent).toHaveLength(0);
+      await admin.post(base, { token: "AbCdEf0123456789+/=AbCdEf0123456789" });
+      const ok = await admin.post(`${base}/test`, { kind: "order_shipped", to });
+      expect(ok.headers.get("location")).toContain("flash=test_ok");
+      expect(sent).toHaveLength(1);
+      expect(sent[0]!.auth).toBe("Bearer AbCdEf0123456789+/=AbCdEf0123456789");
+      expect(sent[0]!.body.to).toBe(to);
+      expect(sent[0]!.body.messages[0]!.text.startsWith("【テスト送信】")).toBe(true);
+      expect(sent[0]!.body.messages[0]!.text).toContain("マイショップ");
+      // 知らない種類は送らない
+      expect((await admin.post(`${base}/test`, { kind: "tryon_ready", to })).headers.get("location")).toContain("flash=test_invalid");
+      status = 400;
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_not_friend");
+      status = 401;
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_bad_token");
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+    // 最近の送信: プラグインが無効なら知らせ、あれば配信の一覧（メールへの配り直しの印も）
+    expect(await (await admin.get(base)).text()).toContain("有効になっていません");
+    sb.tables.hook_endpoints.push({ id: "ep-line", shop_id: shop.id, name: "LINE", url: bundledPluginUrl("line_buyer_notify"), events: ["order.paid"], enabled: true, settings: {} });
+    sb.tables.hook_endpoints.push({ id: "ep-mail", shop_id: shop.id, name: "メール", url: bundledPluginUrl("email_resend"), events: ["order.paid"], enabled: true, settings: {} });
+    sb.tables.hook_endpoints.push({ id: "ep-notify", shop_id: shop.id, name: "LINE 通知", url: bundledPluginUrl("line_notify"), events: [], enabled: true, settings: { to } });
+    sb.tables.hook_deliveries.push({ id: "d-1", shop_id: shop.id, endpoint_id: "ep-line", event: "order.paid", status: "delivered", attempts: 1, last_error: null, created_at: "2026-11-25T01:00:00Z", payload: { order_id: "o-1", notice_line_only: true } });
+    sb.tables.hook_deliveries.push({ id: "d-2", shop_id: shop.id, endpoint_id: "ep-mail", event: "order.paid", status: "delivered", attempts: 1, last_error: null, created_at: "2026-11-25T01:00:01Z", payload: { order_id: "o-1", fallback_of: "d-1" } });
+    const page = await (await admin.get(base)).text();
+    expect(page).toContain("注文の受付");
+    expect(page).toContain("LINE だけのお客様");
+    expect(page).toContain("メールで送りました");
+    // 「LINE 通知」の送り先がテスト送信の宛先の初期値
+    expect(page).toContain(`value="${to}"`);
+  });
+
+  it("管理画面のテスト送信: settings の無い人は使えない・LINE の応答ごとの知らせ・開けないトークン・デプロイの変数のトークン", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const org = String(sb.tables.shops.find((x) => x["id"] === shop.id)!["org_id"]);
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const to = `U${"b".repeat(32)}`;
+    let status = 200;
+    let calls = 0;
+    externalHosts.set("https://api.line.me/", () => {
+      calls++;
+      return new Response("{}", { status });
+    });
+    try {
+      // デプロイの変数のトークン（ショップのトークンは無い）: 送れて、そのことを知らせる
+      const appEnv = appWith(sb, { LINE_CHANNEL_ACCESS_TOKEN: "env-token-1234567890abcdef" });
+      const ownerB = await Browser.loggedIn(appEnv, "owner@example.com", "password-123");
+      expect((await ownerB.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_ok_env");
+      for (const [st, code] of [[403, "test_not_friend"], [429, "test_limit"], [500, "test_failed"]] as const) {
+        status = st;
+        expect((await ownerB.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain(`flash=${code}`);
+      }
+      status = 200;
+      // integrations だけの人: 画面に欄が出ず、送れない（404）。integrations も無い人も 404
+      const app = appWith(sb);
+      const member = async (email: string, perms: string[]) => {
+        const u = sb.addUser(email, "password-123");
+        sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+        sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms });
+        return Browser.loggedIn(app, email, "password-123");
+      };
+      const before = calls;
+      const integ = await member("integ@example.com", ["integrations"]);
+      const page = await (await integ.get(base)).text();
+      expect(page).not.toContain(`action="${base}/test"`);
+      expect((await integ.post(`${base}/test`, { kind: "order_paid", to })).status).toBe(404);
+      const none = await member("none@example.com", ["catalog"]);
+      expect((await none.post(`${base}/test`, { kind: "order_paid", to })).status).toBe(404);
+      expect(calls).toBe(before);
+      // 開けないトークン（別のショップの鍵で閉じた暗号文）
+      sb.tables.shop_secret_boxes.push({ shop_id: shop.id, purpose: "line_messaging", secret_box: await sealSecret("test-session-secret", "other-shop", "line_messaging", "x".repeat(30)), updated_at: new Date().toISOString() });
+      const ownerA = await Browser.loggedIn(app, "owner@example.com", "password-123");
+      expect((await ownerA.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_token_broken");
+      // 決まった知らせ以外の flash は出さない
+      expect(await (await ownerA.get(`${base}?flash=test_prefix`)).text()).not.toContain('class="error">【テスト送信】');
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+  });
+
+  it("管理画面のテスト送信: 会員のメールアドレスで宛先を選ぶ（UID は画面に出さない・監査ログ）。customers の無い人は選べない", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const org = String(sb.tables.shops.find((x) => x["id"] === shop.id)!["org_id"]);
+    const uid = `U${"c".repeat(32)}`;
+    sb.tables.customers.push({ id: "cust-line", shop_id: shop.id, email: "Tester@Example.com", name: "テスト" });
+    sb.tables.customers.push({ id: "cust-mail", shop_id: shop.id, email: "mailonly@example.com", name: "メールだけ" });
+    sb.memberIdentities.push({ shop_id: shop.id, provider: "line", subject: uid, customer_id: "cust-line" });
+    const app = appWith(sb, { LINE_CHANNEL_ACCESS_TOKEN: "env-token-1234567890abcdef" });
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const sent: string[] = [];
+    externalHosts.set("https://api.line.me/", async (req) => {
+      sent.push(((await req.json()) as { to: string }).to);
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+      expect(await (await admin.get(base)).text()).toContain('name="email"');
+      const ok = await admin.post(`${base}/test`, { kind: "order_paid", email: "tester@example.com", to: "" });
+      expect(ok.headers.get("location")).toContain("flash=test_ok");
+      // UID は画面（戻り先の URL）に出さない
+      expect(ok.headers.get("location")).not.toContain(uid);
+      expect(ok.headers.get("location")).not.toContain("tester");
+      expect(sent).toEqual([uid]);
+      expect(sb.tables.audit_log.some((r) => r["action"] === "line.test_recipient" && r["target_id"] === "cust-line")).toBe(true);
+      // LINE と結びついていない会員・いないアドレス
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", email: "mailonly@example.com" })).headers.get("location")).toContain("flash=test_member_not_found");
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", email: "nobody@example.com" })).headers.get("location")).toContain("flash=test_member_not_found");
+      expect(sent).toHaveLength(1);
+      // settings と integrations はあるが customers の無い人: 欄が出ず、メールで送ろうとしても断る
+      const u = sb.addUser("staff@example.com", "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms: ["integrations", "settings"] });
+      const staff = await Browser.loggedIn(app, "staff@example.com", "password-123");
+      expect(await (await staff.get(base)).text()).not.toContain('name="email"');
+      expect((await staff.post(`${base}/test`, { kind: "order_paid", email: "tester@example.com" })).headers.get("location")).toContain("flash=test_member_needs_customers");
+      expect(sent).toHaveLength(1);
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+  });
 });
+

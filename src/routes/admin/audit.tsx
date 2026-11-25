@@ -21,6 +21,7 @@ const ACTION_LABEL: Record<string, MessageKey> = {
   "customer.email_changed": "audit.action.customer.email_changed",
   "customer.deleted": "audit.action.customer.deleted",
   "customer.identity_imported": "audit.action.customer.identity_imported",
+  "line.test_recipient": "audit.action.line.test_recipient",
   "order.status_changed": "audit.action.order.status_changed",
   "order.payment_recorded": "audit.action.order.payment_recorded",
   "org_member.added": "audit.action.org_member.added",

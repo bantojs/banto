@@ -48,6 +48,8 @@ Supabase CLI がある環境なら `npx supabase start` のあと `npm run test:
 
 - Conventional Commits（`feat:` `fix:` `docs:` `chore:`）。本文に「何を・なぜ」。
 - ブランチの名前もコミットの種類から始めます: `feat/<短い名前>`・`fix/…`・`docs/…`・`chore/…`（例: `feat/page-media-thumb`、`chore/v0.5.0`）。道具の名前や人の名前（`claude/…` など）は付けません。
+- **PR は `staging` ブランチに向けます**（`main` ではありません）。`staging` に入ったものを確認用の環境で確かめてから、まとめて `staging` → `main` の PR（マージコミット）で `main` に上げます。リリースは `main` から作ります。
+  - 急ぎの直し（動かない・安全に関わる）だけは、メンテナの判断で `main` に直接 PR し、マージの後に `main` を `staging` に取り込みます。
 - PR には、通したコマンド（lint / test / build:workers / check:rls）と、依存を足したときは Worker の追加サイズを書いてください。
 - 依存の更新は Dependabot が週 1 回 PR にします（`.github/dependabot.yml`: npm・GitHub Actions・`selfhost/` の Docker イメージ）。取り込むときも同じ CI が通ることを確かめます。
 - UI の文言は `src/i18n/ja.ts` を正とし、`en.ts` に同じキーで英訳を置きます。
