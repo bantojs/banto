@@ -4,6 +4,8 @@
  * 送り先は会員の LINE の利用者 ID（LINE ログインのチャネルと Messaging API のチャネルが同じプロバイダーのとき同じ値）。
  * 公式アカウントを友だちに追加していない人には届かない（LINE ログインの画面で友だち追加を促せる）。
  * 文に載せるのは注文番号・合計・ショップ名だけ（住所・氏名は載せない）。
+ * お客様が「LINE だけ」を選んでいる（0176、line_only）とき、送れなかったら（友だちでない・ブロック・トークンが無い・最後の再送の失敗）
+ * 同じ知らせを「メール通知」にだけ配り直す（notice_line_fallback）。何も届かない状態を作らない
  */
 import type { BundledPlugin, PluginContext } from "./types";
 import { LINE_PUSH_URL } from "./line_notify";
@@ -47,21 +49,45 @@ export const lineBuyerNotify: BundledPlugin = {
   async handle(ctx: PluginContext) {
     const text = await messageFor(ctx);
     if (!text) return;
+    // 「LINE だけ」のお客様に送れなかったら、メールで代わりに送る（0176）
+    const fallback = () => (text.lineOnly ? ctx.privileged.noticeLineFallback(ctx.envelope.id) : Promise.resolve(0));
     const token = await lineToken(ctx);
-    if (!token) throw new Error("line_buyer_notify: チャネルアクセストークンが未設定");
-    const res = await ctx.fetch(LINE_PUSH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": ctx.envelope.id },
-      body: JSON.stringify({ to: text.to, messages: [{ type: "text", text: text.text }] }),
-    });
-    // 友だちでない・ブロックされた人には送れない（400/403）。再送しても届かないので、失敗にしない
-    if (res.status === 400 || res.status === 403) return;
-    if (!res.ok) throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!token) {
+      if (text.lineOnly) {
+        await fallback();
+        return;
+      }
+      throw new Error("line_buyer_notify: チャネルアクセストークンが未設定");
+    }
+    let res: Response;
+    try {
+      res = await ctx.fetch(LINE_PUSH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": ctx.envelope.id },
+        body: JSON.stringify({ to: text.to, messages: [{ type: "text", text: text.text }] }),
+      });
+    } catch (e) {
+      if (ctx.envelope.attempt >= LAST_ATTEMPT) await fallback();
+      throw e;
+    }
+    // 友だちでない・ブロックされた人には送れない（400/403）。再送しても届かないので、失敗にしない（「LINE だけ」ならメールで送る）
+    if (res.status === 400 || res.status === 403) {
+      await fallback();
+      return;
+    }
+    if (!res.ok) {
+      // 最後の再送でも送れなければ、「LINE だけ」のお客様にはメールで送る（再送のあいだは LINE を待つ）
+      if (ctx.envelope.attempt >= LAST_ATTEMPT) await fallback();
+      throw new Error(`LINE API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
   },
 };
 
-/** 送り先と文（LINE と結びついていない会員・ゲスト、知らせない状態なら null） */
-async function messageFor(ctx: PluginContext): Promise<{ to: string; text: string } | null> {
+/** hooks の配信の最後の回（finish_hook_delivery が 5 回目の失敗で failed にする） */
+const LAST_ATTEMPT = 5;
+
+/** 送り先と文（LINE と結びついていない会員・ゲスト、知らせない状態なら null）。lineOnly はお客様が「LINE だけ」（0176） */
+async function messageFor(ctx: PluginContext): Promise<{ to: string; text: string; lineOnly: boolean } | null> {
   const { event, data, shop_id } = ctx.envelope;
   if (event.startsWith("tryon.")) {
     const id = typeof data["request_id"] === "string" ? data["request_id"] : "";
@@ -70,7 +96,7 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
     const opts = { extended: data["extended"] === true, reminder: data["reminder"] === true };
     const kind = r ? tryonNoticeKind(event, r.status, opts) : null;
     const text = r && kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
-    return r && text ? { to: r.line_user_id, text } : null;
+    return r && text ? { to: r.line_user_id, text, lineOnly: r.line_only === true } : null;
   }
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
@@ -83,5 +109,5 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
   const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
   const text = r ? buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
-  return r && text ? { to: r.line_user_id, text } : null;
+  return r && text ? { to: r.line_user_id, text, lineOnly: r.line_only === true } : null;
 }

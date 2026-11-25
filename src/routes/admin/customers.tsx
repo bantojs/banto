@@ -12,6 +12,7 @@ const CSV_MAX_ROWS = 5000;
 import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
 import { IDENTITY_IMPORT_MIGRATION } from "./customer-identities";
+import { NOTICE_CHANNEL_MIGRATION } from "../../members/notice-channel";
 import { can } from "./access";
 import { DbError, type Filter } from "../../db/client";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
@@ -316,11 +317,15 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
   const r = await db.from<CustomerRow>("customers").selectOne(CUSTOMER_COLUMNS, { eq: { shop_id: shopId, id: customerId } });
   if (!r) return c.text(t("customers.not_found"), 404);
   const inquiriesOn = moduleEnabled(shop.settings, "inquiries") && can(access, "support");
-  const [orders, inquiries, providers] = await Promise.all([
+  const [orders, inquiries, providers, noticeChannel] = await Promise.all([
     can(access, "orders") ? db.from<MemberOrderRow>("orders").select("id,number,status,total_jpy,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc,id.desc", limit: 20 }) : Promise.resolve(null),
     inquiriesOn ? db.from<MemberInquiryRow>("inquiries").select("id,number,created_at", { eq: { shop_id: shopId, customer_id: customerId }, order: "created_at.desc", limit: 20 }) : Promise.resolve(null),
     // ログインの方法（LINE / Google の別だけ。取り込みで結んだかも分かるように、0168 から）
     migrated({ db, cache: c.get("adapters").cache }, IDENTITY_IMPORT_MIGRATION).then((on) => (on ? db.rpc<string[] | null>("customer_login_providers", { p_shop_id: shopId, p_customer_id: customerId }) : null)),
+    // お知らせの受け取り方（0176、本人が選ぶ。ここでは見るだけ）
+    migrated({ db, cache: c.get("adapters").cache }, NOTICE_CHANNEL_MIGRATION).then((on) =>
+      on ? db.from<{ notice_channel: string }>("customers").selectOne("notice_channel", { eq: { shop_id: shopId, id: customerId } }).then((x) => x?.notice_channel ?? null) : null,
+    ),
   ]);
   const fields = customerFields(shop.settings);
   const ref = externalRef(r.external_ref);
@@ -445,6 +450,16 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
                 <>
                   <dt>{t("customers.login_providers")}</dt>
                   <dd>{providers.length > 0 ? providers.map((p) => (p === "line" ? "LINE" : p === "google" ? "Google" : p)).join("・") : "-"}</dd>
+                </>
+              ) : null}
+              {noticeChannel === "line" ? (
+                <>
+                  <dt>{t("notice_channel.title")}</dt>
+                  <dd>
+                    {t("notice_channel.line")}
+                    <br />
+                    <span class="muted">{t("customers.notice_line_hint")}</span>
+                  </dd>
                 </>
               ) : null}
               {ref ? (
