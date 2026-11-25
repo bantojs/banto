@@ -55,7 +55,7 @@ Banto は、あなた自身の Cloudflare と Supabase のアカウントで動�
 
 ### B. リポジトリを取り込む（自分のコピーや非公開リポジトリから）
 
-1. GitHub で Banto をフォーク（またはコピー）しておきます。
+1. GitHub で Banto をフォーク（またはコピー）しておきます。使うのは **`main` ブランチ**（かリリースのタグ）です。`staging` ブランチは次のリリースに向けて確かめている途中の版なので、本番には使いません。
 2. Cloudflare の画面 → **Workers & Pages → 作成（Create）→ リポジトリをインポート（Import a repository）** で、そのリポジトリを選びます。
 3. ビルド設定はそのままで構いません（Build command: なし、Deploy command: `npx wrangler deploy`、Root directory: `/`）。**デプロイ** を押します。
 4. この方法では値を入力する画面が出ないので、配置が終わったら手順3で 3 つの値を貼ります。

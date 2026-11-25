@@ -70,7 +70,7 @@ jobs:
    - 「すでに最新です」と出たら、更新はありません。
    - Actions が無効と出たら、コピーの **Settings → Actions → General** で Actions を許可し、「Workflow permissions」を **Read and write permissions** にします。
 
-自動にする（`schedule` の # を外す）と、Banto の main に入った変更が週に 1 回あなたのショップに届きます。
+自動にする（`schedule` の # を外す）と、Banto の main に入った変更が週に 1 回あなたのショップに届きます（追いかけるのは `main` だけです。`staging` は次のリリースに向けて確かめている途中の版なので、追いかけないでください）。
 データベースの変更（次の §2）は自動では当たりませんが、当てるまでのあいだもショップは止まりません（下の「適用するまでのあいだ」）。
 MAJOR の更新を自動で受けたくない場合は、手動（Run workflow）のままにしてください。
 
