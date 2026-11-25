@@ -229,3 +229,5 @@ begin
   return api_order_json(v_o, banto_order_pii(v_tok.scopes, 'contact'), banto_order_pii(v_tok.scopes, 'address'), banto_order_pii(v_tok.scopes, 'full'), true);
 end;
 $$;
+
+insert into banto_migrations (version) values ('0174_api_order_item_media');
