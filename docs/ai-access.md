@@ -506,3 +506,22 @@ PHP なら `hash_hmac('sha256', $uid, $key)`、Python なら `hmac.new(key.encod
 - お問い合わせ番号は、発送済みの注文の個人情報のマスキング（既定 180 日、`mask_shipped_orders`）では消えません。
 - hooks の `order.shipped` のペイロードには入れません（hooks は最小の中身のまま。番号は API で引きます）。
 - 0172 を当てる前は `tracking` が入りません。
+
+## 25. 注文の明細のカラー・サイズと画像（0174、メンテナの決定 2026-11-25）
+
+注文の JSON の明細（`items` の各行）に、SKU の選択肢 `options` と画像 `image` が入ります。外部プラグインが注文のメールの明細に、商品の画像とカラー・サイズを出せます。今までの値（`sku_id`・`sku_code`・`sku_name`・`product_id`・`product_name`・`qty`・`unit_price_jpy`・`discount_jpy`）は変わりません。
+
+```json
+{
+  "sku_code": "SH-RED-M",
+  "options": [{ "key": "color", "name": "カラー", "value": "赤" }, { "key": "size", "name": "サイズ", "value": "M" }],
+  "image": { "url": "https://media.example.com/shops/…/red.webp", "thumb": "https://media.example.com/shops/…/red.thumb.webp", "width": 1600, "height": 2000 }
+}
+```
+
+- `options` は商品の SKU を分ける軸（`option_axes`）の順に並べて返します（軸に無い鍵は後ろに鍵の順）。`name` はショップの選択肢の名前の表（`option_names`）、無ければ `key` です。選択肢の無い SKU は `[]`。
+- `image` はその SKU の 1 枚目の画像です。選び方はお店の画面・商品フィードと同じで、その SKU に結んだ画像（細かいもの先）→ 商品全体の画像 → ほかの SKU の画像の順です。URL はデプロイの `MEDIA_BASE_URL`（無ければ `<Banto の URL>/media`）から組みます。`thumb` はサムネイル（無ければ `null`）、画像が無い商品は `"image": null` です。
+- **`image` は 1 件の注文の応答だけ**です（`GET /api/v1/orders/{id}`、状態の変更・取り消し・入金の記録・印とメモの応答、MCP の注文の取得）。注文の一覧（`GET /api/v1/orders`）は件数が多いので `options` だけで、`image` は入りません。明細の画像が要るときは 1 件ずつ引いてください。
+- **`orders:read` で返します**。どちらも商品の情報で、購入者の個人情報ではありません。
+- 注文した時点の写しは残しません。今の SKU と画像から組みます。注文のある SKU は消せないので `options` はいつも返りますが、後から選択肢の値や名前を変えると新しい値になります。画像を消せば `image` は `null`（別の画像があればそれ）になります。商品を非公開にしても返ります。
+- 0174 を当てる前は `options` と `image` が入りません（値が無ければ今までの表のまま出してください）。
