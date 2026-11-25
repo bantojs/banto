@@ -270,5 +270,48 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
       externalHosts.delete("https://api.line.me/");
     }
   });
+
+  it("管理画面のテスト送信: 会員のメールアドレスで宛先を選ぶ（UID は画面に出さない・監査ログ）。customers の無い人は選べない", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const org = String(sb.tables.shops.find((x) => x["id"] === shop.id)!["org_id"]);
+    const uid = `U${"c".repeat(32)}`;
+    sb.tables.customers.push({ id: "cust-line", shop_id: shop.id, email: "Tester@Example.com", name: "テスト" });
+    sb.tables.customers.push({ id: "cust-mail", shop_id: shop.id, email: "mailonly@example.com", name: "メールだけ" });
+    sb.memberIdentities.push({ shop_id: shop.id, provider: "line", subject: uid, customer_id: "cust-line" });
+    const app = appWith(sb, { LINE_CHANNEL_ACCESS_TOKEN: "env-token-1234567890abcdef" });
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const sent: string[] = [];
+    externalHosts.set("https://api.line.me/", async (req) => {
+      sent.push(((await req.json()) as { to: string }).to);
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+      expect(await (await admin.get(base)).text()).toContain('name="email"');
+      const ok = await admin.post(`${base}/test`, { kind: "order_paid", email: "tester@example.com", to: "" });
+      expect(ok.headers.get("location")).toContain("flash=test_ok");
+      // UID は画面（戻り先の URL）に出さない
+      expect(ok.headers.get("location")).not.toContain(uid);
+      expect(ok.headers.get("location")).not.toContain("tester");
+      expect(sent).toEqual([uid]);
+      expect(sb.tables.audit_log.some((r) => r["action"] === "line.test_recipient" && r["target_id"] === "cust-line")).toBe(true);
+      // LINE と結びついていない会員・いないアドレス
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", email: "mailonly@example.com" })).headers.get("location")).toContain("flash=test_member_not_found");
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", email: "nobody@example.com" })).headers.get("location")).toContain("flash=test_member_not_found");
+      expect(sent).toHaveLength(1);
+      // settings と integrations はあるが customers の無い人: 欄が出ず、メールで送ろうとしても断る
+      const u = sb.addUser("staff@example.com", "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms: ["integrations", "settings"] });
+      const staff = await Browser.loggedIn(app, "staff@example.com", "password-123");
+      expect(await (await staff.get(base)).text()).not.toContain('name="email"');
+      expect((await staff.post(`${base}/test`, { kind: "order_paid", email: "tester@example.com" })).headers.get("location")).toContain("flash=test_member_needs_customers");
+      expect(sent).toHaveLength(1);
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+  });
 });
 
