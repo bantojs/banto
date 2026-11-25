@@ -15,7 +15,7 @@ import { createPrivilegedDb } from "../../db/privileged";
 import { lineTokenFor } from "../../plugins/line_token";
 import { LINE_PUSH_URL } from "../../plugins/line_notify";
 import { bundledPluginUrl } from "../../plugins/types";
-import { noticeLine, type NoticeKind } from "../../notices/templates";
+import { LINE_NOTICE_LINKS_MIGRATION, noticeLine, type NoticeKind } from "../../notices/templates";
 import { kindsFor, sampleValues } from "./notices";
 import type { MessageKey } from "../../i18n";
 import { actorHeader } from "../../audit";
@@ -343,7 +343,9 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   }
   if (!token) return back("test_no_token");
   // 今の文面（直していなければ既定）に見本の値を差し込む。テストと分かるように頭に印
-  const body = noticeLine(kind, await privileged.shopNoticeTexts(shop.id, kind), sampleValues(kind, shop.name));
+  // 0179 を当てる前の DB では本番の知らせにリンクが載らないので、テストにも載せない
+  const sample = (await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION)) ? sampleValues(kind, shop.name) : { ...sampleValues(kind, shop.name), order_link: "", tracking: "" };
+  const body = noticeLine(kind, await privileged.shopNoticeTexts(shop.id, kind), sample);
   const text = `${t("linemsg.test_prefix")}\n${body}`;
   try {
     const res = await c.get("deps").fetch(LINE_PUSH_URL, {
