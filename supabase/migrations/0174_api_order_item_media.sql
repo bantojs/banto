@@ -6,7 +6,7 @@
 --     一覧は件数が多いので候補を付けない（DB の手間を増やさない）
 --   - どちらも商品の情報で個人情報ではないので orders:read のまま。
 --   - 写しは残さず、今の SKU と画像から組む（注文のある SKU は消せない。画像が消えていれば null）
--- 旗の無い api_order_json(orders, boolean, boolean, boolean) は画像の候補つきの形を呼ぶ（1 件の注文の api_* はそのまま）。
+-- 旗の無い api_order_json(orders, boolean, boolean, boolean) は候補なしの形を呼ぶ（候補を付けるのは、下で定義し直す 1 件の注文の api_* だけ）。
 
 create or replace function api_order_json(p_order orders, p_contact boolean, p_address boolean, p_note boolean, p_images boolean)
 returns jsonb
@@ -68,7 +68,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select api_order_json(p_order, p_contact, p_address, p_note, true);
+  select api_order_json(p_order, p_contact, p_address, p_note, false);
 $$;
 revoke execute on function api_order_json(orders, boolean, boolean, boolean) from public, anon, authenticated;
 
@@ -128,3 +128,104 @@ begin
 end;
 $$;
 
+-- api_order_get（0173 の定義から。明細に画像の候補を付ける）
+create or replace function api_order_get(p_token_hash text, p_order_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_o orders%rowtype;
+begin
+  v_tok := api_require(p_token_hash, 'orders:read');
+  select * into v_o from orders where id = p_order_id and shop_id = v_tok.shop_id;
+  if not found then raise exception 'not_found'; end if;
+  return api_order_json(v_o, banto_order_pii(v_tok.scopes, 'contact'), banto_order_pii(v_tok.scopes, 'address'), banto_order_pii(v_tok.scopes, 'full'), true);
+end;
+$$;
+
+-- api_order_cancel（0173 の定義から。明細に画像の候補を付ける）
+create or replace function api_order_cancel(p_token_hash text, p_order_id uuid, p_refunded boolean, p_reason text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_r jsonb; v_o orders%rowtype;
+begin
+  v_tok := api_require(p_token_hash, 'orders:write');
+  if not banto_user_shop_perm(v_tok.owner_id, v_tok.shop_id, 'orders_cancel') then
+    raise exception 'unauthorized' using errcode = '42501';
+  end if;
+  v_r := cancel_order(p_order_id, v_tok.shop_id, p_refunded, p_reason);
+  select * into v_o from orders where id = p_order_id;
+  return api_order_json(v_o, banto_order_pii(v_tok.scopes, 'contact'), banto_order_pii(v_tok.scopes, 'address'), banto_order_pii(v_tok.scopes, 'full'), true);
+end;
+$$;
+
+-- api_order_payment_record（0173 の定義から。明細に画像の候補を付ける）
+create or replace function api_order_payment_record(p_token_hash text, p_order_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_o orders%rowtype;
+begin
+  v_tok := api_require(p_token_hash, 'orders:write');
+  perform banto_order_payment_record(v_tok.shop_id, p_order_id);
+  select * into v_o from orders where id = p_order_id and shop_id = v_tok.shop_id;
+  return api_order_json(v_o, banto_order_pii(v_tok.scopes, 'contact'), banto_order_pii(v_tok.scopes, 'address'), banto_order_pii(v_tok.scopes, 'full'), true);
+end;
+$$;
+
+-- api_order_update_status（0173 の定義から。明細に画像の候補を付ける）
+create or replace function api_order_update_status(p_token_hash text, p_order_id uuid, p_status text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_o orders%rowtype;
+begin
+  v_tok := api_require(p_token_hash, 'orders:write');
+  if p_status <> 'shipped' then raise exception 'invalid_status'; end if;
+  update orders set status = 'shipped', shipped_at = now()
+   where id = p_order_id and shop_id = v_tok.shop_id and status::text in ('paid', 'pending')
+  returning * into v_o;
+  if not found then raise exception 'not_found'; end if;
+  perform enqueue_hook(v_tok.shop_id, 'order.shipped',
+    jsonb_build_object('order_id', v_o.id, 'order_number', v_o.number, 'shop_id', v_tok.shop_id, 'total_jpy', v_o.total_jpy, 'status', v_o.status, 'shipped_at', v_o.shipped_at, 'customer_id', v_o.customer_id, 'payment_status', v_o.payment_status));
+  return api_order_json(v_o, banto_order_pii(v_tok.scopes, 'contact'), banto_order_pii(v_tok.scopes, 'address'), banto_order_pii(v_tok.scopes, 'full'), true);
+end;
+$$;
+
+-- api_order_annotate（0173 の定義から。明細に画像の候補を付ける）
+create or replace function api_order_annotate(p_token_hash text, p_order_id uuid, p_add text[] default null, p_remove text[] default null,
+                                              p_tags text[] default null, p_note text default null, p_note_set boolean default false)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_tok api_tokens; v_pii boolean; v_o orders; v_tags text[];
+begin
+  v_tok := api_require(p_token_hash, 'orders:write');
+  v_pii := 'orders:pii' = any(v_tok.scopes);
+  if p_note_set and not v_pii then raise exception 'pii_scope_required'; end if;
+  if p_tags is not null and (p_add is not null or p_remove is not null) then raise exception 'invalid_tags'; end if;
+  select * into v_o from orders where id = p_order_id and shop_id = v_tok.shop_id for update;
+  if not found then raise exception 'not_found'; end if;
+  if p_tags is not null then
+    v_tags := p_tags;
+  else
+    v_tags := array(select x from unnest(v_o.tags) x where not x = any(coalesce(banto_order_tags_norm(p_remove), '{}'))) || coalesce(p_add, '{}');
+  end if;
+  update orders
+     set tags = banto_order_tags_norm(v_tags),
+         note = case when p_note_set then nullif(btrim(coalesce(p_note, '')), '') else note end
+   where id = v_o.id
+  returning * into v_o;
+  return api_order_json(v_o, banto_order_pii(v_tok.scopes, 'contact'), banto_order_pii(v_tok.scopes, 'address'), banto_order_pii(v_tok.scopes, 'full'), true);
+end;
+$$;

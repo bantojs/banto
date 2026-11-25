@@ -267,14 +267,16 @@ export class ApiService {
     /** お問い合わせの添付の置き場（公開しない。無ければ添付を受け付けない） */
     private readonly privateStorage: StorageAdapter | null = null,
     private readonly theme: ThemeApiDeps | null = null,
+    /** Banto の URL（リクエストから。PUBLIC_BASE_URL が無いときの画像の URL の起点） */
+    private readonly publicBase: string | null = null,
   ) {}
 
   /** migrationState: 新しいマイグレーションを使う項目を、適用されるまで受け付けないため（null なら新しい項目は受け付けない） */
   static async forToken(
     rawToken: string,
-    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined; theme?: ThemeApiDeps | null },
+    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined; theme?: ThemeApiDeps | null; publicBase?: string | null },
   ): Promise<ApiService> {
-    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null, deps.theme ?? null);
+    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null, deps.theme ?? null, deps.publicBase ?? null);
   }
 
   /** テーマの置き場（公開しない置き場があればそこ。versions.ts の themeStorage） */
@@ -282,9 +284,10 @@ export class ApiService {
     return themeStorage({ storage: this.storage, privateStorage: this.privateStorage });
   }
 
-  /** 画像の URL の起点（MEDIA_BASE_URL、無ければ <Banto の URL>/media）。外へ渡す URL なのでショップのドメインには切り替えない */
+  /** 画像の URL の起点（MEDIA_BASE_URL、無ければ <Banto の URL>/media）。外へ渡す URL なのでショップのドメインには切り替えない。
+   *  Banto の URL は PUBLIC_BASE_URL、無ければリクエストの URL（routes/common.ts の publicBaseUrl） */
   private mediaBase(): string {
-    const pub = this.config.get("PUBLIC_BASE_URL");
+    const pub = this.config.get("PUBLIC_BASE_URL") || this.publicBase;
     return (this.config.get("MEDIA_BASE_URL") || (pub ? `${pub.replace(/\/+$/, "")}/media` : "/media")).replace(/\/+$/, "");
   }
 

@@ -79,6 +79,18 @@ describe.skipIf(!dbAvailable)("AI 用 API の注文の明細の選択肢と画�
     expect(red).not.toHaveProperty("image_candidates");
   });
 
+  it("候補つきの形も旧い形も anon・authenticated からは呼べない。旗の無い形は候補を付けない", async () => {
+    const pool = getPool();
+    for (const role of ["anon", "authenticated"]) {
+      for (const sig of ["orders, boolean, boolean, boolean, boolean", "orders, boolean, boolean, boolean", "orders, boolean"]) {
+        const r = await pool.query<{ ok: boolean }>(`select has_function_privilege($1, 'api_order_json(${sig})', 'execute') as ok`, [role]);
+        expect(r.rows[0]!.ok).toBe(false);
+      }
+    }
+    const r = await pool.query<{ j: { items: Record<string, unknown>[] } }>("select api_order_json(o, false, false, false) as j from orders o where o.id = $1", [orderId]);
+    expect(r.rows[0]!.j.items.every((i) => !("image_candidates" in i) && Array.isArray(i["options"]))).toBe(true);
+  });
+
   it("商品を非公開にしても、画像を消しても崩れない", async () => {
     const pool = getPool();
     await pool.query("update products set published = false where id = $1", [productId]);
