@@ -343,6 +343,20 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
       expect(sent).toEqual([uid]);
       expect(sb.tables.audit_log.some((r) => r["action"] === "line.test_recipient" && r["target_id"] === memberId)).toBe(true);
       expect(await (await admin.get(`${detail}?flash=line_test_ok_env`)).text()).toContain("デプロイの変数");
+      // customers の無い人（integrations・settings はある）: 欄が出ず、送ろうとしても断る
+      const org = String(sb.tables.shops.find((x) => x["id"] === shop.id)!["org_id"]);
+      const u = sb.addUser("staff2@example.com", "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms: ["integrations", "settings"] });
+      const staff = await Browser.loggedIn(app, "staff2@example.com", "password-123");
+      expect((await staff.post(`/admin/shops/${shop.id}/line-messaging/test`, { kind: "order_paid", customer_id: memberId })).headers.get("location")).toContain("flash=line_test_member_needs_customers");
+      // customers・settings はあるが integrations の無い人: 会員の詳細に欄が出ない
+      const u2 = sb.addUser("staff3@example.com", "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u2.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u2.id, shop_id: shop.id, perms: ["customers", "settings"] });
+      const staff3 = await Browser.loggedIn(app, "staff3@example.com", "password-123");
+      expect(await (await staff3.get(detail)).text()).not.toContain('id="line-test"');
+      expect(sent).toHaveLength(1);
       // 結びついていない会員の id は送らない
       expect((await admin.post(`/admin/shops/${shop.id}/line-messaging/test`, { kind: "order_paid", customer_id: otherId })).headers.get("location")).toContain("flash=line_test_member_not_found");
       expect(sent).toHaveLength(1);
