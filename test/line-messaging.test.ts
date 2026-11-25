@@ -15,7 +15,7 @@ import type { PrivilegedDb } from "../src/db/privileged";
 
 const SITE = "site-secret-for-tests";
 
-async function ctxWith(opts: { box?: string | null; recipient?: Record<string, unknown> | null; env?: string; status?: number; event?: string }) {
+async function ctxWith(opts: { box?: string | null; recipient?: Record<string, unknown> | null; env?: string; status?: number; body?: string; event?: string }) {
   const calls: { url: string; init: RequestInit }[] = [];
   const ctx: PluginContext = {
     envelope: { id: "evt-1", event: opts.event ?? "order.paid", created_at: "2026-10-17T00:00:00Z", shop_id: "shop-1", attempt: 1, data: { order_id: "order-1", total_jpy: 3000, items: [{ qty: 1 }] } },
@@ -23,7 +23,7 @@ async function ctxWith(opts: { box?: string | null; recipient?: Record<string, u
     config: { get: () => undefined, secret: (n: string) => { if (n === "LINE_CHANNEL_ACCESS_TOKEN" && opts.env) return opts.env; throw new Error("missing"); } },
     fetch: (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
-      return new Response("{}", { status: opts.status ?? 200 });
+      return new Response(opts.body ?? "{}", { status: opts.status ?? 200 });
     }) as unknown as typeof fetch,
     privileged: {
       shopSecret: async () => opts.box ?? null,
@@ -60,6 +60,9 @@ describe("LINE の Messaging API（0021）", () => {
     expect(none.calls).toHaveLength(0);
     await lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 403 })).ctx);
     await expect(lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 500 })).ctx)).rejects.toThrow(/LINE API 500/);
+    // 友だちでない 400 は失敗にしないが、メッセージの形の誤り（details あり）は失敗にする（黙って止まらないように）
+    await lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 400, body: JSON.stringify({ message: "Failed to send messages" }) })).ctx);
+    await expect(lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 400, body: JSON.stringify({ message: "invalid", details: [{ property: "messages[0]" }] }) })).ctx)).rejects.toThrow(/LINE API 400/);
     expect(buyerMessage("order.shipped", recipient)).toContain("発送しました");
     expect(buyerMessage("order.cancelled", recipient)).toBeNull();
   });
@@ -219,6 +222,49 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     expect(page).toContain("メールで送りました");
     // 「LINE 通知」の送り先がテスト送信の宛先の初期値
     expect(page).toContain(`value="${to}"`);
+  });
+
+  it("お知らせの文面の画面で LINE の見た目をカードに（0179）。テスト送信もカードで、本番と同じリンク", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const app = appWith(sb, { PUBLIC_BASE_URL: "https://banto.example" });
+    const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+    const notices = `/admin/shops/${shop.id}/notices`;
+    expect(await (await admin.get(notices)).text()).toContain("LINE の注文の知らせの見た目");
+    expect((await admin.post(`${notices}/line-style`, { line_style: "fancy" })).status).toBe(400);
+    expect((await admin.post(`${notices}/line-style`, { line_style: "card" })).headers.get("location")).toContain("flash=saved");
+    expect((sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, unknown>)["line_notice_style"]).toBe("card");
+    const base = `/admin/shops/${shop.id}/line-messaging`;
+    const to = `U${"c".repeat(32)}`;
+    const sent: { messages: Record<string, unknown>[] }[] = [];
+    externalHosts.set("https://api.line.me/", async (req) => {
+      sent.push((await req.json()) as { messages: Record<string, unknown>[] });
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      await admin.post(base, { token: "AbCdEf0123456789+/=AbCdEf0123456789" });
+      expect((await admin.post(`${base}/test`, { kind: "order_shipped", to })).headers.get("location")).toContain("flash=test_ok");
+      const m = sent[0]!.messages[0]!;
+      expect(m["type"]).toBe("flex");
+      expect(String(m["altText"]).startsWith("【テスト送信】\n【マイショップ】")).toBe(true);
+      const json = JSON.stringify(m["contents"]);
+      expect(json).toContain("【テスト送信】");
+      expect(json).toContain("https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1");
+      expect(json).toContain("配送状況");
+      // 文字だけに戻すと、リンクは本文に
+      await admin.post(`${notices}/line-style`, { line_style: "text" });
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_ok");
+      expect(sent[1]!.messages[0]!["type"]).toBe("text");
+      expect(String(sent[1]!.messages[0]!["text"])).toContain("ご注文の状況はこちらで確認できます: https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1");
+      // LINE がメッセージの形を断った 400（details あり）は「友だちでない」と分けて知らせる
+      externalHosts.set("https://api.line.me/", () => new Response(JSON.stringify({ message: "invalid", details: [{ message: "x", property: "messages[0]" }] }), { status: 400 }));
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_bad_message");
+      externalHosts.set("https://api.line.me/", () => new Response(JSON.stringify({ message: "Failed to send messages" }), { status: 400 }));
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_not_friend");
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
   });
 
   it("管理画面のテスト送信: settings の無い人は使えない・LINE の応答ごとの知らせ・開けないトークン・デプロイの変数のトークン", async () => {

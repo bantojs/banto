@@ -8,6 +8,8 @@ import {
   NOTICE_KINDS,
   NOTICE_SUBJECT_MAX,
   NOTICE_TEXTS_MIGRATION,
+  LINE_NOTICE_LINKS_MIGRATION,
+  defaultLineText,
   checkNoticeText,
   fillNotice,
   noticeBodyMax,
@@ -24,6 +26,8 @@ import { formFields, owner, param, type AdminContext } from "./context";
 import { requireOwner } from "./auth";
 import { loadShop } from "./shops";
 import { moduleEnabled } from "../../modules/registry";
+import { LINE_NOTICE_STYLES, lineNoticeStyle } from "../../notices/line-card";
+import { NotSavedNotice, failCode, updateShop } from "./shop-save";
 
 /**
  * お知らせの文面（0154、docs/notices.md）。項目 settings。注文の知らせと、お店で試着のお客様あての知らせ（モジュールが ON のとき）
@@ -93,17 +97,19 @@ interface Draft {
 async function renderPage(c: AdminContext, shop: { id: string; name: string; settings: Record<string, unknown> | null }, draft: Draft | null, status: 200 | 400 = 200) {
   const db = owner(c).db;
   const enabled = await migrated({ db, cache: c.get("adapters").cache }, NOTICE_TEXTS_MIGRATION);
+  // LINE の注文の知らせのリンク（0179）。当てるまで差し込みの一覧・既定の文面に出さない
+  const lineLinks = enabled && (await migrated({ db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION));
   const rows = enabled ? await db.from<NoticeTextRow>("shop_notice_texts").select("kind,channel,subject,body", { eq: { shop_id: shop.id } }) : [];
   const stale = staleNoticeTexts(rows);
   const flash = c.req.query("flash");
   const base = `/admin/shops/${shop.id}/notices`;
   const section = (kind: NoticeKind, channel: NoticeChannel) => {
-    const spec = noticeSpec(kind, channel);
+    const spec = noticeSpec(kind, channel, lineLinks);
     const row = rows.find((r) => r.kind === kind && r.channel === channel);
     const def = DEFAULT_NOTICE_TEXTS[kind];
     const mine = draft && draft.kind === kind && draft.channel === channel ? draft : null;
     const subject = mine ? (mine.subject ?? "") : channel === "mail" ? (row?.subject ?? def.mail.subject) : "";
-    const body = mine ? mine.body : (row?.body ?? (channel === "mail" ? def.mail.body : def.line));
+    const body = mine ? mine.body : (row?.body ?? (channel === "mail" ? def.mail.body : defaultLineText(kind, lineLinks)));
     const preview = fillNotice(body, sampleValues(kind, shop.name));
     const id = `${kind}-${channel}`;
     return (
@@ -155,19 +161,36 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
       <PageHead title={t("notices.title")} />
       {flash === "saved" ? <p class="notice">{t("notices.saved")}</p> : null}
       {flash === "reset" ? <p class="notice">{t("notices.reset_done")}</p> : null}
+      <NotSavedNotice flash={flash} />
       <p>{t("notices.intro")}</p>
       {!enabled ? (
         <p class="notice">
           {t("notices.needs_update")} <a href="/admin/update">{t("inventory.open_update")}</a>
         </p>
       ) : (
-        kindsFor(shop.settings, rows).map((kind) => (
+        <>
+        {lineLinks ? (
+          <form method="post" action={`${base}/line-style`} class="card" id="line-style">
+            <h2>{t("notices.line_style_title")}</h2>
+            <p class="muted">{t("notices.line_style_intro")}</p>
+            {LINE_NOTICE_STYLES.map((v) => (
+              <label>
+                <input type="radio" name="line_style" value={v} checked={lineNoticeStyle(shop.settings?.["line_notice_style"]) === v} /> {t(`notices.line_style_${v}` as MessageKey)}
+              </label>
+            ))}
+            <p>
+              <button type="submit">{t("notices.save")}</button>
+            </p>
+          </form>
+        ) : null}
+        {kindsFor(shop.settings, rows).map((kind) => (
           <section>
             <h2>{t(`notices.kind.${kind}` as MessageKey)}</h2>
             {section(kind, "mail")}
             {section(kind, "line")}
           </section>
-        ))
+        ))}
+        </>
       )}
     </AdminLayout>,
     status,
@@ -178,6 +201,23 @@ notices.get("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
   return renderPage(c, shop, null);
+});
+
+// LINE の注文の知らせの見た目（0179、文字だけ / カード）。鍵 line_notice_style は項目 settings（banto_shop_settings_perm の既定）
+notices.post("/:shopId/notices/line-style", requireOwner, async (c: AdminContext) => {
+  const shop = await loadShop(c, param(c, "shopId"), "settings");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const base = `/admin/shops/${shop.id}/notices`;
+  const f = await formFields(c);
+  const style = LINE_NOTICE_STYLES.find((v) => v === f.line_style);
+  if (!style || !(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION))) return c.text(t("error.generic"), 400);
+  try {
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), line_notice_style: style } });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${failCode(e, "not_saved")}`);
+    throw e;
+  }
+  return c.redirect(`${base}?flash=saved#line-style`);
 });
 
 notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
@@ -197,7 +237,8 @@ notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const subject = channel === "mail" ? (f.subject ?? "") : null;
   const body = f.body ?? "";
   // 画面でも同じ決まりで確かめて、書いた文を残したまま理由を出す（DB も同じ決まりで断る）
-  const err = checkNoticeText(kind, channel, subject, body);
+  const lineLinks = await migrated({ db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION);
+  const err = checkNoticeText(kind, channel, subject, body, lineLinks);
   if (err) return renderPage(c, shop, { kind, channel, subject, body, error: err }, 400);
   try {
     await db.rpc("notice_text_set", { p_shop_id: shop.id, p_kind: kind, p_channel: channel, p_subject: subject, p_body: body });

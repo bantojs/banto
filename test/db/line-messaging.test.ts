@@ -35,5 +35,15 @@ describe.skipIf(!dbAvailable)("LINE の Messaging API（0021_line_messaging）",
     const r = await get(o1);
     expect(r).toMatchObject({ line_user_id: "Uabc", number: 7001, total_jpy: 3000 });
     expect(JSON.stringify(r)).not.toContain("山田");
+    // 0179: リンクの材料（お問い合わせ番号・ショップのスラッグと注文照会のページ）。番号の無い注文は tracking: null
+    expect(r).toMatchObject({ tracking: null, shop: expect.objectContaining({ slug: expect.any(String), return_origins: [] }) });
+    await pool.query("update orders set tracking_carrier = 'yamato', tracking_number = '123456789012', customer_email = 'b@example.com', shipping_address = '{\"line1\":\"一丁目\"}' where id = $1", [o1]);
+    const shipped = await get(o1);
+    expect(shipped).toMatchObject({ tracking: { carrier: "yamato", number: "123456789012" } });
+    expect(JSON.stringify(shipped)).not.toMatch(/山田|b@example\.com|一丁目/);
+    // LINE の見た目（ショップの設定 line_notice_style、無ければ null = 文字だけ）
+    expect(shipped).toMatchObject({ line_style: null });
+    await pool.query("update shops set settings = coalesce(settings, '{}'::jsonb) || '{\"line_notice_style\":\"card\"}' where id = $1", [f.shopId]);
+    expect(await get(o1)).toMatchObject({ line_style: "card" });
   });
 });
