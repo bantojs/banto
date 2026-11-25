@@ -55,11 +55,13 @@ export const lineBuyerNotify: BundledPlugin = {
       await ctx.privileged.noticeLineFallback(ctx.envelope.id);
     };
     const text = await messageFor(ctx);
-    if (!text) {
-      // 送り先が無い（LINE の結びつきが外れた）など。LINE だけの知らせはメールへ（送るかどうかはメール通知が今までの決まりで決める）
+    if (text === NO_RECIPIENT) {
+      // 送り先が無い（LINE の結びつきが外れた）。LINE だけの知らせはメールへ
       if (lineOnly) await toEmail();
       return;
     }
+    // この出来事・状態では知らせない（メール通知も同じ決まりで送らない）
+    if (!text) return;
     let token: string | null;
     try {
       token = await lineToken(ctx);
@@ -90,13 +92,17 @@ export const lineBuyerNotify: BundledPlugin = {
   },
 };
 
-/** 送り先と文（LINE と結びついていない会員・ゲスト、知らせない状態なら null） */
-async function messageFor(ctx: PluginContext): Promise<{ to: string; text: string } | null> {
+/** 知らせる出来事だが、LINE の送り先が無い（会員の LINE の結びつきが外れた・ゲスト） */
+const NO_RECIPIENT = "no_recipient" as const;
+
+/** 送り先と文。知らせない出来事・状態なら null、知らせるが送り先が無いなら NO_RECIPIENT */
+async function messageFor(ctx: PluginContext): Promise<{ to: string; text: string } | typeof NO_RECIPIENT | null> {
   const { event, data, shop_id } = ctx.envelope;
   if (event.startsWith("tryon.")) {
     const id = typeof data["request_id"] === "string" ? data["request_id"] : "";
     if (!id || (event === "tryon.updated" && !["ready", "cancelled"].includes(String(data["status"])))) return null;
     const r = await ctx.privileged.tryonLineRecipient(id, shop_id);
+    if (!r) return NO_RECIPIENT;
     const opts = { extended: data["extended"] === true, reminder: data["reminder"] === true };
     const kind = r ? tryonNoticeKind(event, r.status, opts) : null;
     const text = r && kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
@@ -110,6 +116,7 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; text: strin
   if (event === "order.created" && data["payment_status"] !== "unpaid") return null;
   if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped") return null;
   const r = await ctx.privileged.orderLineRecipient(orderId, shop_id);
+  if (!r) return NO_RECIPIENT;
   // 送り先があるときだけ文面を読む（LINE と結びついていない注文で DB の往復を増やさない）
   const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
   const text = r ? buyerMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;

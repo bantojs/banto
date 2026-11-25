@@ -136,6 +136,42 @@ describe.skipIf(!dbAvailable)("お知らせの受け取り方（0176）", () => 
     }
   });
 
+  it("運営者が積む知らせ（enqueue_hook）からは印を付けられない・外せない。入金済みの order.created には付けない", async () => {
+    expect(await setChannel("line")).toBe("ok");
+    const forged = { order_id: memberOrder, notice_line_only: false, line_fallback: true, fallback_of: "00000000-0000-0000-0000-000000000000" };
+    await asUser(f.ownerId, (c) => c.query("select enqueue_hook($1, 'order.shipped', $2)", [f.shopId, forged]));
+    const got = (await getPool().query<{ payload: Record<string, unknown> }>(
+      "select payload from hook_deliveries where shop_id = $1 and event = 'order.shipped' order by created_at desc, id desc limit 1", [f.shopId])).rows[0]!.payload;
+    // 偽の印は外れ、Banto が決めた印（LINE だけが効いている）が付く
+    expect(got).toMatchObject({ order_id: memberOrder, notice_line_only: true });
+    expect(got).not.toHaveProperty("line_fallback");
+    expect(got).not.toHaveProperty("fallback_of");
+    expect((await mark("order.created", { order_id: memberOrder, payment_status: "paid" }))["notice_line_only"]).toBeUndefined();
+    expect(await mark("order.created", { order_id: memberOrder, payment_status: "unpaid" })).toMatchObject({ notice_line_only: true });
+  });
+
+  it("Cron の打ち切り（取り出したまま 5 回）で failed になった印のある LINE の配信もメールへ", async () => {
+    await mark("order.paid", { order_id: memberOrder });
+    const d = await lineDelivery("order.paid");
+    await getPool().query("update hook_deliveries set attempts = 5, next_attempt_at = now() - interval '1 minute' where id = $1", [d]);
+    await svc("select count(*) as r from claim_hook_deliveries(1)", []);
+    expect((await getPool().query<{ status: string }>("select status from hook_deliveries where id = $1", [d])).rows[0]!.status).toBe("failed");
+    expect(await fallbacksOf(d)).toHaveLength(1);
+  });
+
+  it("ショップごと消しても、配り直しで止まらない", async () => {
+    const pool = getPool();
+    const g = await createShopFixture({ email: "nc-gone@example.com", slug: "nc-gone", publish: true });
+    const m = (await pool.query<{ id: string }>("insert into customers (shop_id, email, notice_channel) values ($1, 'g@example.com', 'line') returning id", [g.shopId])).rows[0]!.id;
+    await pool.query("insert into member_identities (shop_id, provider, subject, customer_id) values ($1, 'line', 'Ugone', $2)", [g.shopId, m]);
+    const o = (await pool.query<{ id: string }>("insert into orders (shop_id, number, status, total_jpy, shipping_jpy, customer_email, payment_provider, payment_ref, customer_id) values ($1, 1001, 'paid', 100, 0, 'g@example.com', 'stripe', 'pi_g', $2) returning id", [g.shopId, m])).rows[0]!.id;
+    await pool.query("insert into hook_endpoints (shop_id, name, url, events) values ($1, 'メール', $2, '{order.paid}'), ($1, 'LINE', $3, '{order.paid}')", [g.shopId, MAIL_URL, LINE_URL]);
+    await svc("select enqueue_hook($1, 'order.paid', $2) as r", [g.shopId, { order_id: o }]);
+    expect((await pool.query<{ n: string }>("select count(*) as n from hook_deliveries where shop_id = $1 and payload->>'notice_line_only' = 'true'", [g.shopId])).rows[0]!.n).toBe("2");
+    await pool.query("delete from shops where id = $1", [g.shopId]);
+    expect((await pool.query<{ n: string }>("select count(*) as n from hook_deliveries where shop_id = $1", [g.shopId])).rows[0]!.n).toBe("0");
+  });
+
   it("LINE だけから戻せる（戻した後は印を付けない）", async () => {
     expect(await setChannel("all")).toBe("ok");
     expect((await mark("order.paid", { order_id: memberOrder }))["notice_line_only"]).toBeUndefined();

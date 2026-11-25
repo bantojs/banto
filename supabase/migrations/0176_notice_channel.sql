@@ -58,10 +58,19 @@ begin
      or new.payload ? 'notice_line_only' or new.payload ? 'fallback_of' then
     return new;
   end if;
+  -- order.created で知らせるのは未入金の注文（代金引換）の受付だけ（入金済みは order.paid）
+  if new.event = 'order.created' and coalesce(new.payload->>'payment_status', '') <> 'unpaid' then return new; end if;
+  -- 先に安い確かめ: このショップの「LINE で購入者に知らせる」が有効でこの出来事を受け取るか（ほとんどのショップ・ゲストはここで終わる）
+  if not exists (select 1 from hook_endpoints e where e.shop_id = new.shop_id and e.enabled
+                  and e.url = 'https://banto.invalid/plugins/line_buyer_notify' and new.event = any(e.events)) then
+    return new;
+  end if;
   if new.event like 'order.%' then
-    select o.customer_id into v_customer from orders o where o.shop_id = new.shop_id and o.id::text = new.payload->>'order_id';
+    if coalesce(new.payload->>'order_id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return new; end if;
+    select o.customer_id into v_customer from orders o where o.id = (new.payload->>'order_id')::uuid and o.shop_id = new.shop_id;
   else
-    select r.customer_id into v_customer from tryon_requests r where r.shop_id = new.shop_id and r.id::text = new.payload->>'request_id';
+    if coalesce(new.payload->>'request_id', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return new; end if;
+    select r.customer_id into v_customer from tryon_requests r where r.id = (new.payload->>'request_id')::uuid and r.shop_id = new.shop_id;
   end if;
   if v_customer is not null and banto_notice_line_only(new.shop_id, v_customer, new.event) then
     new.payload := new.payload || jsonb_build_object('notice_line_only', true);
@@ -89,6 +98,8 @@ begin
   select d.* into v_d from hook_deliveries d join hook_endpoints e on e.id = d.endpoint_id
    where d.id = p_delivery_id and e.url = 'https://banto.invalid/plugins/line_buyer_notify';
   if not found or coalesce(v_d.payload->>'notice_line_only', '') <> 'true' then return 0; end if;
+  -- ショップごと消しているとき（送信先の行の削除が連なって来る）は配り直さない
+  if not exists (select 1 from shops where id = v_d.shop_id) then return 0; end if;
   insert into hook_deliveries (shop_id, endpoint_id, event, payload)
   select e.shop_id, e.id, v_d.event, v_d.payload || jsonb_build_object('line_fallback', true, 'fallback_of', p_delivery_id::text)
     from hook_endpoints e
@@ -159,6 +170,47 @@ revoke execute on function banto_notice_line_endpoint_off() from public, anon, a
 drop trigger if exists hook_endpoints_notice_line_off on hook_endpoints;
 create trigger hook_endpoints_notice_line_off before update of enabled or delete on hook_endpoints
   for each row execute function banto_notice_line_endpoint_off();
+
+-- enqueue_hook（0142 の定義から。運営者が積むときは、お知らせの受け取り方の印を外す）
+create or replace function enqueue_hook(p_shop_id uuid, p_event text, p_payload jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_perm text;
+begin
+  if p_event is null or p_event !~ '^[a-z_]+\.[a-z_]+$' then
+    raise exception 'invalid_event';
+  end if;
+  if auth.role() is distinct from 'service_role' then
+    v_perm := case p_event when 'product.updated' then 'catalog' when 'order.shipped' then 'orders' end;
+    if v_perm is null then
+      raise exception 'event_not_permitted' using errcode = '42501';
+    end if;
+    if not banto_shop_perm(p_shop_id, v_perm) then
+      raise exception 'shop_not_found' using errcode = '42501';
+    end if;
+    -- 0176: お知らせの受け取り方の印は Banto だけが付ける（運営者の積む知らせで、お客様あてのメールを止めたり配り直しの枠を取ったりさせない）
+    p_payload := coalesce(p_payload, '{}'::jsonb) - 'notice_line_only' - 'line_fallback' - 'fallback_of';
+    -- ペイロードの id は、あるなら uuid の形（大文字でもよい）で、そのショップの行だけ（別のショップの商品・無い注文で受け手を動かさない。
+    -- ハイフンの無い形・{…} の形は、受け手が uuid に直して読むと確かめをすり抜けるので受けない）
+    if p_payload->>'order_id' is not null and (lower(p_payload->>'order_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or not exists (select 1 from orders o where o.shop_id = p_shop_id and o.id::text = lower(p_payload->>'order_id'))) then
+      raise exception 'invalid_payload' using detail = 'order_id';
+    end if;
+    if p_payload->>'product_id' is not null and (lower(p_payload->>'product_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or not exists (select 1 from products p where p.shop_id = p_shop_id and p.id::text = lower(p_payload->>'product_id'))) then
+      raise exception 'invalid_payload' using detail = 'product_id';
+    end if;
+    if p_payload->>'customer_id' is not null and (lower(p_payload->>'customer_id') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        or not exists (select 1 from customers c where c.shop_id = p_shop_id and c.id::text = lower(p_payload->>'customer_id'))) then
+      raise exception 'invalid_payload' using detail = 'customer_id';
+    end if;
+  end if;
+  return banto_enqueue_hook_internal(p_shop_id, p_event, p_payload);
+end;
+$$;
 
 -- 会員本人が選ぶ（会員ページ・ヘッドレスの会員トークン）。「LINE だけ」は選べるときだけ
 create or replace function member_set_notice_channel(p_shop_id uuid, p_customer_id uuid, p_epoch integer, p_channel text)

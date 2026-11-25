@@ -71,10 +71,14 @@ describe("LINE で購入者に知らせる: LINE だけの知らせを届けら�
     await expect(lineBuyerNotify.handle!((await lineCtx({ lineOnly: false, status: 401 })).ctx)).rejects.toThrow(/LINE API 401/);
   });
 
-  it("LINE の結びつきが外れて送り先が無い: LINE だけならメールへ", async () => {
+  it("LINE の結びつきが外れて送り先が無い: LINE だけならメールへ。知らせない出来事（入金済みの order.created）では配り直さない", async () => {
     const r = await lineCtx({ lineOnly: true, recipient: false });
     await lineBuyerNotify.handle!(r.ctx);
     expect(r.fallbacks).toEqual(["del-1"]);
+    const created = await lineCtx({ lineOnly: true, recipient: false });
+    created.ctx.envelope = { ...created.ctx.envelope, event: "order.created", data: { order_id: "order-1", payment_status: "paid", notice_line_only: true } };
+    await lineBuyerNotify.handle!(created.ctx);
+    expect(created.fallbacks).toEqual([]);
   });
 
   it("LINE の失敗（500）は再送に回す（再送の末の失敗は DB のトリガーがメールへ配り直す）", async () => {

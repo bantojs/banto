@@ -42,6 +42,7 @@ LINE と結びついた会員は、会員ページの「ご注文のお知らせ
   - その場で分かるとき（友だちでない・ブロックされた・チャネルアクセストークンが無い / 開けない / 効かない・LINE の結びつきが外れた）は、すぐに。
   - LINE の失敗が再送の最後まで続いたとき（Cron の打ち切りを含む）と、「LINE で購入者に知らせる」を止めた・外したとき（まだ送っていない知らせ）は、Banto のデータベースが配り直します。止めた後に有効へ戻しても、古い知らせを LINE で遅れて送りません。
   - 「メール通知」が無効・注文のメールを外部プラグインに任せている（`skip_orders`・`skip_tryon`）ときは、配り直しても送りません。
+  - LINE に送っている最中にプラグインを止めた・Cron が打ち切られた、のような重なりでは、LINE とメールの両方が届くことがまれにあります（届かないよりは重ねる側に倒しています）。
 - 外部プラグインでメールを送るショップは、hooks の中身の `notice_line_only` を見てお客様あてを送らないようにしてください（効いているときだけ付きます。会員の設定そのものは AI 用 API の会員 `notice_channel`）。Banto から外部プラグインへの配り直しはしません。
 - ヘッドレス: `GET /members/me` の `notice_channel`・`notice_line_available`、`POST /members/notice-channel` `{ "channel": "all" | "line" }`（docs/headless.md）。Liquid のテーマ: `customer.notice_channel`・`customer.notice_channel_url`（docs/themes.md）。
 - 運営者は会員の詳細で「LINE だけ」を選んでいるか見られます。
