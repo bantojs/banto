@@ -28,7 +28,8 @@ const TEXT_MAX = 2000;
 /** ボタンに使える URL（https・長さの上限・空白なし） */
 export function cardUri(u: string | null | undefined): string | null {
   if (!u || u.length > URI_MAX || /\s/.test(u) || !URL.canParse(u)) return null;
-  return new URL(u).protocol === "https:" ? u : null;
+  const url = new URL(u);
+  return url.protocol === "https:" && url.href.length <= URI_MAX ? url.href : null;
 }
 
 export interface OrderCardInput {
@@ -68,4 +69,18 @@ export function orderCard(input: OrderCardInput): LineMessage | null {
     ...(buttons.length > 0 ? { footer: { type: "box", layout: "vertical", spacing: "sm", contents: buttons } } : {}),
   };
   return { type: "flex", altText: [...plain].slice(0, ALT_MAX).join(""), contents };
+}
+
+/**
+ * LINE の 400 のうち、メッセージの形の誤り（応答の details に項目ごとの誤りがある）か。
+ * 友だちでない・ブロックの 400 と分けて、形の誤りは黙って捨てずに失敗にする（カードの型の誤りで知らせが止まったと気づけるように）
+ */
+export function lineMessageShapeError(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  try {
+    const v = JSON.parse(body) as { details?: unknown };
+    return Array.isArray(v.details) && v.details.length > 0;
+  } catch {
+    return false;
+  }
 }

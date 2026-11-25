@@ -1914,6 +1914,7 @@ export const en: Record<MessageKey, string> = {
   "linemsg.test_no_token": "No channel access token is set. Enter it above.",
   "linemsg.test_token_broken": "The saved channel access token cannot be opened (for example after the site secret changed). Enter it again.",
   "linemsg.test_bad_token": "LINE rejected the channel access token (401). Check that it is correct and not revoked.",
+  "linemsg.test_bad_message": "LINE rejected the message format (400). Switch the LINE look back to plain text to check it sends, and report this as a Banto bug.",
   "linemsg.test_not_friend": "Not sent. The recipient has not added or has blocked the official account, or the ID belongs to another provider.",
   "linemsg.test_limit": "LINE's sending limit is reached (such as the monthly quota). Check LINE Official Account Manager.",
   "linemsg.test_failed": "Not sent. Try again later.",

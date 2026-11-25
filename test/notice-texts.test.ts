@@ -4,7 +4,7 @@ import { Browser, appWith } from "./helpers";
 import { createPrivilegedDb } from "../src/db/privileged";
 import { buildOrderEmail } from "../src/plugins/email_resend";
 import { buyerLineMessage, buyerMessage, lineBuyerNotify, tryonLineMessage } from "../src/plugins/line_buyer";
-import { cardUri, lineNoticeStyle, orderCard } from "../src/notices/line-card";
+import { cardUri, lineMessageShapeError, lineNoticeStyle, orderCard } from "../src/notices/line-card";
 import { emailResend } from "../src/plugins/email_resend";
 import type { PluginContext } from "../src/plugins/types";
 import type { PrivilegedDb } from "../src/db/privileged";
@@ -144,6 +144,11 @@ describe("注文のメールと LINE", () => {
     const local = buyerLineMessage("order.paid", r, null, "http://localhost:8787")!;
     expect(local.type === "flex" && local.contents["footer"]).toBeUndefined();
     expect(cardUri("http://example.com")).toBeNull();
+    // LINE の 400: 形の誤り（details あり）と友だちでない（details なし）を分ける
+    expect(lineMessageShapeError(400, JSON.stringify({ message: "A message (messages[0]) in the request body is invalid", details: [{ message: "invalid", property: "contents" }] }))).toBe(true);
+    expect(lineMessageShapeError(400, JSON.stringify({ message: "Failed to send messages" }))).toBe(false);
+    expect(lineMessageShapeError(400, "not json")).toBe(false);
+    expect(lineMessageShapeError(403, JSON.stringify({ details: [{}] }))).toBe(false);
     expect(cardUri("javascript:alert(1)")).toBeNull();
     expect(cardUri("https://a.example/x y")).toBeNull();
     expect(cardUri("https://a.example/" + "a".repeat(1000))).toBeNull();

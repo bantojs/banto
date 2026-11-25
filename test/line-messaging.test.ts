@@ -15,7 +15,7 @@ import type { PrivilegedDb } from "../src/db/privileged";
 
 const SITE = "site-secret-for-tests";
 
-async function ctxWith(opts: { box?: string | null; recipient?: Record<string, unknown> | null; env?: string; status?: number; event?: string }) {
+async function ctxWith(opts: { box?: string | null; recipient?: Record<string, unknown> | null; env?: string; status?: number; body?: string; event?: string }) {
   const calls: { url: string; init: RequestInit }[] = [];
   const ctx: PluginContext = {
     envelope: { id: "evt-1", event: opts.event ?? "order.paid", created_at: "2026-10-17T00:00:00Z", shop_id: "shop-1", attempt: 1, data: { order_id: "order-1", total_jpy: 3000, items: [{ qty: 1 }] } },
@@ -23,7 +23,7 @@ async function ctxWith(opts: { box?: string | null; recipient?: Record<string, u
     config: { get: () => undefined, secret: (n: string) => { if (n === "LINE_CHANNEL_ACCESS_TOKEN" && opts.env) return opts.env; throw new Error("missing"); } },
     fetch: (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
-      return new Response("{}", { status: opts.status ?? 200 });
+      return new Response(opts.body ?? "{}", { status: opts.status ?? 200 });
     }) as unknown as typeof fetch,
     privileged: {
       shopSecret: async () => opts.box ?? null,
@@ -60,6 +60,9 @@ describe("LINE の Messaging API（0021）", () => {
     expect(none.calls).toHaveLength(0);
     await lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 403 })).ctx);
     await expect(lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 500 })).ctx)).rejects.toThrow(/LINE API 500/);
+    // 友だちでない 400 は失敗にしないが、メッセージの形の誤り（details あり）は失敗にする（黙って止まらないように）
+    await lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 400, body: JSON.stringify({ message: "Failed to send messages" }) })).ctx);
+    await expect(lineBuyerNotify.handle!((await ctxWith({ box, recipient, status: 400, body: JSON.stringify({ message: "invalid", details: [{ property: "messages[0]" }] }) })).ctx)).rejects.toThrow(/LINE API 400/);
     expect(buyerMessage("order.shipped", recipient)).toContain("発送しました");
     expect(buyerMessage("order.cancelled", recipient)).toBeNull();
   });
@@ -254,6 +257,11 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
       expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_ok");
       expect(sent[1]!.messages[0]!["type"]).toBe("text");
       expect(String(sent[1]!.messages[0]!["text"])).toContain("ご注文の状況はこちらで確認できます: https://banto.example/my-shop/orders/lookup?banto_order=1001&banto_member=1");
+      // LINE がメッセージの形を断った 400（details あり）は「友だちでない」と分けて知らせる
+      externalHosts.set("https://api.line.me/", () => new Response(JSON.stringify({ message: "invalid", details: [{ message: "x", property: "messages[0]" }] }), { status: 400 }));
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_bad_message");
+      externalHosts.set("https://api.line.me/", () => new Response(JSON.stringify({ message: "Failed to send messages" }), { status: 400 }));
+      expect((await admin.post(`${base}/test`, { kind: "order_paid", to })).headers.get("location")).toContain("flash=test_not_friend");
     } finally {
       externalHosts.delete("https://api.line.me/");
     }

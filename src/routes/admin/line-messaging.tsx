@@ -16,7 +16,7 @@ import { lineTokenFor } from "../../plugins/line_token";
 import { LINE_PUSH_URL } from "../../plugins/line_notify";
 import { bundledPluginUrl } from "../../plugins/types";
 import { LINE_NOTICE_LINKS_MIGRATION, noticeLine, type NoticeKind, type NoticeTextRow } from "../../notices/templates";
-import type { LineMessage } from "../../notices/line-card";
+import { lineMessageShapeError, type LineMessage } from "../../notices/line-card";
 import type { ShopRow } from "../../db/types";
 import { buyerLineMessage } from "../../plugins/line_buyer";
 import { kindsFor, sampleValues } from "./notices";
@@ -227,7 +227,7 @@ lineMessaging.post("/:shopId/line-messaging/limit", requireOwner, async (c: Admi
 });
 
 /** テスト送信の結果（画面に出すのはこの決まった知らせだけ） */
-const TEST_FLASHES = ["test_ok", "test_ok_env", "test_invalid", "test_member_not_found", "test_member_needs_customers", "test_no_token", "test_token_broken", "test_bad_token", "test_not_friend", "test_limit", "test_failed"] as const;
+const TEST_FLASHES = ["test_ok", "test_ok_env", "test_invalid", "test_member_not_found", "test_member_needs_customers", "test_no_token", "test_token_broken", "test_bad_token", "test_not_friend", "test_bad_message", "test_limit", "test_failed"] as const;
 type TestFlash = (typeof TEST_FLASHES)[number];
 
 /** LINE の利用者 ID（Messaging API の送り先、U と 32 桁の 16 進） */
@@ -334,8 +334,10 @@ export function withTestPrefix(m: LineMessage, prefix: string): LineMessage {
 }
 
 /** テスト送信の結果（LINE の応答 → 画面の知らせ） */
-export function lineTestResult(status: number): TestFlash {
+export function lineTestResult(status: number, body = ""): TestFlash {
   if (status >= 200 && status < 300) return "test_ok";
+  // メッセージの形の誤り（友だちでない 400 と分ける）
+  if (lineMessageShapeError(status, body)) return "test_bad_message";
   if (status === 400 || status === 403) return "test_not_friend";
   if (status === 401) return "test_bad_token";
   if (status === 429) return "test_limit";
@@ -392,7 +394,6 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   }
   if (!token) return back("test_no_token");
   // 今の文面（直していなければ既定）に見本の値を差し込む。テストと分かるように頭に印
-  // 今の文面（直していなければ既定）に見本の値を差し込む。テストと分かるように頭に印
   const message = await testMessage(c, shop, kind, await privileged.shopNoticeTexts(shop.id, kind));
   try {
     const res = await c.get("deps").fetch(LINE_PUSH_URL, {
@@ -400,7 +401,7 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, "X-Line-Retry-Key": crypto.randomUUID() },
       body: JSON.stringify({ to, messages: [message] }),
     });
-    const result = lineTestResult(res.status);
+    const result = lineTestResult(res.status, res.status === 400 ? await res.text() : "");
     return back(result === "test_ok" && !fromShop ? "test_ok_env" : result);
   } catch {
     return back("test_failed");

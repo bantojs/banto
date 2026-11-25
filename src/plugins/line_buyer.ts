@@ -14,7 +14,7 @@ import { lineToken } from "./line_token";
 import { noticeLine, type NoticeTextRow } from "../notices/templates";
 import { tryonNoticeKind } from "../modules/store-tryon/mail";
 import { orderLinkText, orderPageLink, trackingText, type OrderLinkParts } from "./email_resend";
-import { lineNoticeStyle, orderCard, type LineMessage } from "../notices/line-card";
+import { lineMessageShapeError, lineNoticeStyle, orderCard, type LineMessage } from "../notices/line-card";
 import { trackingOf, trackingUrl } from "../orders/tracking";
 import { t } from "../i18n";
 
@@ -136,6 +136,9 @@ export const lineBuyerNotify: BundledPlugin = {
     });
     // 409: 同じ再送キーの送信を LINE がもう受け付けている（前の回で届いている）
     if (res.status === 409) return;
+    // メッセージの形の誤り（400 で details あり）は、黙って捨てずに失敗にする（再送の末の failed で、LINE だけの知らせは DB がメールへ）
+    const err400 = res.status === 400 ? await res.text() : "";
+    if (lineMessageShapeError(res.status, err400)) throw new Error(`LINE API 400: ${err400.slice(0, 200)}`);
     // 友だちでない・ブロックされた人には送れない（400/403）。再送しても届かないので、失敗にしない（LINE だけならメールで送る）
     if (res.status === 400 || res.status === 403) {
       if (lineOnly) await toEmail();

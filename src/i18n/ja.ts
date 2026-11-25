@@ -1921,6 +1921,7 @@ export const ja = {
   "linemsg.test_no_token": "チャネルアクセストークンが入っていません。上で入れてください。",
   "linemsg.test_token_broken": "保存したチャネルアクセストークンを開けません（サイトの秘密を変えた後など）。入れ直してください。",
   "linemsg.test_bad_token": "LINE がチャネルアクセストークンを受け付けませんでした（401）。トークンが正しいか、失効していないか確かめてください。",
+  "linemsg.test_bad_message": "LINE がメッセージの形を受け付けませんでした（400）。LINE の見た目を「文字だけ」に戻して送れるか確かめ、Banto の不具合として報告してください。",
   "linemsg.test_not_friend": "送れませんでした。送り先が公式アカウントを友だちに追加していない・ブロックしている・別のプロバイダーの ID である、のどれかです。",
   "linemsg.test_limit": "LINE の送信の上限に達しています（月の通数など）。LINE Official Account Manager で確かめてください。",
   "linemsg.test_failed": "送れませんでした。時間をおいてもう一度試してください。",
