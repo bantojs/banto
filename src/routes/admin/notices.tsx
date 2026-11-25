@@ -33,14 +33,14 @@ import { moduleEnabled } from "../../modules/registry";
  */
 export const notices = new Hono<AppEnv>();
 
-const ORDER_KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
-const TRYON_KINDS: readonly NoticeKind[] = ["tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"];
+export const ORDER_KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
+export const TRYON_KINDS: readonly NoticeKind[] = ["tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"];
 /** この画面で扱う知らせ。お店で試着はモジュールが ON のショップと、OFF でも直した文面が残っているとき（見て・既定に戻せるように） */
-const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = []): readonly NoticeKind[] =>
+export const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = []): readonly NoticeKind[] =>
   moduleEnabled(settings, "store_tryon") || rows.some((r) => (TRYON_KINDS as readonly string[]).includes(r.kind)) ? [...ORDER_KINDS, ...TRYON_KINDS] : ORDER_KINDS;
 
-/** 見本の値（プレビュー） */
-function sampleValues(kind: NoticeKind, shopName: string): Record<string, string> {
+/** 見本の値（プレビューと LINE のテスト送信） */
+export function sampleValues(kind: NoticeKind, shopName: string): Record<string, string> {
   return {
     shop_name: shopName,
     customer_name: t("notices.sample_customer"),
