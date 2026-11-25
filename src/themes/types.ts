@@ -196,6 +196,8 @@ export interface Theme {
     orders: Record<string, unknown>[];
     /** 「お得な情報やセールの案内を受け取る」の欄を出す（ショップの設定、0050） */
     consent?: boolean;
+    /** お知らせの受け取り方（0176）: all = メールと LINE、line = LINE だけ。LINE と結びつきショップが LINE で知らせているときだけ。null は欄を出さない */
+    noticeChannel?: "all" | "line" | null;
     prefectures: readonly string[];
     flash?: string;
     error?: string;

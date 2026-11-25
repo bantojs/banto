@@ -10,7 +10,9 @@ import { StorefrontData, storefrontCacheTtl, type PublicShop } from "../../store
 import { privilegedFor } from "../payment-deps";
 import { enabledProviders, loginDeps, memberAddressFrom, membersEnabled, startOAuth } from "../storefront/members";
 import { isProvider } from "../../modules/social-login/providers";
-import { afterResponse, clientIpFor, param, publicBaseUrl, publicJsonBody, type Ctx, originIsSelf } from "../common";
+import { afterResponse, clientIpFor, migrationStateFor, param, publicBaseUrl, publicJsonBody, type Ctx, originIsSelf } from "../common";
+import { migrated } from "../../db/migration-state";
+import { NOTICE_CHANNEL_MIGRATION } from "../../members/notice-channel";
 import { audienceAttrsOf } from "../../members/audience";
 import { randomToken } from "../../util/signed";
 import { sendAccountChangeNotice, sendPasswordLoginNotice, sendWithdrawNotice } from "../../members/notice";
@@ -285,7 +287,9 @@ membersApi.get("/shops/:shop/members/me", async (c: Ctx) => {
   // 注文の住所は返さない（連携側の画面に要るのは注文の状態と金額）。会員本人の既定の住所と案内メールの同意は、マイページのために返す
   const orders = rec.orders.map((o) => ({ number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"], fee_jpy: o["fee_jpy"] ?? 0, discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] }));
   const consent = consentCollected(s.shop) ? { marketing_consent: rec.customer.marketing_consent ?? null } : {};
-  return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, orders }, 200, { "cache-control": "no-store" });
+  // お知らせの受け取り方（0176）: all / line と、LINE だけを選べるか（当てる前の DB には無い）
+  const notice = rec.customer.notice_channel ? { notice_channel: rec.customer.notice_channel, notice_line_available: rec.customer.notice_line_available === true } : {};
+  return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, ...notice, orders }, 200, { "cache-control": "no-store" });
 });
 
 /** 既定の住所を保存する（会員ページの「住所を保存」と同じ。チェックアウトの欄の初期値になる） */
@@ -313,6 +317,25 @@ membersApi.post("/shops/:shop/members/marketing-consent", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   const ok = await db.memberSetMarketingConsent(s.shop.id, s.member.id, s.member.epoch, consent);
   return ok ? c.json({ ok: true, marketing_consent: consent }) : c.json({ error: "invalid_member_token" }, 401);
+});
+
+/**
+ * お知らせの受け取り方（0176）: { channel: "all" | "line" }。本人だけが選ぶ。
+ * LINE だけは、LINE と結びつきショップが LINE で知らせているときだけ（でなければ 409 line_unavailable）
+ */
+membersApi.post("/shops/:shop/members/notice-channel", async (c: Ctx) => {
+  const s = await bearerMember(c);
+  if (s instanceof Response) return s;
+  const channel = (await body(c))["channel"];
+  if (channel !== "all" && channel !== "line") return c.json({ error: "invalid_request", field: "channel" }, 400);
+  const db = privilegedFor(c);
+  if (!db) return c.json({ error: "not_configured" }, 503);
+  const deps = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  if (!deps || !(await migrated(deps, NOTICE_CHANNEL_MIGRATION))) return c.json({ error: "migration_required" }, 409);
+  const r = await db.memberSetNoticeChannel(s.shop.id, s.member.id, s.member.epoch, channel);
+  if (r === "invalid") return c.json({ error: "invalid_member_token" }, 401);
+  if (r === "line_unavailable") return c.json({ error: "line_unavailable" }, 409);
+  return c.json({ ok: true, notice_channel: channel });
 });
 
 // ---------- お気に入り（同梱モジュール favorites、0123、docs/favorites.md） ----------

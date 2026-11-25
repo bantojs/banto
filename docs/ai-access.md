@@ -66,7 +66,7 @@ Banto は、運営者が発行した **AI 用トークン** を使って、Claud
 - 有効期限（任意）、失効（管理画面でいつでも）、最終利用日時の記録。
 - **スコープは発行した人の項目まで**（0028）: `products:*` は `catalog`、`orders:read` / `orders:write` は `orders`、`orders:pii`・`orders:contact`・`orders:address`（0173）は `customers`、`shop:write` は `settings`、`stats:read` は `reports`、`coupons:*` は `marketing`、`customers:*` は `customers`、`inquiries:*` は `support`、`theme:*` は `design`、`content:*` は `content`、`app_data:write` は `apps`、`line:send`・`dialogs:write` は `marketing` の項目を、発行者がそのショップで持っているときだけ付けられます（`shop:read` は発行できる人なら誰でも）。管理画面には付けられるスコープだけが出ます。項目を外すと、そのスコープだけが `unauthorized` になります（他のスコープは残る）。`orders:write` での返金・キャンセルは、管理画面と同じく発行者の `orders_cancel` も要ります。
 - **発行した人の権限が続いている間だけ使える**（0026）: 発行者がそのショップの `integrations` の項目（組織の owner / admin を含む）を失うと、トークンは `unauthorized` になります（メンバーを組織から外した・項目を外したときに、発行済みのトークンが残って使えてしまわないように）。項目を戻せばまた使えます。
-- お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read、名前・メール・電話は orders:contact、名前だけなら orders:address、自由記入は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。メンテナの決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
+- お店で試着（0026）: `tryon_requests_list`・`tryon_request_get`（orders:read。明細の options・image は §25、名前・メール・電話は orders:contact、名前だけなら orders:address、自由記入は orders:pii）、`tryon_request_update_status`（orders:write。sent / ready（`hold_until` 必須）/ purchased / not_purchased / cancelled）、`tryon_request_restock`（orders:write。購入なし・期限切れ・取り消しの申し込みで減らした在庫を EC に戻す。1 回だけ、2 回目は何もしない。メンテナの決定 2026-10-17）、`stores_list`（shop:read）。REST は `/api/v1/tryon-requests`・`/api/v1/tryon-requests/<受付番号>`・`…/status`・`…/restock`・`/api/v1/stores`。状態を進めるだけでは在庫は戻らないので、商品が EC で売れる状態に戻ったことを確かめてから restock を呼んでください。
 - クーポンと会員（0036）: 判断の理由は §6。
 - お問い合わせ（0061）: `inquiries_list`・`inquiry_get`・`inquiry_assignees`（inquiries:read）、`inquiry_reply`・`inquiry_set_status`・`inquiry_assign`（inquiries:write）。REST は `/api/v1/inquiries`（`?assignee=none|<user_id>`）・`/api/v1/inquiries/<受付番号>`・`…/reply`・`…/status`・`…/assignee`（PUT）・`/api/v1/inquiries/assignees`。添付（0064、REST だけ）は `…/reply` を multipart（`body` と `files`）で送り、お客様の添付は `GET /api/v1/inquiries/<受付番号>/attachments/<id>`（inquiries:read と orders:pii）で受け取ります。判断の理由は §8。
 - テーマ（0072、REST だけ。MCP には出さない）: `GET /api/v1/themes`・`POST /api/v1/themes`（束ねたファイル）・`PUT /api/v1/themes/<版>/assets/<名前>`（資産を 1 つ）・`POST …/complete`・`POST …/preview`・`DELETE /api/v1/themes/<版>`（theme:write）、`POST /api/v1/themes/publish`（theme:publish）。ふつうは CLI（`cli/banto-theme.mjs`）から使います（docs/themes.md「コマンドから」）。テンプレートの検査・資産の種類は管理画面の取り込みと同じ（`src/themes/liquid/versions.ts`）。
@@ -258,6 +258,7 @@ HubSpot などの CRM や自社の顧客マスタと Banto の会員を結ぶた
 - **メールアドレスは外部から変えない**（§6）。外部でアドレスが変わった会員を新しいアドレスで `upsert` すると別の会員になろうとし、同じ `external_ref` が既にあれば 409 `external_ref_taken` で止まります。運営者が管理画面の「会員」でアドレスを変えてから、連携側がやり直してください。
 - hooks のペイロードに個人情報は載せません。CRM に送るプロフィールは `customers:read` で引きます（名簿そのものなので、そのトークンは連携先だけに）。
 - 退会・削除依頼で Banto の行が消えても、外部側の消し方は外部の責任です（Banto は `customer.deleted` を知らせるだけ）。
+- 会員の `notice_channel`（0176、`all` / `line`）は、会員が選んだお知らせの受け取り方です（読むだけ。書けるのは本人だけ）。`line` でも、効くのは会員が LINE と結びつきショップが「LINE で購入者に知らせる」を使っているときだけです。外部プラグインで注文のメールを送るときは、この値ではなく hooks の中身の `notice_line_only`（効いているときだけ付く）を見てください（docs/line.md §2）。
 - **案内メールの同意（`marketing_consent`、0050）はこの表の例外**です。同意は本人が Banto の画面で行う行為なので、`true` を書けるのはレジと会員ページだけ（API で `true` を送ると 400 `consent_requires_person`）。`false`（取り下げ）はどこで起きても正しいので、MA の配信停止は `PATCH /customers/{id}` か `upsert` で `{ "marketing_consent": false }` を書き戻してください。同意した会員だけを引くには `GET /customers?marketing_consent=true`。hooks の `customer.*` にも載ります。
 - リクエストの途中で外部に問い合わせる仕組みは持ちません（外部が落ちてもログインとレジは止まらない）。写しは Banto の `customers` にあり、画面はそれだけを読みます。
 - CRM を使わない場合は、Banto 自身が顧客マスタです。管理画面 → 会員 で独自項目を手で直し（0048）、項目の値で絞り、CSV に書き出せます。CRM と連携している項目を手で直すと、次の同期で CRM 側の値に戻ります。
@@ -506,3 +507,24 @@ PHP なら `hash_hmac('sha256', $uid, $key)`、Python なら `hmac.new(key.encod
 - お問い合わせ番号は、発送済みの注文の個人情報のマスキング（既定 180 日、`mask_shipped_orders`）では消えません。
 - hooks の `order.shipped` のペイロードには入れません（hooks は最小の中身のまま。番号は API で引きます）。
 - 0172 を当てる前は `tracking` が入りません。
+
+## 25. 注文・お店で試着の明細のカラー・サイズと画像（0174・0175、メンテナの決定 2026-11-25）
+
+注文の JSON の明細（`items` の各行）に、SKU の選択肢 `options` と画像 `image` が入ります。外部プラグインが注文のメールの明細に、商品の画像とカラー・サイズを出せます。今までの値（`sku_id`・`sku_code`・`sku_name`・`product_id`・`product_name`・`qty`・`unit_price_jpy`・`discount_jpy`）は変わりません。
+
+```json
+{
+  "sku_code": "SH-RED-M",
+  "options": [{ "key": "color", "name": "カラー", "value": "赤" }, { "key": "size", "name": "サイズ", "value": "M" }],
+  "image": { "url": "https://media.example.com/shops/…/red.webp", "thumb": "https://media.example.com/shops/…/red.thumb.webp", "width": 1600, "height": 2000 }
+}
+```
+
+- `options` は商品の SKU を分ける軸（`option_axes`）の順に並べて返します（軸に無い鍵は後ろに鍵の順）。`name` はショップの選択肢の名前の表（`option_names`）、無ければ `key` です。選択肢の無い SKU は `[]`。
+- `image` はその SKU の 1 枚目の画像です。選び方はお店の画面・商品フィードと同じで、その SKU に結んだ画像（細かいもの先）→ 商品全体の画像 → ほかの SKU の画像の順です。URL はデプロイの `MEDIA_BASE_URL` から組みます（下を参照）。`thumb` はサムネイル（無ければ `null`）、画像が無い商品は `"image": null` です。
+- **`image` は 1 件の注文の応答だけ**です（`GET /api/v1/orders/{id}`、状態の変更・取り消し・入金の記録・印とメモの応答、MCP の注文の取得）。注文の一覧（`GET /api/v1/orders`）は件数が多いので `options` だけで、`image` は入りません。明細の画像が要るときは 1 件ずつ引いてください。
+- **`orders:read` で返します**。どちらも商品の情報で、購入者の個人情報ではありません。
+- 注文した時点の写しは残しません。今の SKU と画像から組みます。注文のある SKU は消せないので、ふつうの注文では `options` が返りますが、後から選択肢の値や名前を変えると新しい値になります。画像を消せば `image` は `null`（別の画像があればそれ）になります。商品を非公開にしても返ります。SKU に結ばれていない明細（ほかのカートから取り込んだ注文の履歴など）は `"options": []`・`"image": null` です。
+- URL の起点は `MEDIA_BASE_URL`、無ければ `PUBLIC_BASE_URL`（それも無ければ API を呼んだ URL）の `/media` です。メールに載せるなら、画像を Banto の外（R2 のカスタムドメインなど）から配る設定（docs/setup.md §7）を勧めます。
+- 0174 を当てる前は `options` と `image` が入りません（値が無ければ今までの表のまま出してください）。
+- **お店で試着の申し込みの明細**（0175）にも同じ `options` と `image` が入ります。`image` は 1 件の申し込みの応答だけ（`GET /api/v1/tryon-requests/{number}`、状態の変更・在庫を戻すの応答、MCP の `tryon_request_get`）で、一覧（`GET /api/v1/tryon-requests`）は `options` だけです。選び方・URL・スコープ（`orders:read`）・写しを残さないことは注文と同じです（試着の明細には今までどおり `product_id` と `discount_jpy` はありません）。受付のメールは hooks の `tryon.requested` を受けて、受付番号で 1 件を引いて組み立ててください。0175 を当てる前は入りません。

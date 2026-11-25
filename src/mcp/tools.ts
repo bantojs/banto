@@ -353,7 +353,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "order_get",
-    description: "注文を 1 件取得する。発送していれば tracking に運送会社とお問い合わせ番号（0172）。スコープ orders:read。" + DATA_NOTE,
+    description: "注文を 1 件取得する。発送していれば tracking に運送会社とお問い合わせ番号（0172）。明細に options（カラー・サイズなど）と image（その SKU の 1 枚目の画像の URL、0174）。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ order_id: s("string") }, ["order_id"]),
     readOnly: true,
     run: (api, a) => api.orderGet(str(a, "order_id", true)!),
@@ -392,7 +392,7 @@ export const MCP_TOOLS: McpTool[] = [
   },
   {
     name: "tryon_request_get",
-    description: "お店で試着の申し込みを受付番号で 1 件取得する。スコープ orders:read。" + DATA_NOTE,
+    description: "お店で試着の申し込みを受付番号で 1 件取得する。明細に options（カラー・サイズなど）と image（その SKU の 1 枚目の画像の URL、0175）。スコープ orders:read。" + DATA_NOTE,
     inputSchema: obj({ number: s("integer", "受付番号") }, ["number"]),
     readOnly: true,
     run: (api, a) => {
@@ -404,7 +404,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "tryon_request_update_status",
     description:
-      "【書き込み】お店で試着の申し込みの状態を進める: sent（店舗へ発送済み）、ready（取り置き中。hold_until が必要。お客様に「ご試着いただけます」のお知らせが届く）、purchased / not_purchased（店舗で購入した / しなかった）、cancelled（取り消し。お客様に知らせが届く）。在庫は戻らない（戻すのは tryon_request_restock）。スコープ orders:write。",
+      "【書き込み】お店で試着の申し込みの状態を進める: sent（店舗へ発送済み）、ready（取り置き中。hold_until が必要。お客様に「ご試着いただけます」のお知らせが届く）、purchased / not_purchased（店舗で購入した / しなかった）、cancelled（取り消し。お客様に知らせが届く）。在庫は戻らない（戻すのは tryon_request_restock）。応答の明細に options と image（0175）。スコープ orders:write。",
     inputSchema: obj({ number: s("integer", "受付番号"), status: s("string", TRYON_API_STATUSES.join(" | "), { enum: [...TRYON_API_STATUSES] }), hold_until: s("string", "取り置きの期限（YYYY-MM-DD、ready のとき必須）") }, ["number", "status"]),
     readOnly: false,
     run: (api, a) => {
@@ -421,7 +421,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "tryon_request_restock",
     description:
-      "【書き込み】終わったお店で試着の申し込み（not_purchased・expired・cancelled）で減らした在庫を EC に戻す。商品が店舗から戻ってきた・EC で売れる状態になったことを確かめてから使う。1 回だけ（2 回目は何もしない、restocked_skus: 0）。スコープ orders:write。",
+      "【書き込み】終わったお店で試着の申し込み（not_purchased・expired・cancelled）で減らした在庫を EC に戻す。商品が店舗から戻ってきた・EC で売れる状態になったことを確かめてから使う。1 回だけ（2 回目は何もしない、restocked_skus: 0）。応答の明細に options と image（0175）。スコープ orders:write。",
     inputSchema: obj({ number: s("integer", "受付番号") }, ["number"]),
     readOnly: false,
     run: (api, a) => {

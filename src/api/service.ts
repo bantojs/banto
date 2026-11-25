@@ -13,6 +13,7 @@ import { fetchImage, ImageFetchError } from "../media/fetch-image";
 import type { ConfigAdapter } from "../adapters/types";
 import { CancelError, refundPayment } from "../orders/cancel";
 import { withTrackingInfo } from "../orders/tracking";
+import { withOrderItemMedia } from "../orders/item-media";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { planLimitOf } from "../plan/limits";
 import { attachmentResponse, removeAttachments, storeAttachments } from "../modules/inquiries/attachments";
@@ -266,19 +267,38 @@ export class ApiService {
     /** お問い合わせの添付の置き場（公開しない。無ければ添付を受け付けない） */
     private readonly privateStorage: StorageAdapter | null = null,
     private readonly theme: ThemeApiDeps | null = null,
+    /** Banto の URL（リクエストから。PUBLIC_BASE_URL が無いときの画像の URL の起点） */
+    private readonly publicBase: string | null = null,
   ) {}
 
   /** migrationState: 新しいマイグレーションを使う項目を、適用されるまで受け付けないため（null なら新しい項目は受け付けない） */
   static async forToken(
     rawToken: string,
-    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined; theme?: ThemeApiDeps | null },
+    deps: { db: PrivilegedDb; storage: StorageAdapter; fetch: typeof fetch; publicFetch?: typeof fetch | undefined; config: ConfigAdapter; migrationState: MigrationStateDeps | null; inquiryMail?: InquiryMailDeps | null; privateStorage?: StorageAdapter | null | undefined; theme?: ThemeApiDeps | null; publicBase: string },
   ): Promise<ApiService> {
-    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null, deps.theme ?? null);
+    return new ApiService(deps.db, await hashApiToken(rawToken), deps.storage, deps.fetch, deps.config, deps.migrationState, deps.publicFetch ?? deps.fetch, deps.inquiryMail ?? null, deps.privateStorage ?? null, deps.theme ?? null, deps.publicBase);
   }
 
   /** テーマの置き場（公開しない置き場があればそこ。versions.ts の themeStorage） */
   private get themeFiles(): StorageAdapter {
     return themeStorage({ storage: this.storage, privateStorage: this.privateStorage });
+  }
+
+  /** 画像の URL の起点（MEDIA_BASE_URL、無ければ <Banto の URL>/media）。外へ渡す URL なのでショップのドメインには切り替えない。
+   *  Banto の URL は PUBLIC_BASE_URL、無ければリクエストの URL（routes/common.ts の publicBaseUrl） */
+  private mediaBase(): string {
+    const pub = this.config.get("PUBLIC_BASE_URL") || this.publicBase;
+    return (this.config.get("MEDIA_BASE_URL") || (pub ? `${pub.replace(/\/+$/, "")}/media` : "/media")).replace(/\/+$/, "");
+  }
+
+  /** 注文の JSON（api_order_json）の仕上げ: お問い合わせ番号の名前と URL（0172）、明細の画像（0174） */
+  private orderOut<T extends Record<string, unknown>>(order: T): T {
+    return this.itemsOut(withTrackingInfo(order));
+  }
+
+  /** 明細の画像の候補（image_candidates）を image に直す（注文 0174・お店で試着 0175） */
+  private itemsOut<T extends Record<string, unknown>>(r: T): T {
+    return withOrderItemMedia(r, this.mediaBase());
   }
 
   private migratedTo(version: string): Promise<boolean> {
@@ -405,7 +425,7 @@ export class ApiService {
   /** 入金を記録する（未入金の注文、0156。orders:write）。order.paid を出すのは DB */
   async orderPaymentRecord(id: string): Promise<Record<string, unknown>> {
     await this.requireMigration(PAYMENT_STATUS_MIGRATION);
-    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_payment_record", { p_order_id: id }));
+    return this.orderOut(await this.call<Record<string, unknown>>("api_order_payment_record", { p_order_id: id }));
   }
 
   /** キャンセル: 決済事業者で返金してから cancel_order。返金に失敗したら注文は変えない */
@@ -415,7 +435,7 @@ export class ApiService {
     // 未入金の注文（0156）は返金せずに取り消す（受付のあいだと、発送の後の受け取り拒否）
     if (info.payment_status === "unpaid") {
       if (!cancellable({ status: info.status, payment_status: "unpaid" })) throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
-      return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: false, ...(reason ? { p_reason: reason } : {}) }));
+      return this.orderOut(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: false, ...(reason ? { p_reason: reason } : {}) }));
     }
     if (reason) throw new ApiError("invalid", "reason refused is only for unpaid orders that were shipped", 400);
     if (info.status !== "paid") throw new ApiError("invalid", `order is ${info.status} and cannot be cancelled`, 400);
@@ -428,7 +448,7 @@ export class ApiService {
     } catch (e) {
       throw new ApiError("upstream", `refund failed: ${e instanceof CancelError || e instanceof Error ? e.message : String(e)}`, 502);
     }
-    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: refunded }));
+    return this.orderOut(await this.call<Record<string, unknown>>("api_order_cancel", { p_order_id: id, p_refunded: refunded }));
   }
 
   /**
@@ -578,7 +598,7 @@ export class ApiService {
       p_query: q.query ?? null,
       ...extra,
     });
-    return { ...r, items: (r.items ?? []).map(withTrackingInfo) };
+    return { ...r, items: (r.items ?? []).map((o) => this.orderOut(o)) };
   };
 
   // ---- お店の画面のダイアログ（0111。dialogs:write、モジュール dialogs が ON のショップだけ。連携に結んだトークンは自分の連携のものだけ）----
@@ -619,7 +639,7 @@ export class ApiService {
     };
     const note = body["note"];
     if (note !== undefined && note !== null && typeof note !== "string") throw new ApiError("invalid", "note must be a string or null", 400);
-    return withTrackingInfo(await this.call<Record<string, unknown>>("api_order_annotate", {
+    return this.orderOut(await this.call<Record<string, unknown>>("api_order_annotate", {
       p_order_id: uuidOr404(orderId),
       p_add: list("add_tags"),
       p_remove: list("remove_tags"),
@@ -665,9 +685,9 @@ export class ApiService {
   lineUsage = async () => {
     return this.call<{ month: string; count: number; limit: number }>("api_line_usage", {});
   };
-  orderGet = async (id: string) => withTrackingInfo(await this.call<Record<string, unknown>>("api_order_get", { p_order_id: id }));
+  orderGet = async (id: string) => this.orderOut(await this.call<Record<string, unknown>>("api_order_get", { p_order_id: id }));
   orderUpdateStatus = (id: string, status: "shipped" | "cancelled", reason?: "refused") =>
-    status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status }).then(withTrackingInfo);
+    status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status }).then((o) => this.orderOut(o));
 
   // ---- お店で試着（0026。注文に準じて orders:read / orders:write、名前・メール・電話は orders:contact、名前だけ orders:address、自由記入は orders:pii）----
   tryonRequestsList = (q: { status?: string; storeId?: string; limit?: number; offset?: number } = {}) =>
@@ -677,11 +697,12 @@ export class ApiService {
       p_limit: q.limit ?? 50,
       p_offset: q.offset ?? 0,
     });
-  tryonRequestGet = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_get", { p_number: number });
+  // 1 件の申し込みの応答は明細の画像の候補を image に直す（0175、注文と同じ withOrderItemMedia）
+  tryonRequestGet = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_get", { p_number: number }).then((r) => this.itemsOut(r));
   tryonRequestUpdate = (number: number, status: TryonApiStatus, holdUntil?: string) =>
-    this.call<Record<string, unknown>>("api_tryon_request_update", { p_number: number, p_status: status, p_hold_until: holdUntil ?? null });
+    this.call<Record<string, unknown>>("api_tryon_request_update", { p_number: number, p_status: status, p_hold_until: holdUntil ?? null }).then((r) => this.itemsOut(r));
   /** 終わった申し込み（購入なし・期限切れ・取り消し）の在庫を EC に戻す。2 回目は何もしない */
-  tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number });
+  tryonRequestRestock = (number: number) => this.call<Record<string, unknown>>("api_tryon_request_restock", { p_number: number }).then((r) => this.itemsOut(r));
   /** 洗濯表示（0127、products:write）。商品・カテゴリーを id か URL の名前で。null で外す（商品ならカテゴリーのものを使う） */
   careSet = async (target: "product" | "category", ref: string, care: unknown) => {
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(ref)) throw new ApiError("not_found", "not_found", 404);
@@ -927,7 +948,7 @@ export class ApiService {
     }
     const shop = await this.shopGetIdOnly();
     const key = `pages/${shop}/${randomKey()}.${image.ext}`;
-    const base = (this.config.get("MEDIA_BASE_URL") || (this.config.get("PUBLIC_BASE_URL") ? `${this.config.get("PUBLIC_BASE_URL")!.replace(/\/+$/, "")}/media` : "/media")).replace(/\/+$/, "");
+    const base = this.mediaBase();
     await this.storage.put(key, image.body, image.contentType);
     try {
       return await this.call<Record<string, unknown>>("api_page_media_add", { p_storage_key: key, p_url: imageUrl(base, key) });

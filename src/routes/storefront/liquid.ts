@@ -730,6 +730,9 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         first_name: props.customer.name,
         default_address: props.customer.default_address,
         accepts_marketing: props.customer.marketing_consent === true,
+        // お知らせの受け取り方（0176）: all / line。選べないときは null。変えるのは POST notice_channel_url（channel）
+        notice_channel: props.noticeChannel ?? null,
+        notice_channel_url: props.noticeChannel ? `${s.ctx.shopPath}/account/notice-channel` : null,
         orders,
         orders_count: orders.length,
         has_account: true,

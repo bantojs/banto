@@ -181,6 +181,9 @@ export interface MemberRecord {
     providers?: string[];
     /** 0050 から: 「お得な情報やセールの案内を受け取る」（null = 未回答） */
     marketing_consent?: boolean | null;
+    /** 0176 から: お知らせの受け取り方（all = メールと LINE、line = LINE だけ）と、LINE だけを選べるか */
+    notice_channel?: "all" | "line";
+    notice_line_available?: boolean;
   };
   orders: Record<string, unknown>[];
 }
@@ -295,6 +298,10 @@ export interface PrivilegedDb {
   shopSecret(shopId: string, purpose: "line_messaging"): Promise<string | null>;
   /** 注文を LINE で知らせる相手（0021）。会員の注文で LINE と結びついているときだけ */
   orderLineRecipient(orderId: string, shopId: string): Promise<{ line_user_id: string; number: number; total_jpy: number; shop_name: string; status: string } | null>;
+  /** 0176: LINE で送れなかった知らせを「メール通知」にだけ配り直す（元の配信 1 つにつき 1 回）。配り直した数 */
+  noticeLineFallback(deliveryId: string): Promise<number>;
+  /** 0176: 会員本人がお知らせの受け取り方を選ぶ（all = メールと LINE、line = LINE だけ） */
+  memberSetNoticeChannel(shopId: string, customerId: string, epoch: number, channel: "all" | "line"): Promise<"ok" | "invalid" | "line_unavailable">;
   /** お店で試着の申し込み（0025）。在庫を減らし、番号を返す */
   tryonRequest(shopId: string, storeId: string, items: { sku_id: string; qty: number }[], customer: Record<string, unknown>, visitDate: string | null): Promise<{ id: string; number: number }>;
   /** 試着の申し込みのお知らせ用（メール通知プラグイン） */
@@ -615,6 +622,8 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberGet: (shopId, customerId, epoch, withOrders) => rpc("member_get", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_with_orders: withOrders }),
     shopSecret: (shopId, purpose) => rpc("shop_secret", { p_shop_id: shopId, p_purpose: purpose }),
     orderLineRecipient: (orderId, shopId) => rpc("order_line_recipient", { p_order_id: orderId, p_shop_id: shopId }),
+    noticeLineFallback: async (deliveryId) => (await rpc<number | null>("notice_line_fallback", { p_delivery_id: deliveryId })) ?? 0,
+    memberSetNoticeChannel: (shopId, customerId, epoch, channel) => rpc("member_set_notice_channel", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_channel: channel }),
     tryonRequest: (shopId, storeId, items, customer, visitDate) => rpc("tryon_request", { p_shop_id: shopId, p_store_id: storeId, p_items: items, p_customer: customer, p_visit_date: visitDate }),
     orgInvitationPeek: (tokenHash) => rpc("org_invitation_peek", { p_token_hash: tokenHash }),
     memberTryonRequests: (shopId, customerId, epoch) => rpc("member_tryon_requests", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch }),
