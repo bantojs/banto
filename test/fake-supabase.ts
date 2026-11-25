@@ -5141,6 +5141,14 @@ export class FakeSupabase {
       }
       return json({ customer_master: n });
     }
+    if (fn === "line_test_recipient_member") {
+      // 0178 の再現（本物は test/db/line-test-member.test.ts）: 会員の id で。LINE と結びついた会員だけ。監査ログに会員の id
+      const shopId = String(args["p_shop_id"]);
+      const ident = this.memberIdentities.find((i) => i["shop_id"] === shopId && i["customer_id"] === args["p_customer_id"] && i["provider"] === "line");
+      if (!ident) return json(null);
+      this.tables.audit_log.push({ id: ++this.seq, org_id: this.tables.shops.find((x) => x["id"] === shopId)?.["org_id"], shop_id: shopId, actor_kind: "user", actor_id: null, action: "line.test_recipient", target_type: "customer", target_id: String(args["p_customer_id"]), detail: {}, created_at: new Date().toISOString() });
+      return json({ line_user_id: ident["subject"], customer_id: args["p_customer_id"] });
+    }
     if (fn === "line_test_recipient") {
       // 0177 の再現（本物は test/db/line-test-member.test.ts）: LINE と結びついた会員だけ。監査ログに会員の id
       const shopId = String(args["p_shop_id"]);

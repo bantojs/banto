@@ -13,6 +13,8 @@ import { loadShop } from "./shops";
 import { migrated } from "../../db/migration-state";
 import { IDENTITY_IMPORT_MIGRATION } from "./customer-identities";
 import { NOTICE_CHANNEL_MIGRATION } from "../../members/notice-channel";
+import { LINE_TEST_MEMBER_ID_MIGRATION } from "./line-messaging";
+import { kindsFor } from "./notices";
 import { can } from "./access";
 import { DbError, type Filter } from "../../db/client";
 import { ADMIN_PAGE_SIZE, Pager, olderThan, readAfter, searchRows, splitPage, type PagePosition } from "./paging";
@@ -146,6 +148,18 @@ const DETAIL_FLASH: Record<string, [MessageKey, "notice" | "error"]> = {
   email_taken: ["customers.email_taken", "error"],
   email_invalid: ["customers.email_invalid", "error"],
   note_too_long: ["customers.note_too_long", "error"],
+  // この会員に LINE のテスト送信（0178）の結果
+  line_test_ok: ["linemsg.test_ok", "notice"],
+  line_test_ok_env: ["linemsg.test_ok_env", "notice"],
+  line_test_invalid: ["linemsg.test_invalid", "error"],
+  line_test_member_not_found: ["linemsg.test_member_not_found", "error"],
+  line_test_member_needs_customers: ["linemsg.test_member_needs_customers", "error"],
+  line_test_no_token: ["linemsg.test_no_token", "error"],
+  line_test_token_broken: ["linemsg.test_token_broken", "error"],
+  line_test_bad_token: ["linemsg.test_bad_token", "error"],
+  line_test_not_friend: ["linemsg.test_not_friend", "error"],
+  line_test_limit: ["linemsg.test_limit", "error"],
+  line_test_failed: ["linemsg.test_failed", "error"],
 };
 
 customers.get("/:shopId/customers", requireOwner, async (c: AdminContext) => {
@@ -329,6 +343,9 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
   ]);
   const fields = customerFields(shop.settings);
   const ref = externalRef(r.external_ref);
+  // この会員に LINE のテスト送信（0178）: LINE と結びついた会員で、連携・ショップの設定・会員の項目を持つ人だけ
+  const lineTest =
+    (providers ?? []).includes("line") && can(access, "integrations") && can(access, "settings") && can(access, "customers") && (await migrated({ db, cache: c.get("adapters").cache }, LINE_TEST_MEMBER_ID_MIGRATION));
   const code = c.req.query("flash") ?? c.req.query("error") ?? "";
   const msg = DETAIL_FLASH[code];
   const self = customerPath(shopId, customerId);
@@ -473,6 +490,24 @@ customers.get("/:shopId/customers/:customerId", requireOwner, async (c: AdminCon
             </dl>
           </section>
           <MemberAddress address={r.default_address} />
+          {lineTest ? (
+            <section class="card" id="line-test">
+              <h2>{t("linemsg.member_test_title")}</h2>
+              <p class="muted">{t("linemsg.member_test_intro")}</p>
+              <form method="post" action={`/admin/shops/${shop.id}/line-messaging/test`}>
+                <input type="hidden" name="customer_id" value={r.id} />
+                <label for="line-test-kind">{t("linemsg.test_kind")}</label>
+                <select id="line-test-kind" name="kind">
+                  {kindsFor(shop.settings).map((k) => (
+                    <option value={k}>{t(`notices.kind.${k}` as MessageKey)}</option>
+                  ))}
+                </select>
+                <p>
+                  <button type="submit" class="secondary">{t("linemsg.test_send")}</button>
+                </p>
+              </form>
+            </section>
+          ) : null}
           <section class="card">
             <h2>{t("customers.consent")}</h2>
             <p>{consentLabel(r.marketing_consent)}</p>

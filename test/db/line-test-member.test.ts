@@ -47,10 +47,26 @@ describe.skipIf(!dbAvailable)("LINE のテスト送信の宛先（0177）", () =
     expect((await getPool().query<{ n: string }>("select count(*) as n from audit_log where action = 'line.test_recipient'")).rows[0]!.n).toBe(before);
   });
 
+  it("会員の id で（0178）: メールアドレスの無い会員にも。結びついていない会員・別のショップは null", async () => {
+    const pool = getPool();
+    const noMail = (await pool.query<{ id: string }>("insert into customers (shop_id, name) values ($1, 'メール無し') returning id", [f.shopId])).rows[0]!.id;
+    const UID2 = `U${"f".repeat(32)}`;
+    await pool.query("insert into member_identities (shop_id, provider, subject, customer_id) values ($1, 'line', $2, $3)", [f.shopId, UID2, noMail]);
+    const byId = (shop: string, id: string) => asService(async (c) => (await c.query<{ r: Record<string, unknown> | null }>("select line_test_recipient_member($1, $2) as r", [shop, id])).rows[0]!.r);
+    expect(await byId(f.shopId, noMail)).toEqual({ line_user_id: UID2, customer_id: noMail });
+    expect((await pool.query<{ n: string }>("select count(*) as n from audit_log where action = 'line.test_recipient' and target_id = $1", [noMail])).rows[0]!.n).toBe("1");
+    const plain = (await pool.query<{ id: string }>("select id from customers where shop_id = $1 and email = 'mailonly@example.com'", [f.shopId])).rows[0]!.id;
+    expect(await byId(f.shopId, plain)).toBeNull();
+    const other = await createShopFixture({ email: "lt-other2@example.com", slug: "lt-other2", publish: true });
+    expect(await byId(other.shopId, noMail)).toBeNull();
+  });
+
   it("anon・authenticated からは呼べない", async () => {
     for (const role of ["anon", "authenticated"]) {
-      const r = await getPool().query<{ ok: boolean }>("select has_function_privilege($1, 'line_test_recipient(uuid, text)', 'execute') as ok", [role]);
-      expect(r.rows[0]!.ok).toBe(false);
+      for (const fn of ["line_test_recipient(uuid, text)", "line_test_recipient_member(uuid, uuid)"]) {
+        const r = await getPool().query<{ ok: boolean }>(`select has_function_privilege($1, '${fn}', 'execute') as ok`, [role]);
+        expect(r.rows[0]!.ok).toBe(false);
+      }
     }
   });
 });

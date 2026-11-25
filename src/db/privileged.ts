@@ -302,6 +302,8 @@ export interface PrivilegedDb {
   noticeLineFallback(deliveryId: string): Promise<number>;
   /** 0177: LINE のテスト送信の宛先（会員のメールアドレスから。LINE と結びついた会員だけ、監査ログに残る）。UID は外に出さない */
   lineTestRecipient(shopId: string, email: string): Promise<{ line_user_id: string; customer_id: string } | null>;
+  /** 0178: 同じく会員の id から（メールアドレスの無い会員にも） */
+  lineTestRecipientMember(shopId: string, customerId: string): Promise<{ line_user_id: string; customer_id: string } | null>;
   /** 0176: 会員本人がお知らせの受け取り方を選ぶ（all = メールと LINE、line = LINE だけ） */
   memberSetNoticeChannel(shopId: string, customerId: string, epoch: number, channel: "all" | "line"): Promise<"ok" | "invalid" | "line_unavailable">;
   /** お店で試着の申し込み（0025）。在庫を減らし、番号を返す */
@@ -625,6 +627,7 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     shopSecret: (shopId, purpose) => rpc("shop_secret", { p_shop_id: shopId, p_purpose: purpose }),
     orderLineRecipient: (orderId, shopId) => rpc("order_line_recipient", { p_order_id: orderId, p_shop_id: shopId }),
     lineTestRecipient: (shopId, email) => rpc("line_test_recipient", { p_shop_id: shopId, p_email: email }),
+    lineTestRecipientMember: (shopId, customerId) => rpc("line_test_recipient_member", { p_shop_id: shopId, p_customer_id: customerId }),
     noticeLineFallback: async (deliveryId) => (await rpc<number | null>("notice_line_fallback", { p_delivery_id: deliveryId })) ?? 0,
     memberSetNoticeChannel: (shopId, customerId, epoch, channel) => rpc("member_set_notice_channel", { p_shop_id: shopId, p_customer_id: customerId, p_epoch: epoch, p_channel: channel }),
     tryonRequest: (shopId, storeId, items, customer, visitDate) => rpc("tryon_request", { p_shop_id: shopId, p_store_id: storeId, p_items: items, p_customer: customer, p_visit_date: visitDate }),

@@ -1951,6 +1951,8 @@ export const ja = {
   "linemsg.test_member_not_found": "そのメールアドレスの会員がいないか、LINE と結びついていません（LINE でログインした会員だけに送れます）。",
   "linemsg.test_member_needs_customers": "会員のメールアドレスで送るには、会員の項目も要ります。",
   "audit.action.line.test_recipient": "LINE のテスト送信の宛先に会員を選ぶ",
+  "linemsg.member_test_title": "この会員に LINE のテスト送信",
+  "linemsg.member_test_intro": "知らせの種類を選ぶと、今の文面に見本の値を差し込み、先頭に【テスト送信】を付けて、この会員の LINE に 1 通送ります（メールアドレスの無い会員にも送れます。LINE の利用者 ID は出しません）。テスト用の会員に使ってください。本物のお客様に押すとその方に届きます。宛先に会員を選んだことは監査ログに残ります。",
   "linemsg.title": "LINE 公式アカウント",
   "linemsg.link_hint": "（LINE 通知・LINE で購入者に知らせるプラグインが使うチャネルアクセストークンと、外部プラグインからの宣伝のメッセージの月の上限）",
   "linemsg.card_link": "LINE 公式アカウントの設定（チャネルアクセストークン・宣伝のメッセージの月の上限）",
