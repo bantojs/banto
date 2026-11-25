@@ -20,9 +20,12 @@ import { kindsFor, sampleValues } from "./notices";
 import type { MessageKey } from "../../i18n";
 import { actorHeader } from "../../audit";
 import { migrated } from "../../db/migration-state";
+import { UUID_RE } from "../../util/cursor";
 
 /** テスト送信の宛先を会員のメールアドレスで選ぶ（0177） */
 export const LINE_TEST_MEMBER_MIGRATION = "0177_line_test_member";
+/** 会員の詳細から会員の id で選ぶ（0178。メールアドレスの無い会員にも） */
+export const LINE_TEST_MEMBER_ID_MIGRATION = "0178_line_test_member_id";
 
 /** 宣伝の月の上限の既定（0105 の banto_line_marketing_limit と同じ） */
 export const LINE_MARKETING_LIMIT_DEFAULT = 150;
@@ -296,13 +299,18 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   if (!shop || !can(c.get("shopAccess"), "settings")) return c.text(t("shop.not_found"), 404);
   const base = `/admin/shops/${shop.id}/line-messaging`;
   const f = await formFields(c);
-  const email = (f.email ?? "").trim();
-  let to = email ? "" : (f.to ?? "").trim();
+  // 会員の詳細の「この会員に LINE のテスト送信」（0178）: 会員の id で選び、結果は会員の詳細に戻す
+  const memberId = UUID_RE.test(f.customer_id ?? "") ? (f.customer_id as string) : null;
+  const email = memberId ? "" : (f.email ?? "").trim();
+  let to = email || memberId ? "" : (f.to ?? "").trim();
   const kind = kindsFor(shop.settings).find((k) => k === f.kind) as NoticeKind | undefined;
-  // 宛先の UID は、運営者が入れたもの（LINE_USER_ID_RE に合うもの）だけを画面に戻す。会員のメールで引いた UID・メールは戻さない
-  const typed = email ? "" : to;
-  const back = (code: string) => c.redirect(`${base}?flash=${code}&to=${encodeURIComponent(LINE_USER_ID_RE.test(typed) ? typed : "")}${kind ? `&kind=${kind}` : ""}#test`);
-  if (!kind || (!email && !LINE_USER_ID_RE.test(to)) || email.length > 320) return back("test_invalid");
+  // 宛先の UID は、運営者が入れたもの（LINE_USER_ID_RE に合うもの）だけを画面に戻す。会員のメール・id で引いた UID・メールは戻さない
+  const typed = email || memberId ? "" : to;
+  const back = (code: string) =>
+    memberId
+      ? c.redirect(`/admin/shops/${shop.id}/customers/${memberId}?flash=line_${code}#line-test`)
+      : c.redirect(`${base}?flash=${code}&to=${encodeURIComponent(LINE_USER_ID_RE.test(typed) ? typed : "")}${kind ? `&kind=${kind}` : ""}#test`);
+  if (!kind || (!email && !memberId && !LINE_USER_ID_RE.test(to)) || email.length > 320) return back("test_invalid");
   const cfg = c.get("adapters").config;
   const url = cfg.get("SUPABASE_URL");
   const serviceRoleKey = cfg.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -310,14 +318,14 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   // 権限は上の loadShop（項目 integrations）と settings で確かめた。トークンの暗号文は運営者には読ませないので service_role で読み、Worker で開く（connect.tsx と同じ）。
   // 会員の宛先を引いたことは監査ログに運営者の名で残す（X-Banto-Actor）
   const privileged = createPrivilegedDb({ url, serviceRoleKey, fetch: c.get("deps").fetch, actor: actorHeader("user", owner(c).session.user_id) });
-  if (email) {
-    // 会員のメールアドレスで宛先を選ぶ（0177）: 会員の項目も要る。UID は Worker の中だけで使う
+  if (email || memberId) {
+    // 会員のメールアドレス（0177）か会員の id（0178）で宛先を選ぶ: 会員の項目も要る。UID は Worker の中だけで使う
     if (!can(c.get("shopAccess"), "customers")) return back("test_member_needs_customers");
     const state = { db: owner(c).db, cache: c.get("adapters").cache };
-    if (!(await migrated(state, LINE_TEST_MEMBER_MIGRATION))) return back("test_failed");
+    if (!(await migrated(state, memberId ? LINE_TEST_MEMBER_ID_MIGRATION : LINE_TEST_MEMBER_MIGRATION))) return back("test_failed");
     let r: Awaited<ReturnType<typeof privileged.lineTestRecipient>>;
     try {
-      r = await privileged.lineTestRecipient(shop.id, email);
+      r = memberId ? await privileged.lineTestRecipientMember(shop.id, memberId) : await privileged.lineTestRecipient(shop.id, email);
     } catch {
       return back("test_failed");
     }

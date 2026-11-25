@@ -313,5 +313,56 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
       externalHosts.delete("https://api.line.me/");
     }
   });
+
+  it("会員の詳細から: メールアドレスの無い LINE の会員にも会員の id でテスト送信（UID は出さない・結果は会員の詳細に）", async () => {
+    const sb = new FakeSupabase();
+    const owner = sb.addUser("owner@example.com", "password-123", { owner: true });
+    const shop = sb.addShop(owner.id, { slug: "my-shop", name: "マイショップ", published: true, legal_notice: "a", privacy_policy: "b", return_policy: "c" });
+    const uid = `U${"e".repeat(32)}`;
+    const memberId = "11111111-1111-4111-8111-111111111111";
+    const otherId = "22222222-2222-4222-8222-222222222222";
+    sb.tables.customers.push({ id: memberId, shop_id: shop.id, email: null, name: "LINE だけの会員" });
+    sb.tables.customers.push({ id: otherId, shop_id: shop.id, email: "x@example.com", name: "メールの会員" });
+    sb.memberIdentities.push({ shop_id: shop.id, provider: "line", subject: uid, customer_id: memberId });
+    const app = appWith(sb, { LINE_CHANNEL_ACCESS_TOKEN: "env-token-1234567890abcdef" });
+    const sent: string[] = [];
+    externalHosts.set("https://api.line.me/", async (req) => {
+      sent.push(((await req.json()) as { to: string }).to);
+      return new Response("{}", { status: 200 });
+    });
+    try {
+      const admin = await Browser.loggedIn(app, "owner@example.com", "password-123");
+      const detail = `/admin/shops/${shop.id}/customers/${memberId}`;
+      const page = await (await admin.get(detail)).text();
+      expect(page).toContain('id="line-test"');
+      expect(page).not.toContain(uid);
+      // LINE と結びついていない会員には欄を出さない
+      expect(await (await admin.get(`/admin/shops/${shop.id}/customers/${otherId}`)).text()).not.toContain('id="line-test"');
+      const res = await admin.post(`/admin/shops/${shop.id}/line-messaging/test`, { kind: "order_paid", customer_id: memberId });
+      expect(res.headers.get("location")).toBe(`${detail}?flash=line_test_ok_env#line-test`);
+      expect(sent).toEqual([uid]);
+      expect(sb.tables.audit_log.some((r) => r["action"] === "line.test_recipient" && r["target_id"] === memberId)).toBe(true);
+      expect(await (await admin.get(`${detail}?flash=line_test_ok_env`)).text()).toContain("デプロイの変数");
+      // customers の無い人（integrations・settings はある）: 欄が出ず、送ろうとしても断る
+      const org = String(sb.tables.shops.find((x) => x["id"] === shop.id)!["org_id"]);
+      const u = sb.addUser("staff2@example.com", "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u.id, shop_id: shop.id, perms: ["integrations", "settings"] });
+      const staff = await Browser.loggedIn(app, "staff2@example.com", "password-123");
+      expect((await staff.post(`/admin/shops/${shop.id}/line-messaging/test`, { kind: "order_paid", customer_id: memberId })).headers.get("location")).toContain("flash=line_test_member_needs_customers");
+      // customers・settings はあるが integrations の無い人: 会員の詳細に欄が出ない
+      const u2 = sb.addUser("staff3@example.com", "password-123");
+      sb.orgMembers.push({ org_id: org, user_id: u2.id, role: "member", created_at: new Date().toISOString() });
+      sb.orgMemberShops.push({ org_id: org, user_id: u2.id, shop_id: shop.id, perms: ["customers", "settings"] });
+      const staff3 = await Browser.loggedIn(app, "staff3@example.com", "password-123");
+      expect(await (await staff3.get(detail)).text()).not.toContain('id="line-test"');
+      expect(sent).toHaveLength(1);
+      // 結びついていない会員の id は送らない
+      expect((await admin.post(`/admin/shops/${shop.id}/line-messaging/test`, { kind: "order_paid", customer_id: otherId })).headers.get("location")).toContain("flash=line_test_member_not_found");
+      expect(sent).toHaveLength(1);
+    } finally {
+      externalHosts.delete("https://api.line.me/");
+    }
+  });
 });
 
