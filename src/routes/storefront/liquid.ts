@@ -670,8 +670,8 @@ export function refreshMeta(seconds: number, url: string | null): string {
 
 /** 購入の完了画面（templates/checkout_done）。checkout.status は confirmed / pending / released / not_found / unknown（照会できないとき）、確定していれば order_number */
 export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; refreshUrl?: string | null; free: boolean; inquiryUrl: string | null; payment?: DonePayment | null; categories: CategoryRow[] }): Response | null {
-  // お支払いに戻る・取りやめる（0180）: テーマは payment.url へ s = payment.token と action = pay / cancel を POST する
-  const payment = p.payment ? { url: p.payment.action, token: p.payment.token, resumable: p.payment.resumable, notice: p.payment.notice } : null;
+  // お支払いに戻る・取りやめる（0180）: テーマは payment.url へ <payment.field> = payment.token と action = pay / cancel を POST する（field は s か t、0181）
+  const payment = p.payment ? { url: p.payment.action, token: p.payment.token, field: p.payment.field ?? "s", resumable: p.payment.resumable, notice: p.payment.notice } : null;
   const checkout = { status: p.status, order_number: p.orderNumber, message: p.message, free: p.free, inquiry_url: p.inquiryUrl, continue_url: s.ctx.shopPath || "/", payment };
   return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: refreshMeta(4, p.refreshUrl ?? null) } : {}) });
 }

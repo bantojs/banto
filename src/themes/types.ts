@@ -455,6 +455,8 @@ export type AccountPageProps = Parameters<Theme["AccountPage"]>[0];
 export interface DonePayment {
   action: string;
   token: string;
+  /** 券を送る欄の名前（完了画面は s = 照会トークン、お支払いのお願いのリンクは t = 予約の券、0181）。無ければ s */
+  field?: "s" | "t";
   resumable: boolean;
   notice: string | null;
 }

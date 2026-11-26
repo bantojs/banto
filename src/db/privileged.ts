@@ -560,8 +560,14 @@ export interface PrivilegedDb {
   checkoutStatus(shopId: string, quoteId: string): Promise<CheckoutStatusResult>;
   /** 0180: 決済ページの ID を入れる・入れ替える（expected が今の ID と同じときだけ、最初は null）。入れたら true */
   reservationSetPaymentSession(reservationId: string, shopId: string, session: PaymentSessionRef, expected: string | null): Promise<boolean>;
-  /** 0180: お支払いに戻るための予約（照会の quote か、会員の予約 id） */
-  reservationPaymentGet(shopId: string, by: { quoteId: string } | { reservationId: string; customerId: string; epoch: number }): Promise<ReservationPayment | null>;
+  /** 0180: お支払いに戻るための予約（照会の quote か、会員の予約 id）。0181 から署名した券の予約 id だけでも */
+  reservationPaymentGet(shopId: string, by: { quoteId: string } | { reservationId: string; customerId: string; epoch: number } | { reservationId: string }): Promise<ReservationPayment | null>;
+  /** 0181: 24 時間たった未払いの KOMOJU の予約に checkout.payment_pending を積む（積んだ数） */
+  enqueuePaymentReminders(limit: number): Promise<number>;
+  /** 0181: お支払いのお願いのメールの中身（まだ払えるときだけ） */
+  reservationReminderContact(reservationId: string, shopId: string): Promise<ReminderContact | null>;
+  /** 0181: お支払いのお願いを LINE で送る相手（会員が LINE と結びつき、まだ払えるときだけ） */
+  reservationLineRecipient(reservationId: string, shopId: string): Promise<{ line_user_id: string; reservation_id: string; expires_at: string; total_jpy: number; shop: { name: string; slug: string; domain: string | null } } | null>;
   /** ショップの settings.headless（中継元の IP を含む。公開の settings には無い、0034）。X-Banto-Client-IP が付いた通信のときだけ読む */
   shopHeadless(shopId: string): Promise<Record<string, unknown> | null>;
   /** 管理者ログインの回数の制限（0030）。Supabase に問い合わせる前に確かめ、結果を記録する */
@@ -607,6 +613,17 @@ export interface ReservationPayment {
   payment_session: PaymentSessionRef | null;
   payment_method: string | null;
   total_jpy: number;
+}
+
+/** お支払いのお願いのメールの中身（0181 の reservation_reminder_contact） */
+export interface ReminderContact {
+  reservation_id: string;
+  expires_at: string;
+  total_jpy: number;
+  customer_email: string;
+  customer_name: string | null;
+  items: { name: string; qty: number; unit_price_jpy: number }[];
+  shop: { name: string; slug: string; domain: string | null; contact_email: string | null };
 }
 
 /** 会員ページの「お支払いが済んでいないお申し込み」（0180、member_get の pending_payments） */
@@ -926,8 +943,13 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
         "reservation_payment_get",
         "quoteId" in by
           ? { p_shop_id: shopId, p_quote_id: by.quoteId, p_reservation_id: null, p_customer_id: null, p_epoch: null }
-          : { p_shop_id: shopId, p_quote_id: null, p_reservation_id: by.reservationId, p_customer_id: by.customerId, p_epoch: by.epoch },
+          : "customerId" in by
+            ? { p_shop_id: shopId, p_quote_id: null, p_reservation_id: by.reservationId, p_customer_id: by.customerId, p_epoch: by.epoch }
+            : { p_shop_id: shopId, p_quote_id: null, p_reservation_id: by.reservationId, p_customer_id: null, p_epoch: null },
       ),
+    enqueuePaymentReminders: (limit) => rpc<number>("enqueue_payment_reminders", { p_limit: limit }),
+    reservationReminderContact: (reservationId, shopId) => rpc<ReminderContact | null>("reservation_reminder_contact", { p_reservation_id: reservationId, p_shop_id: shopId }),
+    reservationLineRecipient: (reservationId, shopId) => rpc("reservation_line_recipient", { p_reservation_id: reservationId, p_shop_id: shopId }),
     async shopHeadless(shopId) {
       const res = await doFetch(`${base}/rest/v1/shops?select=settings&id=eq.${encodeURIComponent(shopId)}`, { headers });
       if (!res.ok) throw new PrivilegedRpcError("shops.settings", res.status, await res.text());

@@ -4854,6 +4854,42 @@ export class FakeSupabase {
       if (o) return json({ status: "confirmed", expires_at: r["expires_at"] ?? null, order: { number: o["number"], status: o["status"], total_jpy: o["total_jpy"], payment_provider: o["payment_provider"] ?? null, created_at: o["created_at"] } });
       return json({ status: r["status"], order: null, expires_at: r["expires_at"] ?? null, resumable: r["status"] === "pending" && Boolean(r["payment_session"]) && Date.parse(String(r["expires_at"])) > Date.now() });
     }
+    // 0181: お支払いのお願い（本物は test/db/payment-reminder.test.ts）
+    if (fn === "enqueue_payment_reminders") {
+      let n = 0;
+      for (const r of this.tables.reservations) {
+        const shop = this.tables.shops.find((x) => x["id"] === r["shop_id"]);
+        if (r["status"] !== "pending" || !r["payment_session"] || r["reminded_at"] || (shop?.["settings"] as Record<string, unknown> | undefined)?.["payment_reminder"] !== true) continue;
+        if (Date.parse(String(r["created_at"])) > Date.now() - 24 * 3600_000 || Date.parse(String(r["expires_at"])) <= Date.now() + 3600_000) continue;
+        if (this.tables.orders.some((o) => o["reservation_id"] === r["id"])) continue;
+        r["reminded_at"] = this.now();
+        this.enqueue(String(r["shop_id"]), "checkout.payment_pending", { reservation_id: r["id"], shop_id: r["shop_id"], expires_at: r["expires_at"], ...(r["customer_id"] ? { customer_id: r["customer_id"] } : {}) });
+        n++;
+      }
+      return json(n);
+    }
+    if (fn === "reservation_reminder_contact" || fn === "reservation_line_recipient") {
+      const r = this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"]);
+      const live = r && r["status"] === "pending" && r["payment_session"] && Date.parse(String(r["expires_at"])) > Date.now() && !this.tables.orders.some((o) => o["reservation_id"] === r["id"]);
+      if (!r || !live) return json(null);
+      const shop = this.tables.shops.find((x) => x["id"] === r["shop_id"])!;
+      if (fn === "reservation_line_recipient") {
+        const ident = this.memberIdentities.find((i) => i["shop_id"] === r["shop_id"] && i["customer_id"] === r["customer_id"] && i["provider"] === "line");
+        if (!r["customer_id"] || !ident) return json(null);
+        return json({ line_user_id: ident["subject"], reservation_id: r["id"], expires_at: r["expires_at"], total_jpy: this.reservationTotal(r), shop: { name: shop["name"], slug: shop["slug"], domain: shop["domain"] ?? null } });
+      }
+      const cust = (r["customer"] ?? {}) as Record<string, unknown>;
+      if (!cust["customer_email"]) return json(null);
+      return json({
+        reservation_id: r["id"],
+        expires_at: r["expires_at"],
+        total_jpy: this.reservationTotal(r),
+        customer_email: cust["customer_email"],
+        customer_name: cust["customer_name"] ?? null,
+        items: (r["items"] as { qty: number; unit_price_jpy: number }[]).map((i) => ({ name: "Tシャツ / M", qty: i.qty, unit_price_jpy: i.unit_price_jpy })),
+        shop: { name: shop["name"], slug: shop["slug"], domain: shop["domain"] ?? null, contact_email: (shop["settings"] as Record<string, unknown> | undefined)?.["contact_email"] ?? null },
+      });
+    }
     // 0180: お支払いに戻る（本物は test/db/payment-resume.test.ts）
     if (fn === "reservation_set_payment_session") {
       const r = this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"] && x["status"] === "pending");
@@ -4870,6 +4906,9 @@ export class FakeSupabase {
       } else if (args["p_reservation_id"] && args["p_customer_id"]) {
         const cust = this.tables.customers.find((x) => x["id"] === args["p_customer_id"] && x["shop_id"] === args["p_shop_id"] && Number(x["session_epoch"] ?? 0) === Number(args["p_epoch"]));
         r = cust ? this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"] && x["customer_id"] === cust["id"]) : undefined;
+      } else if (args["p_reservation_id"]) {
+        // 0181: お支払いのお願いの券（Worker が署名を確かめた予約 id）
+        r = this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"]);
       }
       if (!r) return json(null);
       const confirmed = this.tables.orders.some((o) => o["reservation_id"] === r!["id"]);

@@ -17,6 +17,8 @@ import { orderLinkText, orderPageLink, trackingText, type OrderLinkParts } from 
 import { lineMessageShapeError, lineNoticeStyle, orderCard, type LineMessage } from "../notices/line-card";
 import { trackingOf, trackingUrl } from "../orders/tracking";
 import { t } from "../i18n";
+import { paymentLinkUrl, payUntilLabel, sealResumeToken } from "../commerce/payment-resume";
+import { shopHome } from "../storefront/urls";
 
 /** 注文の LINE の知らせの材料（order_line_recipient）。tracking・shop・line_style は 0179 から */
 export interface OrderLineFacts {
@@ -98,7 +100,8 @@ export const lineBuyerNotify: BundledPlugin = {
     version: "1.1.0",
     description: "LINE でログインした会員に、ショップの LINE 公式アカウントから注文の受付・発送（お店で試着の受付・取り置き）を知らせます。チャネルアクセストークンは管理画面の「LINE 公式アカウント」で入れます。",
     // order.created は代金引換などの未入金の注文の受付だけ（0157）
-    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
+    // checkout.payment_pending は KOMOJU の未払いの予約のお支払いのお願い（0181、ショップの設定 payment_reminder で積まれる）
+    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated", "checkout.payment_pending"],
     settings: [],
   },
   requiredSecrets: [],
@@ -166,6 +169,7 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; message: Li
     const text = kind ? tryonLineMessage(event, r, opts, await ctx.privileged.shopNoticeTexts(shop_id, kind)) : null;
     return text ? { to: r.line_user_id, message: { type: "text", text } } : null;
   }
+  if (event === "checkout.payment_pending") return reminderFor(ctx);
   const orderId = typeof data["order_id"] === "string" ? data["order_id"] : "";
   if (!orderId) return null;
   // 未入金の注文の入金の記録（0156）で出た order.paid には、受付の知らせを重ねて送らない
@@ -179,4 +183,26 @@ async function messageFor(ctx: PluginContext): Promise<{ to: string; message: Li
   const kind = event === "order.shipped" ? "order_shipped" : "order_paid";
   const message = buyerLineMessage(event, r, await ctx.privileged.shopNoticeTexts(shop_id, kind), ctx.config.get("PUBLIC_BASE_URL"));
   return message ? { to: r.line_user_id, message } : null;
+}
+
+/**
+ * お支払いのお願い（0181）を LINE で。予約の会員が LINE と結びつき、まだ払えるときだけ（無ければ NO_RECIPIENT: LINE だけのお客様はメールへ配り直す）。
+ * リンクは予約の券の画面（メールと同じ）。組めなければ送らない
+ */
+async function reminderFor(ctx: PluginContext): Promise<{ to: string; message: LineMessage } | typeof NO_RECIPIENT | null> {
+  const { data, shop_id } = ctx.envelope;
+  const reservationId = typeof data["reservation_id"] === "string" ? data["reservation_id"] : "";
+  if (!reservationId) return null;
+  const r = await ctx.privileged.reservationLineRecipient(reservationId, shop_id);
+  if (!r) return NO_RECIPIENT;
+  const base = ctx.config.get("PUBLIC_BASE_URL");
+  if (!ctx.sessionSecret || (!base && !r.shop.domain)) return NO_RECIPIENT;
+  const link = paymentLinkUrl(shopHome(base ?? "", r.shop), await sealResumeToken(ctx.sessionSecret, shop_id, r.reservation_id, r.expires_at));
+  const text = noticeLine("payment_reminder", await ctx.privileged.shopNoticeTexts(shop_id, "payment_reminder"), {
+    shop_name: r.shop.name,
+    total: `¥${Number(r.total_jpy).toLocaleString("ja-JP")}`,
+    pay_until: payUntilLabel(r.expires_at),
+    payment_link: link,
+  });
+  return text ? { to: r.line_user_id, message: { type: "text", text } } : null;
 }

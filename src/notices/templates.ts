@@ -10,7 +10,10 @@
 
 export const NOTICE_TEXTS_MIGRATION = "0154_notice_texts";
 
-export const NOTICE_KINDS = ["order_paid", "order_shipped", "tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"] as const;
+export const NOTICE_KINDS = ["order_paid", "order_shipped", "tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled", "payment_reminder"] as const;
+
+/** お支払いのお願い（0181）。当てるまで画面に出さない */
+export const PAYMENT_REMINDER_MIGRATION = "0181_payment_reminder";
 export type NoticeKind = (typeof NOTICE_KINDS)[number];
 export type NoticeChannel = "mail" | "line";
 
@@ -45,6 +48,17 @@ export function noticeSpec(kind: NoticeKind, channel: NoticeChannel, lineLinks =
       bodyAllowed: ["shop_name", "customer_name", "number", "total", "order_details", ...(shipped ? ["tracking"] : []), "return_policy", "order_link", "contact"],
       bodyRequired: shipped ? ["order_details", "tracking"] : ["order_details"],
       once: ["order_details", "tracking"],
+    };
+  }
+  if (kind === "payment_reminder") {
+    // 0181: お支払いのお願い。リンク（payment_link）は必ず入れる。LINE に氏名は載せない
+    if (channel === "line") return { bodyAllowed: ["shop_name", "total", "pay_until", "payment_link"], bodyRequired: ["payment_link"], once: ["payment_link"] };
+    return {
+      subjectAllowed: ["shop_name", "customer_name", "total", "pay_until"],
+      subjectRequired: [],
+      bodyAllowed: ["shop_name", "customer_name", "total", "pay_until", "items", "payment_link", "contact"],
+      bodyRequired: ["payment_link"],
+      once: ["items", "payment_link"],
     };
   }
   const plain = kind === "tryon_requested" || kind === "tryon_cancelled";
@@ -185,6 +199,13 @@ export const DEFAULT_NOTICE_TEXTS: Record<NoticeKind, { mail: { subject: string;
       body: "{{customer_name}} 様\n\n{{store_name}}でのお取り置きを{{hold_until}}まで延長しました。営業時間をご確認のうえ、お越しください。\n\n受付番号: {{number}}\n\n{{items}}\n\n{{store_info}}\n\n{{contact}}\n\n{{shop_link}}\n\n{{shop_name}}",
     },
     line: "【{{shop_name}}】{{store_name}}でのお取り置きを{{hold_until}}まで延長しました。\n受付番号 {{number}}",
+  },
+  payment_reminder: {
+    mail: {
+      subject: "【{{shop_name}}】お支払いのお願い（{{pay_until}}まで）",
+      body: "{{customer_name}} 様\n\nお申し込みいただいたご注文のお支払いが、まだ確認できていません。\n{{pay_until}}までにお支払いがないと、お申し込みは取り消されます。\n\n{{items}}\n\n合計（税込）: {{total}}\n\nお支払いがまだの方は、こちらからお支払いに進めます（お申し込みを取りやめることもできます）:\n{{payment_link}}\n\nコンビニ払い・銀行振込の手続きを済ませた方は、KOMOJU から届いたメールの案内でお支払いください。行き違いでお支払い済みの場合は、ご容赦ください。\n\n{{contact}}\n\n{{shop_name}}",
+    },
+    line: "【{{shop_name}}】お支払いのお願い\nお申し込みのお支払いがまだ確認できていません（合計 {{total}}）。\n{{pay_until}}までにお支払いがないと、お申し込みは取り消されます。\n{{payment_link}}",
   },
   tryon_cancelled: {
     mail: {
