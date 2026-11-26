@@ -3849,6 +3849,27 @@ export class FakeSupabase {
         if (!need("line:send")) return unauthorized();
         return json({ month: "2026-11", count: this.lineMessages.filter((m) => m["shop_id"] === shopId && ["pending", "sent"].includes(String(m["status"]))).length, limit: 150 });
       }
+      case "api_reservation_payment_reminder": {
+        // 0182（本物は test/db/payment-reminder-api.test.ts）
+        if (!need("orders:read")) return unauthorized();
+        const r = this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === shopId);
+        if (!r || r["status"] !== "pending" || !r["payment_session"] || Date.parse(String(r["expires_at"])) <= Date.now() || this.tables.orders.some((o) => o["reservation_id"] === r["id"])) return notFound();
+        const shop = this.tables.shops.find((x) => x["id"] === shopId)!;
+        const cust = (r["customer"] ?? {}) as Record<string, unknown>;
+        const contact = scopes.includes("orders:contact") || scopes.includes("orders:pii");
+        return json({
+          reservation_id: r["id"],
+          shop_id: shopId,
+          customer_id: r["customer_id"] ?? null,
+          created_at: r["created_at"],
+          expires_at: r["expires_at"],
+          total_jpy: this.reservationTotal(r),
+          payment_method: r["payment_method"] ?? null,
+          items: (r["items"] as { qty: number; unit_price_jpy: number }[]).map((i) => ({ product_name: "Tシャツ", sku_name: "M", sku_code: "TEE-M", qty: i.qty, unit_price_jpy: i.unit_price_jpy })),
+          shop: { slug: shop["slug"], domain: shop["domain"] ?? null },
+          ...(contact ? { email: cust["customer_email"] ?? null, name: cust["customer_name"] ?? null } : {}),
+        });
+      }
       case "api_order_get": {
         if (!need("orders:read")) return unauthorized();
         const o = mine(this.tables.orders.find((x) => x["id"] === args["p_order_id"]));

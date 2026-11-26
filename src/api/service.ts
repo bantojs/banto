@@ -37,6 +37,10 @@ import { customerFields } from "../customers/fields";
 import { getTimeZone } from "../i18n/time";
 import { IDEMPOTENCY_KEY_RE, LineInputError, lineMessagesFrom, pushLine, type LineSendStatus } from "../line/send";
 import { lineTokenFor } from "../plugins/line_token";
+import { paymentLinkUrl, payUntilLabel, sealResumeToken } from "../commerce/payment-resume";
+
+/** お支払いのお願いの中身を返す口（0182） */
+export const PAYMENT_REMINDER_API_MIGRATION = "0182_api_payment_reminder";
 
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
@@ -686,6 +690,23 @@ export class ApiService {
     return this.call<{ month: string; count: number; limit: number }>("api_line_usage", {});
   };
   orderGet = async (id: string) => this.orderOut(await this.call<Record<string, unknown>>("api_order_get", { p_order_id: id }));
+
+  /**
+   * お支払いのお願いの中身（0182、orders:read）。KOMOJU の未払いの予約 1 件（hooks checkout.payment_pending の reservation_id）。
+   * 宛先・お名前とお支払いに進むリンク（payment_link、同梱プラグインと同じ券）は orders:contact / orders:pii のときだけ。
+   * 確定・取りやめ・期限切れは 404
+   */
+  reservationPaymentReminder = async (id: string) => {
+    await this.requireMigration(PAYMENT_REMINDER_API_MIGRATION);
+    if (!isUuid(id)) throw new ApiError("not_found", "reservation not found", 404);
+    const r = await this.call<Record<string, unknown> & { reservation_id: string; shop_id: string; expires_at: string; shop: { slug: string; domain: string | null } }>("api_reservation_payment_reminder", { p_reservation_id: id });
+    const { shop, shop_id, ...rest } = r;
+    const contact = "email" in r;
+    const pub = this.config.get("PUBLIC_BASE_URL") || this.publicBase;
+    const secret = this.theme?.secret ?? null;
+    const link = contact && secret && (pub || shop.domain) ? paymentLinkUrl(shopHome(pub ?? "", shop), await sealResumeToken(secret, shop_id, r.reservation_id, r.expires_at)) : null;
+    return { ...rest, pay_until: payUntilLabel(r.expires_at), ...(contact ? { payment_link: link } : {}) };
+  };
   orderUpdateStatus = (id: string, status: "shipped" | "cancelled", reason?: "refused") =>
     status === "cancelled" ? this.orderCancel(id, reason) : this.call<Record<string, unknown>>("api_order_update_status", { p_order_id: id, p_status: status }).then((o) => this.orderOut(o));
 

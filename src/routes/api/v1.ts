@@ -237,6 +237,8 @@ v1.get("/orders", async (c) =>
     .catch((e) => errorJson(c, e)),
 );
 v1.get("/orders/:id", async (c) => api(c).orderGet(c.req.param("id")).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
+// お支払いのお願いの中身（0182、orders:read。宛先とリンクは orders:contact）。hooks checkout.payment_pending の reservation_id で引く
+v1.get("/reservations/:id/payment-reminder", async (c) => api(c).reservationPaymentReminder(c.req.param("id")).then((r) => c.json(r, 200, { "cache-control": "no-store" })).catch((e) => errorJson(c, e)));
 // 印とメモ（0106。orders:write、メモは orders:pii も）
 v1.patch("/orders/:id", async (c) => body(c).then((b) => api(c).orderAnnotate(c.req.param("id"), b)).then((r) => c.json(r)).catch((e) => errorJson(c, e)));
 // 入金を記録する（未入金の注文、0156。orders:write）

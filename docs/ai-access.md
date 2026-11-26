@@ -528,3 +528,22 @@ PHP なら `hash_hmac('sha256', $uid, $key)`、Python なら `hmac.new(key.encod
 - URL の起点は `MEDIA_BASE_URL`、無ければ `PUBLIC_BASE_URL`（それも無ければ API を呼んだ URL）の `/media` です。メールに載せるなら、画像を Banto の外（R2 のカスタムドメインなど）から配る設定（docs/setup.md §7）を勧めます。
 - 0174 を当てる前は `options` と `image` が入りません（値が無ければ今までの表のまま出してください）。
 - **お店で試着の申し込みの明細**（0175）にも同じ `options` と `image` が入ります。`image` は 1 件の申し込みの応答だけ（`GET /api/v1/tryon-requests/{number}`、状態の変更・在庫を戻すの応答、MCP の `tryon_request_get`）で、一覧（`GET /api/v1/tryon-requests`）は `options` だけです。選び方・URL・スコープ（`orders:read`）・写しを残さないことは注文と同じです（試着の明細には今までどおり `product_id` と `discount_jpy` はありません）。受付のメールは hooks の `tryon.requested` を受けて、受付番号で 1 件を引いて組み立ててください。0175 を当てる前は入りません。
+
+## 26. お支払いのお願いの中身（0182、メンテナの決定 2026-11-26）
+
+注文のメールを外部プラグインに任せたショップ（メール通知の「注文のメールを送らない」）でも、KOMOJU の未払いのお申し込みに「お支払いのお願い」を送れるように、予約 1 件分の中身を読む口です。hooks `checkout.payment_pending`（0181、ショップの設定 `payment_reminder` が ON のときだけ積まれる）の `reservation_id` で引きます。
+
+```
+GET /api/v1/reservations/{reservation_id}/payment-reminder
+```
+
+- スコープは `orders:read`。品目（`product_name`・`sku_name`・`sku_code`・`qty`・`unit_price_jpy`）・合計 `total_jpy`・期限 `expires_at` と期限の文 `pay_until`（運営者の時間帯、「11月28日（金）15:00」）・`payment_method`・`customer_id`（会員の予約だけ）を返します。
+- **宛先 `email`・お名前 `name` と、お支払いに進むリンク `payment_link` は `orders:contact` か `orders:pii` のときだけ**返します（0173 と同じ線）。リンクは同梱のメール通知と同じ券つきの URL（`/<shop>/checkout/resume?t=…`、お支払いの期限まで）で、開くと「お支払いに進む・取りやめる」ができます（お金は動きません）。お客様に渡すものなので、宛先を受け取れる連携にだけ渡します。
+- お届け先（住所）は返しません。
+- 確定した・取りやめた・期限が切れた予約は 404 `not_found`（送らない合図）。送る直前に引いてください。
+- 文面はプラグインが持ちます（Banto の「お知らせの文面」の `payment_reminder` は同梱プラグイン用）。
+- REST だけです（MCP には出しません。AI の会話にお客様向けのリンクを流さないため）。
+- `payment_link` を開くと未払いのお申し込みを取りやめられる（在庫が戻り、KOMOJU の決済ページも取り消される）ので、`orders:contact` を付けたトークンは `orders:write` が無くてもこの範囲のことができます。宛先を受け取る連携にだけ付けてください。
+- ショップの設定（`payment_reminder`）は見ません。KOMOJU の未払いのお申し込みならいつでも読めます。
+- 当てる前（0182）は 409 `migration_required`。
+

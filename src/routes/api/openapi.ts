@@ -222,6 +222,32 @@ export function openapiDocument(origin: string, version: string): Record<string,
           responses: { 200: resp("ok", order), ...errors },
         },
       },
+      "/reservations/{id}/payment-reminder": {
+        get: {
+          summary: "お支払いのお願いの中身（orders:read、0182）。KOMOJU の未払いの予約 1 件（hooks checkout.payment_pending の reservation_id）。email・name・payment_link（お支払いに進む・取りやめる画面のリンク、お支払いの期限まで）は orders:contact / orders:pii のときだけ。確定・取りやめ・期限切れは 404",
+          security: bearer,
+          parameters: [{ name: "id", in: "path", required: true, schema: str }],
+          responses: {
+            200: resp(
+              "ok",
+              obj({
+                reservation_id: str,
+                customer_id: nullableStr,
+                created_at: str,
+                expires_at: str,
+                pay_until: { ...str, description: "お支払いの期限の文（運営者の時間帯、「11月28日（金）15:00」）" },
+                total_jpy: int,
+                payment_method: nullableStr,
+                items: { type: "array", items: obj({ product_name: nullableStr, sku_name: nullableStr, sku_code: nullableStr, qty: int, unit_price_jpy: int }) },
+                email: nullableStr,
+                name: nullableStr,
+                payment_link: nullableStr,
+              }),
+            ),
+            ...errors,
+          },
+        },
+      },
       "/orders/{id}/payment": { post: { summary: "入金を記録する（orders:write、0156）。未入金（payment_status: unpaid）の受付・発送の後の注文だけ。order.paid はこのとき出る。入金済みなら何もしない", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], responses: { 200: resp("ok", order), ...errors } } },
       "/orders/{id}/status": { post: { summary: "発送済み / キャンセルにする（orders:write）。キャンセルは決済事業者で返金してから在庫を戻す（未入金の注文は返金なし、0156）", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: str }], requestBody: { content: { "application/json": { schema: obj({ status: { type: "string", enum: ["shipped", "cancelled"] }, reason: { type: "string", enum: ["refused"], description: "受け取り拒否（0156。未入金で発送した注文を取り消すときだけ）" } }, ["status"]) } } }, responses: { 200: resp("ok", order), ...errors } } },
       "/themes": {
