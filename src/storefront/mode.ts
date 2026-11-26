@@ -53,6 +53,8 @@ export function pageKind(rest: string): PageKind {
   // Amazon Pay の中継ページ・戻り（同梱プラグイン amazon_pay）: ヘッドレスの決済も通るので、どの使い方でも残す
   if (/^\/checkout\/amazon-pay\/(start|return|cancel|relay\.js)$/.test(r)) return "system";
   if (r === "/checkout/done" || r === "/feed/products.xml" || /^\/sitemap-products-[0-9]+\.xml$/.test(r)) return "system";
+  // お支払いに戻る・取りやめる（0180）とお支払いのお願いのリンクの先（0181）: 完了画面とメールのリンクが指すので、どの使い方でも残す
+  if (r === "/checkout/payment" || r === "/checkout/resume") return "system";
   if (/^\/account\/(verify|code)$/.test(r)) return "system";
   // パスキーでのログイン・追加（同梱モジュール passkey）: ヘッドレスのログインと追加もショップのドメインのこの画面を通るので、どの使い方でも残す
   // 追加（0070）: ヘッドレスの会員が券を持って来る画面と、その後の追加の API

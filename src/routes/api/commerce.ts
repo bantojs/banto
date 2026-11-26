@@ -7,7 +7,8 @@ import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, nor
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
 import { anyProvider, choiceAvailable, komojuTypesOf, parsePaymentChoice, type PaymentSetup, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
-import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor, resumeDepsFor } from "../payment-deps";
+import { abandonPayment, resumePayment } from "../../commerce/payment-resume";
 import { buyerRejected } from "../../commerce/discounts";
 import { memberFromRequest, type ApiMember } from "./members";
 import { clientIpFor, publicBaseUrl, publicJsonBody, publicShop, type Ctx } from "../common";
@@ -282,6 +283,39 @@ commerceApi.get("/shops/:shop/checkout/status", async (c: Ctx) => {
   if (!db) return c.json({ error: "not_configured" }, 503);
   const r = await db.checkoutStatus(s.shop.id, st.quoteId);
   return c.json(r, 200, { "cache-control": "no-store" });
+});
+
+/**
+ * お支払いに戻る・取りやめる（0180、KOMOJU。判定は src/commerce/payment-resume.ts）。
+ * { token（照会トークン）| reservation_id（会員トークンの会員の予約）, action: pay | cancel }。
+ * pay は { result: "redirect", url }（KOMOJU の決済ページ。作り直したときの戻り先は Banto の完了画面）か { result: awaiting | paid | confirmed | released | unavailable }、
+ * cancel は { result: cancelled | paid | confirmed | released | failed }
+ */
+commerceApi.post("/shops/:shop/checkout/payment", async (c: Ctx) => {
+  const s = await scope(c);
+  if (s instanceof Response) return s;
+  const b = await jsonBody(c);
+  if (!b || (b["action"] !== "pay" && b["action"] !== "cancel")) return c.json({ error: "invalid_request" }, 400);
+  const deps = await resumeDepsFor(c);
+  if (!deps) return c.json({ error: "not_available" }, 409);
+  const token = typeof b["token"] === "string" ? await openStatusToken(s.secret, b["token"], s.shop.id) : null;
+  const rid = typeof b["reservation_id"] === "string" && /^[0-9A-Za-z-]{1,64}$/.test(b["reservation_id"]) ? b["reservation_id"] : null;
+  if (!token && !(rid && s.member)) return c.json({ error: token === null && typeof b["token"] === "string" ? "invalid_token" : "member_token_required" }, 400);
+  const r = await deps.privileged.reservationPaymentGet(s.shop.id, token ? { quoteId: token.quoteId } : { reservationId: rid!, customerId: s.member!.id, epoch: s.member!.epoch }).catch(() => null);
+  if (!r) return c.json({ error: "not_found" }, 404);
+  try {
+    if (b["action"] === "cancel") {
+      const out = await abandonPayment(deps, s.shop.id, r);
+      return c.json({ result: out === "released" ? "cancelled" : out }, 200, { "cache-control": "no-store" });
+    }
+    const fresh = r.quote_id ? await sealStatusToken(s.secret, s.shop.id, r.quote_id) : null;
+    const done = `${shopHome(s.base, s.shop)}/checkout/done`;
+    const out = await resumePayment(deps, s.shop.id, r, fresh ? withQueryParam(done, "s", fresh) : done);
+    return c.json(out.kind === "redirect" ? { result: "redirect", url: out.url } : { result: out.kind }, 200, { "cache-control": "no-store" });
+  } catch (e) {
+    console.error("[banto] api checkout/payment:", e instanceof Error ? e.message : e);
+    return c.json({ result: "failed" }, 502);
+  }
 });
 
 function quoteContext(s: Scope, setup: PaymentSetup): QuoteContext {

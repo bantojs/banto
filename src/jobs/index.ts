@@ -24,6 +24,7 @@ import { checkLegalLinks } from "../storefront/legal-links";
 import { PAGES_TRASH_DAYS } from "../pages";
 import { fetchManifest } from "../hooks/manifest";
 import { CRON_LIMIT_HEARTBEAT, SubrequestBudget } from "./budget";
+import { PAYMENT_REMINDER_MIGRATION } from "../notices/templates";
 
 /** Cron の通信の予算と、取り出したまま終わらなかった配信の打ち切り（0160）。当てる前の DB では予算で絞らない */
 export const CRON_RESILIENCE_MIGRATION = "0160_cron_resilience";
@@ -166,6 +167,13 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
 
   // 画像を裏で取り込む（同梱モジュール woo_import、0039）。通信の回数を使うので、ほかのジョブの後に置く
   registerImageImportJob(counted, db, doFetch, () => budget.allowance(IMAGE_IMPORT_COST, IMAGE_IMPORT_RESERVE, Number.MAX_SAFE_INTEGER));
+
+  // お支払いのお願い（0181）: 24 時間たった未払いの KOMOJU の予約に checkout.payment_pending を積む（送るのは同じ回の hooks の配信）。
+  // 送るかはショップの設定 payment_reminder（DB が見る）。当てる前の DB では何もしない
+  adapters.scheduler.register("payment_reminders", async () => {
+    if (!(await db.appliedMigrations()).includes(PAYMENT_REMINDER_MIGRATION)) return;
+    await db.enqueuePaymentReminders(50);
+  });
 
   // hooks の配信。決まった回数で済むジョブの後に置き、その回の残りの通信の回数から取り出す数を決める（1 件 DELIVERY_COST 回と見積もる。
   // DB も Workers のプランで上限を決める、claim_hook_deliveries、0056）。残りが足りなければこの回は取り出さない（次の回に回す）

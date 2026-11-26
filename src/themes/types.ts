@@ -194,6 +194,13 @@ export interface Theme {
     ctx: ThemeContext;
     customer: { email: string | null; name: string | null; default_address: Record<string, unknown> | null; marketing_consent?: boolean | null } | null;
     orders: Record<string, unknown>[];
+    /**
+     * お支払いが済んでいないお申し込み（0180、KOMOJU）。null・空なら欄を出さない。
+     * 「お支払いに進む」「取りやめる」は POST `${shopPath}/checkout/payment` に r = reservation_id と action = pay / cancel
+     */
+    pendingPayments?: { reservation_id: string; created_at: string; expires_at: string; total_jpy: number; items: { name: string; qty: number }[] }[] | null;
+    /** 「お支払いに進む」「取りやめる」を押した結果の文（?pay=） */
+    paymentNotice?: string | null;
     /** 「お得な情報やセールの案内を受け取る」の欄を出す（ショップの設定、0050） */
     consent?: boolean;
     /** お知らせの受け取り方（0176）: all = メールと LINE、line = LINE だけ。LINE と結びつきショップが LINE で知らせているときだけ。null は欄を出さない */
@@ -371,7 +378,7 @@ export interface Theme {
    * released なら「成立しなかった」。free: 0 円の注文で、この時点で確定している
    */
   /** inquiryUrl: 同梱モジュール inquiries が ON で注文が確定していれば、この注文について問い合わせる GET の URL */
-  CheckoutDone(props: { ctx: ThemeContext; free?: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; /** 読み込み直す先（# の無い URL） */ refreshUrl?: string; inquiryUrl?: string | null }): Rendered;
+  CheckoutDone(props: { ctx: ThemeContext; free?: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; /** 読み込み直す先（# の無い URL） */ refreshUrl?: string; inquiryUrl?: string | null; /** お支払いに戻る・取りやめる（0180、KOMOJU） */ payment?: DonePayment }): Rendered;
   NotFound(props: { ctx?: ThemeContext }): Rendered;
 }
 
@@ -440,3 +447,16 @@ export interface InquiryThreadView {
 
 /** 会員ページの値（既定のテーマの AccountPage と、Liquid のテーマの {% banto_account %} が受け取る） */
 export type AccountPageProps = Parameters<Theme["AccountPage"]>[0];
+
+/**
+ * 完了画面の「お支払いに戻る・取りやめる」（0180、KOMOJU）。action へ s（照会トークン）と action=pay / cancel を POST する。
+ * resumable は戻れる予約か（ボタンを出す）、notice は押した結果の文
+ */
+export interface DonePayment {
+  action: string;
+  token: string;
+  /** 券を送る欄の名前（完了画面は s = 照会トークン、お支払いのお願いのリンクは t = 予約の券、0181）。無ければ s */
+  field?: "s" | "t";
+  resumable: boolean;
+  notice: string | null;
+}

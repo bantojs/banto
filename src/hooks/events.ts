@@ -6,6 +6,8 @@ export const HOOK_EVENTS = [
   "order.cancelled",
   // 会員の予約が決済されないまま期限切れで解放された（カゴ落ち、0105）。ペイロードは予約・会員・商品の ID と数だけ
   "checkout.abandoned",
+  // KOMOJU の未払いの予約に、作ってから 24 時間たって 1 回（お支払いのお願い、0181。ショップの設定 payment_reminder）。ペイロードは予約・会員の ID と期限だけ
+  "checkout.payment_pending",
   // 会員（0047 のトリガーで積む。ペイロードは customer_id / shop_id / external_ref だけ。docs/knowledge/13-external-customer-master.md）
   "customer.created",
   "customer.updated",

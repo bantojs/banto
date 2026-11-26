@@ -12,6 +12,8 @@ import { trackingOf, trackingUrl } from "../orders/tracking";
 import { orderLink } from "../orders/lookup";
 import { buildTryonMails, tryonNoticeKind, type TryonContact } from "../modules/store-tryon/mail";
 import { noticeMail, type NoticeTextRow } from "../notices/templates";
+import { paymentLinkUrl, payUntilLabel, sealResumeToken } from "../commerce/payment-resume";
+import type { ReminderContact } from "../db/privileged";
 
 interface Contact {
   order_id: string;
@@ -141,7 +143,8 @@ export const emailResend: BundledPlugin = {
     version: "1.3.0",
     description: "注文確認と発送通知のメールを購入者に送ります（送り手は Resend / SMTP / SendGrid / Amazon SES から MAIL_TRANSPORT で選びます）。運営者にも控えを送れます。お店で試着の受付・取り置きのお知らせ（お客様と店舗）も送ります。会員のログインのメールもこの送信元から送ります。",
     // order.created は代金引換などの未入金の注文の受付のメールだけ（0157）。入金済みの注文の受付は order.paid で送る
-    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated"],
+    // checkout.payment_pending は KOMOJU の未払いの予約のお支払いのお願い（0181、ショップの設定 payment_reminder で積まれる）
+    events: ["order.created", "order.paid", "order.shipped", "tryon.requested", "tryon.updated", "checkout.payment_pending"],
     settings: [
       { key: "from", label: "送信元（例: マイショップ <order@example.com>）", type: "text", required: true, description: "送り手で認証済みのドメインのアドレスにしてください" },
       { key: "bcc_owner", label: "運営者にも控えを送る（ショップ設定の連絡先メールアドレス宛）", type: "boolean", description: "注文のメールを送らない設定のときは、注文の控えも送りません（試着はお客様あてを送らない設定のとき、その控えも送りません）" },
@@ -163,7 +166,7 @@ export const emailResend: BundledPlugin = {
   secretFormats: { RESEND_API_KEY: { pattern: /^re_/, hint: "re_ で始まる API キー（Resend → API Keys）" }, SENDGRID_API_KEY: { pattern: /^SG\./, hint: "SG. で始まる API キー（SendGrid → Settings → API Keys）" } },
   async handle(ctx: PluginContext) {
     const { event, data } = ctx.envelope;
-    if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped" && event !== "tryon.requested" && event !== "tryon.updated") return;
+    if (event !== "order.created" && event !== "order.paid" && event !== "order.shipped" && event !== "tryon.requested" && event !== "tryon.updated" && event !== "checkout.payment_pending") return;
     // 注文の受付: 入金済みの注文は order.paid で送る。order.created で送るのは未入金の注文（代金引換、0157）だけ
     if (event === "order.created" && data["payment_status"] !== "unpaid") return;
     // 注文のメールを外部プラグインに任せる店は、ここでは送らない（hooks はほかの送信先に今までどおり届く）。
@@ -175,6 +178,7 @@ export const emailResend: BundledPlugin = {
     const mailer = createMailer({ config: ctx.config, socket: ctx.socket }, ctx.fetch);
     if (!mailer) throw new Error(`email_resend: メールの送り手の設定が足りません（${mailTransportMissing(ctx.config).join(", ") || "SMTP はこのランタイムで使えません"}）`);
     if (event.startsWith("tryon.")) return sendTryon(ctx, mailer, from);
+    if (event === "checkout.payment_pending") return sendPaymentReminder(ctx, mailer, from);
     // 未入金の注文の入金の記録（0156）で出た order.paid には、受付のメールを重ねて送らない（受付のメールは注文のときに送る）
     if (event === "order.paid" && data["recorded_payment"] === true) return;
     const orderId = String(data["order_id"] ?? "");
@@ -250,4 +254,47 @@ async function sendTryon(ctx: PluginContext, mailer: Mailer, from: string): Prom
       idempotencyKey: `banto-${id}-${m.key}`,
     });
   }
+}
+
+/** お支払いのお願いのメールの差し込みの値（0181） */
+export function reminderMailValues(c: ReminderContact, link: string): Record<string, string> {
+  return {
+    shop_name: c.shop.name,
+    customer_name: c.customer_name ?? "お客",
+    total: yen(c.total_jpy),
+    pay_until: payUntilLabel(c.expires_at),
+    items: c.items.map((i) => `・${i.name} × ${i.qty}  ${yen(i.unit_price_jpy * i.qty)}`).join("\n"),
+    payment_link: link,
+    contact: c.shop.contact_email ? `お問い合わせ: ${c.shop.contact_email}` : "",
+  };
+}
+
+/**
+ * お支払いのお願い（0181、hooks checkout.payment_pending）。お客様あてだけ（控えは送らない）。
+ * まだ払える予約だけ（確定・解放・期限切れは DB が null を返す = 送らない）。「LINE だけ」のお客様には送らない（LINE が届かなければ配り直される）
+ */
+async function sendPaymentReminder(ctx: PluginContext, mailer: Mailer, from: string): Promise<void> {
+  const { data, shop_id, id } = ctx.envelope;
+  const reservationId = typeof data["reservation_id"] === "string" ? data["reservation_id"] : "";
+  if (!reservationId || noticeRoute(data) === "owner_only") return;
+  if (!ctx.sessionSecret) throw new Error("email_resend: お支払いのお願いのリンクに署名できません（サイトの秘密が無い）");
+  const c = await ctx.privileged.reservationReminderContact(reservationId, shop_id);
+  if (!c) return;
+  // リンクを組めない（公開の URL もショップのドメインも無い）なら送らない（リンクの無いお願いは送らない）
+  const base = ctx.config.get("PUBLIC_BASE_URL");
+  if (!base && !c.shop.domain) {
+    console.error("[banto] email_resend: payment reminder skipped (no PUBLIC_BASE_URL nor shop domain)");
+    return;
+  }
+  const token = await sealResumeToken(ctx.sessionSecret, shop_id, c.reservation_id, c.expires_at);
+  const link = paymentLinkUrl(shopHome(base ?? "", c.shop), token);
+  const mail = noticeMail("payment_reminder", await ctx.privileged.shopNoticeTexts(shop_id, "payment_reminder"), reminderMailValues(c, link));
+  await sendMail(mailer, {
+    from,
+    to: c.customer_email,
+    ...(c.shop.contact_email ? { replyTo: c.shop.contact_email } : {}),
+    subject: mail.subject,
+    text: mail.text,
+    idempotencyKey: `banto-${id}`,
+  });
 }

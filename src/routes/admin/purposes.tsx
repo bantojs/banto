@@ -111,7 +111,7 @@ export function ScopeList(props: { scopes: readonly string[] }) {
 
 /** 出来事のまとまり（どの出来事もちょうど 1 つに入る） */
 export const EVENT_GROUPS: { label: MessageKey; events: HookEvent[] }[] = [
-  { label: "purpose.orders", events: ["order.created", "order.paid", "order.shipped", "order.cancelled", "checkout.abandoned"] },
+  { label: "purpose.orders", events: ["order.created", "order.paid", "order.shipped", "order.cancelled", "checkout.abandoned", "checkout.payment_pending"] },
   { label: "purpose.customers", events: ["customer.created", "customer.updated", "customer.deleted"] },
   { label: "purpose.products_stock", events: ["product.updated", "inventory.low"] },
   { label: "purpose.modules", events: ["tryon.requested", "tryon.updated", "inquiry.created", "inquiry.updated", "favorite.added", "favorite.removed"] },

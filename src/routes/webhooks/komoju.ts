@@ -75,5 +75,6 @@ komojuWebhook.post("/", async (c: Ctx) => {
     // 使われた支払い方法の種類（0170）。確認画面で種類を選んだ予約は、違えば確定しない（返金）
     ...(typeof payment.payment_details?.type === "string" ? { payment_type: payment.payment_details.type } : {}),
   };
-  return c.json(await confirmFromWebhook({ db, provider: "komoju", eventId: event.id, reservationId, shopId, order, refund }));
+  // 決済ページを作り直した予約（0180）で前のページでも払われたら、2 回目の支払いを返す
+  return c.json(await confirmFromWebhook({ db, provider: "komoju", eventId: event.id, reservationId, shopId, order, refund, confirmedPaymentRef: payment.id }));
 });

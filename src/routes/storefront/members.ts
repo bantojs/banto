@@ -313,6 +313,9 @@ const LOGIN_ERRORS: Record<string, MessageKey> = {
   mail_limit: "member.mail_limit",
 };
 
+/** お支払いに戻る・取りやめるの結果（POST /checkout/payment が ?pay= で戻す、0180） */
+const PAY_NOTICES = ["awaiting", "paid", "confirmed", "released", "unavailable", "cancelled", "failed"];
+
 members.get("/:shop/account", async (c: Ctx) => {
   const s = await scope(c);
   if (!s) return notFound(c);
@@ -368,6 +371,9 @@ members.get("/:shop/account", async (c: Ctx) => {
       ctx: ctxOf(s, { email: rec.customer.email ?? s.session.email }),
       customer: rec.customer,
       orders: rec.orders,
+      // お支払いが済んでいないお申し込み（0180、KOMOJU）。当てる前の DB には無い
+      pendingPayments: (rec.pending_payments ?? []).map((p) => ({ reservation_id: p.reservation_id, created_at: p.created_at, expires_at: p.expires_at, total_jpy: p.total_jpy, items: p.items })),
+      paymentNotice: PAY_NOTICES.includes(c.req.query("pay") ?? "") ? t(`store.pay_result.${c.req.query("pay")}` as MessageKey) : null,
       prefectures: PREFECTURES,
       flash,
       security,

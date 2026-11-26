@@ -348,6 +348,21 @@ GET /api/shops/<shop>/checkout/status?token=<照会トークン>
 - 同梱テーマの完了画面（`/<shop>/checkout/done?s=…`）も同じ仕組みで、確認中は 4 秒おきに自動更新し、確定したら注文番号を出します。
 - 一覧で確定を知りたい（在庫や会計と連動したい）場合は hooks の `order.paid`（docs/hooks.md）を使ってください。
 
+#### KOMOJU のお支払いに戻る・取りやめる（0180）
+
+KOMOJU（コンビニ払い・銀行振込など）は、お客様が決済ページで手続きをせずに戻ってくることがあります。`status` が `pending` で `resumable: true` なら、KOMOJU の決済ページのある未確定の予約です。「お支払いに進む」「取りやめる」を出してください。
+
+```
+POST /api/shops/<shop>/checkout/payment
+{ "token": "<照会トークン>", "action": "pay" | "cancel" }
+```
+
+- 会員の予約は、会員トークン（`Authorization: Bearer`）と `{ "reservation_id": "…", "action": … }` でも送れます（`/members/me` の `pending_payments`）。
+- `pay` → `{ "result": "redirect", "url": "<KOMOJU の決済ページ>" }`。決済ページの期限（最長 24 時間）が切れていれば、同じ予約・同じ金額・同じ種類で作り直します（作り直したときの戻り先は Banto の完了画面）。そのほかは `{ "result": … }`: `awaiting`（コンビニ・銀行振込の手続きは済み。KOMOJU のメールの案内で払ってもらう）・`paid`（支払い済み、確定待ち）・`confirmed`・`released`・`unavailable`（予約の期限切れなど）。
+- `cancel` → KOMOJU の決済ページか支払い（お支払い待ち）を先に取り消し、取り消せたときだけ在庫を戻します: `cancelled`。取り消せない（支払いが済んだ）なら `paid` で、在庫は戻しません。KOMOJU に届かなければ 502 `failed`。
+- 当てる前（0180）は 409 `not_available`。
+- 照会トークン（24 時間）を持っている人は、この API でお申し込みを取りやめられます（お金は動かず、未払いの予約を戻すだけ）。トークンをログや第三者に渡さないでください。
+
 ### C を選ぶときの責任
 
 特定商取引法上の義務（最終確認画面の表示など）を負うのは **販売業者＝ショップの運営者** です。Banto（ソフトウェア）でも、連携側のシステムでもありません。
@@ -412,7 +427,7 @@ A・B では Banto の画面が表示を担いますが、**C では連携側の
 | 503 | `unavailable` | ショップのメール（メール通知プラグインの送信元）の設定が済んでいない |
 
 - quote を作ったときと確定のときで会員が違う・トークンを外した場合は、判定し直して 409 `changed` で出し直します（会員限定の値引きは付きません）。
-- `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレス・名前・既定の住所（`address`）・案内メールの同意（`marketing_consent`。ショップが欄を使うときだけ、`null` は未回答）と、このショップでの注文の一覧（番号・状態・金額・日時。注文の住所は返さない）を返します。
+- `GET /api/shops/<shop>/members/me`（トークン必須）で、会員 ID・メールアドレス・名前・既定の住所（`address`）・案内メールの同意（`marketing_consent`。ショップが欄を使うときだけ、`null` は未回答）と、このショップでの注文の一覧（番号・状態・金額・日時。注文の住所は返さない）を返します。KOMOJU のお支払いが済んでいないお申し込みがあれば `pending_payments`（`reservation_id`・`created_at`・`expires_at`（お支払いの期限）・`total_jpy`・`items`（`name`・`qty`）、0180）も返します（`POST /checkout/payment` に `reservation_id` で「お支払いに進む・取りやめる」）。
 - **会員本人の操作**（会員ページと同じ。お店の画面を使わないショップでも、会員が自分で直せるように）:
   - 会員トークンを付けた注文は、確定したときにお届け先を既定の住所に保存します（既定の住所がまだ無いとき。0159）。連携サイトのレジに、そのことを会員に知らせる文を出してください。既定の住所がある会員は、quote の `address.save_address` に true か `"1"` を渡したときだけ上書きします（`confirmation.save_address` が true）。
   - `POST /api/shops/<shop>/members/address` `{ "customer_name", "phone", "postal_code", "state", "city", "line1", "line2" }` で既定の住所を保存します（チェックアウトの欄の初期値になります。都道府県でない `state` は `null`）。

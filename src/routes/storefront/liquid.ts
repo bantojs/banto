@@ -28,7 +28,7 @@ import { productReviews } from "../../apps/app-data";
 import { type ProductDetail, type ProductListPage, type ProductSort, type ProductSummary, type PublicShop, type StorefrontData } from "../../storefront/data";
 import { couponSource, privilegedFor } from "../payment-deps";
 import { listUrl, productUrl, shopHome, shopOrigin } from "../../storefront/urls";
-import type { AccountPageProps, Theme, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
+import type { AccountPageProps, DonePayment, Theme, AddressFormValues, CartLine, ShippingInfo, StoreView, ThemeContext, TryonFormValues } from "../../themes/types";
 import type { Cart } from "../../cart/cart";
 import { ADDRESS_FIELDS, checkoutMembersOnly, paymentSetup, priceCart, type Confirmation } from "../../commerce/checkout";
 import { loginUrlFor } from "../../members/return-path";
@@ -669,8 +669,10 @@ export function refreshMeta(seconds: number, url: string | null): string {
 }
 
 /** 購入の完了画面（templates/checkout_done）。checkout.status は confirmed / pending / released / not_found / unknown（照会できないとき）、確定していれば order_number */
-export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; refreshUrl?: string | null; free: boolean; inquiryUrl: string | null; categories: CategoryRow[] }): Response | null {
-  const checkout = { status: p.status, order_number: p.orderNumber, message: p.message, free: p.free, inquiry_url: p.inquiryUrl, continue_url: s.ctx.shopPath || "/" };
+export function renderCheckoutDone(c: Ctx, s: LiquidScope, choice: LiquidChoice, p: { status: string; orderNumber: number | null; message: string; refresh: boolean; refreshUrl?: string | null; free: boolean; inquiryUrl: string | null; payment?: DonePayment | null; categories: CategoryRow[] }): Response | null {
+  // お支払いに戻る・取りやめる（0180）: テーマは payment.url へ <payment.field> = payment.token と action = pay / cancel を POST する（field は s か t、0181）
+  const payment = p.payment ? { url: p.payment.action, token: p.payment.token, field: p.payment.field ?? "s", resumable: p.payment.resumable, notice: p.payment.notice } : null;
+  const checkout = { status: p.status, order_number: p.orderNumber, message: p.message, free: p.free, inquiry_url: p.inquiryUrl, continue_url: s.ctx.shopPath || "/", payment };
   return render(c, s, choice, { template: "checkout_done", values: { checkout }, title: t("store.thanks_title"), path: "/checkout/done", noindex: true, categories: p.categories, ...(p.refresh ? { headExtra: refreshMeta(4, p.refreshUrl ?? null) } : {}) });
 }
 
@@ -739,6 +741,10 @@ export async function renderAccount(c: Ctx, s: LiquidScope, choice: LiquidChoice
         favorites,
         favorites_remove_url: `${s.ctx.shopPath}/account/favorites/remove`,
         tryon_requests: tryonRequests,
+        // お支払いが済んでいないお申し込み（0180、KOMOJU）: POST payment_url に r = reservation_id と action = pay / cancel。結果の文は payment_notice
+        pending_payments: (props.pendingPayments ?? []).map((p) => ({ reservation_id: p.reservation_id, created_at: p.created_at, expires_at: p.expires_at, total: p.total_jpy, items: p.items })),
+        payment_url: `${s.ctx.shopPath}/checkout/payment`,
+        payment_notice: props.paymentNotice ?? null,
         news,
         news_unread_count: props.news?.unread ?? 0,
         news_read_url: props.news ? `${s.ctx.shopPath}/account/news/read` : null,

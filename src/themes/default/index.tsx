@@ -280,7 +280,7 @@ function memberPriceNote(skus: readonly { price_jpy: number; regular_price_jpy?:
  */
 const eyecatch = (url: string | null | undefined, ctx: ThemeContext): string | null => (url ? shopImageSrc(url, ctx.mediaBaseUrl) : null);
 
-export function AccountBody({ ctx, customer, orders, prefectures, flash, error, security, emailChange, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, noticeChannel, strict }: AccountPageProps & { strict?: boolean }) {
+export function AccountBody({ ctx, customer, orders, pendingPayments, paymentNotice, prefectures, flash, error, security, emailChange, receipt, coupons, tryon, favorites, news, sessions, passkeys, consent, noticeChannel, strict }: AccountPageProps & { strict?: boolean }) {
   const a = (customer?.default_address ?? {}) as Record<string, unknown>;
   const v = (k: string) => (typeof a[k] === "string" ? (a[k] as string) : "");
   const field = (name: string, label: string, value: string, type = "text", required = true) => (
@@ -419,6 +419,52 @@ export function AccountBody({ ctx, customer, orders, prefectures, flash, error, 
                         <button type="submit">{t("member.tryon_cancel")}</button>
                       </form>
                     ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+      {paymentNotice ? (
+        <p class="notice" id="pending-payments">
+          {paymentNotice}
+        </p>
+      ) : null}
+      {pendingPayments && pendingPayments.length > 0 ? (
+        <section id={paymentNotice ? undefined : "pending-payments"}>
+          <h2>{t("account.pending_payments")}</h2>
+          <p class="muted">{t("account.pending_payments_intro")}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>{t("order.date")}</th>
+                <th>{t("store.item")}</th>
+                <th>{t("store.total")}</th>
+                <th>{t("account.pending_payment_until")}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {pendingPayments.map((p) => (
+                <tr>
+                  <td>{formatDateTime(p.created_at)}</td>
+                  <td>{p.items.map((i) => `${i.name} × ${i.qty}`).join("、")}</td>
+                  <td>{yen(p.total_jpy)}</td>
+                  <td>{formatDateTime(p.expires_at)}</td>
+                  <td>
+                    <form method="post" action={`${ctx.shopPath}/checkout/payment`} style="display:inline">
+                      <input type="hidden" name="r" value={p.reservation_id} />
+                      <button type="submit" name="action" value="pay">
+                        {t("store.pay_resume")}
+                      </button>
+                    </form>{" "}
+                    <form method="post" action={`${ctx.shopPath}/checkout/payment`} style="display:inline">
+                      <input type="hidden" name="r" value={p.reservation_id} />
+                      <button type="submit" name="action" value="cancel" class="secondary small">
+                        {t("store.pay_cancel")}
+                      </button>
+                    </form>
                   </td>
                 </tr>
               ))}
@@ -1930,7 +1976,7 @@ export const defaultTheme: Theme = {
     );
   },
 
-  CheckoutDone({ ctx, free, status, orderNumber, refresh, refreshUrl, inquiryUrl }) {
+  CheckoutDone({ ctx, free, status, orderNumber, refresh, refreshUrl, inquiryUrl, payment }) {
     const body =
       status === "confirmed" && orderNumber != null
         ? tf("store.thanks_confirmed", { n: orderNumber })
@@ -1938,13 +1984,33 @@ export const defaultTheme: Theme = {
           ? t("store.thanks_released")
           : status === "pending" && refresh
             ? t("store.thanks_pending")
-            : free
-              ? t("store.thanks_free")
-              : t("store.thanks_body");
+            : status === "pending" && payment?.resumable
+              ? t("store.thanks_awaiting_payment")
+              : free
+                ? t("store.thanks_free")
+                : t("store.thanks_body");
     return (
       <Layout title={t("store.thanks_title")} ctx={ctx} seo={{ noindex: true }} refreshSeconds={status === "pending" && refresh ? 4 : undefined} {...(refreshUrl ? { refreshUrl } : {})}>
         <h1>{t("store.thanks_title")}</h1>
+        {payment?.notice ? <p class="notice">{payment.notice}</p> : null}
         <p>{body}</p>
+        {payment?.resumable ? (
+          <div class="pay-resume">
+            <p class="muted">{t("store.pay_resume_intro")}</p>
+            <form method="post" action={payment.action} style="display:inline">
+              <input type="hidden" name={payment.field ?? "s"} value={payment.token} />
+              <button type="submit" name="action" value="pay">
+                {t("store.pay_resume")}
+              </button>
+            </form>{" "}
+            <form method="post" action={payment.action} style="display:inline">
+              <input type="hidden" name={payment.field ?? "s"} value={payment.token} />
+              <button type="submit" name="action" value="cancel" class="secondary">
+                {t("store.pay_cancel")}
+              </button>
+            </form>
+          </div>
+        ) : null}
         {inquiryUrl ? (
           <p>
             <a href={inquiryUrl}>{t("inq.about_order")}</a>
