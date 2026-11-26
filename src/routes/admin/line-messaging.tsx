@@ -19,7 +19,7 @@ import { LINE_NOTICE_LINKS_MIGRATION, noticeLine, type NoticeKind, type NoticeTe
 import { lineMessageShapeError, type LineMessage } from "../../notices/line-card";
 import type { ShopRow } from "../../db/types";
 import { buyerLineMessage } from "../../plugins/line_buyer";
-import { kindsFor, sampleValues } from "./notices";
+import { kindsFor, remindersReady, sampleValues } from "./notices";
 import type { MessageKey } from "../../i18n";
 import { actorHeader } from "../../audit";
 import { migrated } from "../../db/migration-state";
@@ -59,7 +59,7 @@ lineMessaging.get("/:shopId/line-messaging", requireOwner, async (c: AdminContex
   const usage = can(c.get("shopAccess"), "marketing") ? await owner(c).db.rpc<{ count: number; limit: number }>("line_marketing_usage", { p_shop_id: shop.id }) : null;
   const { buyerEndpoint, mailEndpoint, notifyTo } = await lineEndpoints(c, shop.id);
   const recent = buyerEndpoint ? await recentLineDeliveries(c, shop.id, buyerEndpoint, mailEndpoint) : [];
-  const kinds = kindsFor(shop.settings);
+  const kinds = kindsFor(shop.settings, [], await remindersReady(c));
   const sentTo = c.req.query("to") ?? "";
   // テスト送信は文面（項目 settings でしか読めない shop_notice_texts）を使うので、settings も持つ人だけ
   const canTest = can(c.get("shopAccess"), "settings");
@@ -354,7 +354,7 @@ lineMessaging.post("/:shopId/line-messaging/test", requireOwner, async (c: Admin
   const memberId = UUID_RE.test(f.customer_id ?? "") ? (f.customer_id as string) : null;
   const email = memberId ? "" : (f.email ?? "").trim();
   let to = email || memberId ? "" : (f.to ?? "").trim();
-  const kind = kindsFor(shop.settings).find((k) => k === f.kind) as NoticeKind | undefined;
+  const kind = kindsFor(shop.settings, [], await remindersReady(c)).find((k) => k === f.kind) as NoticeKind | undefined;
   // 宛先の UID は、運営者が入れたもの（LINE_USER_ID_RE に合うもの）だけを画面に戻す。会員のメール・id で引いた UID・メールは戻さない
   const typed = email || memberId ? "" : to;
   const back = (code: string) =>

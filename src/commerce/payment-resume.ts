@@ -16,6 +16,9 @@
 import type { KomojuClient, KomojuSession } from "../plugins/komoju";
 import { KomojuError } from "../plugins/komoju";
 import type { PrivilegedDb, ReservationPayment } from "../db/privileged";
+import { openJson, sealJson } from "../util/signed";
+import { getTimeZone } from "../i18n/time";
+import { getLocale } from "../i18n";
 
 export type ResumeOutcome =
   /** 決済ページへ */
@@ -123,4 +126,36 @@ export async function abandonPayment(deps: ResumeDeps, shopId: string, r: Reserv
   }
   await deps.privileged.releaseReservation(r.reservation_id, shopId);
   return "released";
+}
+
+/**
+ * お支払いのお願い（0181）のリンクの券: どの予約か（ショップごとに署名、期限は予約の期限）。
+ * 秘密の中身は無い（開いた先は「お支払いに進む・取りやめる」だけ、お金は動かない）。照会トークン（24 時間）より長く使える
+ */
+const resumeSecret = (secret: string, shopId: string) => `${secret}|payment-resume|${shopId}`;
+
+export function sealResumeToken(secret: string, shopId: string, reservationId: string, expiresAt: string): Promise<string> {
+  return sealJson(resumeSecret(secret, shopId), { t: "resume", r: reservationId, exp: Math.floor(Date.parse(expiresAt) / 1000) });
+}
+
+export async function openResumeToken(secret: string, shopId: string, raw: string | undefined, now = Date.now()): Promise<{ reservationId: string } | null> {
+  if (!raw || raw.length > 512) return null;
+  const v = (await openJson(resumeSecret(secret, shopId), raw)) as { t?: unknown; r?: unknown; exp?: unknown } | null;
+  if (!v || v.t !== "resume" || typeof v.r !== "string" || typeof v.exp !== "number" || v.exp * 1000 < now) return null;
+  return { reservationId: v.r };
+}
+
+/** お支払いの期限の文（お支払いのお願い、0181。運営者の時間帯で「11月28日（金）15:00」） */
+export function payUntilLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const en = getLocale() === "en";
+  const parts = new Intl.DateTimeFormat(en ? "en-US" : "ja-JP", { timeZone: getTimeZone(), month: en ? "short" : "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return en ? `${get("month")} ${get("day")} (${get("weekday")}) ${get("hour")}:${get("minute")}` : `${get("month")}月${get("day")}日（${get("weekday")}）${get("hour")}:${get("minute")}`;
+}
+
+/** お支払いのお願いのリンク（0181）: ショップの画面の /checkout/resume に予約の券 */
+export function paymentLinkUrl(shopHomeUrl: string, token: string): string {
+  return `${shopHomeUrl}/checkout/resume?t=${encodeURIComponent(token)}`;
 }

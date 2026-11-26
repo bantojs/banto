@@ -1998,13 +1998,13 @@ export const defaultTheme: Theme = {
           <div class="pay-resume">
             <p class="muted">{t("store.pay_resume_intro")}</p>
             <form method="post" action={payment.action} style="display:inline">
-              <input type="hidden" name="s" value={payment.token} />
+              <input type="hidden" name={payment.field ?? "s"} value={payment.token} />
               <button type="submit" name="action" value="pay">
                 {t("store.pay_resume")}
               </button>
             </form>{" "}
             <form method="post" action={payment.action} style="display:inline">
-              <input type="hidden" name="s" value={payment.token} />
+              <input type="hidden" name={payment.field ?? "s"} value={payment.token} />
               <button type="submit" name="action" value="cancel" class="secondary">
                 {t("store.pay_cancel")}
               </button>

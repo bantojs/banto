@@ -9,6 +9,7 @@ import {
   NOTICE_SUBJECT_MAX,
   NOTICE_TEXTS_MIGRATION,
   LINE_NOTICE_LINKS_MIGRATION,
+  PAYMENT_REMINDER_MIGRATION,
   defaultLineText,
   checkNoticeText,
   fillNotice,
@@ -40,8 +41,15 @@ export const notices = new Hono<AppEnv>();
 export const ORDER_KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
 export const TRYON_KINDS: readonly NoticeKind[] = ["tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"];
 /** この画面で扱う知らせ。お店で試着はモジュールが ON のショップと、OFF でも直した文面が残っているとき（見て・既定に戻せるように） */
-export const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = []): readonly NoticeKind[] =>
-  moduleEnabled(settings, "store_tryon") || rows.some((r) => (TRYON_KINDS as readonly string[]).includes(r.kind)) ? [...ORDER_KINDS, ...TRYON_KINDS] : ORDER_KINDS;
+export const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = [], reminders = false): readonly NoticeKind[] => [
+  ...ORDER_KINDS,
+  ...(moduleEnabled(settings, "store_tryon") || rows.some((r) => (TRYON_KINDS as readonly string[]).includes(r.kind)) ? TRYON_KINDS : []),
+  // お支払いのお願い（0181。reminders = 当てたか）: 送る設定にしたショップと、直した文面が残っているとき
+  ...(reminders && (settings?.["payment_reminder"] === true || rows.some((r) => r.kind === "payment_reminder")) ? (["payment_reminder"] as const) : []),
+];
+
+/** お支払いのお願い（0181）を当てたか（kindsFor の reminders） */
+export const remindersReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_REMINDER_MIGRATION);
 
 /** 見本の値（プレビューと LINE のテスト送信） */
 export function sampleValues(kind: NoticeKind, shopName: string): Record<string, string> {
@@ -60,6 +68,8 @@ export function sampleValues(kind: NoticeKind, shopName: string): Record<string,
     visit: t("notices.sample_visit"),
     items: t("notices.sample_items"),
     store_info: t("notices.sample_store_info"),
+    pay_until: t("notices.sample_pay_until"),
+    payment_link: t("notices.sample_payment_link"),
     shop_link: "https://…",
     ...(kind.startsWith("tryon_") ? { number: "7" } : {}),
   };
@@ -99,6 +109,8 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
   const enabled = await migrated({ db, cache: c.get("adapters").cache }, NOTICE_TEXTS_MIGRATION);
   // LINE の注文の知らせのリンク（0179）。当てるまで差し込みの一覧・既定の文面に出さない
   const lineLinks = enabled && (await migrated({ db, cache: c.get("adapters").cache }, LINE_NOTICE_LINKS_MIGRATION));
+  // お支払いのお願い（0181）。当てるまで欄を出さない
+  const reminders = enabled && (await migrated({ db, cache: c.get("adapters").cache }, PAYMENT_REMINDER_MIGRATION));
   const rows = enabled ? await db.from<NoticeTextRow>("shop_notice_texts").select("kind,channel,subject,body", { eq: { shop_id: shop.id } }) : [];
   const stale = staleNoticeTexts(rows);
   const flash = c.req.query("flash");
@@ -183,7 +195,19 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
             </p>
           </form>
         ) : null}
-        {kindsFor(shop.settings, rows).map((kind) => (
+        {reminders ? (
+          <form method="post" action={`${base}/payment-reminder`} class="card" id="payment-reminder">
+            <h2>{t("notices.payment_reminder_title")}</h2>
+            <p class="muted">{t("notices.payment_reminder_intro")}</p>
+            <label>
+              <input type="checkbox" name="on" value="1" checked={shop.settings?.["payment_reminder"] === true} /> {t("notices.payment_reminder_on")}
+            </label>
+            <p>
+              <button type="submit">{t("notices.save")}</button>
+            </p>
+          </form>
+        ) : null}
+        {kindsFor(shop.settings, rows, reminders).map((kind) => (
           <section>
             <h2>{t(`notices.kind.${kind}` as MessageKey)}</h2>
             {section(kind, "mail")}
@@ -201,6 +225,23 @@ notices.get("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const shop = await loadShop(c, param(c, "shopId"), "settings");
   if (!shop) return c.text(t("shop.not_found"), 404);
   return renderPage(c, shop, null);
+});
+
+// お支払いのお願い（0181、KOMOJU の未払いの予約に翌日 1 回）。鍵 payment_reminder は項目 settings（banto_shop_settings_perm の既定）
+notices.post("/:shopId/notices/payment-reminder", requireOwner, async (c: AdminContext) => {
+  const shop = await loadShop(c, param(c, "shopId"), "settings");
+  if (!shop) return c.text(t("shop.not_found"), 404);
+  const base = `/admin/shops/${shop.id}/notices`;
+  if (!(await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_REMINDER_MIGRATION))) return c.text(t("error.generic"), 400);
+  const f = await formFields(c);
+  const on = f.on === "1";
+  try {
+    await updateShop(c, shop.id, { settings: { ...(shop.settings ?? {}), payment_reminder: on } });
+  } catch (e) {
+    if (e instanceof DbError) return c.redirect(`${base}?flash=${failCode(e, "not_saved")}`);
+    throw e;
+  }
+  return c.redirect(`${base}?flash=saved#payment-reminder`);
 });
 
 // LINE の注文の知らせの見た目（0179、文字だけ / カード）。鍵 line_notice_style は項目 settings（banto_shop_settings_perm の既定）
@@ -226,7 +267,7 @@ notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const base = `/admin/shops/${shop.id}/notices`;
   const f = await formFields(c);
   // 既定に戻すのはどの知らせでも（モジュールを OFF にしたあとに残った文面も消せる）。保存は画面に出す知らせだけ
-  const kind = (f.action === "reset" ? NOTICE_KINDS : kindsFor(shop.settings)).find((k) => k === f.kind);
+  const kind = (f.action === "reset" ? NOTICE_KINDS : kindsFor(shop.settings, [], await remindersReady(c))).find((k) => k === f.kind);
   const channel = f.channel === "mail" || f.channel === "line" ? f.channel : null;
   if (!kind || !channel) return c.text(t("error.generic"), 400);
   const db = owner(c).db;
