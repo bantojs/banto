@@ -15,9 +15,9 @@ import { ipHash, subjectHash } from "../members/auth";
 import { PREFECTURES, describeShipping, freeShippingTarget, isPrefecture, parseShippingSettings, shippingQuote, taxRate, type ShippingFreeReason } from "./shipping";
 import type { AddressFormValues, CartLine } from "../themes/types";
 import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db/privileged";
-import type { MigrationStateDeps } from "../db/migration-state";
+import { migrated, type MigrationStateDeps } from "../db/migration-state";
 import { StripeError, type StripeClient } from "../payments/stripe";
-import { KomojuError, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
+import { KomojuError, PAYMENT_RESUME_MIGRATION, parsePaymentTypes, reservationSeconds, type createKomojuClient } from "../plugins/komoju";
 import { amazonPayConfigured } from "../plugins/amazon_pay";
 import { AMAZON_PAY_URL_MAX, sealAmazonPayTicket } from "../payments/amazon-pay";
 import { t, tf, type MessageKey } from "../i18n";
@@ -1006,6 +1006,12 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       paymentTypes,
       email: a.customer_email,
     });
+    // お支払いに戻れるように、決済ページの ID と種類を予約に残す（0180、src/commerce/payment-resume.ts）。残せなくても支払いは進める
+    if (deps.migrationState && (await migrated(deps.migrationState, PAYMENT_RESUME_MIGRATION))) {
+      await deps.privileged
+        .reservationSetPaymentSession(reservationId, shop.id, { provider: "komoju", id: session.id, ...(paymentTypes.length > 0 ? { types: paymentTypes } : {}) }, null)
+        .catch((e) => console.error("[banto] checkout: could not keep the komoju session on the reservation:", e instanceof Error ? e.message : e));
+    }
     return { ok: true, url: session.session_url, reservationId };
   } catch (e) {
     // 決済ページを出せなければ予約を即座に戻す（Cron を待たない）。理由はログに残す（Cloudflare の Workers ログで見える）

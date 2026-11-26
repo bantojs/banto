@@ -1,7 +1,8 @@
 import { migrationStateFor, type Ctx } from "./common";
 import { createPrivilegedDb, type PrivilegedDb } from "../db/privileged";
 import { createStripeClient, type StripeClient } from "../payments/stripe";
-import { createKomojuClient } from "../plugins/komoju";
+import { PAYMENT_RESUME_MIGRATION, createKomojuClient } from "../plugins/komoju";
+import type { ResumeDeps } from "../commerce/payment-resume";
 import { amazonPayFromConfig } from "../plugins/amazon_pay";
 import type { CouponSource, PaymentSetup, PlaceOrderDeps } from "../commerce/checkout";
 import type { PublicShop } from "../storefront/data";
@@ -18,7 +19,7 @@ function stripeFor(c: Ctx): StripeClient | null {
   return createStripeClient({ secretKey, clientId: cfg.get("STRIPE_CLIENT_ID"), context: cfg.get("STRIPE_CONTEXT"), fetch: c.get("deps").fetch });
 }
 
-function komojuFor(c: Ctx): ReturnType<typeof createKomojuClient> | null {
+export function komojuFor(c: Ctx): ReturnType<typeof createKomojuClient> | null {
   const secretKey = c.get("adapters").config.get("KOMOJU_SECRET_KEY");
   return secretKey ? createKomojuClient({ secretKey, fetch: c.get("deps").fetch }) : null;
 }
@@ -81,4 +82,13 @@ export function couponSource(c: Ctx, shop: PublicShop): CouponSource | null {
   return {
     lookup: (codes, subject, customerId) => privileged.couponLookup(shop.id, codes, subject, customerId ?? null),
   };
+}
+
+/** お支払いに戻る・取りやめる（0180、src/commerce/payment-resume.ts）。0180 の前・設定が足りなければ null */
+export async function resumeDepsFor(c: Ctx): Promise<ResumeDeps | null> {
+  const privileged = privilegedFor(c);
+  if (!privileged) return null;
+  const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
+  if (!state || !(await migrated(state, PAYMENT_RESUME_MIGRATION))) return null;
+  return { privileged, komoju: komojuFor(c) };
 }

@@ -36,7 +36,9 @@ import { fillDateBlocks, fillShopBlocks } from "../../pages/shop-blocks";
 import { memberFreeOverForCart, memberReader, previewBody, shopAudiences, storefrontQueryContext, viewerBody } from "../audience-render";
 import { AUDIENCES_MODULE, GUEST, queryParamsOf, type AudienceContext } from "../../members/audience";
 import { ARTICLES_OFFSET_MAX, ARTICLES_PER_PAGE, BLOG_MODULE, FEED_ARTICLES, articleHandleOk, articleSortFor, articleSummary, atomFeed, blogHandleOk, blogHasFeed, blogPath, type ArticleRow, type BlogRow } from "../../blog";
-import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor } from "../payment-deps";
+import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor, resumeDepsFor } from "../payment-deps";
+import { abandonPayment, resumePayment } from "../../commerce/payment-resume";
+import type { DonePayment } from "../../themes/types";
 import { amazonPayCancel, amazonPayRelayScript, amazonPayReturn, amazonPayStart } from "./amazon-pay";
 import { buyerRejected } from "../../commerce/discounts";
 import { normalizeCode } from "../../commerce/discounts";
@@ -1816,22 +1818,76 @@ storefront.get("/:shop/checkout/done", async (c: Ctx) => {
     c.header("cache-control", "no-store");
     // 読み込み直す先は # の無い URL で明示する。決済事業者が戻り先に # を付けると（KOMOJU の #credit_card など）、
     // URL を書かない refresh は「同じ文書の中の移動」になり、ブラウザが読み込み直さない
-    const refreshUrl = refresh ? withQueryParam(withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? ""), "r", "1") : null;
-    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh, refreshUrl, inquiryUrl });
+    // お支払いに戻る・取りやめる（0180、KOMOJU）: 決済ページのある未確定の予約。押した結果（?pay=）が付いていれば自動の再読み込みは止める
+    const pay = PAY_RESULTS.find((x) => x === c.req.query("pay")) ?? null;
+    const payment: DonePayment | null =
+      r.resumable || pay ? { action: `${s.ctx.shopPath}/checkout/payment`, token: c.req.query("s") ?? "", resumable: r.resumable === true, notice: pay ? t(`store.pay_result.${pay}` as MessageKey) : null } : null;
+    const live = refresh && !pay;
+    const refreshUrl = live ? withQueryParam(withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", c.req.query("s") ?? ""), "r", "1") : null;
+    return doneView(c, s, { free, status: r.status, orderNumber: r.order?.number ?? null, refresh: live, refreshUrl, inquiryUrl, payment, resumable: r.resumable === true });
   } catch (e) {
     console.error("[banto] checkout/done status:", e);
     return doneView(c, s, { free });
   }
 });
 
+/**
+ * お支払いに戻る・取りやめる（0180、KOMOJU。判定は src/commerce/payment-resume.ts）。
+ * 完了画面（照会トークン s）と会員ページ（会員の予約 r、セッションと世代を DB が確かめる）から POST。
+ * 結果は元の画面に ?pay=<結果> で戻す（決済ページへ戻すときだけ KOMOJU へ）
+ */
+storefront.post("/:shop/checkout/payment", async (c: Ctx) => {
+  const s = await scope(c);
+  if (!s) return notFound(c);
+  const f = await formFields(c);
+  const secret = c.get("sessionSecret");
+  const deps = await resumeDepsFor(c);
+  const statusRaw = typeof f.s === "string" ? f.s : "";
+  const token = secret && statusRaw ? await openStatusToken(secret, statusRaw, s.shop.id) : null;
+  const member = !token && typeof f.r === "string" && /^[0-9A-Za-z-]{1,64}$/.test(f.r) && s.ctx.membersEnabled ? await customerSession(c, s) : null;
+  const back = (code: string) =>
+    c.redirect(token ? withQueryParam(withQueryParam(`${s.ctx.shopPath}/checkout/done`, "s", statusRaw), "pay", code) : `${s.ctx.shopPath}/account?pay=${code}#pending-payments`, 303);
+  if (!deps || (!token && !member)) return token || member ? back("unavailable") : notFound(c);
+  const r = await deps.privileged
+    .reservationPaymentGet(s.shop.id, token ? { quoteId: token.quoteId } : { reservationId: f.r as string, customerId: member!.cid, epoch: member!.ep })
+    .catch(() => null);
+  if (!r) return back("unavailable");
+  try {
+    if (f.action === "cancel") {
+      const out = await abandonPayment(deps, s.shop.id, r);
+      return back(out === "released" ? "cancelled" : out);
+    }
+    // 作り直す決済ページの戻り先: 完了画面（照会トークンを新しく付ける）
+    const base = publicBaseUrl(c);
+    const fresh = secret && r.quote_id ? await sealStatusToken(secret, s.shop.id, r.quote_id) : null;
+    const returnUrl = fresh ? withQueryParam(`${shopHome(base, s.shop)}/checkout/done`, "s", fresh) : `${shopHome(base, s.shop)}/checkout/done`;
+    const out = await resumePayment(deps, s.shop.id, r, returnUrl);
+    return out.kind === "redirect" ? c.redirect(out.url, 303) : back(out.kind);
+  } catch (e) {
+    console.error("[banto] checkout/payment:", e instanceof Error ? e.message : e);
+    return back("failed");
+  }
+});
+
 /** 完了画面（Liquid のテーマの templates/checkout_done、無ければ既定のテーマ）。文言は既定のテーマと同じ */
-async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; refreshUrl?: string | null; inquiryUrl?: string | null }): Promise<Response> {
+async function doneView(c: Ctx, s: ShopScope, p: { free: boolean; status?: "pending" | "confirmed" | "released" | "not_found"; orderNumber?: number | null; refresh?: boolean; refreshUrl?: string | null; inquiryUrl?: string | null; payment?: DonePayment | null; resumable?: boolean }): Promise<Response> {
   const lt = await liquidThemeFor(c, s);
   if (lt) {
-    const message =
-      p.status === "confirmed" && p.orderNumber != null ? tf("store.thanks_confirmed", { n: p.orderNumber }) : p.status === "released" ? t("store.thanks_released") : p.status === "pending" && p.refresh ? t("store.thanks_pending") : p.free ? t("store.thanks_free") : t("store.thanks_body");
-    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), refreshUrl: p.refreshUrl ?? null, free: p.free, inquiryUrl: p.inquiryUrl ?? null, categories: await s.sf.listCategories(s.shop) });
+    const message = doneMessage(p);
+    const res = renderCheckoutDone(c, s, lt, { status: p.status ?? "unknown", orderNumber: p.orderNumber ?? null, message, refresh: Boolean(p.status === "pending" && p.refresh), refreshUrl: p.refreshUrl ?? null, free: p.free, inquiryUrl: p.inquiryUrl ?? null, payment: p.payment ?? null, categories: await s.sf.listCategories(s.shop) });
     if (res) return res;
   }
-  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.refreshUrl ? { refreshUrl: p.refreshUrl } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}) }));
+  return c.html(s.theme.CheckoutDone({ ctx: s.ctx, free: p.free, ...(p.status ? { status: p.status } : {}), ...(p.orderNumber !== undefined ? { orderNumber: p.orderNumber } : {}), ...(p.refresh !== undefined ? { refresh: p.refresh } : {}), ...(p.refreshUrl ? { refreshUrl: p.refreshUrl } : {}), ...(p.inquiryUrl !== undefined ? { inquiryUrl: p.inquiryUrl } : {}), ...(p.payment ? { payment: p.payment } : {}) }));
 }
+
+/** 完了画面の文（既定のテーマと Liquid で同じ）。お支払いに戻れる予約（0180）は「受付済み」と言わない */
+function doneMessage(p: { free: boolean; status?: string; orderNumber?: number | null; refresh?: boolean; resumable?: boolean }): string {
+  if (p.status === "confirmed" && p.orderNumber != null) return tf("store.thanks_confirmed", { n: p.orderNumber });
+  if (p.status === "released") return t("store.thanks_released");
+  if (p.status === "pending" && p.refresh) return t("store.thanks_pending");
+  if (p.status === "pending" && p.resumable) return t("store.thanks_awaiting_payment");
+  return p.free ? t("store.thanks_free") : t("store.thanks_body");
+}
+
+/** お支払いに戻る・取りやめるの結果（?pay=、POST /checkout/payment が付ける） */
+const PAY_RESULTS = ["awaiting", "paid", "confirmed", "released", "unavailable", "cancelled", "failed"] as const;

@@ -186,6 +186,8 @@ export interface MemberRecord {
     notice_line_available?: boolean;
   };
   orders: Record<string, unknown>[];
+  /** 0180 から: お支払いが済んでいないお申し込み（KOMOJU） */
+  pending_payments?: MemberPendingPayment[];
 }
 
 /** 会員の試着の申し込み（0026 の member_tryon_requests） */
@@ -556,6 +558,10 @@ export interface PrivilegedDb {
   shopStripeAccount(shopId: string): Promise<string | null>;
   /** 戻り先の画面のための注文の状態（0035。quote の識別子で引く。個人情報は返さない） */
   checkoutStatus(shopId: string, quoteId: string): Promise<CheckoutStatusResult>;
+  /** 0180: 決済ページの ID を入れる・入れ替える（expected が今の ID と同じときだけ、最初は null）。入れたら true */
+  reservationSetPaymentSession(reservationId: string, shopId: string, session: PaymentSessionRef, expected: string | null): Promise<boolean>;
+  /** 0180: お支払いに戻るための予約（照会の quote か、会員の予約 id） */
+  reservationPaymentGet(shopId: string, by: { quoteId: string } | { reservationId: string; customerId: string; epoch: number }): Promise<ReservationPayment | null>;
   /** ショップの settings.headless（中継元の IP を含む。公開の settings には無い、0034）。X-Banto-Client-IP が付いた通信のときだけ読む */
   shopHeadless(shopId: string): Promise<Record<string, unknown> | null>;
   /** 管理者ログインの回数の制限（0030）。Supabase に問い合わせる前に確かめ、結果を記録する */
@@ -580,6 +586,37 @@ export interface CheckoutStatusResult {
   status: "pending" | "confirmed" | "released" | "not_found";
   order: { number: number; status: string; total_jpy: number; payment_provider: string | null; created_at: string } | null;
   expires_at: string | null;
+  /** 0180 から: KOMOJU の決済ページのある未確定の予約（お支払いに戻れる） */
+  resumable?: boolean;
+}
+
+/** 予約の決済ページ（0180、reservations.payment_session） */
+export interface PaymentSessionRef {
+  provider: "komoju";
+  id: string;
+  /** 作ったときの支払いの種類（作り直すときも同じ種類だけ） */
+  types?: string[];
+}
+
+/** お支払いに戻るための予約（0180 の reservation_payment_get） */
+export interface ReservationPayment {
+  reservation_id: string;
+  status: "pending" | "confirmed" | "released";
+  expires_at: string;
+  quote_id: string | null;
+  payment_session: PaymentSessionRef | null;
+  payment_method: string | null;
+  total_jpy: number;
+}
+
+/** 会員ページの「お支払いが済んでいないお申し込み」（0180、member_get の pending_payments） */
+export interface MemberPendingPayment {
+  reservation_id: string;
+  created_at: string;
+  expires_at: string;
+  total_jpy: number;
+  payment_method: string | null;
+  items: { name: string; qty: number }[];
 }
 
 export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
@@ -882,6 +919,15 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
       return rows[0]?.stripe_account_id ?? null;
     },
     checkoutStatus: (shopId, quoteId) => rpc<CheckoutStatusResult>("checkout_status", { p_shop_id: shopId, p_quote_id: quoteId }),
+    reservationSetPaymentSession: (reservationId, shopId, session, expected) =>
+      rpc<boolean>("reservation_set_payment_session", { p_reservation_id: reservationId, p_shop_id: shopId, p_session: session, p_expected: expected }),
+    reservationPaymentGet: (shopId, by) =>
+      rpc<ReservationPayment | null>(
+        "reservation_payment_get",
+        "quoteId" in by
+          ? { p_shop_id: shopId, p_quote_id: by.quoteId, p_reservation_id: null, p_customer_id: null, p_epoch: null }
+          : { p_shop_id: shopId, p_quote_id: null, p_reservation_id: by.reservationId, p_customer_id: by.customerId, p_epoch: by.epoch },
+      ),
     async shopHeadless(shopId) {
       const res = await doFetch(`${base}/rest/v1/shops?select=settings&id=eq.${encodeURIComponent(shopId)}`, { headers });
       if (!res.ok) throw new PrivilegedRpcError("shops.settings", res.status, await res.text());
