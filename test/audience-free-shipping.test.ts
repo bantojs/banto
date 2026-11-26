@@ -42,22 +42,22 @@ describe("送料の計算（shipping.ts）", () => {
       { audience_id: SILVER, free_over_jpy: 3000, label: "x".repeat(50) },
       ...Array.from({ length: 20 }, (_, i) => ({ audience_id: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, free_over_jpy: i })),
     ]);
-    expect(rules[0]).toEqual({ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員" });
-    expect(rules[1]).toEqual({ audience_id: SILVER, free_over_jpy: 3000, label: "x".repeat(40) });
+    expect(rules[0]).toEqual({ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員", exclude_sale: false });
+    expect(rules[1]).toEqual({ audience_id: SILVER, free_over_jpy: 3000, label: "x".repeat(40), exclude_sale: false });
     expect(rules).toHaveLength(10);
   });
   it("公開の形: 名前を付けた決まりの名前と金額だけ（id・名前の無い決まりは出さない）。読み直すと案内と『決まりがある』だけが分かる", () => {
     const raw = { mode: "flat", flat_fee_jpy: 800, free_over_jpy: 5000, by_prefecture: {}, free_over_by_audience: [{ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員" }, { audience_id: SILVER, free_over_jpy: 3000 }] };
     const pub = publicShopSettings({ shipping: raw })["shipping"] as Record<string, unknown>;
     expect(pub).toEqual(publicShipping(raw));
-    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド会員", free_over_jpy: 0 }]);
+    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド会員", free_over_jpy: 0, exclude_sale: false }]);
     expect(pub["member_free"]).toBe(true);
     expect(JSON.stringify(pub)).not.toContain(GOLD);
     expect(JSON.stringify(pub)).not.toContain("3000");
     const parsed = parseShippingSettings(pub);
     expect(parsed.free_over_by_audience).toEqual([]);
     expect(parsed.has_member_free).toBe(true);
-    expect(parsed.member_free).toEqual([{ label: "ゴールド会員", free_over_jpy: 0 }]);
+    expect(parsed.member_free).toEqual([{ label: "ゴールド会員", free_over_jpy: 0, exclude_sale: false }]);
     // 決まりが無ければ member_free も無い
     expect(publicShipping({ mode: "flat", flat_fee_jpy: 800, free_over_by_audience: [{ audience_id: "nope", free_over_jpy: 0 }] })).toEqual({ mode: "flat", flat_fee_jpy: 800 });
     expect(parseShippingSettings({ mode: "flat", flat_fee_jpy: 800 }).has_member_free).toBe(false);
@@ -96,9 +96,9 @@ describe("送料の計算（shipping.ts）", () => {
     expect(freeShippingObject(info(3000, true), 1000)).toMatchObject({ applied: false, coupon: false });
   });
   it("管理画面のフォーム: 選べる条件だけ・外す・重ならない。欄が無い・条件が読めないなら今の決まりのまま", () => {
-    const current = [{ audience_id: GOLD, free_over_jpy: 0, label: null }];
+    const current = [{ audience_id: GOLD, free_over_jpy: 0, label: null, exclude_sale: false }];
     const choices = [{ id: GOLD, name: "ゴールド" }, { id: SILVER, name: "シルバー" }];
-    expect(audienceFreeRulesFromForm({ aud_0: GOLD, aud_over_0: "0", aud_remove_0: "on", aud_1: SILVER, aud_over_1: "3000", aud_label_1: "シルバー会員" }, choices, current)).toEqual([{ audience_id: SILVER, free_over_jpy: 3000, label: "シルバー会員" }]);
+    expect(audienceFreeRulesFromForm({ aud_0: GOLD, aud_over_0: "0", aud_remove_0: "on", aud_1: SILVER, aud_over_1: "3000", aud_label_1: "シルバー会員" }, choices, current)).toEqual([{ audience_id: SILVER, free_over_jpy: 3000, label: "シルバー会員", exclude_sale: false }]);
     expect(audienceFreeRulesFromForm({ aud_0: PARAM, aud_over_0: "0", aud_1: SILVER, aud_over_1: "x" }, choices, current)).toEqual([]);
     expect(audienceFreeRulesFromForm({}, null, current)).toEqual(current);
     expect(audienceFreeRulesFromForm({ aud_0: SILVER, aud_over_0: "1" }, [], current)).toEqual(current);
@@ -265,7 +265,7 @@ describe("会員の条件ごとの送料無料（お店の画面）", () => {
   it("ヘッドレス: カートの shipping.member_free と quote の shipping_free_reason", async () => {
     const { app, teeM } = setup();
     const cartRes = (await (await app.request(`${BASE}/api/shops/my-shop/cart`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "add", sku_id: teeM.id, qty: 1 }) })).json()) as { cart: string; shipping: { member_free: unknown[] } };
-    expect(cartRes.shipping.member_free).toEqual([{ label: "ゴールド会員", free_over_jpy: 0 }]);
+    expect(cartRes.shipping.member_free).toEqual([{ label: "ゴールド会員", free_over_jpy: 0, exclude_sale: false }]);
     const q = (await (await app.request(`${BASE}/api/shops/my-shop/checkout/quote`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cart: cartRes.cart, provider: "stripe", address: ADDRESS }) })).json()) as { confirmation: { shipping_jpy: number; shipping_free_reason: string | null } };
     expect(q.confirmation).toMatchObject({ shipping_jpy: 800, shipping_free_reason: null });
   });
@@ -283,6 +283,6 @@ describe("会員の条件ごとの送料無料（管理画面）", () => {
     await b.post(`/admin/shops/${shop.id}/shipping`, { mode: "flat", flat_fee_jpy: "700", free_over_jpy: "", tax_rate: "10", aud_0: GOLD, aud_over_0: "0", aud_label_0: "ゴールド会員", aud_1: PARAM, aud_over_1: "0" });
     const ship = (sb.tables.shops.find((x) => x["id"] === shop.id)!["settings"] as Record<string, Record<string, unknown>>)["shipping"]!;
     expect(ship["flat_fee_jpy"]).toBe(700);
-    expect(ship["free_over_by_audience"]).toEqual([{ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員" }]);
+    expect(ship["free_over_by_audience"]).toEqual([{ audience_id: GOLD, free_over_jpy: 0, label: "ゴールド会員", exclude_sale: false }]);
   });
 });

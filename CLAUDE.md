@@ -284,5 +284,5 @@ npm run check:rls      # 全テーブルの RLS 有効化・anon/authenticated �
 - ターゲット利用者は「レンタルサーバーに WordPress を入れて運用できる人」。導入手順にコマンドを必須にしない（docs/setup.md）。
 - （決定済み）会員機能は v0.1 に含める。オプトイン（`shops.settings.members_enabled`）。会員 = ショップごとの `customers` 行（2026-10-16 に Supabase Auth から切り替え。店ごとに会員を分けるため。docs/knowledge/10-members-identity.md）。実装は `src/routes/storefront/members.ts` と `src/members/`。
 - （決定済み）テーマは既定の1本を「紹介文・お知らせ・アクセントカラー・ロゴ」の設定つきで仕上げ、SEO（meta / OG / canonical / sitemap）をテーマの Layout が担う。
-- （決定済み）送料は `shops.settings.shipping`（全国一律 / 都道府県別、無料ライン。会員の条件ごとの無料ライン `free_over_by_audience` は 0171、当てはまるかは DB の `member_free_shipping_over`）、計算は `src/commerce/shipping.ts` のみ。価格はすべて税込。確定時の送料は予約と注文に残す。配送先は全決済手段で Banto 側が集める（Stripe には集めさせない）。
+- （決定済み）送料は `shops.settings.shipping`（全国一律 / 都道府県別、無料ライン。会員の条件ごとの無料ライン `free_over_by_audience` は 0171、当てはまるかは DB の `member_free_shipping_over`。0183 から決まりごとに「セール商品（通常価格のある SKU）を金額に含まない」の印 `exclude_sale`・ショップ全体は `free_over_excludes_sale`、当てはまる決まりは DB の `member_free_shipping`）、計算は `src/commerce/shipping.ts` のみ。価格はすべて税込。確定時の送料は予約と注文に残す。配送先は全決済手段で Banto 側が集める（Stripe には集めさせない）。
 - （決定済み）注文のキャンセルは「決済事業者で返金 → `cancel_order` で在庫戻し」の順（`src/orders/cancel.ts`）。返金に失敗したら注文は変えない。
