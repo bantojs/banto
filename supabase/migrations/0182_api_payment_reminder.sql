@@ -9,7 +9,7 @@
 create or replace function api_reservation_payment_reminder(p_token_hash text, p_reservation_id uuid)
 returns jsonb
 language plpgsql
-stable
+-- volatile（既定）: api_require がトークンの最終利用時刻を書くので、stable にすると PostgREST の読み取り専用の取引で落ちる（0093）
 security definer
 set search_path = public
 as $$

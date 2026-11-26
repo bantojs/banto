@@ -41,7 +41,6 @@ import { paymentLinkUrl, payUntilLabel, sealResumeToken } from "../commerce/paym
 
 /** お支払いのお願いの中身を返す口（0182） */
 export const PAYMENT_REMINDER_API_MIGRATION = "0182_api_payment_reminder";
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 
 /** テーマ（theme:write / theme:publish、0072）。プレビューのリンクを作る秘密・お店の画面の URL・CPU の上限を気にしなくてよいランタイムか */
@@ -699,7 +698,7 @@ export class ApiService {
    */
   reservationPaymentReminder = async (id: string) => {
     await this.requireMigration(PAYMENT_REMINDER_API_MIGRATION);
-    if (!UUID_RE.test(id)) throw new ApiError("not_found", "reservation not found", 404);
+    if (!isUuid(id)) throw new ApiError("not_found", "reservation not found", 404);
     const r = await this.call<Record<string, unknown> & { reservation_id: string; shop_id: string; expires_at: string; shop: { slug: string; domain: string | null } }>("api_reservation_payment_reminder", { p_reservation_id: id });
     const { shop, shop_id, ...rest } = r;
     const contact = "email" in r;

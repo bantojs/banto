@@ -542,5 +542,8 @@ GET /api/v1/reservations/{reservation_id}/payment-reminder
 - お届け先（住所）は返しません。
 - 確定した・取りやめた・期限が切れた予約は 404 `not_found`（送らない合図）。送る直前に引いてください。
 - 文面はプラグインが持ちます（Banto の「お知らせの文面」の `payment_reminder` は同梱プラグイン用）。
+- REST だけです（MCP には出しません。AI の会話にお客様向けのリンクを流さないため）。
+- `payment_link` を開くと未払いのお申し込みを取りやめられる（在庫が戻り、KOMOJU の決済ページも取り消される）ので、`orders:contact` を付けたトークンは `orders:write` が無くてもこの範囲のことができます。宛先を受け取る連携にだけ付けてください。
+- ショップの設定（`payment_reminder`）は見ません。KOMOJU の未払いのお申し込みならいつでも読めます。
 - 当てる前（0182）は 409 `migration_required`。
 
