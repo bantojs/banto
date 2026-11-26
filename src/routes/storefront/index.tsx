@@ -125,8 +125,8 @@ storefront.use("*", async (c, next) => {
   }
   await next();
   const contributors = STOREFRONT_HEAD_CONTRIBUTORS.filter((h) => moduleEnabled(shop.settings, h.module));
-  // プレビュー（保存しない下書き）には分析のタグなどを入れない
-  if (contributors.length === 0 || PREVIEW_PATH.test(c.req.path) || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
+  // プレビュー（保存しない下書き）と、お支払いのお願いのリンクの先（0181、URL に予約の券。分析のタグに URL ごと渡さない）には分析のタグなどを入れない
+  if (contributors.length === 0 || PREVIEW_PATH.test(c.req.path) || /\/checkout\/resume$/.test(c.req.path) || !(c.res.headers.get("content-type") ?? "").startsWith("text/html")) return;
   const events = c.get("shopEvents") ?? [];
   // 会員かどうか（お店の行動の中継・ダイアログの「だれに」）。要るモジュールが ON のときだけ確かめる
   const dialogsOn = contributors.some((h) => h.module === DIALOGS_MODULE) && (shop.dialogs ?? []).length > 0;

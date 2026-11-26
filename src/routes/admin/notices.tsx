@@ -41,12 +41,15 @@ export const notices = new Hono<AppEnv>();
 export const ORDER_KINDS: readonly NoticeKind[] = ["order_paid", "order_shipped"];
 export const TRYON_KINDS: readonly NoticeKind[] = ["tryon_requested", "tryon_ready", "tryon_reminder", "tryon_extended", "tryon_cancelled"];
 /** この画面で扱う知らせ。お店で試着はモジュールが ON のショップと、OFF でも直した文面が残っているとき（見て・既定に戻せるように） */
-export const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = []): readonly NoticeKind[] => [
+export const kindsFor = (settings: Record<string, unknown> | null | undefined, rows: readonly NoticeTextRow[] = [], reminders = false): readonly NoticeKind[] => [
   ...ORDER_KINDS,
   ...(moduleEnabled(settings, "store_tryon") || rows.some((r) => (TRYON_KINDS as readonly string[]).includes(r.kind)) ? TRYON_KINDS : []),
-  // お支払いのお願い（0181）: 送る設定にしたショップと、直した文面が残っているとき
-  ...(settings?.["payment_reminder"] === true || rows.some((r) => r.kind === "payment_reminder") ? (["payment_reminder"] as const) : []),
+  // お支払いのお願い（0181。reminders = 当てたか）: 送る設定にしたショップと、直した文面が残っているとき
+  ...(reminders && (settings?.["payment_reminder"] === true || rows.some((r) => r.kind === "payment_reminder")) ? (["payment_reminder"] as const) : []),
 ];
+
+/** お支払いのお願い（0181）を当てたか（kindsFor の reminders） */
+export const remindersReady = (c: AdminContext): Promise<boolean> => migrated({ db: owner(c).db, cache: c.get("adapters").cache }, PAYMENT_REMINDER_MIGRATION);
 
 /** 見本の値（プレビューと LINE のテスト送信） */
 export function sampleValues(kind: NoticeKind, shopName: string): Record<string, string> {
@@ -204,7 +207,7 @@ async function renderPage(c: AdminContext, shop: { id: string; name: string; set
             </p>
           </form>
         ) : null}
-        {kindsFor(shop.settings, rows).map((kind) => (
+        {kindsFor(shop.settings, rows, reminders).map((kind) => (
           <section>
             <h2>{t(`notices.kind.${kind}` as MessageKey)}</h2>
             {section(kind, "mail")}
@@ -264,7 +267,7 @@ notices.post("/:shopId/notices", requireOwner, async (c: AdminContext) => {
   const base = `/admin/shops/${shop.id}/notices`;
   const f = await formFields(c);
   // 既定に戻すのはどの知らせでも（モジュールを OFF にしたあとに残った文面も消せる）。保存は画面に出す知らせだけ
-  const kind = (f.action === "reset" ? NOTICE_KINDS : kindsFor(shop.settings)).find((k) => k === f.kind);
+  const kind = (f.action === "reset" ? NOTICE_KINDS : kindsFor(shop.settings, [], await remindersReady(c))).find((k) => k === f.kind);
   const channel = f.channel === "mail" || f.channel === "line" ? f.channel : null;
   if (!kind || !channel) return c.text(t("error.generic"), 400);
   const db = owner(c).db;
