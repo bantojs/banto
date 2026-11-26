@@ -1192,7 +1192,7 @@ export function shippingSummary(
   taxRate: number;
   viewerFreeOver: number | null;
   viewerFreeMember: boolean;
-  progress?: { over: number; left: number; applied: boolean; member: boolean } | null;
+  progress?: { over: number; left: number; applied: boolean; member: boolean; excludeSale: boolean } | null;
 } {
   const settings = shop.settings ?? {};
   const cfg = parseShippingSettings(settings["shipping"]);
@@ -1209,7 +1209,7 @@ export function shippingSummary(
   if (!pr) return { ...out, progress: null };
   const targets = pr.member ? member : shopTargets;
   const near = targets.reduce((a, t) => (t.over - (t.excludeSale ? bases.nonSale : bases.all) < a.over - (a.excludeSale ? bases.nonSale : bases.all) ? t : a), targets[0]!);
-  return { ...out, progress: { over: near.over, left: pr.left, applied: pr.left === 0, member: pr.member } };
+  return { ...out, progress: { over: near.over, left: pr.left, applied: pr.left === 0, member: pr.member, excludeSale: near.excludeSale } };
 }
 
 export { PREFECTURES };

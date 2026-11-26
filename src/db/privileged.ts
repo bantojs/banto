@@ -441,7 +441,7 @@ export interface PrivilegedDb {
   /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page。ブログをまたぐ articles_member_multi は 0140） */
   contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page" | "articles_member_multi", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
-  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown; free_over_jpy?: number }[]>;
+  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown; free_over_jpy?: number; free_over_excludes_sale?: boolean }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
   memberSessionRefresh(shopId: string, customerId: string, epoch: number, sessionId: string, gen: number): Promise<MemberSessionRefresh>;
   /** 取り消す（logout: 自分の端末 / revoked: 一覧から別の端末） */

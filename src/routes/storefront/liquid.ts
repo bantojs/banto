@@ -583,7 +583,7 @@ export function freeShippingObject(shipping: ShippingInfo | undefined, subtotal:
   const coupon = opts.coupon === true;
   // 0183: セール商品を含まない決まりも数えた目安（progress）があればそれ（over はいちばん近い決まりの金額）
   const p = shipping.progress;
-  if (p) return { over: money(p.over), remaining: money(coupon ? 0 : p.left), applied: coupon || p.applied, member: !coupon && p.member, coupon, excludes_sale: shipping.freeOverExcludesSale === true };
+  if (p) return { over: money(p.over), remaining: money(coupon ? 0 : p.left), applied: coupon || p.applied, member: !coupon && p.member, coupon, excludes_sale: p.excludeSale === true };
   return { over: money(over), remaining: money(coupon ? 0 : Math.max(0, over - subtotal)), applied: coupon || subtotal >= over, member: !coupon && shipping.viewerFreeMember === true, coupon, excludes_sale: shipping.freeOverExcludesSale === true };
 }
 

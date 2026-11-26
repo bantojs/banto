@@ -46,8 +46,8 @@ describe("送料無料とセール商品（0183）", () => {
     const shop = { id: "s", slug: "s", name: "S", settings: { shipping: { mode: "flat", flat_fee_jpy: 800, free_over_jpy: 11000, free_over_excludes_sale: true }, modules: { audiences: true } } } as unknown as PublicShop;
     const s = shippingSummary(shop, [{ over: 1, excludeSale: true }], { all: 12000, nonSale: 0 });
     // セール商品だけ: 会員の決まり（1 円以上・セール商品を含まない）まであと 1 円、ショップ全体まであと 11,000 円 → 近いほう
-    expect(s.progress).toEqual({ over: 1, left: 1, applied: false, member: true });
-    expect(shippingSummary(shop, [{ over: 1, excludeSale: true }], { all: 12000, nonSale: 500 }).progress).toEqual({ over: 1, left: 0, applied: true, member: true });
+    expect(s.progress).toEqual({ over: 1, left: 1, applied: false, member: true, excludeSale: true });
+    expect(shippingSummary(shop, [{ over: 1, excludeSale: true }], { all: 12000, nonSale: 500 }).progress).toEqual({ over: 1, left: 0, applied: true, member: true, excludeSale: true });
     expect(shippingSummary(shop, null, { all: 12000, nonSale: 11000 }).progress).toMatchObject({ left: 0, applied: true, member: false });
     expect(s.freeOverExcludesSale).toBe(true);
   });

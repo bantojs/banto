@@ -3,12 +3,13 @@ import { describeShipping, parseShippingSettings, shippingFee, taxRate } from ".
 
 describe("送料・税", () => {
   it("設定の読み込みは壊れた値を捨てる", () => {
-    expect(parseShippingSettings(undefined)).toEqual({ mode: "flat", flat_fee_jpy: 0, by_prefecture: {}, free_over_jpy: null, free_over_by_audience: [], member_free: [], has_member_free: false });
+    expect(parseShippingSettings(undefined)).toEqual({ mode: "flat", flat_fee_jpy: 0, by_prefecture: {}, free_over_jpy: null, free_over_excludes_sale: false, free_over_by_audience: [], member_free: [], has_member_free: false });
     expect(parseShippingSettings({ mode: "by_prefecture", flat_fee_jpy: 800, by_prefecture: { 北海道: 1500, 火星: 1, 沖縄県: -5, 東京都: "800" }, free_over_jpy: 5000 })).toEqual({
       mode: "by_prefecture",
       flat_fee_jpy: 800,
       by_prefecture: { 北海道: 1500 },
       free_over_jpy: 5000,
+      free_over_excludes_sale: false,
       free_over_by_audience: [],
       member_free: [],
       has_member_free: false,

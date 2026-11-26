@@ -63,7 +63,7 @@ export interface ShippingInfo {
    * 0183: カートの送料無料までの目安（セール商品を含まない決まりも数えた。表示だけ、確認画面の送料が正）。
    * over = いちばん近い決まりの金額、left = あといくら（届いていれば 0）、member = 会員の決まりか。渡されないときは viewerFreeOver と小計で
    */
-  progress?: { over: number; left: number; applied: boolean; member: boolean } | null;
+  progress?: { over: number; left: number; applied: boolean; member: boolean; excludeSale?: boolean } | null;
   taxRate: number;
 }
 

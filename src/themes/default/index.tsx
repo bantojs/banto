@@ -881,7 +881,7 @@ export const defaultTheme: Theme = {
             ) : null}
             <p class="muted">
               {shipping.summary}
-              {shipping.freeOver !== null ? `（${shipping.freeOverExcludesSale ? t("store.excluding_sale") : ""}${yen(shipping.freeOver)}以上で送料無料）` : ""} · <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_details")}</a>
+              {shipping.freeOver !== null ? `（${shipping.freeOverExcludesSale && shipping.freeOver > 0 ? t("store.excluding_sale") : ""}${yen(shipping.freeOver)}以上で送料無料）` : ""} · <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_details")}</a>
             </p>
             {(() => {
               // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料が正）
@@ -1179,15 +1179,16 @@ export const defaultTheme: Theme = {
       <Layout title={t("store.shipping_title")} ctx={ctx}>
         <h1>{t("store.shipping_title")}</h1>
         <p>{shipping.summary}</p>
-        {shipping.freeOver !== null ? <p>{`${shipping.freeOverExcludesSale ? t("store.excluding_sale") : ""}${yen(shipping.freeOver)}以上のご注文で送料無料`}</p> : null}
+        {shipping.freeOver !== null ? <p>{`${shipping.freeOverExcludesSale && shipping.freeOver > 0 ? t("store.excluding_sale") : ""}${yen(shipping.freeOver)}以上のご注文で送料無料`}</p> : null}
         {(shipping.memberFree ?? []).map((m) => (
           <p>
-            {m.freeOver === 0 && m.excludeSale
+            {/* 0183: 0 円はセール商品の印があってもいつでも無料（セール商品だけでも 0 円以上）。1 円・印ありは「セール商品だけのご注文を除く」 */}
+            {m.freeOver === 1 && m.excludeSale
               ? tf("store.member_free_shipping_always_excluding_sale", { label: m.label })
               : m.freeOver === 0
                 ? tf("store.member_free_shipping_always", { label: m.label })
                 : tf("store.member_free_shipping", { label: m.label, amount: yen(m.freeOver) })}
-            {m.excludeSale && m.freeOver > 0 ? t("store.member_free_excluding_sale") : ""}
+            {m.excludeSale && m.freeOver > 1 ? t("store.member_free_excluding_sale") : ""}
           </p>
         ))}
         {shipping.table ? (

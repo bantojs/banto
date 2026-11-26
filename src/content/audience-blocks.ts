@@ -22,6 +22,8 @@ export interface RenderAudience {
   condition: unknown;
   /** この条件の会員の送料無料の金額（0171。決まりが無い・表示用の条件なら無い）。カートの「あと○円で送料無料」の目安だけに使う */
   free_over_jpy?: number;
+  /** 0183: その金額にセール商品を含まない */
+  free_over_excludes_sale?: boolean;
 }
 
 const HAS = /^\s{0,3}:{3,}\s*audience\b/m;
