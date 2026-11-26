@@ -302,7 +302,22 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
         get: {
           summary: "戻り先の画面で、確定したか・注文番号を引く（照会トークン）",
           parameters: [shopPath, { name: "token", in: "query", required: true, schema: str, description: "status_token か、success_url の banto_status" }],
-          responses: { 200: ok(obj({ status: { type: "string", enum: ["pending", "confirmed", "released", "not_found"] }, order: { type: ["object", "null"], description: "number・status・total_jpy・payment_provider・created_at" }, expires_at: str }, ["status"])), 400: err("invalid_token"), ...common },
+          responses: { 200: ok(obj({ status: { type: "string", enum: ["pending", "confirmed", "released", "not_found"] }, order: { type: ["object", "null"], description: "number・status・total_jpy・payment_provider・created_at" }, expires_at: str, resumable: { ...bool, description: "KOMOJU の決済ページのある未確定の予約（POST /checkout/payment でお支払いに戻れる、0180）" } }, ["status"])), 400: err("invalid_token"), ...common },
+        },
+      },
+      "/shops/{shop}/checkout/payment": {
+        post: {
+          summary: "KOMOJU のお支払いに戻る・取りやめる（0180）。照会トークンか、会員トークンの会員の予約 id",
+          parameters: [shopPath],
+          requestBody: body(obj({ token: { ...str, description: "照会トークン" }, reservation_id: { ...str, description: "会員の予約（/members/me の pending_payments、会員トークンが要る）" }, action: { type: "string", enum: ["pay", "cancel"] } }, ["action"], "token か reservation_id")),
+          responses: {
+            200: ok(obj({ result: { type: "string", enum: ["redirect", "awaiting", "paid", "confirmed", "released", "unavailable", "cancelled", "failed"] }, url: { ...str, description: "result が redirect のとき、KOMOJU の決済ページ" } }, ["result"])),
+            400: err("invalid_request・invalid_token・member_token_required"),
+            409: err("not_available（0180 の前）"),
+            502: err("failed（KOMOJU に届かない）"),
+            ...common,
+            404: err("not_found（予約・ショップが無い）"),
+          },
         },
       },
 
@@ -472,6 +487,7 @@ const OPERATION_IDS: Record<string, string> = {
   "post /shops/{shop}/checkout/quote": "createCheckoutQuote",
   "post /shops/{shop}/checkout": "placeCheckout",
   "get /shops/{shop}/checkout/status": "getCheckoutStatus",
+  "post /shops/{shop}/checkout/payment": "resumeCheckoutPayment",
   "post /shops/{shop}/orders/lookup": "lookupOrder",
   "post /shops/{shop}/orders/receipt": "getOrderReceipt",
   "get /shops/{shop}/members/config": "getMemberConfig",

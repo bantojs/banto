@@ -289,7 +289,9 @@ membersApi.get("/shops/:shop/members/me", async (c: Ctx) => {
   const consent = consentCollected(s.shop) ? { marketing_consent: rec.customer.marketing_consent ?? null } : {};
   // お知らせの受け取り方（0176）: all / line と、LINE だけを選べるか（当てる前の DB には無い）
   const notice = rec.customer.notice_channel ? { notice_channel: rec.customer.notice_channel, notice_line_available: rec.customer.notice_line_available === true } : {};
-  return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, ...notice, orders }, 200, { "cache-control": "no-store" });
+  // お支払いが済んでいないお申し込み（0180、KOMOJU）。POST /checkout/payment に reservation_id で「お支払いに進む・取りやめる」。当てる前の DB には無い
+  const pending = rec.pending_payments ? { pending_payments: rec.pending_payments.map((p) => ({ reservation_id: p.reservation_id, created_at: p.created_at, expires_at: p.expires_at, total_jpy: p.total_jpy, items: p.items })) } : {};
+  return c.json({ id: rec.customer.id, email: rec.customer.email, name: rec.customer.name, address: rec.customer.default_address, ...consent, ...notice, orders, ...pending }, 200, { "cache-control": "no-store" });
 });
 
 /** 既定の住所を保存する（会員ページの「住所を保存」と同じ。チェックアウトの欄の初期値になる） */

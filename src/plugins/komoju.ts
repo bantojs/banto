@@ -6,6 +6,12 @@
 import type { BundledPlugin } from "./types";
 
 export const KOMOJU_API_BASE = "https://komoju.com/api/v1";
+/** KOMOJU の決済ページの期限の上限（秒）。既定もこの値 */
+export const KOMOJU_SESSION_MAX_SECONDS = 86_400;
+
+/** お支払いに戻る（予約に決済ページの ID を残す、src/commerce/payment-resume.ts） */
+export const PAYMENT_RESUME_MIGRATION = "0180_payment_resume";
+
 /** コンビニ払いは支払いまで日数がかかるため、予約 TTL は長めに取る（設定で変更可） */
 export const KOMOJU_DEFAULT_RESERVATION_HOURS = 72;
 
@@ -47,7 +53,13 @@ export class KomojuError extends Error {
 export interface KomojuSession {
   id: string;
   session_url: string;
+  /** pending（まだ手続きしていない）・completed / complete（手続き済み、支払いが付く）・cancelled。docs の表記が揺れているので両方を受ける */
   status: string;
+  /** 決済ページの期限（作ってから最長 24 時間）を過ぎたか */
+  expired?: boolean | null;
+  metadata?: Record<string, string> | null;
+  /** 手続き済みなら支払い（コンビニ・銀行振込は authorized = お支払い待ち） */
+  payment?: { id: string; status: string } | null;
 }
 
 export interface KomojuPayment {
@@ -77,8 +89,16 @@ export interface KomojuClient {
     shopId: string;
     paymentTypes?: string[];
     email?: string;
+    /** 決済ページの期限（秒、KOMOJU の上限は 86,400）。予約より長く払えるページを作らないため、予約の残りまでに縮める（0180） */
+    expiresInSeconds?: number;
   }): Promise<KomojuSession>;
   refundPayment(paymentId: string, idempotencyKey: string): Promise<{ id: string; status: string }>;
+  /** 決済ページを引く（0180、支払いに戻る） */
+  getSession(sessionId: string): Promise<KomojuSession>;
+  /** 決済ページを取り消す（手続き済みなら 422） */
+  cancelSession(sessionId: string): Promise<KomojuSession>;
+  /** お支払い待ち（pending / authorized）の支払いを取り消す（それ以外は 422） */
+  cancelPayment(paymentId: string): Promise<{ id: string; status: string }>;
 }
 
 export function createKomojuClient(opts: { secretKey: string; fetch?: typeof fetch; apiBase?: string }): KomojuClient {
@@ -105,7 +125,17 @@ export function createKomojuClient(opts: { secretKey: string; fetch?: typeof fet
     return JSON.parse(text) as T;
   }
 
+  async function get<T>(path: string): Promise<T> {
+    const res = await doFetch(`${base}${path}`, { method: "GET", headers: { Authorization: auth } });
+    const text = await res.text();
+    if (!res.ok) throw new KomojuError(`KOMOJU ${res.status}: ${text.slice(0, 200)}`, res.status);
+    return JSON.parse(text) as T;
+  }
+
   return {
+    getSession: (id) => get<KomojuSession>(`/sessions/${encodeURIComponent(id)}`),
+    cancelSession: (id) => post<KomojuSession>(`/sessions/${encodeURIComponent(id)}/cancel`, {}),
+    cancelPayment: (id) => post<{ id: string; status: string }>(`/payments/${encodeURIComponent(id)}/cancel`, {}),
     createSession: (p) =>
       post<KomojuSession>("/sessions", {
         amount: p.amountJpy,
@@ -116,6 +146,7 @@ export function createKomojuClient(opts: { secretKey: string; fetch?: typeof fet
         metadata: { reservation_id: p.reservationId, shop_id: p.shopId },
         ...(p.paymentTypes && p.paymentTypes.length > 0 ? { payment_types: p.paymentTypes } : {}),
         ...(p.email ? { email: p.email } : {}),
+        ...(p.expiresInSeconds ? { expires_in_seconds: Math.min(KOMOJU_SESSION_MAX_SECONDS, Math.max(1, Math.floor(p.expiresInSeconds))) } : {}),
       }),
     refundPayment: (paymentId, idempotencyKey) =>
       post<{ id: string; status: string }>(`/payments/${paymentId}/refund`, {}, { "Idempotency-Key": idempotencyKey }),

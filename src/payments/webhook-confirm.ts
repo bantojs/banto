@@ -26,6 +26,12 @@ export interface WebhookConfirmArgs {
    * 予約がほかの支払いで確定・返金済みならこの支払いを返金する（支払い済み・注文なし・返金なしにしない）
    */
   separatePaymentRef?: string;
+  /**
+   * 確定済みの予約に別の支払いが届いたときだけ返金する、この支払いの参照（KOMOJU、0180）。
+   * 0180 から 1 つの予約に決済ページを作り直すことがあり、万一前のページでも払われたら 2 回目を返す。
+   * 返金・解放の側の扱いは今までどおり（同じ支払いの別の通知で二重に返金しない）
+   */
+  confirmedPaymentRef?: string;
 }
 
 export type WebhookConfirmResult = { received: true; order_id?: string; refunded?: boolean; ignored?: string };
@@ -34,10 +40,11 @@ export async function confirmFromWebhook(a: WebhookConfirmArgs): Promise<Webhook
   const record = () => a.db.recordWebhookEvent(a.provider, a.eventId);
   try {
     const orderId = await a.db.confirmReservation(a.reservationId, a.shopId, a.order);
-    if (a.separatePaymentRef) {
+    const ownRef = a.separatePaymentRef ?? a.confirmedPaymentRef;
+    if (ownRef) {
       // 確定済みの予約は同じ注文 id を返す。注文がほかの支払いで確定していたら、この支払いは 2 回目なので返す
       const paid = await a.db.reservationPayment(a.reservationId, a.shopId);
-      if (paid.paymentRef && paid.paymentRef !== a.separatePaymentRef) {
+      if (paid.paymentRef && paid.paymentRef !== ownRef) {
         console.error(`[banto] ${a.provider} ${a.eventId}: reservation ${a.reservationId} is already paid by ${paid.paymentRef}; refunding this payment`);
         const refunded = await a.refund();
         await record();

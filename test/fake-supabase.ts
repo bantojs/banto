@@ -252,6 +252,11 @@ export class FakeSupabase {
   /** 0039: 画像を裏で取り込む予約（image_import_jobs）。本物の SQL は test/db/image-import-queue.test.ts */
   imageJobs: { id: number; shop_id: string; product_id: string; url: string; status: string; attempts: number; last_error: string | null }[] = [];
   private seq = 0;
+  /** 予約の支払い総額（0180 の banto_reservation_total と同じ式） */
+  reservationTotal(r: Record<string, unknown>): number {
+    const sub = ((r["items"] as { qty: number; unit_price_jpy: number }[]) ?? []).reduce((a, i) => a + i.qty * i.unit_price_jpy, 0);
+    return Math.max(0, sub + Number(r["shipping_jpy"] ?? 0) - Number(r["discount_jpy"] ?? 0)) + Number(r["fee_jpy"] ?? 0);
+  }
   private tokens = new Map<string, string>(); // access_token -> user id
   private refreshTokens = new Map<string, string>(); // refresh_token -> user id
 
@@ -4093,7 +4098,13 @@ export class FakeSupabase {
               .map((o) => ({ id: o["id"], number: o["number"], status: o["status"], total_jpy: o["total_jpy"], shipping_jpy: o["shipping_jpy"] ?? 0, discount_jpy: o["discount_jpy"] ?? 0, created_at: o["created_at"], shipped_at: o["shipped_at"] ?? null }))
           : [];
         const providers = this.memberIdentities.filter((i) => i["shop_id"] === shopId && i["customer_id"] === c["id"]).map((i) => String(i["provider"]));
-        return json({ customer: { id: c["id"], shop_id: shopId, email: c["email"] ?? null, name: c["name"] ?? null, default_address: c["default_address"] ?? null, marketing_consent: c["marketing_consent"] ?? null, has_password: Boolean(c["password_hash"] || c["legacy_password_hash"]), providers }, orders });
+        // 0180: お支払いが済んでいないお申し込み（本物は test/db/payment-resume.test.ts）
+        const pending_payments = args["p_with_orders"]
+          ? this.tables.reservations
+              .filter((r) => r["shop_id"] === shopId && r["customer_id"] === c["id"] && r["status"] === "pending" && r["payment_session"] && Date.parse(String(r["expires_at"])) > Date.now())
+              .map((r) => ({ reservation_id: r["id"], created_at: r["created_at"], expires_at: r["expires_at"], total_jpy: this.reservationTotal(r), payment_method: r["payment_method"] ?? null, items: (r["items"] as { qty: number }[]).map((i) => ({ name: "商品", qty: i.qty })) }))
+          : [];
+        return json({ customer: { id: c["id"], shop_id: shopId, email: c["email"] ?? null, name: c["name"] ?? null, default_address: c["default_address"] ?? null, marketing_consent: c["marketing_consent"] ?? null, has_password: Boolean(c["password_hash"] || c["legacy_password_hash"]), providers }, orders, pending_payments });
       }
       // 0155: 会員へのお知らせ（本物は test/db/member-news.test.ts。会員の条件は見ない）
       case "member_news_list":
@@ -4841,7 +4852,28 @@ export class FakeSupabase {
       if (!r) return json({ status: "not_found", order: null, expires_at: null });
       const o = this.tables.orders.find((x) => x["reservation_id"] === r["id"]);
       if (o) return json({ status: "confirmed", expires_at: r["expires_at"] ?? null, order: { number: o["number"], status: o["status"], total_jpy: o["total_jpy"], payment_provider: o["payment_provider"] ?? null, created_at: o["created_at"] } });
-      return json({ status: r["status"], order: null, expires_at: r["expires_at"] ?? null });
+      return json({ status: r["status"], order: null, expires_at: r["expires_at"] ?? null, resumable: r["status"] === "pending" && Boolean(r["payment_session"]) && Date.parse(String(r["expires_at"])) > Date.now() });
+    }
+    // 0180: お支払いに戻る（本物は test/db/payment-resume.test.ts）
+    if (fn === "reservation_set_payment_session") {
+      const r = this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"] && x["status"] === "pending");
+      const cur = (r?.["payment_session"] as { id?: string } | undefined)?.id ?? null;
+      if (!r || cur !== (args["p_expected"] ?? null)) return json(false);
+      r["payment_session"] = args["p_session"];
+      return json(true);
+    }
+    if (fn === "reservation_payment_get") {
+      let r: Record<string, unknown> | undefined;
+      if (args["p_quote_id"]) {
+        const rs = this.tables.reservations.filter((x) => x["shop_id"] === args["p_shop_id"] && x["quote_id"] === args["p_quote_id"]);
+        r = rs[rs.length - 1];
+      } else if (args["p_reservation_id"] && args["p_customer_id"]) {
+        const cust = this.tables.customers.find((x) => x["id"] === args["p_customer_id"] && x["shop_id"] === args["p_shop_id"] && Number(x["session_epoch"] ?? 0) === Number(args["p_epoch"]));
+        r = cust ? this.tables.reservations.find((x) => x["id"] === args["p_reservation_id"] && x["shop_id"] === args["p_shop_id"] && x["customer_id"] === cust["id"]) : undefined;
+      }
+      if (!r) return json(null);
+      const confirmed = this.tables.orders.some((o) => o["reservation_id"] === r!["id"]);
+      return json({ reservation_id: r["id"], status: confirmed ? "confirmed" : r["status"] === "refunded" ? "released" : r["status"], expires_at: r["expires_at"], quote_id: r["quote_id"] ?? null, payment_session: r["payment_session"] ?? null, payment_method: r["payment_method"] ?? null, total_jpy: this.reservationTotal(r) });
     }
     if (fn === "release_reservation" || fn === "release_reservation_abandoned") {
       const res = this.tables.reservations.find((r) => r["id"] === args["p_reservation_id"] && r["shop_id"] === args["p_shop_id"]);
