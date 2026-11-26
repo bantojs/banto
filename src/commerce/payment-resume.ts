@@ -57,6 +57,9 @@ function afterSubmit(sess: KomojuSession): ResumeOutcome {
   return st === "captured" ? { kind: "paid" } : { kind: "awaiting" };
 }
 
+/** 作り直す決済ページに残す最短の時間（これより予約の残りが短ければ作り直さない） */
+const MIN_FRESH_SECONDS = 10 * 60;
+
 /**
  * お支払いに戻る。returnUrl は作り直すときの戻り先（完了画面。照会トークンは呼び出し側が新しく付ける）
  */
@@ -68,16 +71,20 @@ export async function resumePayment(deps: ResumeDeps, shopId: string, r: Reserva
   const ref = r.payment_session!;
   const sess = await deps.komoju.getSession(ref.id);
   if (!sessionUsable(sess, r)) return { kind: "unavailable" };
-  if (DONE.has(sess.status) || sess.payment) return afterSubmit(sess);
+  if (sess.payment?.status === "captured") return { kind: "paid" };
+  if (DONE.has(sess.status)) return afterSubmit(sess);
+  // 手続き前（失敗した支払いが付いていても、決済ページが pending なら払い直せる）
   if (sess.status === "pending" && sess.expired !== true && sess.session_url) return { kind: "redirect", url: sess.session_url };
-  // 期限切れ・取り消し済み: 同じ予約・同じ金額・同じ種類で作り直す
-  if (r.total_jpy <= 0) return { kind: "unavailable" };
+  // 期限切れ・取り消し済み: 同じ予約・同じ金額・同じ種類で作り直す。予約の残りより長く払えるページは作らない
+  const left = Math.floor((Date.parse(r.expires_at) - now) / 1000);
+  if (r.total_jpy <= 0 || left < MIN_FRESH_SECONDS) return { kind: "unavailable" };
   const fresh = await deps.komoju.createSession({
     amountJpy: r.total_jpy,
     returnUrl,
     reservationId: r.reservation_id,
     shopId,
     ...(ref.types && ref.types.length > 0 ? { paymentTypes: ref.types } : {}),
+    expiresInSeconds: left,
   });
   const won = await deps.privileged.reservationSetPaymentSession(r.reservation_id, shopId, { provider: "komoju", id: fresh.id, ...(ref.types ? { types: ref.types } : {}) }, ref.id);
   if (won) return { kind: "redirect", url: fresh.session_url };
@@ -102,12 +109,11 @@ export async function abandonPayment(deps: ResumeDeps, shopId: string, r: Reserv
     try {
       const sess = await deps.komoju.getSession(r.payment_session.id);
       if (!sessionUsable(sess, r)) return "failed";
-      if (sess.payment) {
-        if (sess.payment.status === "captured") return "paid";
-        if (AWAITING.has(sess.payment.status)) await deps.komoju.cancelPayment(sess.payment.id);
-      } else if (sess.status === "pending" && sess.expired !== true) {
-        await deps.komoju.cancelSession(sess.id);
-      }
+      if (sess.payment?.status === "captured") return "paid";
+      // お支払い待ちの支払い（コンビニ・銀行振込の番号が出ている）を取り消し、手続き前の決済ページも取り消す
+      // （失敗した支払いが付いた pending の決済ページは払い直せるので、支払いの有無にかかわらず取り消す）
+      if (sess.payment && AWAITING.has(sess.payment.status)) await deps.komoju.cancelPayment(sess.payment.id);
+      if (sess.status === "pending" && sess.expired !== true) await deps.komoju.cancelSession(sess.id);
     } catch (e) {
       // 取り消せない（422 = 手続き・支払いが進んだ）なら戻さない。ほかの失敗も戻さない（払えるまま在庫だけ戻さない）
       if (e instanceof KomojuError && e.status === 422) return "paid";

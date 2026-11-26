@@ -46,8 +46,8 @@ function setup(opts: { members?: boolean } = {}) {
       }
       return Response.json({ ...sess, session_url: `https://komoju.com/sessions/${sess.id}` });
     }
-    const p = /^\/api\/v1\/payments\/([^/]+)\/cancel$/.exec(u.pathname);
-    if (p) return Response.json({ id: p[1], status: "cancelled" });
+    const p = /^\/api\/v1\/payments\/([^/]+)\/(cancel|refund)$/.exec(u.pathname);
+    if (p) return Response.json({ id: p[1], status: p[2] === "cancel" ? "cancelled" : "refunded" });
     return new Response("{}", { status: 404 });
   });
   const mail = opts.members ? memberMail(sb, shop.id) : null;
@@ -110,6 +110,25 @@ describe("完了画面からお支払いに戻る（0180）", () => {
     expect(sb.tables.inventory.find((i) => i["sku_id"] === sku.id)!["available"]).toBe(5);
     // 取りやめた後は戻れない
     expect((await b.post("/my-shop/checkout/payment", { s, action: "pay" })).headers.get("location")).toMatch(/pay=released$/);
+  });
+});
+
+describe("作り直した後の支払い（0180）", () => {
+  it("同じ予約に 2 回目の支払いが届いたら返金する（作り直す前の決済ページでも払われた場合）", async () => {
+    const { sb, shop, sku, app, komoju, b } = setup();
+    await placeKomoju(b, sku.id);
+    expect(komoju.created[0]).toMatchObject({ expires_in_seconds: 86_400 });
+    const rid = String(sb.tables.reservations[0]!["id"]);
+    const { signKomojuPayload } = await import("../src/plugins/komoju");
+    const send = async (evt: string, pay: string) => {
+      const payload = JSON.stringify({ id: evt, type: "payment.captured", data: { id: pay, status: "captured", amount: 3500, currency: "JPY", payment_details: { type: "bank_transfer" }, metadata: { reservation_id: rid, shop_id: shop.id } } });
+      return (await app.request(`${BASE}/webhooks/komoju`, { method: "POST", headers: { "content-type": "application/json", "x-komoju-signature": await signKomojuPayload(payload, "whsec_komoju") }, body: payload })).json();
+    };
+    expect(await send("evt_1", "pay_1")).toMatchObject({ order_id: expect.any(String) });
+    expect(await send("evt_2", "pay_2")).toMatchObject({ refunded: true, ignored: "paid_elsewhere" });
+    expect(komoju.calls).toContain("POST /api/v1/payments/pay_2/refund");
+    expect(komoju.calls).not.toContain("POST /api/v1/payments/pay_1/refund");
+    expect(sb.tables.orders).toHaveLength(1);
   });
 });
 

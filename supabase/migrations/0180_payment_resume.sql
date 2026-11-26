@@ -16,6 +16,9 @@ alter table reservations add column if not exists payment_session jsonb
     and (payment_session->'types' is null or jsonb_typeof(payment_session->'types') = 'array')
   ));
 
+-- 会員ページの一覧（member_get の pending_payments）を、ショップの未確定の予約をなめずに会員で引く
+create index if not exists reservations_customer_pending_idx on reservations (shop_id, customer_id) where status = 'pending' and payment_session is not null;
+
 -- 予約の支払い総額。confirm_reservation（0170）が支払われた額と比べる額と同じ式（品目の単価 × 数量 + 送料 − 値引き、0 未満にしない、+ 手数料）。
 -- 見せる額と、決済ページを作り直すときの額に使う
 create or replace function banto_reservation_total(r reservations)

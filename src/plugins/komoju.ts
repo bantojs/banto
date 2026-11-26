@@ -6,6 +6,9 @@
 import type { BundledPlugin } from "./types";
 
 export const KOMOJU_API_BASE = "https://komoju.com/api/v1";
+/** KOMOJU の決済ページの期限の上限（秒）。既定もこの値 */
+export const KOMOJU_SESSION_MAX_SECONDS = 86_400;
+
 /** お支払いに戻る（予約に決済ページの ID を残す、src/commerce/payment-resume.ts） */
 export const PAYMENT_RESUME_MIGRATION = "0180_payment_resume";
 
@@ -86,6 +89,8 @@ export interface KomojuClient {
     shopId: string;
     paymentTypes?: string[];
     email?: string;
+    /** 決済ページの期限（秒、KOMOJU の上限は 86,400）。予約より長く払えるページを作らないため、予約の残りまでに縮める（0180） */
+    expiresInSeconds?: number;
   }): Promise<KomojuSession>;
   refundPayment(paymentId: string, idempotencyKey: string): Promise<{ id: string; status: string }>;
   /** 決済ページを引く（0180、支払いに戻る） */
@@ -141,6 +146,7 @@ export function createKomojuClient(opts: { secretKey: string; fetch?: typeof fet
         metadata: { reservation_id: p.reservationId, shop_id: p.shopId },
         ...(p.paymentTypes && p.paymentTypes.length > 0 ? { payment_types: p.paymentTypes } : {}),
         ...(p.email ? { email: p.email } : {}),
+        ...(p.expiresInSeconds ? { expires_in_seconds: Math.min(KOMOJU_SESSION_MAX_SECONDS, Math.max(1, Math.floor(p.expiresInSeconds))) } : {}),
       }),
     refundPayment: (paymentId, idempotencyKey) =>
       post<{ id: string; status: string }>(`/payments/${paymentId}/refund`, {}, { "Idempotency-Key": idempotencyKey }),

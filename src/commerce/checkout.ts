@@ -1005,6 +1005,8 @@ export async function placeOrder(deps: PlaceOrderDeps, input: PlaceOrderInput): 
       shopId: shop.id,
       paymentTypes,
       email: a.customer_email,
+      // 予約より長く払える決済ページを作らない（予約の時間を短くしたショップ。既定は 72 時間で、KOMOJU の上限 24 時間のまま）
+      expiresInSeconds: reservationSeconds(deps.setup.komoju?.settings ?? {}),
     });
     // お支払いに戻れるように、決済ページの ID と種類を予約に残す（0180、src/commerce/payment-resume.ts）。残せなくても支払いは進める
     if (deps.migrationState && (await migrated(deps.migrationState, PAYMENT_RESUME_MIGRATION))) {

@@ -74,7 +74,14 @@ describe("お支払いに戻る（0180、src/commerce/payment-resume.ts）", () 
   it("期限切れ・取り消し済みの決済ページは同じ予約・金額・種類で作り直し、前の ID と同じときだけ入れ替える", async () => {
     const f = fakes({ expired: true });
     expect(await resumePayment(f.deps, "shop-1", reservation(), "https://shop.example/done?s=t")).toEqual({ kind: "redirect", url: "https://komoju.example/sessions/sess_new1" });
-    expect(f.created).toEqual([{ amountJpy: 3520, returnUrl: "https://shop.example/done?s=t", reservationId: "res-1", shopId: "shop-1", paymentTypes: ["bank_transfer"] }]);
+    expect(f.created).toEqual([{ amountJpy: 3520, returnUrl: "https://shop.example/done?s=t", reservationId: "res-1", shopId: "shop-1", paymentTypes: ["bank_transfer"], expiresInSeconds: expect.any(Number) }]);
+    // 作り直す決済ページは予約の残り（ここでは約 1 時間）より長く払えない
+    expect(f.created[0]!["expiresInSeconds"]).toBeLessThanOrEqual(3600);
+    expect(f.created[0]!["expiresInSeconds"]).toBeGreaterThan(3500);
+    // 予約の残りが 10 分を切っていれば作り直さない
+    const late = fakes({ expired: true });
+    expect(await resumePayment(late.deps, "shop-1", reservation({ expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }), "u")).toEqual({ kind: "unavailable" });
+    expect(late.created).toHaveLength(0);
     expect(f.sets).toEqual([{ id: "sess_new1", expected: "sess_1" }]);
     const g = fakes({ status: "cancelled" });
     expect((await resumePayment(g.deps, "shop-1", reservation(), "u")).kind).toBe("redirect");
@@ -84,6 +91,14 @@ describe("お支払いに戻る（0180、src/commerce/payment-resume.ts）", () 
     const f = fakes((id) => (id === "sess_other" ? { id, session_url: "https://komoju.example/sessions/sess_other", status: "pending", metadata: { reservation_id: "res-1" } } : { id, session_url: "", status: "pending", expired: true }), { won: [false] });
     expect(await resumePayment(f.deps, "shop-1", reservation(), "u")).toEqual({ kind: "redirect", url: "https://komoju.example/sessions/sess_other" });
     expect(f.calls).toContain("cancel-session:sess_new1");
+  });
+
+  it("失敗した支払いが付いていても、決済ページが手続き前（pending）なら払い直せる。取りやめは決済ページも取り消す", async () => {
+    const f = fakes({ status: "pending", payment: { id: "pay_failed", status: "failed" } });
+    expect(await resumePayment(f.deps, "shop-1", reservation(), "u")).toEqual({ kind: "redirect", url: "https://komoju.example/sessions/sess_1" });
+    expect(await abandonPayment(f.deps, "shop-1", reservation())).toBe("released");
+    expect(f.calls).toContain("cancel-session:sess_1");
+    expect(f.calls).not.toContain("cancel-payment:pay_failed");
   });
 
   it("確定・解放・期限切れ・決済ページの無い予約・違う予約の決済ページには戻らない", async () => {
