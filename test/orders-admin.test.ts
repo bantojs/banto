@@ -137,7 +137,7 @@ describe("メール通知（既定の送り手 Resend）", () => {
     const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
     const config = memoryAdapters({ RESEND_API_KEY: "re_test", PUBLIC_BASE_URL: BASE }).config;
     const r = await deliverPendingHooks({ db, sessionSecret: "test-session-secret", fetch: fetchImpl, config });
-    expect(r).toEqual({ claimed: 2, delivered: 2, failed: 0 });
+    expect(r).toEqual({ claimed: 2, delivered: 2, failed: 0, unrecorded: 0 });
     expect(sent).toHaveLength(2);
     const paid = sent.find((s) => String(s.body["subject"]).includes("ご注文ありがとうございます"))!;
     expect(paid.auth).toBe("Bearer re_test");

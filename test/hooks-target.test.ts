@@ -48,7 +48,7 @@ describe("hooks の行き先", () => {
       },
     });
     expect(calls).toEqual(["POST https://crm.example/hook"]);
-    expect(r).toEqual({ claimed: 3, delivered: 1, failed: 2 });
+    expect(r).toEqual({ claimed: 3, delivered: 1, failed: 2, unrecorded: 0 });
     expect(finished.filter(([, ok]) => !ok).map(([id, , status, err]) => [id, status, /not a public address/.test(err ?? "")])).toEqual([
       ["d1", null, true],
       ["d2", null, true],

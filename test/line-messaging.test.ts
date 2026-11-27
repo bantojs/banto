@@ -123,7 +123,7 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
     const config = { get: () => undefined, secret: (n: string) => (n === "LINE_CHANNEL_ACCESS_TOKEN" ? "env-token" : undefined) } as unknown as ConfigAdapter;
     const r = await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config });
-    expect(r).toEqual({ claimed: 31, delivered: 31, failed: 0 });
+    expect(r).toEqual({ claimed: 31, delivered: 31, failed: 0, unrecorded: 0 });
     expect(pushes).toHaveLength(2);
     const low = pushes.find((p) => p.text.includes("残りわずか"))!;
     expect(low.text.split("\n")[0]).toBe("【Banto】在庫が残りわずかな SKU が 30 件あります（閾値 3）");
@@ -151,7 +151,7 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     }) as typeof fetch;
     const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
     const config = { get: () => undefined, secret: () => "env-token" } as unknown as ConfigAdapter;
-    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 3, failed: 0 });
+    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 3, failed: 0, unrecorded: 0 });
   });
 
   it("まとめた送信に失敗したら、まとめた配信はどれも再送に回る。1 件だけなら今までの文面", async () => {
@@ -169,7 +169,7 @@ describe("LINE 通知: 在庫僅少をまとめて 1 通に（0141 で人が在�
     }) as typeof fetch;
     const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
     const config = { get: () => undefined, secret: () => "env-token" } as unknown as ConfigAdapter;
-    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 0, failed: 3 });
+    expect(await deliverPendingHooks({ db, sessionSecret: SITE, fetch: fetchImpl, config })).toEqual({ claimed: 3, delivered: 0, failed: 3, unrecorded: 0 });
     expect(sb.tables.hook_deliveries.map((d) => [d["status"], d["attempts"], String(d["last_error"]).slice(0, 12)])).toEqual(Array(3).fill(["pending", 1, "LINE API 429"]));
   });
 
