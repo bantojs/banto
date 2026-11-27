@@ -22,7 +22,7 @@ import { can, shopAccess, type ShopAccess, type ShopPerm } from "./access";
 import { bundledPluginUrl } from "../../plugins";
 import { bundledPluginIdFromUrl } from "../../plugins/types";
 import { fetchManifest } from "../../hooks/manifest";
-import { AUDIENCE_FREE_RULES_MAX, AUDIENCE_FREE_SHIPPING_MIGRATION, PREFECTURES, parseShippingSettings, taxRate, type AudienceFreeRule } from "../../commerce/shipping";
+import { AUDIENCE_FREE_RULES_MAX, AUDIENCE_FREE_SHIPPING_MIGRATION, FREE_SHIPPING_EXCLUDE_SALE_MIGRATION, PREFECTURES, parseShippingSettings, taxRate, type AudienceFreeRule } from "../../commerce/shipping";
 import { AUDIENCES_MODULE, audienceDisplayOnly } from "../../members/audience";
 import { checkoutTerms, missingTerms, parseOrigins, parseRelayIps, relayIps, returnOrigins, shopLimit } from "../../commerce/checkout";
 import { FIELD_TYPES, fieldRowsFromForm, fieldVisibility, optionsHaveSeparator, optionsText, productFields, type FieldType, type FieldVisibility, type ProductField } from "../../products/fields";
@@ -340,7 +340,7 @@ interface AudienceChoice {
 /**
  * 会員の条件ごとの送料無料の欄（0171）。ready = 0171 を当てた・audiences = 選べる条件（読めなければ null = 欄を出さず、今の決まりを保つ）
  */
-function AudienceFreeShipping(props: { rules: AudienceFreeRule[]; audiences: AudienceChoice[] | null; moduleOn: boolean; canReadAudiences: boolean }) {
+function AudienceFreeShipping(props: { rules: AudienceFreeRule[]; audiences: AudienceChoice[] | null; moduleOn: boolean; canReadAudiences: boolean; saleFlags?: boolean }) {
   const { rules, audiences, moduleOn, canReadAudiences } = props;
   if (audiences === null) return null;
   // 会員の条件を読む項目（marketing・catalog・content・customers）が無い人には一覧が空で返る。決まりは保存しても今のまま残す
@@ -367,6 +367,7 @@ function AudienceFreeShipping(props: { rules: AudienceFreeRule[]; audiences: Aud
               <th>{t("shipping.audience_choose")}</th>
               <th>{t("shipping.audience_amount")}</th>
               <th>{t("shipping.audience_label")}</th>
+              {props.saleFlags ? <th>{t("shipping.exclude_sale_short")}</th> : null}
               <th></th>
             </tr>
           </thead>
@@ -389,6 +390,13 @@ function AudienceFreeShipping(props: { rules: AudienceFreeRule[]; audiences: Aud
                 <td>
                   <input type="text" name={`aud_label_${i}`} maxlength={40} value={r?.label ?? ""} style="width:12rem" aria-label={t("shipping.audience_label")} />
                 </td>
+                {props.saleFlags ? (
+                  <td>
+                    <label>
+                      <input type="checkbox" name={`aud_excl_${i}`} value="on" checked={r?.exclude_sale === true} /> {t("shipping.exclude_sale_short")}
+                    </label>
+                  </td>
+                ) : null}
                 <td>
                   {r ? (
                     <label>
@@ -413,7 +421,7 @@ async function audienceChoices(c: AdminContext, shop: ShopRow): Promise<Audience
 }
 
 /** フォームの欄 → 決まり（選べる条件だけ・重ならない・10 件まで）。欄が無い（audiences = null）なら今の決まりのまま */
-export function audienceFreeRulesFromForm(f: Record<string, string | undefined>, audiences: AudienceChoice[] | null, current: AudienceFreeRule[]): AudienceFreeRule[] {
+export function audienceFreeRulesFromForm(f: Record<string, string | undefined>, audiences: AudienceChoice[] | null, current: AudienceFreeRule[], saleFlags = false): AudienceFreeRule[] {
   // 読めない（会員の条件を読む項目が無い）・まだ無いときは、今の決まりを保つ（黙って消さない）
   if (audiences === null || audiences.length === 0) return current;
   const ok = new Set(audiences.map((a) => a.id));
@@ -424,13 +432,15 @@ export function audienceFreeRulesFromForm(f: Record<string, string | undefined>,
     const over = Number.parseInt((f[`aud_over_${i}`] ?? "").trim(), 10);
     if (!Number.isInteger(over) || over < 0 || over > 1_000_000) continue;
     const label = (f[`aud_label_${i}`] ?? "").trim().slice(0, 40);
-    out.push({ audience_id: id, free_over_jpy: over, label: label || null });
+    // セール商品を含まない（0183）: 欄を出したときだけ。出していなければ今の印のまま
+    const exclude = saleFlags ? f[`aud_excl_${i}`] === "on" : (current.find((r) => r.audience_id === id)?.exclude_sale ?? false);
+    out.push({ audience_id: id, free_over_jpy: over, label: label || null, exclude_sale: exclude });
   }
   return out;
 }
 
 /** 配送と税。お届け日時の指定（同梱モジュール）はここから */
-function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined; audiences?: AudienceChoice[] | null }) {
+function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined; audiences?: AudienceChoice[] | null; saleFlags?: boolean }) {
   const { shop } = props;
   const shippingCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
   const delivery = moduleEnabled(shop.settings, "delivery_time");
@@ -449,6 +459,12 @@ function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined;
         <input id="flat_fee_jpy" type="number" name="flat_fee_jpy" min={0} value={String(shippingCfg.flat_fee_jpy)} style="width:8rem" />
         <label for="free_over_jpy">{t("shipping.free_over")}</label>
         <input id="free_over_jpy" type="number" name="free_over_jpy" min={0} value={shippingCfg.free_over_jpy === null ? "" : String(shippingCfg.free_over_jpy)} style="width:8rem" placeholder="なし" />
+        {props.saleFlags ? (
+          <label>
+            <input type="checkbox" name="free_over_excludes_sale" value="on" checked={shippingCfg.free_over_excludes_sale} /> {t("shipping.exclude_sale")}
+          </label>
+        ) : null}
+        {props.saleFlags ? <p class="muted">{t("shipping.exclude_sale_hint")}</p> : null}
         <details>
           <summary>{t("shipping.table")}</summary>
           <AutocheckHint label={t("shipping.by_prefecture")} />
@@ -465,7 +481,7 @@ function ShippingSection(props: { shop: ShopRow; access: ShopAccess | undefined;
             </tbody>
           </table>
         </details>
-        <AudienceFreeShipping rules={shippingCfg.free_over_by_audience} audiences={props.audiences ?? null} moduleOn={moduleEnabled(shop.settings, AUDIENCES_MODULE)} canReadAudiences={can(props.access, "admin") || (["marketing", "catalog", "content", "customers"] as const).some((p) => can(props.access, p))} />
+        <AudienceFreeShipping rules={shippingCfg.free_over_by_audience} audiences={props.audiences ?? null} moduleOn={moduleEnabled(shop.settings, AUDIENCES_MODULE)} canReadAudiences={can(props.access, "admin") || (["marketing", "catalog", "content", "customers"] as const).some((p) => can(props.access, p))} saleFlags={props.saleFlags ?? false} />
         <h2>{t("shipping.tax_title")}</h2>
         <label for="tax_rate">{t("shipping.tax_rate")}</label>
         <input id="tax_rate" type="number" name="tax_rate" min={0} max={99} value={String(taxRate(shop.settings ?? {}))} style="width:6rem" />
@@ -994,7 +1010,7 @@ async function settingsPage(c: AdminContext, section: SettingsSection) {
       body = <GeneralSection shop={shop} publicBaseUrl={base} slugMovesDomain={isTemplateDomain(domainTemplateFrom(c.get("adapters").config), shop)} />;
       break;
     case "shipping":
-      body = <ShippingSection shop={shop} access={access} audiences={await audienceChoices(c, shop)} />;
+      body = <ShippingSection shop={shop} access={access} audiences={await audienceChoices(c, shop)} saleFlags={await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, FREE_SHIPPING_EXCLUDE_SALE_MIGRATION)} />;
       break;
     case "payments": {
       const cfg = c.get("adapters").config;
@@ -1155,12 +1171,17 @@ shops.post("/:shopId/shipping", requireOwner, async (c: AdminContext) => {
     if (v !== null) by[p] = v;
   }
   // 会員の条件ごとの送料無料（0171）: 欄を出したときだけ書き換える（0171 の前は今の決まりを保つ）
-  const current = parseShippingSettings((shop.settings ?? {})["shipping"]).free_over_by_audience;
-  const rules = audienceFreeRulesFromForm(f, await audienceChoices(c, shop), current);
+  const currentCfg = parseShippingSettings((shop.settings ?? {})["shipping"]);
+  const current = currentCfg.free_over_by_audience;
+  // セール商品を含まない（0183）: 当ててから欄を出す。当てる前は今の印のまま
+  const saleFlags = await migrated({ db: owner(c).db, cache: c.get("adapters").cache }, FREE_SHIPPING_EXCLUDE_SALE_MIGRATION);
+  const rules = audienceFreeRulesFromForm(f, await audienceChoices(c, shop), current, saleFlags);
+  const excludesSale = saleFlags ? f.free_over_excludes_sale === "on" : currentCfg.free_over_excludes_sale;
   const shipping = {
     mode: f.mode === "by_prefecture" ? "by_prefecture" : "flat",
     flat_fee_jpy: int(f.flat_fee_jpy) ?? 0,
     free_over_jpy: int(f.free_over_jpy),
+    ...(excludesSale ? { free_over_excludes_sale: true } : {}),
     by_prefecture: by,
     ...(rules.length > 0 ? { free_over_by_audience: rules } : {}),
   };

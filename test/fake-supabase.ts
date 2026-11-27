@@ -4705,7 +4705,7 @@ export class FakeSupabase {
     if (fn === "shop_payment_options") return json(this.paymentOptions(args["p_shop_id"]));
     if (fn === "shop_public_get") return json(this.shopPublicGet(args));
     if (fn === "shop_public_list") return json(this.tables.shops.filter((s) => s["published"] === true).map((s) => this.shopPublicJson(s)));
-    if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_") && fn !== "member_free_shipping_over") || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client" || fn === "shop_audiences_render") {
+    if ((fn.startsWith("member_") && !fn.startsWith("member_tryon_") && fn !== "member_free_shipping_over" && fn !== "member_free_shipping") || fn === "import_members" || fn === "import_member_passwords" || fn === "shop_oauth_client" || fn === "shop_audiences_render") {
       return this.memberRpc(fn, args);
     }
     if (fn === "attach_reservation_customer") {
@@ -4959,24 +4959,28 @@ export class FakeSupabase {
       return json(n);
     }
     // 0171: 会員の条件ごとの送料無料（member_free_shipping_over と同じ: セッションが生きている・モジュールが ON・会員の最新の独自項目・表示用の条件は除く・低い金額）
-    if (fn === "member_free_shipping_over") {
+    // 0183: member_free_shipping は当てはまる決まりの一覧（金額とセール商品を含まない印）
+    if (fn === "member_free_shipping_over" || fn === "member_free_shipping") {
+      const list = fn === "member_free_shipping";
       this.memberFreeShippingCalls = (this.memberFreeShippingCalls ?? 0) + 1;
       if (this.memberFreeShippingFail) return json({ code: "XX000", message: "boom" }, 500);
-      if (!this.liveMemberSession(args["p_shop_id"], args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return json(null);
+      if (!this.liveMemberSession(args["p_shop_id"], args["p_customer_id"], args["p_epoch"], args["p_session_id"], Date.now())) return json(list ? [] : null);
       const shop = this.tables.shops.find((x) => x["id"] === args["p_shop_id"]);
       const settings = (shop?.["settings"] as Row | undefined) ?? {};
-      if (((settings["modules"] as Row | undefined)?.["audiences"]) !== true) return json(null);
+      if (((settings["modules"] as Row | undefined)?.["audiences"]) !== true) return json(list ? [] : null);
       const rules = audienceFreeRules((settings["shipping"] as Row | undefined)?.["free_over_by_audience"]);
       const cust = this.tables.customers.find((x) => x["shop_id"] === args["p_shop_id"] && x["id"] === args["p_customer_id"]);
-      if (!cust) return json(null);
+      if (!cust) return json(list ? [] : null);
       const attrs = (cust["attributes"] as Record<string, unknown> | undefined) ?? {};
       let min: number | null = null;
+      const hits: { free_over_jpy: number; exclude_sale: boolean }[] = [];
       for (const r of rules) {
         const a = this.tables.audiences.find((x) => x["shop_id"] === args["p_shop_id"] && String(x["id"]).toLowerCase() === r.audience_id);
         if (!a || audienceDisplayOnly(a["condition"]) || !audienceOk(a["condition"], { member: true, attrs })) continue;
         min = min === null ? r.free_over_jpy : Math.min(min, r.free_over_jpy);
+        hits.push({ free_over_jpy: r.free_over_jpy, exclude_sale: r.exclude_sale });
       }
-      return json(min);
+      return json(list ? hits : min);
     }
     // 0170: 予約の手数料をショップの決まりで確かめる（値引きの後）
     if (fn === "reservation_payment_fee_check") {

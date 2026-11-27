@@ -46,7 +46,7 @@ import { ipHash } from "../../members/auth";
 import type { AddressFormValues } from "../../themes/types";
 import type { CodBlock } from "../../modules/cod";
 import { loginUrlFor } from "../../members/return-path";
-import { ADDRESS_FIELDS, PROVIDERS, checkoutMembersOnly, choiceAvailable, komojuTypesOf, parsePaymentChoice, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
+import { ADDRESS_FIELDS, PROVIDERS, checkoutMembersOnly, freeBasesOf, choiceAvailable, komojuTypesOf, parsePaymentChoice, returnOrigins, PREFECTURES, couponNotice, createQuote, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, shippingSummary, type Confirmation, type PaymentSetup, type Provider, openStatusToken, sealStatusToken, withQueryParam, consentCollected, MEMBER_ADDRESS_MIGRATION } from "../../commerce/checkout";
 import { bindScope, checkoutMember, customerCookieName, customerPrefill, customerSession, members, membersEnabled, rememberOrderAfterLogin } from "./members";
 import { orderLink, orderNumberParam, orderPageUrl } from "../../orders/lookup";
 import { guestOrderLookup } from "../order-lookup";
@@ -1087,7 +1087,7 @@ storefront.get("/:shop/cart", async (c: Ctx) => {
   const [{ lines, total }, { options }, memberFreeOver] = await Promise.all([cartLines(s), paymentOptions(c, s), memberFreeOverForCart(c, s.shop, s.ctx.member)]);
   const coupons = await cartCoupons(c, s, lines, total);
   // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料は DB が決める）
-  const shipping = shippingSummary(s.shop, memberFreeOver);
+  const shipping = shippingSummary(s.shop, memberFreeOver, freeBasesOf({ lines, subtotal: total }));
   const errorKey = CART_ERRORS[c.req.query("error") ?? ""];
   const tryon = moduleEnabled(s.shop.settings, TRYON_MODULE) && !!s.theme.TryonPage;
   // 注文は会員だけのショップ（0165）でゲストのとき: ログイン（その場で会員登録）してカートへ戻るリンク
@@ -1575,7 +1575,7 @@ async function saveAddressMode(c: Ctx, s: ShopScope, member?: { hasAddress: bool
 /** 配送先の画面（Liquid のテーマの templates/checkout、無ければ既定のテーマ） */
 async function addressPage(c: Ctx, s: ShopScope, p: { provider: string; method?: string | null; values: AddressFormValues; subtotal: number; lines: CartLine[]; error?: string; status?: 200 | 400; member?: { hasAddress: boolean | null } | null }): Promise<Response> {
   const saveAddress = await saveAddressMode(c, s, p.member);
-  const props = { provider: p.provider, ...(p.method ? { method: p.method } : {}), values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop, await memberFreeOverForCart(c, s.shop, s.ctx.member)), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), saveAddress, ...(p.error ? { error: p.error } : {}) };
+  const props = { provider: p.provider, ...(p.method ? { method: p.method } : {}), values: p.values, prefectures: PREFECTURES, shipping: shippingSummary(s.shop, await memberFreeOverForCart(c, s.shop, s.ctx.member), freeBasesOf({ lines: p.lines, subtotal: p.subtotal })), subtotal: p.subtotal, delivery: deliveryOptions(s.shop.settings), consent: consentCollected(s.shop), saveAddress, ...(p.error ? { error: p.error } : {}) };
   const lt = await liquidThemeFor(c, s, { cartLines: p.lines });
   if (lt) {
     const res = renderCheckoutAddress(c, s, lt, { ...props, categories: await s.sf.listCategories(s.shop), ...(p.status ? { status: p.status } : {}) });

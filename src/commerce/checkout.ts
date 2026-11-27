@@ -12,7 +12,7 @@ import type { Cart, CartItem } from "../cart/cart";
 import { normalizeCart } from "../cart/cart";
 import { openJson, randomToken, sealJson } from "../util/signed";
 import { ipHash, subjectHash } from "../members/auth";
-import { PREFECTURES, describeShipping, freeShippingTarget, isPrefecture, parseShippingSettings, shippingQuote, taxRate, type ShippingFreeReason } from "./shipping";
+import { PREFECTURES, describeShipping, freeShippingProgress, freeShippingTarget, isPrefecture, nonSaleSubtotal, parseShippingSettings, shippingQuote, shopFreeTargets, taxRate, type FreeBases, type FreeTarget, type ShippingFreeReason } from "./shipping";
 import type { AddressFormValues, CartLine } from "../themes/types";
 import { PrivilegedRpcError, type PrivilegedDb, type ReserveLimits } from "../db/privileged";
 import { migrated, type MigrationStateDeps } from "../db/migration-state";
@@ -440,14 +440,21 @@ export interface QuoteContext {
    * ログイン中の会員が当てはまる会員の条件のうち、いちばん低い送料無料の金額（0171。DB の member_free_shipping_over、最新の独自項目で判定）。
    * 決まりの無いショップ・ゲスト・モジュールが OFF では呼ばない（DB の往復を足さない）。無ければ null
    */
-  memberFreeOver?: () => Promise<number | null>;
+  memberFreeOver?: () => Promise<number | readonly FreeTarget[] | null>;
+}
+
+/**
+ * 送料無料と比べる金額（0183）: 商品の合計（店頭のみの行を除く、値引きの前）と、そこからセール商品（通常価格のある SKU）を引いたもの
+ */
+export function freeBasesOf(priced: { lines: readonly { qty: number; storeOnly?: boolean; sku: { price_jpy: number; compare_at_price_jpy?: number | null } }[]; subtotal: number }): FreeBases {
+  return { all: priced.subtotal, nonSale: nonSaleSubtotal(priced.lines.filter((l) => !l.storeOnly), priced.subtotal) };
 }
 
 /**
  * 送料（0171 の会員の条件ごとの送料無料を含む）。計算は shipping.ts、会員の判定の材料は DB。
  * ゲスト・会員の条件のモジュールが OFF・決まりが無いときは DB に問い合わせない
  */
-async function shippingFor(ctx: QuoteContext, subtotal: number, state: string): Promise<{ fee: number; free_reason: ShippingFreeReason }> {
+async function shippingFor(ctx: QuoteContext, subtotal: FreeBases, state: string): Promise<{ fee: number; free_reason: ShippingFreeReason }> {
   const settings = ctx.shop.settings ?? {};
   const cfg = parseShippingSettings(settings["shipping"]);
   const needsMember = Boolean(ctx.member?.id) && cfg.has_member_free && moduleEnabled(settings, AUDIENCES_MODULE) && ctx.memberFreeOver !== undefined;
@@ -489,7 +496,7 @@ export async function createQuote(ctx: QuoteContext, cart: Cart, provider: Provi
   if (priced.lines.some((l) => l.short)) return { ok: false, error: "stock", dropped: priced.dropped };
   const settings = ctx.shop.settings ?? {};
   // 送料無料のラインは値引き前の小計で判定する（WooCommerce の既定と同じ）。会員の条件ごとの金額（0171）も
-  const ship = await shippingFor(ctx, priced.subtotal, address.state);
+  const ship = await shippingFor(ctx, freeBasesOf(priced), address.state);
   const shipping = ship.fee;
   const discount = await discountCart(ctx, priced, normalized.coupons, shipping, address.customer_email, provider, method);
   const base = priced.subtotal + shipping - discount.total;
@@ -650,7 +657,7 @@ export async function recheckQuote(
     return { ok: false, error: "changed", fresh: await again(priced.cart) };
   }
   const settings = ctx.shop.settings ?? {};
-  const shipping = (await shippingFor(ctx, priced.subtotal, quote.address.state)).fee;
+  const shipping = (await shippingFor(ctx, freeBasesOf(priced), quote.address.state)).fee;
   const samePrices = priced.lines.every((l) => quote.prices[l.sku.id] === l.sku.price_jpy);
   // クーポンも判定し直す（期間が終わった・上限に達した・条件を満たさなくなったら、確認画面を出し直す）
   const discount = await discountCart(ctx, priced, quote.coupons, shipping, quote.address.customer_email, quote.provider, quote.method);
@@ -1172,15 +1179,37 @@ function bantoKey(key: string): boolean {
 /** 送料の案内（カート・確認画面・API で共通） */
 export function shippingSummary(
   shop: PublicShop,
-  /** カートの目安（0171）: ログイン中の会員が当てはまる会員の条件のいちばん低い送料無料の金額（memberFreeOverHint）。表示だけ */
-  memberFreeOver: number | null = null,
-): { summary: string; freeOver: number | null; table: { prefecture: string; fee: number }[] | null; memberFree: { label: string; freeOver: number }[]; taxRate: number; viewerFreeOver: number | null; viewerFreeMember: boolean } {
+  /** カートの目安（0171）: ログイン中の会員が当てはまる会員の条件の決まり（memberFreeTargetsHint。0183 からセール商品を含まない印つき）か、いちばん低い金額。表示だけ */
+  memberFree: number | readonly FreeTarget[] | null = null,
+  /** カートの金額（0183）: 渡すと、セール商品を含まない決まりも数えた「あと○円」（progress）を添える */
+  bases?: FreeBases | null,
+): {
+  summary: string;
+  freeOver: number | null;
+  table: { prefecture: string; fee: number }[] | null;
+  memberFree: { label: string; freeOver: number; excludeSale: boolean }[];
+  freeOverExcludesSale: boolean;
+  taxRate: number;
+  viewerFreeOver: number | null;
+  viewerFreeMember: boolean;
+  progress?: { over: number; left: number; applied: boolean; member: boolean; excludeSale: boolean } | null;
+} {
   const settings = shop.settings ?? {};
-  const d = describeShipping(parseShippingSettings(settings["shipping"]));
+  const cfg = parseShippingSettings(settings["shipping"]);
+  const d = describeShipping(cfg);
   // 会員の条件ごとの送料無料（0171）は、会員の条件のモジュールが ON のときだけ案内する
   const on = moduleEnabled(settings, AUDIENCES_MODULE);
-  const viewer = freeShippingTarget(d.freeOver, on ? memberFreeOver : null);
-  return { ...d, memberFree: on ? d.memberFree : [], taxRate: taxRate(settings), viewerFreeOver: viewer.over, viewerFreeMember: viewer.member };
+  const member: FreeTarget[] = !on || memberFree === null ? [] : typeof memberFree === "number" ? [{ over: memberFree, excludeSale: false }] : [...memberFree];
+  const viewer = freeShippingTarget(d.freeOver, member.length > 0 ? Math.min(...member.map((m) => m.over)) : null);
+  const out = { ...d, memberFree: on ? d.memberFree : [], taxRate: taxRate(settings), viewerFreeOver: viewer.over, viewerFreeMember: viewer.member };
+  if (!bases) return out;
+  // あと○円（0183）: ショップ全体と会員の決まりのうち、残りの少ないもの（セール商品を含まない決まりはセール商品を除いた合計で）
+  const shopTargets = shopFreeTargets(cfg);
+  const pr = freeShippingProgress(shopTargets, member, bases);
+  if (!pr) return { ...out, progress: null };
+  const targets = pr.member ? member : shopTargets;
+  const near = targets.reduce((a, t) => (t.over - (t.excludeSale ? bases.nonSale : bases.all) < a.over - (a.excludeSale ? bases.nonSale : bases.all) ? t : a), targets[0]!);
+  return { ...out, progress: { over: near.over, left: pr.left, applied: pr.left === 0, member: pr.member, excludeSale: near.excludeSale } };
 }
 
 export { PREFECTURES };

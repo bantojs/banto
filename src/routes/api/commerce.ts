@@ -6,7 +6,7 @@ import type { PublicShop, StorefrontData } from "../../storefront/data";
 import { CART_MAX_COUPONS, CART_MAX_LINES, CART_MAX_QTY, addCoupon, addItem, normalizeCart, removeCoupon, sealCart, setQty, type Cart } from "../../cart/cart";
 import { normalizeCode } from "../../commerce/discounts";
 import { openJson } from "../../util/signed";
-import { anyProvider, choiceAvailable, komojuTypesOf, parsePaymentChoice, type PaymentSetup, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
+import { anyProvider, choiceAvailable, freeBasesOf, komojuTypesOf, parsePaymentChoice, type PaymentSetup, STATUS_QUERY_PARAM, checkoutMembersOnly, checkoutPart, couponNotice, createQuote, openStatusToken, sealStatusToken, withQueryParam, discountCart, openQuote, paymentSetup, placeOrder, reserveLimits, priceCart, providerAvailable, recheckQuote, returnOrigins, safeReturnUrl, shippingSummary, type QuoteContext, consentCollected } from "../../commerce/checkout";
 import { couponSource, memberFreeOverSource, placeOrderDeps, privilegedFor, resumeDepsFor } from "../payment-deps";
 import { abandonPayment, resumePayment } from "../../commerce/payment-resume";
 import { buyerRejected } from "../../commerce/discounts";
@@ -40,7 +40,7 @@ interface Scope {
   /** 「お得な情報やセールの案内を受け取る」の欄を出すか（ショップの設定 × 0050） */
   consent: boolean;
   /** 会員の条件ごとの送料無料の金額（0171）を DB に聞く関数。ゲスト・決まりの無いショップでは無し */
-  memberFreeOver?: () => Promise<number | null>;
+  memberFreeOver?: () => Promise<number | readonly { over: number; excludeSale: boolean }[] | null>;
 }
 
 async function scope(c: Ctx): Promise<Scope | Response> {
@@ -72,7 +72,7 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
   const [priced, setup, memberFreeOver] = await Promise.all([priceCart(s.sf, s.shop, cart), paymentSetup(s.sf, s.shop, c.get("adapters").config), memberFreeOverForCart(c, s.shop, s.member)]);
   const token = await sealCart(s.secret, { ...priced.cart, ...(cart.coupons ? { coupons: cart.coupons } : {}) });
   // 送料無料までの目安（0171: 会員トークンなら会員の条件の金額も。表示だけ、送料は quote で決まる）
-  const shipping = shippingSummary(s.shop, memberFreeOver);
+  const shipping = shippingSummary(s.shop, memberFreeOver, freeBasesOf(priced));
   // 購入手続きに進める行（店頭のみの行を外す、0149）で、在庫不足と「進めるか」を決める（同梱テーマのカート・startCheckout と同じ）
   const buyable = checkoutPart(priced).priced;
   const short = buyable.lines.some((l) => l.short);
@@ -118,10 +118,12 @@ async function cartView(c: Ctx, s: Scope, cart: Cart) {
       // 見る人の送料無料の金額（0171: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ）と、あといくら
       viewer_free_over_jpy: shipping.viewerFreeOver,
       member_free_applies: shipping.viewerFreeMember,
-      remaining_for_free_jpy: shipping.viewerFreeOver === null ? null : Math.max(0, shipping.viewerFreeOver - priced.subtotal),
+      // 0183: セール商品を含まない決まりは、セール商品を除いた合計で数える
+      remaining_for_free_jpy: shipping.progress ? shipping.progress.left : shipping.viewerFreeOver === null ? null : Math.max(0, shipping.viewerFreeOver - priced.subtotal),
+      free_over_excludes_sale: shipping.freeOverExcludesSale,
       by_prefecture: shipping.table,
       // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは quote の confirmation.shipping_free_reason
-      member_free: shipping.memberFree.map((m) => ({ label: m.label, free_over_jpy: m.freeOver })),
+      member_free: shipping.memberFree.map((m) => ({ label: m.label, free_over_jpy: m.freeOver, exclude_sale: m.excludeSale })),
     },
     payments: setup.options,
     /** 配送日時の選択肢（同梱モジュール delivery_time が OFF なら null）。チェックアウトの配送先の delivery_date / delivery_slot に value を渡す */

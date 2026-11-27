@@ -117,7 +117,7 @@ describe.skipIf(!dbAvailable)("会員の条件ごとの送料無料（0171）", 
     expect(db).toEqual(audienceFreeRules(rules));
     // 公開の設定: 名前を付けた決まりの名前と金額だけ（会員の条件の id は出さない）。Worker の publicShipping と同じ
     const pub = await asAnon(async (c) => (await c.query<{ r: { settings: J } }>("select shop_public_get('afs-parse') as r")).rows[0]!.r.settings["shipping"] as J);
-    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド", free_over_jpy: 1500 }]);
+    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド", free_over_jpy: 1500, exclude_sale: false }]);
     expect(pub["member_free"]).toBe(true);
     expect(JSON.stringify(pub)).not.toContain(gold);
     expect(pub).toEqual(publicShipping({ mode: "flat", flat_fee_jpy: 800, free_over_jpy: null, by_prefecture: {}, free_over_by_audience: rules }));
@@ -126,7 +126,7 @@ describe.skipIf(!dbAvailable)("会員の条件ごとの送料無料（0171）", 
   it("公開の設定: 名前の無い決まりの金額・会員の条件の id は出さない。決まりが無ければ member_free も無い", async () => {
     const pub = await asAnon(async (c) => (await c.query<{ r: { settings: J } }>("select shop_public_get('afs-shop') as r")).rows[0]!.r.settings["shipping"] as J);
     expect(pub["member_free"]).toBe(true);
-    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド会員", free_over_jpy: 0 }]);
+    expect(pub["free_over_by_audience"]).toEqual([{ label: "ゴールド会員", free_over_jpy: 0, exclude_sale: false }]);
     expect(JSON.stringify(pub)).not.toContain(ids["silver"]!);
     const none = await asAnon(async (c) => (await c.query<{ r: { settings: J } }>("select shop_public_get('afs-other') as r")).rows[0]!.r.settings);
     expect(none["shipping"] === undefined || !("member_free" in (none["shipping"] as J))).toBe(true);
@@ -149,5 +149,24 @@ describe.skipIf(!dbAvailable)("会員の条件ごとの送料無料（0171）", 
     expect(await expectDbError(() => asAnon((c) => c.query("select member_free_shipping_over($1, $2, 0, $3)", [f.shopId, ids["cGold"], sids[ids["cGold"]!]])))).toMatch(/permission denied/);
     expect(await expectDbError(() => asUser(f.ownerId, (c) => c.query("select member_free_shipping_over($1, $2, 0, $3)", [f.shopId, ids["cGold"], sids[ids["cGold"]!]])))).toMatch(/permission denied/);
     expect(await expectDbError(() => asAnon((c) => c.query("select banto_audience_free_rules('[]'::jsonb)")))).toMatch(/permission denied/);
+  });
+
+  it("0183: member_free_shipping は当てはまる決まりを金額とセール商品を含まない印つきで返す。お店の画面の一覧にも印", async () => {
+    // 前のテストで消したゴールドの条件を作り直す
+    ids["gold"] = await audience(f.shopId, "ゴールド2", { all: [{ member: true }, { attr: "rank", in: ["gold"] }] });
+    await setSettings(f.shopId, { shipping: { mode: "flat", flat_fee_jpy: 800, free_over_by_audience: [{ audience_id: ids["gold"], free_over_jpy: 1, exclude_sale: true, label: "ゴールド会員" }, { audience_id: ids["silver"], free_over_jpy: 3000 }] } });
+    const rules = (cid: string) => asService(async (c) => (await c.query<{ v: unknown }>("select member_free_shipping($1, $2, 0, $3) as v", [f.shopId, cid, sids[cid]])).rows[0]!.v);
+    // ゴールドの会員はシルバーの条件（rank が silver か gold）にも当てはまる
+    expect(await rules(ids["cGold"]!)).toEqual([{ free_over_jpy: 1, exclude_sale: true }, { free_over_jpy: 3000, exclude_sale: false }]);
+    expect(await rules(ids["cSilver"]!)).toEqual([{ free_over_jpy: 3000, exclude_sale: false }]);
+    // 前のテストでシルバーに変えた会員を元に戻す
+    await getPool().query("update customers set attributes = $2::jsonb where id = $1", [ids["cRegular"], JSON.stringify({ rank: "regular" })]);
+    expect(await rules(ids["cRegular"]!)).toEqual([]);
+    const render = await asService(async (c) => (await c.query<{ v: { id: string; free_over_excludes_sale?: boolean }[] }>("select shop_audiences_render($1) as v", [f.shopId])).rows[0]!.v);
+    expect(render.find((a) => a.id === ids["gold"])).toMatchObject({ free_over_jpy: 1, free_over_excludes_sale: true });
+    expect(render.find((a) => a.id === ids["silver"])).toMatchObject({ free_over_jpy: 3000, free_over_excludes_sale: false });
+    const pub = await asService(async (c) => (await c.query<{ v: Record<string, unknown> }>("select banto_public_shipping($1::jsonb) as v", [JSON.stringify({ free_over_jpy: 11000, free_over_excludes_sale: true, free_over_by_audience: [{ audience_id: ids["gold"], free_over_jpy: 1, exclude_sale: true, label: "ゴールド会員" }] })])).rows[0]!.v);
+    expect(pub).toMatchObject({ free_over_excludes_sale: true, free_over_by_audience: [{ label: "ゴールド会員", free_over_jpy: 1, exclude_sale: true }] });
+    expect(await expectDbError(() => asAnon((c) => c.query("select member_free_shipping($1, $2, 0, $3)", [f.shopId, ids["cGold"], sids[ids["cGold"]!]])))).toMatch(/permission denied/);
   });
 });
