@@ -581,7 +581,10 @@ export function freeShippingObject(shipping: ShippingInfo | undefined, subtotal:
   const over = shipping?.viewerFreeOver ?? shipping?.freeOver ?? null;
   if (!shipping || over === null || subtotal === undefined || opts.empty === true) return null;
   const coupon = opts.coupon === true;
-  return { over: money(over), remaining: money(coupon ? 0 : Math.max(0, over - subtotal)), applied: coupon || subtotal >= over, member: !coupon && shipping.viewerFreeMember === true, coupon };
+  // 0183: セール商品を含まない決まりも数えた目安（progress）があればそれ（over はいちばん近い決まりの金額）
+  const p = shipping.progress;
+  if (p) return { over: money(p.over), remaining: money(coupon ? 0 : p.left), applied: coupon || p.applied, member: !coupon && p.member, coupon, excludes_sale: p.excludeSale === true };
+  return { over: money(over), remaining: money(coupon ? 0 : Math.max(0, over - subtotal)), applied: coupon || subtotal >= over, member: !coupon && shipping.viewerFreeMember === true, coupon, excludes_sale: shipping.freeOverExcludesSale === true };
 }
 
 /** 配送先の画面（templates/checkout）。checkout に値・都道府県・お届け日時・誤りを渡し、{% form 'checkout_address' %} で送らせる */
@@ -604,9 +607,11 @@ export function renderCheckoutAddress(
     free_shipping_over: p.shipping.freeOver === null ? null : money(p.shipping.freeOver),
     banto_free_shipping: freeShippingObject(p.shipping, p.subtotal),
     // 見る人の送料無料の金額（0171: ログイン中の会員は会員の条件の金額も）で判定する。表示だけ
-    free_shipping_applied: (p.shipping.viewerFreeOver ?? p.shipping.freeOver) !== null && p.subtotal >= (p.shipping.viewerFreeOver ?? p.shipping.freeOver)!,
-    // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは確認画面で決まる
-    member_free_shipping: (p.shipping.memberFree ?? []).map((m) => ({ label: m.label, free_shipping_over: money(m.freeOver) })),
+    free_shipping_applied: p.shipping.progress ? p.shipping.progress.applied : (p.shipping.viewerFreeOver ?? p.shipping.freeOver) !== null && p.subtotal >= (p.shipping.viewerFreeOver ?? p.shipping.freeOver)!,
+    // 0183: ショップ全体の送料無料の金額にセール商品を含まない
+    free_shipping_excludes_sale: p.shipping.freeOverExcludesSale === true,
+    // 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ。当てはまるかは確認画面で決まる。excludes_sale はセール商品を含まない（0183）
+    member_free_shipping: (p.shipping.memberFree ?? []).map((m) => ({ label: m.label, free_shipping_over: money(m.freeOver), excludes_sale: m.excludeSale === true })),
     prefectures: p.prefectures.map((name) => ({ name, shipping_price: fee(name) === undefined ? null : money(fee(name)) })),
     delivery: p.delivery ? { dates: p.delivery.dates, slots: p.delivery.slots, note: t("delivery.note") } : null,
     marketing_consent: Boolean(p.consent),

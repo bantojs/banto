@@ -881,17 +881,19 @@ export const defaultTheme: Theme = {
             ) : null}
             <p class="muted">
               {shipping.summary}
-              {shipping.freeOver !== null ? `（${yen(shipping.freeOver)}以上で送料無料）` : ""} · <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_details")}</a>
+              {shipping.freeOver !== null ? `（${shipping.freeOverExcludesSale && shipping.freeOver > 0 ? t("store.excluding_sale") : ""}${yen(shipping.freeOver)}以上で送料無料）` : ""} · <a href={`${ctx.shopPath}/shipping`}>{t("store.shipping_details")}</a>
             </p>
             {(() => {
               // 送料無料までの目安（0171: ログイン中の会員は会員の条件の金額も。表示だけ、確認画面の送料が正）
               const over = shipping.viewerFreeOver ?? shipping.freeOver;
               // 送料無料のクーポンが入っていれば出さない（クーポンの案内の文がある）
               if (over === null || buyable.length === 0 || coupons?.applied.some((a) => a.free_shipping)) return null;
-              const left = over - total;
+              // 0183: セール商品を含まない決まりも数えた目安（無ければ今までどおり小計で）
+              const left = shipping.progress ? shipping.progress.left : over - total;
+              const member = shipping.progress ? shipping.progress.member : shipping.viewerFreeMember;
               return (
                 <p class="free-shipping-hint">
-                  {left > 0 ? tf("store.free_shipping_remaining", { amount: yen(left) }) : shipping.viewerFreeMember ? t("store.free_shipping_reached_member") : t("store.free_shipping_reached")}
+                  {left > 0 ? tf("store.free_shipping_remaining", { amount: yen(left) }) : member ? t("store.free_shipping_reached_member") : t("store.free_shipping_reached")}
                 </p>
               );
             })()}
@@ -1088,7 +1090,7 @@ export const defaultTheme: Theme = {
         <p>{t("store.address_intro")}</p>
         <p class="muted">
           {t("store.subtotal_tax_included")}: {yen(subtotal)} · {shipping.summary}
-          {(shipping.viewerFreeOver ?? shipping.freeOver) !== null && subtotal >= (shipping.viewerFreeOver ?? shipping.freeOver)! ? `（${t("store.free_shipping_applied")}）` : ""}
+          {(shipping.progress ? shipping.progress.applied : (shipping.viewerFreeOver ?? shipping.freeOver) !== null && subtotal >= (shipping.viewerFreeOver ?? shipping.freeOver)!) ? `（${t("store.free_shipping_applied")}）` : ""}
         </p>
         {error ? <p class="error">{error}</p> : null}
         <form method="post" action={`${ctx.shopPath}/checkout/${provider}`}>
@@ -1177,9 +1179,17 @@ export const defaultTheme: Theme = {
       <Layout title={t("store.shipping_title")} ctx={ctx}>
         <h1>{t("store.shipping_title")}</h1>
         <p>{shipping.summary}</p>
-        {shipping.freeOver !== null ? <p>{`${yen(shipping.freeOver)}以上のご注文で送料無料`}</p> : null}
+        {shipping.freeOver !== null ? <p>{`${shipping.freeOverExcludesSale && shipping.freeOver > 0 ? t("store.excluding_sale") : ""}${yen(shipping.freeOver)}以上のご注文で送料無料`}</p> : null}
         {(shipping.memberFree ?? []).map((m) => (
-          <p>{m.freeOver === 0 ? tf("store.member_free_shipping_always", { label: m.label }) : tf("store.member_free_shipping", { label: m.label, amount: yen(m.freeOver) })}</p>
+          <p>
+            {/* 0183: 0 円はセール商品の印があってもいつでも無料（セール商品だけでも 0 円以上）。1 円・印ありは「セール商品だけのご注文を除く」 */}
+            {m.freeOver === 1 && m.excludeSale
+              ? tf("store.member_free_shipping_always_excluding_sale", { label: m.label })
+              : m.freeOver === 0
+                ? tf("store.member_free_shipping_always", { label: m.label })
+                : tf("store.member_free_shipping", { label: m.label, amount: yen(m.freeOver) })}
+            {m.excludeSale && m.freeOver > 1 ? t("store.member_free_excluding_sale") : ""}
+          </p>
         ))}
         {shipping.table ? (
           <table>

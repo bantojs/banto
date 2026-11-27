@@ -89,7 +89,7 @@ describe("LINE 通知", () => {
     const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
     const config = memoryAdapters({ ...SECRETS }).config;
     const r = await deliverPendingHooks({ db, sessionSecret: "test-session-secret", fetch: fetchImpl, config });
-    expect(r).toEqual({ claimed: 2, delivered: 2, failed: 0 });
+    expect(r).toEqual({ claimed: 2, delivered: 2, failed: 0, unrecorded: 0 });
     expect(pushes).toHaveLength(2);
     expect(pushes[0]!.auth).toBe("Bearer line-token");
     expect(pushes.every((p) => p.body["to"] === "U123")).toBe(true);
@@ -105,7 +105,7 @@ describe("LINE 通知", () => {
     sb.enqueue(shop.id, "order.paid", { order_id: "o", total_jpy: 1, items: [] });
     const noToken = memoryAdapters({ KOMOJU_SECRET_KEY: "x" }).config;
     const r2 = await deliverPendingHooks({ db, sessionSecret: "test-session-secret", fetch: fetchImpl, config: noToken });
-    expect(r2).toEqual({ claimed: 1, delivered: 0, failed: 1 });
+    expect(r2).toEqual({ claimed: 1, delivered: 0, failed: 1, unrecorded: 0 });
     expect(sb.tables.hook_deliveries.at(-1)).toMatchObject({ status: "pending", last_error: "line_notify: チャネルアクセストークンが未設定" });
 
     // 送信先未設定も失敗

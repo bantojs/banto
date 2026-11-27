@@ -14,7 +14,7 @@ import type { ArticleOrder } from "../blog";
 import type { FieldSort } from "../blog/fields";
 import { memberFromRequest } from "./api/members";
 import { withIncludes } from "../content/include";
-import { memberFreeOverHint, parseShippingSettings } from "../commerce/shipping";
+import { memberFreeTargetsHint, parseShippingSettings, type FreeTarget } from "../commerce/shipping";
 
 /** 覚えておく秒数（管理画面で直した条件が効くまでの長さ） */
 export const AUDIENCES_CACHE_TTL = 60;
@@ -151,10 +151,11 @@ export function withApiMember(c: Ctx, sf: StorefrontData, shop: PublicShop, memb
  * ゲスト・モジュールが OFF・決まりの無いショップでは何も引かない。引くのは覚えた条件の一覧（shopAudiences、60 秒）だけで、
  * 判定は会員の Cookie・会員トークンの独自項目（数分ごとに入れ直す）。確認画面の送料は DB の member_free_shipping_over が決める
  */
-export async function memberFreeOverForCart(c: Ctx, shop: { id: string; settings?: Record<string, unknown> | null }, member: { attrs?: Record<string, unknown> } | null | undefined): Promise<number | null> {
-  if (!member) return null;
+export async function memberFreeOverForCart(c: Ctx, shop: { id: string; settings?: Record<string, unknown> | null }, member: { attrs?: Record<string, unknown> } | null | undefined): Promise<FreeTarget[]> {
+  if (!member) return [];
   const settings = shop.settings ?? {};
-  if (!moduleEnabled(settings, AUDIENCES_MODULE)) return null;
-  if (!parseShippingSettings(settings["shipping"]).has_member_free) return null;
-  return memberFreeOverHint(await shopAudiences(c, shop), { member: true, attrs: member.attrs ?? {} });
+  if (!moduleEnabled(settings, AUDIENCES_MODULE)) return [];
+  if (!parseShippingSettings(settings["shipping"]).has_member_free) return [];
+  // 当てはまる決まり（金額と、0183 からセール商品を含まない印）
+  return memberFreeTargetsHint(await shopAudiences(c, shop), { member: true, attrs: member.attrs ?? {} });
 }

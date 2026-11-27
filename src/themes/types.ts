@@ -52,11 +52,18 @@ export interface ShippingInfo {
   freeOver: number | null;
   table: { prefecture: string; fee: number }[] | null;
   /** 会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ（会員の条件の名前・中身は出さない） */
-  memberFree?: { label: string; freeOver: number }[];
+  memberFree?: { label: string; freeOver: number; excludeSale?: boolean }[];
   /** 見る人の送料無料の金額（0171、表示の目安）: ショップ全体と、ログイン中の会員が当てはまる会員の条件の低い方。無ければ null */
   viewerFreeOver?: number | null;
   /** viewerFreeOver が会員の条件のもの（会員特典）か */
   viewerFreeMember?: boolean;
+  /** 0183: ショップ全体の送料無料の金額にセール商品を含まない */
+  freeOverExcludesSale?: boolean;
+  /**
+   * 0183: カートの送料無料までの目安（セール商品を含まない決まりも数えた。表示だけ、確認画面の送料が正）。
+   * over = いちばん近い決まりの金額、left = あといくら（届いていれば 0）、member = 会員の決まりか。渡されないときは viewerFreeOver と小計で
+   */
+  progress?: { over: number; left: number; applied: boolean; member: boolean; excludeSale?: boolean } | null;
   taxRate: number;
 }
 

@@ -37,7 +37,7 @@ export function publicOpenapiDocument(origin: string, version: string): Record<s
       coupons: { type: ["object", "null"], description: "同梱モジュール coupons が OFF なら null。applied・rejected・discount_jpy・subtotal_after_discount_jpy" },
       tax_rate: int,
       tax_included: bool,
-      shipping: obj({ summary: str, free_over_jpy: nInt, viewer_free_over_jpy: { ...nInt, description: "見る人の送料無料の金額（0171）: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ。表示の目安（送料は quote で決まる）" }, member_free_applies: { type: "boolean", description: "viewer_free_over_jpy が会員特典の金額か（0171）" }, remaining_for_free_jpy: { ...nInt, description: "viewer_free_over_jpy まであといくら" }, by_prefecture: { type: ["object", "null"] }, member_free: { type: "array", description: "会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ: [{ label, free_over_jpy }]" } }),
+      shipping: obj({ summary: str, free_over_jpy: nInt, viewer_free_over_jpy: { ...nInt, description: "見る人の送料無料の金額（0171）: 会員トークンの会員が当てはまる会員の条件の金額がショップ全体より低ければそれ。表示の目安（送料は quote で決まる）" }, member_free_applies: { type: "boolean", description: "viewer_free_over_jpy が会員特典の金額か（0171）" }, remaining_for_free_jpy: { ...nInt, description: "送料無料まであといくら（0183 からセール商品を含まない決まりはセール商品を除いた金額で数える）" }, free_over_excludes_sale: { type: "boolean", description: "ショップ全体の送料無料の金額にセール商品を含まない（0183）" }, by_prefecture: { type: ["object", "null"] }, member_free: { type: "array", description: "会員の条件ごとの送料無料（0171）。運営者が名前を付けた決まりだけ: [{ label, free_over_jpy }]" } }),
       payments: obj({ stripe: bool, komoju: bool, amazon_pay: bool, cod: { ...bool, description: "代金引換（同梱モジュール cod）。金額・会員だけの判定は quote で" } }),
       delivery: { type: ["object", "null"], description: "配送日時の選択肢（同梱モジュール delivery_time）。dates[].value・slots[].value を配送先の delivery_date / delivery_slot に" },
       can_checkout: bool,

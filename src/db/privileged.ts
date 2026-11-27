@@ -277,6 +277,8 @@ export interface PrivilegedDb {
   reservationPaymentFeeCheck(reservationId: string, shopId: string): Promise<number>;
   /** ログイン中の会員が当てはまる会員の条件のうち、いちばん低い送料無料の金額（0171）。無ければ null */
   memberFreeShippingOver(shopId: string, member: { id: string; epoch: number; sid: string }): Promise<number | null>;
+  /** 0183: 会員が当てはまる会員の条件ごとの送料無料の決まり（金額とセール商品を含まない印）。当てはまらなければ [] */
+  memberFreeShipping(shopId: string, member: { id: string; epoch: number; sid: string }): Promise<{ over: number; excludeSale: boolean }[]>;
   /** 予約に購入者情報・送料・会員 ID を一時保持させる（確定時に orders へ移る） */
   attachReservationCustomer(reservationId: string, shopId: string, customer: ReservationCustomer): Promise<void>;
   /** クーポンのコードからキャンペーンを引く（0010）。subject があればその人の使用回数も返す */
@@ -439,7 +441,7 @@ export interface PrivilegedDb {
   /** 0100: 会員限定のページ・記事の読み取り（page_member_get / article_member_get / articles_member_page。ブログをまたぐ articles_member_multi は 0140） */
   contentMemberRpc(fn: "page_member_get" | "article_member_get" | "articles_member_page" | "articles_member_multi", args: Record<string, unknown>): Promise<unknown>;
   /** 0097: 本文のブロックの出し分けに使う会員の条件（モジュールが OFF なら空） */
-  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown; free_over_jpy?: number }[]>;
+  shopAudiencesRender(shopId: string): Promise<{ id: string; name: string; condition: unknown; free_over_jpy?: number; free_over_excludes_sale?: boolean }[]>;
   /** ヘッドレスの refresh を回す。使い回しならその行を取り消して reuse */
   memberSessionRefresh(shopId: string, customerId: string, epoch: number, sessionId: string, gen: number): Promise<MemberSessionRefresh>;
   /** 取り消す（logout: 自分の端末 / revoked: 一覧から別の端末） */
@@ -680,6 +682,14 @@ export function createPrivilegedDb(opts: PrivilegedDbOptions): PrivilegedDb {
     memberFreeShippingOver: async (shopId, member) => {
       const r = await rpc<unknown>("member_free_shipping_over", { p_shop_id: shopId, p_customer_id: member.id, p_epoch: member.epoch, p_session_id: member.sid });
       return typeof r === "number" && Number.isInteger(r) && r >= 0 ? r : null;
+    },
+    memberFreeShipping: async (shopId, member) => {
+      const r = await rpc<unknown>("member_free_shipping", { p_shop_id: shopId, p_customer_id: member.id, p_epoch: member.epoch, p_session_id: member.sid });
+      if (!Array.isArray(r)) return [];
+      return r
+        .map((x) => x as { free_over_jpy?: unknown; exclude_sale?: unknown })
+        .filter((x) => typeof x.free_over_jpy === "number" && Number.isInteger(x.free_over_jpy) && x.free_over_jpy >= 0)
+        .map((x) => ({ over: x.free_over_jpy as number, excludeSale: x.exclude_sale === true }));
     },
     attachReservationCustomer: (reservationId, shopId, customer) =>
       rpc<void>("attach_reservation_customer", { p_reservation_id: reservationId, p_shop_id: shopId, p_customer: customer }),

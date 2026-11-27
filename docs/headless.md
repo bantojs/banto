@@ -543,7 +543,7 @@ GET  /api/shops/<shop>/members/orders/<番号>/receipt    （会員トークン�
 
 ## 会員の条件ごとの送料無料（0171）
 
-詳しくは docs/audiences.md「会員の条件ごとの送料無料」。カートの `shipping.member_free`（`[{ label, free_over_jpy }]`）は、運営者が名前を付けた決まりだけです（会員の条件の名前・中身は出しません）。会員トークンを付けたカートは、その会員の「あと○円で送料無料」の目安を `shipping.viewer_free_over_jpy`・`member_free_applies`・`remaining_for_free_jpy` で返します（会員トークンに入っている独自項目で判定する目安。数分ずれることがあります）。当てはまるかは会員トークンの会員のデータベースの最新の独自項目で、quote の `confirmation.shipping_free_reason` が `audience` なら会員の条件による送料無料、`threshold` ならショップ全体の金額による送料無料です。会員トークンのカートでは `remaining_for_free_jpy` が `viewer_free_over_jpy`（見る人の金額）までの残りです（0171 から。`free_over_jpy` はショップ全体の金額のまま）。送料無料のクーポンが入っているかは `coupons.applied[].kind` の `free_shipping` で分かります（`remaining_for_free_jpy` はクーポンを見ません）。
+詳しくは docs/audiences.md「会員の条件ごとの送料無料」。カートの `shipping.member_free`（`[{ label, free_over_jpy }]`）は、運営者が名前を付けた決まりだけです（会員の条件の名前・中身は出しません）。会員トークンを付けたカートは、その会員の「あと○円で送料無料」の目安を `shipping.viewer_free_over_jpy`・`member_free_applies`・`remaining_for_free_jpy` で返します（会員トークンに入っている独自項目で判定する目安。数分ずれることがあります）。当てはまるかは会員トークンの会員のデータベースの最新の独自項目で、quote の `confirmation.shipping_free_reason` が `audience` なら会員の条件による送料無料、`threshold` ならショップ全体の金額による送料無料です。会員トークンのカートでは `remaining_for_free_jpy` が `viewer_free_over_jpy`（見る人の金額）までの残りです（0171 から。`free_over_jpy` はショップ全体の金額のまま）。送料無料のクーポンが入っているかは `coupons.applied[].kind` の `free_shipping` で分かります（`remaining_for_free_jpy` はクーポンを見ません）。0183 からは、送料無料の金額にセール商品を含まない決まり（ショップ全体の `shipping.free_over_excludes_sale`、会員の条件ごとの `shipping.member_free[].exclude_sale`）があれば、`remaining_for_free_jpy` はセール商品を除いた金額で数えた残りです（docs/audiences.md「送料無料とセール商品」）。
 
 ## 代金引換（同梱モジュール cod）
 

@@ -8,7 +8,7 @@ import type { CouponSource, PaymentSetup, PlaceOrderDeps } from "../commerce/che
 import type { PublicShop } from "../storefront/data";
 import { moduleEnabled } from "../modules/registry";
 import { AUDIENCES_MODULE } from "../members/audience";
-import { AUDIENCE_FREE_SHIPPING_MIGRATION, parseShippingSettings } from "../commerce/shipping";
+import { AUDIENCE_FREE_SHIPPING_MIGRATION, FREE_SHIPPING_EXCLUDE_SALE_MIGRATION, parseShippingSettings } from "../commerce/shipping";
 import { migrated } from "../db/migration-state";
 
 /** 決済まわりのクライアント。ストアフロント（同梱テーマのレジ）とヘッドレス API で共通 */
@@ -52,17 +52,24 @@ export function amazonPayFor(c: Ctx): ReturnType<typeof amazonPayFromConfig> {
  * DB はセッション（世代・行）も確かめる。セッションの行の無い古い Cookie・トークンは聞かない（送料がかかる）。
  * DB のエラーは送料がかかる側に倒す（null。確定の前の引き直しで確認画面を出し直す）
  */
-export function memberFreeOverSource(c: Ctx, shop: PublicShop, member: { id: string; epoch: number; sid?: string | undefined } | null | undefined): (() => Promise<number | null>) | undefined {
+export function memberFreeOverSource(c: Ctx, shop: PublicShop, member: { id: string; epoch: number; sid?: string | undefined } | null | undefined): (() => Promise<number | { over: number; excludeSale: boolean }[] | null>) | undefined {
   if (!member?.id || !member.sid || !moduleEnabled(shop.settings, AUDIENCES_MODULE)) return undefined;
   if (!parseShippingSettings((shop.settings ?? {})["shipping"]).has_member_free) return undefined;
   const who = { id: member.id, epoch: member.epoch, sid: member.sid };
   const privileged = privilegedFor(c);
   if (!privileged) return undefined;
   const state = migrationStateFor(c, c.get("adapters").config.get("SUPABASE_URL") ?? "");
-  let once: Promise<number | null> | null = null;
+  let once: Promise<number | { over: number; excludeSale: boolean }[] | null> | null = null;
   return () =>
     (once ??= (async () => {
       if (!state || !(await migrated(state, AUDIENCE_FREE_SHIPPING_MIGRATION))) return null;
+      // 0183 から: 決まりごとの金額とセール商品を含まない印。前は いちばん低い金額だけ
+      if (await migrated(state, FREE_SHIPPING_EXCLUDE_SALE_MIGRATION)) {
+        return privileged.memberFreeShipping(shop.id, who).catch((e: unknown) => {
+          console.warn(`member_free_shipping failed (shop ${shop.id}): ${e instanceof Error ? e.name : "error"}`);
+          return null;
+        });
+      }
       return privileged.memberFreeShippingOver(shop.id, who).catch((e: unknown) => {
         // 会員の判定ができないときは送料がかかる側（個人情報は出さない）
         console.warn(`member_free_shipping_over failed (shop ${shop.id}): ${e instanceof Error ? e.name : "error"}`);
