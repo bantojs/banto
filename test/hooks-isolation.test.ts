@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeSupabase } from "./fake-supabase";
 import { externalHosts, memoryAdapters } from "./helpers";
 import { bundledPluginUrl } from "../src/plugins";
-import { deliverPendingHooks, describeError, EXTERNAL_CONCURRENCY } from "../src/hooks/deliver";
-import { createPrivilegedDb, type PrivilegedDb } from "../src/db/privileged";
+import { deliverPendingHooks, describeError, EXTERNAL_CONCURRENCY, recordableText } from "../src/hooks/deliver";
+import { createPrivilegedDb, PrivilegedRpcError, type PrivilegedDb } from "../src/db/privileged";
 import { registerJobs } from "../src/jobs";
 import { runScheduledJobs } from "../src/adapters/scheduler";
 
@@ -37,7 +37,9 @@ function setup(externals = 1) {
 /** 外部の送信先が返事をしない（打ち切られるまで待つ）fetch */
 function hangingUntilAbort(init?: RequestInit): Promise<Response> {
   return new Promise((_, reject) => {
-    init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
+    // 本物の fetch と同じく、打ち切りの理由（reason）で reject する
+    const signal = init?.signal;
+    signal?.addEventListener("abort", () => reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError")));
   });
 }
 
@@ -54,6 +56,7 @@ describe("hooks の配信を配信ごとに分ける", () => {
     const extId = idOf("ep-ext-0");
     const order: string[] = [];
     const pushes: string[] = [];
+    const extFinishes: Record<string, unknown>[] = [];
     externalHosts.set("https://api.line.me/", async () => {
       order.push("line");
       pushes.push("push");
@@ -63,12 +66,16 @@ describe("hooks の配信を配信ごとに分ける", () => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.startsWith("https://plugin0.example/")) {
         order.push("external");
-        return hangingUntilAbort(init);
+        // 打ち切られた（10 秒を待たずに同じ形の例外で）
+        throw new DOMException("The operation was aborted.", "AbortError");
       }
       for (const [prefix, h] of externalHosts) if (url.startsWith(prefix)) return h(new Request(input, init));
       const f = await finishArgs(input, init);
       // Workers の fetch が文の無い例外で落ちる（PostgREST の応答ではない）
-      if (f?.p_id === extId) throw new TypeError("");
+      if (f?.p_id === extId) {
+        extFinishes.push(f as unknown as Record<string, unknown>);
+        throw new TypeError("");
+      }
       return sb.fetch(input, init);
     };
     const adapters = memoryAdapters({ SUPABASE_URL: sb.url, SUPABASE_SERVICE_ROLE_KEY: sb.serviceRoleKey, SESSION_SECRET: "test-session-secret", ...SECRETS });
@@ -77,18 +84,17 @@ describe("hooks の配信を配信ごとに分ける", () => {
     const errors: string[] = [];
     vi.spyOn(console, "error").mockImplementation((...a: unknown[]) => void errors.push(a.map(String).join(" ")));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
-      // 打ち切り（10 秒）を待たない
-      queueMicrotask(fn);
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    }) as unknown as typeof setTimeout);
     registerJobs(adapters, { fetch: fetchImpl });
     const failed = await runScheduledJobs(jobs.filter((j) => j.name === "deliver_hooks"), (m, e) => errors.push(`${m} ${describeError(e)}`));
 
     expect(pushes).toHaveLength(1);
     expect(delivery("ep-line")).toMatchObject({ status: "delivered" });
-    // 同梱プラグインが先（外部の遅さを待たない）
-    expect(order).toEqual(["line", "external"]);
+    expect(order.sort()).toEqual(["external", "line"]);
+    // 外部の配信は失敗として書こうとした（その場と回の最後の 2 回。送り直してはいない）
+    expect(extFinishes.map((f) => [f["p_success"], f["p_error"]])).toEqual([
+      [false, "The operation was aborted."],
+      [false, "The operation was aborted."],
+    ]);
     // 外部の配信は書けずに pending のまま（貸し出しが切れたら取り出し直される）
     expect(delivery("ep-ext-0")).toMatchObject({ status: "pending", last_error: null });
     // ジョブは全部を進めた後で失敗にする（ハートビートを止める）。ログに配信 ID と原因の種類
@@ -227,5 +233,115 @@ describe("hooks の配信を配信ごとに分ける", () => {
     });
     expect(r).toEqual({ claimed: 12, delivered: 12, failed: 0, unrecorded: 0 });
     expect(peak).toBe(EXTERNAL_CONCURRENCY);
+  });
+
+  it("同梱プラグインの通信が止まっても打ち切り、外部の配信は待たずに送られる", async () => {
+    const { sb, delivery } = setup(1);
+    externalHosts.set("https://api.line.me/", (req) => hangingUntilAbort({ signal: req.signal }));
+    let externalSent = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.startsWith("https://plugin0.example/")) {
+        externalSent++;
+        return new Response(null, { status: 204 });
+      }
+      if (url.startsWith("https://api.line.me/")) return hangingUntilAbort(init);
+      return sb.fetch(input, init);
+    };
+    const db = createPrivilegedDb({ url: sb.url, serviceRoleKey: sb.serviceRoleKey, fetch: fetchImpl });
+    const r = await deliverPendingHooks({ db, sessionSecret: "s", fetch: fetchImpl, config: memoryAdapters(SECRETS).config, bundledTimeoutMs: 20 });
+    expect(externalSent).toBe(1);
+    expect(r).toEqual({ claimed: 2, delivered: 1, failed: 1, unrecorded: 0 });
+    expect(delivery("ep-ext-0")).toMatchObject({ status: "delivered" });
+    expect(delivery("ep-line")).toMatchObject({ status: "pending" });
+    expect(String(delivery("ep-line")["last_error"])).toContain("timed out after 20ms");
+  });
+
+  it("同梱プラグインの 1 件目の結果の書き込みが落ちても、ほかの同梱・外部の配信は書かれる", async () => {
+    const rows = [
+      { id: "b1", url: bundledPluginUrl("komoju") },
+      { id: "b2", url: bundledPluginUrl("komoju") },
+      { id: "x1", url: "https://p1.example/hook" },
+      { id: "x2", url: "https://p2.example/hook" },
+    ].map((r, i) => ({ ...r, shop_id: "s", endpoint_id: `e${i}`, event: "order.paid", payload: {}, attempts: 1, settings: {}, created_at: "", secret_box: null }));
+    const finished: string[] = [];
+    const failOnce = new Set(["b1", "x1"]);
+    const db = {
+      claimHookDeliveries: async () => rows,
+      finishHookDelivery: async (id: string) => {
+        if (failOnce.delete(id)) throw new TypeError("");
+        finished.push(id);
+      },
+    } as unknown as PrivilegedDb;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const r = await deliverPendingHooks({ db, sessionSecret: "s", fetch: async () => new Response(null, { status: 204 }), config: memoryAdapters({}).config });
+    expect(r).toEqual({ claimed: 4, delivered: 4, failed: 0, unrecorded: 0 });
+    expect(finished.sort()).toEqual(["b1", "b2", "x1", "x2"]);
+  });
+
+  it("予算の残りが無い回は書き直さない。返す分（入らない配信）は返す", async () => {
+    const rows = ["d1", "d2"].map((id, i) => ({ id, shop_id: "s", endpoint_id: `e${i}`, event: "order.paid", payload: {}, attempts: 1, url: `https://p${i}.example/hook`, settings: {}, created_at: "", secret_box: null }));
+    let finishes = 0;
+    const released: string[][] = [];
+    let remaining = 6;
+    const db = {
+      claimHookDeliveries: async () => rows,
+      finishHookDelivery: async () => {
+        finishes++;
+        remaining = 2;
+        throw new TypeError("");
+      },
+      releaseHookDeliveries: async (ids: string[]) => void released.push(ids),
+    } as unknown as PrivilegedDb;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // 残り 6・予備 4 → 外部の 1 件（見積もり 2）だけ入り、2 件目は返す。書き込みが落ちた後は残りが予備を割るので書き直さない
+    const r = await deliverPendingHooks({ db, sessionSecret: "s", fetch: async () => new Response(null, { status: 204 }), budget: { remaining: () => remaining, reserve: 4 } });
+    expect(r).toEqual({ claimed: 1, delivered: 1, failed: 0, unrecorded: 1 });
+    expect(finishes).toBe(1);
+    expect(released).toEqual([["d2"]]);
+  });
+
+  it("通信の上限に当たったら、まだ送っていない外部の配信は送らずに返す", async () => {
+    const rows = Array.from({ length: 3 }, (_, i) => ({ id: `d${i}`, shop_id: "s", endpoint_id: `e${i}`, event: "order.paid", payload: {}, attempts: 1, url: `https://p${i}.example/hook`, settings: {}, created_at: "", secret_box: null }));
+    const sent: string[] = [];
+    const released: string[][] = [];
+    const db = {
+      claimHookDeliveries: async () => rows,
+      finishHookDelivery: async () => {
+        throw new Error("Too many subrequests.");
+      },
+      releaseHookDeliveries: async (ids: string[]) => void released.push(ids),
+    } as unknown as PrivilegedDb;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await deliverPendingHooks({ db, sessionSecret: "s", externalConcurrency: 1, fetch: async (input) => (sent.push(String(input)), new Response(null, { status: 204 })) });
+    expect(sent).toEqual(["https://p0.example/hook"]);
+    expect(r).toEqual({ claimed: 1, delivered: 1, failed: 0, unrecorded: 1 });
+    expect(released).toEqual([["d1", "d2"]]);
+  });
+
+  it("記録の文は DB が受け取れる形に（NUL・片割れのサロゲートを外し、文字で切る）。文で断られた失敗は文を差し替えて書き直す", async () => {
+    expect(recordableText("a\u0000b\u001fc\nd")).toBe("abc\nd");
+    expect(recordableText("x\ud83d")).toBe("x\ufffd");
+    expect(recordableText("😀".repeat(600))).toBe("😀".repeat(500));
+    expect(recordableText(null)).toBeNull();
+    const rows = [{ id: "d1", shop_id: "s", endpoint_id: "e1", event: "order.paid", payload: {}, attempts: 1, url: "https://p.example/hook", settings: {}, created_at: "", secret_box: null }];
+    const errors: (string | null)[] = [];
+    let first = true;
+    const db = {
+      claimHookDeliveries: async () => rows,
+      finishHookDelivery: async (_id: string, _ok: boolean, _s: number | null, err: string | null) => {
+        errors.push(err);
+        if (first) {
+          first = false;
+          throw new PrivilegedRpcError("finish_hook_delivery", 400, "invalid byte sequence");
+        }
+      },
+    } as unknown as PrivilegedDb;
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const r = await deliverPendingHooks({ db, sessionSecret: "s", fetch: async () => new Response("busy\u0000", { status: 503 }) });
+    expect(r).toEqual({ claimed: 1, delivered: 0, failed: 1, unrecorded: 0 });
+    expect(errors).toEqual(["busy", "(the error text could not be recorded)"]);
   });
 });

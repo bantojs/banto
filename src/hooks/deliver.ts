@@ -8,14 +8,16 @@
  *   （送れたのに書き込みが 1 回落ちたからといって「失敗」と書き直さない。書き直すと再送で二重に届く）
  * - 結果を書けなかった配信は回の最後にもう 1 回だけ書き直し、それでも書けなければ数えて返す（unrecorded）。
  *   貸し出し（10 分）が切れたら取り出し直される。ジョブを失敗にするかは呼ぶ側が、全部を最後まで進めた後で決める
- * - 先に同梱プラグイン（取引の知らせのメール・LINE）を送り、外部プラグインへの送信はその後で、同時に開く数を絞って送る
- *   （Workers の同時接続の枠を遅い外部の送信先が握り、メールの送信や結果の書き込みを待たせないため）
+ * - 同梱プラグイン（取引の知らせのメール・LINE）は外部プラグインを待たずに並べて送り、外部プラグインへは同時に開く数を絞って送る
+ *   （Workers の同時接続の枠を遅い外部の送信先が握り、メールの送信や結果の書き込みを待たせないため）。
+ *   同梱プラグインの通信にも打ち切りを付ける（メール・LINE の API が止まっても、その回が終わらなくならないように）
+ * - 通信の回数の上限に当たったら、まだ送っていない外部の配信は送らずに返す（送っても結果を書けず、貸し出しの後で二重に届く）
  * - 外部の応答の本文は、2xx なら読まずに閉じる（読まれない本文は接続を開いたままにする）
  * 送る直前に行き先を確かめ（blockedHookTarget）、私設のアドレス・社内の名前には送らない。
  * 渡す fetch は Node では adapters.publicFetch（名前を引いた先も接続の直前に確かめる）。
  */
 import { DELIVERY_COST, isSubrequestLimitError } from "../jobs/budget";
-import type { PrivilegedDb } from "../db/privileged";
+import { PrivilegedRpcError, type PrivilegedDb } from "../db/privileged";
 import type { ConfigAdapter, SocketAdapter } from "../adapters/types";
 import { connectionSecretPurpose, endpointSecret, signHookPayload } from "./signing";
 import { openSecret } from "../members/secret-box";
@@ -30,6 +32,12 @@ export const HOOK_TIMEOUT_MS = 10_000;
  * 外部の送信先が全部の枠を握らないよう、結果の書き込み（PostgREST）の分を残す
  */
 export const EXTERNAL_CONCURRENCY = 4;
+/** 同梱プラグインの 1 回の通信（メール・LINE の API など）の打ち切り。応答の本文を読み終えるまでを含む */
+export const BUNDLED_FETCH_TIMEOUT_MS = 20_000;
+/** 記録に残す失敗の文の長さ（文字。DB の last_error） */
+const ERROR_TEXT_MAX = 500;
+/** 結果の書き込みが文の中身のために断られたとき、書き直しで代わりに残す文 */
+const UNRECORDABLE_ERROR_TEXT = "(the error text could not be recorded)";
 
 export interface DeliverResult {
   claimed: number;
@@ -61,6 +69,37 @@ function errorText(e: unknown): string {
   return String(e);
 }
 
+/**
+ * 記録に残す文を DB が受け取れる形にする: 制御文字（PostgreSQL の text は NUL を受け取らない）と片割れのサロゲートを外し、
+ * 文字（コードポイント）で上限まで切る（UTF-16 の途中で切らない）
+ */
+export function recordableText(text: string | null, max = ERROR_TEXT_MAX): string | null {
+  if (text === null) return null;
+  // eslint-disable-next-line no-control-regex
+  const clean = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, "\ufffd");
+  const chars = Array.from(clean);
+  return chars.length > max ? chars.slice(0, max).join("") : clean;
+}
+
+/** 結果の書き込みが、送り直しても通らない理由で断られたか（PostgREST の 4xx。文の中身・形の誤り） */
+function permanentRecordError(e: unknown): boolean {
+  return e instanceof PrivilegedRpcError && e.status >= 400 && e.status < 500;
+}
+
+/** 打ち切りを付けた fetch（呼ぶ側の signal も効かせる）。本文を読み終えるまでを含むので、時計は止めずに走らせる */
+function fetchWithTimeout(rawFetch: typeof fetch, ms: number): typeof fetch {
+  return (input, init) => {
+    const controller = new AbortController();
+    const outer = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    if (outer) {
+      if (outer.aborted) controller.abort(outer.reason);
+      else outer.addEventListener("abort", () => controller.abort(outer.reason), { once: true });
+    }
+    setTimeout(() => controller.abort(new Error(`bundled plugin request timed out after ${ms}ms`)), ms);
+    return rawFetch(input, { ...init, signal: controller.signal });
+  };
+}
+
 /** 並べて走らせ、すべてが終わるまで待つ。1 つの例外でほかを止めない（各処理は自分で例外を受け止める前提の、最後の砦） */
 async function settleAll(tasks: (() => Promise<void>)[], concurrency = Infinity): Promise<void> {
   let next = 0;
@@ -85,6 +124,8 @@ export async function deliverPendingHooks(opts: {
   timeoutMs?: number;
   /** 外部プラグインへ同時に送る数（既定 EXTERNAL_CONCURRENCY） */
   externalConcurrency?: number;
+  /** 同梱プラグインの 1 回の通信の打ち切り（既定 BUNDLED_FETCH_TIMEOUT_MS） */
+  bundledTimeoutMs?: number;
   /**
    * その回の通信の残り（Cron の予算、src/jobs/budget.ts）。あれば、取り出した配信を種類ごとの見積もりで確かめ直し、
    * 残りに入らない分は送らずに返す（release_hook_deliveries、回数を戻す。0160）
@@ -94,6 +135,7 @@ export async function deliverPendingHooks(opts: {
   // プロパティ経由で呼ばない（Workers の "Illegal invocation" 対策）
   const rawFetch = opts.fetch;
   const doFetch: typeof fetch = (input, init) => rawFetch(input, init);
+  const pluginFetch = fetchWithTimeout(doFetch, opts.bundledTimeoutMs ?? BUNDLED_FETCH_TIMEOUT_MS);
   const claimed = await opts.db.claimHookDeliveries(opts.limit ?? 50);
   const result: DeliverResult = { claimed: claimed.length, delivered: 0, failed: 0, unrecorded: 0 };
   type Row = (typeof claimed)[number];
@@ -108,15 +150,20 @@ export async function deliverPendingHooks(opts: {
 
   // 結果を書く。送った結果（delivered / failed）は書けたかどうかに関わらず決まっている。
   // 書けなければ回の最後にもう 1 回だけ書き直す（その場で繰り返さない: 同じ一時的な不調に当たりやすく、通信の予算も食う）
-  const retry: { id: string; outcome: Outcome; limit: boolean }[] = [];
-  const record = async (id: string, outcome: Outcome): Promise<void> => {
+  const retry: { id: string; outcome: Outcome; limit: boolean; permanent: boolean }[] = [];
+  // 通信の回数の上限に当たった（この回はもう何も通らない）
+  let limitHit = false;
+  const record = async (id: string, raw: Outcome): Promise<void> => {
+    const outcome = { ...raw, error: recordableText(raw.error) };
     if (outcome.ok) result.delivered++;
     else result.failed++;
     try {
       await opts.db.finishHookDelivery(id, outcome.ok, outcome.status, outcome.error);
     } catch (e) {
+      const limit = isSubrequestLimitError(e);
+      if (limit) limitHit = true;
       console.warn(`[banto] hooks: could not record delivery ${id} (${outcome.ok ? "delivered" : "failed"}), will retry: ${describeError(e)}`);
-      retry.push({ id, outcome, limit: isSubrequestLimitError(e) });
+      retry.push({ id, outcome, limit, permanent: permanentRecordError(e) });
     }
   };
 
@@ -174,7 +221,7 @@ export async function deliverPendingHooks(opts: {
       const config = opts.config;
       await plugin.handleBatch!.call(
         plugin,
-        group.map((row) => ({ envelope: envelopeOf(row), settings: row.settings ?? {}, config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret })),
+        group.map((row) => ({ envelope: envelopeOf(row), settings: row.settings ?? {}, config, socket: opts.socket, fetch: pluginFetch, privileged: opts.db, sessionSecret: opts.sessionSecret })),
       );
     } catch (e) {
       outcome = { ok: false, status: null, error: errorText(e) };
@@ -195,7 +242,7 @@ export async function deliverPendingHooks(opts: {
         outcome = { ok: true, status: 204, error: null };
       } else {
         if (!opts.config) throw new Error("config adapter missing");
-        await handle.call(plugin, { envelope: envelopeOf(row), settings: row.settings ?? {}, config: opts.config, socket: opts.socket, fetch: doFetch, privileged: opts.db, sessionSecret: opts.sessionSecret });
+        await handle.call(plugin, { envelope: envelopeOf(row), settings: row.settings ?? {}, config: opts.config, socket: opts.socket, fetch: pluginFetch, privileged: opts.db, sessionSecret: opts.sessionSecret });
         outcome = { ok: true, status: 200, error: null };
       }
     } catch (e) {
@@ -236,17 +283,24 @@ export async function deliverPendingHooks(opts: {
         await res.body?.cancel().catch(() => undefined);
         return { ok, status: res.status, error: null };
       }
-      // 失敗の本文は 4KB まで読み（読み終えたら閉じる）、記録は 500 文字（上限なしに読まない）
-      const text = (await readTextCapped(res, 4096).catch(() => "")).slice(0, 500);
+      // 失敗の本文は 4KB まで読み（読み終えたら閉じる）、記録は 500 文字（上限なしに読まない。record が DB に入る形に整える）
+      const text = await readTextCapped(res, 4096).catch(() => "");
       return { ok, status: res.status, error: text };
     } catch (e) {
+      if (isSubrequestLimitError(e)) limitHit = true;
       return { ok: false, status: null, error: controller.signal.aborted ? `timeout after ${opts.timeoutMs ?? HOOK_TIMEOUT_MS}ms` : errorText(e) };
     } finally {
       clearTimeout(timer);
     }
   };
 
+  // 通信の上限に当たった後の外部の配信は送らずに返す（回数を戻す）
+  const skipped: string[] = [];
   const deliverExternal = async (row: Row): Promise<void> => {
+    if (limitHit) {
+      skipped.push(row.id);
+      return;
+    }
     let outcome: Outcome;
     try {
       outcome = await sendExternal(row);
@@ -258,19 +312,26 @@ export async function deliverPendingHooks(opts: {
   };
 
   try {
-    // 1. 同梱プラグイン（取引の知らせ）。外部の送信先の遅さを待たない
-    await settleAll([...[...batches.values()].map((g) => () => deliverBatch(g)), ...bundledRows.map((r) => () => deliverBundled(r))]);
-    // 2. 外部プラグイン。同時に開く数を絞る（結果の書き込みの枠を残す）
-    await settleAll(
-      externalRows.map((r) => () => deliverExternal(r)),
-      opts.externalConcurrency ?? EXTERNAL_CONCURRENCY,
-    );
-    // 3. 書けなかった結果をもう 1 回だけ書く（送り直さない。書けなければ貸し出しが切れたら取り出し直される）
-    for (const { id, outcome, limit } of retry) {
+    // 1. 同梱プラグイン（取引の知らせ）は外部を待たずに並べて送り、外部プラグインは同時に開く数を絞って送る（結果の書き込みの枠を残す）。
+    //    どちらも 1 件ずつ例外を受け止めるので、片方が遅くても落ちてももう片方は最後まで進む
+    await Promise.all([
+      settleAll([...[...batches.values()].map((g) => () => deliverBatch(g)), ...bundledRows.map((r) => () => deliverBundled(r))]),
+      settleAll(
+        externalRows.map((r) => () => deliverExternal(r)),
+        opts.externalConcurrency ?? EXTERNAL_CONCURRENCY,
+      ),
+    ]);
+    if (skipped.length > 0) {
+      result.claimed -= skipped.length;
+      releaseLater = [...releaseLater, ...skipped];
+    }
+    // 2. 書けなかった結果をもう 1 回だけ書く（送り直さない。書けなければ貸し出しが切れたら取り出し直される）
+    for (const { id, outcome, limit, permanent } of retry) {
       try {
         // 通信の上限に当たった回・予算の残りが無い回は書き直さない（同じ理由で落ちる。ハートビートの分を食わない）
-        if (limit || (opts.budget && opts.budget.remaining() <= opts.budget.reserve)) throw new Error("subrequest budget exhausted");
-        await opts.db.finishHookDelivery(id, outcome.ok, outcome.status, outcome.error);
+        if (limit || limitHit || (opts.budget && opts.budget.remaining() <= opts.budget.reserve)) throw new Error("subrequest budget exhausted");
+        // 文の中身で断られた失敗の記録は、文を差し替えて書く（同じ文では何度書いても通らない）
+        await opts.db.finishHookDelivery(id, outcome.ok, outcome.status, permanent && !outcome.ok ? UNRECORDABLE_ERROR_TEXT : outcome.error);
       } catch (e) {
         result.unrecorded++;
         console.error(`[banto] hooks: could not record delivery ${id} (${outcome.ok ? "delivered" : "failed"}); it will be claimed again after the lease expires: ${describeError(e)}`);
