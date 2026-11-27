@@ -209,14 +209,14 @@ describe("配信ワーカー", () => {
     for (let i = 1; i <= 5; i++) {
       d["next_attempt_at"] = new Date(0).toISOString();
       const r = await deliverPendingHooks({ db, sessionSecret: "test-session-secret", fetch: fetchImpl });
-      expect(r).toEqual({ claimed: 1, delivered: 0, failed: 1 });
+      expect(r).toEqual({ claimed: 1, delivered: 0, failed: 1, unrecorded: 0 });
       expect(d["attempts"]).toBe(i);
       expect(d["last_status"]).toBe(503);
       expect(d["last_error"]).toBe("nope");
     }
     expect(d["status"]).toBe("failed");
     d["next_attempt_at"] = new Date(0).toISOString();
-    expect(await deliverPendingHooks({ db, sessionSecret: "test-session-secret", fetch: fetchImpl })).toEqual({ claimed: 0, delivered: 0, failed: 0 });
+    expect(await deliverPendingHooks({ db, sessionSecret: "test-session-secret", fetch: fetchImpl })).toEqual({ claimed: 0, delivered: 0, failed: 0, unrecorded: 0 });
 
     // ネットワークエラー・タイムアウトも失敗として記録
     externalHosts.set("https://crm.example/", () => {

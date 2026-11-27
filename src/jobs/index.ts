@@ -184,7 +184,7 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
     if (limit === 0) return;
     // 行き先は Node では publicFetch（名前を引いた先が社内のアドレスなら繋がない）。同梱プラグインの中の通信（メール・LINE）も同じ fetch を通る。
     // 取り出した後は種類ごとの見積もりで確かめ直し、残りに入らない分は返す（ハートビートの分を残す）
-    await deliverPendingHooks({
+    const r = await deliverPendingHooks({
       db,
       sessionSecret,
       fetch: outbound,
@@ -192,6 +192,9 @@ export function registerJobs(adapters: Adapters, deps: { fetch?: typeof fetch } 
       socket: adapters.socket,
       ...(limit !== undefined ? { limit, budget: { remaining: () => budget.remaining(), reserve: 2 } } : {}),
     });
+    // 結果を書けなかった配信があれば、全部を最後まで進めた後でジョブを失敗にする（ハートビートを進めず、運営者に気づかせる。
+    // 配信そのものは貸し出しが切れたら取り出し直される）
+    if (r.unrecorded > 0) throw new Error(`${r.unrecorded} hook delivery result(s) could not be recorded`);
   });
 
   // 上のジョブがその回ですべて成功したときだけ時刻が進む（1 つでも落ちれば /health が stale を報告する。残りのジョブは走る）
